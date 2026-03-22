@@ -1,5 +1,6 @@
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Domain.Entities;
+using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Identity;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
@@ -213,6 +214,36 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         builder.Property(entity => entity.DisplayName)
             .HasMaxLength(128)
             .IsRequired();
+
+        builder.Property(entity => entity.ApiKeyCiphertext)
+            .HasMaxLength(4096);
+
+        builder.Property(entity => entity.ApiSecretCiphertext)
+            .HasMaxLength(4096);
+
+        builder.Property(entity => entity.CredentialFingerprint)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.CredentialKeyVersion)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.CredentialStatus)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .HasDefaultValue(ExchangeCredentialStatus.Missing)
+            .IsRequired();
+
+        builder.HasIndex(entity => new
+        {
+            entity.CredentialStatus,
+            entity.CredentialRevalidateAfterUtc
+        });
+
+        builder.HasIndex(entity => new
+        {
+            entity.CredentialStatus,
+            entity.CredentialRotateAfterUtc
+        });
     }
 
     private static void ConfigureGlobalExecutionSwitches(EntityTypeBuilder<GlobalExecutionSwitch> builder)

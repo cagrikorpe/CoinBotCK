@@ -256,7 +256,45 @@ namespace CoinBot.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("ApiKeyCiphertext")
+                        .HasMaxLength(4096)
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ApiSecretCiphertext")
+                        .HasMaxLength(4096)
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<DateTime>("CreatedDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CredentialFingerprint")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("CredentialKeyVersion")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime?>("CredentialLastAccessedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("CredentialLastRotatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("CredentialRevalidateAfterUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("CredentialRotateAfterUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CredentialStatus")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)")
+                        .HasDefaultValue("Missing");
+
+                    b.Property<DateTime?>("CredentialStoredAtUtc")
                         .HasColumnType("datetime2");
 
                     b.Property<string>("DisplayName")
@@ -289,6 +327,10 @@ namespace CoinBot.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("OwnerUserId");
+
+                    b.HasIndex("CredentialStatus", "CredentialRevalidateAfterUtc");
+
+                    b.HasIndex("CredentialStatus", "CredentialRotateAfterUtc");
 
                     b.ToTable("ExchangeAccounts", (string)null);
                 });

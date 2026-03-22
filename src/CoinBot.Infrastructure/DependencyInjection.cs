@@ -1,12 +1,14 @@
 using CoinBot.Application.Abstractions.Alerts;
 using CoinBot.Application.Abstractions.Auditing;
 using CoinBot.Application.Abstractions.DataScope;
+using CoinBot.Application.Abstractions.ExchangeCredentials;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Contracts.Common;
 using CoinBot.Infrastructure.Alerts;
 using CoinBot.Infrastructure.Auditing;
+using CoinBot.Infrastructure.Credentials;
 using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Identity;
 using CoinBot.Infrastructure.MarketData;
@@ -59,6 +61,12 @@ public static class DependencyInjection
         services.AddOptions<MfaOptions>()
             .Bind(configuration.GetSection("Mfa"))
             .ValidateDataAnnotations();
+        services.AddOptions<CredentialSecurityOptions>()
+            .Bind(configuration.GetSection("CredentialSecurity"))
+            .ValidateDataAnnotations()
+            .Validate(
+                options => options.RotationIntervalDays >= options.RevalidationIntervalDays,
+                "RotationIntervalDays must be greater than or equal to RevalidationIntervalDays.");
         services.AddOptions<MarketHealthOptions>()
             .Bind(configuration.GetSection("HealthMonitoring:Market"))
             .ValidateDataAnnotations();
@@ -95,6 +103,7 @@ public static class DependencyInjection
         services.AddScoped<IDataScopeContextAccessor, DataScopeContextAccessor>();
         services.AddScoped<IDataScopeContext>(serviceProvider => serviceProvider.GetRequiredService<IDataScopeContextAccessor>());
         services.AddScoped<IAuditLogService, AuditLogService>();
+        services.AddScoped<IExchangeCredentialService, ExchangeCredentialService>();
         services.AddScoped<IAlertService, AlertingService>();
         services.AddScoped<IGlobalExecutionSwitchService, GlobalExecutionSwitchService>();
         services.AddScoped<IDataLatencyCircuitBreaker, DataLatencyCircuitBreaker>();
@@ -105,6 +114,8 @@ public static class DependencyInjection
         services.AddScoped<ITotpService, TotpService>();
         services.AddScoped<IEmailOtpService, EmailOtpService>();
         services.AddScoped<IMfaCodeValidator, MfaCodeValidator>();
+        services.AddSingleton<ICredentialKeyResolver, CredentialKeyResolver>();
+        services.AddSingleton<ICredentialCipher, Aes256CredentialCipher>();
         services.AddSingleton<MarketDataCachePolicyProvider>();
         services.AddSingleton<SharedSymbolRegistry>();
         services.AddSingleton<ISharedSymbolRegistry>(serviceProvider => serviceProvider.GetRequiredService<SharedSymbolRegistry>());

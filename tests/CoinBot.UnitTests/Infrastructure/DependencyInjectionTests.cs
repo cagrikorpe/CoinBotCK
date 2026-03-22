@@ -1,12 +1,14 @@
 using CoinBot.Application.Abstractions.Alerts;
 using CoinBot.Application.Abstractions.Auditing;
 using CoinBot.Application.Abstractions.DataScope;
+using CoinBot.Application.Abstractions.ExchangeCredentials;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Contracts.Common;
 using CoinBot.Infrastructure;
 using CoinBot.Infrastructure.Alerts;
+using CoinBot.Infrastructure.Credentials;
 using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Mfa;
@@ -35,6 +37,7 @@ public sealed class DependencyInjectionTests
         var alertService = provider.GetRequiredService<IAlertService>();
         var alertProviders = provider.GetServices<IAlertProvider>().ToArray();
         var correlationContextAccessor = provider.GetRequiredService<ICorrelationContextAccessor>();
+        var exchangeCredentialService = provider.GetRequiredService<IExchangeCredentialService>();
         var globalExecutionSwitchService = provider.GetRequiredService<IGlobalExecutionSwitchService>();
         var dataLatencyCircuitBreaker = provider.GetRequiredService<IDataLatencyCircuitBreaker>();
         var healthCheckService = provider.GetRequiredService<HealthCheckService>();
@@ -48,6 +51,7 @@ public sealed class DependencyInjectionTests
         var historicalGapFillerOptions = provider.GetRequiredService<IOptions<HistoricalGapFillerOptions>>().Value;
         var indicatorOptions = provider.GetRequiredService<IOptions<IndicatorEngineOptions>>().Value;
         var mfaOptions = provider.GetRequiredService<IOptions<MfaOptions>>().Value;
+        var credentialSecurityOptions = provider.GetRequiredService<IOptions<CredentialSecurityOptions>>().Value;
         var cookieOptions = provider
             .GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
             .Get(IdentityConstants.ApplicationScheme);
@@ -98,10 +102,16 @@ public sealed class DependencyInjectionTests
         Assert.Equal(6, mfaOptions.EmailOtpCodeLength);
         Assert.Equal(10, mfaOptions.EmailOtpLifetimeMinutes);
         Assert.Equal(30, mfaOptions.TotpTimeStepSeconds);
+        Assert.Equal(CredentialSecurityKeyProvider.Environment, credentialSecurityOptions.Provider);
+        Assert.Equal("credential-v1", credentialSecurityOptions.KeyVersion);
+        Assert.Equal("COINBOT_CREDENTIAL_ENCRYPTION_KEY_BASE64", credentialSecurityOptions.EnvironmentVariableName);
+        Assert.Equal(30, credentialSecurityOptions.RevalidationIntervalDays);
+        Assert.Equal(90, credentialSecurityOptions.RotationIntervalDays);
         Assert.Equal(2, alertProviders.Length);
         Assert.NotNull(auditLogService);
         Assert.NotNull(alertService);
         Assert.NotNull(correlationContextAccessor);
+        Assert.NotNull(exchangeCredentialService);
         Assert.NotNull(globalExecutionSwitchService);
         Assert.NotNull(dataLatencyCircuitBreaker);
         Assert.NotNull(healthCheckService);
@@ -172,6 +182,7 @@ public sealed class DependencyInjectionTests
 
         var services = new ServiceCollection();
         services.AddLogging();
+        services.AddSingleton<IConfiguration>(configuration);
         services.AddInfrastructure(configuration);
 
         return services.BuildServiceProvider();
