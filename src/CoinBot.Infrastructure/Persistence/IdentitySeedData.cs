@@ -1,5 +1,6 @@
 using CoinBot.Contracts.Common;
 using CoinBot.Infrastructure.Identity;
+using System.Data.Common;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -19,6 +20,16 @@ public static class IdentitySeedData
         var dbContext = scopedServices.GetRequiredService<ApplicationDbContext>();
         var roleManager = scopedServices.GetRequiredService<RoleManager<IdentityRole>>();
         var userManager = scopedServices.GetRequiredService<UserManager<ApplicationUser>>();
+        var connectionTarget = DescribeConnectionTarget(dbContext);
+
+        logger.LogInformation(
+            "Identity seed starting. Provider={Provider} DataSource={DataSource} Database={Database} IntegratedSecurity={IntegratedSecurity} Encrypt={Encrypt} TrustServerCertificate={TrustServerCertificate}",
+            connectionTarget.Provider,
+            connectionTarget.DataSource,
+            connectionTarget.Database,
+            connectionTarget.IntegratedSecurity,
+            connectionTarget.Encrypt,
+            connectionTarget.TrustServerCertificate);
 
         await dbContext.Database.MigrateAsync(cancellationToken);
 
@@ -46,7 +57,11 @@ public static class IdentitySeedData
 
         if (string.IsNullOrWhiteSpace(superAdminEmail) || string.IsNullOrWhiteSpace(superAdminPassword))
         {
-            logger.LogInformation("Identity roles seeded. Super admin creation skipped because secure seed configuration was not provided.");
+            logger.LogInformation(
+                "Identity roles seeded. DataSource={DataSource} Database={Database} RoleCount={RoleCount}. Super admin creation skipped because secure seed configuration was not provided.",
+                connectionTarget.DataSource,
+                connectionTarget.Database,
+                await roleManager.Roles.CountAsync(cancellationToken));
             return;
         }
 
@@ -82,7 +97,11 @@ public static class IdentitySeedData
             }
         }
 
-        logger.LogInformation("Identity roles and initial super admin seed completed.");
+        logger.LogInformation(
+            "Identity roles and initial super admin seed completed. DataSource={DataSource} Database={Database} RoleCount={RoleCount}.",
+            connectionTarget.DataSource,
+            connectionTarget.Database,
+            await roleManager.Roles.CountAsync(cancellationToken));
     }
 
     private static async Task EnsureRoleClaimsAsync(RoleManager<IdentityRole> roleManager, IdentityRole role, string roleName)
@@ -108,4 +127,84 @@ public static class IdentitySeedData
             }
         }
     }
+
+    private static ConnectionTargetInfo DescribeConnectionTarget(ApplicationDbContext dbContext)
+    {
+        var provider = dbContext.Database.ProviderName ?? "unknown";
+        var connectionString = dbContext.Database.GetConnectionString();
+
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            return new ConnectionTargetInfo(provider, "unknown", "unknown", null, null, null);
+        }
+
+        try
+        {
+            var builder = new DbConnectionStringBuilder
+            {
+                ConnectionString = connectionString
+            };
+
+            return new ConnectionTargetInfo(
+                provider,
+                GetValue(builder, "Data Source", "Server", "Addr", "Address", "Network Address"),
+                GetValue(builder, "Initial Catalog", "Database"),
+                GetBooleanValue(builder, "Integrated Security", "Trusted_Connection"),
+                GetBooleanValue(builder, "Encrypt"),
+                GetBooleanValue(builder, "TrustServerCertificate", "Trust Server Certificate"));
+        }
+        catch
+        {
+            return new ConnectionTargetInfo(provider, "unparsed", "unparsed", null, null, null);
+        }
+    }
+
+    private static string GetValue(DbConnectionStringBuilder builder, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            if (builder.TryGetValue(key, out var value) && value is not null)
+            {
+                var text = value.ToString();
+
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    return text;
+                }
+            }
+        }
+
+        return "unknown";
+    }
+
+    private static bool? GetBooleanValue(DbConnectionStringBuilder builder, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            if (!builder.TryGetValue(key, out var value) || value is null)
+            {
+                continue;
+            }
+
+            if (value is bool booleanValue)
+            {
+                return booleanValue;
+            }
+
+            if (bool.TryParse(value.ToString(), out var parsedValue))
+            {
+                return parsedValue;
+            }
+        }
+
+        return null;
+    }
+
+    private readonly record struct ConnectionTargetInfo(
+        string Provider,
+        string DataSource,
+        string Database,
+        bool? IntegratedSecurity,
+        bool? Encrypt,
+        bool? TrustServerCertificate);
 }

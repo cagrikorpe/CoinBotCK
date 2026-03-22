@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("CoinBot.Web")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+0cfecaac08c582c841edfdc9673a33c7b093e884")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+ca6bd9c3cbaf67a9fb51d7266d69ab722c659e87")]
 [assembly: System.Reflection.AssemblyProductAttribute("CoinBot.Web")]
 [assembly: System.Reflection.AssemblyTitleAttribute("CoinBot.Web")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
