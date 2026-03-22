@@ -48,10 +48,10 @@
                                 <div class="cb-dashboard-card-meta">Perp placeholder</div>
                             </td>
                             <td><span class="cb-badge @(row.DirectionTone == "success" ? "cb-badge-success" : "cb-badge-danger")">@row.Direction</span></td>
-                            <td class="cb-mono">@row.Leverage</td>
-                            <td class="cb-mono">@row.Entry</td>
-                            <td class="cb-mono">@row.Current</td>
-                            <td class="cb-mono @(row.PnlTone == "positive" ? "cb-text-positive" : "cb-text-negative")">@row.Pnl</td>
+                            <td class="cb-numeric-cell">@row.Leverage</td>
+                            <td class="cb-numeric-cell">@row.Entry</td>
+                            <td class="cb-numeric-cell">@row.Current</td>
+                            <td class="cb-numeric-cell @(row.PnlTone == "positive" ? "cb-text-positive" : "cb-text-negative")">@row.Pnl</td>
                             <td><span class="cb-badge @(row.RiskTone == "success" ? "cb-badge-success" : row.RiskTone == "warning" ? "cb-badge-warning" : "cb-badge-danger")">@row.Risk</span></td>
                             <td>
                                 <div>@row.Updated</div>

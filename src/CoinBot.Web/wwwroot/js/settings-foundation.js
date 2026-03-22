@@ -22,7 +22,7 @@
             leverage: '3',
             channel: 'In-app',
             quietHours: '22:00 - 07:00',
-            toggles: { compact: true, tooltips: true, ai: true, risk: true, bots: true, critical: true },
+            toggles: { compact: true, tooltips: true, ai: true, risk: true, bots: true, critical: true, push: false },
             twoFactor: { badge: ['2FA aktif', 'cb-badge cb-badge-success'], state: ['Aktif', 'cb-badge cb-badge-success'], method: 'Authenticator', notice: 'Authenticator yöntemi önerilir. Email fallback yalnızca geçici güvenlik katmanı olarak düşünülmelidir.' },
             trace: false,
             dirty: false
@@ -42,9 +42,9 @@
             risk: 'Yüksek',
             tradeMode: 'Paper',
             leverage: '6',
-            channel: 'Telegram placeholder',
+            channel: 'Push Notification',
             quietHours: '23:00 - 06:30',
-            toggles: { compact: true, tooltips: false, ai: true, risk: true, bots: false, critical: true },
+            toggles: { compact: true, tooltips: false, ai: true, risk: true, bots: false, critical: true, push: true },
             twoFactor: { badge: ['2FA aktif', 'cb-badge cb-badge-success'], state: ['Aktif', 'cb-badge cb-badge-success'], method: 'Authenticator', notice: 'Özelleştirilmiş kullanıcı profili 2FA ve kritik uyarıları görünür tutuyor.' },
             trace: true,
             dirty: false
@@ -66,7 +66,7 @@
             leverage: '2',
             channel: 'In-app',
             quietHours: '—',
-            toggles: { compact: false, tooltips: true, ai: true, risk: true, bots: true, critical: true },
+            toggles: { compact: false, tooltips: true, ai: true, risk: true, bots: true, critical: true, push: false },
             twoFactor: { badge: ['2FA pasif', 'cb-badge cb-badge-danger'], state: ['Pasif', 'cb-badge cb-badge-danger'], method: 'Email placeholder', notice: '2FA pasif görünüyor. Security section daha görünür hale getirilir ve kullanıcıya kontrollü aksiyon CTA\'sı sunulur.' },
             trace: false,
             dirty: false
@@ -88,7 +88,7 @@
             leverage: '8',
             channel: 'Email placeholder',
             quietHours: '21:30 - 07:00',
-            toggles: { compact: true, tooltips: false, ai: true, risk: true, bots: true, critical: true },
+            toggles: { compact: true, tooltips: false, ai: true, risk: true, bots: true, critical: true, push: true },
             twoFactor: { badge: ['2FA aktif', 'cb-badge cb-badge-success'], state: ['Aktif', 'cb-badge cb-badge-success'], method: 'Authenticator', notice: 'Trading ve notification tercihleri değişti. Persist olmadığı için save bar ile subtle warning gösterilir.' },
             trace: true,
             dirty: true
@@ -197,6 +197,7 @@
         setChecked('cb_settings_notify_risk', scenario.toggles.risk);
         setChecked('cb_settings_notify_bots', scenario.toggles.bots);
         setChecked('cb_settings_notify_critical', scenario.toggles.critical);
+        setChecked('cb_settings_notify_push', scenario.toggles.push);
 
         setThemeSelection(scenario.theme);
         setBadge('cb_settings_2fa_badge', scenario.twoFactor.badge[0], scenario.twoFactor.badge[1]);
