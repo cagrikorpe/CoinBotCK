@@ -1,3 +1,4 @@
+@model RegisterViewModel
 @{
     Layout = "_AuthLayout";
     ViewData["Title"] = "Register";
@@ -24,26 +25,29 @@
         <a asp-controller="Auth" asp-action="Login" class="btn btn-light-primary font-weight-bold">Login'e dön</a>
     </div>
 
-    <form class="cb-auth-form-grid" action="#" method="post" novalidate>
+    <form class="cb-auth-form-grid" asp-action="Register" asp-controller="Auth" method="post" novalidate>
         <div class="form-group mb-0">
             <label class="cb-form-label">Ad Soyad</label>
-            <input type="text" class="form-control cb-form-control" placeholder="Ad Soyad" autocomplete="name" />
+            <input asp-for="FullName" class="form-control cb-form-control" placeholder="Ad Soyad" autocomplete="name" />
             <div class="cb-field-feedback">Profil ve onboarding karşılama alanlarında kullanılacak temel kimlik bilgisi.</div>
+            <span asp-validation-for="FullName" class="text-danger d-block mt-2"></span>
         </div>
 
         <div class="form-group mb-0">
             <label class="cb-form-label">E-posta</label>
-            <input type="email" class="form-control cb-form-control" placeholder="E-posta" autocomplete="email" />
+            <input asp-for="Email" class="form-control cb-form-control" placeholder="E-posta" autocomplete="email" />
             <div class="cb-field-feedback">Bildirim ve olası MFA fallback akışı için foundation alanı.</div>
+            <span asp-validation-for="Email" class="text-danger d-block mt-2"></span>
         </div>
 
         <div class="form-group mb-0">
             <label class="cb-form-label">Şifre</label>
             <div class="cb-auth-password-wrap">
-                <input type="password" id="register_password" class="form-control cb-form-control cb-form-control-with-action" placeholder="Şifre" autocomplete="new-password" />
+                <input asp-for="Password" id="register_password" class="form-control cb-form-control cb-form-control-with-action" placeholder="Şifre" autocomplete="new-password" />
                 <button type="button" class="cb-auth-field-action" data-cb-password-toggle data-cb-password-target="#register_password">Göster</button>
             </div>
             <div class="cb-field-feedback">Kısa helper text alanı: uzun, benzersiz ve tekrar kullanılmayan şifre önerilir.</div>
+            <span asp-validation-for="Password" class="text-danger d-block mt-2"></span>
             <div class="cb-password-strength mt-4" aria-label="Password strength foundation">
                 <span class="is-active"></span>
                 <span class="is-active"></span>
@@ -55,21 +59,30 @@
         <div class="form-group mb-0">
             <label class="cb-form-label">Şifre Tekrar</label>
             <div class="cb-auth-password-wrap">
-                <input type="password" id="register_password_repeat" class="form-control cb-form-control cb-form-control-with-action" placeholder="Şifre tekrar" autocomplete="new-password" />
+                <input asp-for="ConfirmPassword" id="register_password_repeat" class="form-control cb-form-control cb-form-control-with-action" placeholder="Şifre tekrar" autocomplete="new-password" />
                 <button type="button" class="cb-auth-field-action" data-cb-password-toggle data-cb-password-target="#register_password_repeat">Göster</button>
             </div>
             <div class="cb-field-feedback">Input validation ve eşleşme hata alanı foundation bu bölgede gösterilir.</div>
+            <span asp-validation-for="ConfirmPassword" class="text-danger d-block mt-2"></span>
         </div>
 
         <label class="checkbox checkbox-outline checkbox-outline-2x checkbox-primary cb-auth-risk-check">
-            <input type="checkbox" />
+            <input asp-for="AcceptRiskDisclosure" />
             <span></span>
             Spot / futures işlemlerin piyasa riski taşıdığını ve ilk kurulum adımında risk tercihlerini ayrıca belirleyeceğimi anlıyorum.
         </label>
+        <span asp-validation-for="AcceptRiskDisclosure" class="text-danger d-block mt-2"></span>
 
-        <div class="cb-validation-summary cb-validation-summary-warning">
-            Validation summary foundation: eksik alan, zayıf şifre veya sözleşme onayı hataları bu bölgede toplanır.
-        </div>
+        @if (ViewContext.ModelState.ErrorCount > 0)
+        {
+            <div asp-validation-summary="ModelOnly" class="cb-validation-summary cb-validation-summary-warning"></div>
+        }
+        else
+        {
+            <div class="cb-validation-summary cb-validation-summary-warning">
+                Validation summary foundation: eksik alan, zayıf şifre veya sözleşme onayı hataları bu bölgede toplanır.
+            </div>
+        }
 
         <div class="cb-auth-action-row">
             <button type="submit" class="btn btn-primary font-weight-bolder px-10" data-cb-button-loading>
@@ -84,3 +97,7 @@
         Başarı / sonraki adım placeholder: kayıt tamamlandığında kullanıcı MFA doğrulama veya onboarding wizard akışına yönlendirilir.
     </div>
 </div>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}

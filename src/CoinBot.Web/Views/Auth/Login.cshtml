@@ -1,4 +1,8 @@
+@model LoginViewModel
 @{
+    var authSuccess = TempData["AuthSuccess"] as string;
+    var authError = TempData["AuthError"] as string;
+
     Layout = "_AuthLayout";
     ViewData["Title"] = "Login";
     ViewData["AuthTitle"] = "Güvenli giriş";
@@ -24,15 +28,33 @@
         <a asp-controller="Auth" asp-action="Register" class="btn btn-light-primary font-weight-bold">Hesap oluştur</a>
     </div>
 
-    <div class="cb-auth-alert cb-auth-alert-info">
-        Bu ekran mevcut auth logic'ini değiştirmez. Yalnızca güvenli ve anlaşılır giriş foundation katmanını sunar.
-    </div>
+    @if (!string.IsNullOrWhiteSpace(authSuccess))
+    {
+        <div class="cb-auth-alert cb-auth-alert-success">
+            @authSuccess
+        </div>
+    }
+    else if (!string.IsNullOrWhiteSpace(authError))
+    {
+        <div class="cb-auth-alert cb-auth-alert-danger">
+            @authError
+        </div>
+    }
+    else
+    {
+        <div class="cb-auth-alert cb-auth-alert-info">
+            Bu ekran mevcut auth logic'ini değiştirmez. Yalnızca güvenli ve anlaşılır giriş foundation katmanını sunar.
+        </div>
+    }
 
-    <form class="cb-auth-form-grid" action="#" method="post" novalidate>
+    <form class="cb-auth-form-grid" asp-action="Login" asp-controller="Auth" method="post" novalidate>
+        <input asp-for="ReturnUrl" type="hidden" />
+
         <div class="form-group mb-0">
             <label class="cb-form-label">E-posta veya kullanıcı adı</label>
-            <input type="text" class="form-control cb-form-control" placeholder="E-posta veya kullanıcı adı" autocomplete="username" />
+            <input asp-for="EmailOrUserName" class="form-control cb-form-control" placeholder="E-posta veya kullanıcı adı" autocomplete="username" />
             <div class="cb-field-feedback">Kurumsal e-posta veya tanımlı kullanıcı adınızı girin.</div>
+            <span asp-validation-for="EmailOrUserName" class="text-danger d-block mt-2"></span>
         </div>
 
         <div class="form-group mb-0">
@@ -41,24 +63,32 @@
                 <a href="#" class="cb-auth-inline-link">Şifremi unuttum</a>
             </div>
             <div class="cb-auth-password-wrap">
-                <input type="password" id="login_password" class="form-control cb-form-control cb-form-control-with-action" placeholder="Şifre" autocomplete="current-password" />
+                <input asp-for="Password" id="login_password" class="form-control cb-form-control cb-form-control-with-action" placeholder="Şifre" autocomplete="current-password" />
                 <button type="button" class="cb-auth-field-action" data-cb-password-toggle data-cb-password-target="#login_password">Göster</button>
             </div>
             <div class="cb-field-feedback">Şifre alanı için show/hide ve helper text standardı hazırlandı.</div>
+            <span asp-validation-for="Password" class="text-danger d-block mt-2"></span>
         </div>
 
         <div class="cb-auth-row-between">
             <label class="checkbox checkbox-outline checkbox-outline-2x checkbox-primary mb-0 cb-auth-check-inline">
-                <input type="checkbox" />
+                <input asp-for="RememberMe" />
                 <span></span>
                 Beni hatırla
             </label>
             <span class="cb-auth-meta">Ek doğrulama gerektiğinde MFA adımı gösterilir.</span>
         </div>
 
-        <div class="cb-validation-summary cb-validation-summary-danger">
-            Genel hata alanı foundation: invalid credential, lockout veya geçici auth hataları bu bölgede gösterilir.
-        </div>
+        @if (ViewContext.ModelState.ErrorCount > 0)
+        {
+            <div asp-validation-summary="ModelOnly" class="cb-validation-summary cb-validation-summary-danger"></div>
+        }
+        else
+        {
+            <div class="cb-validation-summary cb-validation-summary-danger">
+                Genel hata alanı foundation: invalid credential, lockout veya geçici auth hataları bu bölgede gösterilir.
+            </div>
+        }
 
         <div class="cb-auth-action-row">
             <button type="submit" class="btn btn-primary font-weight-bolder px-10" data-cb-button-loading>
@@ -73,3 +103,7 @@
         Küçük güvenlik notu alanı foundation: şüpheli giriş veya brute-force benzeri uyarılar burada kısa ve profesyonel dil ile gösterilir.
     </div>
 </div>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}

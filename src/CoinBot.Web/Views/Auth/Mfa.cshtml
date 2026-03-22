@@ -1,3 +1,4 @@
+@model MfaViewModel
 @{
     Layout = "_AuthLayout";
     ViewData["Title"] = "MFA";
@@ -33,7 +34,11 @@
         Kod doğrulaması başarılı olduğunda kullanıcı onboarding wizard akışına yönlenecek zemin hazırlanmıştır.
     </div>
 
-    <form class="cb-auth-form-grid" action="#" method="post" novalidate>
+    <form class="cb-auth-form-grid" asp-action="Mfa" asp-controller="Auth" method="post" novalidate data-cb-mfa-form>
+        <input asp-for="Code" type="hidden" data-cb-otp-code />
+        <input asp-for="ReturnUrl" type="hidden" />
+        <input asp-for="RememberMe" type="hidden" />
+
         <div class="form-group mb-0">
             <label class="cb-form-label">6 haneli kod</label>
             <div class="cb-otp-group" data-cb-otp-group>
@@ -45,6 +50,7 @@
                 <input type="text" inputmode="numeric" maxlength="1" class="form-control cb-otp-input" data-cb-otp />
             </div>
             <div class="cb-field-feedback">Tek input veya bölünmüş OTP tasarımı bağlanabilecek şekilde bu sayfada foundation olarak hazırlandı.</div>
+            <span asp-validation-for="Code" class="text-danger d-block mt-2"></span>
         </div>
 
         <div class="cb-auth-row-between">
@@ -52,9 +58,16 @@
             <a href="#" class="cb-auth-inline-link">Kodu yeniden gönder</a>
         </div>
 
-        <div class="cb-validation-summary cb-validation-summary-danger">
-            Invalid code / expired code / rate-limit benzeri hata durumları bu bölgede gösterilir.
-        </div>
+        @if (ViewContext.ModelState.ErrorCount > 0)
+        {
+            <div asp-validation-summary="ModelOnly" class="cb-validation-summary cb-validation-summary-danger"></div>
+        }
+        else
+        {
+            <div class="cb-validation-summary cb-validation-summary-danger">
+                Invalid code / expired code / rate-limit benzeri hata durumları bu bölgede gösterilir.
+            </div>
+        }
 
         <div class="cb-auth-action-row">
             <button type="submit" class="btn btn-primary font-weight-bolder px-10" data-cb-button-loading>
@@ -65,3 +78,49 @@
         </div>
     </form>
 </div>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+    <script>
+        (() => {
+            const form = document.querySelector('[data-cb-mfa-form]');
+
+            if (!form) {
+                return;
+            }
+
+            const inputs = Array.from(form.querySelectorAll('[data-cb-otp]'));
+            const codeInput = form.querySelector('[data-cb-otp-code]');
+
+            if (!codeInput) {
+                return;
+            }
+
+            const syncCode = () => {
+                codeInput.value = inputs
+                    .map(input => input.value.replace(/\D/g, '').slice(0, 1))
+                    .join('')
+                    .slice(0, 6);
+            };
+
+            inputs.forEach((input, index) => {
+                input.addEventListener('input', () => {
+                    input.value = input.value.replace(/\D/g, '').slice(0, 1);
+                    syncCode();
+
+                    if (input.value && index < inputs.length - 1) {
+                        inputs[index + 1].focus();
+                    }
+                });
+
+                input.addEventListener('keydown', event => {
+                    if (event.key === 'Backspace' && !input.value && index > 0) {
+                        inputs[index - 1].focus();
+                    }
+                });
+            });
+
+            syncCode();
+        })();
+    </script>
+}
