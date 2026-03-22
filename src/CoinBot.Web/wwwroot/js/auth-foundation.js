@@ -7,6 +7,19 @@
         button.classList.toggle('is-loading', isLoading);
     }
 
+    function isSubmitButton(button) {
+        if (!button) {
+            return false;
+        }
+
+        const type = (button.getAttribute('type') || '').toLowerCase();
+        if (type === 'submit') {
+            return true;
+        }
+
+        return button.tagName === 'BUTTON' && type !== 'button' && type !== 'reset' && !!button.form;
+    }
+
     function updateChoiceCards(input) {
         if (!input || !input.name) {
             return;
@@ -145,6 +158,11 @@
 
         const loadingButton = event.target.closest('[data-cb-button-loading]:not([data-cb-wizard-next]):not([data-cb-connection-test])');
         if (loadingButton) {
+            if (isSubmitButton(loadingButton)) {
+                setButtonLoading(loadingButton, true);
+                return;
+            }
+
             event.preventDefault();
             setButtonLoading(loadingButton, true);
             window.setTimeout(function () {

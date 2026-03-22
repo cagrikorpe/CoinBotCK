@@ -3,12 +3,16 @@
   "WorkspaceRootPath": "D:\\CkBot\\Code\\CoinBot\\",
   "Documents": [
     {
-      "AbsoluteMoniker": "D:0:0:{DCF8A5AE-2C97-4F8B-9852-852456B018F9}|src\\CoinBot.Web\\CoinBot.Web.csproj|d:\\ckbot\\code\\coinbot\\src\\coinbot.web\\appsettings.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}",
-      "RelativeMoniker": "D:0:0:{DCF8A5AE-2C97-4F8B-9852-852456B018F9}|src\\CoinBot.Web\\CoinBot.Web.csproj|solutionrelative:src\\coinbot.web\\appsettings.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}"
-    },
-    {
       "AbsoluteMoniker": "D:0:0:{DCF8A5AE-2C97-4F8B-9852-852456B018F9}|src\\CoinBot.Web\\CoinBot.Web.csproj|d:\\ckbot\\code\\coinbot\\src\\coinbot.web\\controllers\\authcontroller.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
       "RelativeMoniker": "D:0:0:{DCF8A5AE-2C97-4F8B-9852-852456B018F9}|src\\CoinBot.Web\\CoinBot.Web.csproj|solutionrelative:src\\coinbot.web\\controllers\\authcontroller.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{DCF8A5AE-2C97-4F8B-9852-852456B018F9}|src\\CoinBot.Web\\CoinBot.Web.csproj|d:\\ckbot\\code\\coinbot\\src\\coinbot.web\\areas\\admin\\controllers\\admincontroller.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{DCF8A5AE-2C97-4F8B-9852-852456B018F9}|src\\CoinBot.Web\\CoinBot.Web.csproj|solutionrelative:src\\coinbot.web\\areas\\admin\\controllers\\admincontroller.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{DCF8A5AE-2C97-4F8B-9852-852456B018F9}|src\\CoinBot.Web\\CoinBot.Web.csproj|d:\\ckbot\\code\\coinbot\\src\\coinbot.web\\appsettings.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}",
+      "RelativeMoniker": "D:0:0:{DCF8A5AE-2C97-4F8B-9852-852456B018F9}|src\\CoinBot.Web\\CoinBot.Web.csproj|solutionrelative:src\\coinbot.web\\appsettings.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}"
     },
     {
       "AbsoluteMoniker": "D:0:0:{DCF8A5AE-2C97-4F8B-9852-852456B018F9}|src\\CoinBot.Web\\CoinBot.Web.csproj|d:\\ckbot\\code\\coinbot\\src\\coinbot.web\\views\\shared\\bots\\_botlist.cshtml||{40D31677-CBC0-4297-A9EF-89D907823A98}",
@@ -26,7 +30,7 @@
       "DocumentGroups": [
         {
           "DockedWidth": 200,
-          "SelectedChildIndex": 6,
+          "SelectedChildIndex": 8,
           "Children": [
             {
               "$type": "Bookmark",
@@ -54,32 +58,44 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 0,
+              "DocumentIndex": 1,
+              "Title": "AdminController.cs",
+              "DocumentMoniker": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\Areas\\Admin\\Controllers\\AdminController.cs",
+              "RelativeDocumentMoniker": "src\\CoinBot.Web\\Areas\\Admin\\Controllers\\AdminController.cs",
+              "ToolTip": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\Areas\\Admin\\Controllers\\AdminController.cs",
+              "RelativeToolTip": "src\\CoinBot.Web\\Areas\\Admin\\Controllers\\AdminController.cs",
+              "ViewState": "AgIAAGgBAAAAAAAAAAAYwAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-03-22T18:33:34.108Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
               "Title": "appsettings.json",
               "DocumentMoniker": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\appsettings.json",
               "RelativeDocumentMoniker": "src\\CoinBot.Web\\appsettings.json",
               "ToolTip": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\appsettings.json",
               "RelativeToolTip": "src\\CoinBot.Web\\appsettings.json",
-              "ViewState": "AgIAADUAAAAAAAAAAAAAAFMAAAAcAAAAAAAAAA==",
+              "ViewState": "AgIAAD4AAAAAAAAAAAAAAFEAAAAbAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001642|",
-              "WhenOpened": "2026-03-22T01:39:51.755Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-03-22T01:39:51.755Z"
             },
             {
               "$type": "Document",
-              "DocumentIndex": 1,
+              "DocumentIndex": 0,
               "Title": "AuthController.cs",
               "DocumentMoniker": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\Controllers\\AuthController.cs",
               "RelativeDocumentMoniker": "src\\CoinBot.Web\\Controllers\\AuthController.cs",
               "ToolTip": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\Controllers\\AuthController.cs",
               "RelativeToolTip": "src\\CoinBot.Web\\Controllers\\AuthController.cs",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAABUAAAAAAAAAAAAAAA==",
+              "ViewState": "AgIAAMsAAAAAAAAAAAAAwBUAAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-03-21T14:38:25.696Z"
+              "WhenOpened": "2026-03-21T14:38:25.696Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 2,
+              "DocumentIndex": 3,
               "Title": "_BotList.cshtml",
               "DocumentMoniker": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\Views\\Shared\\Bots\\_BotList.cshtml",
               "RelativeDocumentMoniker": "src\\CoinBot.Web\\Views\\Shared\\Bots\\_BotList.cshtml",
@@ -91,7 +107,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 3,
+              "DocumentIndex": 4,
               "Title": "_Layout.cshtml",
               "DocumentMoniker": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\Views\\Shared\\_Layout.cshtml",
               "RelativeDocumentMoniker": "src\\CoinBot.Web\\Views\\Shared\\_Layout.cshtml",

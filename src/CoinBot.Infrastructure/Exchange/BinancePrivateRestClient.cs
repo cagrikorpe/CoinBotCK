@@ -1,0 +1,317 @@
+using System.Globalization;
+using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using CoinBot.Application.Abstractions.Exchange;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+
+namespace CoinBot.Infrastructure.Exchange;
+
+public sealed class BinancePrivateRestClient(
+    HttpClient httpClient,
+    IOptions<BinancePrivateDataOptions> options,
+    TimeProvider timeProvider,
+    ILogger<BinancePrivateRestClient> logger) : IBinancePrivateRestClient
+{
+    private readonly BinancePrivateDataOptions optionsValue = options.Value;
+
+    public async Task<string> StartListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateApiKeyRequest(HttpMethod.Post, "/fapi/v1/listenKey", apiKey);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Binance listen key start request failed with status {(int)response.StatusCode}.");
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+
+        if (!document.RootElement.TryGetProperty("listenKey", out var listenKeyElement))
+        {
+            throw new InvalidOperationException("Binance listen key start response did not contain a listenKey.");
+        }
+
+        var listenKey = listenKeyElement.GetString()?.Trim();
+
+        if (string.IsNullOrWhiteSpace(listenKey))
+        {
+            throw new InvalidOperationException("Binance listen key start response contained an empty listenKey.");
+        }
+
+        logger.LogDebug("Binance private listen key acquired.");
+        return listenKey;
+    }
+
+    public async Task KeepAliveListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateApiKeyRequest(HttpMethod.Put, "/fapi/v1/listenKey", apiKey);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Binance listen key keepalive request failed with status {(int)response.StatusCode}.");
+        }
+    }
+
+    public async Task CloseListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
+    {
+        using var request = CreateApiKeyRequest(HttpMethod.Delete, "/fapi/v1/listenKey", apiKey);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Binance listen key close request failed with status {(int)response.StatusCode}.");
+        }
+    }
+
+    public async Task<ExchangeAccountSnapshot> GetAccountSnapshotAsync(
+        Guid exchangeAccountId,
+        string ownerUserId,
+        string exchangeName,
+        string apiKey,
+        string apiSecret,
+        CancellationToken cancellationToken = default)
+    {
+        var observedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+        var timestamp = timeProvider.GetUtcNow().ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
+        var unsignedQuery = $"timestamp={timestamp}&recvWindow={optionsValue.RecvWindowMilliseconds.ToString(CultureInfo.InvariantCulture)}";
+        var signature = ComputeSignature(unsignedQuery, apiSecret);
+        var path = $"/fapi/v3/account?{unsignedQuery}&signature={signature}";
+
+        using var request = CreateApiKeyRequest(HttpMethod.Get, path, apiKey);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Binance account snapshot request failed with status {(int)response.StatusCode}.");
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        var root = document.RootElement;
+        var balances = ParseBalances(root, observedAtUtc);
+        var positions = ParsePositions(root, observedAtUtc);
+        var receivedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+
+        logger.LogDebug(
+            "Binance private account snapshot refreshed. Balances={BalanceCount}, Positions={PositionCount}.",
+            balances.Count,
+            positions.Count);
+
+        return new ExchangeAccountSnapshot(
+            exchangeAccountId,
+            ownerUserId.Trim(),
+            exchangeName.Trim(),
+            balances,
+            positions,
+            observedAtUtc,
+            receivedAtUtc,
+            "Binance.PrivateRest.Account");
+    }
+
+    private static HttpRequestMessage CreateApiKeyRequest(HttpMethod method, string path, string apiKey)
+    {
+        var request = new HttpRequestMessage(method, path);
+        request.Headers.Add("X-MBX-APIKEY", apiKey);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        return request;
+    }
+
+    private static string ComputeSignature(string payload, string secret)
+    {
+        var secretBytes = Encoding.UTF8.GetBytes(secret);
+        var payloadBytes = Encoding.UTF8.GetBytes(payload);
+
+        try
+        {
+            using var hmac = new HMACSHA256(secretBytes);
+            return Convert.ToHexStringLower(hmac.ComputeHash(payloadBytes));
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(secretBytes);
+            CryptographicOperations.ZeroMemory(payloadBytes);
+        }
+    }
+
+    private static IReadOnlyCollection<ExchangeBalanceSnapshot> ParseBalances(JsonElement root, DateTime fallbackTimestampUtc)
+    {
+        if (!root.TryGetProperty("assets", out var assetsElement) || assetsElement.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<ExchangeBalanceSnapshot>();
+        }
+
+        var balances = new List<ExchangeBalanceSnapshot>();
+
+        foreach (var assetElement in assetsElement.EnumerateArray())
+        {
+            var asset = assetElement.TryGetProperty("asset", out var assetNameElement)
+                ? NormalizeCode(assetNameElement.GetString())
+                : null;
+            var walletBalance = TryReadDecimal(assetElement, "walletBalance");
+            var crossWalletBalance = TryReadDecimal(assetElement, "crossWalletBalance");
+            var availableBalance = TryReadDecimal(assetElement, "availableBalance");
+            var maxWithdrawAmount = TryReadDecimal(assetElement, "maxWithdrawAmount");
+            var exchangeUpdatedAtUtc = TryReadUnixMilliseconds(assetElement, "updateTime", fallbackTimestampUtc);
+
+            if (string.IsNullOrWhiteSpace(asset) ||
+                walletBalance is null ||
+                crossWalletBalance is null)
+            {
+                continue;
+            }
+
+            var snapshot = new ExchangeBalanceSnapshot(
+                asset,
+                walletBalance.Value,
+                crossWalletBalance.Value,
+                availableBalance,
+                maxWithdrawAmount,
+                exchangeUpdatedAtUtc);
+
+            if (IsEmptyBalance(snapshot))
+            {
+                continue;
+            }
+
+            balances.Add(snapshot);
+        }
+
+        return balances
+            .OrderBy(balance => balance.Asset, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static IReadOnlyCollection<ExchangePositionSnapshot> ParsePositions(JsonElement root, DateTime fallbackTimestampUtc)
+    {
+        if (!root.TryGetProperty("positions", out var positionsElement) || positionsElement.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<ExchangePositionSnapshot>();
+        }
+
+        var positions = new List<ExchangePositionSnapshot>();
+
+        foreach (var positionElement in positionsElement.EnumerateArray())
+        {
+            var symbol = positionElement.TryGetProperty("symbol", out var symbolElement)
+                ? NormalizeCode(symbolElement.GetString())
+                : null;
+            var positionSide = positionElement.TryGetProperty("positionSide", out var positionSideElement)
+                ? NormalizeCode(positionSideElement.GetString())
+                : null;
+            var marginType = positionElement.TryGetProperty("marginType", out var marginTypeElement)
+                ? NormalizeMarginType(marginTypeElement.GetString())
+                : "cross";
+            var quantity = TryReadDecimal(positionElement, "positionAmt");
+            var entryPrice = TryReadDecimal(positionElement, "entryPrice");
+            var breakEvenPrice = TryReadDecimal(positionElement, "breakEvenPrice");
+            var unrealizedProfit = TryReadDecimal(positionElement, "unrealizedProfit");
+            var isolatedWallet = TryReadDecimal(positionElement, "isolatedWallet");
+            var exchangeUpdatedAtUtc = TryReadUnixMilliseconds(positionElement, "updateTime", fallbackTimestampUtc);
+
+            if (string.IsNullOrWhiteSpace(symbol) ||
+                string.IsNullOrWhiteSpace(positionSide) ||
+                quantity is null ||
+                entryPrice is null ||
+                breakEvenPrice is null ||
+                unrealizedProfit is null ||
+                isolatedWallet is null)
+            {
+                continue;
+            }
+
+            var snapshot = new ExchangePositionSnapshot(
+                symbol,
+                positionSide,
+                quantity.Value,
+                entryPrice.Value,
+                breakEvenPrice.Value,
+                unrealizedProfit.Value,
+                marginType,
+                isolatedWallet.Value,
+                exchangeUpdatedAtUtc);
+
+            if (IsFlatPosition(snapshot))
+            {
+                continue;
+            }
+
+            positions.Add(snapshot);
+        }
+
+        return positions
+            .OrderBy(position => position.Symbol, StringComparer.Ordinal)
+            .ThenBy(position => position.PositionSide, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static decimal? TryReadDecimal(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var propertyElement))
+        {
+            return null;
+        }
+
+        var value = propertyElement.GetString();
+
+        if (string.IsNullOrWhiteSpace(value) ||
+            !decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsedValue))
+        {
+            return null;
+        }
+
+        return parsedValue;
+    }
+
+    private static DateTime TryReadUnixMilliseconds(JsonElement element, string propertyName, DateTime fallbackTimestampUtc)
+    {
+        if (!element.TryGetProperty(propertyName, out var propertyElement))
+        {
+            return fallbackTimestampUtc;
+        }
+
+        return propertyElement.ValueKind switch
+        {
+            JsonValueKind.Number when propertyElement.TryGetInt64(out var milliseconds) && milliseconds > 0 =>
+                DateTimeOffset.FromUnixTimeMilliseconds(milliseconds).UtcDateTime,
+            JsonValueKind.String when long.TryParse(propertyElement.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedMilliseconds) && parsedMilliseconds > 0 =>
+                DateTimeOffset.FromUnixTimeMilliseconds(parsedMilliseconds).UtcDateTime,
+            _ => fallbackTimestampUtc
+        };
+    }
+
+    private static bool IsEmptyBalance(ExchangeBalanceSnapshot snapshot)
+    {
+        return snapshot.WalletBalance == 0m &&
+               snapshot.CrossWalletBalance == 0m &&
+               (snapshot.AvailableBalance ?? 0m) == 0m &&
+               (snapshot.MaxWithdrawAmount ?? 0m) == 0m;
+    }
+
+    private static bool IsFlatPosition(ExchangePositionSnapshot snapshot)
+    {
+        return snapshot.Quantity == 0m &&
+               snapshot.EntryPrice == 0m &&
+               snapshot.BreakEvenPrice == 0m &&
+               snapshot.UnrealizedProfit == 0m &&
+               snapshot.IsolatedWallet == 0m;
+    }
+
+    private static string? NormalizeCode(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? null
+            : value.Trim().ToUpperInvariant();
+    }
+
+    private static string NormalizeMarginType(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? "cross"
+            : value.Trim().ToLowerInvariant();
+    }
+}

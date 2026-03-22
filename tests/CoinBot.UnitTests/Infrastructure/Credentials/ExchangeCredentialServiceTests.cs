@@ -79,6 +79,31 @@ public sealed class ExchangeCredentialServiceTests
     }
 
     [Fact]
+    public async Task GetAsync_ForSynchronization_FailsClosed_WhenCredentialIsPendingValidation()
+    {
+        await using var harness = CreateHarness();
+        var exchangeAccountId = await CreateExchangeAccountAsync(harness.DbContext);
+
+        await harness.Service.StoreAsync(
+            new StoreExchangeCredentialsRequest(
+                exchangeAccountId,
+                "api-key-sync-001",
+                "api-secret-sync-001",
+                "user-sync-01",
+                "corr-store-sync-001"));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            harness.Service.GetAsync(
+                new ExchangeCredentialAccessRequest(
+                    exchangeAccountId,
+                    "user-sync-01",
+                    ExchangeCredentialAccessPurpose.Synchronization,
+                    "corr-sync-001")));
+
+        Assert.Contains("Synchronization blocked", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task SetValidationStateAsync_AllowsExecutionAccess_AfterSuccessfulValidation()
     {
         await using var harness = CreateHarness();

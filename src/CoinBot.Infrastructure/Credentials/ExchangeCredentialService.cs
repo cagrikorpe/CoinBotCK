@@ -202,6 +202,7 @@ public sealed class ExchangeCredentialService(
         return purpose switch
         {
             ExchangeCredentialAccessPurpose.Execution => status == ExchangeCredentialStatus.Active,
+            ExchangeCredentialAccessPurpose.Synchronization => status == ExchangeCredentialStatus.Active,
             ExchangeCredentialAccessPurpose.Validation => status != ExchangeCredentialStatus.Missing,
             _ => false
         };
@@ -302,17 +303,29 @@ public sealed class ExchangeCredentialService(
         ExchangeCredentialAccessPurpose purpose,
         ExchangeCredentialStatus status)
     {
-        return purpose == ExchangeCredentialAccessPurpose.Execution
-            ? status switch
-            {
-                ExchangeCredentialStatus.Missing => "Execution blocked because no encrypted exchange credentials are stored.",
-                ExchangeCredentialStatus.PendingValidation => "Execution blocked because exchange credentials are pending validation.",
-                ExchangeCredentialStatus.RevalidationRequired => "Execution blocked because exchange credentials must be re-validated.",
-                ExchangeCredentialStatus.RotationRequired => "Execution blocked because exchange credentials must be rotated.",
-                ExchangeCredentialStatus.Invalid => "Execution blocked because exchange credentials are marked invalid.",
-                _ => "Execution blocked because exchange credentials are not available."
-            }
-            : "Validation access blocked because no encrypted exchange credentials are stored.";
+        return purpose switch
+        {
+            ExchangeCredentialAccessPurpose.Execution =>
+                CreateBlockedAccessMessage(status, "Execution"),
+            ExchangeCredentialAccessPurpose.Synchronization =>
+                CreateBlockedAccessMessage(status, "Synchronization"),
+            _ => "Validation access blocked because no encrypted exchange credentials are stored."
+        };
+    }
+
+    private static string CreateBlockedAccessMessage(
+        ExchangeCredentialStatus status,
+        string purposeLabel)
+    {
+        return status switch
+        {
+            ExchangeCredentialStatus.Missing => $"{purposeLabel} blocked because no encrypted exchange credentials are stored.",
+            ExchangeCredentialStatus.PendingValidation => $"{purposeLabel} blocked because exchange credentials are pending validation.",
+            ExchangeCredentialStatus.RevalidationRequired => $"{purposeLabel} blocked because exchange credentials must be re-validated.",
+            ExchangeCredentialStatus.RotationRequired => $"{purposeLabel} blocked because exchange credentials must be rotated.",
+            ExchangeCredentialStatus.Invalid => $"{purposeLabel} blocked because exchange credentials are marked invalid.",
+            _ => $"{purposeLabel} blocked because exchange credentials are not available."
+        };
     }
 
     private static string MapBlockedOutcome(ExchangeCredentialStatus status)

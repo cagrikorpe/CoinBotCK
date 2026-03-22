@@ -1,7 +1,9 @@
 using CoinBot.Application.Abstractions.Alerts;
 using CoinBot.Application.Abstractions.Auditing;
 using CoinBot.Application.Abstractions.DataScope;
+using CoinBot.Application.Abstractions.DemoPortfolio;
 using CoinBot.Application.Abstractions.ExchangeCredentials;
+using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
@@ -9,6 +11,8 @@ using CoinBot.Contracts.Common;
 using CoinBot.Infrastructure.Alerts;
 using CoinBot.Infrastructure.Auditing;
 using CoinBot.Infrastructure.Credentials;
+using CoinBot.Infrastructure.DemoPortfolio;
+using CoinBot.Infrastructure.Exchange;
 using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Identity;
 using CoinBot.Infrastructure.MarketData;
@@ -94,6 +98,18 @@ public static class DependencyInjection
         services.AddOptions<HistoricalGapFillerOptions>()
             .Bind(configuration.GetSection("MarketData:HistoricalGapFiller"))
             .ValidateDataAnnotations();
+        services.AddOptions<BinancePrivateDataOptions>()
+            .Bind(configuration.GetSection("ExchangeSync:Binance"))
+            .ValidateDataAnnotations()
+            .Validate(
+                options => Uri.IsWellFormedUriString(options.RestBaseUrl, UriKind.Absolute),
+                "RestBaseUrl must be an absolute URI.")
+            .Validate(
+                options => Uri.IsWellFormedUriString(options.WebSocketBaseUrl, UriKind.Absolute),
+                "WebSocketBaseUrl must be an absolute URI.")
+            .Validate(
+                options => options.ListenKeyRenewalIntervalMinutes < 60,
+                "ListenKeyRenewalIntervalMinutes must be less than 60.");
         services.AddOptions<IndicatorEngineOptions>()
             .Bind(configuration.GetSection("MarketData:Indicators"))
             .ValidateDataAnnotations()
@@ -107,6 +123,7 @@ public static class DependencyInjection
         services.AddScoped<IAlertService, AlertingService>();
         services.AddScoped<IGlobalExecutionSwitchService, GlobalExecutionSwitchService>();
         services.AddScoped<IDataLatencyCircuitBreaker, DataLatencyCircuitBreaker>();
+        services.AddScoped<IDemoPortfolioAccountingService, DemoPortfolioAccountingService>();
         services.AddScoped<IExecutionGate, ExecutionGate>();
         services.AddScoped<TradingModeService>();
         services.AddScoped<ITradingModeResolver>(serviceProvider => serviceProvider.GetRequiredService<TradingModeService>());
@@ -125,11 +142,17 @@ public static class DependencyInjection
         services.AddSingleton<IndicatorStreamHub>();
         services.AddSingleton<IndicatorDataService>();
         services.AddSingleton<IIndicatorDataService>(serviceProvider => serviceProvider.GetRequiredService<IndicatorDataService>());
+        services.AddSingleton<ExchangeAccountSnapshotHub>();
         services.AddSingleton<CandleContinuityValidator>();
         services.AddSingleton<CandleDataQualityGuard>();
         services.AddSingleton<IMarketDataHeartbeatRecorder, MarketDataHeartbeatRecorder>();
         services.AddSingleton<IBinanceCandleStreamClient, BinanceCandleStreamClient>();
+        services.AddSingleton<IBinancePrivateStreamClient, BinancePrivateStreamClient>();
         services.AddScoped<HistoricalGapFillerService>();
+        services.AddScoped<ExchangeAccountSyncStateService>();
+        services.AddScoped<ExchangeBalanceSyncService>();
+        services.AddScoped<ExchangePositionSyncService>();
+        services.AddScoped<ExchangeAppStateSyncService>();
         services.AddHttpClient<SlackAlertProvider>();
         services.AddHttpClient<TelegramAlertProvider>();
         services.AddHttpClient<IBinanceExchangeInfoClient, BinanceExchangeInfoClient>((serviceProvider, client) =>
@@ -144,10 +167,20 @@ public static class DependencyInjection
             client.BaseAddress = new Uri(marketDataOptions.RestBaseUrl, UriKind.Absolute);
             client.Timeout = TimeSpan.FromSeconds(30);
         });
+        services.AddHttpClient<IBinancePrivateRestClient, BinancePrivateRestClient>((serviceProvider, client) =>
+        {
+            var privateDataOptions = serviceProvider.GetRequiredService<IOptions<BinancePrivateDataOptions>>().Value;
+            client.BaseAddress = new Uri(privateDataOptions.RestBaseUrl, UriKind.Absolute);
+            client.Timeout = TimeSpan.FromSeconds(30);
+        });
         services.AddScoped<IAlertProvider>(serviceProvider => serviceProvider.GetRequiredService<SlackAlertProvider>());
         services.AddScoped<IAlertProvider>(serviceProvider => serviceProvider.GetRequiredService<TelegramAlertProvider>());
         services.AddHostedService<BinanceWebSocketManager>();
         services.AddHostedService<HistoricalGapFillerWorker>();
+        services.AddHostedService<BinancePrivateStreamManager>();
+        services.AddHostedService<ExchangeBalanceSyncWorker>();
+        services.AddHostedService<ExchangePositionSyncWorker>();
+        services.AddHostedService<ExchangeAppStateSyncWorker>();
 
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseSqlServer(connectionString, sqlOptions =>

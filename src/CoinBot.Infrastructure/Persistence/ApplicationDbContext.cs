@@ -31,7 +31,21 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
     public DbSet<DegradedModeState> DegradedModeStates => Set<DegradedModeState>();
 
+    public DbSet<DemoLedgerEntry> DemoLedgerEntries => Set<DemoLedgerEntry>();
+
+    public DbSet<DemoLedgerTransaction> DemoLedgerTransactions => Set<DemoLedgerTransaction>();
+
+    public DbSet<DemoPosition> DemoPositions => Set<DemoPosition>();
+
+    public DbSet<DemoWallet> DemoWallets => Set<DemoWallet>();
+
     public DbSet<ExchangeAccount> ExchangeAccounts => Set<ExchangeAccount>();
+
+    public DbSet<ExchangeAccountSyncState> ExchangeAccountSyncStates => Set<ExchangeAccountSyncState>();
+
+    public DbSet<ExchangeBalance> ExchangeBalances => Set<ExchangeBalance>();
+
+    public DbSet<ExchangePosition> ExchangePositions => Set<ExchangePosition>();
 
     public DbSet<GlobalExecutionSwitch> GlobalExecutionSwitches => Set<GlobalExecutionSwitch>();
 
@@ -70,7 +84,14 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         ConfigureBackgroundJobLocks(builder.Entity<BackgroundJobLock>());
         ConfigureBackgroundJobStates(builder.Entity<BackgroundJobState>());
         ConfigureDegradedModeStates(builder.Entity<DegradedModeState>());
+        ConfigureDemoLedgerEntries(builder.Entity<DemoLedgerEntry>());
+        ConfigureDemoLedgerTransactions(builder.Entity<DemoLedgerTransaction>());
+        ConfigureDemoPositions(builder.Entity<DemoPosition>());
+        ConfigureDemoWallets(builder.Entity<DemoWallet>());
         ConfigureExchangeAccounts(builder.Entity<ExchangeAccount>());
+        ConfigureExchangeAccountSyncStates(builder.Entity<ExchangeAccountSyncState>());
+        ConfigureExchangeBalances(builder.Entity<ExchangeBalance>());
+        ConfigureExchangePositions(builder.Entity<ExchangePosition>());
         ConfigureGlobalExecutionSwitches(builder.Entity<GlobalExecutionSwitch>());
         ConfigureHistoricalMarketCandles(builder.Entity<HistoricalMarketCandle>());
         ConfigureMfaEmailOtpChallenges(builder.Entity<MfaEmailOtpChallenge>());
@@ -203,6 +224,184 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             .HasMaxLength(64)
             .IsRequired();
     }
+
+    private void ConfigureDemoLedgerEntries(EntityTypeBuilder<DemoLedgerEntry> builder)
+    {
+        ConfigureUserOwnedEntity(builder, "DemoLedgerEntries");
+
+        builder.Property(entity => entity.Asset)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.AvailableDelta)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.ReservedDelta)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.AvailableBalanceAfter)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.ReservedBalanceAfter)
+            .HasPrecision(38, 18);
+
+        builder.HasIndex(entity => entity.DemoLedgerTransactionId);
+
+        builder.HasOne<DemoLedgerTransaction>()
+            .WithMany()
+            .HasForeignKey(entity => entity.DemoLedgerTransactionId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private void ConfigureDemoLedgerTransactions(EntityTypeBuilder<DemoLedgerTransaction> builder)
+    {
+        ConfigureUserOwnedEntity(builder, "DemoLedgerTransactions");
+
+        builder.Property(entity => entity.OperationId)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.TransactionType)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.PositionScopeKey)
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.OrderId)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.FillId)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.Symbol)
+            .HasMaxLength(32);
+
+        builder.Property(entity => entity.BaseAsset)
+            .HasMaxLength(32);
+
+        builder.Property(entity => entity.QuoteAsset)
+            .HasMaxLength(32);
+
+        builder.Property(entity => entity.Side)
+            .HasConversion<string>()
+            .HasMaxLength(16);
+
+        builder.Property(entity => entity.FeeAsset)
+            .HasMaxLength(32);
+
+        builder.Property(entity => entity.Price)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.Quantity)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.FeeAmount)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.FeeAmountInQuote)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.RealizedPnlDelta)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.PositionQuantityAfter)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.PositionCostBasisAfter)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.PositionAverageEntryPriceAfter)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.CumulativeRealizedPnlAfter)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.UnrealizedPnlAfter)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.CumulativeFeesInQuoteAfter)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.MarkPriceAfter)
+            .HasPrecision(38, 18);
+
+        builder.HasIndex(entity => new { entity.OwnerUserId, entity.OperationId })
+            .IsUnique();
+
+        builder.HasIndex(entity => new { entity.OwnerUserId, entity.OccurredAtUtc });
+    }
+
+    private void ConfigureDemoPositions(EntityTypeBuilder<DemoPosition> builder)
+    {
+        ConfigureUserOwnedEntity(builder, "DemoPositions");
+
+        builder.Property(entity => entity.PositionScopeKey)
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.Symbol)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.BaseAsset)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.QuoteAsset)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.Quantity)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.CostBasis)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.AverageEntryPrice)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.RealizedPnl)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.UnrealizedPnl)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.TotalFeesInQuote)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.LastMarkPrice)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.LastFillPrice)
+            .HasPrecision(38, 18);
+
+        builder.HasIndex(entity => new { entity.OwnerUserId, entity.PositionScopeKey, entity.Symbol })
+            .IsUnique();
+
+        builder.HasIndex(entity => entity.BotId);
+    }
+
+    private void ConfigureDemoWallets(EntityTypeBuilder<DemoWallet> builder)
+    {
+        ConfigureUserOwnedEntity(builder, "DemoWallets");
+
+        builder.Property(entity => entity.Asset)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.AvailableBalance)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.ReservedBalance)
+            .HasPrecision(38, 18);
+
+        builder.HasIndex(entity => new { entity.OwnerUserId, entity.Asset })
+            .IsUnique();
+    }
+
     private void ConfigureExchangeAccounts(EntityTypeBuilder<ExchangeAccount> builder)
     {
         ConfigureUserOwnedEntity(builder, "ExchangeAccounts");
@@ -244,6 +443,104 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             entity.CredentialStatus,
             entity.CredentialRotateAfterUtc
         });
+    }
+
+    private void ConfigureExchangeAccountSyncStates(EntityTypeBuilder<ExchangeAccountSyncState> builder)
+    {
+        ConfigureUserOwnedEntity(builder, "ExchangeAccountSyncStates");
+
+        builder.Property(entity => entity.PrivateStreamConnectionState)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.DriftStatus)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.DriftSummary)
+            .HasMaxLength(512);
+
+        builder.Property(entity => entity.LastErrorCode)
+            .HasMaxLength(64);
+
+        builder.HasIndex(entity => entity.ExchangeAccountId)
+            .IsUnique();
+
+        builder.HasOne<ExchangeAccount>()
+            .WithMany()
+            .HasForeignKey(entity => entity.ExchangeAccountId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private void ConfigureExchangeBalances(EntityTypeBuilder<ExchangeBalance> builder)
+    {
+        ConfigureUserOwnedEntity(builder, "ExchangeBalances");
+
+        builder.Property(entity => entity.Asset)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.WalletBalance)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.CrossWalletBalance)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.AvailableBalance)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.MaxWithdrawAmount)
+            .HasPrecision(38, 18);
+
+        builder.HasIndex(entity => new { entity.ExchangeAccountId, entity.Asset })
+            .IsUnique();
+
+        builder.HasOne<ExchangeAccount>()
+            .WithMany()
+            .HasForeignKey(entity => entity.ExchangeAccountId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private void ConfigureExchangePositions(EntityTypeBuilder<ExchangePosition> builder)
+    {
+        ConfigureUserOwnedEntity(builder, "ExchangePositions");
+
+        builder.Property(entity => entity.Symbol)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.PositionSide)
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.MarginType)
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.Quantity)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.EntryPrice)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.BreakEvenPrice)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.UnrealizedProfit)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.IsolatedWallet)
+            .HasPrecision(38, 18);
+
+        builder.HasIndex(entity => new { entity.ExchangeAccountId, entity.Symbol, entity.PositionSide })
+            .IsUnique();
+
+        builder.HasOne<ExchangeAccount>()
+            .WithMany()
+            .HasForeignKey(entity => entity.ExchangeAccountId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigureGlobalExecutionSwitches(EntityTypeBuilder<GlobalExecutionSwitch> builder)
