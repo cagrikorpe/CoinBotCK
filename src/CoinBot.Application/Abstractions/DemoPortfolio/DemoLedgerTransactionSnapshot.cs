@@ -28,4 +28,15 @@ public sealed record DemoLedgerTransactionSnapshot(
     decimal? CumulativeFeesInQuoteAfter,
     decimal? MarkPriceAfter,
     DateTime OccurredAtUtc,
-    IReadOnlyCollection<DemoLedgerEntrySnapshot> Entries);
+    IReadOnlyCollection<DemoLedgerEntrySnapshot> Entries,
+    DemoPositionKind? PositionKind = null,
+    DemoMarginMode? MarginMode = null,
+    decimal? Leverage = null,
+    decimal? FundingRate = null,
+    decimal? FundingDeltaInQuote = null,
+    decimal? NetFundingInQuoteAfter = null,
+    decimal? LastPriceAfter = null,
+    decimal? MaintenanceMarginRateAfter = null,
+    decimal? MaintenanceMarginAfter = null,
+    decimal? MarginBalanceAfter = null,
+    decimal? LiquidationPriceAfter = null);

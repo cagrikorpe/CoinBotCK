@@ -11,4 +11,7 @@ public sealed record DemoMarkPriceUpdateRequest(
     string QuoteAsset,
     decimal MarkPrice,
     Guid? BotId = null,
-    DateTime? OccurredAtUtc = null);
+    DateTime? OccurredAtUtc = null,
+    DemoPositionKind PositionKind = DemoPositionKind.Spot,
+    decimal? LastPrice = null,
+    decimal? FundingRate = null);

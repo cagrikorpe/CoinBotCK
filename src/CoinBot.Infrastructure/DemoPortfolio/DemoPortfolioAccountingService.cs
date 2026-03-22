@@ -13,6 +13,8 @@ public sealed class DemoPortfolioAccountingService(
     ILogger<DemoPortfolioAccountingService> logger) : IDemoPortfolioAccountingService
 {
     private const decimal PrecisionEpsilon = 0.000000000000000001m;
+    private const decimal DefaultFuturesMaintenanceMarginRate = 0.005m;
+    private const decimal DefaultFuturesLiquidationFeeRate = 0.002m;
     private const string PortfolioScopeKey = "portfolio";
 
     public async Task<DemoPortfolioAccountingResult> SeedWalletAsync(
@@ -203,6 +205,12 @@ public sealed class DemoPortfolioAccountingService(
             baseAsset,
             quoteAsset,
             cancellationToken);
+        ConfigurePositionMode(
+            position,
+            request.PositionKind,
+            request.MarginMode,
+            request.Leverage,
+            request.MaintenanceMarginRate);
         var transaction = CreateFillTransaction(
             ownerUserId,
             operationId,
@@ -216,7 +224,21 @@ public sealed class DemoPortfolioAccountingService(
             feeAmountInQuote,
             occurredAtUtc);
 
-        if (request.Side == DemoTradeSide.Buy)
+        if (position.PositionKind == DemoPositionKind.Futures)
+        {
+            await ApplyFuturesFillAsync(
+                request,
+                ownerUserId,
+                quoteAsset,
+                feeAmountInQuote,
+                occurredAtUtc,
+                walletCache,
+                walletMutations,
+                position,
+                transaction,
+                cancellationToken);
+        }
+        else if (request.Side == DemoTradeSide.Buy)
         {
             await ApplyBuyFillAsync(
                 request,
@@ -250,7 +272,11 @@ public sealed class DemoPortfolioAccountingService(
                 cancellationToken);
         }
 
-        ApplyValuation(position, request.Price, request.MarkPrice ?? request.Price, occurredAtUtc);
+        if (position.PositionKind == DemoPositionKind.Spot)
+        {
+            ApplyValuation(position, request.Price, request.MarkPrice ?? request.Price, occurredAtUtc);
+        }
+
         CapturePositionSnapshot(transaction, position);
 
         var entries = CreateEntries(ownerUserId, transaction.Id, walletMutations);
@@ -304,7 +330,7 @@ public sealed class DemoPortfolioAccountingService(
             ?? throw new InvalidOperationException("Mark price update requires an existing demo position.");
 
         EnsurePositionPair(position, baseAsset, quoteAsset);
-        ApplyValuation(position, position.LastFillPrice, request.MarkPrice, occurredAtUtc);
+        EnsureRequestedPositionKind(position, request.PositionKind);
 
         var transaction = new DemoLedgerTransaction
         {
@@ -321,6 +347,35 @@ public sealed class DemoPortfolioAccountingService(
             OccurredAtUtc = occurredAtUtc
         };
 
+        if (position.PositionKind == DemoPositionKind.Futures)
+        {
+            var walletCache = new Dictionary<string, DemoWallet>(StringComparer.Ordinal);
+            var walletMutations = new Dictionary<string, WalletMutation>(StringComparer.Ordinal);
+            await ApplyFuturesMarkUpdateAsync(
+                request,
+                ownerUserId,
+                occurredAtUtc,
+                walletCache,
+                walletMutations,
+                position,
+                transaction,
+                cancellationToken);
+
+            var entries = CreateEntries(ownerUserId, transaction.Id, walletMutations);
+            dbContext.DemoLedgerTransactions.Add(transaction);
+            dbContext.DemoLedgerEntries.AddRange(entries);
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            if (bot is not null)
+            {
+                await UpdateBotOpenPositionCountAsync(bot, cancellationToken);
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
+
+            return BuildResult(transaction, entries, position, isReplay: false);
+        }
+
+        ApplyValuation(position, position.LastFillPrice, request.MarkPrice, occurredAtUtc);
         CapturePositionSnapshot(transaction, position);
         dbContext.DemoLedgerTransactions.Add(transaction);
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -453,6 +508,482 @@ public sealed class DemoPortfolioAccountingService(
         transaction.RealizedPnlDelta = netQuoteProceeds - costRelief;
     }
 
+    private async Task ApplyFuturesFillAsync(
+        DemoFillAccountingRequest request,
+        string ownerUserId,
+        string quoteAsset,
+        decimal feeAmountInQuote,
+        DateTime occurredAtUtc,
+        IDictionary<string, DemoWallet> walletCache,
+        IDictionary<string, WalletMutation> walletMutations,
+        DemoPosition position,
+        DemoLedgerTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        if (request.ConsumedReservedDebitAmount != 0m)
+        {
+            throw new InvalidOperationException("Futures demo fills do not consume spot-style reserved balances.");
+        }
+
+        var quoteWallet = await GetOrCreateWalletAsync(ownerUserId, quoteAsset, walletCache, cancellationToken);
+        var outcome = CalculateFuturesFillOutcome(position, request);
+
+        if (position.MarginMode == DemoMarginMode.Cross)
+        {
+            ApplyWalletDelta(walletMutations, quoteWallet, outcome.RealizedPnlDelta, 0m, occurredAtUtc);
+        }
+        else if (outcome.RealizedPnlDelta != 0m)
+        {
+            ApplyIsolatedMarginDelta(walletMutations, quoteWallet, position, outcome.RealizedPnlDelta, occurredAtUtc);
+        }
+
+        if (position.MarginMode == DemoMarginMode.Isolated && outcome.ClosedExistingExposure)
+        {
+            ReleaseIsolatedMargin(walletMutations, quoteWallet, position, occurredAtUtc);
+        }
+
+        position.Quantity = outcome.NewQuantity;
+        position.CostBasis = position.Quantity == 0m
+            ? 0m
+            : ClampZero(Math.Abs(position.Quantity) * outcome.NewAverageEntryPrice);
+        position.AverageEntryPrice = outcome.NewAverageEntryPrice;
+        position.RealizedPnl = ClampZero(position.RealizedPnl + outcome.RealizedPnlDelta);
+        position.TotalFeesInQuote = ClampZero(position.TotalFeesInQuote + feeAmountInQuote);
+        position.LastPrice = request.Price;
+        position.LastFillPrice = request.Price;
+        position.LastFilledAtUtc = occurredAtUtc;
+        transaction.RealizedPnlDelta = outcome.RealizedPnlDelta;
+
+        if (position.Quantity == 0m)
+        {
+            if (feeAmountInQuote != 0m)
+            {
+                ApplyWalletDelta(walletMutations, quoteWallet, -feeAmountInQuote, 0m, occurredAtUtc);
+            }
+        }
+        else if (position.MarginMode == DemoMarginMode.Isolated)
+        {
+            EnsureIsolatedMarginRequirement(walletMutations, quoteWallet, position, occurredAtUtc);
+
+            if (feeAmountInQuote != 0m)
+            {
+                ApplyIsolatedMarginDelta(walletMutations, quoteWallet, position, -feeAmountInQuote, occurredAtUtc);
+                EnsureIsolatedMarginRequirement(walletMutations, quoteWallet, position, occurredAtUtc);
+            }
+        }
+        else
+        {
+            if (feeAmountInQuote != 0m)
+            {
+                ApplyWalletDelta(walletMutations, quoteWallet, -feeAmountInQuote, 0m, occurredAtUtc);
+            }
+
+            await EnsureCrossMarginCapacityAsync(
+                ownerUserId,
+                quoteAsset,
+                position,
+                quoteWallet,
+                cancellationToken);
+        }
+
+        if (request.FundingRate is decimal fundingRate && fundingRate != 0m && position.Quantity != 0m)
+        {
+            ApplyFundingDelta(
+                walletMutations,
+                quoteWallet,
+                position,
+                fundingRate,
+                request.MarkPrice ?? request.Price,
+                occurredAtUtc,
+                transaction);
+        }
+
+        await ApplyFuturesValuationAndControlsAsync(
+            ownerUserId,
+            quoteWallet,
+            position,
+            fillPrice: request.Price,
+            lastPrice: request.Price,
+            valuationPrice: request.MarkPrice ?? request.Price,
+            occurredAtUtc,
+            walletCache,
+            walletMutations,
+            transaction,
+            cancellationToken);
+    }
+
+    private async Task ApplyFuturesMarkUpdateAsync(
+        DemoMarkPriceUpdateRequest request,
+        string ownerUserId,
+        DateTime occurredAtUtc,
+        IDictionary<string, DemoWallet> walletCache,
+        IDictionary<string, WalletMutation> walletMutations,
+        DemoPosition position,
+        DemoLedgerTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        if (request.LastPrice is decimal lastPrice)
+        {
+            ValidatePositiveAmount(lastPrice, nameof(request.LastPrice));
+        }
+
+        var quoteWallet = await GetOrCreateWalletAsync(ownerUserId, position.QuoteAsset, walletCache, cancellationToken);
+
+        if (request.FundingRate is decimal fundingRate && fundingRate != 0m && position.Quantity != 0m)
+        {
+            ApplyFundingDelta(
+                walletMutations,
+                quoteWallet,
+                position,
+                fundingRate,
+                request.MarkPrice,
+                occurredAtUtc,
+                transaction);
+        }
+
+        await ApplyFuturesValuationAndControlsAsync(
+            ownerUserId,
+            quoteWallet,
+            position,
+            fillPrice: null,
+            lastPrice: request.LastPrice,
+            valuationPrice: request.MarkPrice,
+            occurredAtUtc,
+            walletCache,
+            walletMutations,
+            transaction,
+            cancellationToken);
+    }
+
+    private async Task ApplyFuturesValuationAndControlsAsync(
+        string ownerUserId,
+        DemoWallet quoteWallet,
+        DemoPosition position,
+        decimal? fillPrice,
+        decimal? lastPrice,
+        decimal valuationPrice,
+        DateTime occurredAtUtc,
+        IDictionary<string, DemoWallet> walletCache,
+        IDictionary<string, WalletMutation> walletMutations,
+        DemoLedgerTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        ApplyFuturesValuation(position, fillPrice, lastPrice, valuationPrice, occurredAtUtc);
+        await RefreshFuturesRiskMetricsAsync(ownerUserId, quoteWallet, position, cancellationToken);
+
+        if (ShouldLiquidate(position))
+        {
+            LiquidateFuturesPosition(
+                walletMutations,
+                quoteWallet,
+                position,
+                occurredAtUtc,
+                transaction);
+
+            ApplyFuturesValuation(
+                position,
+                fillPrice: null,
+                lastPrice: lastPrice,
+                valuationPrice: valuationPrice,
+                occurredAtUtc: occurredAtUtc);
+            await RefreshFuturesRiskMetricsAsync(ownerUserId, quoteWallet, position, cancellationToken);
+        }
+    }
+
+    private static void ApplyFuturesValuation(
+        DemoPosition position,
+        decimal? fillPrice,
+        decimal? lastPrice,
+        decimal valuationPrice,
+        DateTime occurredAtUtc)
+    {
+        position.LastMarkPrice = valuationPrice;
+        position.LastPrice = lastPrice ?? position.LastPrice ?? fillPrice ?? valuationPrice;
+        position.LastValuationAtUtc = occurredAtUtc;
+
+        if (fillPrice.HasValue)
+        {
+            position.LastFillPrice = fillPrice.Value;
+            position.LastFilledAtUtc = occurredAtUtc;
+        }
+
+        position.UnrealizedPnl = position.Quantity == 0m
+            ? 0m
+            : ClampZero((valuationPrice - position.AverageEntryPrice) * position.Quantity);
+    }
+
+    private void ApplyFundingDelta(
+        IDictionary<string, WalletMutation> walletMutations,
+        DemoWallet quoteWallet,
+        DemoPosition position,
+        decimal fundingRate,
+        decimal markPrice,
+        DateTime occurredAtUtc,
+        DemoLedgerTransaction transaction)
+    {
+        var fundingDelta = CalculateFundingDelta(position.Quantity, markPrice, fundingRate);
+
+        if (fundingDelta == 0m)
+        {
+            return;
+        }
+
+        if (position.MarginMode == DemoMarginMode.Isolated)
+        {
+            ApplyIsolatedMarginDelta(walletMutations, quoteWallet, position, fundingDelta, occurredAtUtc);
+        }
+        else
+        {
+            ApplyWalletDelta(walletMutations, quoteWallet, fundingDelta, 0m, occurredAtUtc);
+        }
+
+        position.NetFundingInQuote = ClampZero(position.NetFundingInQuote + fundingDelta);
+        position.LastFundingRate = fundingRate;
+        position.LastFundingAppliedAtUtc = occurredAtUtc;
+        transaction.FundingRate = fundingRate;
+        transaction.FundingDeltaInQuote = ClampZero((transaction.FundingDeltaInQuote ?? 0m) + fundingDelta);
+    }
+
+    private async Task RefreshFuturesRiskMetricsAsync(
+        string ownerUserId,
+        DemoWallet quoteWallet,
+        DemoPosition position,
+        CancellationToken cancellationToken)
+    {
+        if (position.Quantity == 0m)
+        {
+            position.MaintenanceMargin = 0m;
+            position.MarginBalance = 0m;
+            position.LiquidationPrice = null;
+            return;
+        }
+
+        var maintenanceMarginRate = position.MaintenanceMarginRate ?? DefaultFuturesMaintenanceMarginRate;
+        var markPrice = position.LastMarkPrice ?? position.LastPrice ?? position.AverageEntryPrice;
+        position.MaintenanceMarginRate = maintenanceMarginRate;
+        position.MaintenanceMargin = CalculateMaintenanceMargin(position.Quantity, markPrice, maintenanceMarginRate);
+
+        if (position.MarginMode == DemoMarginMode.Isolated)
+        {
+            position.MarginBalance = ClampZero(position.IsolatedMargin.GetValueOrDefault() + position.UnrealizedPnl);
+            position.LiquidationPrice = CalculateIsolatedLiquidationPrice(position);
+            return;
+        }
+
+        var otherCrossPositions = await dbContext.DemoPositions
+            .Where(entity =>
+                entity.OwnerUserId == ownerUserId &&
+                !entity.IsDeleted &&
+                entity.PositionKind == DemoPositionKind.Futures &&
+                entity.MarginMode == DemoMarginMode.Cross &&
+                entity.QuoteAsset == position.QuoteAsset &&
+                entity.Quantity != 0m &&
+                !(entity.PositionScopeKey == position.PositionScopeKey && entity.Symbol == position.Symbol))
+            .ToListAsync(cancellationToken);
+
+        var otherUnrealizedPnl = otherCrossPositions.Sum(entity => entity.UnrealizedPnl);
+        var otherMaintenanceMargin = otherCrossPositions.Sum(entity =>
+            entity.MaintenanceMargin ??
+            CalculateMaintenanceMargin(
+                entity.Quantity,
+                entity.LastMarkPrice ?? entity.LastPrice ?? entity.AverageEntryPrice,
+                entity.MaintenanceMarginRate ?? DefaultFuturesMaintenanceMarginRate));
+
+        position.MarginBalance = ClampZero(quoteWallet.AvailableBalance + otherUnrealizedPnl + position.UnrealizedPnl);
+        position.LiquidationPrice = CalculateCrossLiquidationPrice(
+            position,
+            quoteWallet.AvailableBalance,
+            otherUnrealizedPnl,
+            otherMaintenanceMargin);
+    }
+
+    private async Task EnsureCrossMarginCapacityAsync(
+        string ownerUserId,
+        string quoteAsset,
+        DemoPosition targetPosition,
+        DemoWallet quoteWallet,
+        CancellationToken cancellationToken)
+    {
+        if (targetPosition.Quantity == 0m)
+        {
+            return;
+        }
+
+        var otherCrossPositions = await dbContext.DemoPositions
+            .Where(entity =>
+                entity.OwnerUserId == ownerUserId &&
+                !entity.IsDeleted &&
+                entity.PositionKind == DemoPositionKind.Futures &&
+                entity.MarginMode == DemoMarginMode.Cross &&
+                entity.QuoteAsset == quoteAsset &&
+                entity.Quantity != 0m &&
+                !(entity.PositionScopeKey == targetPosition.PositionScopeKey && entity.Symbol == targetPosition.Symbol))
+            .ToListAsync(cancellationToken);
+
+        var requiredInitialMargin = otherCrossPositions.Sum(entity =>
+                CalculateInitialMargin(entity.Quantity, entity.AverageEntryPrice, entity.Leverage ?? 1m))
+            + CalculateInitialMargin(targetPosition.Quantity, targetPosition.AverageEntryPrice, targetPosition.Leverage ?? 1m);
+
+        if (quoteWallet.AvailableBalance + PrecisionEpsilon < requiredInitialMargin)
+        {
+            throw new InvalidOperationException(
+                $"Cross margin collateral is insufficient for futures symbol '{targetPosition.Symbol}'.");
+        }
+    }
+
+    private static void EnsureIsolatedMarginRequirement(
+        IDictionary<string, WalletMutation> walletMutations,
+        DemoWallet quoteWallet,
+        DemoPosition position,
+        DateTime occurredAtUtc)
+    {
+        if (position.Quantity == 0m)
+        {
+            return;
+        }
+
+        var leverage = position.Leverage ?? 1m;
+        var requiredInitialMargin = CalculateInitialMargin(position.Quantity, position.AverageEntryPrice, leverage);
+        var currentIsolatedMargin = position.IsolatedMargin.GetValueOrDefault();
+
+        if (currentIsolatedMargin + PrecisionEpsilon >= requiredInitialMargin)
+        {
+            return;
+        }
+
+        var topUpAmount = ClampZero(requiredInitialMargin - currentIsolatedMargin);
+        ApplyWalletDelta(walletMutations, quoteWallet, -topUpAmount, topUpAmount, occurredAtUtc);
+        position.IsolatedMargin = ClampZero(currentIsolatedMargin + topUpAmount);
+    }
+
+    private static void ApplyIsolatedMarginDelta(
+        IDictionary<string, WalletMutation> walletMutations,
+        DemoWallet quoteWallet,
+        DemoPosition position,
+        decimal marginDelta,
+        DateTime occurredAtUtc)
+    {
+        if (marginDelta == 0m)
+        {
+            return;
+        }
+
+        var nextIsolatedMargin = position.IsolatedMargin.GetValueOrDefault() + marginDelta;
+
+        if (nextIsolatedMargin + PrecisionEpsilon < 0m)
+        {
+            throw new InvalidOperationException(
+                $"Isolated futures margin is exhausted for symbol '{position.Symbol}'.");
+        }
+
+        ApplyWalletDelta(walletMutations, quoteWallet, 0m, marginDelta, occurredAtUtc);
+        position.IsolatedMargin = ClampZero(nextIsolatedMargin);
+    }
+
+    private static void ReleaseIsolatedMargin(
+        IDictionary<string, WalletMutation> walletMutations,
+        DemoWallet quoteWallet,
+        DemoPosition position,
+        DateTime occurredAtUtc)
+    {
+        var isolatedMargin = position.IsolatedMargin.GetValueOrDefault();
+
+        if (isolatedMargin == 0m)
+        {
+            return;
+        }
+
+        ApplyWalletDelta(walletMutations, quoteWallet, isolatedMargin, -isolatedMargin, occurredAtUtc);
+        position.IsolatedMargin = 0m;
+    }
+
+    private static void LiquidateFuturesPosition(
+        IDictionary<string, WalletMutation> walletMutations,
+        DemoWallet quoteWallet,
+        DemoPosition position,
+        DateTime occurredAtUtc,
+        DemoLedgerTransaction transaction)
+    {
+        var liquidationPrice = position.LiquidationPrice ?? position.LastMarkPrice ?? position.AverageEntryPrice;
+        var liquidationFee = ClampZero(Math.Abs(position.Quantity) * liquidationPrice * DefaultFuturesLiquidationFeeRate);
+        var realizedPnlDelta = CalculateCloseRealizedPnl(position.Quantity, position.AverageEntryPrice, liquidationPrice);
+
+        if (position.MarginMode == DemoMarginMode.Isolated)
+        {
+            var isolatedMargin = position.IsolatedMargin.GetValueOrDefault();
+            var netReleaseAmount = ClampZero(isolatedMargin + realizedPnlDelta - liquidationFee);
+
+            if (isolatedMargin != 0m)
+            {
+                ApplyWalletDelta(walletMutations, quoteWallet, netReleaseAmount, -isolatedMargin, occurredAtUtc);
+            }
+
+            position.IsolatedMargin = 0m;
+        }
+        else
+        {
+            ApplyWalletDelta(walletMutations, quoteWallet, realizedPnlDelta - liquidationFee, 0m, occurredAtUtc);
+        }
+
+        position.RealizedPnl = ClampZero(position.RealizedPnl + realizedPnlDelta);
+        position.TotalFeesInQuote = ClampZero(position.TotalFeesInQuote + liquidationFee);
+        position.Quantity = 0m;
+        position.CostBasis = 0m;
+        position.AverageEntryPrice = 0m;
+        position.UnrealizedPnl = 0m;
+        position.MaintenanceMargin = 0m;
+        position.MarginBalance = 0m;
+        position.LiquidationPrice = null;
+
+        transaction.TransactionType = DemoLedgerTransactionType.Liquidated;
+        transaction.Price = liquidationPrice;
+        transaction.RealizedPnlDelta = ClampZero((transaction.RealizedPnlDelta ?? 0m) + realizedPnlDelta);
+        transaction.FeeAsset ??= position.QuoteAsset;
+        transaction.FeeAmountInQuote = ClampZero((transaction.FeeAmountInQuote ?? 0m) + liquidationFee);
+    }
+
+    private static FuturesFillOutcome CalculateFuturesFillOutcome(DemoPosition position, DemoFillAccountingRequest request)
+    {
+        var signedFillQuantity = request.Side == DemoTradeSide.Buy
+            ? request.Quantity
+            : -request.Quantity;
+        var existingQuantity = position.Quantity;
+        var newQuantity = ClampZero(existingQuantity + signedFillQuantity);
+        var closingQuantity = existingQuantity == 0m || Math.Sign(existingQuantity) == Math.Sign(signedFillQuantity)
+            ? 0m
+            : Math.Min(Math.Abs(existingQuantity), Math.Abs(signedFillQuantity));
+        var realizedPnlDelta = closingQuantity == 0m
+            ? 0m
+            : ClampZero((request.Price - position.AverageEntryPrice) * closingQuantity * Math.Sign(existingQuantity));
+
+        decimal newAverageEntryPrice;
+
+        if (newQuantity == 0m)
+        {
+            newAverageEntryPrice = 0m;
+        }
+        else if (existingQuantity == 0m || Math.Sign(existingQuantity) == Math.Sign(signedFillQuantity))
+        {
+            var totalNotional = (Math.Abs(existingQuantity) * position.AverageEntryPrice) + (request.Quantity * request.Price);
+            newAverageEntryPrice = totalNotional / Math.Abs(newQuantity);
+        }
+        else if (Math.Sign(newQuantity) == Math.Sign(existingQuantity))
+        {
+            newAverageEntryPrice = position.AverageEntryPrice;
+        }
+        else
+        {
+            newAverageEntryPrice = request.Price;
+        }
+
+        return new FuturesFillOutcome(
+            newQuantity,
+            ClampZero(newAverageEntryPrice),
+            realizedPnlDelta,
+            ClosedExistingExposure: existingQuantity != 0m &&
+                                    (newQuantity == 0m || Math.Sign(newQuantity) != Math.Sign(existingQuantity)));
+    }
+
     private static DemoLedgerTransaction CreateFillTransaction(
         string ownerUserId,
         string operationId,
@@ -479,12 +1010,16 @@ public sealed class DemoPortfolioAccountingService(
             Symbol = symbol,
             BaseAsset = baseAsset,
             QuoteAsset = quoteAsset,
+            PositionKind = request.PositionKind,
+            MarginMode = request.MarginMode,
             Side = request.Side,
             Quantity = request.Quantity,
             Price = request.Price,
             FeeAsset = feeAsset,
             FeeAmount = feeAmount == 0m ? null : feeAmount,
             FeeAmountInQuote = feeAmount == 0m ? null : feeAmountInQuote,
+            Leverage = request.Leverage,
+            FundingRate = request.FundingRate,
             OccurredAtUtc = occurredAtUtc
         };
     }
@@ -549,7 +1084,18 @@ public sealed class DemoPortfolioAccountingService(
             transaction.CumulativeFeesInQuoteAfter,
             transaction.MarkPriceAfter,
             transaction.OccurredAtUtc,
-            entrySnapshots);
+            entrySnapshots,
+            transaction.PositionKind,
+            transaction.MarginMode,
+            transaction.Leverage,
+            transaction.FundingRate,
+            transaction.FundingDeltaInQuote,
+            transaction.NetFundingInQuoteAfter,
+            transaction.LastPriceAfter,
+            transaction.MaintenanceMarginRateAfter,
+            transaction.MaintenanceMarginAfter,
+            transaction.MarginBalanceAfter,
+            transaction.LiquidationPriceAfter);
 
         return new DemoPortfolioAccountingResult(
             transactionSnapshot,
@@ -588,7 +1134,16 @@ public sealed class DemoPortfolioAccountingService(
             transaction.MarkPriceAfter,
             transaction.TransactionType == DemoLedgerTransactionType.FillApplied ? transaction.Price : null,
             transaction.TransactionType == DemoLedgerTransactionType.FillApplied ? transaction.OccurredAtUtc : null,
-            transaction.MarkPriceAfter.HasValue ? transaction.OccurredAtUtc : null);
+            transaction.MarkPriceAfter.HasValue ? transaction.OccurredAtUtc : null,
+            transaction.PositionKind ?? DemoPositionKind.Spot,
+            transaction.MarginMode,
+            transaction.Leverage,
+            transaction.LastPriceAfter,
+            transaction.MaintenanceMarginRateAfter,
+            transaction.MaintenanceMarginAfter,
+            transaction.MarginBalanceAfter,
+            transaction.NetFundingInQuoteAfter ?? 0m,
+            transaction.LiquidationPriceAfter);
     }
 
     private static DemoPositionSnapshot MapPositionSnapshot(DemoPosition position)
@@ -608,7 +1163,16 @@ public sealed class DemoPortfolioAccountingService(
             position.LastMarkPrice,
             position.LastFillPrice,
             position.LastFilledAtUtc,
-            position.LastValuationAtUtc);
+            position.LastValuationAtUtc,
+            position.PositionKind,
+            position.MarginMode,
+            position.Leverage,
+            position.LastPrice,
+            position.MaintenanceMarginRate,
+            position.MaintenanceMargin,
+            position.MarginBalance,
+            position.NetFundingInQuote,
+            position.LiquidationPrice);
     }
 
     private async Task<DemoLedgerTransaction?> FindTransactionAsync(
@@ -715,7 +1279,7 @@ public sealed class DemoPortfolioAccountingService(
         bot.OpenPositionCount = await dbContext.DemoPositions
             .CountAsync(
                 entity => entity.BotId == bot.Id &&
-                          entity.Quantity > 0m,
+                          entity.Quantity != 0m,
                 cancellationToken);
     }
 
@@ -774,13 +1338,22 @@ public sealed class DemoPortfolioAccountingService(
 
     private static void CapturePositionSnapshot(DemoLedgerTransaction transaction, DemoPosition position)
     {
+        transaction.PositionKind = position.PositionKind;
+        transaction.MarginMode = position.MarginMode;
+        transaction.Leverage = position.Leverage;
         transaction.PositionQuantityAfter = position.Quantity;
         transaction.PositionCostBasisAfter = position.CostBasis;
         transaction.PositionAverageEntryPriceAfter = position.AverageEntryPrice;
         transaction.CumulativeRealizedPnlAfter = position.RealizedPnl;
         transaction.UnrealizedPnlAfter = position.UnrealizedPnl;
         transaction.CumulativeFeesInQuoteAfter = position.TotalFeesInQuote;
+        transaction.NetFundingInQuoteAfter = position.NetFundingInQuote;
+        transaction.LastPriceAfter = position.LastPrice;
         transaction.MarkPriceAfter = position.LastMarkPrice;
+        transaction.MaintenanceMarginRateAfter = position.MaintenanceMarginRate;
+        transaction.MaintenanceMarginAfter = position.MaintenanceMargin;
+        transaction.MarginBalanceAfter = position.MarginBalance;
+        transaction.LiquidationPriceAfter = position.LiquidationPrice;
     }
 
     private static void EnsurePositionPair(DemoPosition position, string baseAsset, string quoteAsset)
@@ -789,6 +1362,73 @@ public sealed class DemoPortfolioAccountingService(
             !string.Equals(position.QuoteAsset, quoteAsset, StringComparison.Ordinal))
         {
             throw new InvalidOperationException("Demo position pair mismatch detected for the requested symbol.");
+        }
+    }
+
+    private static void ConfigurePositionMode(
+        DemoPosition position,
+        DemoPositionKind requestedPositionKind,
+        DemoMarginMode? requestedMarginMode,
+        decimal? requestedLeverage,
+        decimal? requestedMaintenanceMarginRate)
+    {
+        if (position.Quantity != 0m && position.PositionKind != requestedPositionKind)
+        {
+            throw new InvalidOperationException(
+                $"Demo position kind cannot change while symbol '{position.Symbol}' still has exposure.");
+        }
+
+        if (requestedPositionKind == DemoPositionKind.Spot)
+        {
+            if (position.Quantity == 0m)
+            {
+                position.PositionKind = DemoPositionKind.Spot;
+                position.MarginMode = null;
+                position.Leverage = null;
+                position.IsolatedMargin = null;
+                position.MaintenanceMarginRate = null;
+                position.MaintenanceMargin = null;
+                position.MarginBalance = null;
+                position.LiquidationPrice = null;
+                position.NetFundingInQuote = 0m;
+                position.LastFundingRate = null;
+                position.LastFundingAppliedAtUtc = null;
+            }
+
+            return;
+        }
+
+        var leverage = ResolveFuturesLeverage(position, requestedLeverage);
+        var maintenanceMarginRate = ResolveMaintenanceMarginRate(position, requestedMaintenanceMarginRate);
+        var marginMode = position.MarginMode ?? requestedMarginMode
+            ?? throw new InvalidOperationException("Futures demo fills require an explicit margin mode.");
+
+        if (position.Quantity != 0m && position.MarginMode != marginMode)
+        {
+            throw new InvalidOperationException(
+                $"Futures margin mode cannot change while symbol '{position.Symbol}' still has exposure.");
+        }
+
+        if (position.Quantity != 0m &&
+            position.Leverage.HasValue &&
+            position.Leverage.Value != leverage)
+        {
+            throw new InvalidOperationException(
+                $"Futures leverage cannot change while symbol '{position.Symbol}' still has exposure.");
+        }
+
+        position.PositionKind = DemoPositionKind.Futures;
+        position.MarginMode = marginMode;
+        position.Leverage = leverage;
+        position.MaintenanceMarginRate = maintenanceMarginRate;
+    }
+
+    private static void EnsureRequestedPositionKind(DemoPosition position, DemoPositionKind requestedPositionKind)
+    {
+        if (position.PositionKind != requestedPositionKind)
+        {
+            throw new InvalidOperationException(
+                $"Demo position kind mismatch detected for symbol '{position.Symbol}'.");
         }
     }
 
@@ -929,12 +1569,169 @@ public sealed class DemoPortfolioAccountingService(
             : value.Trim();
     }
 
+    private static decimal ResolveFuturesLeverage(DemoPosition position, decimal? requestedLeverage)
+    {
+        var leverage = position.Leverage ?? requestedLeverage
+            ?? throw new InvalidOperationException("Futures demo fills require leverage to be specified.");
+
+        if (leverage < 1m)
+        {
+            throw new ArgumentOutOfRangeException(nameof(requestedLeverage), "Futures leverage must be at least 1.");
+        }
+
+        return leverage;
+    }
+
+    private static decimal ResolveMaintenanceMarginRate(DemoPosition position, decimal? requestedMaintenanceMarginRate)
+    {
+        var maintenanceMarginRate = position.MaintenanceMarginRate
+            ?? requestedMaintenanceMarginRate
+            ?? DefaultFuturesMaintenanceMarginRate;
+
+        if (maintenanceMarginRate <= 0m || maintenanceMarginRate >= 1m)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(requestedMaintenanceMarginRate),
+                "MaintenanceMarginRate must be between 0 and 1 for futures demo positions.");
+        }
+
+        return maintenanceMarginRate;
+    }
+
+    private static decimal CalculateFundingDelta(decimal quantity, decimal markPrice, decimal fundingRate)
+    {
+        return ClampZero(-Math.Sign(quantity) * Math.Abs(quantity) * markPrice * fundingRate);
+    }
+
+    private static decimal CalculateInitialMargin(decimal quantity, decimal entryPrice, decimal leverage)
+    {
+        return quantity == 0m
+            ? 0m
+            : ClampZero(Math.Abs(quantity) * entryPrice / leverage);
+    }
+
+    private static decimal CalculateMaintenanceMargin(decimal quantity, decimal markPrice, decimal maintenanceMarginRate)
+    {
+        return quantity == 0m
+            ? 0m
+            : ClampZero(Math.Abs(quantity) * markPrice * maintenanceMarginRate);
+    }
+
+    private static decimal CalculateCloseRealizedPnl(decimal quantity, decimal averageEntryPrice, decimal closePrice)
+    {
+        return quantity == 0m
+            ? 0m
+            : ClampZero((closePrice - averageEntryPrice) * quantity);
+    }
+
+    private static decimal? CalculateIsolatedLiquidationPrice(DemoPosition position)
+    {
+        if (position.Quantity == 0m ||
+            position.MaintenanceMarginRate is null ||
+            position.IsolatedMargin is null)
+        {
+            return null;
+        }
+
+        var absoluteQuantity = Math.Abs(position.Quantity);
+        var maintenanceMarginRate = position.MaintenanceMarginRate.Value;
+        decimal liquidationPrice;
+
+        if (position.Quantity > 0m)
+        {
+            var denominator = absoluteQuantity * (1m - maintenanceMarginRate);
+
+            if (denominator <= 0m)
+            {
+                return null;
+            }
+
+            liquidationPrice = ((position.AverageEntryPrice * absoluteQuantity) - position.IsolatedMargin.Value) / denominator;
+        }
+        else
+        {
+            var denominator = absoluteQuantity * (1m + maintenanceMarginRate);
+
+            if (denominator <= 0m)
+            {
+                return null;
+            }
+
+            liquidationPrice = (position.IsolatedMargin.Value + (position.AverageEntryPrice * absoluteQuantity)) / denominator;
+        }
+
+        return liquidationPrice <= 0m
+            ? null
+            : ClampZero(liquidationPrice);
+    }
+
+    private static decimal? CalculateCrossLiquidationPrice(
+        DemoPosition position,
+        decimal availableCollateral,
+        decimal otherUnrealizedPnl,
+        decimal otherMaintenanceMargin)
+    {
+        if (position.Quantity == 0m || position.MaintenanceMarginRate is null)
+        {
+            return null;
+        }
+
+        var absoluteQuantity = Math.Abs(position.Quantity);
+        var maintenanceMarginRate = position.MaintenanceMarginRate.Value;
+        decimal liquidationPrice;
+
+        if (position.Quantity > 0m)
+        {
+            var denominator = absoluteQuantity * (1m - maintenanceMarginRate);
+
+            if (denominator <= 0m)
+            {
+                return null;
+            }
+
+            liquidationPrice =
+                ((position.AverageEntryPrice * absoluteQuantity) - availableCollateral - otherUnrealizedPnl + otherMaintenanceMargin) /
+                denominator;
+        }
+        else
+        {
+            var denominator = absoluteQuantity * (1m + maintenanceMarginRate);
+
+            if (denominator <= 0m)
+            {
+                return null;
+            }
+
+            liquidationPrice =
+                (availableCollateral + otherUnrealizedPnl + (position.AverageEntryPrice * absoluteQuantity) - otherMaintenanceMargin) /
+                denominator;
+        }
+
+        return liquidationPrice <= 0m
+            ? null
+            : ClampZero(liquidationPrice);
+    }
+
+    private static bool ShouldLiquidate(DemoPosition position)
+    {
+        return position.Quantity != 0m &&
+               position.MaintenanceMargin.HasValue &&
+               position.MarginBalance.HasValue &&
+               position.MarginBalance.Value <= position.MaintenanceMargin.Value + PrecisionEpsilon;
+    }
+
     private static decimal ClampZero(decimal value)
     {
         return Math.Abs(value) <= PrecisionEpsilon
             ? 0m
             : value;
     }
+
+    private sealed record FuturesFillOutcome(
+        decimal NewQuantity,
+        decimal NewAverageEntryPrice,
+        decimal RealizedPnlDelta,
+        bool ClosedExistingExposure);
 
     private sealed class WalletMutation(DemoWallet wallet)
     {

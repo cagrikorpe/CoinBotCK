@@ -61,6 +61,12 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
     public DbSet<TradingStrategy> TradingStrategies => Set<TradingStrategy>();
 
+    public DbSet<TradingStrategySignal> TradingStrategySignals => Set<TradingStrategySignal>();
+
+    public DbSet<TradingStrategySignalVeto> TradingStrategySignalVetoes => Set<TradingStrategySignalVeto>();
+
+    public DbSet<TradingStrategyVersion> TradingStrategyVersions => Set<TradingStrategyVersion>();
+
     public override int SaveChanges()
     {
         ApplyOwnershipRules();
@@ -99,6 +105,9 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         ConfigureRiskProfiles(builder.Entity<RiskProfile>());
         ConfigureTradingBots(builder.Entity<TradingBot>());
         ConfigureTradingStrategies(builder.Entity<TradingStrategy>());
+        ConfigureTradingStrategySignals(builder.Entity<TradingStrategySignal>());
+        ConfigureTradingStrategySignalVetoes(builder.Entity<TradingStrategySignalVeto>());
+        ConfigureTradingStrategyVersions(builder.Entity<TradingStrategyVersion>());
     }
 
     private string? CurrentUserId => currentUserId;
@@ -285,6 +294,14 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         builder.Property(entity => entity.QuoteAsset)
             .HasMaxLength(32);
 
+        builder.Property(entity => entity.PositionKind)
+            .HasConversion<string>()
+            .HasMaxLength(16);
+
+        builder.Property(entity => entity.MarginMode)
+            .HasConversion<string>()
+            .HasMaxLength(16);
+
         builder.Property(entity => entity.Side)
             .HasConversion<string>()
             .HasMaxLength(16);
@@ -302,6 +319,15 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             .HasPrecision(38, 18);
 
         builder.Property(entity => entity.FeeAmountInQuote)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.Leverage)
+            .HasPrecision(18, 8);
+
+        builder.Property(entity => entity.FundingRate)
+            .HasPrecision(18, 8);
+
+        builder.Property(entity => entity.FundingDeltaInQuote)
             .HasPrecision(38, 18);
 
         builder.Property(entity => entity.RealizedPnlDelta)
@@ -325,7 +351,25 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         builder.Property(entity => entity.CumulativeFeesInQuoteAfter)
             .HasPrecision(38, 18);
 
+        builder.Property(entity => entity.NetFundingInQuoteAfter)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.LastPriceAfter)
+            .HasPrecision(38, 18);
+
         builder.Property(entity => entity.MarkPriceAfter)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.MaintenanceMarginRateAfter)
+            .HasPrecision(18, 8);
+
+        builder.Property(entity => entity.MaintenanceMarginAfter)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.MarginBalanceAfter)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.LiquidationPriceAfter)
             .HasPrecision(38, 18);
 
         builder.HasIndex(entity => new { entity.OwnerUserId, entity.OperationId })
@@ -354,6 +398,19 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             .HasMaxLength(32)
             .IsRequired();
 
+        builder.Property(entity => entity.PositionKind)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .HasDefaultValue(DemoPositionKind.Spot)
+            .IsRequired();
+
+        builder.Property(entity => entity.MarginMode)
+            .HasConversion<string>()
+            .HasMaxLength(16);
+
+        builder.Property(entity => entity.Leverage)
+            .HasPrecision(18, 8);
+
         builder.Property(entity => entity.Quantity)
             .HasPrecision(38, 18);
 
@@ -372,11 +429,35 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         builder.Property(entity => entity.TotalFeesInQuote)
             .HasPrecision(38, 18);
 
+        builder.Property(entity => entity.NetFundingInQuote)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.IsolatedMargin)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.MaintenanceMarginRate)
+            .HasPrecision(18, 8);
+
+        builder.Property(entity => entity.MaintenanceMargin)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.MarginBalance)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.LiquidationPrice)
+            .HasPrecision(38, 18);
+
         builder.Property(entity => entity.LastMarkPrice)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.LastPrice)
             .HasPrecision(38, 18);
 
         builder.Property(entity => entity.LastFillPrice)
             .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.LastFundingRate)
+            .HasPrecision(18, 8);
 
         builder.HasIndex(entity => new { entity.OwnerUserId, entity.PositionScopeKey, entity.Symbol })
             .IsUnique();
@@ -660,6 +741,10 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
         builder.Property(entity => entity.MaxPositionSizePercentage)
             .HasPrecision(18, 4);
+
+        builder.Property(entity => entity.MaxLeverage)
+            .HasPrecision(18, 4)
+            .HasDefaultValue(1m);
     }
 
     private void ConfigureTradingBots(EntityTypeBuilder<TradingBot> builder)
@@ -708,6 +793,179 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
         builder.HasIndex(entity => new { entity.OwnerUserId, entity.StrategyKey })
             .IsUnique();
+    }
+
+    private void ConfigureTradingStrategySignals(EntityTypeBuilder<TradingStrategySignal> builder)
+    {
+        ConfigureUserOwnedEntity(builder, "TradingStrategySignals");
+
+        builder.Property(entity => entity.StrategyVersionNumber)
+            .IsRequired();
+
+        builder.Property(entity => entity.StrategySchemaVersion)
+            .IsRequired();
+
+        builder.Property(entity => entity.SignalType)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.ExecutionEnvironment)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.Symbol)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.Timeframe)
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.GeneratedAtUtc)
+            .IsRequired();
+
+        builder.Property(entity => entity.ExplainabilitySchemaVersion)
+            .HasDefaultValue(1)
+            .IsRequired();
+
+        builder.Property(entity => entity.IndicatorSnapshotJson)
+            .IsRequired();
+
+        builder.Property(entity => entity.RuleResultSnapshotJson)
+            .IsRequired();
+
+        builder.Property(entity => entity.RiskEvaluationJson);
+
+        builder.HasIndex(entity => entity.TradingStrategyId);
+
+        builder.HasIndex(entity => entity.TradingStrategyVersionId);
+
+        builder.HasIndex(entity => new { entity.TradingStrategyId, entity.GeneratedAtUtc });
+
+        builder.HasIndex(entity => new
+            {
+                entity.TradingStrategyVersionId,
+                entity.SignalType,
+                entity.Symbol,
+                entity.Timeframe,
+                entity.IndicatorCloseTimeUtc
+            })
+            .IsUnique();
+
+        builder.HasOne<TradingStrategy>()
+            .WithMany()
+            .HasForeignKey(entity => entity.TradingStrategyId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<TradingStrategyVersion>()
+            .WithMany()
+            .HasForeignKey(entity => entity.TradingStrategyVersionId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private void ConfigureTradingStrategySignalVetoes(EntityTypeBuilder<TradingStrategySignalVeto> builder)
+    {
+        ConfigureUserOwnedEntity(builder, "TradingStrategySignalVetoes");
+
+        builder.Property(entity => entity.StrategyVersionNumber)
+            .IsRequired();
+
+        builder.Property(entity => entity.StrategySchemaVersion)
+            .IsRequired();
+
+        builder.Property(entity => entity.SignalType)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.ExecutionEnvironment)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.Symbol)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.Timeframe)
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.ReasonCode)
+            .HasConversion<string>()
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.RiskEvaluationJson)
+            .IsRequired();
+
+        builder.HasIndex(entity => entity.TradingStrategyId);
+
+        builder.HasIndex(entity => entity.TradingStrategyVersionId);
+
+        builder.HasIndex(entity => new { entity.TradingStrategyId, entity.EvaluatedAtUtc });
+
+        builder.HasIndex(entity => new
+            {
+                entity.TradingStrategyVersionId,
+                entity.SignalType,
+                entity.Symbol,
+                entity.Timeframe,
+                entity.IndicatorCloseTimeUtc,
+                entity.ReasonCode
+            })
+            .IsUnique();
+
+        builder.HasOne<TradingStrategy>()
+            .WithMany()
+            .HasForeignKey(entity => entity.TradingStrategyId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<TradingStrategyVersion>()
+            .WithMany()
+            .HasForeignKey(entity => entity.TradingStrategyVersionId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private void ConfigureTradingStrategyVersions(EntityTypeBuilder<TradingStrategyVersion> builder)
+    {
+        ConfigureUserOwnedEntity(builder, "TradingStrategyVersions");
+
+        builder.Property(entity => entity.SchemaVersion)
+            .IsRequired();
+
+        builder.Property(entity => entity.VersionNumber)
+            .IsRequired();
+
+        builder.Property(entity => entity.Status)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.DefinitionJson)
+            .IsRequired();
+
+        builder.HasIndex(entity => new { entity.TradingStrategyId, entity.VersionNumber })
+            .IsUnique();
+
+        builder.HasIndex(entity => new { entity.TradingStrategyId, entity.Status });
+
+        builder.HasIndex(entity => entity.TradingStrategyId)
+            .HasDatabaseName("IX_TradingStrategyVersions_TradingStrategyId_Draft")
+            .HasFilter("[Status] = N'Draft'")
+            .IsUnique();
+
+        builder.HasIndex(entity => entity.TradingStrategyId)
+            .HasDatabaseName("IX_TradingStrategyVersions_TradingStrategyId_Published")
+            .HasFilter("[Status] = N'Published'")
+            .IsUnique();
+
+        builder.HasOne<TradingStrategy>()
+            .WithMany()
+            .HasForeignKey(entity => entity.TradingStrategyId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 
     private void ConfigureUserOwnedEntity<TEntity>(EntityTypeBuilder<TEntity> builder, string tableName)

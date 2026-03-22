@@ -20,4 +20,9 @@ public sealed record DemoFillAccountingRequest(
     decimal FeeAmount = 0m,
     decimal? FeeAmountInQuote = null,
     decimal? MarkPrice = null,
-    DateTime? OccurredAtUtc = null);
+    DateTime? OccurredAtUtc = null,
+    DemoPositionKind PositionKind = DemoPositionKind.Spot,
+    DemoMarginMode? MarginMode = null,
+    decimal? Leverage = null,
+    decimal? MaintenanceMarginRate = null,
+    decimal? FundingRate = null);

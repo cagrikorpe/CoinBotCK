@@ -1,3 +1,5 @@
+using CoinBot.Domain.Enums;
+
 namespace CoinBot.Application.Abstractions.DemoPortfolio;
 
 public sealed record DemoPositionSnapshot(
@@ -15,4 +17,13 @@ public sealed record DemoPositionSnapshot(
     decimal? LastMarkPrice,
     decimal? LastFillPrice,
     DateTime? LastFilledAtUtc,
-    DateTime? LastValuationAtUtc);
+    DateTime? LastValuationAtUtc,
+    DemoPositionKind PositionKind = DemoPositionKind.Spot,
+    DemoMarginMode? MarginMode = null,
+    decimal? Leverage = null,
+    decimal? LastPrice = null,
+    decimal? MaintenanceMarginRate = null,
+    decimal? MaintenanceMargin = null,
+    decimal? MarginBalance = null,
+    decimal NetFundingInQuote = 0m,
+    decimal? LiquidationPrice = null);

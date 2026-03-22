@@ -22,6 +22,10 @@ public sealed class DemoLedgerTransaction : UserOwnedEntity
 
     public string? QuoteAsset { get; set; }
 
+    public DemoPositionKind? PositionKind { get; set; }
+
+    public DemoMarginMode? MarginMode { get; set; }
+
     public DemoTradeSide? Side { get; set; }
 
     public decimal? Quantity { get; set; }
@@ -33,6 +37,12 @@ public sealed class DemoLedgerTransaction : UserOwnedEntity
     public decimal? FeeAmount { get; set; }
 
     public decimal? FeeAmountInQuote { get; set; }
+
+    public decimal? Leverage { get; set; }
+
+    public decimal? FundingRate { get; set; }
+
+    public decimal? FundingDeltaInQuote { get; set; }
 
     public decimal? RealizedPnlDelta { get; set; }
 
@@ -48,7 +58,19 @@ public sealed class DemoLedgerTransaction : UserOwnedEntity
 
     public decimal? CumulativeFeesInQuoteAfter { get; set; }
 
+    public decimal? NetFundingInQuoteAfter { get; set; }
+
+    public decimal? LastPriceAfter { get; set; }
+
     public decimal? MarkPriceAfter { get; set; }
+
+    public decimal? MaintenanceMarginRateAfter { get; set; }
+
+    public decimal? MaintenanceMarginAfter { get; set; }
+
+    public decimal? MarginBalanceAfter { get; set; }
+
+    public decimal? LiquidationPriceAfter { get; set; }
 
     public DateTime OccurredAtUtc { get; set; }
 }

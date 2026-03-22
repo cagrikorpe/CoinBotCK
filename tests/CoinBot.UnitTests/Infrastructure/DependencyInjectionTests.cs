@@ -7,6 +7,8 @@ using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
+using CoinBot.Application.Abstractions.Risk;
+using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Contracts.Common;
 using CoinBot.Infrastructure;
 using CoinBot.Infrastructure.Alerts;
@@ -61,8 +63,13 @@ public sealed class DependencyInjectionTests
             .GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
             .Get(IdentityConstants.ApplicationScheme);
         var executionGate = provider.GetRequiredService<IExecutionGate>();
+        var riskPolicyEvaluator = provider.GetRequiredService<IRiskPolicyEvaluator>();
         var marketDataService = provider.GetRequiredService<IMarketDataService>();
         var indicatorDataService = provider.GetRequiredService<IIndicatorDataService>();
+        var strategyEvaluatorService = provider.GetRequiredService<IStrategyEvaluatorService>();
+        var strategyRuleParser = provider.GetRequiredService<IStrategyRuleParser>();
+        var strategySignalService = provider.GetRequiredService<IStrategySignalService>();
+        var strategyVersionService = provider.GetRequiredService<IStrategyVersionService>();
         var sharedSymbolRegistry = provider.GetRequiredService<ISharedSymbolRegistry>();
         var candleContinuityValidator = provider.GetRequiredService<CandleContinuityValidator>();
         var candleDataQualityGuard = provider.GetRequiredService<CandleDataQualityGuard>();
@@ -136,8 +143,13 @@ public sealed class DependencyInjectionTests
         Assert.NotNull(tradingModeResolver);
         Assert.NotNull(tradingModeService);
         Assert.NotNull(executionGate);
+        Assert.NotNull(riskPolicyEvaluator);
         Assert.NotNull(marketDataService);
         Assert.NotNull(indicatorDataService);
+        Assert.NotNull(strategyEvaluatorService);
+        Assert.NotNull(strategyRuleParser);
+        Assert.NotNull(strategySignalService);
+        Assert.NotNull(strategyVersionService);
         Assert.NotNull(sharedSymbolRegistry);
         Assert.NotNull(candleContinuityValidator);
         Assert.NotNull(candleDataQualityGuard);

@@ -6,5 +6,6 @@ public enum DemoLedgerTransactionType
     FundsReserved = 1,
     FundsReleased = 2,
     FillApplied = 3,
-    MarkPriceUpdated = 4
+    MarkPriceUpdated = 4,
+    Liquidated = 5
 }

@@ -8,5 +8,7 @@ public sealed class RiskProfile : UserOwnedEntity
 
     public decimal MaxPositionSizePercentage { get; set; }
 
+    public decimal MaxLeverage { get; set; } = 1m;
+
     public bool KillSwitchEnabled { get; set; }
 }

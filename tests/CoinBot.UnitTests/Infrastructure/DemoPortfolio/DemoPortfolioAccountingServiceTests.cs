@@ -267,6 +267,166 @@ public sealed class DemoPortfolioAccountingServiceTests
         Assert.Empty(await harness.Context.DemoWallets.ToListAsync());
     }
 
+    [Fact]
+    public async Task FuturesIsolatedMargin_AppliesFunding_TracksLiquidationPrice_AndLiquidatesOnMarkPrice()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        await using var harness = CreateHarness(databaseRoot, "user-futures-iso");
+        var bot = await harness.AddBotAsync();
+
+        await harness.Service.SeedWalletAsync(
+            new DemoWalletSeedRequest("user-futures-iso", ExecutionEnvironment.Demo, "seed-1", "USDT", 1000m, At(0)));
+
+        var opened = await harness.Service.ApplyFillAsync(
+            new DemoFillAccountingRequest(
+                "user-futures-iso",
+                ExecutionEnvironment.Demo,
+                "futures-fill-1",
+                "ETHUSDT",
+                "ETH",
+                "USDT",
+                DemoTradeSide.Buy,
+                1m,
+                1000m,
+                0m,
+                bot.Id,
+                "fut-ord-1",
+                "fut-fill-1",
+                "USDT",
+                1m,
+                FeeAmountInQuote: null,
+                MarkPrice: 1000m,
+                OccurredAtUtc: At(1),
+                PositionKind: DemoPositionKind.Futures,
+                MarginMode: DemoMarginMode.Isolated,
+                Leverage: 10m,
+                MaintenanceMarginRate: 0.005m));
+
+        var funded = await harness.Service.UpdateMarkPriceAsync(
+            new DemoMarkPriceUpdateRequest(
+                "user-futures-iso",
+                ExecutionEnvironment.Demo,
+                "futures-mark-1",
+                "ETHUSDT",
+                "ETH",
+                "USDT",
+                950m,
+                bot.Id,
+                At(2),
+                DemoPositionKind.Futures,
+                LastPrice: 960m,
+                FundingRate: 0.001m));
+
+        var liquidated = await harness.Service.UpdateMarkPriceAsync(
+            new DemoMarkPriceUpdateRequest(
+                "user-futures-iso",
+                ExecutionEnvironment.Demo,
+                "futures-mark-2",
+                "ETHUSDT",
+                "ETH",
+                "USDT",
+                900m,
+                bot.Id,
+                At(3),
+                DemoPositionKind.Futures));
+
+        var usdtWallet = await harness.Context.DemoWallets.SingleAsync(entity => entity.Asset == "USDT");
+        var position = await harness.Context.DemoPositions.SingleAsync(entity => entity.Symbol == "ETHUSDT");
+        var botEntity = await harness.Context.TradingBots.SingleAsync(entity => entity.Id == bot.Id);
+
+        Assert.Equal(DemoPositionKind.Futures, opened.Position!.PositionKind);
+        Assert.Equal(DemoMarginMode.Isolated, opened.Position.MarginMode);
+        Assert.Equal(10m, opened.Position.Leverage);
+        Assert.Equal(899m, opened.Wallets.Single(wallet => wallet.Asset == "USDT").AvailableBalance);
+        Assert.Equal(100m, opened.Wallets.Single(wallet => wallet.Asset == "USDT").ReservedBalance);
+        Assert.InRange(opened.Position.LiquidationPrice!.Value, 904.52m, 904.53m);
+
+        Assert.Equal(960m, funded.Position!.LastPrice);
+        Assert.Equal(950m, funded.Position.LastMarkPrice);
+        Assert.Equal(-0.95m, funded.Transaction.FundingDeltaInQuote);
+        Assert.Equal(-0.95m, funded.Position.NetFundingInQuote);
+        Assert.InRange(funded.Position.MarginBalance!.Value, 49.04m, 49.06m);
+        Assert.InRange(funded.Position.LiquidationPrice!.Value, 905.47m, 905.48m);
+
+        Assert.Equal(DemoLedgerTransactionType.Liquidated, liquidated.Transaction.TransactionType);
+        Assert.Equal(0m, position.Quantity);
+        Assert.Equal(0m, usdtWallet.ReservedBalance);
+        Assert.InRange(usdtWallet.AvailableBalance, 901.71m, 901.72m);
+        Assert.Equal(0, botEntity.OpenPositionCount);
+    }
+
+    [Fact]
+    public async Task FuturesCrossMargin_SupportsShorts_AndKeepsMarkPriceSeparateFromLastPrice()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        await using var harness = CreateHarness(databaseRoot, "user-futures-cross");
+        var bot = await harness.AddBotAsync();
+
+        await harness.Service.SeedWalletAsync(
+            new DemoWalletSeedRequest("user-futures-cross", ExecutionEnvironment.Demo, "seed-1", "USDT", 1000m, At(0)));
+
+        var opened = await harness.Service.ApplyFillAsync(
+            new DemoFillAccountingRequest(
+                "user-futures-cross",
+                ExecutionEnvironment.Demo,
+                "futures-short-1",
+                "ETHUSDT",
+                "ETH",
+                "USDT",
+                DemoTradeSide.Sell,
+                1m,
+                1000m,
+                0m,
+                bot.Id,
+                "fut-ord-2",
+                "fut-fill-2",
+                "USDT",
+                1m,
+                FeeAmountInQuote: null,
+                MarkPrice: 1000m,
+                OccurredAtUtc: At(1),
+                PositionKind: DemoPositionKind.Futures,
+                MarginMode: DemoMarginMode.Cross,
+                Leverage: 5m,
+                MaintenanceMarginRate: 0.005m));
+
+        var repriced = await harness.Service.UpdateMarkPriceAsync(
+            new DemoMarkPriceUpdateRequest(
+                "user-futures-cross",
+                ExecutionEnvironment.Demo,
+                "futures-short-mark-1",
+                "ETHUSDT",
+                "ETH",
+                "USDT",
+                900m,
+                bot.Id,
+                At(2),
+                DemoPositionKind.Futures,
+                LastPrice: 910m));
+
+        var wallets = await harness.Context.DemoWallets.OrderBy(entity => entity.Asset).ToListAsync();
+        var position = await harness.Context.DemoPositions.SingleAsync(entity => entity.Symbol == "ETHUSDT");
+        var botEntity = await harness.Context.TradingBots.SingleAsync(entity => entity.Id == bot.Id);
+
+        Assert.Single(wallets);
+        Assert.Equal("USDT", wallets[0].Asset);
+        Assert.Equal(DemoPositionKind.Futures, opened.Position!.PositionKind);
+        Assert.Equal(DemoMarginMode.Cross, opened.Position.MarginMode);
+        Assert.Equal(-1m, opened.Position.Quantity);
+        Assert.Equal(999m, wallets[0].AvailableBalance);
+        Assert.Equal(0m, wallets[0].ReservedBalance);
+        Assert.InRange(opened.Position.LiquidationPrice!.Value, 1989.05m, 1989.06m);
+
+        Assert.Equal(-1m, repriced.Position!.Quantity);
+        Assert.Equal(910m, repriced.Position.LastPrice);
+        Assert.Equal(900m, repriced.Position.LastMarkPrice);
+        Assert.Equal(100m, repriced.Position.UnrealizedPnl);
+        Assert.Equal(1099m, repriced.Position.MarginBalance);
+        Assert.Equal(1, botEntity.OpenPositionCount);
+
+        Assert.Equal(-1m, position.Quantity);
+    }
+
     private static DateTime At(int minuteOffset)
     {
         return new DateTime(2026, 3, 22, 12, minuteOffset, 0, DateTimeKind.Utc);

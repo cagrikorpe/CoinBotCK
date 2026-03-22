@@ -1,3 +1,4 @@
+using System.Xml.Linq;
 using CoinBot.Application.Abstractions.DataScope;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
@@ -12,10 +13,19 @@ public sealed class ApplicationDbContextFactory : IDesignTimeDbContextFactory<Ap
         var basePath = ResolveConfigurationBasePath();
         var environmentName = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Development";
 
-        var configuration = new ConfigurationBuilder()
+        var configurationBuilder = new ConfigurationBuilder()
             .SetBasePath(basePath)
             .AddJsonFile("appsettings.json", optional: true)
-            .AddJsonFile($"appsettings.{environmentName}.json", optional: true)
+            .AddJsonFile($"appsettings.{environmentName}.json", optional: true);
+
+        var userSecretsPath = ResolveUserSecretsPath(basePath);
+
+        if (!string.IsNullOrWhiteSpace(userSecretsPath))
+        {
+            configurationBuilder.AddJsonFile(userSecretsPath, optional: true);
+        }
+
+        var configuration = configurationBuilder
             .AddEnvironmentVariables()
             .Build();
 
@@ -54,6 +64,45 @@ public sealed class ApplicationDbContextFactory : IDesignTimeDbContextFactory<Ap
         }
 
         return currentDirectory;
+    }
+
+    private static string? ResolveUserSecretsPath(string basePath)
+    {
+        var projectFilePath = Path.Combine(basePath, "CoinBot.Web.csproj");
+
+        if (!File.Exists(projectFilePath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var document = XDocument.Load(projectFilePath);
+
+            var userSecretsId = document.Root?
+                .Descendants()
+                .FirstOrDefault(element => string.Equals(element.Name.LocalName, "UserSecretsId", StringComparison.Ordinal))?
+                .Value
+                .Trim();
+
+            if (string.IsNullOrWhiteSpace(userSecretsId))
+            {
+                return null;
+            }
+
+            var applicationDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+
+            if (string.IsNullOrWhiteSpace(applicationDataPath))
+            {
+                return null;
+            }
+
+            return Path.Combine(applicationDataPath, "Microsoft", "UserSecrets", userSecretsId, "secrets.json");
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private sealed class DesignTimeDataScopeContext : IDataScopeContext

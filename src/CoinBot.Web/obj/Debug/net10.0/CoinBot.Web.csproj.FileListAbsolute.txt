@@ -973,4 +973,3 @@ D:\CkBot\Code\CoinBot\src\CoinBot.Web\bin\Debug\net10.0\Serilog.Sinks.Console.dl
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\bin\Debug\net10.0\Serilog.Sinks.Debug.dll
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\bin\Debug\net10.0\Serilog.Sinks.File.dll
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\odj2uvrx1q-{0}-x8o3sfkprr-x8o3sfkprr.gz
-D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\staticwebassets.upToDateCheck.txt
