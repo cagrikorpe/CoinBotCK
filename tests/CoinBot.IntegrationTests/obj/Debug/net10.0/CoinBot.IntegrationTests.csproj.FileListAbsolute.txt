@@ -205,3 +205,4 @@ D:\CkBot\Code\CoinBot\tests\CoinBot.IntegrationTests\bin\Debug\net10.0\runtimes\
 D:\CkBot\Code\CoinBot\tests\CoinBot.IntegrationTests\bin\Debug\net10.0\runtimes\win-x64\native\Microsoft.Data.SqlClient.SNI.dll
 D:\CkBot\Code\CoinBot\tests\CoinBot.IntegrationTests\bin\Debug\net10.0\runtimes\win-x86\native\Microsoft.Data.SqlClient.SNI.dll
 D:\CkBot\Code\CoinBot\tests\CoinBot.IntegrationTests\obj\Debug\net10.0\CoinBot.IntegrationTests.genruntimeconfig.cache
+D:\CkBot\Code\CoinBot\tests\CoinBot.IntegrationTests\bin\Debug\net10.0\Serilog.dll

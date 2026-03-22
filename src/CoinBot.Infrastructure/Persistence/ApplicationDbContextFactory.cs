@@ -1,3 +1,4 @@
+using CoinBot.Application.Abstractions.DataScope;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.Extensions.Configuration;
@@ -29,7 +30,7 @@ public sealed class ApplicationDbContextFactory : IDesignTimeDbContextFactory<Ap
         optionsBuilder.UseSqlServer(connectionString, sqlOptions =>
             sqlOptions.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName));
 
-        return new ApplicationDbContext(optionsBuilder.Options);
+        return new ApplicationDbContext(optionsBuilder.Options, new DesignTimeDataScopeContext());
     }
 
     private static string ResolveConfigurationBasePath()
@@ -53,5 +54,12 @@ public sealed class ApplicationDbContextFactory : IDesignTimeDbContextFactory<Ap
         }
 
         return currentDirectory;
+    }
+
+    private sealed class DesignTimeDataScopeContext : IDataScopeContext
+    {
+        public string? UserId => null;
+
+        public bool HasIsolationBypass => false;
     }
 }

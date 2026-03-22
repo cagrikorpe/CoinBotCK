@@ -1,13 +1,16 @@
 using System.Linq;
+using CoinBot.Contracts.Common;
 using CoinBot.Web.ViewModels.Admin;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace CoinBot.Web.Areas.Admin.Controllers;
 
 [Area("Admin")]
+[Authorize(Policy = ApplicationPolicies.AdminPortalAccess)]
 public sealed class AdminController : Controller
 {
-
+    [AllowAnonymous]
     public IActionResult Login()
     {
         ApplyAdminAccessMeta(
@@ -26,6 +29,7 @@ public sealed class AdminController : Controller
         return View();
     }
 
+    [AllowAnonymous]
     public IActionResult Mfa()
     {
         ApplyAdminAccessMeta(
@@ -44,6 +48,7 @@ public sealed class AdminController : Controller
         return View();
     }
 
+    [AllowAnonymous]
     public IActionResult AccessDenied()
     {
         ApplyShellMeta(
@@ -55,6 +60,7 @@ public sealed class AdminController : Controller
         return View();
     }
 
+    [AllowAnonymous]
     public IActionResult PermissionDenied()
     {
         ApplyShellMeta(
@@ -66,6 +72,7 @@ public sealed class AdminController : Controller
         return View();
     }
 
+    [AllowAnonymous]
     public IActionResult SessionExpired()
     {
         ApplyShellMeta(
@@ -77,6 +84,7 @@ public sealed class AdminController : Controller
         return View();
     }
 
+    [Authorize(Policy = ApplicationPolicies.IdentityAdministration)]
     public IActionResult RoleMatrix()
     {
         ApplyShellMeta(
@@ -99,6 +107,7 @@ public sealed class AdminController : Controller
         return View();
     }
 
+    [Authorize(Policy = ApplicationPolicies.IdentityAdministration)]
     public IActionResult Users()
     {
         ApplyShellMeta(
@@ -110,6 +119,7 @@ public sealed class AdminController : Controller
         return View();
     }
 
+    [Authorize(Policy = ApplicationPolicies.IdentityAdministration)]
     public IActionResult UserDetail(string? id)
     {
         ApplyShellMeta(
@@ -124,6 +134,7 @@ public sealed class AdminController : Controller
         return View();
     }
 
+    [Authorize(Policy = ApplicationPolicies.ExchangeManagement)]
     public IActionResult ExchangeAccounts()
     {
         ApplyShellMeta(
@@ -135,6 +146,7 @@ public sealed class AdminController : Controller
         return View();
     }
 
+    [Authorize(Policy = ApplicationPolicies.TradeOperations)]
     public IActionResult BotOperations()
     {
         ApplyShellMeta(
@@ -146,6 +158,7 @@ public sealed class AdminController : Controller
         return View();
     }
 
+    [Authorize(Policy = ApplicationPolicies.TradeOperations)]
     public IActionResult StrategyAiMonitoring()
     {
         ApplyShellMeta(
@@ -179,6 +192,7 @@ public sealed class AdminController : Controller
         return View("SystemHealth");
     }
 
+    [Authorize(Policy = ApplicationPolicies.AuditRead)]
     public IActionResult Audit()
     {
         ApplyShellMeta(
@@ -190,6 +204,7 @@ public sealed class AdminController : Controller
         return View();
     }
 
+    [Authorize(Policy = ApplicationPolicies.AuditRead)]
     public IActionResult SecurityEvents()
     {
         ApplyShellMeta(
@@ -201,6 +216,7 @@ public sealed class AdminController : Controller
         return View();
     }
 
+    [Authorize(Policy = ApplicationPolicies.AuditRead)]
     public IActionResult Notifications()
     {
         ApplyShellMeta(
@@ -223,6 +239,7 @@ public sealed class AdminController : Controller
         return View();
     }
 
+    [Authorize(Policy = ApplicationPolicies.PlatformAdministration)]
     public IActionResult Settings()
     {
         ApplyShellMeta(

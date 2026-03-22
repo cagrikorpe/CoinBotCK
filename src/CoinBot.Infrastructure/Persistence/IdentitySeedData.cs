@@ -24,15 +24,20 @@ public static class IdentitySeedData
 
         foreach (var roleName in ApplicationRoles.All)
         {
-            if (!await roleManager.RoleExistsAsync(roleName))
+            var role = await roleManager.FindByNameAsync(roleName);
+
+            if (role is null)
             {
-                var createRoleResult = await roleManager.CreateAsync(new IdentityRole(roleName));
+                role = new IdentityRole(roleName);
+                var createRoleResult = await roleManager.CreateAsync(role);
 
                 if (!createRoleResult.Succeeded)
                 {
                     throw new InvalidOperationException($"Failed to create role '{roleName}'.");
                 }
             }
+
+            await EnsureRoleClaimsAsync(roleManager, role, roleName);
         }
 
         var superAdminEmail = configuration["IdentitySeed:SuperAdminEmail"];
@@ -78,5 +83,29 @@ public static class IdentitySeedData
         }
 
         logger.LogInformation("Identity roles and initial super admin seed completed.");
+    }
+
+    private static async Task EnsureRoleClaimsAsync(RoleManager<IdentityRole> roleManager, IdentityRole role, string roleName)
+    {
+        var existingClaims = await roleManager.GetClaimsAsync(role);
+
+        foreach (var requiredClaim in ApplicationRoleClaims.GetClaims(roleName))
+        {
+            var claimAlreadyExists = existingClaims.Any(existingClaim =>
+                existingClaim.Type == requiredClaim.Type &&
+                existingClaim.Value == requiredClaim.Value);
+
+            if (claimAlreadyExists)
+            {
+                continue;
+            }
+
+            var addClaimResult = await roleManager.AddClaimAsync(role, requiredClaim);
+
+            if (!addClaimResult.Succeeded)
+            {
+                throw new InvalidOperationException($"Failed to assign claim '{requiredClaim.Value}' to role '{roleName}'.");
+            }
+        }
     }
 }

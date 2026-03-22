@@ -1,0 +1,22 @@
+@{
+    Layout = "_AuthLayout";
+}
+
+<div class="cb-auth-panel cb-auth-panel-compact">
+    <div class="cb-auth-panel-header">
+        <div>
+            <div class="cb-page-eyebrow">Authorization</div>
+            <h2 class="cb-page-title">Bu alana erişim izniniz yok</h2>
+            <p class="cb-page-description">Hesabınız doğrulanmış olsa bile gerekli rol veya permission claim olmadan kritik admin ve trade yüzeyleri açılmaz.</p>
+        </div>
+        <a asp-controller="Home" asp-action="Index" class="btn btn-light-primary font-weight-bold">Ana sayfaya dön</a>
+    </div>
+
+    <div class="cb-auth-alert cb-auth-alert-warning">
+        Erişim kararı fail-closed uygulanır. Gerekli yetki ataması tamamlanmadan bu ekran dışında işlem açılmaz.
+    </div>
+
+    <div class="cb-validation-summary cb-validation-summary-warning mt-6">
+        Gerekliyse yöneticinizden ilgili rol veya permission claim atamasını isteyin.
+    </div>
+</div>

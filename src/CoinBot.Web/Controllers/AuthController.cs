@@ -1,11 +1,13 @@
 using CoinBot.Contracts.Common;
 using CoinBot.Infrastructure.Identity;
 using CoinBot.Web.ViewModels.Auth;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 
 namespace CoinBot.Web.Controllers;
 
+[AllowAnonymous]
 public class AuthController : Controller
 {
     private readonly UserManager<ApplicationUser> userManager;
@@ -124,6 +126,8 @@ public class AuthController : Controller
 
         if (!addRoleResult.Succeeded)
         {
+            await userManager.DeleteAsync(user);
+
             foreach (var error in addRoleResult.Errors)
             {
                 ModelState.AddModelError(string.Empty, error.Description);
@@ -134,6 +138,30 @@ public class AuthController : Controller
 
         TempData["AuthSuccess"] = "Kayıt tamamlandı. Giriş yapabilirsiniz.";
         return RedirectToAction(nameof(Login));
+    }
+
+    [HttpGet]
+    public IActionResult AccessDenied()
+    {
+        if (!(User.Identity?.IsAuthenticated ?? false))
+        {
+            return RedirectToAction(nameof(Login));
+        }
+
+        ViewData["Title"] = "Access Denied";
+        ViewData["AuthTitle"] = "Yetki gerekli";
+        ViewData["AuthDescription"] = "Bu yüzey için hesabınızda gerekli rol veya permission claim bulunmuyor.";
+        ViewData["AuthEyebrow"] = "Authorization";
+        ViewData["AuthStage"] = "Access Denied";
+        ViewData["AuthProgress"] = "Policy";
+        ViewData["AuthHighlights"] = new[]
+        {
+            "Kritik admin ve trade alanları fail-closed çalışır",
+            "Rol ve permission claim eksikse erişim açılmaz",
+            "Gerekirse yöneticinizden ek erişim isteyin"
+        };
+
+        return View();
     }
 
     [HttpGet]

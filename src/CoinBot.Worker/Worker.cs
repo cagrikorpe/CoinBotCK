@@ -1,16 +1,50 @@
+using CoinBot.Infrastructure.Jobs;
+using Microsoft.Extensions.Options;
+
 namespace CoinBot.Worker;
 
-public class Worker(ILogger<Worker> logger) : BackgroundService
+public sealed class Worker(
+    IServiceScopeFactory serviceScopeFactory,
+    IOptions<JobOrchestrationOptions> options,
+    ILogger<Worker> logger) : BackgroundService
 {
+    private readonly JobOrchestrationOptions optionsValue = options.Value;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (!optionsValue.Enabled)
+        {
+            logger.LogInformation("Job scheduler worker is disabled by configuration.");
+            return;
+        }
+
         while (!stoppingToken.IsCancellationRequested)
         {
-            if (logger.IsEnabled(LogLevel.Information))
+            try
             {
-                logger.LogInformation("Worker running at: {time}", DateTimeOffset.Now);
+                using var scope = serviceScopeFactory.CreateScope();
+                var scheduler = scope.ServiceProvider.GetRequiredService<BotJobSchedulerService>();
+                var triggeredCount = await scheduler.RunDueJobsAsync(stoppingToken);
+
+                logger.LogInformation(
+                    "Job scheduler cycle completed. TriggeredJobs={TriggeredJobs}.",
+                    triggeredCount);
+
+                await Task.Delay(TimeSpan.FromSeconds(optionsValue.SchedulerPollIntervalSeconds), stoppingToken);
             }
-            await Task.Delay(1000, stoppingToken);
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(
+                    exception,
+                    "Job scheduler cycle failed. Backing off for {InitialRetryDelaySeconds} seconds.",
+                    optionsValue.InitialRetryDelaySeconds);
+
+                await Task.Delay(TimeSpan.FromSeconds(optionsValue.InitialRetryDelaySeconds), stoppingToken);
+            }
         }
     }
 }
