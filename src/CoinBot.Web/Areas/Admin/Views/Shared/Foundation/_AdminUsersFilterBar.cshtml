@@ -1,0 +1,76 @@
+<div class="cb-filter-bar cb-admin-filter-bar cb-admin-user-filter-bar">
+    <div class="cb-filter-field cb-admin-user-search-field">
+        <label class="cb-form-label">Arama</label>
+        <input class="form-control cb-form-control" placeholder="Kullanıcı adı, email veya external id" />
+    </div>
+    <div class="cb-filter-field">
+        <label class="cb-form-label">Durum</label>
+        <select class="form-control cb-form-control">
+            <option>Tüm durumlar</option>
+            <option>Aktif</option>
+            <option>Pasif</option>
+            <option>Kilitli</option>
+            <option>Doğrulama bekliyor</option>
+        </select>
+    </div>
+    <div class="cb-filter-field">
+        <label class="cb-form-label">MFA</label>
+        <select class="form-control cb-form-control">
+            <option>Tüm MFA durumları</option>
+            <option>Açık</option>
+            <option>Kapalı</option>
+            <option>Bilinmiyor</option>
+        </select>
+    </div>
+    <div class="cb-filter-field">
+        <label class="cb-form-label">Plan / Paket</label>
+        <select class="form-control cb-form-control">
+            <option>Tüm planlar</option>
+            <option>Starter</option>
+            <option>Pro</option>
+            <option>Enterprise</option>
+        </select>
+    </div>
+    <div class="cb-filter-field">
+        <label class="cb-form-label">Son giriş</label>
+        <select class="form-control cb-form-control">
+            <option>Tüm aralıklar</option>
+            <option>Son 24 saat</option>
+            <option>Son 7 gün</option>
+            <option>Stale</option>
+        </select>
+    </div>
+    <div class="cb-filter-field">
+        <label class="cb-form-label">Bot bağlantısı</label>
+        <select class="form-control cb-form-control">
+            <option>Tümü</option>
+            <option>Botu var</option>
+            <option>Botu yok</option>
+        </select>
+    </div>
+    <div class="cb-filter-field">
+        <label class="cb-form-label">Exchange</label>
+        <select class="form-control cb-form-control">
+            <option>Tümü</option>
+            <option>Bağlı</option>
+            <option>Bağlı değil</option>
+        </select>
+    </div>
+    <div class="cb-filter-field cb-filter-actions cb-admin-user-filter-actions">
+        <button type="button" class="btn btn-light-primary font-weight-bold">Temizle</button>
+        <button type="button" class="btn btn-primary font-weight-bolder">Filtreyi uygula</button>
+    </div>
+</div>
+
+<div class="cb-admin-filter-summary mt-5">
+    <div class="cb-admin-filter-summary-copy">
+        <strong>Toplam sonuç placeholder:</strong> 128 kullanıcı
+        <span>Aktif filtreler kullanıcı operasyon görünümünü daraltır; gerçek backend filtering bu fazda bağlı değildir.</span>
+    </div>
+    <div class="cb-admin-filter-chip-list">
+        <span class="cb-admin-filter-chip">Durum: Aktif</span>
+        <span class="cb-admin-filter-chip">MFA: Açık</span>
+        <span class="cb-admin-filter-chip">Exchange: Bağlı</span>
+        <span class="cb-admin-filter-chip">Son giriş: 7 gün</span>
+    </div>
+</div>

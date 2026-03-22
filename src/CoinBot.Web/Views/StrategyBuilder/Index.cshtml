@@ -1,0 +1,63 @@
+@{
+    ViewData["Title"] = "Strategy Builder";
+    ViewData["ActiveNav"] = "StrategyBuilder";
+    ViewData["PageDescription"] = "Template seçimi, görsel kural blokları ve exit/risk kurallarını aynı builder yüzeyinde toplayan strategy foundation ekranı.";
+    ViewData["BreadcrumbItems"] = new[] { "Trade Lab", "Strategy Builder" };
+}
+
+@section Scripts {
+    <script src="~/js/strategy-builder-foundation.js" asp-append-version="true"></script>
+}
+
+<div class="row" data-cb-strategy-builder data-cb-strategy-scenario="blank" data-cb-market-mode="spot">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card">
+            <div class="card-body">
+                <div class="cb-page-header">
+                    <div>
+                        <div class="cb-page-eyebrow">Strategy Builder</div>
+                        <h2 class="cb-page-title">Görsel strateji kurucu</h2>
+                        <p class="cb-page-description">Hazır template’lerden başlayıp entry, exit ve risk mantığını görsel bloklarla düzenlemek için foundation yüzeyi.</p>
+                    </div>
+                    <div class="cb-toolbar">
+                        <span class="cb-badge cb-badge-info">UI-only foundation</span>
+                        <button type="button" class="btn btn-light-primary font-weight-bolder" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Stratejiyi kopyala" data-cb-modal-message="Strateji kopyalama akışı bu fazda placeholder olarak tutulur. Sonraki fazda gerçek save/load akışına bağlanacaktır." data-cb-modal-confirm="Kopya oluştur">Stratejiyi Kopyala</button>
+                        <button type="button" class="btn btn-primary font-weight-bolder" data-cb-strategy-action="new">Yeni Strateji</button>
+                    </div>
+                </div>
+
+                @await Html.PartialAsync("StrategyBuilder/_SummaryStrip")
+
+                <div class="cb-section mt-6">
+                    <div class="cb-section-title">Builder Senaryoları</div>
+                    <p class="cb-page-description mt-2 mb-0">Boş başlangıç, template seçimi, futures modu, riskli ayar ve eksik strateji yüzeylerini aynı ekranda kontrol edin.</p>
+                    <div class="cb-chip-group mt-4" data-cb-toggle-group>
+                        <button type="button" class="cb-chip is-active" data-cb-toggle-active data-cb-strategy-scenario-trigger="blank">Sıfırdan başla</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-strategy-scenario-trigger="template">Template seçildi</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-strategy-scenario-trigger="futures">Futures + long/short</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-strategy-scenario-trigger="risky">Riskli ayar</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-strategy-scenario-trigger="incomplete">Eksik strateji</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-strategy-scenario-trigger="loading">Builder yükleniyor</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-strategy-scenario-trigger="error">Builder hatası</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-8">
+        @await Html.PartialAsync("StrategyBuilder/_TemplateGallery")
+        @await Html.PartialAsync("StrategyBuilder/_RuleBuilderCanvas")
+        @await Html.PartialAsync("StrategyBuilder/_EntryRulesSection")
+    </div>
+
+    <div class="col-xl-4">
+        @await Html.PartialAsync("StrategyBuilder/_ToolboxCard")
+        @await Html.PartialAsync("StrategyBuilder/_ExitRulesSection")
+        @await Html.PartialAsync("StrategyBuilder/_RiskRulesSection")
+        @await Html.PartialAsync("StrategyBuilder/_PreviewCard")
+        @await Html.PartialAsync("StrategyBuilder/_StatePatternsCard")
+    </div>
+</div>
+
+@await Html.PartialAsync("StrategyBuilder/_TemplateDetailDrawer")

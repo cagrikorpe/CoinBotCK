@@ -1,0 +1,17 @@
+<div class="card card-custom gutter-b cb-card">
+    <div class="card-body">
+        <div class="cb-page-header cb-page-header-compact">
+            <div>
+                <div class="cb-page-eyebrow">Detailed Activity Trace</div>
+                <h3 class="cb-page-title">Davranış izleme durumu</h3>
+                <p class="cb-page-description">Kullanıcının ekran, form ve aksiyon düzeyindeki izleri gerektiğinde daha ayrıntılı görünür olur; hassas bilgiler yine maskelenir.</p>
+            </div>
+            <span class="cb-badge cb-badge-success" id="cb_log_trace_status_side">Açık</span>
+        </div>
+        <div class="cb-notice cb-notice-info mt-5" id="cb_log_trace_notice">Detaylı davranış izleme açıkken onboarding, strategy builder, risk merkezi ve AI detay ekranı gibi yüzeylerde yapılan aksiyonların daha görünür özetleri log merkezinde izlenebilir.</div>
+        <div class="cb-inline-stack mt-5">
+            <a asp-controller="Settings" asp-action="Index" class="btn btn-light-primary font-weight-bold">Ayarlar'da yönet</a>
+            <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Privacy note" data-cb-modal-message="API secret, token, cookie ve hassas kimlik alanları bu foundation içinde dahi loga yazılmaz. Trace yalnızca ürün davranışının özetini görünür kılar." data-cb-modal-confirm="Anladım">Privacy notu</button>
+        </div>
+    </div>
+</div>

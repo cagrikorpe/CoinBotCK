@@ -1,0 +1,79 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Security Filters</div>
+                <div class="cb-admin-section-title">Güvenlik filtre toolbar</div>
+                <p class="cb-admin-section-description mb-0">Event tipi, severity, kullanıcı, modül, zaman aralığı ve text search alanlarını triage odaklı tek satırda toplar.</p>
+            </div>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-light-primary font-weight-bold">Audit merkezi</a>
+        </div>
+
+        <div class="cb-filter-bar cb-admin-filter-bar cb-admin-security-filter-bar mt-6">
+            <div class="cb-filter-field">
+                <label class="cb-form-label">Text search</label>
+                <input class="form-control cb-form-control" placeholder="event, device, ip mask, actor" />
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label">Event tipi</label>
+                <select class="form-control cb-form-control">
+                    <option>Tüm event tipleri</option>
+                    <option>Failed login</option>
+                    <option>Invalid MFA</option>
+                    <option>Suspicious session</option>
+                    <option>Risky exchange permission</option>
+                    <option>Admin critical action</option>
+                </select>
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label">Severity</label>
+                <select class="form-control cb-form-control">
+                    <option>Tüm seviyeler</option>
+                    <option>Critical</option>
+                    <option>High</option>
+                    <option>Medium</option>
+                    <option>Low</option>
+                </select>
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label">Kullanıcı</label>
+                <input class="form-control cb-form-control" placeholder="usr-014 / masked actor" />
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label">Modül</label>
+                <select class="form-control cb-form-control">
+                    <option>Tüm modüller</option>
+                    <option>Admin Auth</option>
+                    <option>Exchange</option>
+                    <option>Settings</option>
+                    <option>Runtime</option>
+                </select>
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label">Zaman aralığı</label>
+                <select class="form-control cb-form-control">
+                    <option>Son 24 saat</option>
+                    <option>Son 7 gün</option>
+                    <option>Custom placeholder</option>
+                </select>
+            </div>
+            <div class="cb-filter-field cb-filter-actions cb-admin-user-filter-actions">
+                <button type="button" class="btn btn-light-primary font-weight-bold">Temizle</button>
+                <button type="button" class="btn btn-primary font-weight-bolder">Uygula</button>
+            </div>
+        </div>
+
+        <div class="cb-admin-filter-summary mt-5">
+            <div class="cb-admin-filter-summary-copy">
+                <strong>Aktif filtre özeti</strong>
+                <span>Critical + Invalid MFA + Son 24 saat + Admin Auth</span>
+            </div>
+            <div class="cb-admin-filter-chip-list">
+                <span class="cb-admin-filter-chip">Critical</span>
+                <span class="cb-admin-filter-chip">Invalid MFA</span>
+                <span class="cb-admin-filter-chip">24 saat</span>
+                <span class="cb-admin-filter-chip">Admin Auth</span>
+            </div>
+        </div>
+    </div>
+</div>

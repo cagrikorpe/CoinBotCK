@@ -1,0 +1,32 @@
+<div class="card card-custom gutter-b cb-card cb-settings-section" id="cb_settings_sessions" data-cb-settings-page-panel="content">
+    <div class="card-body">
+        <div class="cb-page-header cb-page-header-compact">
+            <div>
+                <div class="cb-page-eyebrow">Oturumlar / Cihazlar</div>
+                <h3 class="cb-page-title">Session ve device placeholder alanı</h3>
+                <p class="cb-page-description">Gerçek revoke mantığı olmadan, güvenlik ekranına yakışan sade cihaz ve oturum görünümü için foundation bırakır.</p>
+            </div>
+            <button type="button" class="btn btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_danger_modal" data-cb-modal-title="Diğer oturumları sonlandır" data-cb-modal-message="Gerçek session revoke mantığı bu fazda bağlı değildir. Bu danger CTA yalnızca güvenlik doğrulama zemini sağlar." data-cb-modal-confirm="Sonlandır" data-cb-modal-tone="danger">Diğer oturumları sonlandır</button>
+        </div>
+
+        <div class="cb-settings-session-list mt-5">
+            <div class="cb-settings-session-item">
+                <div>
+                    <div class="cb-settings-session-title">Bu cihaz · Web / Desktop placeholder</div>
+                    <div class="cb-settings-session-meta">Son aktif: az önce · Güvenli oturum</div>
+                </div>
+                <span class="cb-badge cb-badge-success">Aktif</span>
+            </div>
+            <div class="cb-settings-session-item">
+                <div>
+                    <div class="cb-settings-session-title">İkincil cihaz · Mobile placeholder</div>
+                    <div class="cb-settings-session-meta">Son aktif: bugün 08:14 · Minimal device placeholder</div>
+                </div>
+                <div class="cb-inline-stack">
+                    <span class="cb-badge cb-badge-neutral">Diğer cihaz</span>
+                    <button type="button" class="btn btn-light-primary btn-sm font-weight-bold" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Oturumu sonlandır" data-cb-modal-message="Bu aksiyon gerçek revoke yapmaz; yalnızca session/device yönetimi için foundation confirm akışı bırakır." data-cb-modal-confirm="Sonlandır">Sonlandır</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

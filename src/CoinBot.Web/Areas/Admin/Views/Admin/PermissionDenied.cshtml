@@ -1,0 +1,66 @@
+@{
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Scoped Permission",
+        Title = "Insufficient Permission",
+        Description = "Rol var; ancak bu aksiyon için kapsam yetersiz. Ekran sert ama yardımcı olacak şekilde tasarlandı.",
+        StatusBadge = new AdminBadgeViewModel { Label = "Limited Scope", Tone = "warning", IconText = "SC" },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = "Support", Tone = "neutral", IconText = "SP" },
+            new AdminBadgeViewModel { Label = "Action Guard", Tone = "warning", IconText = "GD" }
+        },
+        PrimaryActionText = "Role matrix",
+        PrimaryActionHref = Url.Action("RoleMatrix", "Admin", new { area = "Admin" }),
+        SecondaryActionText = "Dashboard'a dön",
+        SecondaryActionHref = Url.Action("Overview", "Admin", new { area = "Admin" })
+    };
+}
+
+<div class="row">
+    <div class="col-xl-8">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = "warning",
+                    Title = "Yetki var, kapsam yetersizliği standardize edilir",
+                    Message = "Bazı roller veriyi görüntüleyebilir ama destructive veya global etkili işlemleri yapamaz. Bu ayrım role matrix foundation’ı ile görünür kılındı.",
+                    Meta = "Scoped access"
+                })
+
+                <div class="mt-6">
+                    @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+                    {
+                        Title = "Bu işlem için rol kapsamın yetersiz",
+                        Message = "Aksiyonun tamamı yerine daha güvenli alternatifler veya read-only yüzeyler önerilir. Gerçek permission backend’i eklendiğinde bu ekran policy sonucu ile beslenir.",
+                        IconText = "?",
+                        ActionText = "Audit merkezi",
+                        ActionHref = Url.Action("Audit", "Admin", new { area = "Admin" }),
+                        SecondaryActionText = "Yeniden doğrula",
+                        SecondaryActionHref = "#cb_admin_reauth_modal"
+                    })
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminSecurityHelpCard", new AdminSecurityHelpCardViewModel
+        {
+            Eyebrow = "Permission hints",
+            Title = "Role matrix ne işe yarar",
+            Description = "Rolün kabaca hangi yüzeyleri görüp hangi yüzeyleri yönetebileceğini sade bir tabloda gösterir.",
+            BadgeLabel = "RBAC",
+            BadgeTone = "role",
+            Items = new[]
+            {
+                "Var / yok / sınırlı sinyalleri aynı dilde gösterilir",
+                "Kritik yüzeyler için ek doğrulama ihtiyacı vurgulanır",
+                "Genişletilebilir backend entegrasyonu için sade zemin bırakılır"
+            }
+        })
+    </div>
+</div>

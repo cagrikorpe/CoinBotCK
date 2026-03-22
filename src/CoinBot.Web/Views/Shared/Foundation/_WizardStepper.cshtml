@@ -1,0 +1,15 @@
+@model IReadOnlyList<CoinBot.Web.ViewModels.Foundation.UiWizardStepViewModel>
+
+<div class="cb-auth-stepper" data-cb-stepper>
+    @foreach (var step in Model)
+    {
+        var stateClass = step.IsCurrent ? "is-current" : step.IsCompleted ? "is-complete" : string.Empty;
+        <div class="cb-auth-step @stateClass" data-cb-step="@step.Number">
+            <div class="cb-auth-step-badge">@step.Number</div>
+            <div class="cb-auth-step-content">
+                <div class="cb-auth-step-title">@step.Title</div>
+                <div class="cb-auth-step-caption">@step.Caption</div>
+            </div>
+        </div>
+    }
+</div>

@@ -1,0 +1,41 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Retention / Export</div>
+                <div class="cb-admin-section-title">Retention meta ve arşiv bilgisi</div>
+            </div>
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "30 gün", Tone = "warning", IconText = "RT" })
+        </div>
+
+        <div class="cb-admin-profile-list mt-5">
+            <div class="cb-admin-profile-row">
+                <span>Retention süresi</span>
+                <strong>30 gün placeholder</strong>
+            </div>
+            <div class="cb-admin-profile-row">
+                <span>Archive / export</span>
+                <strong>UI-only placeholder</strong>
+            </div>
+            <div class="cb-admin-profile-row">
+                <span>Masking kuralı</span>
+                <strong>Secrets/PII asla gösterilmez</strong>
+            </div>
+        </div>
+
+        <div class="mt-6">
+            @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+            {
+                Tone = "info",
+                Title = "Retention bilgi kartı",
+                Message = "Gerçek retention enforcement, archive lifecycle veya export pipeline bu fazda yoktur. Ekran; operatöre retention sınırı ve güvenli export beklentisini anlatır.",
+                Meta = "Archive later"
+            })
+        </div>
+
+        <div class="mt-6 cb-admin-inline-actions cb-admin-inline-actions-compact">
+            <button type="button" class="btn btn-primary font-weight-bolder" data-toggle="modal" data-target="#cb_admin_log_export_modal">Export placeholder</button>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="Settings" class="btn btn-light-primary font-weight-bold">Retention ayarları</a>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,29 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Risk Summary</div>
+                <div class="cb-admin-section-title">Risk ayarı özeti</div>
+            </div>
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Risk dikkat", Tone = "warning", IconText = "RK" })
+        </div>
+        <div class="cb-admin-summary-grid mt-5 cb-admin-user-summary-grid">
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Risk profili</span>
+                <strong>Balanced placeholder</strong>
+                <small>Admin quick review</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Trade limit</span>
+                <strong>Scoped limit</strong>
+                <small>Gerçek backend değeri yok</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Son değişiklik</span>
+                <strong>3 gün önce</strong>
+                <small>Koruma seviyesi normal</small>
+            </div>
+        </div>
+        <a asp-area="Admin" asp-controller="Admin" asp-action="Settings" class="btn btn-light-primary font-weight-bold mt-5">Risk ayarlarına git</a>
+    </div>
+</div>

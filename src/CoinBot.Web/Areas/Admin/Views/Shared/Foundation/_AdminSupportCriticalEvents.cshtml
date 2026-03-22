@@ -1,0 +1,35 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card">
+    <div class="card-body">
+        <div class="cb-admin-section-kicker">Recent Critical Events</div>
+        <div class="cb-admin-section-title">Son kritik olaylar</div>
+
+        <div class="cb-admin-activity-list mt-5">
+            <div class="cb-admin-incident-item">
+                <div>
+                    <strong>Risky exchange permission</strong>
+                    <div class="cb-admin-user-meta">Security · 09:42 · Exchange Accounts</div>
+                </div>
+                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Critical", Tone = "critical", IconText = "SV" })
+            </div>
+            <div class="cb-admin-incident-item">
+                <div>
+                    <strong>Invalid MFA yoğunluğu</strong>
+                    <div class="cb-admin-user-meta">Auth · 09:31 · Security Events</div>
+                </div>
+                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Warning", Tone = "warning", IconText = "SV" })
+            </div>
+            <div class="cb-admin-incident-item">
+                <div>
+                    <strong>Worker stale threshold</strong>
+                    <div class="cb-admin-user-meta">Runtime · 09:15 · System Health</div>
+                </div>
+                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Info", Tone = "info", IconText = "SV" })
+            </div>
+        </div>
+
+        <div class="cb-admin-inline-actions mt-5">
+            <a asp-area="Admin" asp-controller="Admin" asp-action="SecurityEvents" class="btn btn-light-primary font-weight-bold">Security olaylarına git</a>
+            <button type="button" class="btn btn-clean text-muted font-weight-bold" data-cb-drawer-target="#cb_admin_log_drawer">Log detayı</button>
+        </div>
+    </div>
+</div>

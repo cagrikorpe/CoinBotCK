@@ -1,0 +1,43 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-dashboard-card cb-admin-panel-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Policy CTA</div>
+                <div class="cb-admin-section-title">Notification policy placeholder</div>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Read / Unread", Tone = "info", IconText = "NP" })
+        </div>
+
+        <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-6">
+            <div>
+                <div class="cb-admin-info-strip-title">Bildirim policy ekranı sonraki faza hazır</div>
+                <div class="cb-admin-info-strip-text">Alarm routing, escalation, rule ve channel tercihleri gerçek backend olmadan yalnızca CTA foundation olarak ayrıldı.</div>
+            </div>
+            <span class="cb-admin-info-strip-meta">Policy</span>
+        </div>
+
+        <div class="cb-admin-quick-actions-list mt-6">
+            <button type="button" class="cb-admin-action-item border-0 text-left" data-toggle="modal" data-target="#cb_admin_alert_policy_modal">
+                <div>
+                    <strong>Notification policy ekranına git</strong>
+                    <small>Rule/source, severity ve escalation ayarları için placeholder CTA</small>
+                </div>
+                <span>→</span>
+            </button>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="SecurityEvents" class="cb-admin-action-item">
+                <div>
+                    <strong>Security alarmlarını aç</strong>
+                    <small>Şüpheli ve yüksek riskli olaylarla karşılaştır</small>
+                </div>
+                <span>→</span>
+            </a>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="SystemHealth" class="cb-admin-action-item">
+                <div>
+                    <strong>Worker / system health</strong>
+                    <small>Worker alarm ve incident kaynaklarını doğrula</small>
+                </div>
+                <span>→</span>
+            </a>
+        </div>
+    </div>
+</div>

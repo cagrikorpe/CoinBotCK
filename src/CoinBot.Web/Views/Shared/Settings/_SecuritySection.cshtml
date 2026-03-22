@@ -1,0 +1,60 @@
+<div class="card card-custom gutter-b cb-card cb-settings-section" id="cb_settings_security" data-cb-settings-page-panel="content">
+    <div class="card-body">
+        <div class="cb-page-header cb-page-header-compact">
+            <div>
+                <div class="cb-page-eyebrow">Güvenlik</div>
+                <h3 class="cb-page-title">Security / 2FA yüzeyi</h3>
+                <p class="cb-page-description">2FA durumu, MFA yöntemi, şifre alanı ve kritik güvenlik notlarını tek bölümde görünür kılar.</p>
+            </div>
+            <span class="cb-badge cb-badge-success" id="cb_settings_2fa_badge">2FA aktif</span>
+        </div>
+
+        <div class="cb-settings-security-grid mt-5">
+            <div class="cb-section">
+                <div class="cb-section-title">2FA durumu</div>
+                <div class="cb-inline-stack mt-4">
+                    <span class="cb-badge cb-badge-success" id="cb_settings_2fa_state">Aktif</span>
+                    <span class="cb-badge cb-badge-info" id="cb_settings_2fa_method">Authenticator</span>
+                </div>
+                <p class="text-muted mt-4 mb-0">Gerçek 2FA enable/disable backend bu fazda yok; ancak kullanıcı güvenlik seviyesini tek bakışta okuyabilir.</p>
+                <div class="cb-inline-stack mt-5">
+                    <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="2FA yönet" data-cb-modal-message="2FA yönetimi sonraki backend fazında gerçek akışa bağlanacaktır. Bu CTA güvenlik yüzeyini görünür kılmak için hazırlanmıştır." data-cb-modal-confirm="Anladım">2FA yönet</button>
+                    <button type="button" class="btn btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_danger_modal" data-cb-modal-title="2FA'yı kapat" data-cb-modal-message="Gerçek backend yok; bu danger CTA yalnızca security confirmation foundation içindir." data-cb-modal-confirm="Kapat" data-cb-modal-tone="danger">2FA kapat</button>
+                </div>
+            </div>
+            <div class="cb-section">
+                <div class="cb-section-title">Şifre ve güvenlik ipuçları</div>
+                <div class="form-group mt-4 mb-0">
+                    <label class="cb-form-label">Şifre değiştir placeholder</label>
+                    <input type="password" class="form-control cb-form-control" value="placeholder" readonly />
+                </div>
+                <div class="cb-notice cb-notice-warning mt-5" id="cb_settings_security_notice">Authenticator yöntemi önerilir. Email fallback yalnızca geçici güvenlik katmanı olarak düşünülmelidir.</div>
+            </div>
+        </div>
+
+        <div class="cb-section mt-6 cb-settings-trace-box">
+            <div class="cb-page-header cb-page-header-compact">
+                <div>
+                    <div class="cb-page-eyebrow">Detaylı Davranış İzleme</div>
+                    <h4 class="cb-page-title mb-0">Detailed Activity Trace</h4>
+                    <p class="cb-page-description mb-0">Kullanıcı davranışları daha ayrıntılı olay özetleriyle görünür olur; sorun analizi ve denetim için yardımcıdır. Hassas bilgiler yine kaydedilmez.</p>
+                </div>
+                <span class="cb-badge cb-badge-neutral" id="cb_settings_trace_badge">Kapalı</span>
+            </div>
+
+            <div class="cb-settings-trace-toggle mt-5">
+                <label class="cb-switch-card">
+                    <input type="checkbox" id="cb_settings_trace_toggle" />
+                    <span class="cb-switch-card-indicator"></span>
+                    <span>Detaylı davranış izlemeyi aç</span>
+                </label>
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Trace ayarı" data-cb-modal-message="Detaylı davranış izleme sorun analizi ve denetim için yardımcı olur. Secret/token/API secret gibi alanlar yine kaydedilmez." data-cb-modal-confirm="Anladım">Bilgi</button>
+                <a asp-controller="LogCenter" asp-action="Index" class="btn btn-light-primary font-weight-bold">Log Merkezi'ne git</a>
+            </div>
+
+            <div class="cb-notice cb-notice-info mt-5 d-none" id="cb_settings_trace_notice">Detaylı davranış izleme aktif. Olay bazlı görünürlük artar; hassas bilgiler maskelenir ve Log Merkezi'nden takip edilebilir.</div>
+            <div class="cb-helper-text mt-3">Log hacmi artabilir. Yalnızca sorun analizi veya denetim ihtiyacı olduğunda açılması önerilir.</div>
+        </div>
+
+    </div>
+</div>

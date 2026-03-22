@@ -1,0 +1,30 @@
+<section id="cb_admin_settings_maintenance" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+    <div class="card-body">
+        <div class="cb-admin-section-kicker">Maintenance</div>
+        <div class="cb-admin-section-title">Maintenance mode placeholder</div>
+        <p class="cb-admin-section-description">Platform maintenance modu gerçek enforcement olmadan yalnızca güvenli confirm ve danger strip zeminiyle gösterilir.</p>
+
+        <div class="cb-admin-maintenance-card mt-6">
+            <div class="cb-admin-maintenance-head">
+                <div>
+                    <div class="cb-admin-section-title">Durum: Pasif placeholder</div>
+                    <p class="cb-admin-section-description mb-0">Aktif hale gelirse onboarding, trading ve support yüzeyleri kontrollü bakım moduna girecek şekilde düşünülmüştür.</p>
+                </div>
+                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Inactive", Tone = "neutral", IconText = "MT" })
+            </div>
+
+            <div class="cb-admin-info-strip cb-admin-info-strip-danger mt-5">
+                <div>
+                    <div class="cb-admin-info-strip-title">Danger strip</div>
+                    <div class="cb-admin-info-strip-text">Maintenance mode geniş etki alanına sahip olduğu için kritik confirm, audit reason ve gerekirse re-auth beklentisi ile ele alınır.</div>
+                </div>
+                <span class="cb-admin-info-strip-meta">Platform-wide</span>
+            </div>
+
+            <div class="cb-admin-inline-actions mt-5">
+                <button type="button" class="btn btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_admin_critical_confirm_modal" data-cb-modal-title="Maintenance mode aç" data-cb-modal-message="Bu aksiyon platform davranışını etkileyebilir; gerçek maintenance backend’i yoktur." data-cb-modal-confirm="Aktifleştir" data-cb-modal-tone="danger">Aktifleştir placeholder</button>
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_confirm_modal" data-cb-modal-title="Maintenance mode kapat" data-cb-modal-message="Placeholder akış; sistem normale döner varsayımıyla yalnızca confirm dili gösterilir." data-cb-modal-confirm="Kapat">Pasifleştir placeholder</button>
+            </div>
+        </div>
+    </div>
+</section>

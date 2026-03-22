@@ -1,0 +1,55 @@
+@{
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Connection Monitoring",
+        Title = "Exchange Hesapları",
+        Description = "Platform genelindeki exchange bağlantılarını sağlık, permission, freshness ve risk bayraklarıyla tek yüzeyde izleyen Super Admin monitoring foundation ekranı.",
+        StatusBadge = new AdminBadgeViewModel { Label = "Exchange Ops", Tone = "info", IconText = "EX" },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = "Paper / Live", Tone = "neutral", IconText = "PL" },
+            new AdminBadgeViewModel { Label = "Permission Aware", Tone = "warning", IconText = "PM" },
+            new AdminBadgeViewModel { Label = "No Secret View", Tone = "healthy", IconText = "SK" }
+        },
+        SecondaryActionText = "Kullanıcılara git",
+        SecondaryActionHref = Url.Action("Users", "Admin", new { area = "Admin" }),
+        PrimaryActionText = "Risk uyarı rehberi",
+        PrimaryActionHref = "#cb_admin_exchange_risk_modal"
+    };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = "warning",
+                    Title = "Exchange monitoring foundation",
+                    Message = "Gerçek Binance permission check, sync pipeline ve retry/reconnect mantığı bu fazda bağlı değildir. Ekran, stale bağlantı, permission mismatch ve withdrawal risk akışlarını UI seviyesinde hazırlar.",
+                    Meta = "UI-only monitoring"
+                })
+
+                <div class="mt-6">
+                    @await Html.PartialAsync("Foundation/_AdminExchangeSummaryMeta")
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-8">
+        @await Html.PartialAsync("Foundation/_AdminExchangeFilterBar")
+        @await Html.PartialAsync("Foundation/_AdminExchangeAccountsTable")
+    </div>
+
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminExchangeRiskStrip")
+        @await Html.PartialAsync("Foundation/_AdminExchangeHelpCard")
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("Foundation/_AdminExchangeStatesShowcase")
+    </div>
+</div>

@@ -1,0 +1,38 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-panel-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Explainability Sample</div>
+                <div class="cb-admin-section-title">Örnek recommendation açıklaması</div>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Explainable", Tone = "info", IconText = "XP" })
+        </div>
+
+        <div class="cb-admin-profile-list mt-6">
+            <div class="cb-admin-profile-row"><span>Recommendation summary</span><strong>BTCUSDT · Long watch / assisted</strong></div>
+            <div class="cb-admin-profile-row"><span>Neden önerdi?</span><strong>Trend + momentum + hacim uyumu placeholder</strong></div>
+            <div class="cb-admin-profile-row"><span>Neden veto edildi?</span><strong>Makro risk ve confidence bandı nedeniyle soft veto placeholder</strong></div>
+        </div>
+
+        <div class="cb-admin-chip-list mt-6">
+            <span class="cb-admin-filter-chip">Trend güçlü</span>
+            <span class="cb-admin-filter-chip">Momentum uygun</span>
+            <span class="cb-admin-filter-chip">Hacim desteği</span>
+            <span class="cb-admin-filter-chip">Risk guard</span>
+            <span class="cb-admin-filter-chip">Soft veto</span>
+        </div>
+
+        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6">
+            <div>
+                <div class="cb-admin-info-strip-title">Explainability notu</div>
+                <div class="cb-admin-info-strip-text">Gerçek feature importance üretmeden, operasyonel neden-sonuç bağlamını taranabilir chips ve kısa özetlerle verir.</div>
+            </div>
+            <span class="cb-admin-info-strip-meta">Sample</span>
+        </div>
+
+        <div class="cb-admin-inline-actions mt-6">
+            <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_ai_explain_modal">Örnek detayı</button>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-light-primary font-weight-bold">Loglara git</a>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,32 @@
+<section id="cb_admin_settings_risk" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+    <div class="card-body">
+        <div class="cb-admin-section-kicker">Default Risk Policy Template</div>
+        <div class="cb-admin-section-title">Varsayılan risk policy şablonu</div>
+        <p class="cb-admin-section-description">Yeni kullanıcı veya bot yüzeylerine uygulanabilecek default risk template alanı placeholder olarak ayrıldı.</p>
+
+        <div class="cb-admin-settings-form-grid mt-6">
+            <div class="form-group mb-0">
+                <label class="cb-form-label">Template scope</label>
+                <select class="form-control cb-form-control">
+                    <option selected>Balanced default placeholder</option>
+                    <option>Conservative default placeholder</option>
+                    <option>Aggressive sandbox placeholder</option>
+                </select>
+            </div>
+            <div class="form-group mb-0">
+                <label class="cb-form-label">Protection mode</label>
+                <select class="form-control cb-form-control">
+                    <option selected>Guard rails enabled</option>
+                    <option>Manual review required</option>
+                    <option>Shadow enforcement</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="cb-admin-summary-grid">
+            <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Risk template</span><strong>Balanced default</strong><small>Trade limit ve loss guard placeholder</small></div>
+            <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Rollout scope</span><strong>New bots only</strong><small>Global policy yerine controlled zemin</small></div>
+            <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Review</span><strong>Admin gated</strong><small>Kritik değişiklikler destructive confirm ile yapılır</small></div>
+        </div>
+    </div>
+</section>

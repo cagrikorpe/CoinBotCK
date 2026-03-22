@@ -1,0 +1,57 @@
+@{
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Security Triage",
+        Title = "Güvenlik Olayları",
+        Description = "Failed login yoğunluğu, invalid MFA, suspicious session, risky exchange permission ve admin critical action sinyallerini güvenlik odaklı triage ve detail drawer ile toplayan Super Admin monitoring foundation ekranı.",
+        StatusBadge = new AdminBadgeViewModel { Label = "Security Watch", Tone = "critical", IconText = "SC" },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = "Masked PII", Tone = "healthy", IconText = "MS" },
+            new AdminBadgeViewModel { Label = "Triage Ready", Tone = "warning", IconText = "TR" },
+            new AdminBadgeViewModel { Label = "No Auto Block", Tone = "neutral", IconText = "UI" }
+        },
+        SecondaryActionText = "Audit / log merkezi",
+        SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" }),
+        PrimaryActionText = "Security detail drawer",
+        PrimaryActionHref = "#cb_admin_security_drawer"
+    };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = "critical",
+                    Title = "Security events foundation",
+                    Message = "Gerçek brute-force detection, IP/device anomaly backend, MFA event stream veya auto response bu fazda bağlı değildir. Ekran; security summary, triage paneli, event listesi ve detail drawer akışını UI seviyesinde hazırlar.",
+                    Meta = "Masked / UI only"
+                })
+
+                <div class="mt-6">
+                    @await Html.PartialAsync("Foundation/_AdminSecuritySummaryMeta")
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("Foundation/_AdminSecurityFilterBar")
+    </div>
+
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminSecurityTriagePanel")
+    </div>
+
+    <div class="col-xl-8">
+        @await Html.PartialAsync("Foundation/_AdminSecurityEventList")
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("Foundation/_AdminSecurityStatesShowcase")
+    </div>
+</div>

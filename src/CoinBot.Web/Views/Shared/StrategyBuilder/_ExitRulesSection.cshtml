@@ -1,0 +1,62 @@
+<div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Exit rules</h3>
+                <div class="text-muted font-size-sm">Take profit, stop loss ve confidence bazlı çıkış kurallarını ayrı ve taranabilir bir alanda düzenle.</div>
+            </div>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-rule-setting-list">
+            <div class="cb-rule-setting-item">
+                <div class="cb-rule-setting-header">
+                    <div>
+                        <strong>Take profit</strong>
+                        <div class="cb-helper-text">Kademeli kar alma sonraki rule engine fazına bağlanacak placeholder alandır.</div>
+                    </div>
+                    <label class="switch switch-sm switch-outline switch-icon switch-success mb-0"><input type="checkbox" checked="checked" /><span></span></label>
+                </div>
+                <input type="text" class="form-control cb-form-control mt-3" value="2.4%" />
+            </div>
+            <div class="cb-rule-setting-item">
+                <div class="cb-rule-setting-header">
+                    <div>
+                        <strong>Stop loss</strong>
+                        <div class="cb-helper-text">Çok gevşek stop yapısı riskli senaryoda warning üretecek foundation alanıdır.</div>
+                    </div>
+                    <label class="switch switch-sm switch-outline switch-icon switch-danger mb-0"><input type="checkbox" checked="checked" /><span></span></label>
+                </div>
+                <input type="text" class="form-control cb-form-control mt-3" id="cb_strategy_stop_loss" value="1.1%" />
+            </div>
+            <div class="cb-rule-setting-item">
+                <div class="cb-rule-setting-header">
+                    <div>
+                        <strong>Trailing stop</strong>
+                        <div class="cb-helper-text">Momentum devam ediyorsa kazancı korumak için trailing stop placeholder.</div>
+                    </div>
+                    <label class="switch switch-sm switch-outline switch-icon switch-warning mb-0"><input type="checkbox" /><span></span></label>
+                </div>
+            </div>
+            <div class="cb-rule-setting-item">
+                <div class="cb-rule-setting-header">
+                    <div>
+                        <strong>Time-based exit</strong>
+                        <div class="cb-helper-text">Belirli süre sonra pozisyondan çıkma kuralı için foundation.</div>
+                    </div>
+                    <label class="switch switch-sm switch-outline switch-icon switch-primary mb-0"><input type="checkbox" /><span></span></label>
+                </div>
+            </div>
+            <div class="cb-rule-setting-item">
+                <div class="cb-rule-setting-header">
+                    <div>
+                        <strong>Low confidence exit</strong>
+                        <div class="cb-helper-text">AI confidence ileride bağlandığında düşük güven sinyalinde çıkış kuralı çalışabilir.</div>
+                    </div>
+                    <label class="switch switch-sm switch-outline switch-icon switch-info mb-0"><input type="checkbox" /><span></span></label>
+                </div>
+            </div>
+        </div>
+        <div class="cb-mini-warning-card mt-4 d-none" id="cb_strategy_exit_warning">Stop loss çok gevşek veya exit kuralı eksik olduğunda bu alanda yönlendirici warning görünür.</div>
+    </div>
+</div>

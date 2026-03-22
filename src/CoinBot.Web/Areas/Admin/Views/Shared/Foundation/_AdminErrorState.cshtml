@@ -1,0 +1,43 @@
+@model UiStateViewModel
+@{
+    var actionHref = string.IsNullOrWhiteSpace(Model.ActionHref) ? "#" : Model.ActionHref!;
+    var secondaryHref = string.IsNullOrWhiteSpace(Model.SecondaryActionHref) ? "#" : Model.SecondaryActionHref!;
+    var actionIsOverlay = actionHref.StartsWith("#cb_admin_");
+    var secondaryIsOverlay = secondaryHref.StartsWith("#cb_admin_");
+}
+<div class="cb-admin-state-wrap">
+    <div class="cb-state cb-error-state cb-admin-state">
+        <div class="cb-state-icon cb-state-icon-danger">
+            <span>@Model.IconText</span>
+        </div>
+        <div class="cb-state-body">
+            <h4 class="cb-state-title">@Model.Title</h4>
+            <p class="cb-state-text">@Model.Message</p>
+            <div class="cb-state-actions">
+                @if (!string.IsNullOrWhiteSpace(Model.ActionText))
+                {
+                    if (actionIsOverlay)
+                    {
+                        <button type="button" class="btn btn-danger font-weight-bolder" data-toggle="modal" data-target="@actionHref">@Model.ActionText</button>
+                    }
+                    else
+                    {
+                        <a href="@actionHref" class="btn btn-danger font-weight-bolder">@Model.ActionText</a>
+                    }
+                }
+                @if (!string.IsNullOrWhiteSpace(Model.SecondaryActionText))
+                {
+                    if (secondaryIsOverlay)
+                    {
+                        <button type="button" class="btn btn-clean text-muted font-weight-bold" data-toggle="modal" data-target="@secondaryHref">@Model.SecondaryActionText</button>
+                    }
+                    else
+                    {
+                        <a href="@secondaryHref" class="btn btn-clean text-muted font-weight-bold">@Model.SecondaryActionText</a>
+                    }
+                }
+            </div>
+            <div class="cb-state-meta">Retry veya role-safe geri dönüş CTA'ları bu yüzeyde tek tip ve yönlendirici tutulur.</div>
+        </div>
+    </div>
+</div>

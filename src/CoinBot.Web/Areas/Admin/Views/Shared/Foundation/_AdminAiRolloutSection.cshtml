@@ -1,0 +1,28 @@
+<section id="cb_admin_settings_ai_rollout" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+    <div class="card-body">
+        <div class="cb-admin-section-kicker">AI Rollout</div>
+        <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
+            <div>
+                <div class="cb-admin-section-title">Global AI rollout mode</div>
+                <p class="cb-admin-section-description">Controlled, paused ve full rollout placeholder durumları ayrı badge ve açıklama kartları ile görünür tutulur.</p>
+            </div>
+            <div class="cb-admin-badge-stack">
+                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Controlled", Tone = "healthy", IconText = "CT" })
+                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Paused", Tone = "paused", IconText = "PS" })
+                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Full", Tone = "info", IconText = "FL" })
+            </div>
+        </div>
+
+        <div class="cb-admin-summary-grid mt-6">
+            <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Current mode</span><strong>Controlled</strong><small>Geniş etkili rollout öncesi güvenli default durum</small></div>
+            <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">AI health dependency</span><strong>Required</strong><small>Degraded health durumunda rollout pause beklenir</small></div>
+            <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Explainability gate</span><strong>Planned</strong><small>FAZ-SA-6 explainability ile hizalı</small></div>
+        </div>
+
+        <div class="cb-admin-inline-actions mt-5">
+            <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_confirm_modal" data-cb-modal-title="Controlled rollout" data-cb-modal-message="AI rollout mode placeholder olarak controlled seviyesine alınır." data-cb-modal-confirm="Uygula">Controlled</button>
+            <button type="button" class="btn btn-light-warning font-weight-bold" data-toggle="modal" data-target="#cb_admin_confirm_modal" data-cb-modal-title="Rollout pause" data-cb-modal-message="AI rollout geçici olarak pause moduna alınır; gerçek persist yoktur." data-cb-modal-confirm="Pause">Paused</button>
+            <button type="button" class="btn btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_admin_critical_confirm_modal" data-cb-modal-title="Full rollout" data-cb-modal-message="Full rollout geniş platform etkisi yaratabilir. Kritik confirm ve audit reason zemini kullanılır." data-cb-modal-confirm="Full rollout" data-cb-modal-tone="danger">Full placeholder</button>
+        </div>
+    </div>
+</section>

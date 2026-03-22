@@ -1,0 +1,35 @@
+<div class="row">
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminLoadingState", new UiLoadingStateViewModel
+        {
+            Title = "Exchange listesi hazırlanıyor",
+            Message = "Account grid, permission summary ve sync meta hazırlanırken kontrollü loading state görünür.",
+            CardCount = 2,
+            LineCount = 5
+        })
+    </div>
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+        {
+            Title = "Henüz exchange bağlantısı yok",
+            Message = "İlk bağlantı oluşturulmadığında veya filtre sonucu boş geldiğinde admin boş ekran görmez.",
+            IconText = "EX",
+            ActionText = "Kullanıcılara git",
+            ActionHref = Url.Action("Users", "Admin", new { area = "Admin" }),
+            SecondaryActionText = "Yardım alanı",
+            SecondaryActionHref = "#"
+        })
+    </div>
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminErrorState", new UiStateViewModel
+        {
+            Title = "Exchange monitoring verisi alınamadı",
+            Message = "Permission kontrolü, sync meta veya connection state yüklenemediğinde retry/help alanı görünür kalır.",
+            IconText = "!",
+            ActionText = "Tekrar dene",
+            ActionHref = Url.Action("ExchangeAccounts", "Admin", new { area = "Admin" }),
+            SecondaryActionText = "Audit / loglar",
+            SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" })
+        })
+    </div>
+</div>

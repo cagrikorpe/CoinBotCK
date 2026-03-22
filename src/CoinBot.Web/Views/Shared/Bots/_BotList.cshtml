@@ -1,0 +1,193 @@
+<div class="card card-custom gutter-b cb-card cb-bot-list-card" data-cb-bot-list-card>
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Bot Listesi</h3>
+                <div class="text-muted font-size-sm">Aktif, durdurulmuş, taslak ve dikkat gerektiren botları aynı yüzeyde gör.</div>
+            </div>
+        </div>
+        <div class="card-toolbar">
+            <span class="cb-badge cb-badge-neutral">4 kayıt</span>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-table-wrap" data-cb-bot-panel="list">
+            <table class="table table-borderless cb-table mb-0">
+                <thead>
+                    <tr>
+                        <th>Bot</th>
+                        <th>Market / Yön</th>
+                        <th>Durum</th>
+                        <th>Risk</th>
+                        <th>Exchange</th>
+                        <th>Son çalışma</th>
+                        <th class="text-right">Aksiyon</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>
+                            <div class="cb-bot-row-title">Alpha Spot Pulse</div>
+                            <div class="cb-bot-row-subtitle">Momentum Template · Günlük sonuç <span class="cb-text-positive cb-mono">+1.8%</span></div>
+                        </td>
+                        <td>
+                            <div class="cb-inline-stack">
+                                <span class="cb-badge cb-badge-info">Spot</span>
+                                <span class="cb-badge cb-badge-success">Long only</span>
+                            </div>
+                            <div class="cb-bot-inline-help">Max lev: <span class="cb-mono">1x</span></div>
+                        </td>
+                        <td>
+                            <span class="cb-badge cb-badge-success">Aktif</span>
+                            <div class="cb-bot-inline-help">Son güncelleme 5 dk önce</div>
+                        </td>
+                        <td>
+                            <span class="cb-badge cb-badge-info">Düşük risk</span>
+                        </td>
+                        <td><span class="cb-badge cb-badge-neutral">Binance</span></td>
+                        <td>
+                            <div class="cb-mono">09:42</div>
+                            <div class="cb-bot-inline-help">3 açık sinyal</div>
+                        </td>
+                        <td class="text-right">
+                            <div class="cb-table-actions justify-content-end">
+                                <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_bot_detail_drawer" data-cb-bot-detail="alpha">Detay</button>
+                                <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_bot_form_modal" data-cb-bot-form="edit" data-cb-bot-id="alpha">Düzenle</button>
+                                <button type="button" class="btn btn-xs btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Botu durdur" data-cb-modal-message="Aktif bot placeholder olarak durdurma onayı ister. Gerçek runtime aksiyonu bu fazda bağlı değildir." data-cb-modal-confirm="Botu durdur">Durdur</button>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <div class="cb-bot-row-title">Beta Hedge Runner</div>
+                            <div class="cb-bot-row-subtitle">Hedge Template · Günlük sonuç <span class="cb-text-negative cb-mono">-0.6%</span></div>
+                        </td>
+                        <td>
+                            <div class="cb-inline-stack">
+                                <span class="cb-badge cb-badge-warning">Futures</span>
+                                <span class="cb-badge cb-badge-info">Long + Short</span>
+                            </div>
+                            <div class="cb-bot-inline-help">Max lev: <span class="cb-mono">8x</span></div>
+                        </td>
+                        <td>
+                            <span class="cb-badge cb-badge-neutral">Durduruldu</span>
+                            <div class="cb-bot-inline-help">Son çalışma 2 saat önce</div>
+                        </td>
+                        <td>
+                            <span class="cb-badge cb-badge-warning">Orta risk</span>
+                        </td>
+                        <td><span class="cb-badge cb-badge-neutral">Binance</span></td>
+                        <td>
+                            <div class="cb-mono">07:10</div>
+                            <div class="cb-bot-inline-help">0 açık pozisyon</div>
+                        </td>
+                        <td class="text-right">
+                            <div class="cb-table-actions justify-content-end">
+                                <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_bot_detail_drawer" data-cb-bot-detail="beta">Detay</button>
+                                <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_bot_form_modal" data-cb-bot-form="edit" data-cb-bot-id="beta">Düzenle</button>
+                                <button type="button" class="btn btn-xs btn-light-success font-weight-bold" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Botu başlat" data-cb-modal-message="Durdurulmuş bot placeholder olarak yeniden başlatma onayı ister. Gerçek start işlemi bu fazda yoktur." data-cb-modal-confirm="Botu başlat">Başlat</button>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <div class="cb-bot-row-title">Gamma Draft Scout</div>
+                            <div class="cb-bot-row-subtitle">Template seçimi bekleniyor · Performans alanı henüz boş</div>
+                        </td>
+                        <td>
+                            <div class="cb-inline-stack">
+                                <span class="cb-badge cb-badge-info">Spot</span>
+                                <span class="cb-badge cb-badge-neutral">Long only</span>
+                            </div>
+                            <div class="cb-bot-inline-help">Max lev: <span class="cb-mono">1x</span></div>
+                        </td>
+                        <td>
+                            <span class="cb-badge cb-badge-neutral">Taslak</span>
+                            <div class="cb-bot-inline-help">Kurulum tamamlanmadı</div>
+                        </td>
+                        <td>
+                            <span class="cb-badge cb-badge-neutral">Risk seçimi bekleniyor</span>
+                        </td>
+                        <td><span class="cb-badge cb-badge-neutral">Binance</span></td>
+                        <td>
+                            <div class="cb-mono">--:--</div>
+                            <div class="cb-bot-inline-help">Hiç çalıştırılmadı</div>
+                        </td>
+                        <td class="text-right">
+                            <div class="cb-table-actions justify-content-end">
+                                <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_bot_detail_drawer" data-cb-bot-detail="gamma">Detay</button>
+                                <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_bot_form_modal" data-cb-bot-form="edit" data-cb-bot-id="gamma">Düzenle</button>
+                                <button type="button" class="btn btn-xs btn-light-warning font-weight-bold" disabled>Taslak</button>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <div class="cb-bot-row-title">Delta Futures Surge</div>
+                            <div class="cb-bot-row-subtitle">Breakout Template · Günlük sonuç <span class="cb-text-negative cb-mono">-2.4%</span></div>
+                        </td>
+                        <td>
+                            <div class="cb-inline-stack">
+                                <span class="cb-badge cb-badge-warning">Futures</span>
+                                <span class="cb-badge cb-badge-info">Long + Short</span>
+                            </div>
+                            <div class="cb-bot-inline-help">Max lev: <span class="cb-mono">18x</span></div>
+                        </td>
+                        <td>
+                            <span class="cb-badge cb-badge-danger">Dikkat</span>
+                            <div class="cb-bot-inline-help">Risk uyarısı aktif</div>
+                        </td>
+                        <td>
+                            <span class="cb-badge cb-badge-danger">Yüksek risk</span>
+                        </td>
+                        <td><span class="cb-badge cb-badge-neutral">Binance</span></td>
+                        <td>
+                            <div class="cb-mono">09:31</div>
+                            <div class="cb-bot-inline-help">Leverage gözden geçirilmeli</div>
+                        </td>
+                        <td class="text-right">
+                            <div class="cb-table-actions justify-content-end">
+                                <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_bot_detail_drawer" data-cb-bot-detail="delta">Detay</button>
+                                <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_bot_form_modal" data-cb-bot-form="edit" data-cb-bot-id="delta">Düzenle</button>
+                                <button type="button" class="btn btn-xs btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_danger_modal" data-cb-modal-title="Botu arşivle" data-cb-modal-message="Yüksek risk uyarısı olan bot placeholder olarak arşivleme onayı ister. Gerçek arşivleme işlemi bu fazda bağlı değildir." data-cb-modal-tone="danger" data-cb-modal-confirm="Arşivle">Arşivle</button>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="cb-bot-scenario-panel d-none" data-cb-bot-panel="empty">
+            @await Html.PartialAsync("Foundation/_EmptyState", new CoinBot.Web.ViewModels.Foundation.UiStateViewModel
+            {
+                Title = "Henüz bot yok",
+                Message = "İlk botunu oluşturarak market, yön ve risk tercihlerini tek akışta tanımlayabilirsin.",
+                IconText = "BT",
+                ActionText = "İlk botunu oluştur",
+                ActionHref = "#"
+            })
+        </div>
+
+        <div class="cb-bot-scenario-panel d-none" data-cb-bot-panel="loading">
+            @await Html.PartialAsync("Foundation/_LoadingState", new CoinBot.Web.ViewModels.Foundation.UiLoadingStateViewModel
+            {
+                Title = "Bot listesi hazırlanıyor",
+                Message = "Gerçek runtime verisi bu fazda yok. Liste loading, skeleton ve retry standardı foundation olarak gösteriliyor.",
+                LineCount = 4
+            })
+        </div>
+
+        <div class="cb-bot-scenario-panel d-none" data-cb-bot-panel="error">
+            @await Html.PartialAsync("Foundation/_ErrorState", new CoinBot.Web.ViewModels.Foundation.UiStateViewModel
+            {
+                Title = "Bot listesi şu anda alınamadı",
+                Message = "Gerçek service bağlantısı olmadan error/retry görünümü foundation olarak hazırlandı.",
+                IconText = "!",
+                ActionText = "Tekrar dene",
+                ActionHref = "#",
+                SecondaryActionText = "Filtreleri temizle",
+                SecondaryActionHref = "#"
+            })
+        </div>
+    </div>
+</div>

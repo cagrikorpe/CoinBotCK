@@ -1,0 +1,42 @@
+@{
+    var jobs = new[]
+    {
+        new { Worker = "order-sync-worker", Job = "ReconcileOpenOrders", Detail = "Retry budget sınırına yaklaştı", Time = "3 dk önce" },
+        new { Worker = "ai-score-worker", Job = "RefreshModelScores", Detail = "Inference response gecikmesi placeholder", Time = "5 dk önce" },
+        new { Worker = "notification-worker", Job = "DispatchCriticalAlerts", Detail = "Ack kuyruğu tekrar denemede", Time = "9 dk önce" }
+    };
+}
+
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-dashboard-card cb-admin-panel-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Failed Jobs</div>
+                <div class="cb-admin-section-title">Başarısız job alanı</div>
+                <p class="cb-admin-section-description">Worker ve queue sağlığıyla doğrudan ilişkili kompakt failed job paneli. Stack trace değil, kısa operasyon özeti taşır.</p>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "3 active issues", Tone = "warning", IconText = "JB" })
+        </div>
+
+        <div class="cb-admin-job-list mt-6">
+            @foreach (var job in jobs)
+            {
+                <div class="cb-admin-job-item">
+                    <div>
+                        <div class="cb-admin-job-title">@job.Job</div>
+                        <div class="cb-admin-job-meta">@job.Worker • @job.Detail</div>
+                    </div>
+                    <div class="cb-admin-job-actions">
+                        <span class="cb-admin-freshness-time cb-mono">@job.Time</span>
+                        <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_admin_job_drawer">Detay</button>
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div class="cb-admin-inline-actions mt-6">
+            <a asp-area="Admin" asp-controller="Admin" asp-action="Jobs" class="btn btn-primary font-weight-bolder">Stuck jobs ekranına git</a>
+            <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_admin_job_drawer">Failed job detayı</button>
+        </div>
+    </div>
+</div>

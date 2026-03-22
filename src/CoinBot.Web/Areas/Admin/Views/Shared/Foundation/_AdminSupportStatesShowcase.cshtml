@@ -1,0 +1,35 @@
+<div class="row">
+    <div class="col-xl-4">
+        @await Html.PartialAsync("_AdminLoadingState", new UiLoadingStateViewModel
+        {
+            Title = "Lookup hazırlanıyor",
+            Message = "Support lookup, hızlı summary ve diagnostic panel verisi yüklenirken kullanıcı boş ekranda bırakılmaz.",
+            CardCount = 2,
+            LineCount = 4
+        })
+    </div>
+    <div class="col-xl-4">
+        @await Html.PartialAsync("_AdminEmptyState", new UiStateViewModel
+        {
+            Title = "Kullanıcı bulunamadı",
+            Message = "Lookup sonucu dönmediğinde destek ekibi kontrollü empty state ve sonraki güvenli adımlar ile yönlendirilir.",
+            IconText = "?",
+            ActionText = "Kullanıcılara git",
+            ActionHref = Url.Action("Users", "Admin", new { area = "Admin" }),
+            SecondaryActionText = "Log merkezi",
+            SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" })
+        })
+    </div>
+    <div class="col-xl-4">
+        @await Html.PartialAsync("_AdminErrorState", new UiStateViewModel
+        {
+            Title = "Support verisi hazırlanamadı",
+            Message = "Lookup, diagnostic veya kritik olay özeti alınamadığında support paneli güvenli hata dili ile kapanır.",
+            IconText = "!",
+            ActionText = "Retry placeholder",
+            ActionHref = "#cb_admin_info_modal",
+            SecondaryActionText = "Yardım",
+            SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" })
+        })
+    </div>
+</div>

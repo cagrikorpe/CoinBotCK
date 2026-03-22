@@ -1,0 +1,35 @@
+<div class="row">
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminLoadingState", new UiLoadingStateViewModel
+        {
+            Title = "AI monitoring hazırlanıyor",
+            Message = "Model health, strategy usage ve veto summary hazırlanırken kontrollü loading state görünür.",
+            CardCount = 2,
+            LineCount = 5
+        })
+    </div>
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+        {
+            Title = "Henüz sonuç yok",
+            Message = "Yeni model rollout veya veri toplama aşamasında strategy usage ve AI sonuçları boş görünebilir.",
+            IconText = "AI",
+            ActionText = "Dashboard'a dön",
+            ActionHref = Url.Action("Overview", "Admin", new { area = "Admin" }),
+            SecondaryActionText = "Bot operasyonları",
+            SecondaryActionHref = Url.Action("BotOperations", "Admin", new { area = "Admin" })
+        })
+    </div>
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminErrorState", new UiStateViewModel
+        {
+            Title = "AI monitoring verisi alınamadı",
+            Message = "Model health, confidence trend veya strategy adoption summary yüklenemediğinde retry/help alanı görünür kalır.",
+            IconText = "!",
+            ActionText = "Tekrar dene",
+            ActionHref = Url.Action("StrategyAiMonitoring", "Admin", new { area = "Admin" }),
+            SecondaryActionText = "Audit / loglar",
+            SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" })
+        })
+    </div>
+</div>

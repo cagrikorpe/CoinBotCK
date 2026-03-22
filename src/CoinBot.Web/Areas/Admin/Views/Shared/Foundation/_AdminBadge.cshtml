@@ -1,0 +1,22 @@
+@model AdminBadgeViewModel
+@{
+    var toneClass = Model.Tone?.ToLowerInvariant() switch
+    {
+        "critical" => "cb-admin-badge-critical",
+        "error" => "cb-admin-badge-error",
+        "warning" => "cb-admin-badge-warning",
+        "info" => "cb-admin-badge-info",
+        "healthy" => "cb-admin-badge-healthy",
+        "degraded" => "cb-admin-badge-degraded",
+        "paused" => "cb-admin-badge-paused",
+        "role" => "cb-admin-badge-role",
+        _ => "cb-admin-badge-neutral"
+    };
+}
+<span class="cb-admin-badge @toneClass" title="@Model.Title">
+    @if (!string.IsNullOrWhiteSpace(Model.IconText))
+    {
+        <span class="cb-admin-badge-icon">@Model.IconText</span>
+    }
+    <span>@Model.Label</span>
+</span>

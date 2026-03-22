@@ -1,0 +1,107 @@
+<div class="modal fade cb-modal" id="cb_confirm_modal" tabindex="-1" role="dialog" aria-labelledby="cb_confirm_modal_title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="cb_confirm_modal_title">Standart Onay</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="cb-modal-tone cb-modal-tone-warning" id="cb_confirm_modal_tone">Bu modal, ileride kritik olmayan kullanıcı onayları için temel standart olarak kullanılacak.</div>
+                <p class="mb-0 text-muted" id="cb_confirm_modal_message">Başlık, açıklama ve aksiyon butonları tutarlı bir düzenle yerleşir.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-dismiss="modal">Vazgeç</button>
+                <button type="button" class="btn btn-primary font-weight-bolder" data-dismiss="modal" id="cb_confirm_modal_confirm">Onayla</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade cb-modal" id="cb_danger_modal" tabindex="-1" role="dialog" aria-labelledby="cb_danger_modal_title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="cb_danger_modal_title">Tehlikeli Aksiyon</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="cb-modal-tone cb-modal-tone-danger" id="cb_danger_modal_tone">Danger confirm standardı destructive işlemler için ayrıldı.</div>
+                <p class="mb-0 text-muted" id="cb_danger_modal_message">Bu foundation fazında gerçek işlem yok; sadece görsel dil ve buton yerleşimi hazırlanmıştır.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-dismiss="modal">İptal</button>
+                <button type="button" class="btn btn-danger font-weight-bolder" data-dismiss="modal" id="cb_danger_modal_confirm">Devam Et</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade cb-modal" id="cb_form_modal" tabindex="-1" role="dialog" aria-labelledby="cb_form_modal_title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="cb_form_modal_title">Form Modal Foundation</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <label class="cb-form-label">Ad</label>
+                        <input type="text" class="form-control cb-form-control" placeholder="Placeholder" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="cb-form-label">Tip</label>
+                        <select class="form-control cb-form-control">
+                            <option>Seçiniz</option>
+                        </select>
+                    </div>
+                    <div class="col-12 mt-4">
+                        <label class="cb-form-label">Not</label>
+                        <textarea class="form-control cb-form-control" rows="4" placeholder="Açıklama alanı"></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-dismiss="modal">Kapat</button>
+                <button type="button" class="btn btn-primary font-weight-bolder" data-dismiss="modal">Kaydet</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="cb-drawer-backdrop" data-cb-drawer-close></div>
+<aside class="cb-drawer" id="cb_shell_drawer" aria-hidden="true">
+    <div class="cb-drawer-header">
+        <div>
+            <div class="cb-drawer-eyebrow">Foundation</div>
+            <h5 class="cb-drawer-title mb-0">Right Drawer Standardı</h5>
+        </div>
+        <button type="button" class="btn btn-xs btn-icon btn-light" data-cb-drawer-close>
+            <span>&times;</span>
+        </button>
+    </div>
+    <div class="cb-drawer-body">
+        <div class="cb-section">
+            <div class="cb-section-title">Kullanım Amacı</div>
+            <p class="text-muted mb-0">Bot detay, strategy detail, order detail gibi sağ panel akışları için reusable temel yapı hazırlanmıştır.</p>
+        </div>
+        <div class="cb-section mt-6">
+            <div class="cb-section-title">Standart Bölgeler</div>
+            <ul class="mb-0 pl-5 text-muted">
+                <li>Header</li>
+                <li>Scrollable body</li>
+                <li>Sticky footer action bar</li>
+            </ul>
+        </div>
+    </div>
+    <div class="cb-drawer-footer">
+        <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-drawer-close>Kapat</button>
+        <button type="button" class="btn btn-primary font-weight-bolder">Primary Action</button>
+    </div>
+</aside>

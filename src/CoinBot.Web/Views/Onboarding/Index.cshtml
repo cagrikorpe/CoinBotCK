@@ -1,0 +1,191 @@
+@using CoinBot.Web.ViewModels.Foundation
+@{
+    Layout = "_AuthLayout";
+    ViewData["Title"] = "Onboarding";
+    ViewData["AuthTitle"] = "İlk kurulum wizard'ı";
+    ViewData["AuthDescription"] = "Yeni kullanıcının trade modu, yön tercihleri, risk profili ve exchange bağlama hazırlığını anlaşılır adımlarla tamamlayacağı foundation akışı.";
+    ViewData["AuthEyebrow"] = "Onboarding";
+    ViewData["AuthStage"] = "Wizard";
+    ViewData["AuthProgress"] = "6 adım";
+    ViewData["AuthShellVariant"] = "wide";
+    ViewData["AuthHighlights"] = new[]
+    {
+        "Step-by-step kurulum dili",
+        "Riskli seçimlerde hafif ama net uyarı alanları",
+        "Exchange security checkpoint ve connect formuna temiz geçiş"
+    };
+
+    var steps = new List<UiWizardStepViewModel>
+    {
+        new() { Number = 1, Title = "Hoş Geldin", Caption = "Kurulum başlangıcı", IsCurrent = true },
+        new() { Number = 2, Title = "Trade Modu", Caption = "Spot / Futures" },
+        new() { Number = 3, Title = "Yön", Caption = "Long / Short" },
+        new() { Number = 4, Title = "Risk", Caption = "Leverage / Profil" },
+        new() { Number = 5, Title = "Exchange", Caption = "Hazırlık" },
+        new() { Number = 6, Title = "Özet", Caption = "Finish" }
+    };
+}
+
+<div class="cb-auth-panel cb-auth-panel-wide">
+    <div class="cb-auth-panel-header">
+        <div>
+            <div class="cb-page-eyebrow">Getting Started</div>
+            <h2 class="cb-page-title">İlk kurulum akışı</h2>
+            <p class="cb-page-description">Bu wizard gerçek business logic eklemeden, kullanıcının ne yapacağını adım adım anlayacağı ortak onboarding foundation'ını kurar.</p>
+        </div>
+        <div class="cb-badge cb-badge-info">UI-only foundation</div>
+    </div>
+
+    @await Html.PartialAsync("Foundation/_WizardStepper", steps)
+
+    <div class="cb-auth-wizard" data-cb-wizard data-cb-current-step="1" data-cb-total-steps="6">
+        <section class="cb-wizard-panel is-active" data-cb-step-panel="1">
+            <div class="cb-wizard-panel-grid">
+                <div>
+                    <h3 class="cb-section-title">Hoş geldiniz</h3>
+                    <p class="cb-page-description">Bu kurulum sırasında trade modu, işlem yönleri, risk profili ve exchange bağlantısı öncesi güvenlik adımları netleştirilecektir.</p>
+                </div>
+                <div class="cb-auth-summary-card">
+                    <div class="cb-auth-summary-label">Tahmini akış</div>
+                    <div class="cb-auth-summary-value">6 kısa adım</div>
+                    <div class="cb-auth-summary-text">Her adım tek ekrana sığacak şekilde sade tutuldu.</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="cb-wizard-panel" data-cb-step-panel="2">
+            <h3 class="cb-section-title">Trade modu seçimi</h3>
+            <div class="cb-choice-grid">
+                <label class="cb-choice-card is-selected">
+                    <input type="radio" name="trade_mode" value="spot" checked data-cb-summary-key="mode" data-cb-summary-text="Spot" data-cb-mode-switch="spot" />
+                    <span class="cb-choice-title">Spot</span>
+                    <span class="cb-choice-text">Daha sade işlem akışı, kaldıraç gerektirmeyen temel mod.</span>
+                </label>
+                <label class="cb-choice-card">
+                    <input type="radio" name="trade_mode" value="futures" data-cb-summary-key="mode" data-cb-summary-text="Futures" data-cb-mode-switch="futures" />
+                    <span class="cb-choice-title">Futures</span>
+                    <span class="cb-choice-text">Daha esnek yön seçimi; daha yüksek risk ve dikkatli kontrol gerektirir.</span>
+                </label>
+            </div>
+            <div class="cb-auth-alert cb-auth-alert-warning mt-6">
+                Futures seçimi daha yüksek risk uyarısı ile birlikte gösterilir; burada sadece foundation dili ve kart yapısı hazırlanmıştır.
+            </div>
+        </section>
+
+        <section class="cb-wizard-panel" data-cb-step-panel="3">
+            <h3 class="cb-section-title">Yön / işlem izinleri</h3>
+            <div class="cb-choice-grid cb-choice-grid-3">
+                <label class="cb-choice-card is-selected">
+                    <input type="radio" name="trade_direction" value="long" checked data-cb-summary-key="direction" data-cb-summary-text="Sadece Long" />
+                    <span class="cb-choice-title">Sadece Long</span>
+                    <span class="cb-choice-text">Daha kontrollü başlangıç için tek yönlü akış.</span>
+                </label>
+                <label class="cb-choice-card" data-cb-mode-dependent="futures">
+                    <input type="radio" name="trade_direction" value="long_short" data-cb-summary-key="direction" data-cb-summary-text="Long + Short" />
+                    <span class="cb-choice-title">Long + Short</span>
+                    <span class="cb-choice-text">Futures modunda iki yönlü işlem foundation alanı.</span>
+                </label>
+                <div class="cb-auth-summary-card">
+                    <div class="cb-auth-summary-label">Risk notu</div>
+                    <div class="cb-auth-summary-text">Long + short izni açıldığında risk açıklaması ve ek güvenlik notları bu blokta gösterilir.</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="cb-wizard-panel" data-cb-step-panel="4">
+            <h3 class="cb-section-title">Kaldıraç / risk profili</h3>
+            <div class="row">
+                <div class="col-lg-4 mb-6">
+                    <label class="cb-form-label">Max leverage</label>
+                    <select class="form-control cb-form-control" data-cb-summary-key="leverage">
+                        <option>3x</option>
+                        <option>5x</option>
+                        <option>10x</option>
+                    </select>
+                    <div class="cb-field-feedback">Bu alan gerçek limit logic'i olmadan future-proof form standardı sunar.</div>
+                </div>
+                <div class="col-lg-8">
+                    <div class="cb-choice-grid cb-choice-grid-3">
+                        <label class="cb-choice-card is-selected">
+                            <input type="radio" name="risk_profile" value="dusuk" checked data-cb-summary-key="risk" data-cb-summary-text="Düşük" />
+                            <span class="cb-choice-title">Düşük</span>
+                            <span class="cb-choice-text">Daha temkinli sinyal ve pozisyon tercihi.</span>
+                        </label>
+                        <label class="cb-choice-card">
+                            <input type="radio" name="risk_profile" value="orta" data-cb-summary-key="risk" data-cb-summary-text="Orta" />
+                            <span class="cb-choice-title">Orta</span>
+                            <span class="cb-choice-text">Dengeli başlangıç profili foundation seçeneği.</span>
+                        </label>
+                        <label class="cb-choice-card">
+                            <input type="radio" name="risk_profile" value="yuksek" data-cb-summary-key="risk" data-cb-summary-text="Yüksek" />
+                            <span class="cb-choice-title">Yüksek</span>
+                            <span class="cb-choice-text">Daha agresif seçimlerde warning dili gösterilir.</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <div class="cb-auth-alert cb-auth-alert-warning mt-6">
+                Agresif leverage veya yüksek risk profili seçildiğinde warning / notice pattern bu bölgede kullanılacaktır.
+            </div>
+        </section>
+
+        <section class="cb-wizard-panel" data-cb-step-panel="5">
+            <div class="cb-wizard-panel-grid">
+                <div>
+                    <h3 class="cb-section-title">Exchange bağlama hazırlığı</h3>
+                    <p class="cb-page-description">API key neden gerektiği, hangi izinlerin verileceği ve hangi izinlerin verilmemesi gerektiği bir sonraki security checkpoint sayfasında netleştirilir.</p>
+                    <ul class="cb-auth-bullet-list">
+                        <li>Sadece gerekli trade izinleri verilmeli</li>
+                        <li>Withdrawal izni kapalı kalmalı</li>
+                        <li>IP whitelist önerisi kullanıcıya gösterilmeli</li>
+                    </ul>
+                </div>
+                <div class="cb-auth-summary-card">
+                    <div class="cb-auth-summary-label">Sonraki ekran</div>
+                    <div class="cb-auth-summary-value">Security checkpoint</div>
+                    <div class="cb-auth-summary-text">Kullanıcı güvenlik checklist'ini onayladıktan sonra connect formuna geçer.</div>
+                    <a asp-controller="Onboarding" asp-action="ExchangeSecurity" class="btn btn-light-primary font-weight-bold mt-6">Checkpoint ekranını aç</a>
+                </div>
+            </div>
+        </section>
+
+        <section class="cb-wizard-panel" data-cb-step-panel="6">
+            <div class="cb-wizard-panel-grid">
+                <div>
+                    <h3 class="cb-section-title">Kurulum özeti</h3>
+                    <p class="cb-page-description">Aşağıdaki kartlar, wizard seçimlerinin son özet görünümü için foundation alanı sağlar.</p>
+                    <div class="cb-summary-grid">
+                        <div class="cb-auth-summary-card">
+                            <div class="cb-auth-summary-label">Trade modu</div>
+                            <div class="cb-auth-summary-value" data-cb-summary-target="mode">Spot</div>
+                        </div>
+                        <div class="cb-auth-summary-card">
+                            <div class="cb-auth-summary-label">Yön</div>
+                            <div class="cb-auth-summary-value" data-cb-summary-target="direction">Sadece Long</div>
+                        </div>
+                        <div class="cb-auth-summary-card">
+                            <div class="cb-auth-summary-label">Max leverage</div>
+                            <div class="cb-auth-summary-value" data-cb-summary-target="leverage">3x</div>
+                        </div>
+                        <div class="cb-auth-summary-card">
+                            <div class="cb-auth-summary-label">Risk profili</div>
+                            <div class="cb-auth-summary-value" data-cb-summary-target="risk">Düşük</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="cb-auth-summary-card cb-auth-summary-card-emphasis">
+                    <div class="cb-auth-summary-label">Exchange durumu</div>
+                    <div class="cb-auth-summary-value">Bağlantı bekleniyor</div>
+                    <div class="cb-auth-summary-text">Exchange connect formu sonraki ekrana foundation olarak hazırlandı.</div>
+                    <a asp-controller="Onboarding" asp-action="ExchangeConnect" class="btn btn-primary font-weight-bolder mt-6">Exchange formuna geç</a>
+                </div>
+            </div>
+        </section>
+
+        <div class="cb-wizard-footer">
+            <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-wizard-prev>Geri</button>
+            <div class="cb-auth-meta">Wizard adım geçişleri minimum JS ile yönetilir. Loading davranışı buton üzerinde gösterilir.</div>
+            <button type="button" class="btn btn-primary font-weight-bolder" data-cb-button-loading data-cb-wizard-next>Devam et</button>
+        </div>
+    </div>
+</div>

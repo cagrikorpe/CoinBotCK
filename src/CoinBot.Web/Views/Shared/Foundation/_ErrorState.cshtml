@@ -1,0 +1,21 @@
+@model CoinBot.Web.ViewModels.Foundation.UiStateViewModel
+
+<div class="cb-state cb-error-state">
+    <div class="cb-state-icon cb-state-icon-danger">
+        <span>@Model.IconText</span>
+    </div>
+    <div class="cb-state-body">
+        <h4 class="cb-state-title">@Model.Title</h4>
+        <p class="cb-state-text">@Model.Message</p>
+        <div class="cb-state-actions">
+            @if (!string.IsNullOrWhiteSpace(Model.ActionText))
+            {
+                <a href="@(string.IsNullOrWhiteSpace(Model.ActionHref) ? "#" : Model.ActionHref)" class="btn btn-danger font-weight-bolder">@Model.ActionText</a>
+            }
+            @if (!string.IsNullOrWhiteSpace(Model.SecondaryActionText))
+            {
+                <a href="@(string.IsNullOrWhiteSpace(Model.SecondaryActionHref) ? "#" : Model.SecondaryActionHref)" class="btn btn-clean text-muted font-weight-bold">@Model.SecondaryActionText</a>
+            }
+        </div>
+    </div>
+</div>

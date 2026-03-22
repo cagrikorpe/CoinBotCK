@@ -1,0 +1,30 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card">
+    <div class="card-body">
+        <div class="cb-admin-section-kicker">Security Status</div>
+        <div class="cb-admin-section-title">Güvenlik durumu</div>
+        <div class="cb-admin-summary-grid mt-5 cb-admin-user-summary-grid">
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">MFA</span>
+                <strong>Açık</strong>
+                <small>Step-up security ile uyumlu</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Son giriş</span>
+                <strong>12 dk önce</strong>
+                <small>Fresh login signal</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Güvenlik olayı</span>
+                <strong>1 warning placeholder</strong>
+                <small>Re-auth gerekebilir notu</small>
+            </div>
+        </div>
+        @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+        {
+            Tone = "warning",
+            Title = "Security attention",
+            Message = "Kilitli, askıda veya MFA kapalı senaryolarında bu blok aynı görsel dil ile warning seviyesine çıkabilir.",
+            Meta = "Session / device placeholder"
+        })
+    </div>
+</div>

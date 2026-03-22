@@ -1,0 +1,15 @@
+@using CoinBot.Web.ViewModels.Admin
+@{
+    var label = ViewData["AdminAuditReasonLabel"]?.ToString() ?? "Audit reason";
+    var placeholder = ViewData["AdminAuditReasonPlaceholder"]?.ToString() ?? "Bu aksiyonun neden gerektiğini kısaca yazın";
+    var helperText = ViewData["AdminAuditReasonHelper"]?.ToString() ?? "Gerçek audit persistence yoktur; ancak reason alanı admin genelinde tek tip ve zorunlu görünüme yakın bırakıldı.";
+    var emphasize = (ViewData["AdminAuditReasonRequired"]?.ToString() ?? "true").Equals("true", System.StringComparison.OrdinalIgnoreCase);
+}
+<div class="cb-admin-audit-reason-wrap">
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+        <label class="cb-form-label mb-0">@label</label>
+        @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = emphasize ? "Required" : "Optional", Tone = emphasize ? "warning" : "info", IconText = "AR" })
+    </div>
+    <textarea class="form-control cb-form-control cb-admin-audit-reason" rows="3" placeholder="@placeholder"></textarea>
+    <div class="cb-field-feedback">@helperText</div>
+</div>

@@ -1,0 +1,86 @@
+<div class="card card-custom gutter-b cb-card cb-settings-section" id="cb_settings_app" data-cb-settings-page-panel="content">
+    <div class="card-body">
+        <div class="cb-page-header cb-page-header-compact">
+            <div>
+                <div class="cb-page-eyebrow">Uygulama</div>
+                <h3 class="cb-page-title">Tema ve genel tercih alanları</h3>
+                <p class="cb-page-description">Tema, dil, timezone ve günlük kullanım yoğunluğu gibi genel UI/UX tercihlerini tek bölümde toplar.</p>
+            </div>
+            <span class="cb-badge cb-badge-info">Kişiselleştirme</span>
+        </div>
+
+        <div class="cb-settings-section-block mt-5">
+            <div class="cb-section-title">Tema tercihi</div>
+            <div class="cb-choice-grid mt-4">
+                <button type="button" class="cb-choice-card is-active" data-cb-settings-theme="dark">
+                    <span class="cb-choice-title">Dark Mode</span>
+                    <span class="cb-choice-text">Ana tema yaklaşımını korur, yoğun veri yüzeylerinde kontrastı artırır.</span>
+                </button>
+                <button type="button" class="cb-choice-card" data-cb-settings-theme="light">
+                    <span class="cb-choice-title">Light Mode</span>
+                    <span class="cb-choice-text">Raporlama veya gündüz kullanımında daha açık yüzey tercih etmek için foundation zemini sağlar.</span>
+                </button>
+                <button type="button" class="cb-choice-card" data-cb-settings-theme="system">
+                    <span class="cb-choice-title">System / Default</span>
+                    <span class="cb-choice-text">İleride cihaz temasına göre davranacak seçenek için placeholder yüzeyi bırakır.</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="cb-form-grid cb-form-grid-2col mt-6">
+            <div class="form-group mb-0">
+                <label class="cb-form-label">Timezone</label>
+                <select id="cb_settings_timezone" class="form-control cb-form-control">
+                    <option>Europe/Berlin</option>
+                    <option>UTC</option>
+                    <option>Europe/Istanbul</option>
+                    <option>America/New_York</option>
+                </select>
+                <div class="cb-helper-text mt-2">Tarih/saat gösterimleri ve rapor özetleri bu seçime göre ileride lokalize edilebilir.</div>
+            </div>
+            <div class="form-group mb-0">
+                <label class="cb-form-label">Dil</label>
+                <select id="cb_settings_language" class="form-control cb-form-control">
+                    <option>Türkçe</option>
+                    <option>English</option>
+                    <option>Deutsch</option>
+                </select>
+                <div class="cb-helper-text mt-2">Global i18n ve label yönetimi için foundation zemini hazırlanır.</div>
+            </div>
+            <div class="form-group mb-0">
+                <label class="cb-form-label">Varsayılan açılış sayfası</label>
+                <select id="cb_settings_homepage" class="form-control cb-form-control">
+                    <option>Dashboard</option>
+                    <option>Botlarım</option>
+                    <option>Paper Trading</option>
+                    <option>Bildirimler</option>
+                </select>
+            </div>
+            <div class="form-group mb-0">
+                <label class="cb-form-label">Dashboard görünümü</label>
+                <select id="cb_settings_dashboard_view" class="form-control cb-form-control">
+                    <option>Operasyon görünümü</option>
+                    <option>Kompakt görünüm</option>
+                    <option>AI odaklı görünüm</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="cb-toggle-grid mt-6">
+            <label class="cb-toggle-card">
+                <span>
+                    <span class="cb-toggle-title">Compact mode</span>
+                    <span class="cb-toggle-text">Daha yoğun tablo ve kart düzeni kullanır.</span>
+                </span>
+                <input id="cb_settings_compact_mode" type="checkbox" checked />
+            </label>
+            <label class="cb-toggle-card">
+                <span>
+                    <span class="cb-toggle-title">Tooltip / helper görünürlüğü</span>
+                    <span class="cb-toggle-text">Yeni kullanıcılar için açıklama katmanını daha belirgin tutar.</span>
+                </span>
+                <input id="cb_settings_tooltips" type="checkbox" checked />
+            </label>
+        </div>
+    </div>
+</div>

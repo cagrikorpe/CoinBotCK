@@ -1,0 +1,95 @@
+<aside class="cb-drawer cb-bot-drawer" id="cb_bot_detail_drawer" aria-hidden="true">
+    <div class="cb-drawer-header">
+        <div>
+            <div class="cb-drawer-eyebrow" id="cb_bot_drawer_eyebrow">Bot Detail</div>
+            <div class="d-flex align-items-center flex-wrap gap-2">
+                <h5 class="cb-drawer-title mb-0" id="cb_bot_drawer_title">Alpha Spot Pulse</h5>
+                <span class="cb-badge cb-badge-success" id="cb_bot_drawer_status">Aktif</span>
+            </div>
+        </div>
+        <button type="button" class="btn btn-xs btn-icon btn-light" data-cb-drawer-close>
+            <span>&times;</span>
+        </button>
+    </div>
+    <div class="cb-drawer-body">
+        <div class="cb-bot-drawer-summary">
+            <div class="cb-bot-drawer-summary-item"><span>Exchange</span><strong id="cb_bot_drawer_exchange">Binance</strong></div>
+            <div class="cb-bot-drawer-summary-item"><span>Market</span><strong id="cb_bot_drawer_market">Spot</strong></div>
+            <div class="cb-bot-drawer-summary-item"><span>Yön</span><strong id="cb_bot_drawer_direction">Long only</strong></div>
+            <div class="cb-bot-drawer-summary-item"><span>Risk</span><strong id="cb_bot_drawer_risk">Düşük</strong></div>
+            <div class="cb-bot-drawer-summary-item"><span>Leverage</span><strong id="cb_bot_drawer_leverage">1x</strong></div>
+            <div class="cb-bot-drawer-summary-item"><span>Mode</span><strong id="cb_bot_drawer_mode">Paper</strong></div>
+        </div>
+
+        <div class="cb-chip-group cb-chip-group-sm mt-6" data-cb-bot-tabs>
+            <button type="button" class="cb-chip is-active" data-cb-bot-tab-trigger="general">Genel Bilgi</button>
+            <button type="button" class="cb-chip" data-cb-bot-tab-trigger="strategy">Strateji Özeti</button>
+            <button type="button" class="cb-chip" data-cb-bot-tab-trigger="activity">Aktivite</button>
+            <button type="button" class="cb-chip" data-cb-bot-tab-trigger="risk">Risk & Durum</button>
+        </div>
+
+        <div class="cb-bot-drawer-panel mt-6" data-cb-bot-tab-panel="general">
+            <div class="cb-section">
+                <div class="cb-section-title">Genel Bilgi</div>
+                <p class="text-muted mb-5" id="cb_bot_drawer_note">Kısa bot açıklaması bu alanda gösterilir.</p>
+                <div class="cb-stat-list">
+                    <div class="cb-stat-row"><span class="cb-stat-label">Oluşturulma</span><span class="cb-mono" id="cb_bot_drawer_created">21 Mar · 08:30</span></div>
+                    <div class="cb-stat-row"><span class="cb-stat-label">Son güncelleme</span><span class="cb-mono" id="cb_bot_drawer_updated">21 Mar · 09:42</span></div>
+                    <div class="cb-stat-row"><span class="cb-stat-label">Son çalışma</span><span class="cb-mono" id="cb_bot_drawer_last_run">09:42</span></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="cb-bot-drawer-panel mt-6 d-none" data-cb-bot-tab-panel="strategy">
+            <div class="cb-section">
+                <div class="cb-section-title">Strateji Özeti</div>
+                <div class="cb-stat-list">
+                    <div class="cb-stat-row"><span class="cb-stat-label">Template</span><span id="cb_bot_drawer_strategy">Momentum Template</span></div>
+                    <div class="cb-stat-row"><span class="cb-stat-label">Entry / Exit</span><span id="cb_bot_drawer_entry_exit">Trend kırılımı / risk filtresi placeholder</span></div>
+                    <div class="cb-stat-row"><span class="cb-stat-label">AI destek</span><span id="cb_bot_drawer_ai">Opsiyonel</span></div>
+                    <div class="cb-stat-row"><span class="cb-stat-label">Risk filtresi</span><span id="cb_bot_drawer_guard">Drawdown guard placeholder</span></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="cb-bot-drawer-panel mt-6 d-none" data-cb-bot-tab-panel="activity">
+            <div class="cb-section">
+                <div class="cb-section-title">Pozisyon / Aktivite Özeti</div>
+                <div class="cb-stat-list">
+                    <div class="cb-stat-row"><span class="cb-stat-label">Açık pozisyon</span><span id="cb_bot_drawer_positions">0</span></div>
+                    <div class="cb-stat-row"><span class="cb-stat-label">Son sinyal</span><span id="cb_bot_drawer_signal">Watch</span></div>
+                    <div class="cb-stat-row"><span class="cb-stat-label">Son aksiyon</span><span id="cb_bot_drawer_action">Henüz yok</span></div>
+                    <div class="cb-stat-row"><span class="cb-stat-label">Günlük sonuç</span><span class="cb-mono" id="cb_bot_drawer_daily">+0.0%</span></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="cb-bot-drawer-panel mt-6 d-none" data-cb-bot-tab-panel="risk">
+            <div class="cb-section">
+                <div class="cb-section-title">Risk ve Durum</div>
+                <div class="cb-stat-list">
+                    <div class="cb-stat-row"><span class="cb-stat-label">Risk skoru</span><span id="cb_bot_drawer_risk_score">24 / 100</span></div>
+                    <div class="cb-stat-row"><span class="cb-stat-label">Max leverage</span><span id="cb_bot_drawer_risk_leverage">1x</span></div>
+                    <div class="cb-stat-row"><span class="cb-stat-label">Stop durumu</span><span id="cb_bot_drawer_stop">Normal</span></div>
+                </div>
+                <div class="cb-notice cb-notice-warning mt-5" id="cb_bot_drawer_warning">Risk uyarıları bu alanda özetlenir.</div>
+            </div>
+        </div>
+
+        <div class="cb-section mt-6">
+            <div class="cb-section-title">Hızlı Aksiyonlar</div>
+            <div class="cb-table-actions mt-4">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_bot_form_modal" data-cb-bot-form="edit" id="cb_bot_drawer_quick_edit">Düzenle</button>
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_confirm_modal" id="cb_bot_drawer_quick_toggle">Başlat / Durdur</button>
+                <button type="button" class="btn btn-light-warning font-weight-bold" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Botu taslağa al" data-cb-modal-message="Taslağa alma akışı, aktif yapıdan güvenli şekilde ayrılacak state için foundation onayı gösterir." data-cb-modal-confirm="Taslağa al">Taslağa al</button>
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Botu kopyala" data-cb-modal-message="Kopyalama akışı sonraki fazlarda yeni bot wizard'ına bağlanacaktır. Bu fazda yalnızca controlled confirm standardı hazırlanır." data-cb-modal-confirm="Kopyala">Kopyala</button>
+                <button type="button" class="btn btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_danger_modal" data-cb-modal-title="Botu arşivle" data-cb-modal-message="Arşivleme aksiyonu foundation aşamasında destructive confirm standardını gösterir. Gerçek arşivleme işlemi bu fazda bağlı değildir." data-cb-modal-tone="danger" data-cb-modal-confirm="Arşivle">Arşivle</button>
+                <button type="button" class="btn btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_danger_modal" data-cb-modal-title="Botu sil" data-cb-modal-message="Silme aksiyonu foundation aşamasında destructive confirm standardını gösterir. Gerçek silme işlemi bu fazda bağlı değildir." data-cb-modal-tone="danger" data-cb-modal-confirm="Sil">Sil</button>
+            </div>
+        </div>
+    </div>
+    <div class="cb-drawer-footer">
+        <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_bot_form_modal" data-cb-bot-form="edit" id="cb_bot_drawer_edit">Düzenle</button>
+        <button type="button" class="btn btn-primary font-weight-bolder" data-toggle="modal" data-target="#cb_confirm_modal" id="cb_bot_drawer_primary">Başlat / Durdur</button>
+    </div>
+</aside>

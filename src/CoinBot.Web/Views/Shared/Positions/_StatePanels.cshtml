@@ -1,0 +1,43 @@
+<div class="d-none" data-cb-positions-panel="empty">
+    @await Html.PartialAsync("Foundation/_EmptyState", new UiStateViewModel
+    {
+        IconText = "PZ",
+        Title = "Henüz pozisyon veya emir yok",
+        Message = "İlk strateji ve bot akışı oluştuktan sonra açık/kapalı pozisyonlar ile emir history aynı merkezde görünecek.",
+        ActionText = "Botlarım’a git",
+        ActionHref = "/Bots",
+        SecondaryActionText = "Strategy Builder’ı aç",
+        SecondaryActionHref = "/StrategyBuilder"
+    })
+</div>
+
+<div class="d-none" data-cb-positions-panel="loading">
+    @await Html.PartialAsync("Foundation/_LoadingState", new UiLoadingStateViewModel
+    {
+        Title = "Pozisyon ve emir yüzeyi hazırlanıyor",
+        Message = "Summary kartları, açık/kapalı pozisyon tabloları ve history drawer standardı aynı tasarım dilinde yükleniyor.",
+        CardCount = 3,
+        LineCount = 5
+    })
+</div>
+
+<div class="d-none" data-cb-positions-panel="error">
+    @await Html.PartialAsync("Foundation/_ErrorState", new UiStateViewModel
+    {
+        IconText = "!",
+        Title = "Pozisyon veya emir verisi alınamadı",
+        Message = "Stale/veri bekleniyor ya da placeholder erişim sorunu yüzeyinde kullanıcıyı çıkışsız bırakmayan retry/help dili gösterilir.",
+        ActionText = "Tekrar dene",
+        ActionHref = "#",
+        SecondaryActionText = "Paper Trading’i aç",
+        SecondaryActionHref = "/PaperTrading"
+    })
+</div>
+
+<div class="d-none" data-cb-positions-panel="waiting">
+    <div class="card card-custom gutter-b cb-card">
+        <div class="card-body">
+            <div class="cb-notice cb-notice-warning mb-0">Veri bekleniyor. Exchange sync veya runtime history henüz taze değil; bu ara durum normal karşılanmalı ve kullanıcıya panic hissi verilmemelidir.</div>
+        </div>
+    </div>
+</div>

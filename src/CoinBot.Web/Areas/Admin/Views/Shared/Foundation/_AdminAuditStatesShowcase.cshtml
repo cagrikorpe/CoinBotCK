@@ -1,0 +1,35 @@
+<div class="row">
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminLoadingState", new UiLoadingStateViewModel
+        {
+            Title = "Log center hazırlanıyor",
+            Message = "Liste, filtre meta ve detail drawer yüzeyi hazırlanırken kontrollü loading state görünür.",
+            CardCount = 2,
+            LineCount = 5
+        })
+    </div>
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+        {
+            Title = "Sonuç bulunamadı",
+            Message = "Filtreler çok dar olduğunda veya seçilen kategori için kayıt yoksa kullanıcıya açıklayıcı empty state gösterilir.",
+            IconText = "Ø",
+            ActionText = "Filtreleri temizle",
+            ActionHref = Url.Action("Audit", "Admin", new { area = "Admin" }),
+            SecondaryActionText = "Sistem sağlığı",
+            SecondaryActionHref = Url.Action("SystemHealth", "Admin", new { area = "Admin" })
+        })
+    </div>
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminErrorState", new UiStateViewModel
+        {
+            Title = "Log center verisi alınamadı",
+            Message = "Global audit listesi, retention meta veya detail yüklenemediğinde retry/help alanı görünür kalır.",
+            IconText = "!",
+            ActionText = "Tekrar dene",
+            ActionHref = Url.Action("Audit", "Admin", new { area = "Admin" }),
+            SecondaryActionText = "Runtime health",
+            SecondaryActionHref = Url.Action("SystemHealth", "Admin", new { area = "Admin" })
+        })
+    </div>
+</div>

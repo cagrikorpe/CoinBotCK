@@ -1,0 +1,38 @@
+<div class="card card-custom gutter-b cb-card">
+    <div class="card-body">
+        <div class="cb-filter-bar cb-filter-bar-logs">
+            <div class="cb-filter-field cb-filter-field-search">
+                <label class="cb-form-label">Ara</label>
+                <input type="text" class="form-control cb-form-control" placeholder="Olay özeti, modül veya kullanıcı davranışı ara" />
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label">Kategori</label>
+                <select class="form-control cb-form-control" id="cb_log_filter_category">
+                    <option>Tümü</option><option>Audit</option><option>Trading</option><option>AI</option><option>Risk</option><option>Security</option><option>System</option><option>User Activity</option>
+                </select>
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label">Severity</label>
+                <select class="form-control cb-form-control" id="cb_log_filter_severity">
+                    <option>Tümü</option><option>Critical</option><option>Error</option><option>Warning</option><option>Info</option><option>Trace</option>
+                </select>
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label">Zaman</label>
+                <select class="form-control cb-form-control"><option>Son 24 saat</option><option>Son 7 gün</option><option>Son 30 gün</option><option>Özel aralık</option></select>
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label">Trace</label>
+                <select class="form-control cb-form-control" id="cb_log_filter_trace"><option>Tümü</option><option>Sadece activity</option><option>Trace hariç</option></select>
+            </div>
+            <div class="cb-filter-actions">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-logcenter-filter-clear>Filtreleri temizle</button>
+            </div>
+        </div>
+        <div class="cb-chip-group mt-4">
+            <span class="cb-chip is-active">Risk</span>
+            <span class="cb-chip">Critical</span>
+            <span class="cb-chip">Yeni olaylar</span>
+        </div>
+    </div>
+</div>

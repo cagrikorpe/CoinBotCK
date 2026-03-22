@@ -1,0 +1,68 @@
+@{
+    ViewData["Title"] = "Ayarlar";
+    ViewData["ActiveNav"] = "Settings";
+    ViewData["PageDescription"] = "Profil, uygulama, trading, bildirimler ve güvenlik tercihlerini tek merkezde yöneten; section tabanlı ve genişlemeye açık settings foundation ekranı.";
+    ViewData["BreadcrumbItems"] = new[] { "System", "Ayarlar" };
+}
+
+@section Scripts {
+    <script src="~/js/settings-foundation.js" asp-append-version="true"></script>
+}
+
+<div class="row" data-cb-settings-page data-cb-settings-scenario="default">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card">
+            <div class="card-body">
+                <div class="cb-page-header">
+                    <div>
+                        <div class="cb-page-eyebrow">Settings Center</div>
+                        <h2 class="cb-page-title">Ayarlar foundation merkezi</h2>
+                        <p class="cb-page-description">Profil, uygulama tercihleri, default trading davranışı, bildirim seçimleri ve güvenlik alanlarını aynı tasarım dili içinde toplayan son temel UI yüzeyi.</p>
+                    </div>
+                    <div class="cb-toolbar">
+                        <span class="cb-badge cb-badge-info">UI-only foundation</span>
+                        <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-settings-cancel>İptal</button>
+                        <button type="button" class="btn btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Varsayılana dön" data-cb-modal-message="Gerçek settings persist bu fazda yok; bu aksiyon yalnızca varsayılan profile dönüş akışı için foundation olarak hazırlanmıştır." data-cb-modal-confirm="Varsayılana dön">Varsayılana dön</button>
+                        <button type="button" class="btn btn-primary font-weight-bolder" data-cb-settings-save>Kaydet</button>
+                    </div>
+                </div>
+
+                <div class="cb-section mt-6">
+                    <div class="cb-section-title">Durum Senaryoları</div>
+                    <p class="cb-page-description mt-2 mb-0">İlk ayarlar, özelleştirilmiş kullanıcı, güvenlik dikkati, kaydedilmemiş değişiklikler, loading ve error yüzeylerini aynı foundation içinde kontrol edin. Gerçek settings persist bu fazda bağlı değildir.</p>
+                    <div class="cb-chip-group mt-4" data-cb-toggle-group>
+                        <button type="button" class="cb-chip is-active" data-cb-toggle-active data-cb-settings-scenario-trigger="default">İlk ayarlar</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-settings-scenario-trigger="customized">Özelleştirilmiş kullanıcı</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-settings-scenario-trigger="security">Security dikkat</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-settings-scenario-trigger="dirty">Kaydedilmemiş değişiklik</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-settings-scenario-trigger="loading">Loading</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-settings-scenario-trigger="error">Error</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12" data-cb-settings-page-panel="content">
+        <div class="row">
+            <div class="col-xl-3 col-lg-4">
+                @await Html.PartialAsync("Settings/_CategoryNav")
+            </div>
+            <div class="col-xl-9 col-lg-8">
+                <div class="cb-inline-stack cb-inline-stack-vertical">
+                    @await Html.PartialAsync("Settings/_ProfileSection")
+                    @await Html.PartialAsync("Settings/_ApplicationSection")
+                    @await Html.PartialAsync("Settings/_TradingPreferencesSection")
+                    @await Html.PartialAsync("Settings/_NotificationPreferencesSection")
+                    @await Html.PartialAsync("Settings/_SecuritySection")
+                    @await Html.PartialAsync("Settings/_SessionsSection")
+                    @await Html.PartialAsync("Settings/_HelpCard")
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("Settings/_StatePanels")
+    </div>
+</div>

@@ -1,0 +1,17 @@
+<div class="cb-admin-session-grid">
+    <div class="cb-admin-session-card is-warning">
+        <div class="cb-admin-session-card-title">Idle timeout yaklaşımı</div>
+        <div class="cb-admin-session-card-text">Oturum süren dolmak üzere placeholder uyarısı. Kritik değişiklikten önce yeniden doğrulama gerekebilir.</div>
+        <a asp-area="Admin" asp-controller="Admin" asp-action="SessionExpired" class="cb-admin-session-card-link">Session expired ekranını gör</a>
+    </div>
+    <div class="cb-admin-session-card is-info">
+        <div class="cb-admin-session-card-title">Başka cihazda aktif oturum olabilir</div>
+        <div class="cb-admin-session-card-text">Çoklu cihaz veya lokasyon sinyali için kontrollü uyarı dili foundation olarak hazırlandı.</div>
+        <button type="button" class="cb-admin-session-card-link btn btn-link p-0" data-toggle="modal" data-target="#cb_admin_reauth_modal">Oturumu doğrula</button>
+    </div>
+    <div class="cb-admin-session-card is-neutral">
+        <div class="cb-admin-session-card-title">Security-sensitive action note</div>
+        <div class="cb-admin-session-card-text">Bot force stop, maintenance mode veya global ayar değişimi step-up security ile bağlanabilecek şekilde ayrıldı.</div>
+        <button type="button" class="cb-admin-session-card-link btn btn-link p-0" data-toggle="modal" data-target="#cb_admin_critical_confirm_modal">Kritik confirm örneği</button>
+    </div>
+</div>

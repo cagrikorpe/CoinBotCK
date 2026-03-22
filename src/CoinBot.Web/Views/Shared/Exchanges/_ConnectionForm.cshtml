@@ -1,0 +1,100 @@
+<div class="card card-custom gutter-b cb-card cb-dashboard-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-2">Binance bağlama formu</h3>
+                <div class="cb-dashboard-card-meta">Credential formu, helper text ve aksiyon hiyerarşisi foundation standardı.</div>
+            </div>
+        </div>
+        <div class="card-toolbar">
+            <span class="cb-badge cb-badge-warning">Withdrawal kapalı olmalı</span>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <form action="#" method="post" novalidate data-cb-exchange-form>
+            <div class="row">
+                <div class="col-md-6 mb-6">
+                    <label class="cb-form-label">Exchange</label>
+                    <select class="form-control cb-form-control" data-cb-exchange-field="exchange">
+                        <option>Binance</option>
+                    </select>
+                    <div class="cb-helper-text">Bu fazda foundation yalnızca Binance akışı için hazırlanmıştır.</div>
+                </div>
+                <div class="col-md-6 mb-6">
+                    <label class="cb-form-label">Kullanım modu</label>
+                    <div class="cb-choice-row">
+                        <label class="cb-choice-pill is-selected"><input type="radio" name="cb_mode" value="paper" checked data-cb-exchange-mode /> Paper</label>
+                        <label class="cb-choice-pill"><input type="radio" name="cb_mode" value="live" data-cb-exchange-mode /> Live</label>
+                    </div>
+                    <div class="cb-helper-text" data-cb-mode-helper>Paper mode ile başlayıp izinleri doğruladıktan sonra live moda geçin.</div>
+                </div>
+                <div class="col-md-6 mb-6">
+                    <label class="cb-form-label">Trade mode</label>
+                    <div class="cb-choice-row cb-choice-row-wrap">
+                        <label class="cb-choice-pill is-selected"><input type="radio" name="cb_trade_mode" value="spot" checked data-cb-trade-mode /> Spot</label>
+                        <label class="cb-choice-pill"><input type="radio" name="cb_trade_mode" value="futures" data-cb-trade-mode /> Futures</label>
+                        <label class="cb-choice-pill"><input type="radio" name="cb_trade_mode" value="both" data-cb-trade-mode /> Her ikisi</label>
+                    </div>
+                    <div class="cb-helper-text">Futures seçimi, daha sıkı permission ve risk kontrolü gerektirir.</div>
+                </div>
+                <div class="col-md-6 mb-6">
+                    <label class="cb-form-label">Güvenlik profili</label>
+                    <div class="cb-inline-summary">
+                        <span class="cb-badge cb-badge-info">IP whitelist önerilir</span>
+                        <span class="cb-badge cb-badge-neutral">Secret saklama logic'i bu fazda yok</span>
+                    </div>
+                </div>
+                <div class="col-12 mb-6">
+                    <label class="cb-form-label">API Key</label>
+                    <input type="text" class="form-control cb-form-control cb-mono" placeholder="API Key" autocomplete="off" data-cb-exchange-api />
+                    <div class="cb-helper-text">Exchange panelinden yalnızca gerekli trade ve read izinleri verilmiş key kullanılmalıdır.</div>
+                </div>
+                <div class="col-12 mb-6">
+                    <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">
+                        <label class="cb-form-label mb-0">Secret</label>
+                        <button type="button" class="btn btn-xs btn-light-primary font-weight-bold"
+                                data-toggle="modal"
+                                data-target="#cb_confirm_modal"
+                                data-cb-modal-title="Secret alanı hakkında"
+                                data-cb-modal-message="Secret yalnızca kullanıcı tarafından görülmeli ve paylaşılmamalıdır. Bu fazda gerçek saklama veya doğrulama yapılmaz."
+                                data-cb-modal-confirm="Anladım">
+                            Neden hassas?
+                        </button>
+                    </div>
+                    <div class="cb-sensitive-input-wrap mt-3">
+                        <input type="password" id="cb_exchange_secret" class="form-control cb-form-control cb-form-control-with-action cb-mono cb-sensitive-input" placeholder="Secret" autocomplete="off" />
+                        <button type="button" class="cb-sensitive-action" data-cb-exchange-secret-toggle data-cb-password-target="#cb_exchange_secret">Göster</button>
+                    </div>
+                    <div class="cb-helper-text">Withdrawal yetkili secret kullanılmamalı; paper mod ile ilk test önerilir.</div>
+                </div>
+            </div>
+
+            <div class="cb-exchange-inline-note mt-2">
+                <div class="cb-notice cb-notice-warning">
+                    Güvenlik notu: withdrawal izni kapalı kalmalı, IP whitelist mümkünse açılmalı ve live mod öncesi permission check tamamlanmalıdır.
+                </div>
+            </div>
+
+            <div class="cb-toolbar mt-7">
+                <button type="button" class="btn btn-primary font-weight-bolder" data-cb-exchange-test>
+                    <span class="cb-btn-label">Bağlantıyı Test Et</span>
+                    <span class="cb-btn-spinner"></span>
+                </button>
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-exchange-save>
+                    <span class="cb-btn-label">Kaydet / Devam Et</span>
+                    <span class="cb-btn-spinner"></span>
+                </button>
+                <button type="button" class="btn btn-light-danger font-weight-bold"
+                        data-toggle="modal"
+                        data-target="#cb_confirm_modal"
+                        data-cb-modal-title="Formu temizle"
+                        data-cb-modal-message="Bu işlem yalnızca mevcut UI alanlarını sıfırlar. Gerçek secret saklama olmadığı için veri kalıcı değildir."
+                        data-cb-modal-confirm="Temizle">
+                    Temizle / Sıfırla
+                </button>
+                <button type="button" class="btn btn-light-secondary font-weight-bold" data-cb-paper-continue>Paper Mode ile devam et</button>
+                <button type="button" class="btn btn-clean font-weight-bold text-info" data-cb-drawer-target="#cb_shell_drawer">Yardım bilgilerini aç</button>
+            </div>
+        </form>
+    </div>
+</div>

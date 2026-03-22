@@ -1,0 +1,27 @@
+<div class="card card-custom gutter-b cb-card cb-settings-nav-card" data-cb-settings-page-panel="content">
+    <div class="card-body">
+        <div class="cb-section-title">Ayar kategorileri</div>
+        <div class="cb-settings-nav mt-4">
+            <a class="cb-settings-nav-link is-active" href="#cb_settings_profile" data-cb-settings-nav-link="profile">Profil</a>
+            <a class="cb-settings-nav-link" href="#cb_settings_app" data-cb-settings-nav-link="app">Uygulama</a>
+            <a class="cb-settings-nav-link" href="#cb_settings_trading" data-cb-settings-nav-link="trading">Trading</a>
+            <a class="cb-settings-nav-link" href="#cb_settings_notifications" data-cb-settings-nav-link="notifications">Bildirimler</a>
+            <a class="cb-settings-nav-link" href="#cb_settings_security" data-cb-settings-nav-link="security">Güvenlik</a>
+            <a class="cb-settings-nav-link" href="#cb_settings_sessions" data-cb-settings-nav-link="sessions">Oturumlar / Cihazlar</a>
+        </div>
+        <div class="cb-notice cb-notice-info mt-5">
+            Section bazlı kaydetme ve merkezi save bar mantığı için foundation hazır. Gerçek persist akışı bu fazda bağlı değildir.
+        </div>
+        <div class="cb-settings-savebar mt-5 d-none" id="cb_settings_savebar">
+            <div>
+                <div class="cb-settings-savebar-title">Kaydedilmemiş değişiklikler var</div>
+                <div class="cb-settings-savebar-text">Tema, trading ve notification tercihleri değiştirilmiş görünüyor.</div>
+            </div>
+            <div class="cb-inline-stack">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-settings-cancel>İptal</button>
+                <button type="button" class="btn btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Varsayılana dön" data-cb-modal-message="Gerçek persist bu fazda yok; bu CTA kullanıcıya varsayılan settings profiline dönüş akışını gösterir." data-cb-modal-confirm="Dön">Varsayılana dön</button>
+                <button type="button" class="btn btn-primary font-weight-bolder" data-cb-settings-save>Kaydet</button>
+            </div>
+        </div>
+    </div>
+</div>

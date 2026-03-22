@@ -1,0 +1,60 @@
+@{
+    ViewData["Title"] = "Backtest";
+    ViewData["ActiveNav"] = "Backtest";
+    ViewData["PageDescription"] = "Geçmiş veri testi parametrelerini girip sonuçları özet kartlar, sonuç eğrisi ve trade listesi üzerinden incelemek için analitik foundation ekranı.";
+    ViewData["BreadcrumbItems"] = new[] { "Trade Lab", "Backtest" };
+}
+
+@section Scripts {
+    <script src="~/js/backtest-foundation.js" asp-append-version="true"></script>
+}
+
+<div class="row" data-cb-backtest data-cb-backtest-scenario="idle">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card">
+            <div class="card-body">
+                <div class="cb-page-header">
+                    <div>
+                        <div class="cb-page-eyebrow">Historical Strategy Evaluation</div>
+                        <h2 class="cb-page-title">Backtest çalışma alanı</h2>
+                        <p class="cb-page-description">Strateji, tarih aralığı, sembol ve maliyet parametrelerini tanımlayıp geçmiş veri testi sonuçlarını analitik bir dilde inceleyen foundation yüzeyi.</p>
+                    </div>
+                    <div class="cb-toolbar">
+                        <span class="cb-badge cb-badge-info">UI-only foundation</span>
+                        <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-backtest-reset>Varsayılana dön</button>
+                        <button type="button" class="btn btn-primary font-weight-bolder" data-cb-backtest-run>Backtest Başlat <span class="cb-btn-spinner"></span></button>
+                    </div>
+                </div>
+
+                <div class="cb-section mt-6">
+                    <div class="cb-section-title">Çalışma Senaryoları</div>
+                    <p class="cb-page-description mt-2 mb-0">Henüz çalıştırılmadı, çalışıyor, başarılı, yetersiz sonuç ve başarısız senaryoları tek ekranda görebilmek için görünümü değiştirin. Bu seçim gerçek backtest motorunu tetiklemez.</p>
+                    <div class="cb-chip-group mt-4" data-cb-toggle-group>
+                        <button type="button" class="cb-chip is-active" data-cb-toggle-active data-cb-backtest-scenario-trigger="idle">Henüz çalıştırılmadı</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-backtest-scenario-trigger="running">Çalışıyor</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-backtest-scenario-trigger="success">Başarılı</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-backtest-scenario-trigger="limited">Sonuç yetersiz</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-backtest-scenario-trigger="error">Başarısız</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Backtest/_ParameterForm")
+        @await Html.PartialAsync("Backtest/_HelpCard")
+    </div>
+
+    <div class="col-xl-8">
+        <div data-cb-backtest-panel="content">
+            @await Html.PartialAsync("Backtest/_SummaryCards")
+            @await Html.PartialAsync("Backtest/_EquityCurveCard")
+            @await Html.PartialAsync("Backtest/_MetricsPanel")
+            @await Html.PartialAsync("Backtest/_TradeList")
+        </div>
+        @await Html.PartialAsync("Backtest/_StatePanels")
+    </div>
+</div>
+
+@await Html.PartialAsync("Backtest/_TradeDetailDrawer")

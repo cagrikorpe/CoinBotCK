@@ -1,0 +1,43 @@
+<section id="cb_admin_settings_flags" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+    <div class="card-body">
+        <div class="cb-admin-section-kicker">Feature Flags</div>
+        <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
+            <div>
+                <div class="cb-admin-section-title">Global feature flag placeholder’ları</div>
+                <p class="cb-admin-section-description">Birkaç sistem davranışı flag kartları ve enabled/disabled badge diliyle ayrıldı. Gerçek flag backend’i bu fazda bağlı değildir.</p>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Flag Registry", Tone = "info", IconText = "FF" })
+        </div>
+
+        <div class="cb-admin-settings-switch-grid mt-6">
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">AI assisted suggestions</span>
+                <strong>Enabled placeholder</strong>
+                <small>Global suggestion layer için kontrollü rollout zemini.</small>
+                <label class="cb-switch-card mt-5"><input type="checkbox" checked /><span class="cb-switch-card-indicator"></span><span>Enabled</span></label>
+                <div class="cb-admin-page-meta mt-4">@await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Enabled", Tone = "healthy", IconText = "ON" })</div>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Detailed activity trace</span>
+                <strong>Disabled placeholder</strong>
+                <small>Ek izleme yükü yaratabileceği için default off zemini.</small>
+                <label class="cb-switch-card mt-5"><input type="checkbox" /><span class="cb-switch-card-indicator"></span><span>Disabled</span></label>
+                <div class="cb-admin-page-meta mt-4">@await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Disabled", Tone = "neutral", IconText = "OF" })</div>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Shadow alerts</span>
+                <strong>Enabled placeholder</strong>
+                <small>Alarm davranışını sessiz doğrulama modunda izleyecek zemin.</small>
+                <label class="cb-switch-card mt-5"><input type="checkbox" checked /><span class="cb-switch-card-indicator"></span><span>Enabled</span></label>
+                <div class="cb-admin-page-meta mt-4">@await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Shadow", Tone = "warning", IconText = "SH" })</div>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Support fast lookup</span>
+                <strong>Enabled placeholder</strong>
+                <small>Support ekranındaki hızlı lookup kartlarını açık tutan foundation.</small>
+                <label class="cb-switch-card mt-5"><input type="checkbox" checked /><span class="cb-switch-card-indicator"></span><span>Enabled</span></label>
+                <div class="cb-admin-page-meta mt-4">@await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Global", Tone = "info", IconText = "GL" })</div>
+            </div>
+        </div>
+    </div>
+</section>

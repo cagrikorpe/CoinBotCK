@@ -1,0 +1,76 @@
+@{
+    var rows = new[]
+    {
+        new { Name = "Alpha Pulse Global", User = "Ops Primary", Status = "Aktif", Market = "Spot", Mode = "Live", Strategy = "Momentum", Risk = "Balanced", LastAction = "5 dk önce rebalance", Error = "Yok", StatusTone = "healthy", RiskTone = "info" },
+        new { Name = "Beta Hedge Guard", User = "Risk Watch", Status = "Durduruldu", Market = "Futures", Mode = "Live", Strategy = "Hedge", Risk = "Conservative", LastAction = "22 dk önce manuel stop", Error = "Yok", StatusTone = "neutral", RiskTone = "healthy" },
+        new { Name = "Gamma Draft Scout", User = "Paper Lab", Status = "Taslak", Market = "Spot", Mode = "Paper", Strategy = "Template bekliyor", Risk = "Unset", LastAction = "Henüz başlatılmadı", Error = "N/A", StatusTone = "warning", RiskTone = "neutral" },
+        new { Name = "Delta Futures Surge", User = "Growth Desk", Status = "Hata", Market = "Futures", Mode = "Live", Strategy = "Breakout", Risk = "Aggressive", LastAction = "2 dk önce retry", Error = "Order reject placeholder", StatusTone = "critical", RiskTone = "critical" },
+        new { Name = "Echo Mean Revert", User = "Desk Beta", Status = "Aktif", Market = "Spot", Mode = "Paper", Strategy = "Mean reversion", Risk = "Balanced", LastAction = "11 dk önce signal sync", Error = "Stale watch", StatusTone = "degraded", RiskTone = "warning" }
+    };
+}
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-table-card">
+    <div class="card-body">
+        <div class="cb-admin-table-header">
+            <div>
+                <div class="cb-admin-section-kicker">Bot Grid</div>
+                <div class="cb-admin-section-title">Global bot monitoring listesi</div>
+                <p class="cb-admin-section-description mb-0">Bot adı, kullanıcı, strategy, risk ve son operasyon sinyali tek satırda görünür. Error ve stale botlar hızlı seçilebilir.</p>
+            </div>
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "1,284 kayıt", Tone = "info", IconText = "TB" })
+        </div>
+
+        <div class="table-responsive cb-admin-table-wrap">
+            <table class="table table-borderless cb-admin-table cb-admin-bot-table mb-0">
+                <thead>
+                    <tr>
+                        <th>Bot</th>
+                        <th>Kullanıcı</th>
+                        <th>Durum</th>
+                        <th>Market</th>
+                        <th>Paper/Live</th>
+                        <th>Strategy</th>
+                        <th>Risk</th>
+                        <th>Son aksiyon</th>
+                        <th>Son hata</th>
+                        <th>Aksiyon</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in rows)
+                    {
+                        <tr>
+                            <td>
+                                <div class="cb-admin-user-cell">
+                                    <span class="cb-admin-user-avatar">@row.Name.Substring(0,1)</span>
+                                    <div>
+                                        <div class="cb-admin-user-name">@row.Name</div>
+                                        <div class="cb-admin-user-meta">Bot id masked placeholder / runtime-safe label</div>
+                                    </div>
+                                </div>
+                            </td>
+                            <td>
+                                <div class="cb-admin-mini-stat">
+                                    <strong>@row.User</strong>
+                                    <small>Scoped user placeholder</small>
+                                </div>
+                            </td>
+                            <td>@await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = row.Status, Tone = row.StatusTone, IconText = "ST" })</td>
+                            <td>@await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = row.Market, Tone = row.Market == "Futures" ? "warning" : "info", IconText = "MK" })</td>
+                            <td>@await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = row.Mode, Tone = row.Mode == "Live" ? "critical" : "neutral", IconText = "PL" })</td>
+                            <td><div class="cb-admin-mini-stat"><strong>@row.Strategy</strong><small>Template / entry-exit özeti</small></div></td>
+                            <td>@await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = row.Risk, Tone = row.RiskTone, IconText = "RK" })</td>
+                            <td><div class="cb-admin-mini-stat"><strong>@row.LastAction</strong><small>Son operasyon placeholder</small></div></td>
+                            <td><div class="cb-admin-mini-stat"><strong>@row.Error</strong><small>Severity-aware placeholder</small></div></td>
+                            <td>
+                                <div class="cb-admin-inline-actions cb-admin-inline-actions-compact">
+                                    <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_admin_bot_drawer">Detay</button>
+                                    <button type="button" class="btn btn-xs btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_admin_bot_force_stop_modal" data-cb-modal-title="Botu force stop" data-cb-modal-message="Gerçek force stop işlemi yoktur; kritik confirm ve audit reason foundation'ı gösterilir." data-cb-modal-confirm="Force stop" data-cb-modal-tone="danger">Force stop</button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>

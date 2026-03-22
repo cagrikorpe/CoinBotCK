@@ -1,0 +1,139 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "D:\\CkBot\\Code\\CoinBot\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{DCF8A5AE-2C97-4F8B-9852-852456B018F9}|src\\CoinBot.Web\\CoinBot.Web.csproj|d:\\ckbot\\code\\coinbot\\src\\coinbot.web\\areas\\admin\\views\\shared\\foundation\\_adminauditreasonfield.cshtml||{40D31677-CBC0-4297-A9EF-89D907823A98}",
+      "RelativeMoniker": "D:0:0:{DCF8A5AE-2C97-4F8B-9852-852456B018F9}|src\\CoinBot.Web\\CoinBot.Web.csproj|solutionrelative:src\\coinbot.web\\areas\\admin\\views\\shared\\foundation\\_adminauditreasonfield.cshtml||{40D31677-CBC0-4297-A9EF-89D907823A98}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{DCF8A5AE-2C97-4F8B-9852-852456B018F9}|src\\CoinBot.Web\\CoinBot.Web.csproj|d:\\ckbot\\code\\coinbot\\src\\coinbot.web\\areas\\admin\\controllers\\admincontroller.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{DCF8A5AE-2C97-4F8B-9852-852456B018F9}|src\\CoinBot.Web\\CoinBot.Web.csproj|solutionrelative:src\\coinbot.web\\areas\\admin\\controllers\\admincontroller.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{DCF8A5AE-2C97-4F8B-9852-852456B018F9}|src\\CoinBot.Web\\CoinBot.Web.csproj|d:\\ckbot\\code\\coinbot\\src\\coinbot.web\\controllers\\authcontroller.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{DCF8A5AE-2C97-4F8B-9852-852456B018F9}|src\\CoinBot.Web\\CoinBot.Web.csproj|solutionrelative:src\\coinbot.web\\controllers\\authcontroller.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{DCF8A5AE-2C97-4F8B-9852-852456B018F9}|src\\CoinBot.Web\\CoinBot.Web.csproj|d:\\ckbot\\code\\coinbot\\src\\coinbot.web\\views\\shared\\bots\\_botlist.cshtml||{40D31677-CBC0-4297-A9EF-89D907823A98}",
+      "RelativeMoniker": "D:0:0:{DCF8A5AE-2C97-4F8B-9852-852456B018F9}|src\\CoinBot.Web\\CoinBot.Web.csproj|solutionrelative:src\\coinbot.web\\views\\shared\\bots\\_botlist.cshtml||{40D31677-CBC0-4297-A9EF-89D907823A98}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{DCF8A5AE-2C97-4F8B-9852-852456B018F9}|src\\CoinBot.Web\\CoinBot.Web.csproj|d:\\ckbot\\code\\coinbot\\src\\coinbot.web\\views\\shared\\_layout.cshtml||{40D31677-CBC0-4297-A9EF-89D907823A98}",
+      "RelativeMoniker": "D:0:0:{DCF8A5AE-2C97-4F8B-9852-852456B018F9}|src\\CoinBot.Web\\CoinBot.Web.csproj|solutionrelative:src\\coinbot.web\\views\\shared\\_layout.cshtml||{40D31677-CBC0-4297-A9EF-89D907823A98}"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 0,
+      "VerticalTabListWidth": 256,
+      "DocumentGroups": [
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": 6,
+          "Children": [
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{aa2115a1-9712-457b-9047-dbb71ca2cdd2}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:128:0:{75188d03-9892-4ae2-abf1-207126247ce5}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{1c4feeaa-4718-4aa9-859d-94ce25d182ba}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{004be353-6879-467c-9d1e-9ac23cdf6d49}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{d78612c7-9962-4b83-95d9-268046dad23a}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{34e76e81-ee4a-11d0-ae2e-00a0c90fffc3}"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "_AdminAuditReasonField.cshtml",
+              "DocumentMoniker": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\Areas\\Admin\\Views\\Shared\\Foundation\\_AdminAuditReasonField.cshtml",
+              "RelativeDocumentMoniker": "src\\CoinBot.Web\\Areas\\Admin\\Views\\Shared\\Foundation\\_AdminAuditReasonField.cshtml",
+              "ToolTip": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\Areas\\Admin\\Views\\Shared\\Foundation\\_AdminAuditReasonField.cshtml",
+              "RelativeToolTip": "src\\CoinBot.Web\\Areas\\Admin\\Views\\Shared\\Foundation\\_AdminAuditReasonField.cshtml",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAA8AAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000759|",
+              "WhenOpened": "2026-03-21T20:45:52.473Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "AdminController.cs",
+              "DocumentMoniker": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\Areas\\Admin\\Controllers\\AdminController.cs",
+              "RelativeDocumentMoniker": "src\\CoinBot.Web\\Areas\\Admin\\Controllers\\AdminController.cs",
+              "ToolTip": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\Areas\\Admin\\Controllers\\AdminController.cs",
+              "RelativeToolTip": "src\\CoinBot.Web\\Areas\\Admin\\Controllers\\AdminController.cs",
+              "ViewState": "AgIAABcBAAAAAAAAAAA0wAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-03-21T20:10:00.131Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "AuthController.cs",
+              "DocumentMoniker": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\Controllers\\AuthController.cs",
+              "RelativeDocumentMoniker": "src\\CoinBot.Web\\Controllers\\AuthController.cs",
+              "ToolTip": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\Controllers\\AuthController.cs",
+              "RelativeToolTip": "src\\CoinBot.Web\\Controllers\\AuthController.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAABUAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-03-21T14:38:25.696Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "_BotList.cshtml",
+              "DocumentMoniker": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\Views\\Shared\\Bots\\_BotList.cshtml",
+              "RelativeDocumentMoniker": "src\\CoinBot.Web\\Views\\Shared\\Bots\\_BotList.cshtml",
+              "ToolTip": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\Views\\Shared\\Bots\\_BotList.cshtml",
+              "RelativeToolTip": "src\\CoinBot.Web\\Views\\Shared\\Bots\\_BotList.cshtml",
+              "ViewState": "AgIAAI4AAAAAAAAAAAAnwJ4AAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000759|",
+              "WhenOpened": "2026-03-21T14:27:06.639Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 4,
+              "Title": "_Layout.cshtml",
+              "DocumentMoniker": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\Views\\Shared\\_Layout.cshtml",
+              "RelativeDocumentMoniker": "src\\CoinBot.Web\\Views\\Shared\\_Layout.cshtml",
+              "ToolTip": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\Views\\Shared\\_Layout.cshtml",
+              "RelativeToolTip": "src\\CoinBot.Web\\Views\\Shared\\_Layout.cshtml",
+              "ViewState": "AgIAADUAAAAAAAAAAAAnwFUAAAA5AAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000759|",
+              "WhenOpened": "2026-03-21T13:12:53.706Z"
+            }
+          ]
+        },
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": -1,
+          "Children": [
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{0ad07096-bba9-4900-a651-0598d26f6d24}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{e5c86464-96be-4d7c-9a8b-abcb3bbf5f92}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

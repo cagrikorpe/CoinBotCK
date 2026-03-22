@@ -1,0 +1,24 @@
+@{
+    var tone = ViewData["AdminFreshnessTone"]?.ToString() ?? "healthy";
+    var label = ViewData["AdminFreshnessLabel"]?.ToString() ?? "Fresh";
+    var message = ViewData["AdminFreshnessMessage"]?.ToString() ?? "Admin yüzeyi güncel placeholder akış ile okunuyor.";
+    var meta = ViewData["AdminFreshnessMeta"]?.ToString() ?? "Freshness · canlı";
+    var title = ViewData["Title"]?.ToString() ?? "Admin";
+    var stripToneClass = tone switch
+    {
+        "critical" => "cb-admin-info-strip-critical",
+        "warning" => "cb-admin-info-strip-warning",
+        "degraded" => "cb-admin-info-strip-degraded",
+        _ => "cb-admin-info-strip-success"
+    };
+}
+<div class="cb-admin-info-strip cb-admin-global-stale-strip @stripToneClass" role="status" aria-live="polite">
+    <div class="cb-admin-global-stale-copy">
+        <div class="cb-admin-info-strip-title">@title · stale / freshness guard</div>
+        <div class="cb-admin-info-strip-text">@message</div>
+    </div>
+    <div class="cb-admin-global-stale-actions">
+        @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = label, Tone = tone == "critical" ? "critical" : tone == "warning" ? "warning" : tone == "degraded" ? "degraded" : "healthy", IconText = "FD" })
+        <span class="cb-admin-info-strip-meta">@meta</span>
+    </div>
+</div>

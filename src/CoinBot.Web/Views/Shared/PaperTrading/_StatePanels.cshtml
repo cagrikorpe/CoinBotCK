@@ -1,0 +1,35 @@
+<div class="d-none cb-paper-state-card" data-cb-paper-panel="empty">
+    @await Html.PartialAsync("Foundation/_EmptyState", new UiStateViewModel
+    {
+        IconText = "PT",
+        Title = "Paper hesabı hazır, henüz işlem yok",
+        Message = "Önce paper botlarını veya strategy akışını başlat. Yeni simülasyon işlemleri oluştuğunda bu sayfa canlıya yakın operasyon görünümüne döner.",
+        ActionText = "Botlarım ekranına git",
+        ActionHref = "/Bots",
+        SecondaryActionText = "Strategy Builder aç",
+        SecondaryActionHref = "/StrategyBuilder"
+    })
+</div>
+
+<div class="d-none cb-paper-state-card" data-cb-paper-panel="loading">
+    @await Html.PartialAsync("Foundation/_LoadingState", new UiLoadingStateViewModel
+    {
+        Title = "Paper Trading workspace hazırlanıyor",
+        Message = "Sanal bakiye, açık pozisyonlar, aktif botlar ve son işlemler aynı operasyonel dilde yükleniyor.",
+        CardCount = 3,
+        LineCount = 5
+    })
+</div>
+
+<div class="d-none cb-paper-state-card" data-cb-paper-panel="error">
+    @await Html.PartialAsync("Foundation/_ErrorState", new UiStateViewModel
+    {
+        IconText = "!",
+        Title = "Paper session şu anda alınamadı",
+        Message = "Placeholder hata senaryosu, kullanıcıyı retry ve yardım kartı ile çıkmaza sokmayan bir foundation yüzeyi sunar.",
+        ActionText = "Tekrar dene",
+        ActionHref = "#",
+        SecondaryActionText = "Yardımı aç",
+        SecondaryActionHref = "#paper-help"
+    })
+</div>

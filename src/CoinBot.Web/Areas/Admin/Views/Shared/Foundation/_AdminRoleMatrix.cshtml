@@ -1,0 +1,73 @@
+@{
+    var permissions = new[]
+    {
+        "Kullanıcı yönetimi",
+        "Exchange görüntüleme",
+        "Bot operasyonları",
+        "Audit / log erişimi",
+        "Security olayları",
+        "Global ayarlar"
+    };
+
+    var rows = new[]
+    {
+        new { Role = "Super Admin", Tone = "role", Values = new[] { "Tam", "Tam", "Tam", "Tam", "Tam", "Tam" } },
+        new { Role = "Admin", Tone = "info", Values = new[] { "Sınırlı", "Tam", "Sınırlı", "Tam", "Sınırlı", "Sınırlı" } },
+        new { Role = "Support", Tone = "neutral", Values = new[] { "Sınırlı", "Var", "Yok", "Sınırlı", "Yok", "Yok" } },
+        new { Role = "Auditor", Tone = "paused", Values = new[] { "Yok", "Var", "Yok", "Tam", "Var", "Yok" } },
+        new { Role = "Viewer", Tone = "degraded", Values = new[] { "Yok", "Var", "Yok", "Sınırlı", "Yok", "Yok" } }
+    };
+}
+
+<div class="cb-admin-role-matrix">
+    <div class="cb-admin-role-matrix-head">
+        <div>
+            <div class="cb-admin-section-kicker">Role Matrix</div>
+            <div class="cb-admin-section-title">Kaba yetki görünümü</div>
+            <p class="cb-admin-section-description">Gerçek permission backend’i bu fazda yok; yalnızca hangi rolün kabaca neyi görebildiğini anlatan taranabilir foundation hazırlanmıştır.</p>
+        </div>
+        <div class="cb-admin-role-matrix-actions">
+            <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_permission_info_modal">Permission info</button>
+            <button type="button" class="btn btn-primary font-weight-bolder" data-cb-drawer-target="#cb_admin_role_matrix_drawer">Drawer detayı</button>
+        </div>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table cb-admin-role-matrix-table">
+            <thead>
+                <tr>
+                    <th>Rol</th>
+                    @foreach (var permission in permissions)
+                    {
+                        <th>@permission</th>
+                    }
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in rows)
+                {
+                    <tr>
+                        <td>
+                            <div class="d-flex align-items-center gap-2">
+                                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = row.Role, Tone = row.Tone, IconText = row.Role.Substring(0, Math.Min(2, row.Role.Length)).ToUpperInvariant() })
+                            </div>
+                        </td>
+                        @foreach (var value in row.Values)
+                        {
+                            var tone = value switch
+                            {
+                                "Tam" => "healthy",
+                                "Var" => "info",
+                                "Sınırlı" => "warning",
+                                _ => "neutral"
+                            };
+                            <td>
+                                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = value, Tone = tone, IconText = value == "Yok" ? "--" : value.Substring(0, Math.Min(2, value.Length)).ToUpperInvariant() })
+                            </td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>

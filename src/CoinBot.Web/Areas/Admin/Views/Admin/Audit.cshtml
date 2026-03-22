@@ -1,0 +1,58 @@
+@{
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Global Trace Workspace",
+        Title = "Audit & Log Merkezi",
+        Description = "Platform genelindeki audit, security, runtime, AI, trading, admin action ve user activity kayıtlarını okunabilir filtreler, severity görünümü ve detail drawer ile tek ekranda toplayan Super Admin log center foundation ekranı.",
+        StatusBadge = new AdminBadgeViewModel { Label = "Log Center", Tone = "info", IconText = "LG" },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = "PII Safe", Tone = "healthy", IconText = "OK" },
+            new AdminBadgeViewModel { Label = "Retention Aware", Tone = "warning", IconText = "RT" },
+            new AdminBadgeViewModel { Label = "Export Placeholder", Tone = "neutral", IconText = "EX" }
+        },
+        SecondaryActionText = "Sistem sağlığı",
+        SecondaryActionHref = Url.Action("SystemHealth", "Admin", new { area = "Admin" }),
+        PrimaryActionText = "Export placeholder",
+        PrimaryActionHref = "#cb_admin_log_export_modal"
+    };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = "warning",
+                    Title = "Global audit / log center foundation",
+                    Message = "Gerçek logging backend, export pipeline, retention enforcement veya correlation store bu fazda bağlı değildir. Ekran; global log listesi, kategori/severity akışı, detail drawer ve retention meta yüzeylerini UI seviyesinde hazırlar.",
+                    Meta = "UI-only monitoring"
+                })
+
+                <div class="mt-6">
+                    @await Html.PartialAsync("Foundation/_AdminAuditSummaryMeta")
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("Foundation/_AdminAuditFilterBar")
+    </div>
+
+    <div class="col-xl-8">
+        @await Html.PartialAsync("Foundation/_AdminAuditCategoryStrip")
+        @await Html.PartialAsync("Foundation/_AdminAuditLogList")
+    </div>
+
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminAuditRetentionInfo")
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("Foundation/_AdminAuditStatesShowcase")
+    </div>
+</div>

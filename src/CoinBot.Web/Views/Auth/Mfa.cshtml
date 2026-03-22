@@ -1,0 +1,67 @@
+@{
+    Layout = "_AuthLayout";
+    ViewData["Title"] = "MFA";
+    ViewData["AuthTitle"] = "İkinci doğrulama";
+    ViewData["AuthDescription"] = "Login sonrası ikinci güvenlik katmanı için profesyonel görünen, korkutmayan MFA foundation ekranı.";
+    ViewData["AuthEyebrow"] = "Security Check";
+    ViewData["AuthStage"] = "MFA";
+    ViewData["AuthProgress"] = "3 / 3";
+    ViewData["AuthHighlights"] = new[]
+    {
+        "6 haneli OTP input standardı",
+        "Authenticator / e-posta kodu yöntem placeholder alanları",
+        "Resend, timer, invalid code ve loading pattern desteği"
+    };
+}
+
+<div class="cb-auth-panel cb-auth-panel-compact">
+    <div class="cb-auth-panel-header">
+        <div>
+            <div class="cb-page-eyebrow">Multi-Factor Authentication</div>
+            <h2 class="cb-page-title">Doğrulama kodunu girin</h2>
+            <p class="cb-page-description">Geçerli auth logic bağlandığında kullanıcı, başarılı login sonrası bu adıma taşınabilecek şekilde UI foundation hazırlandı.</p>
+        </div>
+        <a asp-controller="Auth" asp-action="Login" class="btn btn-light-primary font-weight-bold">Başka hesapla giriş</a>
+    </div>
+
+    <div class="cb-auth-methods">
+        <button type="button" class="cb-auth-method is-active">Authenticator App</button>
+        <button type="button" class="cb-auth-method">Email Code</button>
+    </div>
+
+    <div class="cb-auth-alert cb-auth-alert-info mt-6">
+        Kod doğrulaması başarılı olduğunda kullanıcı onboarding wizard akışına yönlenecek zemin hazırlanmıştır.
+    </div>
+
+    <form class="cb-auth-form-grid" action="#" method="post" novalidate>
+        <div class="form-group mb-0">
+            <label class="cb-form-label">6 haneli kod</label>
+            <div class="cb-otp-group" data-cb-otp-group>
+                <input type="text" inputmode="numeric" maxlength="1" class="form-control cb-otp-input" data-cb-otp />
+                <input type="text" inputmode="numeric" maxlength="1" class="form-control cb-otp-input" data-cb-otp />
+                <input type="text" inputmode="numeric" maxlength="1" class="form-control cb-otp-input" data-cb-otp />
+                <input type="text" inputmode="numeric" maxlength="1" class="form-control cb-otp-input" data-cb-otp />
+                <input type="text" inputmode="numeric" maxlength="1" class="form-control cb-otp-input" data-cb-otp />
+                <input type="text" inputmode="numeric" maxlength="1" class="form-control cb-otp-input" data-cb-otp />
+            </div>
+            <div class="cb-field-feedback">Tek input veya bölünmüş OTP tasarımı bağlanabilecek şekilde bu sayfada foundation olarak hazırlandı.</div>
+        </div>
+
+        <div class="cb-auth-row-between">
+            <span class="cb-auth-meta">Kod süresi: <strong>00:28</strong> <span class="cb-auth-meta-soft">(placeholder)</span></span>
+            <a href="#" class="cb-auth-inline-link">Kodu yeniden gönder</a>
+        </div>
+
+        <div class="cb-validation-summary cb-validation-summary-danger">
+            Invalid code / expired code / rate-limit benzeri hata durumları bu bölgede gösterilir.
+        </div>
+
+        <div class="cb-auth-action-row">
+            <button type="submit" class="btn btn-primary font-weight-bolder px-10" data-cb-button-loading>
+                <span class="cb-btn-label">Doğrula</span>
+                <span class="cb-btn-spinner"></span>
+            </button>
+            <a asp-controller="Auth" asp-action="Login" class="btn btn-clean text-muted font-weight-bold">Geri dön</a>
+        </div>
+    </form>
+</div>

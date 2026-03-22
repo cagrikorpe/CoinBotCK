@@ -1,0 +1,41 @@
+<div class="card card-custom gutter-b cb-card cb-ai-state-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">State foundation</h3>
+                <div class="text-muted font-size-sm">AI ekranındaki loading, empty, stale ve error durumlarının aynı dilde nasıl kullanılacağını gösterir.</div>
+            </div>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-state-grid">
+            @await Html.PartialAsync("Foundation/_LoadingState", new UiLoadingStateViewModel
+            {
+                Title = "AI health yükleniyor",
+                Message = "Health, recommendation ve explainability kartları aynı anda skeleton ile hazırlanır.",
+                CardCount = 1,
+                LineCount = 3
+            })
+            @await Html.PartialAsync("Foundation/_EmptyState", new UiStateViewModel
+            {
+                IconText = "AI",
+                Title = "Henüz öneri yok",
+                Message = "Uygun setup bulunmadığında kullanıcıyı çıkmaza sokmayan empty state burada devreye girer.",
+                ActionText = "Yenile",
+                ActionHref = "#",
+                SecondaryActionText = "Yardımı aç",
+                SecondaryActionHref = "#ai-help"
+            })
+            @await Html.PartialAsync("Foundation/_ErrorState", new UiStateViewModel
+            {
+                IconText = "!",
+                Title = "AI verisi alınamadı",
+                Message = "Scoring veya health kaynağı geciktiğinde kullanıcıya retry ve yardım aksiyonu ile yön gösteren hata yüzeyi kullanılır.",
+                ActionText = "Tekrar dene",
+                ActionHref = "#",
+                SecondaryActionText = "Durumu incele",
+                SecondaryActionHref = "#"
+            })
+        </div>
+    </div>
+</div>

@@ -1,0 +1,68 @@
+@{
+    ViewData["Title"] = "Log Merkezi";
+    ViewData["ActiveNav"] = "LogCenter";
+    ViewData["PageDescription"] = "Audit, trading, AI, risk, security ve detaylı davranış izleme olaylarını tek ekranda toplayan; filtre, severity ve detail drawer desteği sunan log foundation ekranı.";
+    ViewData["BreadcrumbItems"] = new[] { "System", "Log Merkezi" };
+}
+
+@section Scripts {
+    <script src="~/js/log-center-foundation.js" asp-append-version="true"></script>
+}
+
+<div class="row" data-cb-logcenter-page data-cb-logcenter-scenario="mixed">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card">
+            <div class="card-body">
+                <div class="cb-page-header">
+                    <div>
+                        <div class="cb-page-eyebrow">Log Center</div>
+                        <h2 class="cb-page-title">Sistem olayları ve davranış izleme merkezi</h2>
+                        <p class="cb-page-description">Audit, trading, AI, risk, security ve detaylı kullanıcı davranış olaylarını anlaşılır özetlerle listeler; kritik kayıtları hızla ayırmaya ve detayını drawer üzerinden incelemeye zemin hazırlar.</p>
+                    </div>
+                    <div class="cb-toolbar">
+                        <span class="cb-badge cb-badge-info">UI-only foundation</span>
+                        <a asp-controller="Settings" asp-action="Index" class="btn btn-light-primary font-weight-bold">Ayarlar'a git</a>
+                        <button type="button" class="btn btn-primary font-weight-bolder" data-cb-logcenter-refresh>Listeyi yenile</button>
+                    </div>
+                </div>
+
+                <div class="cb-section mt-6">
+                    <div class="cb-section-title">Durum Senaryoları</div>
+                    <p class="cb-page-description mt-2 mb-0">Boş, normal akış, kritik yoğunluk, trace kapalı, trace açık, loading ve error yüzeylerini aynı foundation içinde kontrol edin. Gerçek log backend ve DB/file okuma bu fazda bağlı değildir.</p>
+                    <div class="cb-chip-group mt-4" data-cb-toggle-group>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-logcenter-scenario-trigger="empty">Hiç log yok</button>
+                        <button type="button" class="cb-chip is-active" data-cb-toggle-active data-cb-logcenter-scenario-trigger="mixed">Normal akış</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-logcenter-scenario-trigger="critical">Kritik yoğunluk</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-logcenter-scenario-trigger="trace-off">Trace kapalı</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-logcenter-scenario-trigger="trace-on">Trace açık</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-logcenter-scenario-trigger="loading">Loading</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-logcenter-scenario-trigger="error">Error</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12" data-cb-logcenter-page-panel="content">
+        @await Html.PartialAsync("LogCenter/_SummaryMeta")
+    </div>
+
+    <div class="col-12" data-cb-logcenter-page-panel="content">
+        @await Html.PartialAsync("LogCenter/_Toolbar")
+    </div>
+
+    <div class="col-xl-8" data-cb-logcenter-page-panel="content">
+        @await Html.PartialAsync("LogCenter/_LogList")
+    </div>
+
+    <div class="col-xl-4" data-cb-logcenter-page-panel="content">
+        @await Html.PartialAsync("LogCenter/_TraceInfoCard")
+        @await Html.PartialAsync("LogCenter/_HelpCard")
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("LogCenter/_StatePanels")
+    </div>
+</div>
+
+@await Html.PartialAsync("LogCenter/_DetailDrawer")

@@ -1,0 +1,27 @@
+<div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">State patterns</h3>
+                <div class="text-muted font-size-sm">Template loading, builder empty ve validation warning davranışları aynı foundation diliyle korunur.</div>
+            </div>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-state-grid">
+            <div class="cb-strategy-state-card">
+                @await Html.PartialAsync("Foundation/_LoadingState", new UiLoadingStateViewModel
+                {
+                    Title = "Template listesi hazırlanıyor",
+                    Message = "Kart grid, toolbox ve builder eşzamanlı yüklenirken boş ekran yerine skeleton gösterilir.",
+                    CardCount = 1,
+                    LineCount = 3
+                })
+            </div>
+            <div class="cb-strategy-state-card">
+                <div class="cb-bot-mini-validation">Tamamlanmamış strateji: En az bir entry rule ve bir exit rule eklemeden "hazır" durumuna geçme.</div>
+                <div class="cb-mini-helper-card mt-4">Validation dili sert değil, yönlendirici tutulur. Riskli leverage veya eksik exit kuralı burada öne çıkar.</div>
+            </div>
+        </div>
+    </div>
+</div>

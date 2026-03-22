@@ -1,0 +1,71 @@
+@{
+    ViewData["Title"] = "Paper Trading";
+    ViewData["ActiveNav"] = "PaperTrading";
+    ViewData["PageDescription"] = "Sanal bakiye, açık paper pozisyonlar, aktif paper botlar ve canlıya geçiş hazırlığını aynı operasyonel dilde sunan UI foundation ekranı.";
+    ViewData["BreadcrumbItems"] = new[] { "Trade Lab", "Paper Trading" };
+}
+
+@section Scripts {
+    <script src="~/js/paper-trading-foundation.js" asp-append-version="true"></script>
+}
+
+<div class="row" data-cb-paper-trading data-cb-paper-scenario="ready">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card">
+            <div class="card-body">
+                <div class="cb-page-header">
+                    <div>
+                        <div class="cb-page-eyebrow">Simulated Live Operations</div>
+                        <h2 class="cb-page-title">Paper Trading operasyon yüzeyi</h2>
+                        <p class="cb-page-description">Gerçek piyasaya emir göndermeden sanal bakiye, açık paper pozisyonlar ve aktif paper botların canlıya yakın simülasyon görünümünü sunan foundation alanı.</p>
+                    </div>
+                    <div class="cb-toolbar">
+                        <span class="cb-badge cb-badge-info">UI-only foundation</span>
+                        <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-paper-refresh>Listeyi yenile</button>
+                        <button type="button" class="btn btn-primary font-weight-bolder" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Canlıya geçiş hazırlığı" data-cb-modal-message="Paper Trading sonucu canlı geçişe hazır olup olmadığını göstermek için hazırlanan kontrollü placeholder akışıdır." data-cb-modal-confirm="Hazırlığı incele">Canlıya geçiş önerisi</button>
+                    </div>
+                </div>
+
+                <div class="cb-section mt-6">
+                    <div class="cb-section-title">Durum Senaryoları</div>
+                    <p class="cb-page-description mt-2 mb-0">Paper hesabı hazır, aktif çalışma, veri bekleniyor, uyarı ağırlıklı ve hata senaryolarını aynı ekranda kontrol edin. Bu seçim gerçek stream veya order simulation tetiklemez.</p>
+                    <div class="cb-chip-group mt-4" data-cb-toggle-group>
+                        <button type="button" class="cb-chip is-active" data-cb-toggle-active data-cb-paper-scenario-trigger="ready">Hazır ama işlem yok</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-paper-scenario-trigger="active">Aktif paper çalışma</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-paper-scenario-trigger="waiting">Veri bekleniyor</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-paper-scenario-trigger="caution">Canlıya geçiş uyarısı</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-paper-scenario-trigger="loading">Loading</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-paper-scenario-trigger="error">Error</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12" data-cb-paper-panel="content">
+        @await Html.PartialAsync("PaperTrading/_ModeBanner")
+    </div>
+
+    <div class="col-12" data-cb-paper-panel="content">
+        @await Html.PartialAsync("PaperTrading/_SummaryCards")
+    </div>
+
+    <div class="col-xl-8" data-cb-paper-panel="content">
+        @await Html.PartialAsync("PaperTrading/_OpenPositionsCard")
+        @await Html.PartialAsync("PaperTrading/_RecentTradesCard")
+    </div>
+
+    <div class="col-xl-4" data-cb-paper-panel="content">
+        @await Html.PartialAsync("PaperTrading/_SessionMeta")
+        @await Html.PartialAsync("PaperTrading/_ActiveBotsCard")
+        @await Html.PartialAsync("PaperTrading/_DailyResultsCard")
+        @await Html.PartialAsync("PaperTrading/_ReadinessCard")
+        @await Html.PartialAsync("PaperTrading/_HelpCard")
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("PaperTrading/_StatePanels")
+    </div>
+</div>
+
+@await Html.PartialAsync("PaperTrading/_ActivityDrawer")

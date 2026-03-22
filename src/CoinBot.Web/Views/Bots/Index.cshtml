@@ -1,0 +1,79 @@
+@{
+    ViewData["Title"] = "Botlarım";
+    ViewData["ActiveNav"] = "Bots";
+    ViewData["PageDescription"] = "Trading botlarını tek ekranda izlemek, oluşturmak, düzenlemek ve detay drawer içinde incelemek için operasyonel foundation ekranı.";
+    ViewData["BreadcrumbItems"] = new[] { "Automation", "Botlarım" };
+}
+
+@section Scripts {
+    <script src="~/js/bot-foundation.js" asp-append-version="true"></script>
+}
+
+<div class="row" data-cb-bot-management data-cb-bot-scenario="list">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card">
+            <div class="card-body">
+                <div class="cb-page-header">
+                    <div>
+                        <div class="cb-page-eyebrow">Bot Management</div>
+                        <h2 class="cb-page-title">Bot yönetim yüzeyi</h2>
+                        <p class="cb-page-description">Bot listesini, create/edit akışını ve detail drawer temelini aynı tasarım diliyle bir araya getiren operasyonel foundation ekranı.</p>
+                    </div>
+                    <div class="cb-toolbar">
+                        <span class="cb-badge cb-badge-info">UI-only foundation</span>
+                        <button type="button"
+                                class="btn btn-primary font-weight-bolder"
+                                data-toggle="modal"
+                                data-target="#cb_bot_form_modal"
+                                data-cb-bot-form="create">
+                            Yeni Bot Oluştur
+                        </button>
+                    </div>
+                </div>
+
+                <div class="cb-bot-meta-row mt-6">
+                    <div class="cb-bot-meta-tile">
+                        <span class="cb-bot-meta-label">Toplam bot</span>
+                        <strong class="cb-bot-meta-value cb-mono">04</strong>
+                    </div>
+                    <div class="cb-bot-meta-tile">
+                        <span class="cb-bot-meta-label">Aktif</span>
+                        <strong class="cb-bot-meta-value cb-mono">02</strong>
+                    </div>
+                    <div class="cb-bot-meta-tile">
+                        <span class="cb-bot-meta-label">Taslak</span>
+                        <strong class="cb-bot-meta-value cb-mono">01</strong>
+                    </div>
+                    <div class="cb-bot-meta-tile cb-bot-meta-tile-warning">
+                        <span class="cb-bot-meta-label">Dikkat gereken</span>
+                        <strong class="cb-bot-meta-value cb-mono">01</strong>
+                    </div>
+                </div>
+
+                <div class="cb-section mt-6">
+                    <div class="cb-section-title">Sayfa Durumları</div>
+                    <p class="cb-page-description mt-2 mb-0">Liste, empty ve error davranışlarını görmek için görünümü değiştirin. Taslak / aktif / durdurulmuş / riskli bot örnekleri normal liste görünümünde birlikte yer alır.</p>
+                    <div class="cb-chip-group mt-4" data-cb-toggle-group>
+                        <button type="button" class="cb-chip is-active" data-cb-toggle-active data-cb-bot-scenario-trigger="list">Operasyon listesi</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-bot-scenario-trigger="empty">İlk bot yok</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-bot-scenario-trigger="loading">Liste yükleniyor</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-bot-scenario-trigger="error">Liste hatası</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-8">
+        @await Html.PartialAsync("Bots/_BotToolbar")
+        @await Html.PartialAsync("Bots/_BotList")
+    </div>
+
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Bots/_BotHelpCard")
+        @await Html.PartialAsync("Bots/_BotStatePatterns")
+    </div>
+</div>
+
+@await Html.PartialAsync("Bots/_BotFormModal")
+@await Html.PartialAsync("Bots/_BotDetailDrawer")

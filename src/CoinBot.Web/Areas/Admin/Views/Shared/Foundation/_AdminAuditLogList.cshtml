@@ -1,0 +1,62 @@
+@{
+    var logs = new[]
+    {
+        new { Time = "2026-03-21 20:14", Category = "Security", CategoryTone = "critical", Severity = "Critical", SeverityTone = "critical", Summary = "Step-up doğrulama policy mismatch", Scope = "Admin / Settings", Description = "Kritik ayar değişimi öncesi beklenen doğrulama placeholder akışı tetiklendi.", Tags = new[] { "step-up", "policy", "guard" } },
+        new { Time = "2026-03-21 20:05", Category = "Runtime", CategoryTone = "warning", Severity = "Warning", SeverityTone = "warning", Summary = "Worker heartbeat threshold yaklaştı", Scope = "market-data-worker", Description = "Last heartbeat stale eşiklerine yaklaşan worker için warning summary placeholder.", Tags = new[] { "heartbeat", "stale", "worker" } },
+        new { Time = "2026-03-21 19:51", Category = "AI", CategoryTone = "degraded", Severity = "Info", SeverityTone = "info", Summary = "Confidence band soft veto", Scope = "AI / Recommendation", Description = "Global confidence band ve macro risk placeholder nedeniyle soft veto kaydı üretildi.", Tags = new[] { "confidence", "veto", "explain" } },
+        new { Time = "2026-03-21 19:22", Category = "Admin Actions", CategoryTone = "info", Severity = "Info", SeverityTone = "info", Summary = "Maintenance placeholder confirm açıldı", Scope = "Overview / Quick Action", Description = "Gerçek state değişimi olmadan kritik aksiyon modal zinciri log center perspektifiyle görünür kaldı.", Tags = new[] { "confirm", "maintenance", "audit" } },
+        new { Time = "2026-03-21 18:48", Category = "Trading", CategoryTone = "warning", Severity = "Error", SeverityTone = "critical", Summary = "Execution guard rejection placeholder", Scope = "Bot Ops / Execution", Description = "Order pipeline guard katmanında blocked decision placeholder event'i üretildi.", Tags = new[] { "execution", "guard", "risk" } },
+        new { Time = "2026-03-21 18:07", Category = "User Activity", CategoryTone = "neutral", Severity = "Info", SeverityTone = "info", Summary = "Detailed trace toggle enabled", Scope = "User / Log Center", Description = "Kullanıcı davranış trace görünümü placeholder olarak genişletildi; hassas veri maskeli kalır.", Tags = new[] { "trace", "user", "masking" } }
+    };
+}
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-table-card">
+    <div class="card-body">
+        <div class="cb-admin-table-header">
+            <div>
+                <div class="cb-admin-section-kicker">Global Log List</div>
+                <div class="cb-admin-section-title">Platform audit / event listesi</div>
+                <p class="cb-admin-section-description mb-0">Kategori, severity, olay özeti, scope ve kısa açıklama aynı satırda taranabilir kalır. Ham payload veya secrets/PII gösterilmez.</p>
+            </div>
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Detail drawer ready", Tone = "info", IconText = "DR" })
+        </div>
+
+        <div class="table-responsive cb-admin-table-wrap">
+            <table class="table table-borderless cb-admin-table cb-admin-audit-table mb-0">
+                <thead>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>Kategori</th>
+                        <th>Severity</th>
+                        <th>Olay özeti</th>
+                        <th>İlgili kullanıcı / modül</th>
+                        <th>Kısa açıklama</th>
+                        <th>Detay</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var log in logs)
+                    {
+                        <tr>
+                            <td><span class="cb-admin-freshness-time cb-mono">@log.Time</span></td>
+                            <td>@await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = log.Category, Tone = log.CategoryTone, IconText = "CT" })</td>
+                            <td>@await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = log.Severity, Tone = log.SeverityTone, IconText = "SV" })</td>
+                            <td>
+                                <div class="cb-admin-mini-stat">
+                                    <strong>@log.Summary</strong>
+                                    <small>@string.Join(" · ", log.Tags)</small>
+                                </div>
+                            </td>
+                            <td><div class="cb-admin-mini-stat"><strong>@log.Scope</strong><small>Scoped entity placeholder</small></div></td>
+                            <td class="text-muted">@log.Description</td>
+                            <td>
+                                <div class="cb-admin-inline-actions cb-admin-inline-actions-compact">
+                                    <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_admin_log_drawer">Detay</button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,23 @@
+@using CoinBot.Web.ViewModels.Foundation
+<div class="d-none" data-cb-logcenter-page-panel="loading">
+    @await Html.PartialAsync("Foundation/_LoadingState", new UiLoadingStateViewModel
+    {
+        Title = "Log merkezi yükleniyor",
+        Message = "Summary, filtre toolbar ve log akışı skeleton yüzeylerle hazırlanıyor.",
+        CardCount = 3,
+        LineCount = 4
+    })
+</div>
+
+<div class="d-none" data-cb-logcenter-page-panel="error">
+    @await Html.PartialAsync("Foundation/_ErrorState", new UiStateViewModel
+    {
+        IconText = "!",
+        Title = "Log merkezi yüklenemedi",
+        Message = "Gerçek backend sonradan bağlandığında retry ve destekleyici açıklama yüzeyi aynı foundation üstüne oturacaktır.",
+        ActionText = "Tekrar dene",
+        ActionHref = "#",
+        SecondaryActionText = "Dashboard'a git",
+        SecondaryActionHref = "/"
+    })
+</div>

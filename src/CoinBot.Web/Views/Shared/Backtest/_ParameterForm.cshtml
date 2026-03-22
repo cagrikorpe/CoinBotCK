@@ -1,0 +1,123 @@
+<div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Backtest parametreleri</h3>
+                <div class="text-muted font-size-sm">Bu form Paper Trading değil, yalnızca geçmiş veri testi senaryosunu tanımlar. Gerçek veri/motor sonraki fazda bağlanacaktır.</div>
+            </div>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-rule-setting-item">
+            <div class="cb-rule-setting-header">
+                <strong>Strateji ve piyasa bağlamı</strong>
+                <span class="cb-badge cb-badge-info" id="cb_backtest_mode_badge">Spot context</span>
+            </div>
+            <div class="row mt-4">
+                <div class="col-12">
+                    <label class="cb-form-label">Strateji seçimi</label>
+                    <select class="form-control cb-form-control" id="cb_backtest_strategy">
+                        <option>EMA Cross Strategy</option>
+                        <option>RSI Reversal</option>
+                        <option>Breakout Template</option>
+                        <option>DCA Template</option>
+                    </select>
+                </div>
+                <div class="col-md-6 mt-4">
+                    <label class="cb-form-label">Market tipi</label>
+                    <select class="form-control cb-form-control" id="cb_backtest_market">
+                        <option value="spot">Spot</option>
+                        <option value="futures">Futures</option>
+                    </select>
+                </div>
+                <div class="col-md-6 mt-4">
+                    <label class="cb-form-label">Timeframe</label>
+                    <select class="form-control cb-form-control" id="cb_backtest_timeframe">
+                        <option>1m</option>
+                        <option>5m</option>
+                        <option>15m</option>
+                        <option selected>1h</option>
+                        <option>4h</option>
+                        <option>1d</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="cb-rule-setting-item mt-4">
+            <div class="cb-rule-setting-header">
+                <strong>Tarih aralığı</strong>
+                <span class="cb-badge cb-badge-neutral" id="cb_backtest_range_badge">Son 90 gün</span>
+            </div>
+            <div class="cb-chip-group cb-chip-group-sm mt-3" data-cb-toggle-group>
+                <button type="button" class="cb-chip" data-cb-toggle-active data-cb-backtest-range="7d">Son 7 gün</button>
+                <button type="button" class="cb-chip" data-cb-toggle-active data-cb-backtest-range="30d">Son 30 gün</button>
+                <button type="button" class="cb-chip is-active" data-cb-toggle-active data-cb-backtest-range="90d">Son 90 gün</button>
+                <button type="button" class="cb-chip" data-cb-toggle-active data-cb-backtest-range="custom">Özel aralık</button>
+            </div>
+            <div class="row mt-4" id="cb_backtest_range_inputs">
+                <div class="col-md-6">
+                    <label class="cb-form-label">Başlangıç tarihi</label>
+                    <input type="date" class="form-control cb-form-control" id="cb_backtest_start" value="2026-01-01" />
+                </div>
+                <div class="col-md-6 mt-4 mt-md-0">
+                    <label class="cb-form-label">Bitiş tarihi</label>
+                    <input type="date" class="form-control cb-form-control" id="cb_backtest_end" value="2026-03-20" />
+                </div>
+                <div class="col-12 mt-3">
+                    <div class="text-muted font-size-sm" id="cb_backtest_range_help">Daha uzun aralık, istatistiklerin güvenilirliğini artırır. Kısa aralıklar sonucu olduğundan parlak gösterebilir.</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="cb-rule-setting-item mt-4">
+            <div class="cb-rule-setting-header">
+                <strong>Sembol ve maliyet varsayımları</strong>
+                <span class="cb-badge cb-badge-warning" id="cb_backtest_cost_badge">Fee + slippage etkin</span>
+            </div>
+            <div class="row mt-4">
+                <div class="col-md-6">
+                    <label class="cb-form-label">Sembol</label>
+                    <select class="form-control cb-form-control" id="cb_backtest_symbol">
+                        <option>BTCUSDT</option>
+                        <option>ETHUSDT</option>
+                        <option>SOLUSDT</option>
+                        <option>BNBUSDT</option>
+                    </select>
+                </div>
+                <div class="col-md-6 mt-4 mt-md-0">
+                    <label class="cb-form-label">Başlangıç bakiye</label>
+                    <div class="input-group">
+                        <div class="input-group-prepend"><span class="input-group-text cb-input-addon">$</span></div>
+                        <input type="text" class="form-control cb-form-control" id="cb_backtest_initial_balance" value="10000" />
+                    </div>
+                </div>
+                <div class="col-md-6 mt-4">
+                    <label class="cb-form-label">Fee</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control cb-form-control" id="cb_backtest_fee" value="0.10" />
+                        <div class="input-group-append"><span class="input-group-text cb-input-addon">%</span></div>
+                    </div>
+                    <div class="cb-helper-text mt-2">İşlem maliyeti sonuçları aşağı çeker; bu alan sonraki fazda gerçek borsa fee yapılarına bağlanabilir.</div>
+                </div>
+                <div class="col-md-6 mt-4">
+                    <label class="cb-form-label">Slippage</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control cb-form-control" id="cb_backtest_slippage" value="0.03" />
+                        <div class="input-group-append"><span class="input-group-text cb-input-addon">%</span></div>
+                    </div>
+                    <div class="cb-helper-text mt-2">Fiyat kayması varsayımı özellikle düşük timeframe ve agresif stratejilerde sonucu etkileyebilir.</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="cb-alert cb-alert-warning mt-4 d-none" id="cb_backtest_validation_alert">
+            Seçilen tarih aralığı ve maliyet varsayımları sonuç üretmeyi zorlaştırabilir. Bu alan yönlendirici validation foundation olarak hazırlandı.
+        </div>
+
+        <div class="cb-toolbar mt-6">
+            <button type="button" class="btn btn-primary font-weight-bolder" data-cb-backtest-run>Backtest Başlat <span class="cb-btn-spinner"></span></button>
+            <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-backtest-reset>Temizle</button>
+        </div>
+    </div>
+</div>

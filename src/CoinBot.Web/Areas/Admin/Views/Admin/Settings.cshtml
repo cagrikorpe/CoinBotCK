@@ -1,0 +1,56 @@
+@{
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "System Settings",
+        Title = "Global Ayarlar",
+        Description = "Kullanıcı ayarlarından ayrı tutulan; feature flag, retention, AI rollout, maintenance ve varsayılan politika alanlarını güvenli admin diliyle toplayan global settings foundation ekranı.",
+        StatusBadge = new AdminBadgeViewModel { Label = "System Scope", Tone = "warning", IconText = "GS" },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = "No Persist", Tone = "info", IconText = "NP" },
+            new AdminBadgeViewModel { Label = "Danger Aware", Tone = "critical", IconText = "DG" },
+            new AdminBadgeViewModel { Label = "Re-auth Ready", Tone = "warning", IconText = "RA" }
+        },
+        SecondaryActionText = "Support tools",
+        SecondaryActionHref = Url.Action("SupportTools", "Admin", new { area = "Admin" }),
+        PrimaryActionText = "Step-up security",
+        PrimaryActionHref = "#cb_admin_reauth_modal"
+    };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = "warning",
+                    Title = "Bu ekran sistem ayarıdır",
+                    Message = "Kullanıcı bazlı tercihleri değil; platform genelindeki feature flag, retention, rollout ve maintenance ayarlarının güvenli foundation yüzeyini temsil eder.",
+                    Meta = "Global Scope"
+                })
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row cb-admin-settings-layout">
+    <div class="col-xl-3 col-lg-4">
+        @await Html.PartialAsync("Foundation/_AdminGlobalSettingsSectionNav")
+    </div>
+    <div class="col-xl-9 col-lg-8">
+        <div class="cb-admin-settings-shell">
+            @await Html.PartialAsync("Foundation/_AdminFeatureFlagsSection")
+            @await Html.PartialAsync("Foundation/_AdminLoggingRetentionSection")
+            @await Html.PartialAsync("Foundation/_AdminAiRolloutSection")
+            @await Html.PartialAsync("Foundation/_AdminNotificationDefaultsSection")
+            @await Html.PartialAsync("Foundation/_AdminRiskPolicyDefaultsSection")
+            @await Html.PartialAsync("Foundation/_AdminMaintenanceSettingsSection")
+            @await Html.PartialAsync("Foundation/_AdminEmergencyBroadcastSection")
+            @await Html.PartialAsync("Foundation/_AdminGlobalDangerSettingsSection")
+            @await Html.PartialAsync("Foundation/_AdminGlobalSettingsStatesShowcase")
+        </div>
+    </div>
+</div>

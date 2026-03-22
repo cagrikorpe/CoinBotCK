@@ -1,0 +1,49 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-dashboard-card cb-admin-panel-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">AI Health</div>
+                <div class="cb-admin-section-title">Global AI health summary</div>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Degraded", Tone = "degraded", IconText = "AI" })
+        </div>
+
+        <div class="cb-admin-ai-health-grid mt-6">
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Model version</span>
+                <strong>vNext-shadow</strong>
+                <small>Canary / rollback-ready placeholder</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Son skor zamanı</span>
+                <strong class="cb-mono">04:12 önce</strong>
+                <small>Stale threshold eşiğine yakın</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Low confidence yoğunluğu</span>
+                <strong>Yükseliyor</strong>
+                <small>Karar kalitesi fallback izleme placeholder</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Durum</span>
+                <strong>Warming up / degraded</strong>
+                <small>Paused ve healthy state aynı yapı ile taşınır</small>
+            </div>
+        </div>
+
+        <div class="mt-6">
+            @await Html.PartialAsync("_AdminInfoStrip", new AdminInfoStripViewModel
+            {
+                Tone = "warning",
+                Title = "AI degraded senaryosu",
+                Message = "Son skor zamanı geciktiğinde warning badge ve detay CTA aynı kart içinde daha görünür hale gelir.",
+                Meta = "Scenario C"
+            })
+        </div>
+
+        <div class="cb-admin-inline-actions mt-6">
+            <a asp-area="Admin" asp-controller="Admin" asp-action="StrategyAiMonitoring" class="btn btn-primary font-weight-bolder">AI ekranına git</a>
+            <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_ai_health_modal" data-cb-modal-title="AI health detayı" data-cb-modal-message="Model health, freshness ve düşük güven yoğunluğu placeholder bilgisi burada açılır." data-cb-modal-confirm="Anladım">Detay</button>
+        </div>
+    </div>
+</div>

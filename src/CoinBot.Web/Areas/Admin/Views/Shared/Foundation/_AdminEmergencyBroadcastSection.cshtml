@@ -1,0 +1,32 @@
+<section id="cb_admin_settings_broadcast" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+    <div class="card-body">
+        <div class="cb-admin-section-kicker">Emergency Broadcast</div>
+        <div class="cb-admin-section-title">Acil yayın placeholder alanı</div>
+        <p class="cb-admin-section-description">Sistem geneline gönderilecek acil mesajlar için ayrı severity ve kısa mesaj alanı hazırlandı. Gerçek broadcast backend’i yoktur.</p>
+
+        <div class="cb-admin-settings-form-grid cb-admin-broadcast-grid mt-6">
+            <div class="form-group mb-0">
+                <label class="cb-form-label">Başlık</label>
+                <input class="form-control cb-form-control" type="text" value="Planned maintenance notice" />
+            </div>
+            <div class="form-group mb-0">
+                <label class="cb-form-label">Severity</label>
+                <select class="form-control cb-form-control">
+                    <option>Info placeholder</option>
+                    <option selected>Warning placeholder</option>
+                    <option>Critical placeholder</option>
+                </select>
+            </div>
+            <div class="form-group mb-0 cb-admin-broadcast-message">
+                <label class="cb-form-label">Kısa mesaj</label>
+                <textarea class="form-control cb-form-control" rows="4" placeholder="Kısa emergency broadcast mesajı placeholder"></textarea>
+                <div class="cb-field-feedback">Gerçek gönderim yok; yalnızca kritik iletişim yüzeyi foundation olarak ayrılmıştır.</div>
+            </div>
+        </div>
+
+        <div class="cb-admin-inline-actions mt-5">
+            <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_confirm_modal" data-cb-modal-title="Broadcast preview" data-cb-modal-message="Emergency broadcast yalnızca preview/confirm placeholder olarak gösterilir." data-cb-modal-confirm="Preview">Preview placeholder</button>
+            <button type="button" class="btn btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_admin_danger_modal" data-cb-modal-title="Emergency broadcast gönder" data-cb-modal-message="Gerçek gönderim yoktur; yalnızca danger panel ve controlled send dili gösterilir." data-cb-modal-confirm="Gönder" data-cb-modal-tone="danger">Gönder placeholder</button>
+        </div>
+    </div>
+</section>

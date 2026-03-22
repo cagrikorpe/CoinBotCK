@@ -1,0 +1,47 @@
+@{
+    var statTiles = new[]
+    {
+        new AdminStatTileViewModel { Label = "Toplam exchange account", Value = "1,142", Meta = "Platform çapında bağlı hesap placeholder", Tone = "info" },
+        new AdminStatTileViewModel { Label = "Aktif bağlantı", Value = "1,008", Meta = "Son sync eşiği içinde healthy görünenler", Tone = "healthy" },
+        new AdminStatTileViewModel { Label = "Stale bağlantı", Value = "54", Meta = "Freshness eşiğini aşmış placeholder hesaplar", Tone = "warning" },
+        new AdminStatTileViewModel { Label = "Riskli permission", Value = "17", Meta = "Withdrawal veya mismatch uyarısı taşıyanlar", Tone = "critical" }
+    };
+}
+
+<div class="row">
+    @foreach (var stat in statTiles)
+    {
+        <div class="col-xl-3 col-md-6 mb-6">
+            @await Html.PartialAsync("Foundation/_AdminStatTile", stat)
+        </div>
+    }
+
+    <div class="col-12">
+        <div class="cb-admin-freshness-card mt-2">
+            <div class="cb-admin-panel-head">
+                <div>
+                    <div class="cb-admin-section-kicker">Monitoring Meta</div>
+                    <div class="cb-admin-section-title">Paper / live dağılımı ve global sync</div>
+                </div>
+                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Delayed", Tone = "warning", IconText = "FS" })
+            </div>
+            <div class="cb-admin-exchange-meta-grid mt-5">
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Paper / Live</span>
+                    <strong>412 / 730</strong>
+                    <small>Mode belirsizliği ayrı risk yüzeyi olarak izlenir</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Spot / Futures</span>
+                    <strong>688 / 454</strong>
+                    <small>Binance ürün moduna göre ayrıştırılmış placeholder</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Son global sync</span>
+                    <strong class="cb-mono">3 dk önce</strong>
+                    <small>Worker heartbeat ile hizalı placeholder</small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

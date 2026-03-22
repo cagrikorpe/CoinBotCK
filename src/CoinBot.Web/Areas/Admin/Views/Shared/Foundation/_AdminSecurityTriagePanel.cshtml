@@ -1,0 +1,55 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-panel-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Security Triage</div>
+                <div class="cb-admin-section-title">Severity triage paneli</div>
+                <p class="cb-admin-section-description mb-0">Critical, high, medium ve low yoğunluklarını hızlı filtre CTA’ları ile birlikte gösterir.</p>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "High focus", Tone = "critical", IconText = "TG" })
+        </div>
+
+        <div class="cb-admin-severity-grid mt-6">
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Critical</span>
+                <strong>05</strong>
+                <small>Risky permission + brute-force placeholder</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">High</span>
+                <strong>11</strong>
+                <small>Suspicious session + invalid MFA</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Medium</span>
+                <strong>18</strong>
+                <small>Failed login yoğunluğu / retry watch</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Low</span>
+                <strong>26</strong>
+                <small>Review / masked anomaly placeholder</small>
+            </div>
+        </div>
+
+        <div class="cb-admin-incident-list mt-6">
+            <div class="cb-admin-incident-item is-critical">
+                <div>
+                    <div class="cb-admin-job-title">Kısa incident summary</div>
+                    <div class="cb-admin-job-meta">Withdrawal risk flag + invalid MFA spike aynı pencereye denk geldi placeholder</div>
+                </div>
+                <button type="button" class="btn btn-xs btn-light-danger font-weight-bold">Critical filtre</button>
+            </div>
+            <div class="cb-admin-incident-item">
+                <div>
+                    <div class="cb-admin-job-title">Hızlı filtre CTA</div>
+                    <div class="cb-admin-job-meta">Failed login, suspicious session ve admin critical action akışları tek tık filtre placeholder</div>
+                </div>
+                <div class="cb-admin-inline-actions cb-admin-inline-actions-compact">
+                    <button type="button" class="btn btn-xs btn-light-primary font-weight-bold">MFA</button>
+                    <button type="button" class="btn btn-xs btn-light-primary font-weight-bold">Session</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

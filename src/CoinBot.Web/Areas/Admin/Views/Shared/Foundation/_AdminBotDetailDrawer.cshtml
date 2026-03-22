@@ -1,0 +1,117 @@
+<aside class="cb-drawer cb-admin-drawer cb-admin-bot-drawer" id="cb_admin_bot_drawer" aria-hidden="true">
+    <div class="cb-drawer-header cb-admin-drawer-header">
+        <div>
+            <div class="cb-drawer-eyebrow">Bot Detail</div>
+            <h5 class="cb-drawer-title mb-0">Global bot detail drawer</h5>
+        </div>
+        <button type="button" class="btn btn-xs btn-icon btn-light" data-cb-drawer-close><span>&times;</span></button>
+    </div>
+    <div class="cb-admin-severity-strip">
+        <span class="cb-admin-severity-dot"></span>
+        <span>Strategy, risk, AI etkisi ve son event/hata özetleri tek drawer içinde operasyon kararına yardımcı olacak şekilde toplanır.</span>
+    </div>
+    <div class="cb-drawer-body cb-admin-drawer-body">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Bot Özeti</div>
+                <div class="cb-admin-section-title">Bağlantı ve mod özeti</div>
+                <div class="cb-admin-profile-list mt-5">
+                    <div class="cb-admin-profile-row"><span>Bot adı</span><strong>Delta Futures Surge</strong></div>
+                    <div class="cb-admin-profile-row"><span>Kullanıcı</span><strong>Growth Desk</strong></div>
+                    <div class="cb-admin-profile-row"><span>Bağlı exchange</span><strong>Binance Futures</strong></div>
+                    <div class="cb-admin-profile-row"><span>Market tipi</span><strong>Futures</strong></div>
+                    <div class="cb-admin-profile-row"><span>Paper / Live</span><strong>Live</strong></div>
+                    <div class="cb-admin-profile-row"><span>Durum</span><strong>Error / force-stop watch</strong></div>
+                </div>
+                <div class="cb-admin-badge-stack mt-5">
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Hata", Tone = "critical", IconText = "ST" })
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Futures", Tone = "warning", IconText = "MK" })
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Live", Tone = "critical", IconText = "PL" })
+                </div>
+            </div>
+        </div>
+
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Strategy Summary</div>
+                <div class="cb-admin-section-title">Template ve giriş/çıkış özeti</div>
+                <div class="cb-admin-summary-grid mt-5 cb-admin-user-summary-grid">
+                    <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Template</span><strong>Breakout vNext</strong><small>Strategy template placeholder</small></div>
+                    <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Giriş özeti</span><strong>Momentum + vol filter</strong><small>Entry rule placeholder</small></div>
+                    <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Çıkış özeti</span><strong>ATR trail / hard stop</strong><small>Exit rule placeholder</small></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Risk Summary</div>
+                <div class="cb-admin-section-title">Risk profili ve limitler</div>
+                <div class="cb-admin-profile-list mt-5">
+                    <div class="cb-admin-profile-row"><span>Risk profili</span><strong>Aggressive</strong></div>
+                    <div class="cb-admin-profile-row"><span>Leverage</span><strong>12x placeholder</strong></div>
+                    <div class="cb-admin-profile-row"><span>Limit özeti</span><strong>Max daily loss / pair cap placeholder</strong></div>
+                </div>
+                <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-5">
+                    <div>
+                        <div class="cb-admin-info-strip-title">Risk dikkat</div>
+                        <div class="cb-admin-info-strip-text">Live futures botlarında force stop ve leverage incelemesi birlikte ele alınır.</div>
+                    </div>
+                    <span class="cb-admin-info-strip-meta">Risk</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Son Event'ler</div>
+                <div class="cb-admin-section-title">Kısa activity listesi</div>
+                <div class="cb-admin-activity-list mt-5">
+                    <div class="cb-admin-activity-item"><strong>09:48</strong><span>Signal evaluated placeholder</span></div>
+                    <div class="cb-admin-activity-item"><strong>09:51</strong><span>Risk guard tetiklendi</span></div>
+                    <div class="cb-admin-activity-item"><strong>09:53</strong><span>Retry / cooldown placeholder</span></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Son Hatalar</div>
+                <div class="cb-admin-section-title">Severity-aware hata özeti</div>
+                <div class="cb-admin-log-list mt-5">
+                    <div class="cb-admin-log-item">
+                        @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Critical", Tone = "critical", IconText = "ER" })
+                        <div>
+                            <div class="cb-admin-user-name">Order reject placeholder</div>
+                            <div class="cb-admin-user-meta">Exchange response / retry backoff bilgisi maskeli özetle verilir.</div>
+                        </div>
+                    </div>
+                    <div class="cb-admin-log-item">
+                        @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Warning", Tone = "warning", IconText = "ER" })
+                        <div>
+                            <div class="cb-admin-user-name">Stale event window</div>
+                            <div class="cb-admin-user-meta">Event stream placeholder gecikmesi</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">AI Etkisi</div>
+                <div class="cb-admin-section-title">AI support placeholder</div>
+                <div class="cb-admin-summary-grid mt-5 cb-admin-user-summary-grid">
+                    <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">AI support</span><strong>Assisted</strong><small>Model influence placeholder</small></div>
+                    <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Confidence</span><strong>0.61</strong><small>Confidence influence placeholder</small></div>
+                    <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Veto</span><strong>Soft veto watch</strong><small>AI notu / veto placeholder</small></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="cb-drawer-footer cb-admin-drawer-footer">
+        <a asp-area="Admin" asp-controller="Admin" asp-action="UserDetail" asp-route-id="usr-042" class="btn btn-light-primary font-weight-bold">Kullanıcı</a>
+        <a asp-area="Admin" asp-controller="Admin" asp-action="ExchangeAccounts" class="btn btn-light-primary font-weight-bold">Exchange</a>
+        <button type="button" class="btn btn-danger font-weight-bolder" data-toggle="modal" data-target="#cb_admin_bot_force_stop_modal" data-dismiss="modal">Force stop</button>
+    </div>
+</aside>

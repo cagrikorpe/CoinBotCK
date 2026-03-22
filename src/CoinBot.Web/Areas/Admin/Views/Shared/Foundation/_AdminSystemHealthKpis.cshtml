@@ -1,0 +1,20 @@
+@{
+    var tiles = new[]
+    {
+        new AdminStatTileViewModel { Label = "API health", Value = "Healthy", Meta = "Nominal request path placeholder", Tone = "healthy" },
+        new AdminStatTileViewModel { Label = "Web app health", Value = "Healthy", Meta = "UI shell reachable placeholder", Tone = "healthy" },
+        new AdminStatTileViewModel { Label = "Queue health", Value = "Guarded", Meta = "Queue depth placeholder", Tone = "warning" },
+        new AdminStatTileViewModel { Label = "Overall status", Value = "Degraded", Meta = "Stale worker ve failed job etkisi", Tone = "degraded" },
+        new AdminStatTileViewModel { Label = "Stale worker", Value = "02", Meta = "Heartbeat threshold üstü placeholder", Tone = "warning" },
+        new AdminStatTileViewModel { Label = "Service uptime", Value = "17d 04h", Meta = "Uptime placeholder", Tone = "info" }
+    };
+}
+
+<div class="row">
+    @for (var i = 0; i < tiles.Length; i++)
+    {
+        <div class="col-xl-2 col-md-4 col-sm-6">
+            @await Html.PartialAsync("Foundation/_AdminStatTile", tiles[i])
+        </div>
+    }
+</div>

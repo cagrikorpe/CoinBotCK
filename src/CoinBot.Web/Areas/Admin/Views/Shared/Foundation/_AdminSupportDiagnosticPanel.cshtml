@@ -1,0 +1,51 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card">
+    <div class="card-body">
+        <div class="d-flex align-items-start justify-content-between gap-3 flex-wrap">
+            <div>
+                <div class="cb-admin-section-kicker">Read-only Diagnostic</div>
+                <div class="cb-admin-section-title">Tanı paneli</div>
+                <p class="cb-admin-section-description mb-0">Son hata, exchange problemi, risk uyarısı ve log özeti yalnızca okunur şekilde gösterilir.</p>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Read-only", Tone = "warning", IconText = "RO" })
+        </div>
+
+        <div class="row mt-4">
+            <div class="col-md-6 mb-4">
+                <div class="cb-admin-summary-card h-100">
+                    <span class="cb-admin-summary-label">Son hata</span>
+                    <strong>Bot execution guard placeholder</strong>
+                    <small>2 dk önce · Bot Operations</small>
+                </div>
+            </div>
+            <div class="col-md-6 mb-4">
+                <div class="cb-admin-summary-card h-100">
+                    <span class="cb-admin-summary-label">Son exchange problemi</span>
+                    <strong>Permission mismatch watch</strong>
+                    <small>11 dk önce · Exchange Accounts</small>
+                </div>
+            </div>
+            <div class="col-md-6 mb-4">
+                <div class="cb-admin-summary-card h-100">
+                    <span class="cb-admin-summary-label">Son risk uyarısı</span>
+                    <strong>Daily cap soft warning</strong>
+                    <small>27 dk önce · Risk Center placeholder</small>
+                </div>
+            </div>
+            <div class="col-md-6 mb-4">
+                <div class="cb-admin-summary-card h-100">
+                    <span class="cb-admin-summary-label">Son log özeti</span>
+                    <strong>Security + runtime correlation</strong>
+                    <small>Audit akışı ve user trace placeholder</small>
+                </div>
+            </div>
+        </div>
+
+        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-2">
+            <div>
+                <div class="cb-admin-info-strip-title">Tanı paneli güvenli sınırda kalır</div>
+                <div class="cb-admin-info-strip-text">Secret, token, cookie, credential veya maskesiz cihaz/IP bilgisi gösterilmez.</div>
+            </div>
+            <span class="cb-admin-info-strip-meta">Masked</span>
+        </div>
+    </div>
+</div>

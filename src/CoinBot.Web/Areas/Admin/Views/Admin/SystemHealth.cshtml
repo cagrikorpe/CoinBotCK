@@ -1,0 +1,61 @@
+@{
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Runtime Monitoring",
+        Title = "System Health / Worker Status",
+        Description = "API, web app, queue ve worker health sinyallerini failed jobs, stale warning ve incident severity görünümüyle tek ekranda toplayan Super Admin monitoring foundation ekranı.",
+        StatusBadge = new AdminBadgeViewModel { Label = "Health Watch", Tone = "degraded", IconText = "HL" },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = "Heartbeat Aware", Tone = "info", IconText = "HB" },
+            new AdminBadgeViewModel { Label = "Retry Placeholder", Tone = "warning", IconText = "RT" },
+            new AdminBadgeViewModel { Label = "Job Focus", Tone = "critical", IconText = "JB" }
+        },
+        SecondaryActionText = "Audit / loglar",
+        SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" }),
+        PrimaryActionText = "Worker detail",
+        PrimaryActionHref = "#cb_admin_worker_drawer"
+    };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = "warning",
+                    Title = "System health foundation",
+                    Message = "Gerçek health endpoint, worker runtime, job retry veya uptime kaynağı bu fazda bağlı değildir. Ekran; health KPI, worker freshness, failed jobs ve severity/incident akışlarını UI seviyesinde hazırlar.",
+                    Meta = "UI-only monitoring"
+                })
+
+                <div class="mt-6">
+                    @await Html.PartialAsync("Foundation/_AdminSystemHealthFreshnessStrip")
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("Foundation/_AdminSystemHealthKpis")
+    </div>
+
+    <div class="col-xl-7">
+        @await Html.PartialAsync("Foundation/_AdminWorkerHealthList")
+    </div>
+
+    <div class="col-xl-5">
+        @await Html.PartialAsync("Foundation/_AdminSeverityIncidentPanel")
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("Foundation/_AdminSystemFailedJobsTable")
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("Foundation/_AdminSystemHealthStatesShowcase")
+    </div>
+</div>

@@ -1,0 +1,62 @@
+@{
+    var events = new[]
+    {
+        new { Time = "2026-03-21 20:42", Type = "Risky exchange permission", TypeTone = "critical", Severity = "Critical", SeverityTone = "critical", Actor = "usr-014", Module = "Exchange", Summary = "Withdrawal enabled flag bulundu", Description = "Masked connection scope üzerinde withdrawal risk flag placeholder görüldü.", Tags = new[] { "withdrawal", "permission", "exchange" } },
+        new { Time = "2026-03-21 20:35", Type = "Invalid MFA", TypeTone = "warning", Severity = "High", SeverityTone = "warning", Actor = "adm-***", Module = "Admin Auth", Summary = "Tek kullanıcıda invalid MFA yoğunluğu", Description = "Aynı oturum penceresinde tekrar eden invalid code placeholder akışı izlendi.", Tags = new[] { "mfa", "retry", "auth" } },
+        new { Time = "2026-03-21 20:19", Type = "Suspicious session", TypeTone = "degraded", Severity = "High", SeverityTone = "warning", Actor = "usr-031", Module = "Session", Summary = "Masked device / location değişimi", Description = "Şüpheli session placeholder; PII maske kuralı korunarak device / ip anomaly zemini gösterilir.", Tags = new[] { "session", "device", "anomaly" } },
+        new { Time = "2026-03-21 19:54", Type = "Failed login", TypeTone = "info", Severity = "Medium", SeverityTone = "info", Actor = "usr-008", Module = "Login", Summary = "Failed login yoğunluğu arttı", Description = "Rate spike ve brute-force placeholder için izleme sinyali yükseltildi.", Tags = new[] { "login", "failed", "spike" } },
+        new { Time = "2026-03-21 19:22", Type = "Admin critical action", TypeTone = "critical", Severity = "Medium", SeverityTone = "warning", Actor = "adm-ops", Module = "Settings", Summary = "Danger confirm zinciri açıldı", Description = "Global ayar değişimi öncesi critical confirm ve re-auth foundation akışı loglandı.", Tags = new[] { "step-up", "critical", "settings" } },
+        new { Time = "2026-03-21 18:47", Type = "IP/device anomaly", TypeTone = "neutral", Severity = "Low", SeverityTone = "neutral", Actor = "usr-***", Module = "Device", Summary = "IP/device anomaly placeholder", Description = "Gerçek anomaly backend olmadan security-focused placeholder olay kaydı görünür kalır.", Tags = new[] { "ip", "device", "placeholder" } }
+    };
+}
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-table-card">
+    <div class="card-body">
+        <div class="cb-admin-table-header">
+            <div>
+                <div class="cb-admin-section-kicker">Security Event List</div>
+                <div class="cb-admin-section-title">Global security event listesi</div>
+                <p class="cb-admin-section-description mb-0">Failed login, invalid MFA, suspicious session, risky permission ve admin critical action akışları aynı tabloda güvenlik odaklı taranabilir yoğunlukta sunulur.</p>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Masked actors", Tone = "healthy", IconText = "MS" })
+        </div>
+
+        <div class="table-responsive cb-admin-table-wrap">
+            <table class="table table-borderless cb-admin-table cb-admin-security-table mb-0">
+                <thead>
+                    <tr>
+                        <th>Zaman</th>
+                        <th>Event tipi</th>
+                        <th>Severity</th>
+                        <th>İlgili kullanıcı</th>
+                        <th>Modül</th>
+                        <th>Kısa özet</th>
+                        <th>Detay</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var item in events)
+                    {
+                        <tr>
+                            <td><span class="cb-admin-freshness-time cb-mono">@item.Time</span></td>
+                            <td>@await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = item.Type, Tone = item.TypeTone, IconText = "EV" })</td>
+                            <td>@await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = item.Severity, Tone = item.SeverityTone, IconText = "SV" })</td>
+                            <td><div class="cb-admin-mini-stat"><strong>@item.Actor</strong><small>Masked actor placeholder</small></div></td>
+                            <td><div class="cb-admin-mini-stat"><strong>@item.Module</strong><small>@string.Join(" · ", item.Tags)</small></div></td>
+                            <td class="text-muted">
+                                <div class="cb-admin-mini-stat">
+                                    <strong>@item.Summary</strong>
+                                    <small>@item.Description</small>
+                                </div>
+                            </td>
+                            <td>
+                                <div class="cb-admin-inline-actions cb-admin-inline-actions-compact">
+                                    <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_admin_security_drawer">Detay</button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>

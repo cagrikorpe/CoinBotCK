@@ -1,0 +1,19 @@
+@{
+    var tiles = new[]
+    {
+        new AdminStatTileViewModel { Label = "Toplam log", Value = "148.4K", Meta = "Platform çapında event count placeholder", Tone = "info" },
+        new AdminStatTileViewModel { Label = "Kritik log", Value = "38", Meta = "Severity critical / escalated placeholder", Tone = "critical" },
+        new AdminStatTileViewModel { Label = "Bugün", Value = "6.2K", Meta = "Son 24 saat trace placeholder", Tone = "healthy" },
+        new AdminStatTileViewModel { Label = "Admin action", Value = "412", Meta = "Policy sensitive action placeholder", Tone = "warning" },
+        new AdminStatTileViewModel { Label = "User activity trace", Value = "2.1K", Meta = "Detailed trace toggle placeholder", Tone = "neutral" },
+        new AdminStatTileViewModel { Label = "Retention", Value = "30 gün", Meta = "Archive/export policy placeholder", Tone = "info" }
+    };
+}
+<div class="row cb-admin-summary-grid cb-admin-audit-summary-grid">
+    @foreach (var tile in tiles)
+    {
+        <div class="col-xl-2 col-md-4 col-sm-6">
+            @await Html.PartialAsync("Foundation/_AdminStatTile", tile)
+        </div>
+    }
+</div>

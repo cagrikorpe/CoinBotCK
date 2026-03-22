@@ -1,0 +1,71 @@
+@{
+    ViewData["Title"] = "AI Robot";
+    ViewData["ActiveNav"] = "AiRobot";
+    ViewData["PageDescription"] = "AI öneri, veto, explainability ve model health foundation ekranı; scoring servisi bağlanmadan önce karar yüzeyinin tasarım dilini kurar.";
+    ViewData["BreadcrumbItems"] = new[] { "Trade Lab", "AI Robot" };
+}
+
+@section Scripts {
+    <script src="~/js/ai-robot-foundation.js" asp-append-version="true"></script>
+}
+
+<div class="row" data-cb-ai-robot data-cb-ai-scenario="collecting">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card">
+            <div class="card-body">
+                <div class="cb-page-header">
+                    <div>
+                        <div class="cb-page-eyebrow">AI Decision Center</div>
+                        <h2 class="cb-page-title">AI Robot karar yüzeyi</h2>
+                        <p class="cb-page-description">AI modülünün hangi coinleri önerdiğini, ne zaman veto ettiğini ve önerilerin arkasındaki kısa açıklamaları aynı operasyonel dilde görmen için hazırlanmış foundation ekranı.</p>
+                    </div>
+                    <div class="cb-toolbar">
+                        <span class="cb-badge cb-badge-info">UI-only foundation</span>
+                        <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-ai-refresh>AI akışını yenile <span class="cb-btn-spinner"></span></button>
+                        <button type="button" class="btn btn-primary font-weight-bolder" data-cb-drawer-target="#cb_ai_detail_drawer" data-cb-ai-detail="btc">Öneri detayını aç</button>
+                    </div>
+                </div>
+
+                <div class="cb-section mt-6">
+                    <div class="cb-section-title">Durum Senaryoları</div>
+                    <p class="cb-page-description mt-2 mb-0">Farklı AI state'lerini görmek için senaryo değiştirin. Bu seçim gerçek inference çalıştırmaz; yalnızca foundation yüzeyini günceller.</p>
+                    <div class="cb-chip-group mt-4" data-cb-toggle-group>
+                        <button type="button" class="cb-chip is-active" data-cb-toggle-active data-cb-ai-scenario-trigger="collecting">Veri topluyor</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-ai-scenario-trigger="active">Aktif ve sağlıklı</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-ai-scenario-trigger="low">Düşük güven</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-ai-scenario-trigger="stale">Degraded / stale</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-ai-scenario-trigger="empty">Öneri yok</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-ai-scenario-trigger="loading">Loading</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-ai-scenario-trigger="error">Error</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("AiRobot/_HeroSummary")
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("AiRobot/_FreshnessMeta")
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("AiRobot/_HighlightCards")
+    </div>
+
+    <div class="col-xl-8">
+        @await Html.PartialAsync("AiRobot/_RecommendationList")
+    </div>
+
+    <div class="col-xl-4">
+        @await Html.PartialAsync("AiRobot/_ExplainabilityCard")
+        @await Html.PartialAsync("AiRobot/_VetoCard")
+        @await Html.PartialAsync("AiRobot/_ModelHealthCard")
+        @await Html.PartialAsync("AiRobot/_HelpCard")
+        @await Html.PartialAsync("AiRobot/_StatePatternsCard")
+    </div>
+</div>
+
+@await Html.PartialAsync("AiRobot/_RecommendationDrawer")

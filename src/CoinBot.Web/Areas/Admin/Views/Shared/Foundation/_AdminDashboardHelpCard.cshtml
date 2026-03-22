@@ -1,0 +1,24 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-dashboard-card cb-admin-panel-card">
+    <div class="card-body">
+        <div class="cb-admin-section-kicker">Overview Help</div>
+        <div class="cb-admin-section-title">Bu ekran neyi anlatır?</div>
+        <p class="cb-admin-section-description">Platformun genel sağlık özeti, kritik alarm yoğunluğu, AI health ve failed job alanlarını tek ekranda toparlar. Detay analiz için ilgili admin modüllerine yönlendirme yapar.</p>
+
+        <ul class="cb-admin-help-list mt-6">
+            <li>KPI kartları kullanıcı, bot ve exchange yüzeylerinin kısa operasyon özetidir.</li>
+            <li>Paper / live dağılımı, kullanım profili ve risk takibini aynı satırda görünür kılar.</li>
+            <li>AI health ve failed jobs panelleri warning/degraded senaryolarını erken fark etmek için hazırlanmıştır.</li>
+            <li>Quick actions kartı kullanıcı yönetimi, sistem sağlığı ve global log ekranlarına geçiş zemini bırakır.</li>
+        </ul>
+
+        <div class="mt-6">
+            @await Html.PartialAsync("_AdminInfoStrip", new AdminInfoStripViewModel
+            {
+                Tone = "info",
+                Title = "Senaryo E — Veri bekleniyor / yüklenemedi",
+                Message = "Aşağıdaki state kartları page loading, empty ve error fallback'lerinin dashboard dilinde nasıl görüneceğini gösterir.",
+                Meta = "State preview"
+            })
+        </div>
+    </div>
+</div>

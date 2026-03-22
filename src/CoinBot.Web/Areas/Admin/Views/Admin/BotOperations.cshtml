@@ -1,0 +1,55 @@
+@{
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Global Bot Ops",
+        Title = "Bot Operasyonları",
+        Description = "Platform genelindeki kullanıcı botlarını durum, market, risk ve AI etkisi sinyalleriyle tek ekranda izleyen Super Admin operations foundation ekranı.",
+        StatusBadge = new AdminBadgeViewModel { Label = "Bot Ops", Tone = "warning", IconText = "BT" },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = "Paper / Live", Tone = "neutral", IconText = "PL" },
+            new AdminBadgeViewModel { Label = "Force Stop Guarded", Tone = "critical", IconText = "FS" },
+            new AdminBadgeViewModel { Label = "Strategy Aware", Tone = "info", IconText = "ST" }
+        },
+        SecondaryActionText = "Exchange hesapları",
+        SecondaryActionHref = Url.Action("ExchangeAccounts", "Admin", new { area = "Admin" }),
+        PrimaryActionText = "Force stop rehberi",
+        PrimaryActionHref = "#cb_admin_bot_force_stop_modal"
+    };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = "warning",
+                    Title = "Global bot operations foundation",
+                    Message = "Gerçek runtime, start/stop, force stop veya event stream backend'i bağlı değildir. Bu ekran; durum yoğunluğu, risk sinyali, bulk operation strip ve detail drawer akışlarını UI seviyesinde hazırlar.",
+                    Meta = "UI-only"
+                })
+
+                <div class="mt-6">
+                    @await Html.PartialAsync("Foundation/_AdminBotSummaryMeta")
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-8">
+        @await Html.PartialAsync("Foundation/_AdminBotFilterBar")
+        @await Html.PartialAsync("Foundation/_AdminBulkBotActionsStrip")
+        @await Html.PartialAsync("Foundation/_AdminBotOperationsTable")
+    </div>
+
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminBotHelpCard")
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("Foundation/_AdminBotStatesShowcase")
+    </div>
+</div>

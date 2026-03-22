@@ -1,0 +1,68 @@
+@{
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Session Boundary",
+        Title = "Session Expired",
+        Description = "Admin alanında oturum süresi dolduğunda yeniden giriş veya yeniden doğrulama için temiz, profesyonel bir placeholder ekranı gösterilir.",
+        StatusBadge = new AdminBadgeViewModel { Label = "Session Expired", Tone = "warning", IconText = "SE" },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = "Idle Timeout", Tone = "warning", IconText = "ID" },
+            new AdminBadgeViewModel { Label = "Re-Auth Ready", Tone = "info", IconText = "RA" }
+        },
+        PrimaryActionText = "Yeniden giriş",
+        PrimaryActionHref = Url.Action("Login", "Admin", new { area = "Admin" }),
+        SecondaryActionText = "Dashboard'a dön",
+        SecondaryActionHref = Url.Action("Overview", "Admin", new { area = "Admin" })
+    };
+}
+
+<div class="row">
+    <div class="col-xl-8">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = "warning",
+                    Title = "Oturum sınırı ve yeniden doğrulama görünürdür",
+                    Message = "Admin session timeout, idle warning ve multi-device uyarıları shell içinde açıklayıcı banner’lar ile gösterilir.",
+                    Meta = "Placeholder only"
+                })
+
+                <div class="cb-admin-security-state-grid mt-6">
+                    @await Html.PartialAsync("Foundation/_AdminErrorState", new UiStateViewModel
+                    {
+                        Title = "Yüksek ayrıcalıklı oturum süren doldu",
+                        Message = "Yüksek ayrıcalıklı alanda boşta kalma süresi veya yeniden doğrulama gereksinimi nedeniyle oturum geçersiz sayıldı placeholder. Yeniden giriş veya step-up ile devam edilebilir.",
+                        IconText = "!",
+                        ActionText = "Yeniden giriş",
+                        ActionHref = Url.Action("Login", "Admin", new { area = "Admin" }),
+                        SecondaryActionText = "Role matrix",
+                        SecondaryActionHref = Url.Action("RoleMatrix", "Admin", new { area = "Admin" })
+                    })
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminSecurityHelpCard", new AdminSecurityHelpCardViewModel
+        {
+            Eyebrow = "Session note",
+            Title = "Neden yeniden doğrulama istenebilir",
+            Description = "Maintenance mode, global ayar değişimi veya cihaz oturumu sonlandırma gibi aksiyonlar normal oturum devam ederken bile step-up security isteyebilir.",
+            BadgeLabel = "Session",
+            BadgeTone = "warning",
+            Items = new[]
+            {
+                "Idle timeout warning",
+                "Security-sensitive action note",
+                "Başka cihazda aktif oturum olabilir"
+            },
+            ActionText = "Re-auth modalını aç",
+            ActionHref = "#cb_admin_reauth_modal"
+        })
+    </div>
+</div>

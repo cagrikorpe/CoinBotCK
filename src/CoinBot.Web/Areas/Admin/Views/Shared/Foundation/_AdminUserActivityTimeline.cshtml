@@ -1,0 +1,33 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Recent Activity</div>
+                <div class="cb-admin-section-title">Son aktiviteler</div>
+            </div>
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Timeline", Tone = "neutral", IconText = "TL" })
+        </div>
+        <div class="cb-admin-activity-list mt-5">
+            <div class="cb-admin-activity-item">
+                <strong>Son giriş</strong>
+                <span>Web paneline başarılı giriş placeholder</span>
+                <small>12 dk önce</small>
+            </div>
+            <div class="cb-admin-activity-item">
+                <strong>Bot değişikliği</strong>
+                <span>Paper bot profili güncellendi placeholder</span>
+                <small>3 saat önce</small>
+            </div>
+            <div class="cb-admin-activity-item">
+                <strong>Exchange değişikliği</strong>
+                <span>Bağlantı sync ayarı değişti placeholder</span>
+                <small>Dün</small>
+            </div>
+            <div class="cb-admin-activity-item">
+                <strong>MFA değişikliği</strong>
+                <span>Recovery flow gözden geçirildi placeholder</span>
+                <small>3 gün önce</small>
+            </div>
+        </div>
+    </div>
+</div>

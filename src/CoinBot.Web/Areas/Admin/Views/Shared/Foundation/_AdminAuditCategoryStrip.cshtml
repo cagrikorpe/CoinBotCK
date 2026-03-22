@@ -1,0 +1,49 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Category / Severity Strip</div>
+                <div class="cb-admin-section-title">Kategori ve severity görünümü</div>
+            </div>
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Security focus", Tone = "critical", IconText = "SE" })
+        </div>
+
+        <div class="cb-admin-category-strip mt-5">
+            <div class="cb-admin-category-item">
+                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Audit", Tone = "info", IconText = "AU" })
+                <strong>42.1K</strong>
+                <small>Platform audit stream</small>
+            </div>
+            <div class="cb-admin-category-item">
+                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Security", Tone = "critical", IconText = "SC" })
+                <strong>214</strong>
+                <small>Escalation worthy</small>
+            </div>
+            <div class="cb-admin-category-item">
+                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Runtime", Tone = "warning", IconText = "RT" })
+                <strong>3.8K</strong>
+                <small>Worker / queue events</small>
+            </div>
+            <div class="cb-admin-category-item">
+                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "AI", Tone = "degraded", IconText = "AI" })
+                <strong>1.1K</strong>
+                <small>Recommendation & veto</small>
+            </div>
+            <div class="cb-admin-category-item">
+                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Trading", Tone = "warning", IconText = "TR" })
+                <strong>8.6K</strong>
+                <small>Order / execution placeholder</small>
+            </div>
+            <div class="cb-admin-category-item">
+                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Admin Actions", Tone = "info", IconText = "AD" })
+                <strong>412</strong>
+                <small>Policy sensitive changes</small>
+            </div>
+            <div class="cb-admin-category-item">
+                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "User Activity", Tone = "neutral", IconText = "UA" })
+                <strong>2.1K</strong>
+                <small>Trace toggle aware</small>
+            </div>
+        </div>
+    </div>
+</div>

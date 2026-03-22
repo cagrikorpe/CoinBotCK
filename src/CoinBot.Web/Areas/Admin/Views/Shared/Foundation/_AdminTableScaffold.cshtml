@@ -1,0 +1,38 @@
+@model AdminTableScaffoldViewModel
+
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-table-card">
+    <div class="card-body">
+        <div class="cb-admin-table-header">
+            <div>
+                <div class="cb-admin-section-kicker">Table Wrapper</div>
+                <div class="cb-admin-section-title">@Model.Title</div>
+                <p class="cb-admin-section-description mb-0">@Model.Description</p>
+            </div>
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Compact", Tone = "neutral", IconText = "TB" })
+        </div>
+
+        <div class="table-responsive cb-admin-table-wrap">
+            <table class="table table-borderless cb-admin-table mb-0">
+                <thead>
+                    <tr>
+                        @foreach (var column in Model.Columns)
+                        {
+                            <th>@column</th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @for (var row = 0; row < Model.SkeletonRowCount; row++)
+                    {
+                        <tr>
+                            @foreach (var _ in Model.Columns)
+                            {
+                                <td><span class="cb-admin-skeleton-line @(row % 2 == 0 ? "is-wide" : string.Empty)"></span></td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>

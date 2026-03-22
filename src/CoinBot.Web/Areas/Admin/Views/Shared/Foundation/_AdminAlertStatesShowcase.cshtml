@@ -1,0 +1,35 @@
+<div class="row">
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminLoadingState", new UiLoadingStateViewModel
+        {
+            Title = "Alarm merkezi hazırlanıyor",
+            Message = "Severity filtreleri, unread/read akışı ve detail drawer yüzeyi hazırlanırken kontrollü loading state görünür.",
+            CardCount = 2,
+            LineCount = 5
+        })
+    </div>
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+        {
+            Title = "Aktif alarm yok",
+            Message = "Kritik yoğunluk olmadığında veya yalnız unread filtre boş döndüğünde kullanıcıyı çıkmaza sokmayan empty state görünür.",
+            IconText = "AL",
+            ActionText = "Genel bakış",
+            ActionHref = Url.Action("Overview", "Admin", new { area = "Admin" }),
+            SecondaryActionText = "System health",
+            SecondaryActionHref = Url.Action("SystemHealth", "Admin", new { area = "Admin" })
+        })
+    </div>
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminErrorState", new UiStateViewModel
+        {
+            Title = "Alarm verisi alınamadı",
+            Message = "Notification backend veya rule/source placeholder verisi yüklenemediğinde retry/help alanı görünür kalır.",
+            IconText = "!",
+            ActionText = "Tekrar dene",
+            ActionHref = Url.Action("Notifications", "Admin", new { area = "Admin" }),
+            SecondaryActionText = "Audit / log merkezi",
+            SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" })
+        })
+    </div>
+</div>

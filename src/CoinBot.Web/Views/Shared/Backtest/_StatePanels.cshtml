@@ -1,0 +1,45 @@
+<div class="d-none" data-cb-backtest-panel="idle">
+    @await Html.PartialAsync("Foundation/_EmptyState", new UiStateViewModel
+    {
+        IconText = "BT",
+        Title = "Henüz backtest çalıştırılmadı",
+        Message = "Parametreleri seçip backtest başlattığında sonuç kartları, eğri ve trade listesi aynı sayfada dolacaktır.",
+        ActionText = "Backtest Başlat",
+        ActionHref = "#",
+        SecondaryActionText = "Yardım bilgisi",
+        SecondaryActionHref = "#cb_backtest_help_card"
+    })
+</div>
+
+<div class="d-none" data-cb-backtest-panel="running">
+    @await Html.PartialAsync("Foundation/_LoadingState", new UiLoadingStateViewModel
+    {
+        Title = "Backtest çalışıyor",
+        Message = "Veri hazırlanıyor, sonuç hesaplanıyor ve trade listesi oluşturuluyor. Gerçek job/queue altyapısı sonraki fazda bağlanacaktır.",
+        CardCount = 3,
+        LineCount = 5
+    })
+</div>
+
+<div class="d-none" data-cb-backtest-panel="limited">
+    <div class="card card-custom gutter-b cb-card cb-backtest-state-card">
+        <div class="card-body">
+            <div class="cb-alert cb-alert-warning mb-0">
+                Çok az veri veya çok dar parametre kombinasyonu nedeniyle sonuçlar tam anlamıyla güvenilir görünmüyor. Tarih aralığını genişletmek veya timeframe’i gözden geçirmek mantıklı olabilir.
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="d-none" data-cb-backtest-panel="error">
+    @await Html.PartialAsync("Foundation/_ErrorState", new UiStateViewModel
+    {
+        IconText = "!",
+        Title = "Backtest sonucu üretilemedi",
+        Message = "Historical data, parametre kombinasyonu veya sonuç hesaplama akışı başarısız olduğunda kullanıcıyı çıkmaza sokmayan yönlendirici hata yüzeyi burada devreye girer.",
+        ActionText = "Tekrar dene",
+        ActionHref = "#",
+        SecondaryActionText = "Parametreleri gözden geçir",
+        SecondaryActionHref = "#"
+    })
+</div>

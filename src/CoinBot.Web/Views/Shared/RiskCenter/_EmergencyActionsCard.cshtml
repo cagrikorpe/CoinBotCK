@@ -1,0 +1,58 @@
+<div class="card card-custom gutter-b cb-card cb-risk-emergency-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Emergency actions</h3>
+                <div class="text-muted font-size-sm">Gerçek işlem yoktur; bu alan controlled danger action dilini ve onay akışını hazırlar.</div>
+            </div>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-risk-emergency-grid">
+            <button type="button" class="btn btn-danger font-weight-bolder"
+                    data-toggle="modal" data-target="#cb_danger_modal"
+                    data-cb-modal-title="Close All placeholder"
+                    data-cb-modal-message="Tüm açık pozisyonları kapatmayı simüle eden controlled danger action foundation'ı. Gerçek close-all işlemi bu fazda yok."
+                    data-cb-modal-tone="danger"
+                    data-cb-modal-confirm="Close All">
+                Close All
+            </button>
+            <button type="button" class="btn btn-light-danger font-weight-bolder"
+                    data-toggle="modal" data-target="#cb_danger_modal"
+                    data-cb-modal-title="Stop All Bots placeholder"
+                    data-cb-modal-message="Tüm botları durdurmayı simüle eden danger action foundation'ı. Yeni girişler etkilenir; gerçek stop-all işlemi bu fazda yok."
+                    data-cb-modal-tone="danger"
+                    data-cb-modal-confirm="Stop All">
+                Stop All Bots
+            </button>
+            <button type="button" class="btn btn-light-warning font-weight-bold"
+                    data-toggle="modal" data-target="#cb_confirm_modal"
+                    data-cb-modal-title="Pause New Entries"
+                    data-cb-modal-message="Yeni girişleri geçici olarak durdurmaya yönelik kontrollü confirm akışı; mevcut pozisyonları kapatma amacı taşımaz."
+                    data-cb-modal-confirm="Pause Entries">
+                Pause New Entries
+            </button>
+            <button type="button" class="btn btn-light-warning font-weight-bold"
+                    data-toggle="modal" data-target="#cb_confirm_modal"
+                    data-cb-modal-title="Futures'ı Durdur"
+                    data-cb-modal-message="Sadece futures tarafını durdurmaya yönelik placeholder aksiyon; spot politikaları etkilenmez."
+                    data-cb-modal-confirm="Pause Futures">
+                Futures'ı Durdur
+            </button>
+        </div>
+
+        <div class="cb-mini-helper-card mt-4">
+            <div class="cb-rule-setting-header">
+                <strong>Close All vs Stop All</strong>
+                <span class="cb-badge cb-badge-danger">Danger</span>
+            </div>
+            <div class="text-muted font-size-sm mt-2">Close All açık pozisyonları kapatmayı hedefleyen aksiyon dilidir. Stop All Bots ise yeni karar üretimini ve bot çalışma akışını durdurmayı temsil eder.</div>
+        </div>
+
+        <div class="cb-risk-last-action mt-4">
+            <span>Son emergency action</span>
+            <strong id="cb_risk_last_action">Henüz kritik aksiyon yok</strong>
+            <small id="cb_risk_last_action_note">Sistem stabil görünüyor</small>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,54 @@
+@{
+    var templates = new[]
+    {
+        new { Key = "blank", Name = "Sıfırdan Başla", Description = "Hazır şablon seçmeden kendi kural bloklarını tek tek ekle.", Risk = "Esnek", Market = "Spot / Futures", Tag = "Blank", Selected = true },
+        new { Key = "ema", Name = "EMA Cross", Description = "Trend yönünü EMA kesişimlerinden okuyarak giriş sinyali üretir.", Risk = "Orta", Market = "Spot / Futures", Tag = "Trend", Selected = false },
+        new { Key = "rsi", Name = "RSI Reversal", Description = "Aşırı alım/aşırı satım bölgelerinden geri dönüş yakalamayı hedefler.", Risk = "Orta", Market = "Spot", Tag = "Reversal", Selected = false },
+        new { Key = "breakout", Name = "Breakout", Description = "Aralık kırılımı ve hacim onayı ile momentum fırsatlarını izler.", Risk = "Yüksek", Market = "Spot / Futures", Tag = "Momentum", Selected = false },
+        new { Key = "dca", Name = "DCA", Description = "Kademeli alım mantığı ile ortalama maliyet yaklaşımı sunar.", Risk = "Düşük", Market = "Spot", Tag = "Layered", Selected = false },
+        new { Key = "grid", Name = "Grid", Description = "Band içinde tekrar eden hareketleri grid mantığı ile değerlendirir.", Risk = "Orta", Market = "Spot / Futures", Tag = "Range", Selected = false },
+        new { Key = "trend", Name = "Trend Follower", Description = "Trend filter ve cooldown blokları ile daha seçici akış kurar.", Risk = "Orta", Market = "Futures", Tag = "Filter", Selected = false },
+        new { Key = "mean", Name = "Mean Reversion", Description = "Fiyattaki aşırı sapmaların dengeye dönmesini hedefler.", Risk = "Orta", Market = "Spot", Tag = "Reversion", Selected = false }
+    };
+}
+
+<div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Template seçimi</h3>
+                <div class="text-muted font-size-sm">Hazır strateji şablonu seç veya sıfırdan başlayarak builder alanını doldur.</div>
+            </div>
+        </div>
+        <div class="card-toolbar">
+            <button type="button" class="btn btn-light-primary btn-sm font-weight-bolder" data-cb-drawer-target="#cb_strategy_template_drawer">Template detayları</button>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-strategy-template-grid">
+            @foreach (var template in templates)
+            {
+                <button type="button"
+                        class="cb-template-card @(template.Selected ? "is-selected" : string.Empty)"
+                        data-cb-template-card
+                        data-cb-template-key="@template.Key"
+                        data-cb-template-name="@template.Name"
+                        data-cb-template-risk="@template.Risk"
+                        data-cb-template-market="@template.Market"
+                        data-cb-template-tag="@template.Tag"
+                        data-cb-template-description="@template.Description">
+                    <span class="cb-template-tag">@template.Tag</span>
+                    <div class="cb-template-title-row">
+                        <strong>@template.Name</strong>
+                        <span class="cb-badge @(template.Risk == "Yüksek" ? "cb-badge-danger" : template.Risk == "Düşük" ? "cb-badge-success" : "cb-badge-warning")">@template.Risk</span>
+                    </div>
+                    <p>@template.Description</p>
+                    <div class="cb-template-meta">
+                        <span>Market: @template.Market</span>
+                        <span>Uygula</span>
+                    </div>
+                </button>
+            }
+        </div>
+    </div>
+</div>

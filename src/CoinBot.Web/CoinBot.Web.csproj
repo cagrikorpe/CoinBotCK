@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\CoinBot.Application\CoinBot.Application.csproj" />
+    <ProjectReference Include="..\CoinBot.Infrastructure\CoinBot.Infrastructure.csproj" />
+    <ProjectReference Include="..\CoinBot.Contracts\CoinBot.Contracts.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>

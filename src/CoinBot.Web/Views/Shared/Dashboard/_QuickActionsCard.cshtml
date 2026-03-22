@@ -1,0 +1,37 @@
+<div class="card card-custom gutter-b cb-card cb-dashboard-card cb-quick-actions-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title d-block">
+            <div class="d-flex align-items-center flex-wrap gap-2">
+                <h3 class="card-label font-weight-bolder mb-0">Kill Switch / Quick Actions</h3>
+                <span class="cb-badge cb-badge-danger">Guarded</span>
+            </div>
+            <div class="text-muted mt-2">Gerçek işlem yapmadan önce kontrollü onay akışının nasıl görüneceğini hazırlar.</div>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-quick-actions-grid">
+            <button type="button" class="btn btn-light-danger font-weight-bolder cb-quick-action-btn" data-toggle="modal" data-target="#cb_danger_modal" data-cb-modal-title="Tüm botları durdur" data-cb-modal-tone="danger" data-cb-modal-message="Bu foundation fazında gerçek durdurma işlemi yok. Sonraki fazda bu aksiyon kontrollü risk/confirm akışına bağlanacak." data-cb-modal-confirm="Durdur">
+                Tüm Botları Durdur
+            </button>
+            <button type="button" class="btn btn-light-danger font-weight-bolder cb-quick-action-btn" data-toggle="modal" data-target="#cb_danger_modal" data-cb-modal-title="Tüm pozisyonları kapat" data-cb-modal-tone="danger" data-cb-modal-message="Bu buton sadece confirm modal standardını göstermek için hazırlandı. Gerçek close-all işlemi bu fazda yok." data-cb-modal-confirm="Kapat">
+                Tüm Pozisyonları Kapat
+            </button>
+            <button type="button" class="btn btn-light-warning font-weight-bolder cb-quick-action-btn" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Sadece futures’ı durdur" data-cb-modal-tone="warning" data-cb-modal-message="Futures odaklı kontrollü aksiyonlar için ayrı confirm standardı hazır. Şimdilik işlem yapılmayacak." data-cb-modal-confirm="Devam et">
+                Sadece Futures’ı Durdur
+            </button>
+            <button type="button" class="btn btn-light-primary font-weight-bold cb-quick-action-btn" data-cb-drawer-target="#cb_shell_drawer">
+                Güvenli mod notları
+            </button>
+        </div>
+
+        <div class="cb-quick-safe-mode mt-6">
+            <div>
+                <div class="cb-stat-label">Hızlı güvenli mod</div>
+                <div class="cb-dashboard-card-meta">Yeni girişleri durdur, sadece mevcut pozisyonları izle.</div>
+            </div>
+            <span class="cb-badge cb-badge-neutral">Placeholder</span>
+        </div>
+
+        <div class="cb-dashboard-card-meta mt-5">Son aksiyon: <span class="cb-mono">08:57</span> • Sadece görünüm hazırlığı.</div>
+    </div>
+</div>

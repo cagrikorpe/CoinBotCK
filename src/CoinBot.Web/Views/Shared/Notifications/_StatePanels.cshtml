@@ -1,0 +1,41 @@
+<div class="d-none" data-cb-notifications-page-panel="waiting">
+    <div class="card card-custom gutter-b cb-card">
+        <div class="card-body">
+            <div class="cb-state cb-empty-state">
+                <div class="cb-state-icon">
+                    <span>i</span>
+                </div>
+                <div class="cb-state-body">
+                    <h4 class="cb-state-title">Bildirim akışı veri bekliyor</h4>
+                    <p class="cb-state-text">Bazı event kaynakları henüz bildirim üretmemiş olabilir. Bu ara durum normaldir ve kullanıcıyı çıkmaza sokmadan açıklayıcı bilgi verir.</p>
+                    <div class="cb-state-actions">
+                        <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-notifications-refresh>Tekrar dene</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="d-none" data-cb-notifications-page-panel="loading">
+    @await Html.PartialAsync("Foundation/_LoadingState", new UiLoadingStateViewModel
+    {
+        Title = "Bildirim merkezi hazırlanıyor",
+        Message = "Özet kartları, filtre toolbar ve bildirim akışı aynı tasarım diliyle yükleniyor.",
+        CardCount = 3,
+        LineCount = 4
+    })
+</div>
+
+<div class="d-none" data-cb-notifications-page-panel="error">
+    @await Html.PartialAsync("Foundation/_ErrorState", new UiStateViewModel
+    {
+        IconText = "!",
+        Title = "Bildirim merkezi şu an erişilebilir değil",
+        Message = "Notification feed alınamadığında kullanıcıyı retry ve ilgili modüllere yönlendiren kontrollü hata yüzeyi gösterilir.",
+        ActionText = "Tekrar dene",
+        ActionHref = "#",
+        SecondaryActionText = "Dashboard'a dön",
+        SecondaryActionHref = "/"
+    })
+</div>

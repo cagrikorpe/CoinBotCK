@@ -1,0 +1,35 @@
+<div class="row">
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminLoadingState", new UiLoadingStateViewModel
+        {
+            Title = "Security events hazırlanıyor",
+            Message = "Triage paneli, security event listesi ve detail drawer yüzeyi hazırlanırken kontrollü loading state korunur.",
+            CardCount = 2,
+            LineCount = 5
+        })
+    </div>
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+        {
+            Title = "Şu an güvenlik olayı yok",
+            Message = "Seçili filtrelerde failed login, suspicious session veya risky permission olayı bulunmadığında açıklayıcı empty state gösterilir.",
+            IconText = "OK",
+            ActionText = "Filtreleri temizle",
+            ActionHref = Url.Action("SecurityEvents", "Admin", new { area = "Admin" }),
+            SecondaryActionText = "Audit merkezi",
+            SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" })
+        })
+    </div>
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminErrorState", new UiStateViewModel
+        {
+            Title = "Security feed alınamadı",
+            Message = "Security summary, triage veya detail drawer verisi yüklenemediğinde retry/help alanı görünür kalır.",
+            IconText = "!",
+            ActionText = "Tekrar dene",
+            ActionHref = Url.Action("SecurityEvents", "Admin", new { area = "Admin" }),
+            SecondaryActionText = "Sistem sağlığı",
+            SecondaryActionHref = Url.Action("SystemHealth", "Admin", new { area = "Admin" })
+        })
+    </div>
+</div>

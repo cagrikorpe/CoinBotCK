@@ -1,0 +1,57 @@
+@{
+    var alarms = new[]
+    {
+        new { Title = "AI skor yenilemesi gecikti", Module = "AI", Severity = "Critical", SeverityTone = "critical", Time = "4 dk önce", Detail = "Skor pipeline penceresi uzadı" },
+        new { Title = "Exchange sync kuyruğu yavaşladı", Module = "Exchange", Severity = "Warning", SeverityTone = "warning", Time = "2 dk önce", Detail = "Snapshot tazeliği hedef aralığın dışında" },
+        new { Title = "Worker retry yoğunluğu arttı", Module = "Worker", Severity = "Info", SeverityTone = "info", Time = "55 sn önce", Detail = "Retry batch'i olağan üst sınırda" }
+    };
+}
+
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-dashboard-card cb-admin-panel-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Critical Alerts</div>
+                <div class="cb-admin-section-title">Kritik alarm alanı</div>
+                <p class="cb-admin-section-description">Kısa başlık, severity ve modül bilgisiyle taranabilir alarm yüzeyi. Empty/loading/error state aynı kart standardına bağlanır.</p>
+            </div>
+            <div class="cb-admin-inline-actions">
+                <a asp-area="Admin" asp-controller="Admin" asp-action="Notifications" class="btn btn-light-primary font-weight-bold">Bildirimlere git</a>
+                <button type="button" class="btn btn-primary font-weight-bolder" data-cb-drawer-target="#cb_admin_alarm_drawer">Alarm detayı</button>
+            </div>
+        </div>
+
+        <div class="cb-admin-alert-list mt-6">
+            @foreach (var alarm in alarms)
+            {
+                <div class="cb-admin-alert-item">
+                    <div class="cb-admin-alert-main">
+                        <div class="d-flex flex-wrap align-items-center gap-2">
+                            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = alarm.Severity, Tone = alarm.SeverityTone, IconText = alarm.Module.Substring(0, 1).ToUpperInvariant() })
+                            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = alarm.Module, Tone = "neutral", IconText = "MD" })
+                        </div>
+                        <div class="cb-admin-alert-title">@alarm.Title</div>
+                        <div class="cb-admin-alert-detail">@alarm.Detail</div>
+                    </div>
+                    <div class="cb-admin-alert-side">
+                        <span class="cb-admin-freshness-time cb-mono">@alarm.Time</span>
+                        <div class="cb-admin-table-actions justify-content-end mt-3">
+                            <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_admin_alarm_drawer">Detay</button>
+                            <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-xs btn-light-primary font-weight-bold">Loglara git</a>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div class="mt-6">
+            @await Html.PartialAsync("_AdminInfoStrip", new AdminInfoStripViewModel
+            {
+                Tone = "warning",
+                Title = "Alarm yoğunluğu senaryosu",
+                Message = "Alarm yoğunluğu arttığında bu panel daha görünür hale gelir; empty durumda ise 'Şu an kritik alarm yok' dili aynı kart iskeletiyle gösterilir.",
+                Meta = "Scenario B"
+            })
+        </div>
+    </div>
+</div>

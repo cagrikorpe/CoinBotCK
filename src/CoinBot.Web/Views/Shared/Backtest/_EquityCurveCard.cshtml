@@ -1,0 +1,65 @@
+<div class="card card-custom gutter-b cb-card cb-dashboard-card cb-equity-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title d-block">
+            <div class="d-flex align-items-center flex-wrap gap-2">
+                <h3 class="card-label font-weight-bolder mb-0">Backtest sonuç eğrisi</h3>
+                <span class="cb-badge cb-badge-info">Historical curve foundation</span>
+            </div>
+            <div class="text-muted mt-2">Equity curve, running/no-result/failed state’leriyle birlikte geçmiş veri testi bağlamında hazırlanmıştır.</div>
+        </div>
+        <div class="card-toolbar">
+            <div class="cb-chip-group" data-cb-toggle-group>
+                <button type="button" class="cb-chip is-active" data-cb-toggle-active data-cb-backtest-chart-range="all">Test aralığı</button>
+                <button type="button" class="cb-chip" data-cb-toggle-active data-cb-backtest-chart-range="zoom">Son segment</button>
+                <button type="button" class="cb-chip" data-cb-toggle-active data-cb-backtest-chart-range="dd">Drawdown</button>
+            </div>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-chart-shell cb-backtest-chart-shell">
+            <div class="cb-chart-grid"></div>
+            <svg class="cb-chart-svg" viewBox="0 0 640 280" role="img" aria-label="Backtest equity curve placeholder">
+                <defs>
+                    <linearGradient id="cbBacktestStroke" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" stop-color="#12c29c"></stop>
+                        <stop offset="100%" stop-color="#4b7cf3"></stop>
+                    </linearGradient>
+                    <linearGradient id="cbBacktestFill" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" stop-color="rgba(18,194,156,0.22)"></stop>
+                        <stop offset="100%" stop-color="rgba(75,124,243,0.02)"></stop>
+                    </linearGradient>
+                </defs>
+                <path d="M20 228 C 86 224, 118 178, 168 184 S 256 104, 314 118 S 388 150, 444 132 S 540 98, 620 76" fill="none" stroke="url(#cbBacktestStroke)" stroke-width="5" stroke-linecap="round"></path>
+                <path d="M20 228 C 86 224, 118 178, 168 184 S 256 104, 314 118 S 388 150, 444 132 S 540 98, 620 76 L620 260 L20 260 Z" fill="url(#cbBacktestFill)"></path>
+                <circle cx="168" cy="184" r="6" fill="#ffb84d"></circle>
+                <circle cx="314" cy="118" r="6" fill="#5ac8fa"></circle>
+                <circle cx="620" cy="76" r="7" fill="#12c29c"></circle>
+            </svg>
+            <div class="cb-chart-overlay-note">
+                <span class="cb-badge cb-badge-success" id="cb_backtest_curve_badge">Sonuç hazır</span>
+                <span class="cb-chart-overlay-text" id="cb_backtest_curve_note">Backtest motoru bağlandığında çizgi gerçek equity, zoom ve drawdown metrikleriyle güncellenecek.</span>
+            </div>
+        </div>
+
+        <div class="row mt-6">
+            <div class="col-md-4">
+                <div class="cb-chart-summary-card">
+                    <div class="cb-stat-label">Başlangıç</div>
+                    <div class="cb-chart-summary-value cb-mono" id="cb_backtest_curve_initial">$ 10,000.00</div>
+                </div>
+            </div>
+            <div class="col-md-4 mt-4 mt-md-0">
+                <div class="cb-chart-summary-card">
+                    <div class="cb-stat-label">Bitiş</div>
+                    <div class="cb-chart-summary-value cb-mono" id="cb_backtest_curve_end">$ 11,840.20</div>
+                </div>
+            </div>
+            <div class="col-md-4 mt-4 mt-md-0">
+                <div class="cb-chart-summary-card">
+                    <div class="cb-stat-label">Değişim</div>
+                    <div class="cb-chart-summary-value cb-mono cb-text-positive" id="cb_backtest_curve_change">+18.40%</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

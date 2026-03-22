@@ -1,0 +1,22 @@
+<div class="d-none" data-cb-settings-page-panel="loading">
+    @await Html.PartialAsync("Foundation/_LoadingState", new UiLoadingStateViewModel
+    {
+        Title = "Ayarlar hazırlanıyor",
+        Message = "Section navigasyonu, tercih kartları ve güvenlik yüzeyleri aynı tasarım diliyle yükleniyor.",
+        CardCount = 4,
+        LineCount = 4
+    })
+</div>
+
+<div class="d-none" data-cb-settings-page-panel="error">
+    @await Html.PartialAsync("Foundation/_ErrorState", new UiStateViewModel
+    {
+        IconText = "!",
+        Title = "Ayarlar yüzeyi şu an erişilebilir değil",
+        Message = "Settings verisi alınamadığında kullanıcıyı retry ve güvenli geri dönüş akışına taşıyan kontrollü hata yüzeyi gösterilir.",
+        ActionText = "Tekrar dene",
+        ActionHref = "#",
+        SecondaryActionText = "Dashboard'a dön",
+        SecondaryActionHref = "/"
+    })
+</div>

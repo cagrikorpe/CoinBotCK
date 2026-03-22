@@ -1,0 +1,75 @@
+@{
+    Layout = "_AuthLayout";
+    ViewData["Title"] = "Login";
+    ViewData["AuthTitle"] = "Güvenli giriş";
+    ViewData["AuthDescription"] = "Kullanıcıyı sade bir giriş deneyiminden MFA ve ilk kurulum adımlarına taşıyan foundation ekranı.";
+    ViewData["AuthEyebrow"] = "Auth Foundation";
+    ViewData["AuthStage"] = "Login";
+    ViewData["AuthProgress"] = "1 / 3";
+    ViewData["AuthHighlights"] = new[]
+    {
+        "Tutarlı input, validation ve error alanları",
+        "Show / hide password ve loading button standardı",
+        "Onboarding öncesi güven veren sade giriş kurgusu"
+    };
+}
+
+<div class="cb-auth-panel cb-auth-panel-compact">
+    <div class="cb-auth-panel-header">
+        <div>
+            <div class="cb-page-eyebrow">Sign In</div>
+            <h2 class="cb-page-title">Hesabınıza giriş yapın</h2>
+            <p class="cb-page-description">Başarılı girişten sonra MFA doğrulama ve ilk kurulum akışı devreye alınacak şekilde zemin hazırlandı.</p>
+        </div>
+        <a asp-controller="Auth" asp-action="Register" class="btn btn-light-primary font-weight-bold">Hesap oluştur</a>
+    </div>
+
+    <div class="cb-auth-alert cb-auth-alert-info">
+        Bu ekran mevcut auth logic'ini değiştirmez. Yalnızca güvenli ve anlaşılır giriş foundation katmanını sunar.
+    </div>
+
+    <form class="cb-auth-form-grid" action="#" method="post" novalidate>
+        <div class="form-group mb-0">
+            <label class="cb-form-label">E-posta veya kullanıcı adı</label>
+            <input type="text" class="form-control cb-form-control" placeholder="E-posta veya kullanıcı adı" autocomplete="username" />
+            <div class="cb-field-feedback">Kurumsal e-posta veya tanımlı kullanıcı adınızı girin.</div>
+        </div>
+
+        <div class="form-group mb-0">
+            <div class="d-flex align-items-center justify-content-between">
+                <label class="cb-form-label mb-0">Şifre</label>
+                <a href="#" class="cb-auth-inline-link">Şifremi unuttum</a>
+            </div>
+            <div class="cb-auth-password-wrap">
+                <input type="password" id="login_password" class="form-control cb-form-control cb-form-control-with-action" placeholder="Şifre" autocomplete="current-password" />
+                <button type="button" class="cb-auth-field-action" data-cb-password-toggle data-cb-password-target="#login_password">Göster</button>
+            </div>
+            <div class="cb-field-feedback">Şifre alanı için show/hide ve helper text standardı hazırlandı.</div>
+        </div>
+
+        <div class="cb-auth-row-between">
+            <label class="checkbox checkbox-outline checkbox-outline-2x checkbox-primary mb-0 cb-auth-check-inline">
+                <input type="checkbox" />
+                <span></span>
+                Beni hatırla
+            </label>
+            <span class="cb-auth-meta">Ek doğrulama gerektiğinde MFA adımı gösterilir.</span>
+        </div>
+
+        <div class="cb-validation-summary cb-validation-summary-danger">
+            Genel hata alanı foundation: invalid credential, lockout veya geçici auth hataları bu bölgede gösterilir.
+        </div>
+
+        <div class="cb-auth-action-row">
+            <button type="submit" class="btn btn-primary font-weight-bolder px-10" data-cb-button-loading>
+                <span class="cb-btn-label">Giriş yap</span>
+                <span class="cb-btn-spinner"></span>
+            </button>
+            <a asp-controller="Auth" asp-action="Register" class="btn btn-clean text-muted font-weight-bold">Kayıt ekranına geç</a>
+        </div>
+    </form>
+
+    <div class="cb-auth-footnote">
+        Küçük güvenlik notu alanı foundation: şüpheli giriş veya brute-force benzeri uyarılar burada kısa ve profesyonel dil ile gösterilir.
+    </div>
+</div>

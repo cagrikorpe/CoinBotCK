@@ -1,0 +1,25 @@
+<div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Model health</h3>
+                <div class="text-muted font-size-sm">Versiyon, health bandı ve son skor zamanını kullanıcıyı korkutmadan görünür kılar.</div>
+            </div>
+        </div>
+        <div class="card-toolbar">
+            <span class="cb-ai-state-badge is-stable" id="cb_ai_health_badge">Stable</span>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-preview-list">
+            <div class="cb-preview-row"><span>Model versiyonu</span><strong id="cb_ai_health_version">AI-v0.9 foundation</strong></div>
+            <div class="cb-preview-row"><span>Son eğitim zamanı</span><strong id="cb_ai_health_training">Bugün · 06:10</strong></div>
+            <div class="cb-preview-row"><span>Son skor zamanı</span><strong id="cb_ai_health_score">Henüz skor yok</strong></div>
+            <div class="cb-preview-row"><span>Confidence bandı</span><strong id="cb_ai_health_band">Kalibrasyon aşamasında</strong></div>
+        </div>
+        <div class="cb-mini-helper-card mt-4" id="cb_ai_health_summary">Model health özeti: scoring pipeline hazır, ancak güven bandı ve veri penceresi hâlâ başlangıç ısınma durumunda.</div>
+        <div class="cb-toolbar mt-4">
+            <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Model health detayı" data-cb-modal-message="Gerçek health metrikleri bağlandığında bu alan daha ayrıntılı bir operational modal veya drawer ile desteklenecek." data-cb-modal-confirm="Anladım">Detay</button>
+        </div>
+    </div>
+</div>

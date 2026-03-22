@@ -1,0 +1,61 @@
+<aside class="cb-drawer cb-ai-drawer" id="cb_positions_detail_drawer" aria-hidden="true">
+    <div class="cb-drawer-header">
+        <div>
+            <div class="cb-drawer-eyebrow" id="cb_positions_drawer_eyebrow">Execution Detail</div>
+            <div class="d-flex align-items-center flex-wrap gap-2">
+                <h5 class="cb-drawer-title mb-0" id="cb_positions_drawer_title">BTCUSDT · Long</h5>
+                <span class="cb-badge cb-badge-success" id="cb_positions_drawer_status">Açık</span>
+            </div>
+        </div>
+        <button type="button" class="btn btn-xs btn-icon btn-light" data-cb-drawer-close>
+            <span>&times;</span>
+        </button>
+    </div>
+    <div class="cb-drawer-body">
+        <div class="cb-rule-setting-item">
+            <div class="cb-rule-setting-header"><strong>Meta özet</strong><span class="cb-badge cb-badge-info" id="cb_positions_drawer_type">Position</span></div>
+            <div class="cb-ai-chip-list mt-3">
+                <span class="cb-badge cb-badge-neutral" id="cb_positions_drawer_symbol">BTCUSDT</span>
+                <span class="cb-badge cb-badge-success" id="cb_positions_drawer_direction">Long</span>
+                <span class="cb-badge cb-badge-info" id="cb_positions_drawer_order_type">Market</span>
+                <span class="cb-badge cb-badge-warning" id="cb_positions_drawer_leverage">3x</span>
+            </div>
+            <div class="cb-stat-list mt-4">
+                <div class="cb-stat-row"><span class="cb-stat-label">Order Id</span><span class="cb-mono" id="cb_positions_drawer_order_id">POS-240321-001</span></div>
+                <div class="cb-stat-row"><span class="cb-stat-label">Zaman</span><span class="cb-mono" id="cb_positions_drawer_time">21 Mar · 09:14</span></div>
+                <div class="cb-stat-row"><span class="cb-stat-label">Bot</span><span id="cb_positions_drawer_bot">Alpha Spot Pulse</span></div>
+                <div class="cb-stat-row"><span class="cb-stat-label">Fiyat / Qty</span><span class="cb-mono" id="cb_positions_drawer_price_qty">61,420 / 0.42 BTC</span></div>
+                <div class="cb-stat-row"><span class="cb-stat-label">PnL</span><span class="cb-mono" id="cb_positions_drawer_pnl">+$126 unrealized</span></div>
+            </div>
+        </div>
+
+        <div class="cb-rule-setting-item mt-4">
+            <div class="cb-rule-setting-header"><strong>Neden açıldı?</strong><span class="cb-badge cb-badge-success">Reason</span></div>
+            <div class="cb-ai-chip-list mt-3">
+                <span class="cb-badge cb-badge-info" id="cb_positions_drawer_reason_chip_1">Strategy signal</span>
+                <span class="cb-badge cb-badge-info" id="cb_positions_drawer_reason_chip_2">AI recommendation</span>
+                <span class="cb-badge cb-badge-info" id="cb_positions_drawer_reason_chip_3">Risk approval</span>
+            </div>
+            <div class="text-muted font-size-sm mt-3" id="cb_positions_drawer_reason_open">Trend teyidi, AI önerisi ve risk filtresi onayı ile işlem açıldı.</div>
+        </div>
+
+        <div class="cb-rule-setting-item mt-4">
+            <div class="cb-rule-setting-header"><strong>Neden kapandı?</strong><span class="cb-badge cb-badge-warning">Closure</span></div>
+            <div class="cb-ai-chip-list mt-3">
+                <span class="cb-badge cb-badge-warning" id="cb_positions_drawer_close_chip_1">Take Profit</span>
+                <span class="cb-badge cb-badge-warning" id="cb_positions_drawer_close_chip_2">Reverse signal</span>
+            </div>
+            <div class="text-muted font-size-sm mt-3" id="cb_positions_drawer_reason_close">Kapanış sebebi varsa TP / SL / manual close veya reverse signal olarak kısa şekilde özetlenir.</div>
+        </div>
+
+        <div class="cb-rule-setting-item mt-4">
+            <div class="cb-rule-setting-header"><strong>Ek notlar</strong><span class="cb-badge cb-badge-neutral">Context</span></div>
+            <div class="text-muted font-size-sm mt-2" id="cb_positions_drawer_risk_note">Risk notu, AI etkisi ve veto/rejection placeholder bilgileri burada kısa ve taranabilir şekilde gösterilir.</div>
+        </div>
+    </div>
+    <div class="cb-drawer-footer">
+        <button type="button" class="btn btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_danger_modal" data-cb-modal-title="Pozisyonu kapat" data-cb-modal-message="Close placeholder akışı yalnızca controlled confirm standardı gösterir." data-cb-modal-tone="danger" data-cb-modal-confirm="Kapat">Kapat</button>
+        <button type="button" class="btn btn-light-primary font-weight-bold">Önceki / Sonraki</button>
+        <button type="button" class="btn btn-primary font-weight-bolder" data-cb-drawer-close>Drawer kapat</button>
+    </div>
+</aside>

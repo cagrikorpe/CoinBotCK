@@ -1,0 +1,97 @@
+<div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Açık paper pozisyonlar</h3>
+                <div class="text-muted font-size-sm">Gerçek emir göndermeden çalışan sanal pozisyonların operasyonel özeti.</div>
+            </div>
+        </div>
+        <div class="card-toolbar cb-inline-stack">
+            <div class="cb-filter-bar cb-filter-bar-compact">
+                <div class="cb-chip-group cb-chip-group-sm" data-cb-toggle-group>
+                    <button type="button" class="cb-chip is-active" data-cb-toggle-active data-cb-paper-position-filter="all">Tümü</button>
+                    <button type="button" class="cb-chip" data-cb-toggle-active data-cb-paper-position-filter="long">Long</button>
+                    <button type="button" class="cb-chip" data-cb-toggle-active data-cb-paper-position-filter="short">Short</button>
+                    <button type="button" class="cb-chip" data-cb-toggle-active data-cb-paper-position-filter="bot">Bot bazlı</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-table-wrap" data-cb-paper-positions-panel="list">
+            <table class="table table-borderless cb-table mb-0">
+                <thead>
+                    <tr>
+                        <th>Sembol</th>
+                        <th>Yön</th>
+                        <th>Giriş</th>
+                        <th>Güncel</th>
+                        <th>Unrealized PnL</th>
+                        <th>Süre</th>
+                        <th>Kaynak bot</th>
+                        <th>Durum</th>
+                        <th class="text-right">Aksiyon</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr data-cb-paper-position-row data-cb-paper-activity-id="btc-position" data-cb-paper-type="position" data-cb-paper-direction="long">
+                        <td><div class="cb-bot-row-title">BTCUSDT</div><div class="cb-bot-row-subtitle">Lev: <span class="cb-mono">3x</span></div></td>
+                        <td><span class="cb-badge cb-badge-success">Long</span></td>
+                        <td class="cb-mono">61,420</td>
+                        <td class="cb-mono">62,140</td>
+                        <td class="cb-mono cb-text-positive">+$126</td>
+                        <td><div class="cb-mono">42 dk</div><div class="cb-bot-inline-help">Canlı akış simülasyonu</div></td>
+                        <td><span class="cb-badge cb-badge-info">Alpha Spot Pulse</span></td>
+                        <td><span class="cb-badge cb-badge-success">Açık</span></td>
+                        <td class="text-right"><div class="cb-table-actions justify-content-end"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-paper-activity-detail="btc-position" data-cb-drawer-target="#cb_paper_activity_drawer">Detay</button><button type="button" class="btn btn-xs btn-light-warning font-weight-bold" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Pozisyonu azalt" data-cb-modal-message="Paper pozisyon azaltma akışı placeholder olarak hazırlıdır. Gerçek order simulation bu fazda bağlı değildir." data-cb-modal-confirm="Azalt">Azalt</button><button type="button" class="btn btn-xs btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_danger_modal" data-cb-modal-title="Pozisyonu kapat" data-cb-modal-message="Paper pozisyon kapatma onayı gösterilir. Gerçek close işlemi yoktur." data-cb-modal-tone="danger" data-cb-modal-confirm="Kapat">Kapat</button></div></td>
+                    </tr>
+                    <tr data-cb-paper-position-row data-cb-paper-activity-id="sol-position" data-cb-paper-type="position" data-cb-paper-direction="short">
+                        <td><div class="cb-bot-row-title">SOLUSDT</div><div class="cb-bot-row-subtitle">Lev: <span class="cb-mono">5x</span></div></td>
+                        <td><span class="cb-badge cb-badge-danger">Short</span></td>
+                        <td class="cb-mono">131.8</td>
+                        <td class="cb-mono">130.7</td>
+                        <td class="cb-mono cb-text-positive">+$84</td>
+                        <td><div class="cb-mono">1 sa 12 dk</div><div class="cb-bot-inline-help">Paper futures simülasyonu</div></td>
+                        <td><span class="cb-badge cb-badge-warning">Beta Hedge Runner</span></td>
+                        <td><span class="cb-badge cb-badge-info">İzleniyor</span></td>
+                        <td class="text-right"><div class="cb-table-actions justify-content-end"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-paper-activity-detail="sol-position" data-cb-drawer-target="#cb_paper_activity_drawer">Detay</button><button type="button" class="btn btn-xs btn-light-warning font-weight-bold" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Pozisyonu azalt" data-cb-modal-message="Paper short pozisyon için azalt akışı placeholder olarak hazırlanmıştır." data-cb-modal-confirm="Azalt">Azalt</button><button type="button" class="btn btn-xs btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_danger_modal" data-cb-modal-title="Pozisyonu kapat" data-cb-modal-message="Short paper pozisyonu için kapatma confirm standardı gösterilir." data-cb-modal-tone="danger" data-cb-modal-confirm="Kapat">Kapat</button></div></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="d-none" data-cb-paper-positions-panel="empty">
+            @await Html.PartialAsync("Foundation/_EmptyState", new UiStateViewModel
+            {
+                IconText = "PT",
+                Title = "Açık paper pozisyon yok",
+                Message = "Paper hesabı hazır; botlar yeni sinyal üretince açık pozisyonlar burada operasyonel tablo olarak görünecek.",
+                ActionText = "Paper botları incele",
+                ActionHref = "#paper-bots"
+            })
+        </div>
+
+        <div class="d-none" data-cb-paper-positions-panel="loading">
+            @await Html.PartialAsync("Foundation/_LoadingState", new UiLoadingStateViewModel
+            {
+                Title = "Paper pozisyonlar hazırlanıyor",
+                Message = "Sanal pozisyon tablosu ve PnL alanları aynı tasarım dilinde yükleniyor.",
+                CardCount = 2,
+                LineCount = 4
+            })
+        </div>
+
+        <div class="d-none" data-cb-paper-positions-panel="error">
+            @await Html.PartialAsync("Foundation/_ErrorState", new UiStateViewModel
+            {
+                IconText = "!",
+                Title = "Paper pozisyonlar alınamadı",
+                Message = "Placeholder erişim sorunu yüzeyinde kullanıcıya çıkışsız his vermeyen retry/help dili hazırlanır.",
+                ActionText = "Tekrar dene",
+                ActionHref = "#",
+                SecondaryActionText = "Risk merkezine git",
+                SecondaryActionHref = "/RiskCenter"
+            })
+        </div>
+    </div>
+</div>

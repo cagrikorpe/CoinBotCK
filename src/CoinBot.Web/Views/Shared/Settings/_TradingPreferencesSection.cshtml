@@ -1,0 +1,55 @@
+<div class="card card-custom gutter-b cb-card cb-settings-section" id="cb_settings_trading" data-cb-settings-page-panel="content">
+    <div class="card-body">
+        <div class="cb-page-header cb-page-header-compact">
+            <div>
+                <div class="cb-page-eyebrow">Trading</div>
+                <h3 class="cb-page-title">Default trading preferences</h3>
+                <p class="cb-page-description">Yeni bot, strategy ve paper/live akışlarının başlangıç davranışını etkileyen varsayılan ayarları toplar.</p>
+            </div>
+            <span class="cb-badge cb-badge-warning" id="cb_settings_trading_badge">Dengeli varsayılanlar</span>
+        </div>
+
+        <div class="cb-form-grid cb-form-grid-2col mt-5">
+            <div class="form-group mb-0">
+                <label class="cb-form-label">Varsayılan market tipi</label>
+                <select id="cb_settings_market_type" class="form-control cb-form-control">
+                    <option>Spot</option>
+                    <option>Futures</option>
+                </select>
+            </div>
+            <div class="form-group mb-0">
+                <label class="cb-form-label">Varsayılan trade yönü</label>
+                <select id="cb_settings_trade_direction" class="form-control cb-form-control">
+                    <option>Long only</option>
+                    <option>Long + Short</option>
+                </select>
+            </div>
+            <div class="form-group mb-0">
+                <label class="cb-form-label">Varsayılan risk profili</label>
+                <select id="cb_settings_risk_profile" class="form-control cb-form-control">
+                    <option>Düşük</option>
+                    <option selected>Orta</option>
+                    <option>Yüksek</option>
+                </select>
+            </div>
+            <div class="form-group mb-0">
+                <label class="cb-form-label">Varsayılan mod</label>
+                <select id="cb_settings_trade_mode" class="form-control cb-form-control">
+                    <option selected>Paper</option>
+                    <option>Live</option>
+                </select>
+            </div>
+            <div class="form-group mb-0">
+                <label class="cb-form-label">Varsayılan leverage</label>
+                <input id="cb_settings_leverage" type="number" min="1" max="10" class="form-control cb-form-control" value="3" />
+                <div class="cb-helper-text mt-2">Spot için secondary, futures için daha görünür davranan leverage alanı foundation olarak hazırlanmıştır.</div>
+            </div>
+            <div class="form-group mb-0">
+                <label class="cb-form-label">Yeni botlarda bu ayarları temel al</label>
+                <div class="cb-notice cb-notice-info mt-2">Botlarım, Strategy Builder ve Risk Merkezi ekranlarına kavramsal bağ kuran default davranış yüzeyi.</div>
+            </div>
+        </div>
+
+        <div class="cb-notice cb-notice-warning mt-5 d-none" id="cb_settings_trading_warning">Agresif kombinasyon algılandı: futures + long/short + yüksek leverage birlikte seçildiğinde Risk Merkezi gözden geçirme CTA'sı öne çıkarılmalıdır.</div>
+    </div>
+</div>

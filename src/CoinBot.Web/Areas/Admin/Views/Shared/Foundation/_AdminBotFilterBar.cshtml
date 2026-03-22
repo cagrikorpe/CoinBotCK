@@ -1,0 +1,91 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card">
+    <div class="card-body">
+        <div class="cb-admin-table-header">
+            <div>
+                <div class="cb-admin-section-kicker">Filter Toolbar</div>
+                <div class="cb-admin-section-title">Bot filtreleri</div>
+                <p class="cb-admin-section-description mb-0">Kullanıcı, durum, market, strategy ve risk profili bazında global bot izleme görünümü hazırlanır.</p>
+            </div>
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Scoped Filters", Tone = "info", IconText = "FL" })
+        </div>
+
+        <div class="cb-admin-filter-bar cb-admin-bot-filter-bar">
+            <div class="cb-filter-field">
+                <label class="cb-form-label">Bot adı ara</label>
+                <input class="form-control cb-form-control" placeholder="Bot adı / kullanıcı / template placeholder" />
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label">Kullanıcı</label>
+                <select class="form-control cb-form-control">
+                    <option>Tüm kullanıcılar</option>
+                    <option>Ops Primary</option>
+                    <option>Risk Watch</option>
+                    <option>Paper Lab</option>
+                </select>
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label">Durum</label>
+                <select class="form-control cb-form-control">
+                    <option>Tüm durumlar</option>
+                    <option>Aktif</option>
+                    <option>Durduruldu</option>
+                    <option>Hata</option>
+                    <option>Taslak</option>
+                </select>
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label">Market</label>
+                <select class="form-control cb-form-control">
+                    <option>Spot + Futures</option>
+                    <option>Spot</option>
+                    <option>Futures</option>
+                </select>
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label">Paper / Live</label>
+                <select class="form-control cb-form-control">
+                    <option>Tümü</option>
+                    <option>Paper</option>
+                    <option>Live</option>
+                </select>
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label">Strategy tipi</label>
+                <select class="form-control cb-form-control">
+                    <option>Tüm strategy'ler</option>
+                    <option>Momentum</option>
+                    <option>Breakout</option>
+                    <option>Mean reversion</option>
+                </select>
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label">Risk profili</label>
+                <select class="form-control cb-form-control">
+                    <option>Tüm profiller</option>
+                    <option>Conservative</option>
+                    <option>Balanced</option>
+                    <option>Aggressive</option>
+                </select>
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label">Sıralama</label>
+                <select class="form-control cb-form-control">
+                    <option>Son aksiyon</option>
+                    <option>Hata yoğunluğu</option>
+                    <option>Risk seviyesi</option>
+                </select>
+            </div>
+            <div class="cb-admin-filter-actions">
+                <button type="button" class="btn btn-primary font-weight-bolder">Filtreyi uygula</button>
+                <button type="button" class="btn btn-light-primary font-weight-bold">Temizle</button>
+            </div>
+        </div>
+
+        <div class="cb-admin-filter-summary mt-5">
+            <span class="cb-admin-filter-chip">Live</span>
+            <span class="cb-admin-filter-chip">Futures</span>
+            <span class="cb-admin-filter-chip">Risk dikkat</span>
+            <span class="cb-admin-filter-chip">Sıralama: son aksiyon</span>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,18 @@
+@{
+    var tiles = new[]
+    {
+        new AdminStatTileViewModel { Label = "Kritik alarm", Value = "12", Meta = "Escalation bekleyen platform alarmı placeholder", Tone = "critical" },
+        new AdminStatTileViewModel { Label = "Okunmamış", Value = "19", Meta = "İlk gözden geçirme sırası bekleyen alarm sayısı", Tone = "warning" },
+        new AdminStatTileViewModel { Label = "AI alarmı", Value = "07", Meta = "Model health, veto ve confidence sinyalleri", Tone = "degraded" },
+        new AdminStatTileViewModel { Label = "Worker alarmı", Value = "05", Meta = "Heartbeat, retry ve failed job etkili uyarılar", Tone = "warning" },
+        new AdminStatTileViewModel { Label = "Son alarm", Value = "09:42", Meta = "AI veto / worker stale placeholder", Tone = "info" }
+    };
+}
+<div class="row cb-admin-summary-grid cb-admin-alert-summary-grid">
+    @foreach (var tile in tiles)
+    {
+        <div class="col-xl-2 col-md-4 col-sm-6">
+            @await Html.PartialAsync("Foundation/_AdminStatTile", tile)
+        </div>
+    }
+</div>

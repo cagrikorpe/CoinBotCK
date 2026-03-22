@@ -1,0 +1,70 @@
+<div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Entry rules</h3>
+                <div class="text-muted font-size-sm">Long ve short giriş mantığı builder bloklarının doğal uzantısı olarak ayrı başlıklar altında toplanır.</div>
+            </div>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-strategy-section-grid">
+            <div class="cb-rule-subsection">
+                <div class="cb-rule-subsection-header">
+                    <h4>Long entry rules</h4>
+                    <label class="switch switch-sm switch-outline switch-icon switch-primary mb-0">
+                        <input type="checkbox" checked="checked" />
+                        <span></span>
+                    </label>
+                </div>
+                <div class="cb-form-grid mt-4">
+                    <div>
+                        <label class="cb-form-label">Minimum confidence</label>
+                        <input type="text" class="form-control cb-form-control" value="72%" />
+                    </div>
+                    <div>
+                        <label class="cb-form-label">Minimum volume</label>
+                        <input type="text" class="form-control cb-form-control" value="Ortalama x 1.4" />
+                    </div>
+                    <div>
+                        <label class="cb-form-label">Trend filter</label>
+                        <select class="form-control cb-form-control">
+                            <option>EMA trend aligned</option>
+                            <option>ADX above threshold</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="cb-form-label">Time filter</label>
+                        <select class="form-control cb-form-control">
+                            <option>Avrupa + ABD seansı</option>
+                            <option>Tüm gün</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="cb-rule-subsection cb-rule-subsection-short is-secondary" id="cb_short_rules_section">
+                <div class="cb-rule-subsection-header">
+                    <h4>Short entry rules</h4>
+                    <label class="switch switch-sm switch-outline switch-icon switch-warning mb-0">
+                        <input type="checkbox" id="cb_short_rules_toggle" />
+                        <span></span>
+                    </label>
+                </div>
+                <p class="cb-helper-text mb-4">Spot modda secondary görünür. Futures + long/short senaryosunda aktifleşir.</p>
+                <div class="cb-form-grid">
+                    <div>
+                        <label class="cb-form-label">Minimum confidence</label>
+                        <input type="text" class="form-control cb-form-control" value="68%" />
+                    </div>
+                    <div>
+                        <label class="cb-form-label">Trend filter</label>
+                        <select class="form-control cb-form-control">
+                            <option>Bearish regime only</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

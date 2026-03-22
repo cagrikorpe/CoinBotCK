@@ -1,0 +1,47 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+    <div class="card-body">
+        <div class="cb-admin-section-kicker">States &amp; Help</div>
+        <div class="cb-admin-section-title">Loading / error / defaults görünümü</div>
+        <p class="cb-admin-section-description">Gerçek ayar verisi veya persist pipeline olmadan da ekranın nasıl davranacağı ürün kalitesinde görünür tutulur.</p>
+
+        <div class="cb-admin-summary-grid mt-6">
+            <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Defaults</span><strong>Visible</strong><small>Global baseline ayarlar kart bazında gösterilir.</small></div>
+            <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Rollout paused</span><strong>Placeholder</strong><small>AI rollout bölümü paused badge ile görünür kalabilir.</small></div>
+            <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Maintenance active</span><strong>Placeholder</strong><small>Danger strip daha belirgin hale gelir.</small></div>
+        </div>
+
+        <div class="row mt-6">
+            <div class="col-xl-4 mb-5">
+                @await Html.PartialAsync("_AdminLoadingState", new UiLoadingStateViewModel
+                {
+                    Title = "Global settings yükleniyor",
+                    Message = "Section kartları hazırlanıyor; gerçek config backend’i bu fazda bağlı değildir."
+                })
+            </div>
+            <div class="col-xl-4 mb-5">
+                @await Html.PartialAsync("_AdminEmptyState", new UiStateViewModel
+                {
+                    Title = "Ayar verisi bekleniyor",
+                    Message = "Platform ayarları henüz bağlanmadıysa defaults görünümü ve help kartları ile güvenli başlangıç yüzeyi korunur.",
+                    IconText = "GS",
+                    ActionText = "Info modal",
+                    ActionHref = "#cb_admin_info_modal",
+                    SecondaryActionText = "Support tools",
+                    SecondaryActionHref = Url.Action("SupportTools", "Admin", new { area = "Admin" })
+                })
+            </div>
+            <div class="col-xl-4 mb-5">
+                @await Html.PartialAsync("_AdminErrorState", new UiStateViewModel
+                {
+                    Title = "Settings verisi alınamadı",
+                    Message = "Gerçek settings source yoksa bile kullanıcıyı çıkmaza sokmayan retry ve yardım CTA'ları görünür kalır.",
+                    IconText = "!",
+                    ActionText = "Retry placeholder",
+                    ActionHref = "#cb_admin_confirm_modal",
+                    SecondaryActionText = "Audit / log merkezi",
+                    SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" })
+                })
+            </div>
+        </div>
+    </div>
+</div>

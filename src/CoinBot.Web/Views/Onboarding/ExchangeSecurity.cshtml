@@ -1,0 +1,99 @@
+@using CoinBot.Web.ViewModels.Foundation
+@{
+    Layout = "_AuthLayout";
+    ViewData["Title"] = "Exchange Security";
+    ViewData["AuthTitle"] = "Exchange security checkpoint";
+    ViewData["AuthDescription"] = "Binance bağlantısı öncesi kullanıcıyı gereksiz izinlerden kaçınması için yönlendiren kısa ve profesyonel güvenlik checkpoint ekranı.";
+    ViewData["AuthEyebrow"] = "Security Checkpoint";
+    ViewData["AuthStage"] = "Exchange Review";
+    ViewData["AuthProgress"] = "5 / 6";
+    ViewData["AuthBackHref"] = Url.Action("Index", "Onboarding");
+    ViewData["AuthHighlights"] = new[]
+    {
+        "Withdrawal kapalı olmalı",
+        "Sadece gerekli trade izinleri açılmalı",
+        "IP whitelist önerisi taranabilir checklist olarak sunulmalı"
+    };
+
+    var steps = new List<UiWizardStepViewModel>
+    {
+        new() { Number = 1, Title = "Hoş Geldin", Caption = "Tamamlandı", IsCompleted = true },
+        new() { Number = 2, Title = "Trade Modu", Caption = "Tamamlandı", IsCompleted = true },
+        new() { Number = 3, Title = "Yön", Caption = "Tamamlandı", IsCompleted = true },
+        new() { Number = 4, Title = "Risk", Caption = "Tamamlandı", IsCompleted = true },
+        new() { Number = 5, Title = "Security", Caption = "Aktif", IsCurrent = true },
+        new() { Number = 6, Title = "Connect", Caption = "Sıradaki" }
+    };
+}
+
+<div class="cb-auth-panel cb-auth-panel-wide">
+    <div class="cb-auth-panel-header">
+        <div>
+            <div class="cb-page-eyebrow">API Access Review</div>
+            <h2 class="cb-page-title">API erişimi öncesi güvenlik kontrolü</h2>
+            <p class="cb-page-description">Korku dili kullanmadan, taranabilir maddeler ile kullanıcıyı doğru izin setine yönlendiren checkpoint standardı.</p>
+        </div>
+        <div class="cb-badge cb-badge-warning">Önce oku</div>
+    </div>
+
+    @await Html.PartialAsync("Foundation/_WizardStepper", steps)
+
+    <div class="cb-checkpoint-grid" data-cb-ack-group data-cb-ack-target="#cb_exchange_ack_continue">
+        <div class="cb-auth-panel-block">
+            <div class="cb-auth-alert cb-auth-alert-info">
+                API key yalnızca kullanıcının kendi hesabı adına işlem yapabilmesi için gereklidir. Secret alanı hassastır ve paylaşılmamalıdır.
+            </div>
+
+            <div class="cb-checklist-cards mt-6">
+                <div class="cb-tone-card cb-tone-card-warning">
+                    <div class="cb-tone-card-title">Verilmesi gerekenler</div>
+                    <ul>
+                        <li>Gerekli trade izni</li>
+                        <li>Futures kullanılıyorsa ilgili futures izni</li>
+                        <li>Mümkünse IP whitelist</li>
+                    </ul>
+                </div>
+                <div class="cb-tone-card cb-tone-card-danger">
+                    <div class="cb-tone-card-title">Verilmemesi gerekenler</div>
+                    <ul>
+                        <li>Withdrawal izni</li>
+                        <li>Gereksiz geniş hesap izinleri</li>
+                        <li>Paylaşılan veya ortak secret kullanımı</li>
+                    </ul>
+                </div>
+                <div class="cb-tone-card cb-tone-card-info">
+                    <div class="cb-tone-card-title">Ortam ayrımı</div>
+                    <ul>
+                        <li>Paper / testnet / live farkları sonraki ekranda ayrıca gösterilir</li>
+                        <li>Canlı işlem öncesi düşük riskli başlangıç önerilir</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="cb-auth-summary-card cb-auth-summary-card-stacked">
+            <div class="cb-auth-summary-label">Güvenlik checklist</div>
+            <label class="cb-checkpoint-item">
+                <input type="checkbox" data-cb-ack-item />
+                <span>Withdrawal izninin kapalı olması gerektiğini anladım.</span>
+            </label>
+            <label class="cb-checkpoint-item">
+                <input type="checkbox" data-cb-ack-item />
+                <span>Sadece gerekli trade izinlerini açacağımı anladım.</span>
+            </label>
+            <label class="cb-checkpoint-item">
+                <input type="checkbox" data-cb-ack-item />
+                <span>IP whitelist ve ortam seçimi önerilerini gözden geçireceğim.</span>
+            </label>
+
+            <div class="cb-validation-summary cb-validation-summary-info mt-6">
+                Continue butonu tüm maddeler onaylandığında aktif olur. Bu davranış UI-only foundation olarak minimum JS ile hazırlanmıştır.
+            </div>
+
+            <div class="cb-auth-action-row mt-6">
+                <a asp-controller="Onboarding" asp-action="Index" class="btn btn-light-primary font-weight-bold">Wizard'a dön</a>
+                <a asp-controller="Onboarding" asp-action="ExchangeConnect" id="cb_exchange_ack_continue" class="btn btn-primary font-weight-bolder disabled" aria-disabled="true">Devam et</a>
+            </div>
+        </div>
+    </div>
+</div>

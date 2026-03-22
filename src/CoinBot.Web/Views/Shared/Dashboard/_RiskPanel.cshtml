@@ -1,0 +1,42 @@
+<div class="card card-custom gutter-b cb-card cb-dashboard-card cb-risk-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title d-block">
+            <div class="d-flex align-items-center flex-wrap gap-2">
+                <h3 class="card-label font-weight-bolder mb-0">Risk Paneli</h3>
+                <span class="cb-badge cb-badge-warning">Skor 64 / 100</span>
+            </div>
+            <div class="text-muted mt-2">Günlük limit, leverage ve açık risk yoğunluğunu kısa ve taranabilir şekilde özetler.</div>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-risk-progress-row">
+            <div>
+                <div class="cb-stat-label">Günlük zarar limiti kullanımı</div>
+                <div class="cb-risk-progress-meta">$ 820 / $ 1,500</div>
+            </div>
+            <span class="cb-badge cb-badge-warning">%54.7</span>
+        </div>
+        <div class="cb-progress mt-4">
+            <span class="cb-progress-bar is-warning" style="width: 54.7%;"></span>
+        </div>
+
+        <div class="cb-risk-stat-grid mt-6">
+            <div class="cb-risk-stat-box">
+                <span class="cb-stat-label">Pozisyon riski</span>
+                <strong class="cb-mono">Orta</strong>
+            </div>
+            <div class="cb-risk-stat-box">
+                <span class="cb-stat-label">Margin baskısı</span>
+                <strong class="cb-mono">Düşük</strong>
+            </div>
+        </div>
+
+        <div class="cb-alert-list mt-6">
+            <div class="cb-alert cb-alert-warning">Günlük limit kullanım oranı yükseliyor.</div>
+            <div class="cb-alert cb-alert-danger">İki pozisyonda leverage seviyesi yüksek.</div>
+            <div class="cb-alert cb-alert-info">Futures modu aktif, AI güven skoru takip ediliyor.</div>
+        </div>
+
+        <a asp-controller="Home" asp-action="Privacy" class="btn btn-light-primary font-weight-bold btn-block mt-6">Risk Merkezi’ne git</a>
+    </div>
+</div>

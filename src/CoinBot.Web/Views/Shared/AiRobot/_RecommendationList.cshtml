@@ -1,0 +1,123 @@
+<div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Önerilen coinler</h3>
+                <div class="text-muted font-size-sm">Long, short, watch ve veto edilen setup'ları tek listede takip et. Explainability paneli seçili öneriye göre güncellenir.</div>
+            </div>
+        </div>
+        <div class="card-toolbar cb-inline-stack">
+            <button type="button" class="btn btn-light-primary btn-sm font-weight-bolder" data-cb-ai-refresh>Yenile <span class="cb-btn-spinner"></span></button>
+            <button type="button" class="btn btn-light-primary btn-sm font-weight-bolder" data-cb-drawer-target="#cb_ai_detail_drawer" data-cb-ai-detail="btc">Detay drawer</button>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-filter-bar mb-5">
+            <div class="cb-chip-group cb-chip-group-sm" data-cb-toggle-group>
+                <button type="button" class="cb-chip is-active" data-cb-toggle-active data-cb-ai-filter="all">Tümü</button>
+                <button type="button" class="cb-chip" data-cb-toggle-active data-cb-ai-filter="long">Long</button>
+                <button type="button" class="cb-chip" data-cb-toggle-active data-cb-ai-filter="short">Short</button>
+                <button type="button" class="cb-chip" data-cb-toggle-active data-cb-ai-filter="watch">Watch</button>
+                <button type="button" class="cb-chip" data-cb-toggle-active data-cb-ai-filter="high">Yüksek güven</button>
+                <button type="button" class="cb-chip" data-cb-toggle-active data-cb-ai-filter="veto">Veto edilenler</button>
+            </div>
+        </div>
+
+        <div data-cb-ai-panel="list">
+            <div class="cb-table-wrap">
+                <table class="table table-borderless cb-table mb-0">
+                    <thead>
+                        <tr>
+                            <th>Coin</th>
+                            <th>Yön</th>
+                            <th>Confidence</th>
+                            <th>Setup</th>
+                            <th>Risk</th>
+                            <th>Son skor</th>
+                            <th>Veto</th>
+                            <th class="text-right">Aksiyon</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr data-cb-ai-row data-cb-ai-id="btc" data-cb-ai-direction="long" data-cb-ai-confidence="84" data-cb-ai-veto="false">
+                            <td><div class="cb-bot-row-title">BTCUSDT</div><div class="cb-bot-row-subtitle">Trend Pulse</div></td>
+                            <td><span class="cb-badge cb-badge-success">Long</span></td>
+                            <td><div class="cb-ai-confidence"><span class="cb-ai-confidence-bar"><i style="width:84%"></i></span><strong class="cb-mono">84%</strong></div></td>
+                            <td><span class="cb-badge cb-badge-info">EMA + hacim teyidi</span></td>
+                            <td><span class="cb-badge cb-badge-success">Düşük</span></td>
+                            <td><div class="cb-mono">09:42</div></td>
+                            <td><span class="cb-badge cb-badge-success">Yok</span></td>
+                            <td class="text-right"><div class="cb-table-actions justify-content-end"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-ai-detail="btc" data-cb-drawer-target="#cb_ai_detail_drawer">Detay</button><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-ai-select="btc">Explain</button></div></td>
+                        </tr>
+                        <tr data-cb-ai-row data-cb-ai-id="sol" data-cb-ai-direction="short" data-cb-ai-confidence="78" data-cb-ai-veto="false">
+                            <td><div class="cb-bot-row-title">SOLUSDT</div><div class="cb-bot-row-subtitle">Breakdown Setup</div></td>
+                            <td><span class="cb-badge cb-badge-danger">Short</span></td>
+                            <td><div class="cb-ai-confidence"><span class="cb-ai-confidence-bar"><i style="width:78%"></i></span><strong class="cb-mono">78%</strong></div></td>
+                            <td><span class="cb-badge cb-badge-warning">Zayıf trend desteği</span></td>
+                            <td><span class="cb-badge cb-badge-warning">Orta</span></td>
+                            <td><div class="cb-mono">09:40</div></td>
+                            <td><span class="cb-badge cb-badge-success">Yok</span></td>
+                            <td class="text-right"><div class="cb-table-actions justify-content-end"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-ai-detail="sol" data-cb-drawer-target="#cb_ai_detail_drawer">Detay</button><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-ai-select="sol">Explain</button></div></td>
+                        </tr>
+                        <tr data-cb-ai-row data-cb-ai-id="eth" data-cb-ai-direction="watch" data-cb-ai-confidence="63" data-cb-ai-veto="false">
+                            <td><div class="cb-bot-row-title">ETHUSDT</div><div class="cb-bot-row-subtitle">Watch Setup</div></td>
+                            <td><span class="cb-badge cb-badge-neutral">Watch</span></td>
+                            <td><div class="cb-ai-confidence"><span class="cb-ai-confidence-bar"><i style="width:63%"></i></span><strong class="cb-mono">63%</strong></div></td>
+                            <td><span class="cb-badge cb-badge-neutral">Setup olgunlaşıyor</span></td>
+                            <td><span class="cb-badge cb-badge-info">Dengeli</span></td>
+                            <td><div class="cb-mono">09:38</div></td>
+                            <td><span class="cb-badge cb-badge-success">Yok</span></td>
+                            <td class="text-right"><div class="cb-table-actions justify-content-end"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-ai-detail="eth" data-cb-drawer-target="#cb_ai_detail_drawer">Detay</button><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-ai-select="eth">Explain</button></div></td>
+                        </tr>
+                        <tr data-cb-ai-row data-cb-ai-id="avax" data-cb-ai-direction="long" data-cb-ai-confidence="41" data-cb-ai-veto="true">
+                            <td><div class="cb-bot-row-title">AVAXUSDT</div><div class="cb-bot-row-subtitle">Veto adayı</div></td>
+                            <td><span class="cb-badge cb-badge-success">Long</span></td>
+                            <td><div class="cb-ai-confidence"><span class="cb-ai-confidence-bar"><i style="width:41%"></i></span><strong class="cb-mono">41%</strong></div></td>
+                            <td><span class="cb-badge cb-badge-warning">Momentum kırılgan</span></td>
+                            <td><span class="cb-badge cb-badge-danger">Yüksek</span></td>
+                            <td><div class="cb-mono">09:35</div></td>
+                            <td><span class="cb-badge cb-badge-danger">Veto</span></td>
+                            <td class="text-right"><div class="cb-table-actions justify-content-end"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-ai-detail="avax" data-cb-drawer-target="#cb_ai_detail_drawer">Detay</button><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-ai-select="avax">Neden veto?</button></div></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="d-none" data-cb-ai-panel="empty">
+            @await Html.PartialAsync("Foundation/_EmptyState", new UiStateViewModel
+            {
+                IconText = "AI",
+                Title = "Şu an uygun setup bulunamadı",
+                Message = "AI motoru izlediği coinlerde yeterli güven bandına ulaşan bir setup bulamadı. Biraz daha veri toplandığında öneri listesi yeniden dolacaktır.",
+                ActionText = "Yardımı aç",
+                ActionHref = "#ai-help",
+                SecondaryActionText = "Tekrar kontrol et",
+                SecondaryActionHref = "#"
+            })
+        </div>
+
+        <div class="d-none" data-cb-ai-panel="loading">
+            @await Html.PartialAsync("Foundation/_LoadingState", new UiLoadingStateViewModel
+            {
+                Title = "AI önerileri hazırlanıyor",
+                Message = "Coin önerileri, confidence bandı ve veto kartları aynı dilde yükleniyor.",
+                CardCount = 2,
+                LineCount = 5
+            })
+        </div>
+
+        <div class="d-none" data-cb-ai-panel="error">
+            @await Html.PartialAsync("Foundation/_ErrorState", new UiStateViewModel
+            {
+                IconText = "!",
+                Title = "Öneri akışı şu anda alınamadı",
+                Message = "AI sinyal listesi yenilenemediğinde kullanıcıyı çıkmaza sokmayan yönlendirici hata yüzeyi burada devreye girer.",
+                ActionText = "Tekrar dene",
+                ActionHref = "#",
+                SecondaryActionText = "Yardımı aç",
+                SecondaryActionHref = "#ai-help"
+            })
+        </div>
+    </div>
+</div>

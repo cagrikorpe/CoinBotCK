@@ -1,0 +1,48 @@
+@model AdminSecurityHelpCardViewModel
+@{
+    var actionHref = string.IsNullOrWhiteSpace(Model.ActionHref) ? "#" : Model.ActionHref!;
+    var isOverlay = actionHref.StartsWith("#cb_admin_");
+}
+
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-help-card">
+    <div class="card-body">
+        <div class="cb-admin-section-kicker">@Model.Eyebrow</div>
+        <div class="d-flex align-items-start justify-content-between gap-3">
+            <div>
+                <div class="cb-admin-section-title">@Model.Title</div>
+                <p class="cb-admin-section-description">@Model.Description</p>
+            </div>
+            @if (!string.IsNullOrWhiteSpace(Model.BadgeLabel))
+            {
+                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+                {
+                    Label = Model.BadgeLabel!,
+                    Tone = string.IsNullOrWhiteSpace(Model.BadgeTone) ? "info" : Model.BadgeTone!,
+                    IconText = Model.BadgeLabel!.Length >= 2 ? Model.BadgeLabel!.Substring(0, 2).ToUpperInvariant() : Model.BadgeLabel!.ToUpperInvariant()
+                })
+            }
+        </div>
+
+        @if (Model.Items.Length > 0)
+        {
+            <ul class="cb-admin-help-list">
+                @foreach (var item in Model.Items)
+                {
+                    <li>@item</li>
+                }
+            </ul>
+        }
+
+        @if (!string.IsNullOrWhiteSpace(Model.ActionText))
+        {
+            if (isOverlay)
+            {
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="@actionHref">@Model.ActionText</button>
+            }
+            else
+            {
+                <a href="@actionHref" class="btn btn-light-primary font-weight-bold">@Model.ActionText</a>
+            }
+        }
+    </div>
+</div>

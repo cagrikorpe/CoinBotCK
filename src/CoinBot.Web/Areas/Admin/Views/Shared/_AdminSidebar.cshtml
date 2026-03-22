@@ -1,0 +1,98 @@
+@using System.Linq
+@{
+    var activeNav = ViewData["AdminActiveNav"]?.ToString() ?? "Overview";
+    var currentRoleKey = ViewData["AdminRoleKey"]?.ToString() ?? "SuperAdmin";
+    var currentRoleLabel = ViewData["AdminRoleLabel"]?.ToString() ?? "Super Admin";
+
+    var navigation = new[]
+    {
+        new { Group = "Overview", Key = "Overview", Label = "Genel Bakış", Initials = "GV", Action = "Overview", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "Admin", "Support", "Auditor", "Viewer" } },
+        new { Group = "Identity", Key = "Users", Label = "Kullanıcılar", Initials = "US", Action = "Users", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "Admin", "Support", "Auditor" } },
+        new { Group = "Identity", Key = "UserDetail", Label = "Kullanıcı Detayı", Initials = "UD", Action = "UserDetail", Badge = new AdminBadgeViewModel { Label = "Drawer", Tone = "neutral" }, VisibleTo = new[] { "SuperAdmin", "Admin", "Support", "Auditor" } },
+        new { Group = "Operations", Key = "ExchangeAccounts", Label = "Exchange Hesapları", Initials = "EX", Action = "ExchangeAccounts", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "Admin", "Support", "Auditor" } },
+        new { Group = "Operations", Key = "BotOperations", Label = "Bot Operasyonları", Initials = "BT", Action = "BotOperations", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "Admin", "Support" } },
+        new { Group = "Operations", Key = "StrategyAiMonitoring", Label = "Strategy/AI İzleme", Initials = "AI", Action = "StrategyAiMonitoring", Badge = new AdminBadgeViewModel { Label = "Watch", Tone = "info" }, VisibleTo = new[] { "SuperAdmin", "Admin", "Auditor" } },
+        new { Group = "Runtime", Key = "SystemHealth", Label = "Sistem Sağlığı", Initials = "HL", Action = "SystemHealth", Badge = new AdminBadgeViewModel { Label = "Live", Tone = "healthy" }, VisibleTo = new[] { "SuperAdmin", "Admin", "Auditor" } },
+        new { Group = "Runtime", Key = "Jobs", Label = "Job/Worker Durumu", Initials = "JB", Action = "Jobs", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "Admin", "Auditor" } },
+        new { Group = "Observability", Key = "Audit", Label = "Audit & Log Merkezi", Initials = "AU", Action = "Audit", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "Admin", "Support", "Auditor" } },
+        new { Group = "Observability", Key = "SecurityEvents", Label = "Güvenlik Olayları", Initials = "SE", Action = "SecurityEvents", Badge = new AdminBadgeViewModel { Label = "Critical", Tone = "critical" }, VisibleTo = new[] { "SuperAdmin", "Admin", "Auditor" } },
+        new { Group = "Observability", Key = "Notifications", Label = "Bildirim/Alarm Merkezi", Initials = "AL", Action = "Notifications", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "Admin", "Support", "Auditor" } },
+        new { Group = "Platform", Key = "SupportTools", Label = "Destek Araçları", Initials = "SP", Action = "SupportTools", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "Admin", "Support" } },
+        new { Group = "Platform", Key = "Settings", Label = "Global Ayarlar", Initials = "GL", Action = "Settings", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "Admin" } }
+    };
+
+    var visibleNavigation = navigation.Where(item => item.VisibleTo.Contains(currentRoleKey)).ToArray();
+    var hiddenCount = navigation.Length - visibleNavigation.Length;
+}
+<div class="aside aside-left aside-fixed d-flex flex-column flex-row-auto cb-shell-aside cb-admin-aside" id="kt_aside">
+    <div class="brand flex-column-auto cb-shell-brand cb-admin-brand" id="kt_brand">
+        <a asp-area="Admin" asp-controller="Admin" asp-action="Overview" class="brand-logo text-decoration-none">
+            <span class="app-logo-mark cb-admin-logo-mark">A</span>
+            <span>
+                <span class="text-white font-size-h4 font-weight-bolder d-block">Super Admin</span>
+                <span class="cb-brand-subtitle">Platform Control Center</span>
+            </span>
+        </a>
+        <button class="brand-toggle btn btn-sm px-0" id="kt_aside_toggle" type="button" aria-label="Sidebar toggle">
+            <span class="svg-icon svg-icon-xl">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24px" height="24px" viewBox="0 0 24 24" version="1.1">
+                    <g stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+                        <polygon points="0 0 24 0 24 24 0 24"></polygon>
+                        <path d="M5.29288961,6.70710318 C4.90236532,6.31657888 4.90236532,5.68341391 5.29288961,5.29288961 C5.68341391,4.90236532 6.31657888,4.90236532 6.70710318,5.29288961 L12.7071032,11.2928896 C13.0856821,11.6714686 13.0989277,12.281055 12.7371505,12.675721 L7.23715054,18.675721 C6.86395813,19.08284 6.23139076,19.1103429 5.82427177,18.7371505 C5.41715278,18.3639581 5.38964985,17.7313908 5.76284226,17.3242718 L10.6158586,12.0300721 L5.29288961,6.70710318 Z" fill="#ffffff" fill-rule="nonzero" transform="translate(8.999997, 11.999999) scale(-1, 1) translate(-8.999997, -11.999999)"></path>
+                        <path d="M10.7071009,15.7071068 C10.3165766,16.0976311 9.68341162,16.0976311 9.29288733,15.7071068 C8.90236304,15.3165825 8.90236304,14.6834175 9.29288733,14.2928932 L15.2928873,8.29289322 C15.6714663,7.91431428 16.2810527,7.90106866 16.6757187,8.26284586 L22.6757187,13.7628459 C23.0828377,14.1360383 23.1103407,14.7686056 22.7371482,15.1757246 C22.3639558,15.5828436 21.7313885,15.6103465 21.3242695,15.2371541 L16.0300699,10.3841378 L10.7071009,15.7071068 Z" fill="#ffffff" fill-rule="nonzero" opacity="0.35" transform="translate(15.999997, 11.999999) scale(-1, 1) rotate(-270.000000) translate(-15.999997, -11.999999)"></path>
+                    </g>
+                </svg>
+            </span>
+        </button>
+    </div>
+
+    <div class="cb-admin-side-meta">
+        <span class="cb-admin-side-meta-label">Scope</span>
+        <strong>@(ViewData["AdminTenantScope"]?.ToString() ?? "Tenant: Global")</strong>
+        <small>@(ViewData["AdminEnvironment"]?.ToString() ?? "Prod Shadow")</small>
+    </div>
+
+    <div class="cb-admin-role-visibility-card">
+        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = currentRoleLabel + " görünümü", Tone = "role", IconText = "RB" })
+            @if (hiddenCount > 0)
+            {
+                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = hiddenCount + " gizli bölüm", Tone = "warning", IconText = "HD" })
+            }
+        </div>
+        <small>Gerçek role-based enforcement bağlı değil; menü görünürlüğü foundation olarak ayrıldı. Kritik ekranlar yine access denied ve re-auth akışlarıyla korunur.</small>
+    </div>
+
+    <div class="aside-menu-wrapper flex-column-fluid" id="kt_aside_menu_wrapper">
+        <div id="kt_aside_menu" class="aside-menu my-4" data-menu-vertical="1" data-menu-scroll="1" data-menu-dropdown-timeout="500">
+            <ul class="menu-nav cb-menu-nav cb-admin-menu-nav">
+                @foreach (var navSection in visibleNavigation.GroupBy(item => item.Group))
+                {
+                    <li class="menu-section">
+                        <h4 class="menu-text">@navSection.Key</h4>
+                        <i class="menu-icon ki ki-bold-more-hor icon-md"></i>
+                    </li>
+
+                    @foreach (var item in navSection)
+                    {
+                        var isActive = string.Equals(activeNav, item.Key, StringComparison.OrdinalIgnoreCase);
+                        <li class="menu-item @(isActive ? "menu-item-active" : string.Empty)" aria-haspopup="true">
+                            <a asp-area="Admin" asp-controller="Admin" asp-action="@item.Action" asp-route-role="@currentRoleKey" class="menu-link">
+                                <span class="menu-icon">
+                                    <span class="cb-menu-icon cb-admin-menu-icon @(isActive ? "is-active" : string.Empty)">@item.Initials</span>
+                                </span>
+                                <span class="menu-text">@item.Label</span>
+                                @if (item.Badge is not null)
+                                {
+                                    <span class="menu-label">
+                                        @await Html.PartialAsync("Foundation/_AdminBadge", item.Badge)
+                                    </span>
+                                }
+                            </a>
+                        </li>
+                    }
+                }
+            </ul>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,73 @@
+<div class="row">
+    <div class="col-xl-5">
+        <div class="card card-custom gutter-b cb-card">
+            <div class="card-header border-0 pt-6">
+                <div class="card-title">
+                    <div>
+                        <h3 class="card-label font-weight-bolder mb-1">Drawdown analizi</h3>
+                        <div class="text-muted font-size-sm">Backtest sonucu sırasında görülen geri çekilme baskısını sade ama anlaşılır bir dille gösterir.</div>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body pt-2">
+                <div class="cb-backtest-drawdown-shell">
+                    <div>
+                        <div class="cb-stat-label">Max drawdown</div>
+                        <div class="cb-backtest-drawdown-value cb-mono" id="cb_backtest_drawdown_value">-8.6%</div>
+                        <div class="cb-helper-text mt-2" id="cb_backtest_drawdown_note">Risk profili ve stop mantığı drawdown davranışını belirgin şekilde etkiler.</div>
+                    </div>
+                    <div class="cb-backtest-mini-chart" aria-hidden="true">
+                        <span></span><span></span><span></span><span></span><span></span><span></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-7">
+        <div class="card card-custom gutter-b cb-card">
+            <div class="card-header border-0 pt-6">
+                <div class="card-title">
+                    <div>
+                        <h3 class="card-label font-weight-bolder mb-1">Sonuç metrikleri</h3>
+                        <div class="text-muted font-size-sm">Win rate, ortalama kazanç/kayıp ve işlem sayıları tek blokta taranabilir durumda tutulur.</div>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body pt-2">
+                <div class="cb-backtest-metric-grid">
+                    <div class="cb-risk-summary-tile">
+                        <span>Win rate</span>
+                        <strong class="cb-mono" id="cb_backtest_metric_win">61%</strong>
+                        <small>Kârlı işlem oranı</small>
+                    </div>
+                    <div class="cb-risk-summary-tile">
+                        <span>Loss rate</span>
+                        <strong class="cb-mono" id="cb_backtest_metric_loss">39%</strong>
+                        <small>Zararlı işlem oranı</small>
+                    </div>
+                    <div class="cb-risk-summary-tile">
+                        <span>Ort. kazanç</span>
+                        <strong class="cb-mono cb-text-positive" id="cb_backtest_metric_avg_win">+2.1%</strong>
+                        <small>Kazanan trade ortalaması</small>
+                    </div>
+                    <div class="cb-risk-summary-tile">
+                        <span>Ort. kayıp</span>
+                        <strong class="cb-mono cb-text-negative" id="cb_backtest_metric_avg_loss">-1.3%</strong>
+                        <small>Kaybeden trade ortalaması</small>
+                    </div>
+                    <div class="cb-risk-summary-tile">
+                        <span>Kârlı işlem</span>
+                        <strong class="cb-mono" id="cb_backtest_metric_wins">29</strong>
+                        <small>Trade listesiyle uyumlu placeholder</small>
+                    </div>
+                    <div class="cb-risk-summary-tile">
+                        <span>Zararlı işlem</span>
+                        <strong class="cb-mono" id="cb_backtest_metric_losses">19</strong>
+                        <small>Risk baskısını görünür kılar</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,112 @@
+@{
+    var pageTitle = ViewData["Title"]?.ToString() ?? "CoinBot";
+    var authTitle = ViewData["AuthTitle"]?.ToString() ?? pageTitle;
+    var authDescription = ViewData["AuthDescription"]?.ToString() ?? "Güvenli giriş ve kurulum akışı foundation ekranı.";
+    var authEyebrow = ViewData["AuthEyebrow"]?.ToString() ?? "Secure Access";
+    var authStage = ViewData["AuthStage"]?.ToString() ?? "Foundation";
+    var authProgress = ViewData["AuthProgress"]?.ToString() ?? "Hazır";
+    var authBackHref = ViewData["AuthBackHref"]?.ToString();
+    var authShellVariant = ViewData["AuthShellVariant"]?.ToString() ?? "default";
+    var authHighlights = ViewData["AuthHighlights"] as string[] ?? new[]
+    {
+        "Session ve MFA temelli güvenli erişim zemini",
+        "İlk kurulum wizard adımları için yönlendirici akış",
+        "Exchange bağlantısı öncesi güvenlik checkpoint standardı"
+    };
+}
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <title>@pageTitle - CoinBot</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700" />
+    <link rel="stylesheet" href="~/metronic/assets/plugins/global/plugins.bundle.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/metronic/assets/css/style.bundle.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/auth.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/CoinBot.Web.styles.css" asp-append-version="true" />
+    <link rel="icon" type="image/x-icon" href="~/favicon.ico" />
+    @await RenderSectionAsync("Styles", required: false)
+</head>
+<body class="cb-auth-body page-loading" data-cb-theme="dark">
+    <div class="cb-auth-root @("cb-auth-root--" + authShellVariant)">
+        <aside class="cb-auth-aside">
+            <div class="cb-auth-aside-top">
+                <a asp-controller="Home" asp-action="Index" class="brand-logo text-decoration-none">
+                    <span class="app-logo-mark">C</span>
+                    <span>
+                        <span class="text-white font-size-h4 font-weight-bolder d-block">CoinBot</span>
+                        <span class="cb-brand-subtitle">Auth / Onboarding Foundation</span>
+                    </span>
+                </a>
+                <button type="button" class="btn btn-icon btn-clean cb-icon-button" id="cb_theme_toggle" title="Theme foundation toggle">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none">
+                        <path d="M12 3v2.5M12 18.5V21M4.93 4.93l1.77 1.77M17.3 17.3l1.77 1.77M3 12h2.5M18.5 12H21M4.93 19.07l1.77-1.77M17.3 6.7l1.77-1.77" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                        <circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.6"/>
+                    </svg>
+                </button>
+            </div>
+
+            <div class="cb-auth-hero">
+                <div class="cb-auth-pill-row">
+                    <span class="cb-auth-pill">@authEyebrow</span>
+                    <span class="cb-auth-pill cb-auth-pill-muted">@authProgress</span>
+                </div>
+                <h1 class="cb-auth-hero-title">@authTitle</h1>
+                <p class="cb-auth-hero-text">@authDescription</p>
+
+                <div class="cb-auth-hero-card">
+                    <div class="cb-auth-hero-card-label">Aktif aşama</div>
+                    <div class="cb-auth-hero-card-value">@authStage</div>
+                    <div class="cb-auth-hero-card-text">Auth, MFA, onboarding ve exchange güvenlik checkpoint ekranları aynı tasarım diliyle hazırlandı.</div>
+                </div>
+
+                <div class="cb-auth-checklist mt-8">
+                    @foreach (var item in authHighlights)
+                    {
+                        <div class="cb-auth-checklist-item">
+                            <span class="cb-auth-checklist-mark"></span>
+                            <span>@item</span>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <div class="cb-auth-aside-footer">
+                @if (!string.IsNullOrWhiteSpace(authBackHref))
+                {
+                    <a href="@authBackHref" class="btn btn-light-primary font-weight-bold btn-block">Geri dön</a>
+                }
+                <a asp-controller="Home" asp-action="Index" class="btn btn-clean text-muted font-weight-bold btn-block">Ana shell</a>
+            </div>
+        </aside>
+
+        <main class="cb-auth-main">
+            <div class="cb-auth-main-header">
+                <div>
+                    <div class="cb-auth-main-eyebrow">@authEyebrow</div>
+                    <div class="cb-auth-main-stage">@authStage</div>
+                </div>
+                <div class="cb-auth-main-links">
+                    <a asp-controller="Auth" asp-action="Login">Login</a>
+                    <a asp-controller="Auth" asp-action="Register">Register</a>
+                    <a asp-controller="Auth" asp-action="Mfa">MFA</a>
+                    <a asp-controller="Onboarding" asp-action="Index">Onboarding</a>
+                </div>
+            </div>
+            <div class="cb-auth-main-body">
+                @RenderBody()
+            </div>
+        </main>
+    </div>
+
+    <script src="~/metronic/assets/plugins/global/plugins.bundle.js" asp-append-version="true"></script>
+    <script src="~/metronic/assets/js/scripts.bundle.js" asp-append-version="true"></script>
+    <script src="~/js/site.js" asp-append-version="true"></script>
+    <script src="~/js/auth-foundation.js" asp-append-version="true"></script>
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

@@ -1,0 +1,17 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card">
+    <div class="card-body">
+        <div class="cb-admin-section-kicker">Monitoring Help</div>
+        <div class="cb-admin-section-title">Bu ekran neyi anlatır?</div>
+        <ul class="cb-admin-help-list mt-5 mb-0">
+            <li>Stale bağlantı: son sync penceresi aşılmış veya health verisi gecikmiş olabilir.</li>
+            <li>Permission mismatch: beklenen spot/futures capability ile görünen izinler hizalı değildir.</li>
+            <li>Withdrawal risk: admin seviyesinde hızlı görünür olmalı; maskesiz credential asla gösterilmez.</li>
+            <li>Repeated sync failure: retry/reconnect veya log incelemesi gerektirebilecek durumları işaretler.</li>
+        </ul>
+
+        <div class="cb-admin-inline-actions mt-6">
+            <a asp-area="Admin" asp-controller="Admin" asp-action="Users" class="btn btn-light-primary font-weight-bold">Kullanıcı bazlı izle</a>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-light-primary font-weight-bold">Log merkezine git</a>
+        </div>
+    </div>
+</div>

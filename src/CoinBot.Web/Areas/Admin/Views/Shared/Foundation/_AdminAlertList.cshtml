@@ -1,0 +1,66 @@
+@{
+    var alarms = new[]
+    {
+        new { Title = "AI confidence band düştü", Severity = "Critical", SeverityTone = "critical", Category = "AI", CategoryTone = "degraded", Source = "score-health-rule", Time = "2026-03-21 09:42", Read = "Okunmamış", ReadTone = "warning", Summary = "Low confidence cluster placeholder nedeniyle recommendation health dikkat seviyesine indi.", Scope = "Strategy / AI" },
+        new { Title = "Worker heartbeat gecikiyor", Severity = "Warning", SeverityTone = "warning", Category = "Worker", CategoryTone = "warning", Source = "worker-heartbeat-watch", Time = "2026-03-21 09:25", Read = "Okunmamış", ReadTone = "warning", Summary = "notification-worker last heartbeat stale eşiğine yaklaştı; retry / backlog etkisi placeholder.", Scope = "System Health" },
+        new { Title = "Risk guard escalation", Severity = "Critical", SeverityTone = "critical", Category = "Risk", CategoryTone = "critical", Source = "risk-daily-loss", Time = "2026-03-21 09:08", Read = "Okunmuş", ReadTone = "info", Summary = "Günlük limit bandı ve leverage placeholder sinyalleri alarm merkezine taşındı.", Scope = "Risk Center" },
+        new { Title = "Risky exchange permission", Severity = "Critical", SeverityTone = "critical", Category = "Security", CategoryTone = "critical", Source = "permission-review", Time = "2026-03-21 08:54", Read = "Okunmamış", ReadTone = "warning", Summary = "Withdrawal risk flag ve permission mismatch placeholder aynı alarm altında toplandı.", Scope = "Exchange Accounts" },
+        new { Title = "Maintenance mode review", Severity = "Info", SeverityTone = "info", Category = "System", CategoryTone = "info", Source = "admin-policy-reminder", Time = "2026-03-21 08:20", Read = "Okunmuş", ReadTone = "info", Summary = "Notification policy CTA ve admin critical action görünürlüğü için sistem placeholder alarmı üretildi.", Scope = "Overview / Settings" }
+    };
+}
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-table-card">
+    <div class="card-body">
+        <div class="cb-admin-table-header">
+            <div>
+                <div class="cb-admin-section-kicker">Alert Feed</div>
+                <div class="cb-admin-section-title">Platform alarm listesi</div>
+                <p class="cb-admin-section-description mb-0">Severity, kategori, rule/source, unread/read ve kısa özet alanlarıyla alarm satırları taranabilir kalır.</p>
+            </div>
+            <div class="cb-admin-inline-actions cb-admin-inline-actions-compact">
+                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "3 unread", Tone = "warning", IconText = "UN" })
+                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "2 critical", Tone = "critical", IconText = "CR" })
+            </div>
+        </div>
+
+        <div class="table-responsive cb-admin-table-wrap">
+            <table class="table table-borderless cb-admin-table cb-admin-alert-table mb-0">
+                <thead>
+                    <tr>
+                        <th>Başlık</th>
+                        <th>Severity</th>
+                        <th>Kategori</th>
+                        <th>Rule / Source</th>
+                        <th>Zaman</th>
+                        <th>Okunma</th>
+                        <th>Kısa özet</th>
+                        <th>Detay</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var alarm in alarms)
+                    {
+                        <tr>
+                            <td>
+                                <div class="cb-admin-mini-stat">
+                                    <strong>@alarm.Title</strong>
+                                    <small>@alarm.Scope</small>
+                                </div>
+                            </td>
+                            <td>@await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = alarm.Severity, Tone = alarm.SeverityTone, IconText = "SV" })</td>
+                            <td>@await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = alarm.Category, Tone = alarm.CategoryTone, IconText = "CT" })</td>
+                            <td><span class="cb-admin-freshness-time cb-mono">@alarm.Source</span></td>
+                            <td><span class="cb-admin-freshness-time cb-mono">@alarm.Time</span></td>
+                            <td>@await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = alarm.Read, Tone = alarm.ReadTone, IconText = "RD" })</td>
+                            <td class="text-muted">@alarm.Summary</td>
+                            <td>
+                                <div class="cb-admin-inline-actions cb-admin-inline-actions-compact">
+                                    <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_admin_alert_drawer">Detay</button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>

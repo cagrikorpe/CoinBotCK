@@ -1,0 +1,46 @@
+<div class="card card-custom gutter-b cb-card cb-dashboard-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title d-block">
+            <div class="d-flex align-items-center flex-wrap gap-2">
+                <h3 class="card-label font-weight-bolder mb-0">Dashboard State Patterns</h3>
+                <span class="cb-badge cb-badge-info">Reusable</span>
+            </div>
+            <div class="text-muted mt-2">Alt modüller veri beklerken, boş kalırken veya hata alırken aynı foundation partial’ları kullanır.</div>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="row">
+            <div class="col-lg-4 mb-6 mb-lg-0">
+                @await Html.PartialAsync("Foundation/_LoadingState", new CoinBot.Web.ViewModels.Foundation.UiLoadingStateViewModel
+                {
+                    Title = "KPI verisi hazırlanıyor",
+                    Message = "Chart ve tablo alanları skeleton ile aynı kart dilini korur.",
+                    CardCount = 1,
+                    LineCount = 2
+                })
+            </div>
+            <div class="col-lg-4 mb-6 mb-lg-0">
+                @await Html.PartialAsync("Foundation/_EmptyState", new CoinBot.Web.ViewModels.Foundation.UiStateViewModel
+                {
+                    Title = "Henüz açık pozisyon yok",
+                    Message = "Sistem yeni kurulduğunda kullanıcı boş ekran yerine yönlendirici bir durum görür.",
+                    IconText = "Ø",
+                    ActionText = "Botlarımı aç",
+                    ActionHref = "/Bots"
+                })
+            </div>
+            <div class="col-lg-4">
+                @await Html.PartialAsync("Foundation/_ErrorState", new CoinBot.Web.ViewModels.Foundation.UiStateViewModel
+                {
+                    Title = "AI akışı güncellenemedi",
+                    Message = "Retry ve secondary action alanları riskli ekranlarda aynı şekilde tekrar kullanılabilir.",
+                    IconText = "!",
+                    ActionText = "Tekrar dene",
+                    ActionHref = "#",
+                    SecondaryActionText = "Detayı aç",
+                    SecondaryActionHref = "#"
+                })
+            </div>
+        </div>
+    </div>
+</div>

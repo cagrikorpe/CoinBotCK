@@ -1,0 +1,98 @@
+@{
+    var pageTitle = ViewData["Title"]?.ToString() ?? "Super Admin";
+    var pageDescription = ViewData["PageDescription"]?.ToString() ?? "Admin shell foundation hazır.";
+}
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <title>@pageTitle - CoinBot Super Admin</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700" />
+    <link rel="stylesheet" href="~/metronic/assets/plugins/global/plugins.bundle.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/metronic/assets/css/style.bundle.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/metronic/assets/css/themes/layout/header/base/light.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/metronic/assets/css/themes/layout/header/menu/light.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/metronic/assets/css/themes/layout/brand/dark.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/metronic/assets/css/themes/layout/aside/dark.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/admin.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/CoinBot.Web.styles.css" asp-append-version="true" />
+    <link rel="icon" type="image/x-icon" href="~/favicon.ico" />
+    @await RenderSectionAsync("Styles", required: false)
+</head>
+<body id="kt_body" class="header-fixed header-mobile-fixed aside-enabled aside-fixed aside-minimize-hoverable page-loading cb-admin-shell" data-cb-theme="dark" data-cb-shell="admin" data-cb-admin-role="@(ViewData["AdminRoleKey"]?.ToString() ?? "SuperAdmin")">
+    <div id="kt_header_mobile" class="header-mobile align-items-center header-mobile-fixed cb-shell-mobile-header cb-admin-mobile-header">
+        <a asp-area="Admin" asp-controller="Admin" asp-action="Overview" class="brand-logo text-decoration-none">
+            <span class="app-logo-mark cb-admin-logo-mark">A</span>
+            <span class="text-white font-size-h5 font-weight-bolder">CoinBot Admin</span>
+        </a>
+        <div class="d-flex align-items-center">
+            <button class="btn p-0 burger-icon burger-icon-left" id="kt_aside_mobile_toggle" type="button">
+                <span></span>
+            </button>
+        </div>
+    </div>
+
+    <div class="d-flex flex-column flex-root">
+        <div class="d-flex flex-row flex-column-fluid page">
+            @await Html.PartialAsync("_AdminSidebar")
+
+            <div class="d-flex flex-column flex-row-fluid wrapper cb-shell-wrapper cb-admin-wrapper" id="kt_wrapper">
+                @await Html.PartialAsync("_AdminTopbar")
+
+                <div class="content d-flex flex-column flex-column-fluid cb-shell-content cb-admin-content" id="kt_content">
+                    <div class="d-flex flex-column-fluid">
+                        <div class="container-fluid metronic-page-content cb-content-container cb-admin-content-container">
+                            <div class="cb-admin-banner-stack">
+                                @await Html.PartialAsync("Foundation/_AdminActivityBanner")
+                                @await Html.PartialAsync("Foundation/_AdminSessionWarnings")
+                                @await Html.PartialAsync("Foundation/_AdminGlobalStaleStrip")
+                            </div>
+                            @RenderBody()
+                        </div>
+                    </div>
+                </div>
+
+                <div class="footer py-4 d-flex flex-lg-column cb-shell-footer cb-admin-footer" id="kt_footer">
+                    <div class="container-fluid d-flex flex-column flex-md-row align-items-center justify-content-between">
+                        <div class="order-2 order-md-1">
+                            <span class="text-muted font-weight-bold mr-2">@DateTime.UtcNow.Year ©</span>
+                            <span class="text-white-50">CoinBot Super Admin Shell / Foundation</span>
+                        </div>
+                        <div class="nav nav-dark cb-footer-nav">
+                            <a asp-area="Admin" asp-controller="Admin" asp-action="Overview" class="nav-link pl-0 pr-5">Genel Bakış</a>
+                            <a asp-area="Admin" asp-controller="Admin" asp-action="Users" class="nav-link pl-0 pr-5">Kullanıcılar</a>
+                            <a asp-area="Admin" asp-controller="Admin" asp-action="SystemHealth" class="nav-link pl-0 pr-0">Sistem Sağlığı</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @await Html.PartialAsync("Foundation/_AdminShellOverlays")
+
+    <script>
+        var KTAppSettings = {
+            breakpoints: { sm: 576, md: 768, lg: 992, xl: 1200, xxl: 1400 },
+            colors: {
+                theme: {
+                    base: { white: '#ffffff', primary: '#6D5DF6', secondary: '#2C3553', success: '#1AC8A8', info: '#54B6FF', warning: '#F5A623', danger: '#FF5D73', light: '#202943', dark: '#0D1324' },
+                    light: { white: '#ffffff', primary: '#EFECFF', secondary: '#EEF1F7', success: '#D8FFF5', info: '#E6F7FF', warning: '#FFF4DF', danger: '#FFE3E7', light: '#F5F8FF', dark: '#D4DCEC' },
+                    inverse: { white: '#ffffff', primary: '#ffffff', secondary: '#D0D8EA', success: '#ffffff', info: '#ffffff', warning: '#101827', danger: '#ffffff', light: '#4F5D7A', dark: '#ffffff' }
+                },
+                gray: { 'gray-100': '#F8FAFC', 'gray-200': '#DCE3F2', 'gray-300': '#AAB7D1', 'gray-400': '#8291B2', 'gray-500': '#6C7A97', 'gray-600': '#52607B', 'gray-700': '#334155', 'gray-800': '#1E293B', 'gray-900': '#0F172A' }
+            },
+            'font-family': 'Poppins'
+        };
+    </script>
+    <script src="~/metronic/assets/plugins/global/plugins.bundle.js" asp-append-version="true"></script>
+    <script src="~/metronic/assets/js/scripts.bundle.js" asp-append-version="true"></script>
+    <script src="~/js/site.js" asp-append-version="true"></script>
+    <script src="~/js/auth-foundation.js" asp-append-version="true"></script>
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

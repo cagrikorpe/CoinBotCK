@@ -1,0 +1,48 @@
+<div class="card card-custom gutter-b cb-card cb-settings-section" id="cb_settings_profile" data-cb-settings-page-panel="content">
+    <div class="card-body">
+        <div class="cb-page-header cb-page-header-compact">
+            <div>
+                <div class="cb-page-eyebrow">Profil</div>
+                <h3 class="cb-page-title">Kimlik ve profil bilgileri</h3>
+                <p class="cb-page-description">Temel hesap görünürlüğünü ve kullanıcı kimliğini sade, güven veren alanlarla yönetir.</p>
+            </div>
+            <span class="cb-badge cb-badge-neutral">Temel profil</span>
+        </div>
+
+        <div class="row mt-5 align-items-start">
+            <div class="col-md-4 col-xl-3">
+                <div class="cb-settings-avatar-card">
+                    <div class="cb-settings-avatar">OP</div>
+                    <div class="cb-settings-avatar-title" id="cb_settings_display_name">Operator</div>
+                    <div class="cb-settings-avatar-help">Avatar ve profile image alanı ileride genişletilebilir; bu fazda kontrollü placeholder yüzeyi sunulur.</div>
+                    <button type="button" class="btn btn-light-primary font-weight-bold btn-block mt-4">Avatar güncelle</button>
+                </div>
+            </div>
+            <div class="col-md-8 col-xl-9">
+                <div class="cb-form-grid cb-form-grid-2col">
+                    <div class="form-group mb-0">
+                        <label class="cb-form-label">Ad soyad</label>
+                        <input id="cb_settings_full_name" type="text" class="form-control cb-form-control" value="Operasyon Kullanıcısı" />
+                    </div>
+                    <div class="form-group mb-0">
+                        <label class="cb-form-label">Görünen ad</label>
+                        <input id="cb_settings_public_name" type="text" class="form-control cb-form-control" value="Operator" />
+                    </div>
+                    <div class="form-group mb-0">
+                        <label class="cb-form-label">Email</label>
+                        <input id="cb_settings_email" type="email" class="form-control cb-form-control" value="operator@placeholder.local" readonly />
+                        <div class="cb-helper-text mt-2">Email alanı foundation seviyesinde readonly bırakıldı; gerçek profil update mantığı bu fazda bağlı değildir.</div>
+                    </div>
+                    <div class="form-group mb-0">
+                        <label class="cb-form-label">Kısa not</label>
+                        <textarea id="cb_settings_profile_note" class="form-control cb-form-control" rows="4">Trading operasyonlarını, risk yüzeylerini ve bildirim akışını tek merkezden izleyen kullanıcı profili.</textarea>
+                    </div>
+                </div>
+                <div class="cb-inline-stack mt-5">
+                    <button type="button" class="btn btn-primary font-weight-bolder" data-cb-settings-save>Profili kaydet</button>
+                    <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-settings-cancel>İptal</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

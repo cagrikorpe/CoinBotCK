@@ -1,0 +1,69 @@
+<div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Coin bazlı limitler</h3>
+                <div class="text-muted font-size-sm">Aynı coin için tekrar giriş, exposure ve pozisyon sayısı kurallarını ayrı yönetmek için foundation alanı.</div>
+            </div>
+        </div>
+        <div class="card-toolbar">
+            <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_coin_limit_modal" data-cb-coin-limit-mode="create">Coin limiti ekle</button>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-form-grid">
+            <div>
+                <label class="cb-form-label">Coin başına max pozisyon</label>
+                <input type="number" min="1" value="1" class="form-control cb-form-control" />
+            </div>
+            <div>
+                <label class="cb-form-label">Coin başına max exposure</label>
+                <input type="text" value="Portföy %18" class="form-control cb-form-control" />
+            </div>
+            <div>
+                <label class="cb-form-label">Tekrar giriş cooldown</label>
+                <input type="text" value="90 dk" class="form-control cb-form-control" />
+            </div>
+            <div>
+                <label class="cb-form-label">Risk notu</label>
+                <input type="text" value="Yüksek volatil coinler için daha sıkı limit uygula" class="form-control cb-form-control" />
+            </div>
+        </div>
+
+        <div class="cb-mini-helper-card mt-4">Coin bazlı limitler, aynı sembole üst üste agresif girişleri sınırlamak için kullanılır. Gerçek enforcement bir sonraki fazda bağlanacaktır.</div>
+
+        <div class="table-responsive cb-table-wrap mt-5">
+            <table class="table cb-table align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Coin</th>
+                        <th>Limit tipi</th>
+                        <th>Değer</th>
+                        <th>Not</th>
+                        <th class="text-right">Aksiyon</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>BTCUSDT</strong></td>
+                        <td><span class="cb-badge cb-badge-info">Exposure</span></td>
+                        <td class="cb-mono">%12</td>
+                        <td class="text-muted">Majör coin için daha kontrollü risk bandı</td>
+                        <td class="text-right">
+                            <button type="button" class="btn btn-sm btn-light-primary" data-toggle="modal" data-target="#cb_coin_limit_modal" data-cb-coin-limit-mode="edit" data-cb-coin-symbol="BTCUSDT">Düzenle</button>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>SOLUSDT</strong></td>
+                        <td><span class="cb-badge cb-badge-warning">Cooldown</span></td>
+                        <td class="cb-mono">120 dk</td>
+                        <td class="text-muted">Volatil günlerde tekrar girişi geciktir</td>
+                        <td class="text-right">
+                            <button type="button" class="btn btn-sm btn-light-primary" data-toggle="modal" data-target="#cb_coin_limit_modal" data-cb-coin-limit-mode="edit" data-cb-coin-symbol="SOLUSDT">Düzenle</button>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,13 @@
+@model UiLoadingStateViewModel
+<div class="cb-admin-state-wrap">
+    <div class="cb-state cb-loading-state cb-admin-state">
+        <div class="cb-state-icon cb-state-icon-loading" aria-hidden="true">
+            <span></span>
+        </div>
+        <div class="cb-state-body">
+            <h4 class="cb-state-title">@Model.Title</h4>
+            <p class="cb-state-text">@Model.Message</p>
+            <div class="cb-state-meta">Masked placeholder veri yükleniyor. Kritik karar öncesi stale strip ve ilgili detay modülü birlikte kontrol edilmelidir.</div>
+        </div>
+    </div>
+</div>

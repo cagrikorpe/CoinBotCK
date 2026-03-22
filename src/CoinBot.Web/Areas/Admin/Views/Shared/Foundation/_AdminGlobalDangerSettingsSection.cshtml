@@ -1,0 +1,39 @@
+<section id="cb_admin_settings_danger" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section cb-admin-danger-settings-card">
+    <div class="card-body">
+        <div class="cb-admin-section-kicker">Danger Settings</div>
+        <div class="cb-admin-section-title">Kritik sistem ayarları</div>
+        <p class="cb-admin-section-description">Destructive veya geniş etki alanına sahip ayarlar ayrı danger card içinde tutulur. Kullanıcı ayarları ile bilerek karışmaz.</p>
+
+        <div class="cb-admin-summary-grid mt-6">
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Danger scope</span>
+                <strong>Maintenance + rollout + broadcast</strong>
+                <small>Geniş sistem etkili placeholder alanlar</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Required guard</span>
+                <strong>Critical confirm + re-auth</strong>
+                <small>SA-1 step-up security ile bağlı</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Reset policy</span>
+                <strong>Manual review</strong>
+                <small>Gerçek rollback/persist bu fazda yok</small>
+            </div>
+        </div>
+
+        <div class="cb-admin-info-strip cb-admin-info-strip-danger mt-6">
+            <div>
+                <div class="cb-admin-info-strip-title">Destructive confirm foundation</div>
+                <div class="cb-admin-info-strip-text">Kritik sistem ayarları tek tık aksiyon gibi görünmez. Audit reason, step-up security ve kontrollü warning dili ile ilerler.</div>
+            </div>
+            <span class="cb-admin-info-strip-meta">Danger</span>
+        </div>
+
+        <div class="cb-admin-inline-actions mt-5">
+            <button type="button" class="btn btn-light-warning font-weight-bold" data-toggle="modal" data-target="#cb_admin_reauth_modal" data-cb-modal-title="Step-up security" data-cb-modal-message="Kritik ayar değişiklikleri öncesi parola ve MFA doğrulaması beklenebilir." data-cb-modal-confirm="Doğrula">Re-auth placeholder</button>
+            <button type="button" class="btn btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_admin_critical_confirm_modal" data-cb-modal-title="Danger settings uygula" data-cb-modal-message="Bu değişiklik platform genelini etkileyebilir; gerçek persist yoktur, yalnızca kontrollü confirm dili gösterilir." data-cb-modal-confirm="Uygula" data-cb-modal-tone="danger">Danger confirm</button>
+            <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_confirm_modal" data-cb-modal-title="Defaults'e dön" data-cb-modal-message="Global settings ekranı varsayılan görünüme döner; placeholder akıştır." data-cb-modal-confirm="Sıfırla">Reset placeholder</button>
+        </div>
+    </div>
+</section>

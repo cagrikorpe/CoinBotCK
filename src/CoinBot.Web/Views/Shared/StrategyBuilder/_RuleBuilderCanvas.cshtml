@@ -1,0 +1,138 @@
+<div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Visual rule builder</h3>
+                <div class="text-muted font-size-sm">Koşul, grup ve aksiyon bloklarını satır satır kurgulayarak stratejinin giriş mantığını oluştur.</div>
+            </div>
+        </div>
+        <div class="card-toolbar cb-inline-stack">
+            <button type="button" class="btn btn-light-primary btn-sm font-weight-bolder" data-cb-drawer-target="#cb_strategy_template_drawer">Blok ekle</button>
+            <button type="button" class="btn btn-light-danger btn-sm font-weight-bolder" data-toggle="modal" data-target="#cb_danger_modal" data-cb-modal-title="Kural grubunu sil" data-cb-modal-tone="danger" data-cb-modal-message="Bu grup builder içinde kaldırılacak gibi görünür. Gerçek persist olmadığı için sadece foundation onay akışı gösterilir." data-cb-modal-confirm="Grubu sil">Grubu sil</button>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-builder-empty" data-cb-strategy-panel="blank">
+            @await Html.PartialAsync("Foundation/_EmptyState", new UiStateViewModel
+            {
+                IconText = "SB",
+                Title = "İlk kuralını ekle",
+                Message = "Template seçerek hazır bloklarla başla veya toolbox alanından ilk condition bloğunu ekleyerek builder akışını oluştur.",
+                ActionText = "Template seç",
+                ActionHref = "#templates",
+                SecondaryActionText = "Toolbox'ı aç",
+                SecondaryActionHref = "#toolbox"
+            })
+        </div>
+
+        <div data-cb-strategy-panel="template" class="d-none">
+            <div class="cb-rule-group">
+                <div class="cb-rule-group-header">
+                    <div>
+                        <span class="cb-rule-group-label">IF grubu</span>
+                        <h4>Trend başlangıcı</h4>
+                    </div>
+                    <div class="cb-inline-stack">
+                        <span class="cb-badge cb-badge-info">AND</span>
+                        <button type="button" class="btn btn-xs btn-light-primary font-weight-bold">Duplicate</button>
+                    </div>
+                </div>
+                <div class="cb-rule-block-list">
+                    <div class="cb-rule-block">
+                        <div class="cb-rule-block-main">
+                            <span class="cb-rule-block-type">RSI</span>
+                            <span class="cb-rule-block-operator">&lt;</span>
+                            <span class="cb-rule-block-value">30</span>
+                            <span class="cb-rule-block-meta">15m</span>
+                        </div>
+                        <div class="cb-rule-block-actions">
+                            <button type="button" class="btn btn-xs btn-light-primary">Kopyala</button>
+                            <button type="button" class="btn btn-xs btn-light-danger">Kaldır</button>
+                        </div>
+                    </div>
+                    <div class="cb-rule-block">
+                        <div class="cb-rule-block-main">
+                            <span class="cb-rule-block-type">EMA 20</span>
+                            <span class="cb-rule-block-operator">cross above</span>
+                            <span class="cb-rule-block-value">EMA 50</span>
+                            <span class="cb-rule-block-meta">1h</span>
+                        </div>
+                        <div class="cb-rule-block-actions">
+                            <button type="button" class="btn btn-xs btn-light-primary">Gruba taşı</button>
+                            <button type="button" class="btn btn-xs btn-light-danger">Sil</button>
+                        </div>
+                    </div>
+                    <div class="cb-rule-action-row">
+                        <span class="cb-badge cb-badge-success">Aksiyon</span>
+                        <strong>Long aç</strong>
+                        <span class="text-muted">Minimum confidence placeholder: <span class="cb-mono">72%</span></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="cb-rule-group mt-5">
+                <div class="cb-rule-group-header">
+                    <div>
+                        <span class="cb-rule-group-label">OR grubu</span>
+                        <h4>Breakout alternatifi</h4>
+                    </div>
+                    <span class="cb-badge cb-badge-warning">Nested group</span>
+                </div>
+                <div class="cb-rule-block-list">
+                    <div class="cb-rule-block">
+                        <div class="cb-rule-block-main">
+                            <span class="cb-rule-block-type">Volume</span>
+                            <span class="cb-rule-block-operator">&gt;</span>
+                            <span class="cb-rule-block-value">Avg x 1.8</span>
+                            <span class="cb-rule-block-meta">5m</span>
+                        </div>
+                        <div class="cb-rule-block-actions">
+                            <button type="button" class="btn btn-xs btn-light-primary">Kopyala</button>
+                            <button type="button" class="btn btn-xs btn-light-danger">Sil</button>
+                        </div>
+                    </div>
+                    <div class="cb-rule-block">
+                        <div class="cb-rule-block-main">
+                            <span class="cb-rule-block-type">Trend Filter</span>
+                            <span class="cb-rule-block-operator">=</span>
+                            <span class="cb-rule-block-value">Bullish</span>
+                            <span class="cb-rule-block-meta">Market regime</span>
+                        </div>
+                        <div class="cb-rule-block-actions">
+                            <button type="button" class="btn btn-xs btn-light-primary">Kopyala</button>
+                            <button type="button" class="btn btn-xs btn-light-danger">Sil</button>
+                        </div>
+                    </div>
+                    <div class="cb-rule-action-row cb-rule-action-row-watch">
+                        <span class="cb-badge cb-badge-info">Aksiyon</span>
+                        <strong>İzle / Watch</strong>
+                        <span class="text-muted">İşlem açmadan alarm üret</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div data-cb-strategy-panel="loading" class="d-none">
+            @await Html.PartialAsync("Foundation/_LoadingState", new UiLoadingStateViewModel
+            {
+                Title = "Builder hazırlanıyor",
+                Message = "Template blokları, toolbox ve giriş kuralları yüzeyi aynı layout içinde skeleton olarak gösterilir.",
+                CardCount = 3,
+                LineCount = 4
+            })
+        </div>
+
+        <div data-cb-strategy-panel="error" class="d-none">
+            @await Html.PartialAsync("Foundation/_ErrorState", new UiStateViewModel
+            {
+                IconText = "!",
+                Title = "Builder yüzeyi alınamadı",
+                Message = "Gerçek rule engine bağlı olmadığında bile kullanıcı yönlendirmesiz kalmamalı; retry ve yardım aksiyonları hazır tutulur.",
+                ActionText = "Tekrar dene",
+                ActionHref = "#builder",
+                SecondaryActionText = "Template seçimine dön",
+                SecondaryActionHref = "#templates"
+            })
+        </div>
+    </div>
+</div>

@@ -1,0 +1,68 @@
+@{
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Security Boundary",
+        Title = "Access Denied",
+        Description = "İstenen admin yüzeyine erişim reddedildi. Ekran kaba 403 yerine yönlendiren, açıklayıcı ve admin shell ile uyumlu tutuldu.",
+        StatusBadge = new AdminBadgeViewModel { Label = "Access Denied", Tone = "critical", IconText = "AD" },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = "MFA Check", Tone = "warning", IconText = "2F" },
+            new AdminBadgeViewModel { Label = "Policy Pending", Tone = "neutral", IconText = "PL" }
+        },
+        PrimaryActionText = "Yeniden doğrula",
+        PrimaryActionHref = "#cb_admin_reauth_modal",
+        SecondaryActionText = "Dashboard'a dön",
+        SecondaryActionHref = Url.Action("Overview", "Admin", new { area = "Admin" })
+    };
+}
+
+<div class="row">
+    <div class="col-xl-8">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = "critical",
+                    Title = "Erişim akışı kontrollü ve yönlendirici sunulur",
+                    Message = "Gerçek authorization backend bu fazda yok; ancak 401/403 yerine yönlendirici ve açıklayıcı admin ekranı hazırlandı.",
+                    Meta = "No hard failure"
+                })
+
+                <div class="mt-6">
+                    @await Html.PartialAsync("Foundation/_AdminErrorState", new UiStateViewModel
+                    {
+                        Title = "Bu yüzeye erişim iznin yok",
+                        Message = "Rol kapsamın, MFA durumun veya yeniden doğrulama gereksinimi nedeniyle istenen admin yüzeyi açılamadı. Uygun role veya re-auth akışına yönlendirilirsin.",
+                        IconText = "!",
+                        ActionText = "Role matrix",
+                        ActionHref = Url.Action("RoleMatrix", "Admin", new { area = "Admin" }),
+                        SecondaryActionText = "Yeniden giriş",
+                        SecondaryActionHref = Url.Action("Login", "Admin", new { area = "Admin" })
+                    })
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminSecurityHelpCard", new AdminSecurityHelpCardViewModel
+        {
+            Eyebrow = "What now?",
+            Title = "Çıkmaz oluşturmayan yönlendirme",
+            Description = "Access denied ekranı kullanıcıyı role matrix, yeniden doğrulama veya dashboard’a dönüş seçenekleri ile karşılar.",
+            BadgeLabel = "Help",
+            BadgeTone = "info",
+            Items = new[]
+            {
+                "Rol kapsamını kontrol et",
+                "MFA veya session durumunu yenile",
+                "Gerekirse daha düşük ayrıcalıklı yüzeye dön"
+            },
+            ActionText = "Session expired ekranı",
+            ActionHref = Url.Action("SessionExpired", "Admin", new { area = "Admin" })
+        })
+    </div>
+</div>

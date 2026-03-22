@@ -1,0 +1,63 @@
+@{
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Role Matrix",
+        Title = "Role / Permission Matrix",
+        Description = "Super Admin, Admin, Support, Auditor ve Viewer rollerinin kabaca hangi yüzeylere erişebileceğini gösteren sade foundation görünümü.",
+        StatusBadge = new AdminBadgeViewModel { Label = "RBAC Foundation", Tone = "role", IconText = "RB" },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = "UI-only", Tone = "neutral", IconText = "UI" },
+            new AdminBadgeViewModel { Label = "Extensible", Tone = "info", IconText = "EX" }
+        },
+        PrimaryActionText = "Permission info",
+        PrimaryActionHref = "#cb_admin_permission_info_modal",
+        SecondaryActionText = "Kullanıcılar",
+        SecondaryActionHref = Url.Action("Users", "Admin", new { area = "Admin" })
+    };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = "info",
+                    Title = "Permission matrix backend’e zemin bırakır",
+                    Message = "Bu tablo gerçek policy evaluation içermez. Ama admin auth/authorization backend’i eklendiğinde okunur, sade ve genişleyebilir bir yüzey hazırdır.",
+                    Meta = "No enforcement"
+                })
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-8">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminRoleMatrix")
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminSecurityHelpCard", new AdminSecurityHelpCardViewModel
+        {
+            Eyebrow = "Why this matters",
+            Title = "Rol matrisi neden görünür olmalı",
+            Description = "Access denied ve insufficient permission ekranları yalnızca hata üretmez; beklenen kapsamı da anlaşılır biçimde gösterir.",
+            BadgeLabel = "Guide",
+            BadgeTone = "info",
+            Items = new[]
+            {
+                "Roller arası kaba ayrımı görünür kılar",
+                "Kritik yüzeyler için step-up beklentisini açıklar",
+                "FAZ-SA-2 dashboard ve platform yüzeylerine kontrollü zemin bırakır"
+            },
+            ActionText = "Access denied ekranı",
+            ActionHref = Url.Action("AccessDenied", "Admin", new { area = "Admin" })
+        })
+    </div>
+</div>

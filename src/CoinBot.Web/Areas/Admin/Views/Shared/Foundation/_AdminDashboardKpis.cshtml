@@ -1,0 +1,87 @@
+@{
+    var statTiles = new[]
+    {
+        new AdminStatTileViewModel { Label = "Toplam kullanıcı", Value = "24.8K", Meta = "Platform çapında kayıtlı hesap placeholder", Tone = "info" },
+        new AdminStatTileViewModel { Label = "Aktif kullanıcı", Value = "6.4K", Meta = "Son senkron penceresinde aktif görünen hesaplar", Tone = "healthy" },
+        new AdminStatTileViewModel { Label = "Bağlı exchange", Value = "1,142", Meta = "Bağlantı doğrulaması geçen hesap placeholder", Tone = "neutral" },
+        new AdminStatTileViewModel { Label = "Aktif bot", Value = "318", Meta = "Runtime'ta çalışan bot foundation sayısı", Tone = "warning" }
+    };
+}
+
+<div class="row">
+    @for (var i = 0; i < statTiles.Length; i++)
+    {
+        <div class="col-sm-6 col-xl-3">
+            @await Html.PartialAsync("_AdminStatTile", statTiles[i])
+        </div>
+    }
+
+    <div class="col-xl-6">
+        <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-dashboard-card cb-admin-composite-kpi-card">
+            <div class="card-body">
+                <div class="cb-admin-panel-head">
+                    <div>
+                        <div class="cb-admin-section-kicker">Mode Distribution</div>
+                        <div class="cb-admin-section-title">Paper / live dağılımı</div>
+                    </div>
+                    @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Balanced", Tone = "info", IconText = "PL" })
+                </div>
+
+                <p class="cb-admin-section-description">Canlı ve paper kullanımının platform üzerindeki operasyonel dağılımını tek bakışta okunur kılan kompakt split görünüm.</p>
+
+                <div class="cb-admin-split-kpi mt-6">
+                    <div class="cb-admin-split-bar" aria-hidden="true">
+                        <span class="cb-admin-split-segment is-paper" style="width: 42%;"></span>
+                        <span class="cb-admin-split-segment is-live" style="width: 58%;"></span>
+                    </div>
+                    <div class="cb-admin-split-meta">
+                        <div class="cb-admin-split-meta-item">
+                            <span class="cb-admin-split-dot is-paper"></span>
+                            <div>
+                                <strong>Paper 42%</strong>
+                                <small>Kullanıcı / bot onboarding yoğunluğu</small>
+                            </div>
+                        </div>
+                        <div class="cb-admin-split-meta-item">
+                            <span class="cb-admin-split-dot is-live"></span>
+                            <div>
+                                <strong>Live 58%</strong>
+                                <small>Risk ve execution takibi için görünür tutulur</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-6">
+        <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-dashboard-card cb-admin-composite-kpi-card">
+            <div class="card-body">
+                <div class="cb-admin-panel-head">
+                    <div>
+                        <div class="cb-admin-section-kicker">24h Activity</div>
+                        <div class="cb-admin-section-title">Son 24 saat order hacmi</div>
+                    </div>
+                    @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Placeholder", Tone = "neutral", IconText = "24H" })
+                </div>
+
+                <div class="cb-admin-volume-value cb-mono mt-6">$ 18.4M</div>
+                <div class="cb-admin-volume-meta">Operasyon özeti için kullanılan placeholder hacim yüzeyi; gerçek finansal mutabakat değildir.</div>
+
+                <div class="cb-admin-volume-grid mt-6">
+                    <div class="cb-admin-summary-card">
+                        <span class="cb-admin-summary-label">Live flow</span>
+                        <strong>$ 11.1M</strong>
+                        <small>High priority exchange activity placeholder</small>
+                    </div>
+                    <div class="cb-admin-summary-card">
+                        <span class="cb-admin-summary-label">Paper flow</span>
+                        <strong>$ 7.3M</strong>
+                        <small>Simulation ve onboarding yoğunluğu</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

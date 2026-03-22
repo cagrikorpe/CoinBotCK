@@ -1,0 +1,72 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Alert Filters</div>
+                <div class="cb-admin-section-title">Severity, kategori ve unread/read filtreleri</div>
+                <p class="cb-admin-section-description mb-0">Alarm akışını severity, kategori, okunma durumu, source/rule ve sıralama placeholder alanlarıyla filtreleyen toolbar foundation.</p>
+            </div>
+            <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_alert_policy_modal">Notification policy CTA</button>
+        </div>
+
+        <div class="cb-filter-bar cb-admin-filter-bar cb-admin-alert-filter-bar mt-6">
+            <div class="cb-filter-field">
+                <label class="cb-form-label">Severity</label>
+                <select class="form-control cb-form-control">
+                    <option>Tüm severity</option>
+                    <option>Critical</option>
+                    <option>Warning</option>
+                    <option>Info</option>
+                </select>
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label">Kategori</label>
+                <select class="form-control cb-form-control">
+                    <option>Tüm kategoriler</option>
+                    <option>AI</option>
+                    <option>Risk</option>
+                    <option>Worker</option>
+                    <option>Security</option>
+                    <option>System</option>
+                </select>
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label">Okunma</label>
+                <select class="form-control cb-form-control">
+                    <option>Tümü</option>
+                    <option>Okunmamış</option>
+                    <option>Okunmuş</option>
+                </select>
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label">Rule / Source</label>
+                <input class="form-control cb-form-control" placeholder="rule, source, signal placeholder" />
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label">Sıralama</label>
+                <select class="form-control cb-form-control">
+                    <option>En yeni</option>
+                    <option>Severity önceliği</option>
+                    <option>Unread önce</option>
+                </select>
+            </div>
+            <div class="cb-filter-field cb-filter-actions cb-admin-user-filter-actions">
+                <button type="button" class="btn btn-light-primary font-weight-bold">Temizle</button>
+                <button type="button" class="btn btn-primary font-weight-bolder">Uygula</button>
+            </div>
+        </div>
+
+        <div class="cb-admin-filter-summary mt-5">
+            <div class="cb-admin-filter-summary-copy">
+                <strong>Aktif filtre özeti</strong>
+                <span>Kritik + Unread + Worker / Security + source placeholder</span>
+            </div>
+            <div class="cb-admin-filter-chip-list">
+                <span class="cb-admin-filter-chip">Critical</span>
+                <span class="cb-admin-filter-chip">Unread</span>
+                <span class="cb-admin-filter-chip">Worker</span>
+                <span class="cb-admin-filter-chip">Security</span>
+            </div>
+        </div>
+    </div>
+</div>

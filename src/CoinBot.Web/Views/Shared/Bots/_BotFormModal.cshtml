@@ -1,0 +1,104 @@
+<div class="modal fade cb-modal" id="cb_bot_form_modal" tabindex="-1" role="dialog" aria-labelledby="cb_bot_form_modal_title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-xl" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <div class="cb-page-eyebrow mb-2" id="cb_bot_form_modal_eyebrow">Create Bot</div>
+                    <h5 class="modal-title" id="cb_bot_form_modal_title">Yeni bot oluştur</h5>
+                </div>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="cb-notice cb-notice-info mb-5" id="cb_bot_form_info">
+                    Strategy builder ve gerçek persist akışı bu fazda bağlı değildir; form yalnızca ortak create/edit standardını kurar.
+                </div>
+
+                <div class="cb-form-grid cb-bot-form-grid">
+                    <div class="form-group mb-0">
+                        <label class="cb-form-label">Bot Adı</label>
+                        <input type="text" class="form-control cb-form-control" id="cb_bot_form_name" placeholder="Bot adı" />
+                        <div class="cb-bot-inline-help">Liste ve detail drawer başlığında kullanılacak ana isim alanı.</div>
+                    </div>
+                    <div class="form-group mb-0">
+                        <label class="cb-form-label">Exchange</label>
+                        <select class="form-control cb-form-control" id="cb_bot_form_exchange">
+                            <option>Binance</option>
+                        </select>
+                        <div class="cb-bot-inline-help">Gerçek exchange entegrasyonu sonraki fazda bağlanacaktır.</div>
+                    </div>
+                    <div class="form-group mb-0 cb-form-grid-span-2">
+                        <label class="cb-form-label">Açıklama / Kısa Not</label>
+                        <textarea class="form-control cb-form-control" id="cb_bot_form_note" rows="3" placeholder="Bu botun amacı veya çalışma notu"></textarea>
+                    </div>
+                    <div class="form-group mb-0">
+                        <label class="cb-form-label">Market Tipi</label>
+                        <select class="form-control cb-form-control" id="cb_bot_form_market">
+                            <option value="spot">Spot</option>
+                            <option value="futures">Futures</option>
+                        </select>
+                    </div>
+                    <div class="form-group mb-0">
+                        <label class="cb-form-label">Trade Yönü</label>
+                        <select class="form-control cb-form-control" id="cb_bot_form_direction">
+                            <option value="long">Long only</option>
+                            <option value="both">Long + Short</option>
+                        </select>
+                    </div>
+                    <div class="form-group mb-0">
+                        <label class="cb-form-label">Strategy Template</label>
+                        <select class="form-control cb-form-control" id="cb_bot_form_strategy">
+                            <option>Momentum Template</option>
+                            <option>Breakout Template</option>
+                            <option>Mean Reversion Template</option>
+                            <option>Placeholder seçiniz</option>
+                        </select>
+                    </div>
+                    <div class="form-group mb-0">
+                        <label class="cb-form-label">Risk Profili</label>
+                        <select class="form-control cb-form-control" id="cb_bot_form_risk">
+                            <option value="low">Düşük</option>
+                            <option value="medium">Orta</option>
+                            <option value="high">Yüksek</option>
+                        </select>
+                    </div>
+                    <div class="form-group mb-0">
+                        <label class="cb-form-label">Max Leverage</label>
+                        <input type="number" min="1" max="25" class="form-control cb-form-control" id="cb_bot_form_leverage" value="1" />
+                        <div class="cb-bot-inline-help" id="cb_bot_form_leverage_help">Spot modunda leverage alanı secondary görünür; futures seçildiğinde öne çıkar.</div>
+                    </div>
+                    <div class="form-group mb-0">
+                        <label class="cb-form-label">Çalışma Modu</label>
+                        <div class="cb-choice-row mt-2">
+                            <label class="cb-choice-pill is-active" data-cb-bot-mode-choice>
+                                <input type="radio" name="cb_bot_form_mode" value="paper" checked />
+                                <span>Paper</span>
+                            </label>
+                            <label class="cb-choice-pill" data-cb-bot-mode-choice>
+                                <input type="radio" name="cb_bot_form_mode" value="live" />
+                                <span>Live</span>
+                            </label>
+                        </div>
+                        <div class="cb-bot-inline-help">Gerçek mode switching yok; güvenli başlangıç dili foundation olarak hazırlanır.</div>
+                    </div>
+                    <div class="form-group mb-0 cb-form-grid-span-2">
+                        <label class="checkbox checkbox-outline checkbox-outline-2x checkbox-primary cb-bot-risk-check">
+                            <input type="checkbox" id="cb_bot_form_start_enabled" />
+                            <span></span>
+                            Bot hazırsa ilk kayıt sonrası aktif başlasın foundation toggle'ı.
+                        </label>
+                    </div>
+                </div>
+
+                <div class="cb-notice cb-notice-warning mt-5 d-none" id="cb_bot_form_warning">
+                    Futures + yüksek leverage kombinasyonu daha yüksek risk taşır. Gerçek risk motoru sonraki fazda bağlanacaktır.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-dismiss="modal">İptal</button>
+                <button type="button" class="btn btn-primary font-weight-bolder" id="cb_bot_form_submit">Kaydet</button>
+            </div>
+        </div>
+    </div>
+</div>

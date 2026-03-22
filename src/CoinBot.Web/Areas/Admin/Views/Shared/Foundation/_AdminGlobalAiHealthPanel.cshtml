@@ -1,0 +1,45 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-panel-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">AI Health</div>
+                <div class="cb-admin-section-title">Model health ve recommendation durumu</div>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Degraded", Tone = "degraded", IconText = "AI" })
+        </div>
+
+        <div class="cb-admin-ai-health-grid mt-6">
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Son skor zamanı</span>
+                <strong class="cb-mono">06 dk önce</strong>
+                <small>Freshness threshold eşiğine yakın</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">AI recommendation health</span>
+                <strong>Guarded</strong>
+                <small>Confidence fallback ve veto yoğunluğu izlenir</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Durum</span>
+                <strong>Warming up / degraded</strong>
+                <small>Healthy ve paused state aynı blokta taşınır</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Trend placeholder</span>
+                <strong>Confidence downshift</strong>
+                <small>Kısa trend özeti, chart yerine summary ile verilir</small>
+            </div>
+        </div>
+
+        <div class="cb-admin-trend-placeholder mt-6">
+            <div class="cb-admin-trend-line is-high"></div>
+            <div class="cb-admin-trend-line is-mid"></div>
+            <div class="cb-admin-trend-line is-low"></div>
+        </div>
+
+        <div class="cb-admin-inline-actions mt-6">
+            <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_ai_health_modal">Health detayı</button>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="Overview" class="btn btn-primary font-weight-bolder">Dashboard bağlantısı</a>
+        </div>
+    </div>
+</div>

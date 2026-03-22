@@ -1,0 +1,35 @@
+<div class="row">
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminLoadingState", new UiLoadingStateViewModel
+        {
+            Title = "Liste hazırlanıyor",
+            Message = "Kullanıcı listesi, filtre summary ve satır aksiyonları yükleniyor.",
+            CardCount = 2,
+            LineCount = 4
+        })
+    </div>
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+        {
+            Title = "Sonuç bulunamadı",
+            Message = "Filtre kombinasyonu ile eşleşen kullanıcı yok. Filtreleri temizleyip tekrar deneyin.",
+            IconText = "U",
+            ActionText = "Filtreyi temizle",
+            ActionHref = "#",
+            SecondaryActionText = "Yardıma git",
+            SecondaryActionHref = Url.Action("SupportTools", "Admin", new { area = "Admin" })
+        })
+    </div>
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminErrorState", new UiStateViewModel
+        {
+            Title = "Kullanıcı verisi alınamadı",
+            Message = "Liste, drawer veya detay verisi beklenirken genel auth ve permission context'i korunur.",
+            IconText = "!",
+            ActionText = "Tekrar dene",
+            ActionHref = "#",
+            SecondaryActionText = "Listeye dön",
+            SecondaryActionHref = Url.Action("Users", "Admin", new { area = "Admin" })
+        })
+    </div>
+</div>

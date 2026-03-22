@@ -1,0 +1,95 @@
+@{
+    var rows = new[]
+    {
+        new { User = "Ops Primary", Exchange = "Binance", Market = "Spot", Mode = "Live", Connection = "Connected", Permission = "Permission ok", LastSync = "2 dk önce", Stale = "Fresh", Risk = "None", Tone = "healthy", PermissionTone = "healthy", RiskTone = "neutral" },
+        new { User = "Desk Futures", Exchange = "Binance", Market = "Futures", Mode = "Live", Connection = "Stale", Permission = "Permission mismatch", LastSync = "27 dk önce", Stale = "Stale", Risk = "Mismatch", Tone = "warning", PermissionTone = "warning", RiskTone = "warning" },
+        new { User = "Paper Lab", Exchange = "Binance", Market = "Spot", Mode = "Paper", Connection = "Connected", Permission = "Paper mode", LastSync = "6 dk önce", Stale = "Fresh", Risk = "Low", Tone = "info", PermissionTone = "info", RiskTone = "neutral" },
+        new { User = "Risk Watch", Exchange = "Binance", Market = "Futures", Mode = "Live", Connection = "Degraded", Permission = "Withdrawal risk", LastSync = "11 dk önce", Stale = "Delayed", Risk = "Withdrawal", Tone = "critical", PermissionTone = "critical", RiskTone = "critical" },
+        new { User = "Growth Desk", Exchange = "Binance", Market = "Spot", Mode = "Live", Connection = "Disconnected", Permission = "Unknown", LastSync = "1 sa önce", Stale = "Stale", Risk = "Sync fail", Tone = "degraded", PermissionTone = "warning", RiskTone = "warning" }
+    };
+}
+
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-table-card">
+    <div class="card-body">
+        <div class="cb-admin-table-header">
+            <div>
+                <div class="cb-admin-section-kicker">Account Grid</div>
+                <div class="cb-admin-section-title">Exchange account monitoring listesi</div>
+                <p class="cb-admin-section-description mb-0">Kullanıcı, market modu, permission durumu, stale sinyali ve risk flag aynı satırda taranabilir yoğunlukta gösterilir.</p>
+            </div>
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Monitoring", Tone = "info", IconText = "TB" })
+        </div>
+
+        <div class="table-responsive cb-admin-table-wrap">
+            <table class="table table-borderless cb-admin-table cb-admin-exchange-table mb-0">
+                <thead>
+                    <tr>
+                        <th>Kullanıcı</th>
+                        <th>Exchange</th>
+                        <th>Spot/Futures</th>
+                        <th>Paper/Live</th>
+                        <th>Bağlantı</th>
+                        <th>Permission</th>
+                        <th>Son sync</th>
+                        <th>Stale</th>
+                        <th>Risk</th>
+                        <th>Aksiyon</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in rows)
+                    {
+                        <tr>
+                            <td>
+                                <div class="cb-admin-user-cell">
+                                    <span class="cb-admin-user-avatar">@row.User.Substring(0, 1)</span>
+                                    <div>
+                                        <div class="cb-admin-user-name">@row.User</div>
+                                        <div class="cb-admin-user-meta">User scope placeholder / tenant-safe label</div>
+                                    </div>
+                                </div>
+                            </td>
+                            <td>
+                                <div class="cb-admin-mini-stat">
+                                    <strong>@row.Exchange</strong>
+                                    <small>Key id masked placeholder</small>
+                                </div>
+                            </td>
+                            <td>
+                                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = row.Market, Tone = row.Market == "Futures" ? "warning" : "info", IconText = "MK" })
+                            </td>
+                            <td>
+                                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = row.Mode, Tone = row.Mode == "Live" ? "critical" : "neutral", IconText = "MD" })
+                            </td>
+                            <td>
+                                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = row.Connection, Tone = row.Tone, IconText = "CN" })
+                            </td>
+                            <td>
+                                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = row.Permission, Tone = row.PermissionTone, IconText = "PM" })
+                            </td>
+                            <td>
+                                <div class="cb-admin-mini-stat">
+                                    <strong>@row.LastSync</strong>
+                                    <small>Global sync window placeholder</small>
+                                </div>
+                            </td>
+                            <td>
+                                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = row.Stale, Tone = row.Stale == "Fresh" ? "healthy" : "warning", IconText = "FS" })
+                            </td>
+                            <td>
+                                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = row.Risk, Tone = row.RiskTone, IconText = "RK" })
+                            </td>
+                            <td>
+                                <div class="cb-admin-inline-actions cb-admin-inline-actions-compact">
+                                    <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_admin_exchange_drawer">Detay</button>
+                                    <a asp-area="Admin" asp-controller="Admin" asp-action="UserDetail" asp-route-id="usr-014" class="btn btn-xs btn-light-primary font-weight-bold">Kullanıcı</a>
+                                    <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-xs btn-light-primary font-weight-bold">Log</a>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>

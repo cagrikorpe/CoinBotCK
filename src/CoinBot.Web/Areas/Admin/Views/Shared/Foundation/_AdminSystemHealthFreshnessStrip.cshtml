@@ -1,0 +1,42 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-freshness-card cb-admin-panel-card mb-0">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Freshness / Meta</div>
+                <div class="cb-admin-section-title">Heartbeat ve sync meta alanı</div>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Stale warning", Tone = "warning", IconText = "FS" })
+        </div>
+
+        <div class="cb-admin-freshness-grid mt-6">
+            <div class="cb-admin-freshness-item">
+                <span class="cb-admin-freshness-label">API probe</span>
+                <div class="cb-admin-freshness-meta">
+                    <span class="cb-admin-freshness-time cb-mono">34 sn önce</span>
+                    @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Healthy", Tone = "healthy", IconText = "AP" })
+                </div>
+            </div>
+            <div class="cb-admin-freshness-item">
+                <span class="cb-admin-freshness-label">Market data worker heartbeat</span>
+                <div class="cb-admin-freshness-meta">
+                    <span class="cb-admin-freshness-time cb-mono">04 dk önce</span>
+                    @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Stale", Tone = "warning", IconText = "MD" })
+                </div>
+            </div>
+            <div class="cb-admin-freshness-item">
+                <span class="cb-admin-freshness-label">AI scoring heartbeat</span>
+                <div class="cb-admin-freshness-meta">
+                    <span class="cb-admin-freshness-time cb-mono">91 sn önce</span>
+                    @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Degraded", Tone = "degraded", IconText = "AI" })
+                </div>
+            </div>
+            <div class="cb-admin-freshness-item">
+                <span class="cb-admin-freshness-label">Son global snapshot</span>
+                <div class="cb-admin-freshness-meta">
+                    <span class="cb-admin-freshness-time cb-mono">02 dk önce</span>
+                    @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Guarded", Tone = "info", IconText = "SN" })
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

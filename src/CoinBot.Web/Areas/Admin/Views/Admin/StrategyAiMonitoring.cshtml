@@ -1,0 +1,56 @@
+@{
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Global AI Ops",
+        Title = "Strategy / AI İzleme",
+        Description = "Platform genelindeki strategy template kullanımı, AI health, confidence/veto sinyalleri ve explainability örneklerini tek ekranda özetleyen Super Admin monitoring foundation ekranı.",
+        StatusBadge = new AdminBadgeViewModel { Label = "AI Watch", Tone = "degraded", IconText = "AI" },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = "Model Health", Tone = "warning", IconText = "HL" },
+            new AdminBadgeViewModel { Label = "Explainable", Tone = "info", IconText = "XP" },
+            new AdminBadgeViewModel { Label = "Veto Aware", Tone = "critical", IconText = "VT" }
+        },
+        SecondaryActionText = "Bot operasyonları",
+        SecondaryActionHref = Url.Action("BotOperations", "Admin", new { area = "Admin" }),
+        PrimaryActionText = "Explainability sample",
+        PrimaryActionHref = "#cb_admin_ai_explain_modal"
+    };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = "warning",
+                    Title = "Global strategy / AI monitoring foundation",
+                    Message = "Gerçek AI backend, model scoring, cluster analizi veya strategy health pipeline bu fazda bağlı değildir. Ekran; usage yoğunluğu, model health, veto/confidence ve explainability akışlarını UI seviyesinde hazırlar.",
+                    Meta = "UI-only monitoring"
+                })
+
+                <div class="mt-6">
+                    @await Html.PartialAsync("Foundation/_AdminStrategyAiSummaryMeta")
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-7">
+        @await Html.PartialAsync("Foundation/_AdminStrategyUsagePanel")
+        @await Html.PartialAsync("Foundation/_AdminConfidenceVetoPanel")
+    </div>
+
+    <div class="col-xl-5">
+        @await Html.PartialAsync("Foundation/_AdminGlobalAiHealthPanel")
+        @await Html.PartialAsync("Foundation/_AdminExplainabilitySamplePanel")
+        @await Html.PartialAsync("Foundation/_AdminStrategyAiHelpCard")
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("Foundation/_AdminStrategyAiStatesShowcase")
+    </div>
+</div>

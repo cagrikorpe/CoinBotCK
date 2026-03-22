@@ -1,0 +1,56 @@
+@{
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Platform Overview",
+        Title = "Super Admin platform dashboard",
+        Description = "Platformın genel sağlık özeti, kritik alarm yoğunluğu, AI health, failed jobs ve hızlı yönlendirme aksiyonlarını tek ekranda toplayan operasyon dashboard foundation'ı.",
+        StatusBadge = new AdminBadgeViewModel { Label = "Operational View", Tone = "healthy", IconText = "OV" },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = "Super Admin", Tone = "role", IconText = "SA" },
+            new AdminBadgeViewModel { Label = "Prod Shadow", Tone = "info", IconText = "ENV" },
+            new AdminBadgeViewModel { Label = "UI-only Metrics", Tone = "warning", IconText = "PH" },
+            new AdminBadgeViewModel { Label = "Freshness Aware", Tone = "degraded", IconText = "FS" }
+        },
+        SecondaryActionText = "Kritik loglara git",
+        SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" }),
+        PrimaryActionText = "Notifications paneli",
+        PrimaryActionHref = Url.Action("Notifications", "Admin", new { area = "Admin" })
+    };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-dashboard-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+                @await Html.PartialAsync("Foundation/_AdminFreshnessStrip")
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("Foundation/_AdminDashboardKpis")
+    </div>
+
+    <div class="col-xl-7">
+        @await Html.PartialAsync("Foundation/_AdminCriticalAlarmsPanel")
+    </div>
+
+    <div class="col-xl-5">
+        @await Html.PartialAsync("Foundation/_AdminAiHealthSummary")
+        @await Html.PartialAsync("Foundation/_AdminQuickActionsPanel")
+    </div>
+
+    <div class="col-xl-7">
+        @await Html.PartialAsync("Foundation/_AdminFailedJobsPanel")
+    </div>
+
+    <div class="col-xl-5">
+        @await Html.PartialAsync("Foundation/_AdminDashboardHelpCard")
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("Foundation/_AdminDashboardStateShowcase")
+    </div>
+</div>

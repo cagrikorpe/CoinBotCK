@@ -1,0 +1,65 @@
+@{
+    var workers = new[]
+    {
+        new { Name = "market-data-worker", Status = "Healthy", StatusTone = "healthy", Heartbeat = "34 sn önce", Stale = "Hayır", StaleTone = "healthy", Jobs = "184", Retry = "0", Meta = "Binance stream / candle sync placeholder" },
+        new { Name = "ai-scoring-worker", Status = "Degraded", StatusTone = "degraded", Heartbeat = "91 sn önce", Stale = "Eşik yakın", StaleTone = "warning", Jobs = "58", Retry = "2", Meta = "Model scoring ve confidence refresh" },
+        new { Name = "notification-worker", Status = "Retrying", StatusTone = "warning", Heartbeat = "03 dk önce", Stale = "Hayır", StaleTone = "healthy", Jobs = "27", Retry = "4", Meta = "Alert dispatch placeholder" },
+        new { Name = "webhook-worker", Status = "Down", StatusTone = "critical", Heartbeat = "11 dk önce", Stale = "Evet", StaleTone = "warning", Jobs = "12", Retry = "7", Meta = "External callback / webhook placeholder" }
+    };
+}
+
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-panel-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Worker Health</div>
+                <div class="cb-admin-section-title">Worker health listesi</div>
+                <p class="cb-admin-section-description mb-0">Last heartbeat, stale warning, job yoğunluğu ve retry placeholder sinyallerini tek listede toplar.</p>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "4 workers", Tone = "info", IconText = "WK" })
+        </div>
+
+        <div class="cb-admin-worker-list mt-6">
+            @foreach (var worker in workers)
+            {
+                <div class="cb-admin-worker-item">
+                    <div class="cb-admin-worker-main">
+                        <div class="cb-admin-worker-title-row">
+                            <div>
+                                <div class="cb-admin-job-title">@worker.Name</div>
+                                <div class="cb-admin-job-meta">@worker.Meta</div>
+                            </div>
+                            <div class="cb-admin-badge-stack">
+                                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = worker.Status, Tone = worker.StatusTone, IconText = "ST" })
+                                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = worker.Stale == "Evet" ? "Stale" : worker.Stale, Tone = worker.StaleTone, IconText = "FS" })
+                            </div>
+                        </div>
+
+                        <div class="cb-admin-worker-meta-grid mt-4">
+                            <div class="cb-admin-summary-card">
+                                <span class="cb-admin-summary-label">Last heartbeat</span>
+                                <strong class="cb-mono">@worker.Heartbeat</strong>
+                                <small>Freshness penceresi placeholder</small>
+                            </div>
+                            <div class="cb-admin-summary-card">
+                                <span class="cb-admin-summary-label">Job count</span>
+                                <strong>@worker.Jobs</strong>
+                                <small>Aktif/son iş adedi placeholder</small>
+                            </div>
+                            <div class="cb-admin-summary-card">
+                                <span class="cb-admin-summary-label">Retry</span>
+                                <strong>@worker.Retry</strong>
+                                <small>Retry budget placeholder</small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="cb-admin-worker-actions">
+                        <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_admin_worker_drawer">Detay</button>
+                        <button type="button" class="btn btn-xs btn-light-warning font-weight-bold" data-toggle="modal" data-target="#cb_admin_job_retry_modal" data-cb-modal-title="Retry / recheck" data-cb-modal-message="Gerçek retry backend’i yoktur; worker veya failed job için kontrollü retry placeholder akışı gösterilir." data-cb-modal-confirm="Retry başlat">Retry</button>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+</div>

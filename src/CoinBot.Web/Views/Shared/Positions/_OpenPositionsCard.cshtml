@@ -1,0 +1,101 @@
+<div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Açık pozisyonlar</h3>
+                <div class="text-muted font-size-sm">Unrealized PnL, leverage ve risk durumunu aynı operasyonel tablo içinde izlemek için foundation yüzeyi.</div>
+            </div>
+        </div>
+        <div class="card-toolbar cb-inline-stack">
+            <span class="cb-badge cb-badge-info" id="cb_positions_open_badge">2 aktif</span>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-table-wrap" data-cb-open-positions-panel="list">
+            <table class="table table-borderless cb-table mb-0">
+                <thead>
+                    <tr>
+                        <th>Sembol</th>
+                        <th>Yön</th>
+                        <th>Market</th>
+                        <th>Lev.</th>
+                        <th>Giriş</th>
+                        <th>Güncel</th>
+                        <th>Unrealized PnL</th>
+                        <th>Boyut</th>
+                        <th>Açılış</th>
+                        <th>Bot</th>
+                        <th>Risk</th>
+                        <th class="text-right">Aksiyon</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr data-cb-position-detail="btc-open" data-cb-position-kind="open">
+                        <td><div class="cb-bot-row-title">BTCUSDT</div><div class="cb-bot-row-subtitle">Futures contract</div></td>
+                        <td><span class="cb-badge cb-badge-success cb-direction-badge">▲ Long</span></td>
+                        <td><span class="cb-badge cb-badge-info">Futures</span></td>
+                        <td><span class="cb-badge cb-badge-warning">3x</span></td>
+                        <td class="cb-mono">61,420</td>
+                        <td class="cb-mono">62,140</td>
+                        <td class="cb-mono cb-text-positive">+$126</td>
+                        <td class="cb-mono">0.42 BTC</td>
+                        <td><div class="cb-mono">09:14</div><div class="cb-bot-inline-help">42 dk önce</div></td>
+                        <td><span class="cb-badge cb-badge-info">Alpha Spot Pulse</span></td>
+                        <td><span class="cb-badge cb-badge-warning">İzleniyor</span></td>
+                        <td class="text-right"><div class="cb-table-actions justify-content-end"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-position-open-detail="btc-open" data-cb-drawer-target="#cb_positions_detail_drawer">Detay</button><button type="button" class="btn btn-xs btn-light-warning font-weight-bold" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Pozisyonu azalt" data-cb-modal-message="Reduce akışı foundation olarak hazırlanmıştır. Gerçek execution bu fazda bağlı değildir." data-cb-modal-confirm="Azalt">Azalt</button><button type="button" class="btn btn-xs btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_danger_modal" data-cb-modal-title="Pozisyonu kapat" data-cb-modal-message="Close placeholder onayı mevcut danger confirm standardı ile gösterilir." data-cb-modal-tone="danger" data-cb-modal-confirm="Kapat">Kapat</button></div></td>
+                    </tr>
+                    <tr data-cb-position-detail="sol-open" data-cb-position-kind="open">
+                        <td><div class="cb-bot-row-title">SOLUSDT</div><div class="cb-bot-row-subtitle">Hedge leg</div></td>
+                        <td><span class="cb-badge cb-badge-danger cb-direction-badge">▼ Short</span></td>
+                        <td><span class="cb-badge cb-badge-info">Futures</span></td>
+                        <td><span class="cb-badge cb-badge-danger">8x</span></td>
+                        <td class="cb-mono">131.8</td>
+                        <td class="cb-mono">130.7</td>
+                        <td class="cb-mono cb-text-positive">+$84</td>
+                        <td class="cb-mono">12 SOL</td>
+                        <td><div class="cb-mono">08:31</div><div class="cb-bot-inline-help">1 sa 20 dk</div></td>
+                        <td><span class="cb-badge cb-badge-warning">Beta Hedge Runner</span></td>
+                        <td><span class="cb-badge cb-badge-danger">High leverage</span></td>
+                        <td class="text-right"><div class="cb-table-actions justify-content-end"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-position-open-detail="sol-open" data-cb-drawer-target="#cb_positions_detail_drawer">Detay</button><button type="button" class="btn btn-xs btn-light-warning font-weight-bold" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Pozisyonu azalt" data-cb-modal-message="Short paper/runtime azaltma akışı sonradan execution guard’larına bağlanacaktır." data-cb-modal-confirm="Azalt">Azalt</button><button type="button" class="btn btn-xs btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_danger_modal" data-cb-modal-title="Pozisyonu kapat" data-cb-modal-message="Short pozisyon kapatma confirm akışı yalnızca foundation seviyesindedir." data-cb-modal-tone="danger" data-cb-modal-confirm="Kapat">Kapat</button></div></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="d-none" data-cb-open-positions-panel="empty">
+            @await Html.PartialAsync("Foundation/_EmptyState", new UiStateViewModel
+            {
+                IconText = "OP",
+                Title = "Açık pozisyon yok",
+                Message = "Aktif bir execution/runtime bağlantısı oluştuğunda açık pozisyonlar burada unrealized PnL ve leverage ile birlikte görünür.",
+                ActionText = "Botlarımı aç",
+                ActionHref = "/Bots",
+                SecondaryActionText = "Paper Trading’e git",
+                SecondaryActionHref = "/PaperTrading"
+            })
+        </div>
+
+        <div class="d-none" data-cb-open-positions-panel="loading">
+            @await Html.PartialAsync("Foundation/_LoadingState", new UiLoadingStateViewModel
+            {
+                Title = "Açık pozisyonlar hazırlanıyor",
+                Message = "Leverage, unrealized PnL ve risk sütunları skeleton yüzeyde yükleniyor.",
+                CardCount = 2,
+                LineCount = 4
+            })
+        </div>
+
+        <div class="d-none" data-cb-open-positions-panel="error">
+            @await Html.PartialAsync("Foundation/_ErrorState", new UiStateViewModel
+            {
+                IconText = "!",
+                Title = "Açık pozisyonlar alınamadı",
+                Message = "Exchange sync veya runtime event akışı sonra bağlandığında bu yüzey retry/help davranışıyla genişletilir.",
+                ActionText = "Tekrar dene",
+                ActionHref = "#",
+                SecondaryActionText = "Paper Trading’i aç",
+                SecondaryActionHref = "/PaperTrading"
+            })
+        </div>
+    </div>
+</div>

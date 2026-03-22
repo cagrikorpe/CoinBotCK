@@ -1,0 +1,58 @@
+<div class="card card-custom gutter-b cb-card cb-settings-section" id="cb_settings_notifications" data-cb-settings-page-panel="content">
+    <div class="card-body">
+        <div class="cb-page-header cb-page-header-compact">
+            <div>
+                <div class="cb-page-eyebrow">Bildirimler</div>
+                <h3 class="cb-page-title">Notification preferences</h3>
+                <p class="cb-page-description">AI, risk ve bot durum uyarılarının görünürlüğünü ve kanal tercihlerini tek bölümde toplar.</p>
+            </div>
+            <a asp-controller="Notifications" asp-action="Index" class="btn btn-light-primary font-weight-bold">Bildirimler ekranına git</a>
+        </div>
+
+        <div class="cb-toggle-grid mt-5">
+            <label class="cb-toggle-card cb-toggle-card-critical">
+                <span>
+                    <span class="cb-toggle-title">AI uyarıları</span>
+                    <span class="cb-toggle-text">Düşük güven, veri topluyor ve veto benzeri AI state akışını görünür tutar.</span>
+                </span>
+                <input id="cb_settings_notify_ai" type="checkbox" checked />
+            </label>
+            <label class="cb-toggle-card cb-toggle-card-critical">
+                <span>
+                    <span class="cb-toggle-title">Risk uyarıları</span>
+                    <span class="cb-toggle-text">Limit yaklaşımı, leverage warning ve emergency note yüzeylerini önceliklendirir.</span>
+                </span>
+                <input id="cb_settings_notify_risk" type="checkbox" checked />
+            </label>
+            <label class="cb-toggle-card">
+                <span>
+                    <span class="cb-toggle-title">Bot durum bildirimleri</span>
+                    <span class="cb-toggle-text">Bot durduruldu, taslakta kaldı veya yeni sinyal üretti gibi operasyonel bilgileri gösterir.</span>
+                </span>
+                <input id="cb_settings_notify_bots" type="checkbox" checked />
+            </label>
+            <label class="cb-toggle-card cb-toggle-card-critical">
+                <span>
+                    <span class="cb-toggle-title">Kritik uyarıları her zaman göster</span>
+                    <span class="cb-toggle-text">Channel tercihi ne olursa olsun kritik risk seviyesini in-app görünür tutar.</span>
+                </span>
+                <input id="cb_settings_notify_critical" type="checkbox" checked />
+            </label>
+        </div>
+
+        <div class="cb-form-grid cb-form-grid-2col mt-6">
+            <div class="form-group mb-0">
+                <label class="cb-form-label">Tercih edilen kanal</label>
+                <select id="cb_settings_channel" class="form-control cb-form-control">
+                    <option>In-app</option>
+                    <option>Email placeholder</option>
+                    <option>Telegram placeholder</option>
+                </select>
+            </div>
+            <div class="form-group mb-0">
+                <label class="cb-form-label">Sessiz saatler</label>
+                <input id="cb_settings_quiet_hours" type="text" class="form-control cb-form-control" value="22:00 - 07:00" />
+            </div>
+        </div>
+    </div>
+</div>

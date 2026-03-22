@@ -1,0 +1,22 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Category / Read State</div>
+                <div class="cb-admin-section-title">Alarm kategori ve okunma görünümü</div>
+            </div>
+            <div class="cb-admin-inline-actions cb-admin-inline-actions-compact">
+                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Unread first", Tone = "warning", IconText = "UR" })
+                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Read history", Tone = "info", IconText = "RD" })
+            </div>
+        </div>
+
+        <div class="cb-admin-category-strip mt-5">
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "AI", Tone = "degraded", IconText = "AI" })
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Risk", Tone = "critical", IconText = "RK" })
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Worker", Tone = "warning", IconText = "WK" })
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Security", Tone = "critical", IconText = "SC" })
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "System", Tone = "info", IconText = "SY" })
+        </div>
+    </div>
+</div>

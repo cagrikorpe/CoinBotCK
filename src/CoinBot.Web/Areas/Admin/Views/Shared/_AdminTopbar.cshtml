@@ -1,0 +1,114 @@
+@{
+    var pageTitle = ViewData["Title"]?.ToString() ?? "Super Admin";
+    var pageDescription = ViewData["PageDescription"]?.ToString() ?? "Admin shell foundation hazır.";
+    var breadcrumbItems = ViewData["BreadcrumbItems"] as string[] ?? new[] { "Super Admin", pageTitle };
+    var environmentLabel = ViewData["AdminEnvironment"]?.ToString() ?? "Prod Shadow";
+    var buildLabel = ViewData["AdminBuild"]?.ToString() ?? "Build vNext";
+    var tenantScope = ViewData["AdminTenantScope"]?.ToString() ?? "Tenant: Global";
+    var roleLabel = ViewData["AdminRoleLabel"]?.ToString() ?? "Super Admin";
+    var roleKey = ViewData["AdminRoleKey"]?.ToString() ?? "SuperAdmin";
+    var freshnessLabel = ViewData["AdminFreshnessLabel"]?.ToString() ?? "Fresh";
+}
+<div id="kt_header" class="header header-fixed cb-shell-header cb-admin-header">
+    <div class="container-fluid d-flex align-items-center justify-content-between flex-wrap flex-sm-nowrap">
+        <div class="d-flex align-items-center mr-5 cb-topbar-meta">
+            <button class="btn btn-icon btn-clean d-lg-none mr-3" id="kt_aside_mobile_toggle_desktop" type="button">
+                <span class="svg-icon svg-icon-xl">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none">
+                        <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    </svg>
+                </span>
+            </button>
+            <div>
+                <div class="cb-shell-breadcrumb cb-admin-breadcrumb">
+                    @for (var i = 0; i < breadcrumbItems.Length; i++)
+                    {
+                        <span>@breadcrumbItems[i]</span>
+                        @if (i < breadcrumbItems.Length - 1)
+                        {
+                            <span class="cb-breadcrumb-separator">/</span>
+                        }
+                    }
+                </div>
+                <h1 class="cb-shell-title cb-admin-shell-title mb-0">@pageTitle</h1>
+                <div class="cb-shell-description">@pageDescription</div>
+
+                <div class="cb-admin-quick-meta">
+                    <span class="cb-admin-quick-meta-item">@environmentLabel</span>
+                    <span class="cb-admin-quick-meta-item">@buildLabel</span>
+                    <span class="cb-admin-quick-meta-item">@tenantScope</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="topbar cb-topbar cb-admin-topbar">
+            <div class="cb-top-search cb-admin-top-search d-none d-xl-flex">
+                <span class="cb-top-search-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none">
+                        <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"></circle>
+                        <path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+                    </svg>
+                </span>
+                <input type="text" class="form-control border-0 bg-transparent" placeholder="Admin global search (placeholder)" />
+            </div>
+
+            <div class="cb-topbar-actions">
+                <button type="button" class="btn btn-light-primary font-weight-bold cb-topbar-action" data-toggle="modal" data-target="#cb_admin_reauth_modal" data-cb-modal-title="Step-up security" data-cb-modal-message="Kritik admin aksiyonları öncesinde parola ve MFA ile yeniden doğrulama istenebilir." data-cb-modal-confirm="Doğrulama">Re-auth</button>
+
+                <button type="button" class="btn btn-icon btn-clean cb-icon-button cb-admin-alert-button" title="Kritik alarm indicator placeholder">
+                    <span class="cb-icon-badge cb-admin-alert-count">2</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none">
+                        <path d="M12 4l7 13H5L12 4Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"></path>
+                        <path d="M12 9v4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path>
+                        <circle cx="12" cy="16.5" r="1" fill="currentColor"></circle>
+                    </svg>
+                </button>
+
+                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = environmentLabel, Tone = "info", IconText = "ENV" })
+                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = freshnessLabel, Tone = freshnessLabel == "Fresh" ? "healthy" : freshnessLabel == "Delayed" ? "warning" : freshnessLabel == "Degraded" ? "degraded" : "critical", IconText = "FD" })
+                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = roleLabel, Tone = "role", IconText = roleKey == "SuperAdmin" ? "SA" : "RB" })
+
+                <div class="dropdown">
+                    <button class="btn btn-clean d-flex align-items-center px-2 py-2" type="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                        <span class="cb-user-avatar cb-admin-user-avatar">SA</span>
+                        <span class="cb-user-meta d-none d-md-inline-block">
+                            <span class="cb-user-name">Root Operator</span>
+                            <span class="cb-user-role">Profile placeholder</span>
+                        </span>
+                    </button>
+                    <div class="dropdown-menu dropdown-menu-right dropdown-menu-anim-up dropdown-menu-lg p-0 cb-dropdown-menu cb-admin-dropdown-menu">
+                        <div class="cb-dropdown-header cb-admin-dropdown-header">
+                            <div class="cb-user-avatar cb-admin-user-avatar">SA</div>
+                            <div>
+                                <div class="font-weight-bolder text-white">Root Operator</div>
+                                <div class="text-white-50">Profile / session placeholder</div>
+                            </div>
+                        </div>
+                        <div class="navi navi-hover py-2">
+                            <a asp-area="Admin" asp-controller="Admin" asp-action="Overview" class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75">
+                                <span class="navi-text">Genel Bakış</span>
+                                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Shell", Tone = "healthy" })
+                            </a>
+                            <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75">
+                                <span class="navi-text">Audit merkezi</span>
+                                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Trace", Tone = "info" })
+                            </a>
+                            <a asp-area="Admin" asp-controller="Admin" asp-action="RoleMatrix" class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75">
+                                <span class="navi-text">Role matrix</span>
+                                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "RBAC", Tone = "role" })
+                            </a>
+                            <a asp-area="Admin" asp-controller="Admin" asp-action="Login" class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75">
+                                <span class="navi-text">Admin access</span>
+                                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "MFA", Tone = "warning" })
+                            </a>
+                            <a asp-controller="Home" asp-action="Index" asp-area="" class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75">
+                                <span class="navi-text">Kullanıcı paneline dön</span>
+                                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "UI", Tone = "neutral" })
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,48 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-dashboard-card cb-admin-panel-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">State Patterns</div>
+                <div class="cb-admin-section-title">Loading / empty / error foundation</div>
+                <p class="cb-admin-section-description">Dashboard boş veya eksik veri ile açıldığında kaba görünmemesi için alt paneller aynı reusable state kartlarını kullanır.</p>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Scenario E", Tone = "warning", IconText = "ST" })
+        </div>
+
+        <div class="row mt-6">
+            <div class="col-lg-4">
+                @await Html.PartialAsync("_AdminLoadingState", new UiLoadingStateViewModel
+                {
+                    Title = "Dashboard yükleniyor",
+                    Message = "KPI, alarm ve worker özetleri bağlanana kadar section skeleton korunur.",
+                    CardCount = 2,
+                    LineCount = 3
+                })
+            </div>
+            <div class="col-lg-4">
+                @await Html.PartialAsync("_AdminEmptyState", new UiStateViewModel
+                {
+                    Title = "Şu an kritik alarm yok",
+                    Message = "Empty state profesyonel kalır ve kullanıcıyı bildirim veya jobs ekranına yönlendirebilir.",
+                    IconText = "OK",
+                    ActionText = "Bildirim merkezi",
+                    ActionHref = Url.Action("Notifications", "Admin", new { area = "Admin" }),
+                    SecondaryActionText = "Job durumu",
+                    SecondaryActionHref = Url.Action("Jobs", "Admin", new { area = "Admin" })
+                })
+            </div>
+            <div class="col-lg-4">
+                @await Html.PartialAsync("_AdminErrorState", new UiStateViewModel
+                {
+                    Title = "Özet verisi alınamadı",
+                    Message = "Retry ve yardım aksiyonları ile kullanıcı çıkmaza sokulmaz. Freshness strip stale/delayed notunu açık bırakır.",
+                    IconText = "!",
+                    ActionText = "Tekrar dene",
+                    ActionHref = "#",
+                    SecondaryActionText = "Audit merkezi",
+                    SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" })
+                })
+            </div>
+        </div>
+    </div>
+</div>

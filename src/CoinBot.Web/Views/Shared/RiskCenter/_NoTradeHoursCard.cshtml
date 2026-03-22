@@ -1,0 +1,50 @@
+<div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">İşlem penceresi / No-trade hours</h3>
+                <div class="text-muted font-size-sm">Düşük likidite, haber akışı veya ekip dışı zamanlar için işlem açmama penceresi foundation alanı.</div>
+            </div>
+        </div>
+        <div class="card-toolbar">
+            <label class="checkbox checkbox-outline checkbox-outline-2x checkbox-primary mb-0">
+                <input type="checkbox" checked id="cb_risk_notrade_toggle" data-cb-risk-notrade-toggle />
+                <span></span>
+                Aktif
+            </label>
+        </div>
+    </div>
+    <div class="card-body pt-2" id="cb_risk_notrade_body">
+        <div class="cb-form-grid">
+            <div>
+                <label class="cb-form-label">Başlangıç saati</label>
+                <input type="time" value="22:00" class="form-control cb-form-control" />
+            </div>
+            <div>
+                <label class="cb-form-label">Bitiş saati</label>
+                <input type="time" value="01:30" class="form-control cb-form-control" />
+            </div>
+            <div>
+                <label class="cb-form-label">Timezone</label>
+                <select class="form-control cb-form-control">
+                    <option>UTC placeholder</option>
+                    <option>Europe/Berlin placeholder</option>
+                </select>
+            </div>
+            <div>
+                <label class="cb-form-label">Özet</label>
+                <input type="text" class="form-control cb-form-control" id="cb_risk_notrade_summary" value="22:00 - 01:30 arası yeni giriş kapalı" />
+            </div>
+        </div>
+        <div class="cb-helper-text mt-3">Aktif olduğunda botlar sinyali görse bile yeni giriş açmama kuralı uygulanacakmış gibi düşünülür.</div>
+        <div class="cb-chip-group cb-chip-group-sm mt-4">
+            <button type="button" class="cb-chip is-active">Pzt</button>
+            <button type="button" class="cb-chip is-active">Sal</button>
+            <button type="button" class="cb-chip is-active">Çar</button>
+            <button type="button" class="cb-chip is-active">Per</button>
+            <button type="button" class="cb-chip is-active">Cum</button>
+            <button type="button" class="cb-chip">Cts</button>
+            <button type="button" class="cb-chip">Paz</button>
+        </div>
+    </div>
+</div>

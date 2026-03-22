@@ -1,0 +1,35 @@
+<div class="row">
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminLoadingState", new UiLoadingStateViewModel
+        {
+            Title = "System health hazırlanıyor",
+            Message = "Health KPI, worker heartbeat ve failed jobs alanları hazırlanırken kontrollü loading state görünür.",
+            CardCount = 2,
+            LineCount = 5
+        })
+    </div>
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+        {
+            Title = "Aktif incident yok",
+            Message = "Sistem sağlıklı olduğunda failed jobs ve severity paneli sessiz ama bilgilendirici bir empty state ile görünür kalır.",
+            IconText = "OK",
+            ActionText = "Dashboard'a dön",
+            ActionHref = Url.Action("Overview", "Admin", new { area = "Admin" }),
+            SecondaryActionText = "Alarm merkezi",
+            SecondaryActionHref = Url.Action("Notifications", "Admin", new { area = "Admin" })
+        })
+    </div>
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminErrorState", new UiStateViewModel
+        {
+            Title = "System health verisi alınamadı",
+            Message = "Worker heartbeat, failed jobs veya service status summary yüklenemediğinde retry/help alanı görünür kalır.",
+            IconText = "!",
+            ActionText = "Tekrar dene",
+            ActionHref = Url.Action("SystemHealth", "Admin", new { area = "Admin" }),
+            SecondaryActionText = "Audit / loglar",
+            SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" })
+        })
+    </div>
+</div>

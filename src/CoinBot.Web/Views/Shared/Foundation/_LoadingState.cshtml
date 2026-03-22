@@ -1,0 +1,24 @@
+@model CoinBot.Web.ViewModels.Foundation.UiLoadingStateViewModel
+
+<div class="cb-state cb-loading-state">
+    <div class="cb-state-icon cb-state-icon-loading">
+        <span></span>
+    </div>
+    <div class="cb-state-body">
+        <h4 class="cb-state-title">@Model.Title</h4>
+        <p class="cb-state-text">@Model.Message</p>
+        <div class="row mt-6">
+            @for (var i = 0; i < Model.CardCount; i++)
+            {
+                <div class="col-md-4 mb-4">
+                    <div class="cb-skeleton-card">
+                        @for (var line = 0; line < Model.LineCount; line++)
+                        {
+                            <span class="cb-skeleton-line @(line == 0 ? "is-wide" : string.Empty)"></span>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+</div>

@@ -1,0 +1,62 @@
+@{
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Support Ops",
+        Title = "Destek Araçları",
+        Description = "Kullanıcı lookup, hızlı operasyon özeti, read-only diagnostic panel ve güvenli destek CTA'larını aynı yüzeyde toplayan Super Admin support operations foundation ekranı.",
+        StatusBadge = new AdminBadgeViewModel { Label = "Support Desk", Tone = "info", IconText = "SD" },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = "Read-only Aware", Tone = "warning", IconText = "RO" },
+            new AdminBadgeViewModel { Label = "No Impersonation", Tone = "critical", IconText = "IM" },
+            new AdminBadgeViewModel { Label = "Fast Lookup", Tone = "healthy", IconText = "LK" }
+        },
+        SecondaryActionText = "Kullanıcılara git",
+        SecondaryActionHref = Url.Action("Users", "Admin", new { area = "Admin" }),
+        PrimaryActionText = "Kullanıcı detail drawer",
+        PrimaryActionHref = "#cb_admin_user_drawer"
+    };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = "info",
+                    Title = "Güvenli destek akışı",
+                    Message = "Support ekranı hızlı lookup ve read-only diagnostic yüzeyi sunar. Gerçek impersonation, note persistence ve scoped permission enforcement bu fazda bağlı değildir.",
+                    Meta = "UI-only support"
+                })
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-5">
+        @await Html.PartialAsync("Foundation/_AdminSupportLookupPanel")
+        @await Html.PartialAsync("Foundation/_AdminSupportQuickUserSummary")
+    </div>
+
+    <div class="col-xl-7">
+        @await Html.PartialAsync("Foundation/_AdminSupportDiagnosticPanel")
+    </div>
+
+    <div class="col-xl-6">
+        @await Html.PartialAsync("Foundation/_AdminSupportCriticalEvents")
+    </div>
+
+    <div class="col-xl-6">
+        @await Html.PartialAsync("Foundation/_AdminSupportBotErrors")
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("Foundation/_AdminSupportActionPanel")
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("Foundation/_AdminSupportStatesShowcase")
+    </div>
+</div>

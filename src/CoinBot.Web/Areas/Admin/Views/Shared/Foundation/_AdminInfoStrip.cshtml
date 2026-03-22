@@ -1,0 +1,20 @@
+@model AdminInfoStripViewModel
+@{
+    var toneClass = Model.Tone?.ToLowerInvariant() switch
+    {
+        "critical" => "cb-admin-info-strip-critical",
+        "warning" => "cb-admin-info-strip-warning",
+        "success" => "cb-admin-info-strip-success",
+        _ => "cb-admin-info-strip-info"
+    };
+}
+<div class="cb-admin-info-strip @toneClass">
+    <div>
+        <div class="cb-admin-info-strip-title">@Model.Title</div>
+        <div class="cb-admin-info-strip-text">@Model.Message</div>
+    </div>
+    @if (!string.IsNullOrWhiteSpace(Model.Meta))
+    {
+        <span class="cb-admin-info-strip-meta">@Model.Meta</span>
+    }
+</div>

@@ -1,0 +1,68 @@
+@{
+    ViewData["Title"] = "Bildirimler";
+    ViewData["ActiveNav"] = "Notifications";
+    ViewData["PageDescription"] = "AI, risk ve bot durum uyarılarını severity ve okunma durumuna göre ayıran; detail drawer ve ayarlara yönlendirme CTA'sı içeren notifications foundation ekranı.";
+    ViewData["BreadcrumbItems"] = new[] { "Execution", "Bildirimler" };
+}
+
+@section Scripts {
+    <script src="~/js/notifications-foundation.js" asp-append-version="true"></script>
+}
+
+<div class="row" data-cb-notifications-page data-cb-notifications-scenario="mixed">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card">
+            <div class="card-body">
+                <div class="cb-page-header">
+                    <div>
+                        <div class="cb-page-eyebrow">Notification Center</div>
+                        <h2 class="cb-page-title">Bildirimler operasyon yüzeyi</h2>
+                        <p class="cb-page-description">Kritik, uyarı ve bilgi seviyesindeki AI, risk ve bot durum bildirimlerini tek merkezde toplayan; okunmuş/okunmamış akışını ve ilgili modüllere yönlendirmeyi hazırlayan UI foundation alanı.</p>
+                    </div>
+                    <div class="cb-toolbar">
+                        <span class="cb-badge cb-badge-info">UI-only foundation</span>
+                        <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-notifications-mark-all>Tümünü okundu işaretle</button>
+                        <button type="button" class="btn btn-primary font-weight-bolder" data-cb-notifications-refresh>Yenile</button>
+                    </div>
+                </div>
+
+                <div class="cb-section mt-6">
+                    <div class="cb-section-title">Durum Senaryoları</div>
+                    <p class="cb-page-description mt-2 mb-0">Boş durum, karışık akış, kritik yoğunluk, yalnızca okunmamış görünümü ve hata/bekleme yüzeylerini aynı foundation içinde kontrol edin. Gerçek notifications backend bu fazda bağlı değildir.</p>
+                    <div class="cb-chip-group mt-4" data-cb-toggle-group>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-notifications-scenario-trigger="empty">Hiç bildirim yok</button>
+                        <button type="button" class="cb-chip is-active" data-cb-toggle-active data-cb-notifications-scenario-trigger="mixed">Karışık bildirim akışı</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-notifications-scenario-trigger="critical">Kritik yoğunluk</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-notifications-scenario-trigger="unread">Sadece okunmamış</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-notifications-scenario-trigger="waiting">Veri bekleniyor</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-notifications-scenario-trigger="loading">Loading</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-notifications-scenario-trigger="error">Error</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12" data-cb-notifications-page-panel="content">
+        @await Html.PartialAsync("Notifications/_SummaryMeta")
+    </div>
+
+    <div class="col-12" data-cb-notifications-page-panel="content">
+        @await Html.PartialAsync("Notifications/_Toolbar")
+    </div>
+
+    <div class="col-xl-8" data-cb-notifications-page-panel="content">
+        @await Html.PartialAsync("Notifications/_NotificationList")
+    </div>
+
+    <div class="col-xl-4" data-cb-notifications-page-panel="content">
+        @await Html.PartialAsync("Notifications/_SettingsCtaCard")
+        @await Html.PartialAsync("Notifications/_HelpCard")
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("Notifications/_StatePanels")
+    </div>
+</div>
+
+@await Html.PartialAsync("Notifications/_DetailDrawer")

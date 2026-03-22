@@ -1,0 +1,96 @@
+@{
+    var entityId = ViewData["AdminEntityId"]?.ToString() ?? "usr-placeholder-01";
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Identity Detail",
+        Title = "Kullanıcı Detayı",
+        Description = "Profil özeti, güvenlik durumu, bot ve exchange summary ile son aktiviteleri operasyon odaklı bir admin detail screen içinde toplar.",
+        StatusBadge = new AdminBadgeViewModel { Label = entityId, Tone = "neutral", IconText = "ID" },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = "User Ops", Tone = "info", IconText = "US" },
+            new AdminBadgeViewModel { Label = "Controlled Access", Tone = "warning", IconText = "CF" }
+        },
+        SecondaryActionText = "Kullanıcılara dön",
+        SecondaryActionHref = Url.Action("Users", "Admin", new { area = "Admin" }),
+        PrimaryActionText = "Kullanıcıyı askıya al",
+        PrimaryActionHref = "#cb_admin_critical_confirm_modal"
+    };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = "warning",
+                    Title = "Detail page foundation",
+                    Message = "Gerçek user backend verisi, audit feed ve permission enforcement bu fazda bağlı değildir. Bölümler operasyonel inceleme için modüler olarak hazırlandı.",
+                    Meta = "Drawer + page parity"
+                })
+
+                <div class="cb-admin-inline-actions mt-6">
+                    <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_admin_user_drawer">Drawer karşılaştırması</button>
+                    <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_user_note_modal" data-cb-modal-title="Kullanıcıya not ekle" data-cb-modal-message="İç kullanım notu detaya özel bağlam ile açılır." data-cb-modal-confirm="Notu kaydet">Not ekle</button>
+                    <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-light-primary font-weight-bold">Audit / loglara git</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminUserProfileSummary")
+        @await Html.PartialAsync("Foundation/_AdminUserSecuritySummary")
+        @await Html.PartialAsync("Foundation/_AdminUserRiskSummary")
+
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Admin Actions</div>
+                <div class="cb-admin-section-title">Admin aksiyonları</div>
+                <div class="cb-admin-inline-actions mt-5">
+                    <button type="button" class="btn btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_admin_critical_confirm_modal" data-cb-modal-title="Kullanıcıyı askıya al" data-cb-modal-message="Bu kullanıcı için erişim sınırlandırması uygulanmadan önce audit reason ve gerekirse re-auth beklenir." data-cb-modal-confirm="Askıya al" data-cb-modal-tone="danger">Askıya al</button>
+                    <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_confirm_modal" data-cb-modal-title="Kullanıcı askısını kaldır" data-cb-modal-message="Read-only foundation; gerçek unlock işlemi bu fazda bağlı değildir." data-cb-modal-confirm="Aç">Askıyı kaldır</button>
+                    <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_user_note_modal" data-cb-modal-title="Admin notu" data-cb-modal-message="Operasyon içi not, kullanıcıya görünmez." data-cb-modal-confirm="Kaydet">Not ekle</button>
+                    <a asp-area="Admin" asp-controller="Admin" asp-action="Settings" class="btn btn-light-primary font-weight-bold">Risk ayarlarına git</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-8">
+        @await Html.PartialAsync("Foundation/_AdminUserBotSummary")
+        @await Html.PartialAsync("Foundation/_AdminUserExchangeSummary")
+        @await Html.PartialAsync("Foundation/_AdminUserActivityTimeline")
+        @await Html.PartialAsync("Foundation/_AdminUserCriticalLogs")
+    </div>
+
+    <div class="col-12">
+        <div class="row">
+            <div class="col-xl-6">
+                @await Html.PartialAsync("Foundation/_AdminLoadingState", new UiLoadingStateViewModel
+                {
+                    Title = "Detail verisi hazırlanıyor",
+                    Message = "Profil summary, security meta ve activity feed yüklenirken kullanıcı boş ekranda bırakılmaz.",
+                    CardCount = 2,
+                    LineCount = 4
+                })
+            </div>
+            <div class="col-xl-6">
+                @await Html.PartialAsync("Foundation/_AdminErrorState", new UiStateViewModel
+                {
+                    Title = "Kullanıcı bulunamadı",
+                    Message = "Route parametresi, permission scope veya veri kaynağı eşleşmediğinde detail screen kontrollü hata dili ile kapanır.",
+                    IconText = "!",
+                    ActionText = "Kullanıcılara dön",
+                    ActionHref = Url.Action("Users", "Admin", new { area = "Admin" }),
+                    SecondaryActionText = "Yardıma git",
+                    SecondaryActionHref = Url.Action("SupportTools", "Admin", new { area = "Admin" })
+                })
+            </div>
+        </div>
+    </div>
+
+</div>

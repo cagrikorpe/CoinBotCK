@@ -1,0 +1,33 @@
+<div class="row">
+    <div class="col-lg-4 mb-6">
+        @await Html.PartialAsync("Foundation/_AdminLoadingState", new UiLoadingStateViewModel
+        {
+            Title = "Bot listesi hazırlanıyor",
+            Message = "Global bot grid, runtime placeholder ve detail drawer içeriği yüklenirken gösterilecek page loading foundation'ı.",
+            CardCount = 3,
+            LineCount = 4
+        })
+    </div>
+    <div class="col-lg-4 mb-6">
+        @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+        {
+            Title = "Henüz bot yok",
+            Message = "Hiç bot bulunmayan tenant veya yeni platform görünümü için boş durum foundation'ı.",
+            ActionText = "Exchange hesaplarını aç",
+            ActionHref = Url.Action("ExchangeAccounts", "Admin", new { area = "Admin" }),
+            SecondaryActionText = "Genel bakışa dön",
+            SecondaryActionHref = Url.Action("Overview", "Admin", new { area = "Admin" })
+        })
+    </div>
+    <div class="col-lg-4 mb-6">
+        @await Html.PartialAsync("Foundation/_AdminErrorState", new UiStateViewModel
+        {
+            Title = "Bot grid alınamadı",
+            Message = "Runtime kaynakları veya event cache geciktiğinde gösterilecek hata foundation'ı. Retry ve help alanı kullanıcıyı çıkmaza sokmaz.",
+            ActionText = "Tekrar dene",
+            ActionHref = "#cb_admin_confirm_modal",
+            SecondaryActionText = "Job / Worker",
+            SecondaryActionHref = Url.Action("Jobs", "Admin", new { area = "Admin" })
+        })
+    </div>
+</div>

@@ -1,0 +1,50 @@
+<aside class="cb-drawer cb-log-drawer" id="cb_logcenter_detail_drawer" aria-hidden="true">
+    <div class="cb-drawer-header">
+        <div>
+            <div class="cb-drawer-eyebrow" id="cb_log_drawer_eyebrow">Log Detail</div>
+            <h5 class="cb-drawer-title mb-0" id="cb_log_drawer_title">Log detayı</h5>
+        </div>
+        <button type="button" class="btn btn-xs btn-icon btn-light" data-cb-drawer-close><span>&times;</span></button>
+    </div>
+    <div class="cb-drawer-body">
+        <div class="cb-inline-stack mb-4">
+            <span class="cb-badge cb-badge-danger" id="cb_log_drawer_severity">Critical</span>
+            <span class="cb-badge cb-badge-warning" id="cb_log_drawer_category">Risk</span>
+            <span class="cb-badge cb-badge-neutral" id="cb_log_drawer_trace">Özet olay</span>
+        </div>
+
+        <div class="cb-open-close-grid mb-5">
+            <div class="cb-rule-setting-item"><span class="cb-form-label">Zaman</span><strong class="cb-mono d-block mt-2" id="cb_log_drawer_time">21 Mar · 09:42</strong></div>
+            <div class="cb-rule-setting-item"><span class="cb-form-label">Kaynak modül</span><strong class="d-block mt-2" id="cb_log_drawer_source">Risk Merkezi</strong></div>
+        </div>
+
+        <div class="cb-section">
+            <div class="cb-section-title">Olay özeti</div>
+            <p class="text-muted mb-0" id="cb_log_drawer_message">Log satırı ürün diliyle özetlenir; ham JSON, token, cookie veya hassas alanlar gösterilmez.</p>
+        </div>
+
+        <div class="cb-section mt-6">
+            <div class="cb-section-title">İlgili etiketler</div>
+            <div class="cb-ai-chip-list mt-4">
+                <span class="cb-badge cb-badge-neutral" id="cb_log_drawer_tag1">Risk</span>
+                <span class="cb-badge cb-badge-neutral" id="cb_log_drawer_tag2">Alpha Desk</span>
+                <span class="cb-badge cb-badge-neutral" id="cb_log_drawer_tag3">Manual review</span>
+            </div>
+        </div>
+
+        <div class="cb-section mt-6">
+            <div class="cb-section-title">Davranış / privacy notu</div>
+            <div class="cb-bot-mini-validation" id="cb_log_drawer_privacy">Detaylı davranış izleme açık olsa bile secret, token, tam request body ve hassas kimlik alanları kaydedilmez.</div>
+        </div>
+
+        <div class="cb-section mt-6">
+            <div class="cb-section-title">Sonraki aksiyon</div>
+            <div class="cb-bot-mini-validation" id="cb_log_drawer_action">İlgili modüle giderek ayarı, strategy davranışını veya risk limitini gözden geçir.</div>
+        </div>
+    </div>
+    <div class="cb-drawer-footer">
+        <a asp-controller="Settings" asp-action="Index" class="btn btn-light-primary font-weight-bold" id="cb_log_drawer_settings">Ayarlar'a git</a>
+        <button type="button" class="btn btn-primary font-weight-bolder" id="cb_log_drawer_cta" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="İlgili modüle git" data-cb-modal-message="İlgili modüle yönlendirme CTA'sı foundation seviyesinde hazırlanmıştır." data-cb-modal-confirm="Tamam">İlgili ekrana git</button>
+        <button type="button" class="btn btn-light" data-cb-drawer-close>Kapat</button>
+    </div>
+</aside>

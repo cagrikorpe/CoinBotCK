@@ -1,0 +1,56 @@
+<div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Risk rules</h3>
+                <div class="text-muted font-size-sm">Risk engine’e bağlanacak zemin için leverage, risk yüzdesi ve kill switch koşullarını ayrı bölümde tut.</div>
+            </div>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-rule-setting-list">
+            <div class="cb-form-grid">
+                <div>
+                    <label class="cb-form-label">Max leverage</label>
+                    <input type="number" min="1" class="form-control cb-form-control" id="cb_strategy_leverage" value="1" />
+                </div>
+                <div>
+                    <label class="cb-form-label">İşlem başına risk %</label>
+                    <input type="text" class="form-control cb-form-control" value="0.8%" />
+                </div>
+                <div>
+                    <label class="cb-form-label">Max position size</label>
+                    <input type="text" class="form-control cb-form-control" value="Portföy %12" />
+                </div>
+                <div>
+                    <label class="cb-form-label">Günlük max zarar</label>
+                    <input type="text" class="form-control cb-form-control" value="2.5%" />
+                </div>
+                <div>
+                    <label class="cb-form-label">Max açık pozisyon</label>
+                    <input type="text" class="form-control cb-form-control" value="3" />
+                </div>
+                <div>
+                    <label class="cb-form-label">Cooldown</label>
+                    <input type="text" class="form-control cb-form-control" value="45 dk" />
+                </div>
+            </div>
+            <div class="mt-4">
+                <label class="cb-form-label">No-trade hours</label>
+                <select class="form-control cb-form-control">
+                    <option>Yok</option>
+                    <option>Hafta sonu hariç</option>
+                    <option>Düşük likidite saatlerini hariç tut</option>
+                </select>
+            </div>
+            <div class="mt-4">
+                <label class="cb-form-label">Kill switch condition</label>
+                <select class="form-control cb-form-control">
+                    <option>Günlük zarar limiti aşılırsa stop</option>
+                    <option>Art arda 3 başarısız sinyal sonrası stop</option>
+                </select>
+            </div>
+        </div>
+        <div class="cb-mini-warning-card mt-4 d-none" id="cb_strategy_risk_warning">Futures + yüksek leverage kombinasyonu aktif. Risk helper alanı bilinçli olarak daha görünür yapıldı.</div>
+    </div>
+</div>

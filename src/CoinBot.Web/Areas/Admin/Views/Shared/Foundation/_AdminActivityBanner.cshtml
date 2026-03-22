@@ -1,0 +1,18 @@
+@{
+    var roleLabel = ViewData["AdminRoleLabel"]?.ToString() ?? "Super Admin";
+    var environmentLabel = ViewData["AdminEnvironment"]?.ToString() ?? "Prod Shadow";
+    var tenantScope = ViewData["AdminTenantScope"]?.ToString() ?? "Tenant: Global";
+}
+<div class="cb-admin-activity-banner" role="note">
+    <div>
+        <div class="cb-admin-activity-title">Admin-only yüksek ayrıcalık alanı</div>
+        <div class="cb-admin-activity-text">Kritik aksiyonlar audit reason ile kaydedilir placeholder. Re-auth, stale veri kontrolü ve ikinci onay bazı işlemlerde tekrar istenir.</div>
+    </div>
+    <div class="cb-admin-activity-actions">
+        @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = roleLabel, Tone = "role", IconText = "RB" })
+        @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = environmentLabel, Tone = "info", IconText = "ENV" })
+        @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = tenantScope, Tone = "healthy", IconText = "SC" })
+        <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_permission_info_modal">Neden ayrı korunuyor?</button>
+        <button type="button" class="btn btn-primary font-weight-bolder" data-toggle="modal" data-target="#cb_admin_reauth_modal">Step-up demo</button>
+    </div>
+</div>

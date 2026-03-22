@@ -1,0 +1,18 @@
+<section id="cb_admin_settings_notifications" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+    <div class="card-body">
+        <div class="cb-admin-section-kicker">Notifications Default Policy</div>
+        <div class="cb-admin-section-title">Varsayılan bildirim politikası</div>
+        <p class="cb-admin-section-description">Alarm routing, default channel ve escalation placeholder alanları admin notification center ile aynı ürün dilinde tutulur.</p>
+
+        <div class="cb-admin-summary-grid mt-6">
+            <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Default route</span><strong>Security + worker split</strong><small>Kategori bazlı yönlendirme placeholder</small></div>
+            <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Default channel</span><strong>In-app + email placeholder</strong><small>Gerçek channel backend yok</small></div>
+            <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Escalation mode</span><strong>Manual review</strong><small>Policy CTA üzerinden genişler</small></div>
+        </div>
+
+        <div class="cb-admin-inline-actions mt-5">
+            <a asp-area="Admin" asp-controller="Admin" asp-action="Notifications" class="btn btn-light-primary font-weight-bold">Alarm merkezine git</a>
+            <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_alert_policy_modal" data-cb-modal-title="Default notification policy" data-cb-modal-message="Notification policy placeholder ekranı sonraki fazlara zemin hazırlar." data-cb-modal-confirm="Anladım">Policy CTA</button>
+        </div>
+    </div>
+</section>

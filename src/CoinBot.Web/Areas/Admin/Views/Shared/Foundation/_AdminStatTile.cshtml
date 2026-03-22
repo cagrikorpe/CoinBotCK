@@ -1,0 +1,17 @@
+@model AdminStatTileViewModel
+@{
+    var toneClass = Model.Tone?.ToLowerInvariant() switch
+    {
+        "critical" => "cb-admin-stat-critical",
+        "warning" => "cb-admin-stat-warning",
+        "healthy" => "cb-admin-stat-healthy",
+        "degraded" => "cb-admin-stat-degraded",
+        "info" => "cb-admin-stat-info",
+        _ => "cb-admin-stat-neutral"
+    };
+}
+<div class="cb-admin-stat-tile @toneClass">
+    <span class="cb-admin-stat-label">@Model.Label</span>
+    <strong class="cb-admin-stat-value">@Model.Value</strong>
+    <small class="cb-admin-stat-meta">@Model.Meta</small>
+</div>

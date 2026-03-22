@@ -1,0 +1,74 @@
+@model AdminPlaceholderPageViewModel
+@{
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = Model.Eyebrow,
+        Title = Model.Title,
+        Description = Model.Description,
+        StatusBadge = Model.StatusBadge,
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = "Placeholder", Tone = "neutral", IconText = "PH" },
+            new AdminBadgeViewModel { Label = "Foundation Only", Tone = "warning", IconText = "UI" }
+        },
+        SecondaryActionText = Model.SecondaryActionText,
+        SecondaryActionHref = Model.SecondaryActionHref,
+        PrimaryActionText = Model.PrimaryActionText,
+        PrimaryActionHref = Model.PrimaryActionHref
+    };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+
+                @if (Model.Strip is not null)
+                {
+                    @await Html.PartialAsync("Foundation/_AdminInfoStrip", Model.Strip)
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-7">
+        @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+        {
+            Title = Model.Title,
+            Message = Model.Description,
+            IconText = "A",
+            ActionText = Model.PrimaryActionText,
+            ActionHref = Model.PrimaryActionHref,
+            SecondaryActionText = Model.SecondaryActionText,
+            SecondaryActionHref = Model.SecondaryActionHref
+        })
+    </div>
+
+    <div class="col-xl-5">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Next Phase Hint</div>
+                <div class="cb-admin-section-title">@Model.HintTitle</div>
+                <p class="cb-admin-section-description">@Model.HintMessage</p>
+
+                <div class="cb-admin-summary-grid">
+                    <div class="cb-admin-summary-card">
+                        <span class="cb-admin-summary-label">Shell</span>
+                        <strong>Ayrı admin alanı</strong>
+                        <small>Kullanıcı paneliyle karışmıyor.</small>
+                    </div>
+                    <div class="cb-admin-summary-card">
+                        <span class="cb-admin-summary-label">Foundation</span>
+                        <strong>Reusable patterns</strong>
+                        <small>Badge, modal, drawer, state.</small>
+                    </div>
+                </div>
+
+                <div class="mt-6">
+                    <button type="button" class="btn btn-primary font-weight-bolder" data-cb-drawer-target="#cb_admin_detail_drawer">Detail drawer standardı</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,27 @@
+<div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Neden veto edildi?</h3>
+                <div class="text-muted font-size-sm">İşlem açılmadığında kullanıcıyı suçlamadan açıklayan veto paneli.</div>
+            </div>
+        </div>
+        <div class="card-toolbar">
+            <span class="cb-badge cb-badge-neutral" id="cb_ai_veto_badge">Veto yok</span>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-mini-warning-card d-none" id="cb_ai_veto_warning">Confidence düşük, risk bandı yüksek veya veri yetersiz olduğunda veto alanı daha belirgin görünür.</div>
+        <div class="cb-rule-setting-list mt-4" id="cb_ai_veto_list">
+            <div class="cb-rule-setting-item">
+                <div class="cb-rule-setting-header"><strong>Durum</strong><span class="cb-badge cb-badge-success">Öneri geçerli</span></div>
+                <div class="text-muted font-size-sm mt-2" id="cb_ai_veto_summary">Seçili setup için aktif bir veto bulunmuyor; AI öneri listesinde operasyonel olarak gösterilebilir.</div>
+            </div>
+        </div>
+        <div class="cb-preview-row mt-4"><span>Önerilen sonraki aksiyon</span><strong id="cb_ai_veto_action">Risk paneli ile birlikte değerlendir</strong></div>
+        <div class="cb-toolbar mt-4">
+            <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_ai_detail_drawer" data-cb-ai-detail="avax">Veto detayını aç</button>
+            <button type="button" class="btn btn-light-primary font-weight-bold">Watchlist'e al</button>
+        </div>
+    </div>
+</div>

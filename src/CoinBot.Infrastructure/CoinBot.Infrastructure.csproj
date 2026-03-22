@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\CoinBot.Application\CoinBot.Application.csproj" />
+    <ProjectReference Include="..\CoinBot.Domain\CoinBot.Domain.csproj" />
+    <ProjectReference Include="..\CoinBot.Contracts\CoinBot.Contracts.csproj" />
+    <ProjectReference Include="..\CoinBot.SharedKernel\CoinBot.SharedKernel.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

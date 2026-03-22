@@ -1,0 +1,40 @@
+<div data-cb-risk-panel="empty" class="d-none">
+    <div class="card card-custom gutter-b cb-card">
+        <div class="card-body">
+            @await Html.PartialAsync("Foundation/_EmptyState", new UiStateViewModel {
+                Title = "Önce risk limitlerini tanımla",
+                Message = "Henüz temel risk politikası belirlenmedi. Leverage, zarar sınırı ve emergency action tercihlerini ayarlayarak güvenli başlangıç zemini oluştur.",
+                IconText = "R",
+                ActionText = "Koruyucu profil uygula",
+                SecondaryActionText = "Risk yardımını incele"
+            })
+        </div>
+    </div>
+</div>
+
+<div data-cb-risk-panel="loading" class="d-none">
+    <div class="card card-custom gutter-b cb-card cb-risk-state-card">
+        <div class="card-body">
+            @await Html.PartialAsync("Foundation/_LoadingState", new UiLoadingStateViewModel {
+                Title = "Risk yüzeyi hazırlanıyor",
+                Message = "Summary kartları, policy formu ve emergency controls hazırlanıyor.",
+                CardCount = 3,
+                LineCount = 4
+            })
+        </div>
+    </div>
+</div>
+
+<div data-cb-risk-panel="error" class="d-none">
+    <div class="card card-custom gutter-b cb-card cb-risk-state-card">
+        <div class="card-body">
+            @await Html.PartialAsync("Foundation/_ErrorState", new UiStateViewModel {
+                Title = "Risk verisi şu anda alınamadı",
+                Message = "Risk policy ve warning yüzeyi geçici olarak hazırlanamadı. Kullanıcıyı çıkmaza sokmadan yeniden deneme ve yardım aksiyonu gösterilir.",
+                IconText = "!",
+                ActionText = "Tekrar dene",
+                SecondaryActionText = "Risk yardımını aç"
+            })
+        </div>
+    </div>
+</div>

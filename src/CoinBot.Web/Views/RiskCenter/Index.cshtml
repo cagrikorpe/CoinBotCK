@@ -1,0 +1,67 @@
+@{
+    ViewData["Title"] = "Risk Merkezi";
+    ViewData["ActiveNav"] = "RiskCenter";
+    ViewData["PageDescription"] = "Trading limitleri, zarar sınırları, işlem pencereleri ve acil aksiyonları tek yerde yöneten UI foundation ekranı.";
+    ViewData["BreadcrumbItems"] = new[] { "Trade Lab", "Risk Merkezi" };
+}
+
+@section Scripts {
+    <script src="~/js/risk-center-foundation.js" asp-append-version="true"></script>
+}
+
+<div class="row" data-cb-risk-center data-cb-risk-scenario="stable">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card">
+            <div class="card-body">
+                <div class="cb-page-header">
+                    <div>
+                        <div class="cb-page-eyebrow">Risk Control Center</div>
+                        <h2 class="cb-page-title">Risk Merkezi politikaları</h2>
+                        <p class="cb-page-description">Leverage, zarar limitleri, coin kısıtları ve emergency action akışlarını aynı operasyonel tasarım dilinde toplayan foundation yüzeyi.</p>
+                    </div>
+                    <div class="cb-toolbar">
+                        <span class="cb-badge cb-badge-info">UI-only foundation</span>
+                        <button type="button" class="btn btn-light-primary font-weight-bold">Taslak kaydet</button>
+                        <button type="button" class="btn btn-primary font-weight-bolder">Kaydet</button>
+                    </div>
+                </div>
+
+                <div class="cb-section mt-6">
+                    <div class="cb-section-title">Durum Senaryoları</div>
+                    <p class="cb-page-description mt-2 mb-0">Risk profilinin farklı yüzeylerini görmek için senaryoyu değiştirin. Bu seçim gerçek risk motorunu tetiklemez; yalnızca UI foundation yüzeyini günceller.</p>
+                    <div class="cb-chip-group mt-4" data-cb-toggle-group>
+                        <button type="button" class="cb-chip is-active" data-cb-toggle-active data-cb-risk-scenario-trigger="stable">Düşük risk</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-risk-scenario-trigger="balanced">Orta risk</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-risk-scenario-trigger="aggressive">Agresif ayar</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-risk-scenario-trigger="emergency">Emergency mod</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-risk-scenario-trigger="empty">Henüz ayar yok</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-risk-scenario-trigger="loading">Loading</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-risk-scenario-trigger="error">Error</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12" data-cb-risk-panel="content">
+        @await Html.PartialAsync("RiskCenter/_SummaryCards")
+    </div>
+
+    <div class="col-xl-8" data-cb-risk-panel="content">
+        @await Html.PartialAsync("RiskCenter/_PolicyForm")
+        @await Html.PartialAsync("RiskCenter/_CoinLimitsCard")
+        @await Html.PartialAsync("RiskCenter/_NoTradeHoursCard")
+    </div>
+
+    <div class="col-xl-4" data-cb-risk-panel="content">
+        @await Html.PartialAsync("RiskCenter/_WarningPanel")
+        @await Html.PartialAsync("RiskCenter/_EmergencyActionsCard")
+        @await Html.PartialAsync("RiskCenter/_HelpCard")
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("RiskCenter/_StatePanels")
+    </div>
+</div>
+
+@await Html.PartialAsync("RiskCenter/_CoinLimitModal")

@@ -1,0 +1,72 @@
+@model AdminPageHeaderViewModel
+@{
+    var secondaryHref = string.IsNullOrWhiteSpace(Model.SecondaryActionHref) ? "#" : Model.SecondaryActionHref!;
+    var primaryHref = string.IsNullOrWhiteSpace(Model.PrimaryActionHref) ? "#" : Model.PrimaryActionHref!;
+    var secondaryIsOverlay = secondaryHref.StartsWith("#cb_admin_");
+    var primaryIsOverlay = primaryHref.StartsWith("#cb_admin_");
+    var secondaryIsDrawer = secondaryHref.Contains("drawer");
+    var primaryIsDrawer = primaryHref.Contains("drawer");
+}
+
+<div class="cb-page-header cb-admin-page-header">
+    <div>
+        <div class="cb-page-eyebrow cb-admin-page-eyebrow">@Model.Eyebrow</div>
+        <div class="d-flex flex-wrap align-items-center gap-3">
+            <h2 class="cb-page-title cb-admin-page-title">@Model.Title</h2>
+            @if (Model.StatusBadge is not null)
+            {
+                @await Html.PartialAsync("Foundation/_AdminBadge", Model.StatusBadge)
+            }
+        </div>
+        <p class="cb-page-description cb-admin-page-description">@Model.Description</p>
+
+        @if (Model.MetaBadges.Count > 0)
+        {
+            <div class="cb-admin-page-meta">
+                @foreach (var badge in Model.MetaBadges)
+                {
+                    @await Html.PartialAsync("Foundation/_AdminBadge", badge)
+                }
+            </div>
+        }
+    </div>
+
+    <div class="cb-toolbar cb-admin-toolbar">
+        @if (!string.IsNullOrWhiteSpace(Model.SecondaryActionText))
+        {
+            if (secondaryIsOverlay)
+            {
+                if (secondaryIsDrawer)
+                {
+                    <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-drawer-target="@secondaryHref">@Model.SecondaryActionText</button>
+                }
+                else
+                {
+                    <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="@secondaryHref">@Model.SecondaryActionText</button>
+                }
+            }
+            else
+            {
+                <a href="@secondaryHref" class="btn btn-light-primary font-weight-bold">@Model.SecondaryActionText</a>
+            }
+        }
+        @if (!string.IsNullOrWhiteSpace(Model.PrimaryActionText))
+        {
+            if (primaryIsOverlay)
+            {
+                if (primaryIsDrawer)
+                {
+                    <button type="button" class="btn btn-primary font-weight-bolder" data-cb-drawer-target="@primaryHref">@Model.PrimaryActionText</button>
+                }
+                else
+                {
+                    <button type="button" class="btn btn-primary font-weight-bolder" data-toggle="modal" data-target="@primaryHref">@Model.PrimaryActionText</button>
+                }
+            }
+            else
+            {
+                <a href="@primaryHref" class="btn btn-primary font-weight-bolder">@Model.PrimaryActionText</a>
+            }
+        }
+    </div>
+</div>

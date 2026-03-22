@@ -1,0 +1,58 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Risk Warnings</div>
+                <div class="cb-admin-section-title">Riskli permission uyarıları</div>
+            </div>
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "4 active", Tone = "critical", IconText = "RK" })
+        </div>
+
+        <div class="cb-admin-alert-list mt-5 cb-admin-exchange-risk-list">
+            <div class="cb-admin-alert-item cb-admin-alert-item-critical">
+                <div>
+                    <strong>Withdrawal enabled warning</strong>
+                    <small>Live hesapta çekim yetkisi açık görünüyor placeholder</small>
+                </div>
+                <div class="cb-admin-inline-actions cb-admin-inline-actions-compact">
+                    <button type="button" class="btn btn-xs btn-light-danger font-weight-bold" data-cb-drawer-target="#cb_admin_exchange_drawer">Detay</button>
+                    <a asp-area="Admin" asp-controller="Admin" asp-action="UserDetail" asp-route-id="usr-020" class="btn btn-xs btn-light-primary font-weight-bold">Kullanıcı</a>
+                    <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-xs btn-light-primary font-weight-bold">Log</a>
+                </div>
+            </div>
+
+            <div class="cb-admin-alert-item cb-admin-alert-item-warning">
+                <div>
+                    <strong>Permission mismatch</strong>
+                    <small>Futures beklenirken yalnızca read/trade izni görünen placeholder durum</small>
+                </div>
+                <div class="cb-admin-inline-actions cb-admin-inline-actions-compact">
+                    <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_exchange_risk_modal" data-cb-modal-title="Permission mismatch" data-cb-modal-message="Beklenen capability ile görünen izinler hizalı değil." data-cb-modal-confirm="Anladım">Detay</button>
+                    <a asp-area="Admin" asp-controller="Admin" asp-action="UserDetail" asp-route-id="usr-014" class="btn btn-xs btn-light-primary font-weight-bold">Kullanıcı</a>
+                    <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-xs btn-light-primary font-weight-bold">Log</a>
+                </div>
+            </div>
+
+            <div class="cb-admin-alert-item cb-admin-alert-item-warning">
+                <div>
+                    <strong>Repeated sync failure</strong>
+                    <small>Aynı hesap için art arda sync başarısızlığı placeholder</small>
+                </div>
+                <div class="cb-admin-inline-actions cb-admin-inline-actions-compact">
+                    <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_exchange_retest_modal" data-cb-modal-title="Reconnect / retest" data-cb-modal-message="Bu foundation yalnızca retest akışını temsil eder; gerçek reconnect yapmaz." data-cb-modal-confirm="Retest başlat">Retest</button>
+                    <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-xs btn-light-primary font-weight-bold">Log</a>
+                </div>
+            </div>
+
+            <div class="cb-admin-alert-item cb-admin-alert-item-info">
+                <div>
+                    <strong>Paper / live belirsiz</strong>
+                    <small>Mode metadata eşleşmiyor veya henüz kesinleşmedi placeholder</small>
+                </div>
+                <div class="cb-admin-inline-actions cb-admin-inline-actions-compact">
+                    <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_exchange_risk_modal" data-cb-modal-title="Mode belirsizliği" data-cb-modal-message="Paper / live ayrımı netleşmeden risk kararları otomatik bağlanmamalıdır." data-cb-modal-confirm="Kapat">Detay</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

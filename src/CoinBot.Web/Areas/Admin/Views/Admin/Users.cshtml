@@ -1,0 +1,91 @@
+@{
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Identity Workspace",
+        Title = "Kullanıcılar",
+        Description = "Kullanıcı listesi, filtre barı, güvenlik sinyalleri ve kontrollü admin aksiyonları için operasyonel kullanıcı yönetimi foundation ekranı.",
+        StatusBadge = new AdminBadgeViewModel { Label = "User Ops", Tone = "info", IconText = "US" },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = "Super Admin", Tone = "role", IconText = "SA" },
+            new AdminBadgeViewModel { Label = "Controlled Actions", Tone = "warning", IconText = "CF" }
+        },
+        SecondaryActionText = "Role matrix",
+        SecondaryActionHref = Url.Action("RoleMatrix", "Admin", new { area = "Admin" }),
+        PrimaryActionText = "Örnek kullanıcı detayı",
+        PrimaryActionHref = Url.Action("UserDetail", "Admin", new { area = "Admin", id = "usr-001" })
+    };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = "info",
+                    Title = "User management foundation",
+                    Message = "Arama, filtre, durum badge'leri, detay drawer ve admin aksiyonları aynı yüzeyde toplanır. Gerçek backend paging ve enforcement bu fazda bağlı değildir.",
+                    Meta = "UI-only user ops"
+                })
+
+                <div class="mt-6">
+                    @await Html.PartialAsync("Foundation/_AdminUsersFilterBar")
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-8">
+        @await Html.PartialAsync("Foundation/_AdminUsersTable")
+    </div>
+
+    <div class="col-xl-4">
+        @await Html.PartialAsync("Foundation/_AdminSecurityHelpCard", new AdminSecurityHelpCardViewModel
+        {
+            Eyebrow = "Admin actions",
+            Title = "Kontrollü kullanıcı aksiyonları",
+            Description = "Askıya alma, açma, not ekleme ve detail drawer akışları mevcut admin confirm/re-auth foundation'ı ile hizalanır.",
+            BadgeLabel = "User Ops",
+            BadgeTone = "warning",
+            Items = new[]
+            {
+                "Suspend / unsuspend placeholder",
+                "Admin note modal",
+                "Detail drawer + detail page ayrımı",
+                "Audit ve risk ekranlarına yönlendirme"
+            },
+            ActionText = "Kullanıcı detayı",
+            ActionHref = Url.Action("UserDetail", "Admin", new { area = "Admin", id = "usr-014" })
+        })
+
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Status language</div>
+                <div class="cb-admin-section-title">Durum / badge standardı</div>
+                <div class="cb-admin-badge-stack mt-5">
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Aktif", Tone = "healthy", IconText = "ST" })
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Pasif", Tone = "neutral", IconText = "ST" })
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Kilitli", Tone = "critical", IconText = "ST" })
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Doğrulama bekliyor", Tone = "warning", IconText = "VR" })
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "MFA Açık", Tone = "healthy", IconText = "2F" })
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "MFA Kapalı", Tone = "degraded", IconText = "2F" })
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Exchange yok", Tone = "neutral", IconText = "EX" })
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Risk dikkat", Tone = "warning", IconText = "RK" })
+                </div>
+
+                <div class="cb-admin-inline-actions mt-6">
+                    <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_admin_user_drawer">Detail drawer</button>
+                    <button type="button" class="btn btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_admin_critical_confirm_modal" data-cb-modal-title="Kullanıcıyı askıya al" data-cb-modal-message="Bu kullanıcı aksiyonu gerçek suspend işlemi yapmaz; kontrollü destructive action dili için hazırlanmıştır." data-cb-modal-confirm="Askıya al" data-cb-modal-tone="danger">Askıya al</button>
+                    <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_user_note_modal" data-cb-modal-title="Admin notu ekle" data-cb-modal-message="İç kullanım notu; gerçek persistence ve audit pipeline bu fazda yoktur." data-cb-modal-confirm="Notu kaydet">Not ekle</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("Foundation/_AdminUserStatesShowcase")
+    </div>
+</div>

@@ -1,0 +1,32 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card">
+    <div class="card-body">
+        <div class="cb-admin-section-kicker">Profile Summary</div>
+        <div class="cb-admin-section-title">Profil özeti</div>
+        <div class="cb-admin-profile-list mt-5">
+            <div class="cb-admin-profile-row">
+                <span>Kullanıcı</span>
+                <strong>@(ViewData["AdminEntityLabel"]?.ToString() ?? "Ops Primary")</strong>
+            </div>
+            <div class="cb-admin-profile-row">
+                <span>Identifier</span>
+                <strong>@(ViewData["AdminEntityId"]?.ToString() ?? "usr-placeholder-01")</strong>
+            </div>
+            <div class="cb-admin-profile-row">
+                <span>Kayıt zamanı</span>
+                <strong>14 gün önce</strong>
+            </div>
+            <div class="cb-admin-profile-row">
+                <span>Plan / Paket</span>
+                <strong>Enterprise placeholder</strong>
+            </div>
+            <div class="cb-admin-profile-row">
+                <span>Tenant / Scope</span>
+                <strong>Global tenant</strong>
+            </div>
+        </div>
+        <div class="cb-admin-badge-stack mt-5">
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Aktif", Tone = "healthy", IconText = "ST" })
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Yüksek öncelikli hesap", Tone = "info", IconText = "PR" })
+        </div>
+    </div>
+</div>

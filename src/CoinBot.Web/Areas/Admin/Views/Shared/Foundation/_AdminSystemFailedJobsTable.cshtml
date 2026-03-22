@@ -1,0 +1,57 @@
+@{
+    var jobs = new[]
+    {
+        new { Job = "RefreshMarketCandles", Worker = "market-data-worker", Error = "Out-of-order window placeholder", Time = "7 dk önce", Severity = "Warning", Tone = "warning" },
+        new { Job = "RefreshModelScores", Worker = "ai-scoring-worker", Error = "Inference latency threshold placeholder", Time = "4 dk önce", Severity = "Error", Tone = "critical" },
+        new { Job = "DispatchUserNotification", Worker = "notification-worker", Error = "Provider ack timeout placeholder", Time = "11 dk önce", Severity = "Info", Tone = "info" }
+    };
+}
+
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-table-card">
+    <div class="card-body">
+        <div class="cb-admin-table-header">
+            <div>
+                <div class="cb-admin-section-kicker">Failed Jobs</div>
+                <div class="cb-admin-section-title">Failed jobs tablosu</div>
+                <p class="cb-admin-section-description mb-0">Worker, kısa hata özeti, zaman, severity ve retry placeholder aksiyonlarını tablo standardında taşır.</p>
+            </div>
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Retry aware", Tone = "warning", IconText = "RT" })
+        </div>
+
+        <div class="table-responsive cb-admin-table-wrap">
+            <table class="table table-borderless cb-admin-table cb-admin-failed-jobs-table mb-0">
+                <thead>
+                    <tr>
+                        <th>Job</th>
+                        <th>Worker</th>
+                        <th>Son hata özeti</th>
+                        <th>Zaman</th>
+                        <th>Severity</th>
+                        <th>Retry</th>
+                        <th>Detay</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var job in jobs)
+                    {
+                        <tr>
+                            <td>
+                                <div class="cb-admin-job-title">@job.Job</div>
+                            </td>
+                            <td><span class="cb-mono">@job.Worker</span></td>
+                            <td class="text-muted">@job.Error</td>
+                            <td><span class="cb-admin-freshness-time cb-mono">@job.Time</span></td>
+                            <td>@await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = job.Severity, Tone = job.Tone, IconText = "SV" })</td>
+                            <td>
+                                <button type="button" class="btn btn-xs btn-light-warning font-weight-bold" data-toggle="modal" data-target="#cb_admin_job_retry_modal" data-cb-modal-title="Failed job retry" data-cb-modal-message="Retry placeholder akışı yalnızca operatör dilini gösterir; gerçek retry backend’i yoktur." data-cb-modal-confirm="Retry başlat">Retry</button>
+                            </td>
+                            <td>
+                                <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_admin_job_drawer">Detay</button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>

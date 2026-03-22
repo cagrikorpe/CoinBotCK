@@ -1,0 +1,59 @@
+<div class="card card-custom gutter-b cb-card" id="paper-bots">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Aktif paper botlar</h3>
+                <div class="text-muted font-size-sm">Botlarım ekranındaki dil korunur; sadece paper mode vurgusu güçlendirilir.</div>
+            </div>
+        </div>
+        <div class="card-toolbar"><span class="cb-badge cb-badge-info" id="cb_paper_bots_badge">3 aktif</span></div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-paper-bot-list" data-cb-paper-bots-panel="list">
+            <article class="cb-paper-bot-item" data-cb-paper-bot="alpha" data-cb-paper-activity-detail="alpha-bot" data-cb-drawer-target="#cb_paper_activity_drawer">
+                <div class="cb-paper-bot-top"><div><div class="cb-bot-row-title">Alpha Spot Pulse</div><div class="cb-bot-row-subtitle">Momentum Template · Son sinyal BTCUSDT Long</div></div><span class="cb-badge cb-badge-success">Aktif</span></div>
+                <div class="cb-inline-stack mt-3"><span class="cb-badge cb-badge-neutral">Paper Mode</span><span class="cb-badge cb-badge-info">2 açık işlem</span><span class="cb-badge cb-badge-success">+$86 gün içi</span></div>
+                <div class="cb-table-actions mt-4"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-paper-activity-detail="alpha-bot" data-cb-drawer-target="#cb_paper_activity_drawer">Detay</button><button type="button" class="btn btn-xs btn-light-warning font-weight-bold" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Botu duraklat" data-cb-modal-message="Paper botu için duraklatma placeholder akışı gösterilir." data-cb-modal-confirm="Duraklat">Duraklat</button></div>
+            </article>
+            <article class="cb-paper-bot-item" data-cb-paper-bot="beta" data-cb-paper-activity-detail="beta-bot" data-cb-drawer-target="#cb_paper_activity_drawer">
+                <div class="cb-paper-bot-top"><div><div class="cb-bot-row-title">Beta Hedge Runner</div><div class="cb-bot-row-subtitle">Hedge Template · Son sinyal ETHUSDT Watch</div></div><span class="cb-badge cb-badge-warning">Beklemede</span></div>
+                <div class="cb-inline-stack mt-3"><span class="cb-badge cb-badge-neutral">Paper Mode</span><span class="cb-badge cb-badge-info">0 açık işlem</span><span class="cb-badge cb-badge-warning">-$24 gün içi</span></div>
+                <div class="cb-table-actions mt-4"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-paper-activity-detail="beta-bot" data-cb-drawer-target="#cb_paper_activity_drawer">Detay</button><button type="button" class="btn btn-xs btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Botu durdur" data-cb-modal-message="Paper botu kontrollü şekilde durdurma confirm standardına bağlanır." data-cb-modal-confirm="Durdur">Durdur</button></div>
+            </article>
+        </div>
+
+        <div class="d-none" data-cb-paper-bots-panel="empty">
+            @await Html.PartialAsync("Foundation/_EmptyState", new UiStateViewModel
+            {
+                IconText = "BT",
+                Title = "Aktif paper bot yok",
+                Message = "Paper modunda çalışan bot olmadığında kullanıcıyı Botlarım veya Strategy Builder akışına yönlendiren boş durum yüzeyi gösterilir.",
+                ActionText = "Botlarımı aç",
+                ActionHref = "/Bots"
+            })
+        </div>
+
+        <div class="d-none" data-cb-paper-bots-panel="loading">
+            @await Html.PartialAsync("Foundation/_LoadingState", new UiLoadingStateViewModel
+            {
+                Title = "Paper botlar hazırlanıyor",
+                Message = "Aktif bot kartları, mod etiketi ve günlük sonuç alanı skeleton olarak yükleniyor.",
+                CardCount = 2,
+                LineCount = 3
+            })
+        </div>
+
+        <div class="d-none" data-cb-paper-bots-panel="error">
+            @await Html.PartialAsync("Foundation/_ErrorState", new UiStateViewModel
+            {
+                IconText = "!",
+                Title = "Paper bot yüzeyi şu anda alınamadı",
+                Message = "Gerçek runtime olmadan bile hata dili kontrollü ve yönlendirici kalır.",
+                ActionText = "Tekrar dene",
+                ActionHref = "#",
+                SecondaryActionText = "Botlarım ekranına git",
+                SecondaryActionHref = "/Bots"
+            })
+        </div>
+    </div>
+</div>

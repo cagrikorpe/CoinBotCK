@@ -1,0 +1,207 @@
+<div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Bildirim listesi</h3>
+                <div class="text-muted font-size-sm">AI, risk ve bot durum uyarıları severity ve okunma durumuna göre aynı operasyonel akışta listelenir.</div>
+            </div>
+        </div>
+        <div class="card-toolbar cb-inline-stack">
+            <span class="cb-badge cb-badge-info" id="cb_notifications_list_badge">3 okunmamış</span>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div data-cb-notification-list-panel="list">
+            <div class="cb-notification-list">
+                <article class="cb-notification-item is-unread" data-cb-notification-item data-cb-id="risk-daily" data-cb-severity="critical" data-cb-category="risk" data-cb-read="unread">
+                    <div class="cb-notification-marker is-critical">RK</div>
+                    <div class="cb-notification-body">
+                        <div class="cb-notification-top">
+                            <div>
+                                <div class="cb-bot-row-title">Günlük zarar limitine yaklaşıldı</div>
+                                <div class="cb-bot-row-subtitle">Risk Merkezi · Günlük kayıp bandı %85 kullanım eşiğine yaklaştı placeholder.</div>
+                            </div>
+                            <div class="cb-inline-stack">
+                                <span class="cb-badge cb-badge-danger">Kritik</span>
+                                <span class="cb-badge cb-badge-warning">Risk</span>
+                                <span class="cb-badge cb-badge-neutral">Okunmamış</span>
+                            </div>
+                        </div>
+                        <div class="cb-notification-meta">
+                            <span class="cb-badge cb-badge-neutral">BTCUSDT</span>
+                            <span class="cb-badge cb-badge-neutral">Risk Merkezi</span>
+                            <span class="cb-mono">09:42</span>
+                        </div>
+                    </div>
+                    <div class="cb-notification-actions">
+                        <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-notification-detail="risk-daily" data-cb-drawer-target="#cb_notifications_detail_drawer">Detay</button>
+                        <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-notification-mark-read="risk-daily">Okundu</button>
+                    </div>
+                </article>
+
+                <article class="cb-notification-item is-unread" data-cb-notification-item data-cb-id="ai-veto" data-cb-severity="warning" data-cb-category="ai" data-cb-read="unread">
+                    <div class="cb-notification-marker is-warning">AI</div>
+                    <div class="cb-notification-body">
+                        <div class="cb-notification-top">
+                            <div>
+                                <div class="cb-bot-row-title">AVAXUSDT önerisi veto edildi</div>
+                                <div class="cb-bot-row-subtitle">Düşük confidence ve yüksek risk notu nedeniyle öneri yalnızca watchlist düzeyinde bırakıldı.</div>
+                            </div>
+                            <div class="cb-inline-stack">
+                                <span class="cb-badge cb-badge-warning">Uyarı</span>
+                                <span class="cb-badge cb-badge-info">AI</span>
+                                <span class="cb-badge cb-badge-neutral">Okunmamış</span>
+                            </div>
+                        </div>
+                        <div class="cb-notification-meta">
+                            <span class="cb-badge cb-badge-neutral">AVAXUSDT</span>
+                            <span class="cb-badge cb-badge-neutral">Confidence 41%</span>
+                            <span class="cb-mono">09:35</span>
+                        </div>
+                    </div>
+                    <div class="cb-notification-actions">
+                        <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-notification-detail="ai-veto" data-cb-drawer-target="#cb_notifications_detail_drawer">Detay</button>
+                        <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-notification-mark-read="ai-veto">Okundu</button>
+                    </div>
+                </article>
+
+                <article class="cb-notification-item" data-cb-notification-item data-cb-id="bot-paused" data-cb-severity="info" data-cb-category="bot" data-cb-read="read">
+                    <div class="cb-notification-marker is-info">BT</div>
+                    <div class="cb-notification-body">
+                        <div class="cb-notification-top">
+                            <div>
+                                <div class="cb-bot-row-title">Beta Hedge Runner duraklatıldı</div>
+                                <div class="cb-bot-row-subtitle">Bot yeni sinyal bekleme moduna geçti; runtime hata değil kontrollü pause olarak işaretlendi.</div>
+                            </div>
+                            <div class="cb-inline-stack">
+                                <span class="cb-badge cb-badge-info">Bilgi</span>
+                                <span class="cb-badge cb-badge-success">Bot durumu</span>
+                                <span class="cb-badge cb-badge-neutral">Okunmuş</span>
+                            </div>
+                        </div>
+                        <div class="cb-notification-meta">
+                            <span class="cb-badge cb-badge-neutral">Beta Hedge Runner</span>
+                            <span class="cb-badge cb-badge-neutral">Paper bot</span>
+                            <span class="cb-mono">08:58</span>
+                        </div>
+                    </div>
+                    <div class="cb-notification-actions">
+                        <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-notification-detail="bot-paused" data-cb-drawer-target="#cb_notifications_detail_drawer">Detay</button>
+                    </div>
+                </article>
+
+                <article class="cb-notification-item is-unread" data-cb-notification-item data-cb-id="risk-leverage" data-cb-severity="critical" data-cb-category="risk" data-cb-read="unread">
+                    <div class="cb-notification-marker is-critical">RK</div>
+                    <div class="cb-notification-body">
+                        <div class="cb-notification-top">
+                            <div>
+                                <div class="cb-bot-row-title">Yüksek leverage uyarısı</div>
+                                <div class="cb-bot-row-subtitle">SOLUSDT pozisyonu için yüksek leverage warning seviyesi oluştu placeholder.</div>
+                            </div>
+                            <div class="cb-inline-stack">
+                                <span class="cb-badge cb-badge-danger">Kritik</span>
+                                <span class="cb-badge cb-badge-warning">Risk</span>
+                                <span class="cb-badge cb-badge-neutral">Okunmamış</span>
+                            </div>
+                        </div>
+                        <div class="cb-notification-meta">
+                            <span class="cb-badge cb-badge-neutral">SOLUSDT</span>
+                            <span class="cb-badge cb-badge-danger">8x leverage</span>
+                            <span class="cb-mono">08:41</span>
+                        </div>
+                    </div>
+                    <div class="cb-notification-actions">
+                        <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-notification-detail="risk-leverage" data-cb-drawer-target="#cb_notifications_detail_drawer">Detay</button>
+                        <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-notification-mark-read="risk-leverage">Okundu</button>
+                    </div>
+                </article>
+
+                <article class="cb-notification-item" data-cb-notification-item data-cb-id="ai-collecting" data-cb-severity="info" data-cb-category="ai" data-cb-read="read">
+                    <div class="cb-notification-marker is-info">AI</div>
+                    <div class="cb-notification-body">
+                        <div class="cb-notification-top">
+                            <div>
+                                <div class="cb-bot-row-title">AI veri topluyor</div>
+                                <div class="cb-bot-row-subtitle">Model health warming-up aşamasında; yeterli güven bandı oluşana kadar öneri akışı sınırlı kalabilir.</div>
+                            </div>
+                            <div class="cb-inline-stack">
+                                <span class="cb-badge cb-badge-info">Bilgi</span>
+                                <span class="cb-badge cb-badge-info">AI</span>
+                                <span class="cb-badge cb-badge-neutral">Okunmuş</span>
+                            </div>
+                        </div>
+                        <div class="cb-notification-meta">
+                            <span class="cb-badge cb-badge-neutral">Model v0.9.7</span>
+                            <span class="cb-badge cb-badge-neutral">Collecting data</span>
+                            <span class="cb-mono">08:12</span>
+                        </div>
+                    </div>
+                    <div class="cb-notification-actions">
+                        <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-notification-detail="ai-collecting" data-cb-drawer-target="#cb_notifications_detail_drawer">Detay</button>
+                    </div>
+                </article>
+
+                <article class="cb-notification-item" data-cb-notification-item data-cb-id="bot-signal" data-cb-severity="warning" data-cb-category="bot" data-cb-read="read">
+                    <div class="cb-notification-marker is-warning">BT</div>
+                    <div class="cb-notification-body">
+                        <div class="cb-notification-top">
+                            <div>
+                                <div class="cb-bot-row-title">Alpha Spot Pulse yeni sinyal üretti</div>
+                                <div class="cb-bot-row-subtitle">Yeni setup oluşturuldu placeholder; execution yerine yalnızca notification flow foundation gösterilir.</div>
+                            </div>
+                            <div class="cb-inline-stack">
+                                <span class="cb-badge cb-badge-warning">Uyarı</span>
+                                <span class="cb-badge cb-badge-success">Bot durumu</span>
+                                <span class="cb-badge cb-badge-neutral">Okunmuş</span>
+                            </div>
+                        </div>
+                        <div class="cb-notification-meta">
+                            <span class="cb-badge cb-badge-neutral">Alpha Spot Pulse</span>
+                            <span class="cb-badge cb-badge-neutral">BTCUSDT</span>
+                            <span class="cb-mono">07:54</span>
+                        </div>
+                    </div>
+                    <div class="cb-notification-actions">
+                        <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-notification-detail="bot-signal" data-cb-drawer-target="#cb_notifications_detail_drawer">Detay</button>
+                    </div>
+                </article>
+            </div>
+        </div>
+
+        <div class="d-none" data-cb-notification-list-panel="empty">
+            @await Html.PartialAsync("Foundation/_EmptyState", new UiStateViewModel
+            {
+                IconText = "NT",
+                Title = "Henüz bildirim yok",
+                Message = "AI, risk ve bot runtime event üretimi bağlandığında yeni bildirimler burada severity ve okunma durumuna göre listelenecek.",
+                ActionText = "Dashboard'a git",
+                ActionHref = "/",
+                SecondaryActionText = "AI Robot'u aç",
+                SecondaryActionHref = "/AiRobot"
+            })
+        </div>
+
+        <div class="d-none" data-cb-notification-list-panel="loading">
+            @await Html.PartialAsync("Foundation/_LoadingState", new UiLoadingStateViewModel
+            {
+                Title = "Bildirim akışı hazırlanıyor",
+                Message = "Severity, kategori ve okunma durumuna göre listelenen satırlar skeleton olarak yükleniyor.",
+                CardCount = 2,
+                LineCount = 5
+            })
+        </div>
+
+        <div class="d-none" data-cb-notification-list-panel="error">
+            @await Html.PartialAsync("Foundation/_ErrorState", new UiStateViewModel
+            {
+                IconText = "!",
+                Title = "Bildirim akışı alınamadı",
+                Message = "Notifications backend sonra bağlandığında retry ve yardımcı açıklama yüzeyi bu foundation üstüne oturacaktır.",
+                ActionText = "Tekrar dene",
+                ActionHref = "#",
+                SecondaryActionText = "Risk Merkezi'ne git",
+                SecondaryActionHref = "/RiskCenter"
+            })
+        </div>
+    </div>
+</div>

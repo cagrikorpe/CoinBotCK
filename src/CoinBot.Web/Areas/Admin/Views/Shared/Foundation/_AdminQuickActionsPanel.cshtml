@@ -1,0 +1,49 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-dashboard-card cb-admin-panel-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Quick Actions</div>
+                <div class="cb-admin-section-title">Hızlı yönlendirme ve kritik aksiyonlar</div>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Action Hub", Tone = "info", IconText = "GO" })
+        </div>
+
+        <div class="cb-admin-maintenance-card mt-6">
+            <div class="cb-admin-maintenance-head">
+                <div>
+                    <div class="cb-admin-section-title">Maintenance mode</div>
+                    <div class="cb-admin-section-description">Aktif değil. Gerçek maintenance flow yok; yalnızca kritik admin aksiyonu foundation'ı gösterilir.</div>
+                </div>
+                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Inactive", Tone = "healthy", IconText = "MM" })
+            </div>
+            <div class="cb-admin-inline-actions mt-4">
+                <button type="button" class="btn btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_admin_critical_confirm_modal" data-cb-modal-title="Maintenance mode aç" data-cb-modal-message="Bu işlem platform davranışını etkileyebilir. Re-auth ve audit reason zemini hazırdır." data-cb-modal-confirm="Mode'u aç" data-cb-modal-tone="danger">Aç / kapat placeholder</button>
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_reauth_modal" data-cb-modal-title="Maintenance re-auth" data-cb-modal-message="Maintenance mode veya platform etkili değişiklikler öncesi yeniden doğrulama istenebilir." data-cb-modal-confirm="Doğrula">Re-auth step-up</button>
+            </div>
+        </div>
+
+        <div class="cb-admin-quick-actions-list mt-6">
+            <a asp-area="Admin" asp-controller="Admin" asp-action="Notifications" class="cb-admin-action-item">
+                <div>
+                    <strong>Notifications paneline git</strong>
+                    <small>Kritik alarm ve acknowledgement akışına yönlendirir</small>
+                </div>
+                <span>→</span>
+            </a>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="cb-admin-action-item">
+                <div>
+                    <strong>Kritik loglara git</strong>
+                    <small>Audit ve log merkezi foundation ekranı</small>
+                </div>
+                <span>→</span>
+            </a>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="Jobs" class="cb-admin-action-item">
+                <div>
+                    <strong>Stuck jobs ekranına git</strong>
+                    <small>Worker / retry sorunlarını daha derin inceleme yüzeyi</small>
+                </div>
+                <span>→</span>
+            </a>
+        </div>
+    </div>
+</div>

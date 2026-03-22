@@ -1,0 +1,52 @@
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-panel-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Severity / Incident</div>
+                <div class="cb-admin-section-title">Severity paneli</div>
+                <p class="cb-admin-section-description mb-0">Critical, error, warning ve info yoğunluğunu kısa incident summary ile birlikte görünür kılar.</p>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "1 active incident", Tone = "critical", IconText = "IC" })
+        </div>
+
+        <div class="cb-admin-severity-grid mt-6">
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Critical</span>
+                <strong>01</strong>
+                <small>Webhook worker down placeholder</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Error</span>
+                <strong>03</strong>
+                <small>AI scoring / queue delay placeholder</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Warning</span>
+                <strong>06</strong>
+                <small>Stale worker / retry pressure</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Info</span>
+                <strong>09</strong>
+                <small>Recovery / recheck guidance</small>
+            </div>
+        </div>
+
+        <div class="cb-admin-incident-list mt-6">
+            <div class="cb-admin-incident-item is-critical">
+                <div>
+                    <div class="cb-admin-job-title">Critical incident summary</div>
+                    <div class="cb-admin-job-meta">Webhook worker down + failed callback jobs placeholder</div>
+                </div>
+                <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-xs btn-light-danger font-weight-bold">Loglara git</a>
+            </div>
+            <div class="cb-admin-incident-item">
+                <div>
+                    <div class="cb-admin-job-title">AI worker degraded</div>
+                    <div class="cb-admin-job-meta">Scoring latency arttı, confidence freshness penceresi daraldı placeholder</div>
+                </div>
+                <a asp-area="Admin" asp-controller="Admin" asp-action="StrategyAiMonitoring" class="btn btn-xs btn-light-primary font-weight-bold">AI ekranı</a>
+            </div>
+        </div>
+    </div>
+</div>

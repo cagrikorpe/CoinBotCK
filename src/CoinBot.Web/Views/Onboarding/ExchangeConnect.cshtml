@@ -1,0 +1,132 @@
+@using CoinBot.Web.ViewModels.Foundation
+@{
+    Layout = "_AuthLayout";
+    ViewData["Title"] = "Exchange Connect";
+    ViewData["AuthTitle"] = "Exchange connect foundation";
+    ViewData["AuthDescription"] = "Gerçek Binance entegrasyonu olmadan, API key / secret formu ve bağlantı durum alanlarının UI-only foundation standardı.";
+    ViewData["AuthEyebrow"] = "Exchange Connect";
+    ViewData["AuthStage"] = "Connection Form";
+    ViewData["AuthProgress"] = "6 / 6";
+    ViewData["AuthBackHref"] = Url.Action("ExchangeSecurity", "Onboarding");
+    ViewData["AuthHighlights"] = new[]
+    {
+        "Exchange seçimi ve credential input standardı",
+        "Paper / live toggle foundation",
+        "Test connection loading ve durum alanı placeholder yapısı"
+    };
+
+    var steps = new List<UiWizardStepViewModel>
+    {
+        new() { Number = 1, Title = "Hoş Geldin", Caption = "Tamamlandı", IsCompleted = true },
+        new() { Number = 2, Title = "Trade Modu", Caption = "Tamamlandı", IsCompleted = true },
+        new() { Number = 3, Title = "Yön", Caption = "Tamamlandı", IsCompleted = true },
+        new() { Number = 4, Title = "Risk", Caption = "Tamamlandı", IsCompleted = true },
+        new() { Number = 5, Title = "Security", Caption = "Tamamlandı", IsCompleted = true },
+        new() { Number = 6, Title = "Connect", Caption = "Aktif", IsCurrent = true }
+    };
+}
+
+<div class="cb-auth-panel cb-auth-panel-wide">
+    <div class="cb-auth-panel-header">
+        <div>
+            <div class="cb-page-eyebrow">Connection Setup</div>
+            <h2 class="cb-page-title">Exchange bağlantı formu</h2>
+            <p class="cb-page-description">Bu ekran gerçek credential saklama veya API çağrısı yapmadan, connect akışının form, helper text ve durum bileşenlerini gösterir.</p>
+        </div>
+        <span class="cb-badge cb-badge-neutral">Binance foundation</span>
+    </div>
+
+    @await Html.PartialAsync("Foundation/_WizardStepper", steps)
+
+    <div class="cb-checkpoint-grid">
+        <div class="cb-auth-panel-block">
+            <form action="#" method="post" novalidate>
+                <div class="row">
+                    <div class="col-md-6 mb-6">
+                        <label class="cb-form-label">Exchange</label>
+                        <select class="form-control cb-form-control">
+                            <option>Binance</option>
+                        </select>
+                        <div class="cb-field-feedback">Bu fazda foundation yalnızca Binance seçeneği ile sınırlandı.</div>
+                    </div>
+                    <div class="col-md-6 mb-6">
+                        <label class="cb-form-label">Ortam</label>
+                        <div class="cb-inline-toggle-row">
+                            <label class="cb-choice-pill is-selected"><input type="radio" name="env" checked /> Paper</label>
+                            <label class="cb-choice-pill"><input type="radio" name="env" /> Live</label>
+                        </div>
+                        <div class="cb-field-feedback">Testnet / paper / live ayrımı için foundation toggle alanı.</div>
+                    </div>
+                    <div class="col-12 mb-6">
+                        <label class="cb-form-label">API Key</label>
+                        <input type="text" class="form-control cb-form-control" placeholder="API Key" autocomplete="off" />
+                        <div class="cb-field-feedback">Gerçek secret örneği veya storage logic'i eklenmedi.</div>
+                    </div>
+                    <div class="col-12 mb-6">
+                        <label class="cb-form-label">Secret</label>
+                        <div class="cb-auth-password-wrap">
+                            <input type="password" id="exchange_secret" class="form-control cb-form-control cb-form-control-with-action" placeholder="Secret" autocomplete="off" />
+                            <button type="button" class="cb-auth-field-action" data-cb-password-toggle data-cb-password-target="#exchange_secret">Göster</button>
+                        </div>
+                        <div class="cb-field-feedback">Secret alanı hassas veri alanıdır; bu fazda yalnızca UI foundation hazırlanmıştır.</div>
+                    </div>
+                </div>
+
+                <div class="cb-auth-alert cb-auth-alert-warning">
+                    Güvenlik notu: yalnızca gerekli trade izinlerini verin; withdrawal izni kapalı kalmalıdır.
+                </div>
+
+                <div class="cb-auth-action-row mt-8">
+                    <button type="submit" class="btn btn-primary font-weight-bolder" data-cb-button-loading data-cb-connection-test>
+                        <span class="cb-btn-label">Test connection</span>
+                        <span class="cb-btn-spinner"></span>
+                    </button>
+                    <a asp-controller="Home" asp-action="Index" class="btn btn-light-primary font-weight-bold">Kurulumu bitir</a>
+                </div>
+            </form>
+        </div>
+
+        <div>
+            <div class="cb-auth-summary-card cb-auth-summary-card-stacked">
+                <div class="cb-auth-summary-label">Bağlantı durumu</div>
+                <div class="cb-status-toggle-row mt-4">
+                    <button type="button" class="cb-status-chip is-active" data-cb-connection-state="pending">Henüz test edilmedi</button>
+                    <button type="button" class="cb-status-chip" data-cb-connection-state="success">Başarılı</button>
+                    <button type="button" class="cb-status-chip" data-cb-connection-state="error">Başarısız</button>
+                </div>
+                <div class="cb-connection-state-panels mt-6">
+                    <div class="cb-connection-state-panel is-active" data-cb-connection-panel="pending">
+                        <div class="cb-badge cb-badge-warning">Pending</div>
+                        <p class="cb-page-description mb-0 mt-4">Henüz test yapılmadı. Form doldurulup placeholder test aksiyonu tetiklenebilir.</p>
+                    </div>
+                    <div class="cb-connection-state-panel" data-cb-connection-panel="success">
+                        <div class="cb-badge cb-badge-success">Success</div>
+                        <p class="cb-page-description mb-0 mt-4">Trade izni doğrulandı, futures izni opsiyonel, withdrawal kapalı uyarısı görünür.</p>
+                    </div>
+                    <div class="cb-connection-state-panel" data-cb-connection-panel="error">
+                        <div class="cb-badge cb-badge-danger">Failed</div>
+                        <p class="cb-page-description mb-0 mt-4">Credential veya izin problemi gibi hatalar için error görünümü bu blokta gösterilir.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="cb-auth-summary-card cb-auth-summary-card-stacked mt-6">
+                <div class="cb-auth-summary-label">İzin özeti</div>
+                <div class="cb-permission-list mt-4">
+                    <div class="cb-permission-item">
+                        <span>Trade izni</span>
+                        <span class="cb-badge cb-badge-success">Beklenen</span>
+                    </div>
+                    <div class="cb-permission-item">
+                        <span>Futures izni</span>
+                        <span class="cb-badge cb-badge-info">Opsiyonel</span>
+                    </div>
+                    <div class="cb-permission-item">
+                        <span>Withdrawal</span>
+                        <span class="cb-badge cb-badge-danger">Kapalı olmalı</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

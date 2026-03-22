@@ -1,0 +1,205 @@
+@using CoinBot.Web.ViewModels.Foundation
+<div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Log akışı</h3>
+                <div class="text-muted font-size-sm">Kritik security ve risk olaylarından kullanıcı davranış trace kayıtlarına kadar tüm panel olayları aynı listede toplanır.</div>
+            </div>
+        </div>
+        <div class="card-toolbar cb-inline-stack">
+            <span class="cb-badge cb-badge-info" id="cb_log_list_badge">7 yeni olay</span>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div data-cb-log-list-panel="list">
+            <div class="cb-log-list">
+                <article class="cb-log-item is-new" data-cb-log-item data-cb-id="risk-limit" data-cb-category="Risk" data-cb-severity="Critical" data-cb-trace="false">
+                    <div class="cb-log-item-marker is-critical">RK</div>
+                    <div class="cb-log-item-body">
+                        <div class="cb-log-item-top">
+                            <div>
+                                <div class="cb-bot-row-title">Günlük zarar limiti eşiği aşılıyor</div>
+                                <div class="cb-bot-row-subtitle">Risk · Günlük kayıp bandı tanımlı eşik seviyesinin üzerine çıkıyor placeholder.</div>
+                            </div>
+                            <div class="cb-inline-stack">
+                                <span class="cb-badge cb-badge-danger">Critical</span>
+                                <span class="cb-badge cb-badge-warning">Risk</span>
+                                <span class="cb-badge cb-badge-neutral">Yeni</span>
+                            </div>
+                        </div>
+                        <div class="cb-notification-meta">
+                            <span class="cb-badge cb-badge-neutral">Risk Merkezi</span>
+                            <span class="cb-badge cb-badge-neutral">Alpha Desk</span>
+                            <span class="cb-mono">09:42</span>
+                        </div>
+                    </div>
+                    <div class="cb-notification-actions">
+                        <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-log-detail="risk-limit" data-cb-drawer-target="#cb_logcenter_detail_drawer">Detay</button>
+                    </div>
+                </article>
+
+                <article class="cb-log-item is-new" data-cb-log-item data-cb-id="security-2fa" data-cb-category="Security" data-cb-severity="Warning" data-cb-trace="false">
+                    <div class="cb-log-item-marker is-warning">SC</div>
+                    <div class="cb-log-item-body">
+                        <div class="cb-log-item-top">
+                            <div>
+                                <div class="cb-bot-row-title">2FA yönetim yüzeyi görüntülendi</div>
+                                <div class="cb-bot-row-subtitle">Security · Kullanıcı güvenlik ayarlarını kontrol etti, ancak kritik bilgiler maskelenmiş halde tutulur.</div>
+                            </div>
+                            <div class="cb-inline-stack">
+                                <span class="cb-badge cb-badge-warning">Warning</span>
+                                <span class="cb-badge cb-badge-danger">Security</span>
+                                <span class="cb-badge cb-badge-neutral">Yeni</span>
+                            </div>
+                        </div>
+                        <div class="cb-notification-meta">
+                            <span class="cb-badge cb-badge-neutral">Ayarlar</span>
+                            <span class="cb-badge cb-badge-neutral">2FA</span>
+                            <span class="cb-mono">09:31</span>
+                        </div>
+                    </div>
+                    <div class="cb-notification-actions">
+                        <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-log-detail="security-2fa" data-cb-drawer-target="#cb_logcenter_detail_drawer">Detay</button>
+                    </div>
+                </article>
+
+                <article class="cb-log-item" data-cb-log-item data-cb-id="ai-veto" data-cb-category="AI" data-cb-severity="Info" data-cb-trace="false">
+                    <div class="cb-log-item-marker is-info">AI</div>
+                    <div class="cb-log-item-body">
+                        <div class="cb-log-item-top">
+                            <div>
+                                <div class="cb-bot-row-title">AI önerisi veto edildi</div>
+                                <div class="cb-bot-row-subtitle">AI · Düşük confidence nedeniyle öneri watch seviyesinde bırakıldı placeholder.</div>
+                            </div>
+                            <div class="cb-inline-stack">
+                                <span class="cb-badge cb-badge-info">Info</span>
+                                <span class="cb-badge cb-badge-info">AI</span>
+                                <span class="cb-badge cb-badge-neutral">Özet</span>
+                            </div>
+                        </div>
+                        <div class="cb-notification-meta">
+                            <span class="cb-badge cb-badge-neutral">AVAXUSDT</span>
+                            <span class="cb-badge cb-badge-neutral">Confidence 41%</span>
+                            <span class="cb-mono">09:18</span>
+                        </div>
+                    </div>
+                    <div class="cb-notification-actions">
+                        <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-log-detail="ai-veto" data-cb-drawer-target="#cb_logcenter_detail_drawer">Detay</button>
+                    </div>
+                </article>
+
+                <article class="cb-log-item cb-log-item-trace" data-cb-log-item data-cb-id="activity-builder" data-cb-category="User Activity" data-cb-severity="Trace" data-cb-trace="true">
+                    <div class="cb-log-item-marker is-trace">TR</div>
+                    <div class="cb-log-item-body">
+                        <div class="cb-log-item-top">
+                            <div>
+                                <div class="cb-bot-row-title">Strategy Builder içinde yeni blok eklendi</div>
+                                <div class="cb-bot-row-subtitle">User Activity · Kullanıcı RSI koşulu ekleyip kural satırını güncelledi placeholder.</div>
+                            </div>
+                            <div class="cb-inline-stack">
+                                <span class="cb-badge cb-badge-neutral">Trace</span>
+                                <span class="cb-badge cb-badge-success">User Activity</span>
+                                <span class="cb-badge cb-badge-neutral">Detaylı izleme</span>
+                            </div>
+                        </div>
+                        <div class="cb-notification-meta">
+                            <span class="cb-badge cb-badge-neutral">Strategy Builder</span>
+                            <span class="cb-badge cb-badge-neutral">Condition block</span>
+                            <span class="cb-mono">09:11</span>
+                        </div>
+                    </div>
+                    <div class="cb-notification-actions">
+                        <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-log-detail="activity-builder" data-cb-drawer-target="#cb_logcenter_detail_drawer">Detay</button>
+                    </div>
+                </article>
+
+                <article class="cb-log-item" data-cb-log-item data-cb-id="trading-sync" data-cb-category="Trading" data-cb-severity="Error" data-cb-trace="false">
+                    <div class="cb-log-item-marker is-error">TR</div>
+                    <div class="cb-log-item-body">
+                        <div class="cb-log-item-top">
+                            <div>
+                                <div class="cb-bot-row-title">Paper trade senkronizasyonu gecikti</div>
+                                <div class="cb-bot-row-subtitle">Trading · Simülasyon sonucu güncel değil; veri hazırlama katmanı bekleniyor placeholder.</div>
+                            </div>
+                            <div class="cb-inline-stack">
+                                <span class="cb-badge cb-badge-danger">Error</span>
+                                <span class="cb-badge cb-badge-success">Trading</span>
+                                <span class="cb-badge cb-badge-neutral">Sistem</span>
+                            </div>
+                        </div>
+                        <div class="cb-notification-meta">
+                            <span class="cb-badge cb-badge-neutral">Paper Trading</span>
+                            <span class="cb-badge cb-badge-neutral">Sync queue</span>
+                            <span class="cb-mono">08:54</span>
+                        </div>
+                    </div>
+                    <div class="cb-notification-actions">
+                        <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-log-detail="trading-sync" data-cb-drawer-target="#cb_logcenter_detail_drawer">Detay</button>
+                    </div>
+                </article>
+
+                <article class="cb-log-item" data-cb-log-item data-cb-id="audit-settings" data-cb-category="Audit" data-cb-severity="Info" data-cb-trace="false">
+                    <div class="cb-log-item-marker is-info">AU</div>
+                    <div class="cb-log-item-body">
+                        <div class="cb-log-item-top">
+                            <div>
+                                <div class="cb-bot-row-title">Bildirim tercihleri güncelleme girişimi</div>
+                                <div class="cb-bot-row-subtitle">Audit · Kritik ve AI uyarıları bölümünde toggle değişikliği yapıldı placeholder.</div>
+                            </div>
+                            <div class="cb-inline-stack">
+                                <span class="cb-badge cb-badge-info">Info</span>
+                                <span class="cb-badge cb-badge-warning">Audit</span>
+                                <span class="cb-badge cb-badge-neutral">Özet</span>
+                            </div>
+                        </div>
+                        <div class="cb-notification-meta">
+                            <span class="cb-badge cb-badge-neutral">Ayarlar</span>
+                            <span class="cb-badge cb-badge-neutral">Bildirimler</span>
+                            <span class="cb-mono">08:32</span>
+                        </div>
+                    </div>
+                    <div class="cb-notification-actions">
+                        <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-log-detail="audit-settings" data-cb-drawer-target="#cb_logcenter_detail_drawer">Detay</button>
+                    </div>
+                </article>
+            </div>
+        </div>
+
+        <div class="d-none" data-cb-log-list-panel="empty">
+            @await Html.PartialAsync("Foundation/_EmptyState", new UiStateViewModel
+            {
+                IconText = "LG",
+                Title = "Henüz log yok",
+                Message = "Audit, AI, risk ve sistem olayları bağlandığında log akışı burada kategori ve severity bazında görünecek.",
+                ActionText = "Dashboard'a git",
+                ActionHref = "/",
+                SecondaryActionText = "Ayarlar'a git",
+                SecondaryActionHref = "/Settings"
+            })
+        </div>
+
+        <div class="d-none" data-cb-log-list-panel="loading">
+            @await Html.PartialAsync("Foundation/_LoadingState", new UiLoadingStateViewModel
+            {
+                Title = "Log akışı hazırlanıyor",
+                Message = "Kategori, severity ve davranış trace kayıtları skeleton yüzeylerle yükleniyor.",
+                CardCount = 2,
+                LineCount = 5
+            })
+        </div>
+
+        <div class="d-none" data-cb-log-list-panel="error">
+            @await Html.PartialAsync("Foundation/_ErrorState", new UiStateViewModel
+            {
+                IconText = "!",
+                Title = "Log akışı alınamadı",
+                Message = "Gerçek logging backend bu fazda bağlı değil. Retry ve yardım CTA'ları foundation olarak hazırlanmıştır.",
+                ActionText = "Tekrar dene",
+                ActionHref = "#",
+                SecondaryActionText = "Ayarlar'a git",
+                SecondaryActionHref = "/Settings"
+            })
+        </div>
+    </div>
+</div>

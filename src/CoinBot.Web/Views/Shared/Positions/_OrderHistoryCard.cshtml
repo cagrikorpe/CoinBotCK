@@ -1,0 +1,114 @@
+<div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Emir geçmişi</h3>
+                <div class="text-muted font-size-sm">Filled, partial, canceled ve rejected gibi order lifecycle placeholder yüzeyleri operasyonel history tablosunda gösterilir.</div>
+            </div>
+        </div>
+        <div class="card-toolbar cb-inline-stack">
+            <div class="cb-chip-group cb-chip-group-sm" data-cb-toggle-group>
+                <button type="button" class="cb-chip is-active" data-cb-toggle-active>Tümü</button>
+                <button type="button" class="cb-chip" data-cb-toggle-active>Filled</button>
+                <button type="button" class="cb-chip" data-cb-toggle-active>Partial</button>
+                <button type="button" class="cb-chip" data-cb-toggle-active>Canceled</button>
+            </div>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-table-wrap" data-cb-order-history-panel="list">
+            <table class="table table-borderless cb-table mb-0">
+                <thead>
+                    <tr>
+                        <th>Tarih/Saat</th>
+                        <th>Sembol</th>
+                        <th>Side</th>
+                        <th>Yön</th>
+                        <th>Qty</th>
+                        <th>Fiyat</th>
+                        <th>Order Type</th>
+                        <th>Status</th>
+                        <th>Sonuç</th>
+                        <th>Bot</th>
+                        <th class="text-right">Aksiyon</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr data-cb-position-open-detail="ord-btc-buy">
+                        <td><div class="cb-bot-row-title cb-mono">21 Mar</div><div class="cb-bot-row-subtitle">09:14</div></td>
+                        <td><div class="cb-bot-row-title">BTCUSDT</div><div class="cb-bot-row-subtitle">1h</div></td>
+                        <td><span class="cb-badge cb-badge-success">Buy</span></td>
+                        <td><span class="cb-badge cb-badge-success">Long</span></td>
+                        <td class="cb-mono">0.42</td>
+                        <td class="cb-mono">61,420</td>
+                        <td><span class="cb-badge cb-badge-info">Market</span></td>
+                        <td><span class="cb-badge cb-badge-success">Filled</span></td>
+                        <td><span class="cb-badge cb-badge-neutral">Manual/Auto</span></td>
+                        <td><span class="cb-badge cb-badge-info">Alpha Spot Pulse</span></td>
+                        <td class="text-right"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-position-open-detail="ord-btc-buy" data-cb-drawer-target="#cb_positions_detail_drawer">Detay</button></td>
+                    </tr>
+                    <tr data-cb-position-open-detail="ord-sol-stop">
+                        <td><div class="cb-bot-row-title cb-mono">21 Mar</div><div class="cb-bot-row-subtitle">08:54</div></td>
+                        <td><div class="cb-bot-row-title">SOLUSDT</div><div class="cb-bot-row-subtitle">15m</div></td>
+                        <td><span class="cb-badge cb-badge-danger">Sell</span></td>
+                        <td><span class="cb-badge cb-badge-danger">Short</span></td>
+                        <td class="cb-mono">12</td>
+                        <td class="cb-mono">132.4</td>
+                        <td><span class="cb-badge cb-badge-warning">Stop</span></td>
+                        <td><span class="cb-badge cb-badge-warning">Partial</span></td>
+                        <td><span class="cb-badge cb-badge-danger">Stop/TP</span></td>
+                        <td><span class="cb-badge cb-badge-warning">Beta Hedge Runner</span></td>
+                        <td class="text-right"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-position-open-detail="ord-sol-stop" data-cb-drawer-target="#cb_positions_detail_drawer">Detay</button></td>
+                    </tr>
+                    <tr data-cb-position-open-detail="ord-eth-cancel">
+                        <td><div class="cb-bot-row-title cb-mono">21 Mar</div><div class="cb-bot-row-subtitle">07:41</div></td>
+                        <td><div class="cb-bot-row-title">ETHUSDT</div><div class="cb-bot-row-subtitle">4h</div></td>
+                        <td><span class="cb-badge cb-badge-success">Buy</span></td>
+                        <td><span class="cb-badge cb-badge-info">Long</span></td>
+                        <td class="cb-mono">1.4</td>
+                        <td class="cb-mono">3,160</td>
+                        <td><span class="cb-badge cb-badge-info">Limit</span></td>
+                        <td><span class="cb-badge cb-badge-neutral">Canceled</span></td>
+                        <td><span class="cb-badge cb-badge-neutral">Rejected/None</span></td>
+                        <td><span class="cb-badge cb-badge-info">Gamma Mean Reversion</span></td>
+                        <td class="text-right"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-position-open-detail="ord-eth-cancel" data-cb-drawer-target="#cb_positions_detail_drawer">Detay</button></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="d-none" data-cb-order-history-panel="empty">
+            @await Html.PartialAsync("Foundation/_EmptyState", new UiStateViewModel
+            {
+                IconText = "OH",
+                Title = "Henüz emir geçmişi yok",
+                Message = "Execution event history bağlandığında filled, partial, canceled ve rejected satırları burada görünür.",
+                ActionText = "Botlarım’a git",
+                ActionHref = "/Bots"
+            })
+        </div>
+
+        <div class="d-none" data-cb-order-history-panel="loading">
+            @await Html.PartialAsync("Foundation/_LoadingState", new UiLoadingStateViewModel
+            {
+                Title = "Emir geçmişi hazırlanıyor",
+                Message = "Order lifecycle ve status badge satırları skeleton olarak yükleniyor.",
+                CardCount = 2,
+                LineCount = 4
+            })
+        </div>
+
+        <div class="d-none" data-cb-order-history-panel="error">
+            @await Html.PartialAsync("Foundation/_ErrorState", new UiStateViewModel
+            {
+                IconText = "!",
+                Title = "Emir geçmişi alınamadı",
+                Message = "History tabı hata aldığında kullanıcıyı retry ve yardım akışına taşıyan kontrollü UI görünümü gösterilir.",
+                ActionText = "Tekrar dene",
+                ActionHref = "#",
+                SecondaryActionText = "Bildirimler için hazır ol",
+                SecondaryActionHref = "#"
+            })
+        </div>
+    </div>
+</div>
