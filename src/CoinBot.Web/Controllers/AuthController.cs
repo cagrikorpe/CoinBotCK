@@ -4,10 +4,10 @@ using CoinBot.Web.ViewModels.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 
 namespace CoinBot.Web.Controllers;
 
-[AllowAnonymous]
 public class AuthController : Controller
 {
     private readonly UserManager<ApplicationUser> userManager;
@@ -20,17 +20,19 @@ public class AuthController : Controller
     }
 
     [HttpGet]
+    [AllowAnonymous]
     public IActionResult Login(string? returnUrl = null)
     {
         if (signInManager.IsSignedIn(User))
         {
-            return RedirectToAction("Index", "Home");
+            return RedirectToLocal(returnUrl);
         }
 
         return View(new LoginViewModel { ReturnUrl = returnUrl });
     }
 
     [HttpPost]
+    [AllowAnonymous]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> Login(LoginViewModel model)
     {
@@ -48,6 +50,24 @@ public class AuthController : Controller
         }
 
         var result = await signInManager.PasswordSignInAsync(user.UserName, model.Password, model.RememberMe, lockoutOnFailure: true);
+        var shouldSynchronizeClaims = result.Succeeded || result.RequiresTwoFactor;
+
+        if (shouldSynchronizeClaims)
+        {
+            var claimSyncResult = await SynchronizePermissionClaimsAsync(user);
+
+            if (!claimSyncResult.Succeeded)
+            {
+                if (result.Succeeded)
+                {
+                    await signInManager.SignOutAsync();
+                }
+
+                AddIdentityErrors(claimSyncResult);
+                ModelState.AddModelError(string.Empty, "Oturum başlatılamadı. Yetkilendirme bilgileri hazırlanamadı.");
+                return View(model);
+            }
+        }
 
         if (result.RequiresTwoFactor)
         {
@@ -72,21 +92,24 @@ public class AuthController : Controller
             return View(model);
         }
 
+        await signInManager.RefreshSignInAsync(user);
         return RedirectToLocal(model.ReturnUrl);
     }
 
     [HttpGet]
-    public IActionResult Register()
+    [AllowAnonymous]
+    public IActionResult Register(string? returnUrl = null)
     {
         if (signInManager.IsSignedIn(User))
         {
-            return RedirectToAction("Index", "Home");
+            return RedirectToLocal(returnUrl);
         }
 
-        return View(new RegisterViewModel());
+        return View(new RegisterViewModel { ReturnUrl = returnUrl });
     }
 
     [HttpPost]
+    [AllowAnonymous]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> Register(RegisterViewModel model)
     {
@@ -136,11 +159,21 @@ public class AuthController : Controller
             return View(model);
         }
 
+        var claimSyncResult = await SynchronizePermissionClaimsAsync(user);
+
+        if (!claimSyncResult.Succeeded)
+        {
+            await userManager.DeleteAsync(user);
+            AddIdentityErrors(claimSyncResult);
+            return View(model);
+        }
+
         TempData["AuthSuccess"] = "Kayıt tamamlandı. Giriş yapabilirsiniz.";
-        return RedirectToAction(nameof(Login));
+        return RedirectToAction(nameof(Login), new { returnUrl = model.ReturnUrl });
     }
 
     [HttpGet]
+    [AllowAnonymous]
     public IActionResult AccessDenied()
     {
         if (!(User.Identity?.IsAuthenticated ?? false))
@@ -165,6 +198,7 @@ public class AuthController : Controller
     }
 
     [HttpGet]
+    [AllowAnonymous]
     public async Task<IActionResult> Mfa(string? returnUrl = null, bool rememberMe = false)
     {
         if (await signInManager.GetTwoFactorAuthenticationUserAsync() is null)
@@ -181,6 +215,7 @@ public class AuthController : Controller
     }
 
     [HttpPost]
+    [AllowAnonymous]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> Mfa(MfaViewModel model)
     {
@@ -195,6 +230,15 @@ public class AuthController : Controller
         {
             TempData["AuthError"] = "Çok faktörlü doğrulama oturumu bulunamadı.";
             return RedirectToAction(nameof(Login));
+        }
+
+        var claimSyncResult = await SynchronizePermissionClaimsAsync(user);
+
+        if (!claimSyncResult.Succeeded)
+        {
+            AddIdentityErrors(claimSyncResult);
+            ModelState.AddModelError(string.Empty, "Oturum doğrulanamadı. Yetkilendirme bilgileri hazırlanamadı.");
+            return View(model);
         }
 
         var code = NormalizeOtpCode(model.Code);
@@ -213,6 +257,17 @@ public class AuthController : Controller
         }
 
         return RedirectToLocal(model.ReturnUrl);
+    }
+
+    [HttpPost]
+    [Authorize]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> Logout()
+    {
+        await signInManager.SignOutAsync();
+        TempData["AuthSuccess"] = "Oturum güvenli şekilde kapatıldı.";
+
+        return RedirectToAction(nameof(Login));
     }
 
     private async Task<ApplicationUser?> FindUserAsync(string emailOrUserName)
@@ -237,6 +292,54 @@ public class AuthController : Controller
         }
 
         return RedirectToAction("Index", "Home");
+    }
+
+    private async Task<IdentityResult> SynchronizePermissionClaimsAsync(ApplicationUser user)
+    {
+        var roles = await userManager.GetRolesAsync(user);
+        var expectedClaims = roles
+            .SelectMany(ApplicationRoleClaims.GetClaims)
+            .GroupBy(claim => new { claim.Type, claim.Value })
+            .Select(group => group.First())
+            .ToArray();
+        var existingClaims = (await userManager.GetClaimsAsync(user))
+            .Where(claim => claim.Type == ApplicationClaimTypes.Permission)
+            .ToArray();
+        var claimsToAdd = expectedClaims
+            .Where(expectedClaim => !existingClaims.Any(existingClaim =>
+                existingClaim.Type == expectedClaim.Type &&
+                existingClaim.Value == expectedClaim.Value))
+            .ToArray();
+        var claimsToRemove = existingClaims
+            .Where(existingClaim => !expectedClaims.Any(expectedClaim =>
+                expectedClaim.Type == existingClaim.Type &&
+                expectedClaim.Value == existingClaim.Value))
+            .ToArray();
+
+        if (claimsToRemove.Length > 0)
+        {
+            var removeClaimsResult = await userManager.RemoveClaimsAsync(user, claimsToRemove);
+
+            if (!removeClaimsResult.Succeeded)
+            {
+                return removeClaimsResult;
+            }
+        }
+
+        if (claimsToAdd.Length == 0)
+        {
+            return IdentityResult.Success;
+        }
+
+        return await userManager.AddClaimsAsync(user, claimsToAdd);
+    }
+
+    private void AddIdentityErrors(IdentityResult identityResult)
+    {
+        foreach (var error in identityResult.Errors)
+        {
+            ModelState.AddModelError(string.Empty, error.Description);
+        }
     }
 
     private static string NormalizeOtpCode(string code)

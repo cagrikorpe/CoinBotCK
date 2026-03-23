@@ -1,0 +1,129 @@
+@model CoinBot.Web.ViewModels.Settings.MfaSettingsViewModel
+@{
+    ViewData["Title"] = "2FA Yönetimi";
+    ViewData["ActiveNav"] = "Settings";
+    ViewData["PageDescription"] = "Authenticator tabanli MFA kurulumu, recovery code yenileme ve kapatma akislari tek yerde yonetilir.";
+    ViewData["BreadcrumbItems"] = new[] { "System", "Ayarlar", "2FA" };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card">
+            <div class="card-body">
+                <div class="cb-page-header">
+                    <div>
+                        <div class="cb-page-eyebrow">Security</div>
+                        <h2 class="cb-page-title">2FA yonetimi</h2>
+                        <p class="cb-page-description">Google Authenticator uyumlu TOTP secret, kod dogrulama ve recovery code akislari bu sayfadan yonetilir.</p>
+                    </div>
+                    <div class="cb-toolbar">
+                        <a asp-controller="Settings" asp-action="Index" class="btn btn-light-primary font-weight-bold">Ayarlara don</a>
+                    </div>
+                </div>
+
+                @if (TempData["MfaSuccess"] is string successMessage)
+                {
+                    <div class="cb-auth-alert cb-auth-alert-success mt-6">@successMessage</div>
+                }
+
+                @if (TempData["MfaError"] is string errorMessage)
+                {
+                    <div class="cb-validation-summary cb-validation-summary-danger mt-6">@errorMessage</div>
+                }
+
+                <div class="row mt-6">
+                    <div class="col-xl-5">
+                        <div class="cb-section h-100">
+                            <div class="cb-section-title">Durum</div>
+                            <div class="cb-inline-stack mt-4">
+                                <span class="cb-badge @(Model.IsMfaEnabled ? "cb-badge-success" : "cb-badge-danger")">@(Model.IsMfaEnabled ? "2FA aktif" : "2FA pasif")</span>
+                                <span class="cb-badge cb-badge-info">@(Model.PreferredProvider ?? "authenticator-app")</span>
+                            </div>
+                            <div class="cb-helper-text mt-4">Aktif recovery code sayisi: <strong>@Model.ActiveRecoveryCodeCount</strong></div>
+                            @if (Model.UpdatedAtUtc is DateTime updatedAtUtc)
+                            {
+                                <div class="cb-helper-text mt-2">Son guncelleme: <strong>@updatedAtUtc.ToUniversalTime().ToString("yyyy-MM-dd HH:mm") UTC</strong></div>
+                            }
+                            <div class="cb-notice cb-notice-info mt-5">
+                                Secret, MFA kodu ve recovery code degerleri loglanmaz. Secret yalnizca kurulum asamasinda tekrar gorunur.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-xl-7 mt-6 mt-xl-0">
+                        <div class="cb-section h-100">
+                            <div class="cb-section-title">Authenticator kurulumu</div>
+                            @if (Model.HasPendingAuthenticatorEnrollment && !string.IsNullOrWhiteSpace(Model.DisplaySharedKey))
+                            {
+                                <div class="cb-notice cb-notice-warning mt-4">
+                                    Authenticator uygulamasina su anahtari ekleyin ve olusan 6 haneli kodu asagidan dogrulayin.
+                                </div>
+                                <div class="form-group mt-5 mb-0">
+                                    <label class="cb-form-label">Kurulum anahtari</label>
+                                    <input type="text" class="form-control cb-form-control" value="@Model.DisplaySharedKey" readonly />
+                                </div>
+                                <div class="cb-helper-text mt-3">
+                                    <a href="@Model.AuthenticatorUri" class="cb-auth-inline-link">Authenticator URI</a>
+                                </div>
+                                <form asp-controller="Settings" asp-action="EnableMfa" method="post" class="mt-5">
+                                    @Html.AntiForgeryToken()
+                                    <div class="form-group mb-0">
+                                        <label class="cb-form-label">6 haneli dogrulama kodu</label>
+                                        <input name="code" type="text" inputmode="numeric" maxlength="6" class="form-control cb-form-control" autocomplete="one-time-code" />
+                                    </div>
+                                    <div class="cb-inline-stack mt-5">
+                                        <button type="submit" class="btn btn-primary font-weight-bolder">2FA'yi etkinlestir</button>
+                                        <a asp-controller="Settings" asp-action="Mfa" class="btn btn-light-primary font-weight-bold">Sayfayi yenile</a>
+                                    </div>
+                                </form>
+                            }
+                            else if (!Model.IsMfaEnabled)
+                            {
+                                <p class="text-muted mt-4 mb-0">2FA kapali. Yeni bir authenticator secret uretilip kod dogrulandiktan sonra giris akisi MFA ister.</p>
+                                <form asp-controller="Settings" asp-action="StartMfaSetup" method="post" class="mt-5">
+                                    @Html.AntiForgeryToken()
+                                    <button type="submit" class="btn btn-primary font-weight-bolder">Authenticator kurulumu baslat</button>
+                                </form>
+                            }
+                            else
+                            {
+                                <p class="text-muted mt-4 mb-0">Authenticator tabanli MFA aktif. Recovery code yenilemek veya 2FA'yi kapatmak icin gecerli bir MFA kodu ya da recovery code kullanin.</p>
+                                <form asp-controller="Settings" asp-action="RegenerateRecoveryCodes" method="post" class="mt-5">
+                                    @Html.AntiForgeryToken()
+                                    <div class="form-group mb-0">
+                                        <label class="cb-form-label">Recovery code yenilemek icin MFA kodu</label>
+                                        <input name="code" type="text" class="form-control cb-form-control" autocomplete="one-time-code" />
+                                    </div>
+                                    <button type="submit" class="btn btn-light-primary font-weight-bold mt-5">Recovery code yenile</button>
+                                </form>
+                                <form asp-controller="Settings" asp-action="DisableMfa" method="post" class="mt-6">
+                                    @Html.AntiForgeryToken()
+                                    <div class="form-group mb-0">
+                                        <label class="cb-form-label">2FA kapatmak icin MFA kodu veya recovery code</label>
+                                        <input name="code" type="text" class="form-control cb-form-control" autocomplete="one-time-code" />
+                                    </div>
+                                    <button type="submit" class="btn btn-light-danger font-weight-bold mt-5">2FA'yi kapat</button>
+                                </form>
+                            }
+                        </div>
+                    </div>
+                </div>
+
+                @if (Model.RecoveryCodes.Count > 0)
+                {
+                    <div class="cb-section mt-6">
+                        <div class="cb-section-title">Yeni recovery code'lar</div>
+                        <p class="text-muted mt-3 mb-0">Bu kodlar sadece su an gosterilir. Sonraki sayfa yenilemesinde geri dondurulmez.</p>
+                        <div class="row mt-4">
+                            @foreach (var recoveryCode in Model.RecoveryCodes)
+                            {
+                                <div class="col-md-3 col-sm-6 mb-3">
+                                    <div class="cb-notice cb-notice-info h-100"><strong>@recoveryCode</strong></div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>

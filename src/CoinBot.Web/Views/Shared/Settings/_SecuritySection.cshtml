@@ -16,10 +16,10 @@
                     <span class="cb-badge cb-badge-success" id="cb_settings_2fa_state">Aktif</span>
                     <span class="cb-badge cb-badge-info" id="cb_settings_2fa_method">Authenticator</span>
                 </div>
-                <p class="text-muted mt-4 mb-0">Gerçek 2FA enable/disable backend bu fazda yok; ancak kullanıcı güvenlik seviyesini tek bakışta okuyabilir.</p>
+                <p class="text-muted mt-4 mb-0">Authenticator tabanli 2FA kurulumu, recovery code yenileme ve kapatma akisi ayri MFA yonetim sayfasina baglandi.</p>
                 <div class="cb-inline-stack mt-5">
-                    <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="2FA yönet" data-cb-modal-message="2FA yönetimi sonraki backend fazında gerçek akışa bağlanacaktır. Bu CTA güvenlik yüzeyini görünür kılmak için hazırlanmıştır." data-cb-modal-confirm="Anladım">2FA yönet</button>
-                    <button type="button" class="btn btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_danger_modal" data-cb-modal-title="2FA'yı kapat" data-cb-modal-message="Gerçek backend yok; bu danger CTA yalnızca security confirmation foundation içindir." data-cb-modal-confirm="Kapat" data-cb-modal-tone="danger">2FA kapat</button>
+                    <a asp-controller="Settings" asp-action="Mfa" class="btn btn-light-primary font-weight-bold">2FA yonet</a>
+                    <a asp-controller="Settings" asp-action="Mfa" class="btn btn-light-danger font-weight-bold">2FA kapat</a>
                 </div>
             </div>
             <div class="cb-section">

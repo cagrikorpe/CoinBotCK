@@ -10,8 +10,9 @@
     ViewData["AuthHighlights"] = new[]
     {
         "6 haneli OTP input standardı",
-        "Authenticator / e-posta kodu yöntem placeholder alanları",
-        "Resend, timer, invalid code ve loading pattern desteği"
+        "Authenticator app doğrulaması gerçek backend akışına bağlı",
+        "Geçersiz kod ve oturum hataları aynı yüzeyde gösterilir",
+        "Login redirect zinciri korunarak sign-in tamamlanır"
     };
 }
 
@@ -20,7 +21,7 @@
         <div>
             <div class="cb-page-eyebrow">Multi-Factor Authentication</div>
             <h2 class="cb-page-title">Doğrulama kodunu girin</h2>
-            <p class="cb-page-description">Geçerli auth logic bağlandığında kullanıcı, başarılı login sonrası bu adıma taşınabilecek şekilde UI foundation hazırlandı.</p>
+            <p class="cb-page-description">Başarılı parola doğrulaması sonrası authenticator uygulamanızdaki 6 haneli kod backend tarafında doğrulanır ve oturum güvenli şekilde tamamlanır.</p>
         </div>
         <a asp-controller="Auth" asp-action="Login" class="btn btn-light-primary font-weight-bold">Başka hesapla giriş</a>
     </div>
@@ -31,7 +32,7 @@
     </div>
 
     <div class="cb-auth-alert cb-auth-alert-info mt-6">
-        Kod doğrulaması başarılı olduğunda kullanıcı onboarding wizard akışına yönlenecek zemin hazırlanmıştır.
+        Kod doğrulaması başarılı olduğunda kullanıcı hedeflenen auth gerektiren sayfaya yönlendirilir.
     </div>
 
     <form class="cb-auth-form-grid" asp-action="Mfa" asp-controller="Auth" method="post" novalidate data-cb-mfa-form>
@@ -49,13 +50,13 @@
                 <input type="text" inputmode="numeric" maxlength="1" class="form-control cb-otp-input" data-cb-otp />
                 <input type="text" inputmode="numeric" maxlength="1" class="form-control cb-otp-input" data-cb-otp />
             </div>
-            <div class="cb-field-feedback">Tek input veya bölünmüş OTP tasarımı bağlanabilecek şekilde bu sayfada foundation olarak hazırlandı.</div>
+            <div class="cb-field-feedback">Kod yalnızca sayısal olarak alınır ve backend'e normalize edilerek gönderilir.</div>
             <span asp-validation-for="Code" class="text-danger d-block mt-2"></span>
         </div>
 
         <div class="cb-auth-row-between">
-            <span class="cb-auth-meta">Kod süresi: <strong>00:28</strong> <span class="cb-auth-meta-soft">(placeholder)</span></span>
-            <a href="#" class="cb-auth-inline-link">Kodu yeniden gönder</a>
+            <span class="cb-auth-meta">Authenticator uygulamanizdaki guncel kodu kullanin.</span>
+            <span class="cb-auth-inline-link">Email fallback bu patch kapsaminda login ekranina baglanmadi.</span>
         </div>
 
         @if (ViewContext.ModelState.ErrorCount > 0)
@@ -65,7 +66,7 @@
         else
         {
             <div class="cb-validation-summary cb-validation-summary-danger">
-                Invalid code / expired code / rate-limit benzeri hata durumları bu bölgede gösterilir.
+                Gecersiz kod veya MFA oturumu bulunamadi durumlari bu bolgede gosterilir.
             </div>
         }
 

@@ -3,15 +3,15 @@
     Layout = "_AuthLayout";
     ViewData["Title"] = "Register";
     ViewData["AuthTitle"] = "Hesap oluştur";
-    ViewData["AuthDescription"] = "Yeni kullanıcıyı kayıt ekranından onboarding wizard akışına taşıyacak sade ve kontrollü foundation ekranı.";
-    ViewData["AuthEyebrow"] = "Auth Foundation";
+    ViewData["AuthDescription"] = "Yeni kullanıcıyı güvenli şekilde oluşturan ve giriş akışına bağlanan kontrollü kayıt ekranı.";
+    ViewData["AuthEyebrow"] = "Secure Access";
     ViewData["AuthStage"] = "Register";
     ViewData["AuthProgress"] = "2 / 3";
     ViewData["AuthHighlights"] = new[]
     {
-        "Trading bağlamına uygun kısa risk onayı",
-        "Password strength ve helper text foundation zemini",
-        "Kayıt sonrası MFA / onboarding geçişine hazır aksiyon dili"
+        "Yeni kullanıcı güvenli parola kurallarıyla oluşturulur",
+        "Varsayılan User rolü ve permission claim senkronizasyonu yapılır",
+        "Kayıt sonrası giriş ekranına güvenli şekilde dönülür"
     };
 }
 
@@ -20,12 +20,14 @@
         <div>
             <div class="cb-page-eyebrow">Create Account</div>
             <h2 class="cb-page-title">Yeni hesap oluşturun</h2>
-            <p class="cb-page-description">Gerçek kullanıcı oluşturma logic'i olmadan, doğrulama ve kurulum akışına hazır temiz kayıt formu foundation'ı.</p>
+            <p class="cb-page-description">Kayıt tamamlandığında hesabınız oluşturulur ve giriş ekranına yönlendirilirsiniz.</p>
         </div>
         <a asp-controller="Auth" asp-action="Login" class="btn btn-light-primary font-weight-bold">Login'e dön</a>
     </div>
 
     <form class="cb-auth-form-grid" asp-action="Register" asp-controller="Auth" method="post" novalidate>
+        <input asp-for="ReturnUrl" type="hidden" />
+
         <div class="form-group mb-0">
             <label class="cb-form-label">Ad Soyad</label>
             <input asp-for="FullName" class="form-control cb-form-control" placeholder="Ad Soyad" autocomplete="name" />
@@ -77,12 +79,6 @@
         {
             <div asp-validation-summary="ModelOnly" class="cb-validation-summary cb-validation-summary-warning"></div>
         }
-        else
-        {
-            <div class="cb-validation-summary cb-validation-summary-warning">
-                Validation summary foundation: eksik alan, zayıf şifre veya sözleşme onayı hataları bu bölgede toplanır.
-            </div>
-        }
 
         <div class="cb-auth-action-row">
             <button type="submit" class="btn btn-primary font-weight-bolder px-10" data-cb-button-loading>
@@ -94,7 +90,7 @@
     </form>
 
     <div class="cb-auth-alert cb-auth-alert-success mt-8">
-        Başarı / sonraki adım placeholder: kayıt tamamlandığında kullanıcı MFA doğrulama veya onboarding wizard akışına yönlendirilir.
+        Kullanıcı oluşturma tamamlandığında giriş ekranına yönlendirilirsiniz; varsa hedef sayfa dönüş bilgisi korunur.
     </div>
 </div>
 

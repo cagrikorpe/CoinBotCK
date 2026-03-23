@@ -27,6 +27,7 @@
     <ProjectReference Include="..\..\src\CoinBot.Application\CoinBot.Application.csproj" />
     <ProjectReference Include="..\..\src\CoinBot.Domain\CoinBot.Domain.csproj" />
     <ProjectReference Include="..\..\src\CoinBot.Infrastructure\CoinBot.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\CoinBot.Web\CoinBot.Web.csproj" />
   </ItemGroup>
 
 </Project>

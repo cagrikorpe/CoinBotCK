@@ -7,6 +7,7 @@ using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
+using CoinBot.Application.Abstractions.Mfa;
 using CoinBot.Application.Abstractions.Risk;
 using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Contracts.Common;
@@ -95,6 +96,7 @@ public sealed class DependencyInjectionTests
         var totpService = provider.GetRequiredService<ITotpService>();
         var emailOtpService = provider.GetRequiredService<IEmailOtpService>();
         var mfaCodeValidator = provider.GetRequiredService<IMfaCodeValidator>();
+        var mfaManagementService = provider.GetRequiredService<IMfaManagementService>();
 
         Assert.Same(dataScopeContextAccessor, dataScopeContext);
         Assert.True(identityOptions.User.RequireUniqueEmail);
@@ -189,6 +191,7 @@ public sealed class DependencyInjectionTests
         Assert.NotNull(totpService);
         Assert.NotNull(emailOtpService);
         Assert.NotNull(mfaCodeValidator);
+        Assert.NotNull(mfaManagementService);
     }
 
     [Theory]

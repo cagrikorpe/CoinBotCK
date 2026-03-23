@@ -1,9 +1,18 @@
 @using System.Linq
+@using System.Security.Claims
 @{
     var pageTitle = ViewData["Title"]?.ToString() ?? "Dashboard";
     var pageDescription = ViewData["PageDescription"]?.ToString() ?? "CoinBot UI foundation hazır.";
     var activeNav = ViewData["ActiveNav"]?.ToString() ?? "Dashboard";
     var breadcrumbItems = ViewData["BreadcrumbItems"] as string[] ?? new[] { "UI Foundation", pageTitle };
+    var isAuthenticated = User.Identity?.IsAuthenticated == true;
+    var displayName = User.Claims.FirstOrDefault(claim => claim.Type == ClaimTypes.Name)?.Value
+        ?? User.Identity?.Name
+        ?? "Guest";
+    var roleLabel = User.Claims.FirstOrDefault(claim => claim.Type == ClaimTypes.Role)?.Value
+        ?? (isAuthenticated ? "Authenticated" : "Guest");
+    var initialsSource = string.Concat(displayName.Where(char.IsLetterOrDigit).Take(2)).ToUpperInvariant();
+    var userInitials = string.IsNullOrWhiteSpace(initialsSource) ? "CB" : initialsSource;
 
     var navigation = new[]
     {
@@ -180,41 +189,49 @@
                                 </button>
                                 <div class="dropdown">
                                     <button class="btn btn-clean d-flex align-items-center px-2 py-2" type="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-                                        <span class="cb-user-avatar">OP</span>
+                                        <span class="cb-user-avatar">@userInitials</span>
                                         <span class="cb-user-meta d-none d-md-inline-block">
-                                            <span class="cb-user-name">Operator</span>
-                                            <span class="cb-user-role">Profile placeholder</span>
+                                            <span class="cb-user-name">@displayName</span>
+                                            <span class="cb-user-role">@roleLabel</span>
                                         </span>
                                     </button>
                                     <div class="dropdown-menu dropdown-menu-right dropdown-menu-anim-up dropdown-menu-lg p-0 cb-dropdown-menu">
                                         <div class="cb-dropdown-header">
-                                            <div class="cb-user-avatar">OP</div>
+                                            <div class="cb-user-avatar">@userInitials</div>
                                             <div>
-                                                <div class="font-weight-bolder text-white">Operator</div>
-                                                <div class="text-white-50">Auth menu foundation</div>
+                                                <div class="font-weight-bolder text-white">@displayName</div>
+                                                <div class="text-white-50">@roleLabel</div>
                                             </div>
                                         </div>
                                         <div class="navi navi-hover py-2">
-                                            <a asp-controller="Auth" asp-action="Login" class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75">
-                                                <span class="navi-text">Login foundation</span>
-                                                <span class="cb-badge cb-badge-info">UI</span>
-                                            </a>
-                                            <a asp-controller="Auth" asp-action="Register" class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75">
-                                                <span class="navi-text">Register foundation</span>
-                                                <span class="cb-badge cb-badge-warning">UI</span>
-                                            </a>
-                                            <a asp-controller="Auth" asp-action="Mfa" class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75">
-                                                <span class="navi-text">MFA foundation</span>
-                                                <span class="cb-badge cb-badge-danger">UI</span>
-                                            </a>
-                                            <a asp-controller="Onboarding" asp-action="Index" class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75">
-                                                <span class="navi-text">Onboarding</span>
-                                                <span class="cb-badge cb-badge-success">Flow</span>
-                                            </a>
-                                            <a asp-controller="Settings" asp-action="Index" class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75">
-                                                <span class="navi-text">Ayarlar</span>
-                                                <span class="cb-badge cb-badge-info">UI</span>
-                                            </a>
+                                            @if (isAuthenticated)
+                                            {
+                                                <a asp-controller="Onboarding" asp-action="Index" class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75">
+                                                    <span class="navi-text">Onboarding</span>
+                                                    <span class="cb-badge cb-badge-success">Flow</span>
+                                                </a>
+                                                <a asp-controller="Settings" asp-action="Index" class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75">
+                                                    <span class="navi-text">Ayarlar</span>
+                                                    <span class="cb-badge cb-badge-info">User</span>
+                                                </a>
+                                                <form asp-controller="Auth" asp-action="Logout" method="post" class="px-4 py-3">
+                                                    <button type="submit" class="btn btn-link p-0 d-flex w-100 justify-content-between align-items-center text-white-75">
+                                                        <span class="navi-text">Logout</span>
+                                                        <span class="cb-badge cb-badge-danger">Auth</span>
+                                                    </button>
+                                                </form>
+                                            }
+                                            else
+                                            {
+                                                <a asp-controller="Auth" asp-action="Login" class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75">
+                                                    <span class="navi-text">Giriş yap</span>
+                                                    <span class="cb-badge cb-badge-info">Auth</span>
+                                                </a>
+                                                <a asp-controller="Auth" asp-action="Register" class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75">
+                                                    <span class="navi-text">Hesap oluştur</span>
+                                                    <span class="cb-badge cb-badge-warning">Auth</span>
+                                                </a>
+                                            }
                                         </div>
                                     </div>
                                 </div>

@@ -6,15 +6,15 @@
     Layout = "_AuthLayout";
     ViewData["Title"] = "Login";
     ViewData["AuthTitle"] = "Güvenli giriş";
-    ViewData["AuthDescription"] = "Kullanıcıyı sade bir giriş deneyiminden MFA ve ilk kurulum adımlarına taşıyan foundation ekranı.";
-    ViewData["AuthEyebrow"] = "Auth Foundation";
+    ViewData["AuthDescription"] = "Kullanıcıyı güvenli şekilde oturum açtıran ve gerekli olduğunda MFA ile tamamlanan giriş akışı.";
+    ViewData["AuthEyebrow"] = "Secure Access";
     ViewData["AuthStage"] = "Login";
     ViewData["AuthProgress"] = "1 / 3";
     ViewData["AuthHighlights"] = new[]
     {
-        "Tutarlı input, validation ve error alanları",
-        "Show / hide password ve loading button standardı",
-        "Onboarding öncesi güven veren sade giriş kurgusu"
+        "Return URL korunarak güvenli redirect uygulanır",
+        "Cookie tabanlı oturum ve logout akışı aynı yüzeyle çalışır",
+        "Gerekli olduğunda MFA adımı mevcut akışın devamı olarak açılır"
     };
 }
 
@@ -23,7 +23,7 @@
         <div>
             <div class="cb-page-eyebrow">Sign In</div>
             <h2 class="cb-page-title">Hesabınıza giriş yapın</h2>
-            <p class="cb-page-description">Başarılı girişten sonra MFA doğrulama ve ilk kurulum akışı devreye alınacak şekilde zemin hazırlandı.</p>
+            <p class="cb-page-description">Başarılı girişten sonra oturum çerezi oluşturulur ve yetki gerektiren sayfalara güvenli şekilde yönlendirilirsiniz.</p>
         </div>
         <a asp-controller="Auth" asp-action="Register" class="btn btn-light-primary font-weight-bold">Hesap oluştur</a>
     </div>
@@ -43,7 +43,7 @@
     else
     {
         <div class="cb-auth-alert cb-auth-alert-info">
-            Bu ekran mevcut auth logic'ini değiştirmez. Yalnızca güvenli ve anlaşılır giriş foundation katmanını sunar.
+            E-posta veya kullanıcı adınızla giriş yapın. Korunan bir sayfadan geldiyseniz dönüş yönlendirmesi korunur.
         </div>
     }
 
@@ -83,12 +83,6 @@
         {
             <div asp-validation-summary="ModelOnly" class="cb-validation-summary cb-validation-summary-danger"></div>
         }
-        else
-        {
-            <div class="cb-validation-summary cb-validation-summary-danger">
-                Genel hata alanı foundation: invalid credential, lockout veya geçici auth hataları bu bölgede gösterilir.
-            </div>
-        }
 
         <div class="cb-auth-action-row">
             <button type="submit" class="btn btn-primary font-weight-bolder px-10" data-cb-button-loading>
@@ -100,7 +94,7 @@
     </form>
 
     <div class="cb-auth-footnote">
-        Küçük güvenlik notu alanı foundation: şüpheli giriş veya brute-force benzeri uyarılar burada kısa ve profesyonel dil ile gösterilir.
+        Çoklu başarısız denemelerde hesap geçici olarak kilitlenebilir; beklenmeyen girişlerde parolanızı değiştirin.
     </div>
 </div>
 

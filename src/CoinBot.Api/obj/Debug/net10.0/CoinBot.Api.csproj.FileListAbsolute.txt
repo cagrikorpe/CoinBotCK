@@ -169,7 +169,6 @@ D:\CkBot\Code\CoinBot\src\CoinBot.Api\obj\Debug\net10.0\staticwebassets.build.js
 D:\CkBot\Code\CoinBot\src\CoinBot.Api\obj\Debug\net10.0\staticwebassets.development.json
 D:\CkBot\Code\CoinBot\src\CoinBot.Api\obj\Debug\net10.0\staticwebassets.build.endpoints.json
 D:\CkBot\Code\CoinBot\src\CoinBot.Api\obj\Debug\net10.0\swae.build.ex.cache
-D:\CkBot\Code\CoinBot\src\CoinBot.Api\obj\Debug\net10.0\staticwebassets.upToDateCheck.txt
 D:\CkBot\Code\CoinBot\src\CoinBot.Api\obj\Debug\net10.0\CoinBot..D89B186B.Up2Date
 D:\CkBot\Code\CoinBot\src\CoinBot.Api\obj\Debug\net10.0\CoinBot.Api.dll
 D:\CkBot\Code\CoinBot\src\CoinBot.Api\obj\Debug\net10.0\refint\CoinBot.Api.dll

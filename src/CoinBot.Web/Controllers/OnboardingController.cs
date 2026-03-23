@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 
 namespace CoinBot.Web.Controllers;
 
+[Authorize]
 public class OnboardingController : Controller
 {
     public IActionResult Index()

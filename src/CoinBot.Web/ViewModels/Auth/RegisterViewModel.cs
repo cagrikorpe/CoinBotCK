@@ -24,4 +24,6 @@ public sealed class RegisterViewModel
 
     [Range(typeof(bool), "true", "true", ErrorMessage = "Devam etmek için risk onayını kabul etmelisiniz.")]
     public bool AcceptRiskDisclosure { get; set; }
+
+    public string? ReturnUrl { get; set; }
 }

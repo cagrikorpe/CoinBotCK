@@ -7,6 +7,7 @@ using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
+using CoinBot.Application.Abstractions.Mfa;
 using CoinBot.Application.Abstractions.Risk;
 using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Contracts.Common;
@@ -152,6 +153,7 @@ public static class DependencyInjection
         services.AddScoped<ITotpService, TotpService>();
         services.AddScoped<IEmailOtpService, EmailOtpService>();
         services.AddScoped<IMfaCodeValidator, MfaCodeValidator>();
+        services.AddScoped<IMfaManagementService, MfaManagementService>();
         services.AddSingleton<ICredentialKeyResolver, CredentialKeyResolver>();
         services.AddSingleton<ICredentialCipher, Aes256CredentialCipher>();
         services.AddSingleton<IStrategyRuleParser, StrategyRuleParser>();
@@ -229,6 +231,10 @@ public static class DependencyInjection
                 options.Lockout.AllowedForNewUsers = true;
                 options.Lockout.MaxFailedAccessAttempts = 5;
                 options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
+
+                options.SignIn.RequireConfirmedAccount = false;
+                options.SignIn.RequireConfirmedEmail = false;
+                options.SignIn.RequireConfirmedPhoneNumber = false;
 
                 options.User.RequireUniqueEmail = true;
                 options.Tokens.AuthenticatorIssuer = "CoinBot";
