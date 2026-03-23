@@ -6,4 +6,5 @@ public sealed record BinancePrivateStreamEvent(
     string EventType,
     DateTime EventTimeUtc,
     IReadOnlyCollection<ExchangeBalanceSnapshot> BalanceUpdates,
-    IReadOnlyCollection<ExchangePositionSnapshot> PositionUpdates);
+    IReadOnlyCollection<ExchangePositionSnapshot> PositionUpdates,
+    IReadOnlyCollection<BinanceOrderStatusSnapshot> OrderUpdates);

@@ -3,6 +3,7 @@ using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Auditing;
+using CoinBot.Infrastructure.DemoPortfolio;
 using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
@@ -81,7 +82,7 @@ public sealed class HealthChecksTests
             actor: "system",
             correlationId: "corr-health-001");
 
-        var demoEngineHealthCheck = new DemoEngineHealthCheck(globalExecutionSwitchService);
+        var demoEngineHealthCheck = new DemoEngineHealthCheck(globalExecutionSwitchService, dbContext);
 
         var result = await demoEngineHealthCheck.CheckHealthAsync(new HealthCheckContext());
 
@@ -101,7 +102,40 @@ public sealed class HealthChecksTests
             actor: "system",
             correlationId: "corr-health-002");
 
-        var demoEngineHealthCheck = new DemoEngineHealthCheck(globalExecutionSwitchService);
+        var demoEngineHealthCheck = new DemoEngineHealthCheck(globalExecutionSwitchService, dbContext);
+
+        var result = await demoEngineHealthCheck.CheckHealthAsync(new HealthCheckContext());
+
+        Assert.Equal(HealthStatus.Unhealthy, result.Status);
+    }
+
+    [Fact]
+    public async Task DemoEngineHealthCheck_ReturnsUnhealthy_WhenActiveDemoSessionHasDrift()
+    {
+        await using var dbContext = CreateDbContext();
+        var correlationContextAccessor = new CorrelationContextAccessor();
+        var auditLogService = new AuditLogService(dbContext, correlationContextAccessor);
+        var globalExecutionSwitchService = new GlobalExecutionSwitchService(dbContext, auditLogService);
+
+        await globalExecutionSwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "system",
+            correlationId: "corr-health-003");
+
+        dbContext.DemoSessions.Add(new DemoSession
+        {
+            OwnerUserId = "user-demo",
+            SequenceNumber = 1,
+            SeedAsset = "USDT",
+            SeedAmount = 1000m,
+            State = DemoSessionState.Active,
+            ConsistencyStatus = DemoConsistencyStatus.DriftDetected,
+            StartedAtUtc = new DateTime(2026, 3, 22, 12, 0, 0, DateTimeKind.Utc)
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var demoEngineHealthCheck = new DemoEngineHealthCheck(globalExecutionSwitchService, dbContext);
 
         var result = await demoEngineHealthCheck.CheckHealthAsync(new HealthCheckContext());
 

@@ -1,8 +1,11 @@
 using CoinBot.Application.Abstractions.Alerts;
 using CoinBot.Application.Abstractions.DataScope;
+using CoinBot.Application.Abstractions.DemoPortfolio;
 using CoinBot.Application.Abstractions.Execution;
+using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Auditing;
+using CoinBot.Infrastructure.DemoPortfolio;
 using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
@@ -131,6 +134,56 @@ public sealed class ExecutionGateTests
     }
 
     [Fact]
+    public async Task EnsureExecutionAllowedAsync_BlocksWhenDemoSessionDriftIsDetected()
+    {
+        await using var harness = CreateHarness();
+        await PrimeFreshMarketDataAsync(harness, "corr-450");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-12",
+            context: "Demo execution window open",
+            correlationId: "corr-451");
+
+        harness.DbContext.DemoSessions.Add(new DemoSession
+        {
+            OwnerUserId = "user-drift",
+            SequenceNumber = 1,
+            SeedAsset = "USDT",
+            SeedAmount = 1000m,
+            State = DemoSessionState.Active,
+            ConsistencyStatus = DemoConsistencyStatus.Unknown,
+            StartedAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime.AddMinutes(-1)
+        });
+        harness.DbContext.DemoWallets.Add(new DemoWallet
+        {
+            OwnerUserId = "user-drift",
+            Asset = "USDT",
+            AvailableBalance = 1000m,
+            ReservedBalance = 0m,
+            LastActivityAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime
+        });
+        await harness.DbContext.SaveChangesAsync();
+
+        var exception = await Assert.ThrowsAsync<ExecutionGateRejectedException>(() =>
+            harness.ExecutionGate.EnsureExecutionAllowedAsync(
+                new ExecutionGateRequest(
+                    Actor: "worker-04b",
+                    Action: "TradeExecution.Dispatch",
+                    Target: "bot-004b",
+                    Environment: ExecutionEnvironment.Demo,
+                    Context: "Demo dispatch attempt",
+                    CorrelationId: "corr-452",
+                    UserId: "user-drift")));
+
+        var session = await harness.DbContext.DemoSessions.SingleAsync(entity => entity.OwnerUserId == "user-drift");
+        var auditLog = await harness.DbContext.AuditLogs.SingleAsync(entity => entity.Outcome == "Blocked:DemoSessionDriftDetected");
+
+        Assert.Equal(ExecutionGateBlockedReason.DemoSessionDriftDetected, exception.Reason);
+        Assert.Equal(DemoConsistencyStatus.DriftDetected, session.ConsistencyStatus);
+        Assert.Equal(nameof(ExecutionEnvironment.Demo), auditLog.Environment);
+    }
+
+    [Fact]
     public async Task EnsureExecutionAllowedAsync_BlocksWhenRequestedEnvironmentDoesNotMatchResolvedScopedMode()
     {
         await using var harness = CreateHarness();
@@ -248,7 +301,19 @@ public sealed class ExecutionGateTests
             timeProvider,
             NullLogger<DataLatencyCircuitBreaker>.Instance);
         var tradingModeService = new TradingModeService(dbContext, auditLogService);
+        var demoSessionService = new DemoSessionService(
+            dbContext,
+            new DemoConsistencyWatchdogService(
+                dbContext,
+                Options.Create(new DemoSessionOptions()),
+                timeProvider,
+                NullLogger<DemoConsistencyWatchdogService>.Instance),
+            auditLogService,
+            Options.Create(new DemoSessionOptions()),
+            timeProvider,
+            NullLogger<DemoSessionService>.Instance);
         var executionGate = new ExecutionGate(
+            demoSessionService,
             switchService,
             circuitBreaker,
             tradingModeService,
@@ -269,7 +334,7 @@ public sealed class ExecutionGateTests
     {
         public string? UserId => null;
 
-        public bool HasIsolationBypass => false;
+        public bool HasIsolationBypass => true;
     }
 
     private sealed class FakeAlertService : IAlertService

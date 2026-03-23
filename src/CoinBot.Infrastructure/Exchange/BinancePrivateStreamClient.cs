@@ -112,25 +112,45 @@ public sealed class BinancePrivateStreamClient(
 
         if (string.Equals(eventType, "listenKeyExpired", StringComparison.Ordinal))
         {
-            return new BinancePrivateStreamEvent(eventType, eventTimeUtc, [], []);
+            return new BinancePrivateStreamEvent(eventType, eventTimeUtc, [], [], []);
         }
 
-        if (!string.Equals(eventType, "ACCOUNT_UPDATE", StringComparison.Ordinal))
+        if (string.Equals(eventType, "ACCOUNT_UPDATE", StringComparison.Ordinal))
         {
-            logger.LogDebug("Ignoring unsupported Binance private stream event type {EventType}.", eventType);
-            return null;
+            if (!root.TryGetProperty("a", out var accountUpdateElement))
+            {
+                return null;
+            }
+
+            return new BinancePrivateStreamEvent(
+                eventType,
+                eventTimeUtc,
+                ParseBalances(accountUpdateElement, eventTimeUtc),
+                ParsePositions(accountUpdateElement, eventTimeUtc),
+                []);
         }
 
-        if (!root.TryGetProperty("a", out var accountUpdateElement))
+        if (string.Equals(eventType, "ORDER_TRADE_UPDATE", StringComparison.Ordinal))
         {
-            return null;
+            if (!root.TryGetProperty("o", out var orderUpdateElement))
+            {
+                return null;
+            }
+
+            var orderUpdate = ParseOrderUpdate(orderUpdateElement, eventTimeUtc);
+
+            return orderUpdate is null
+                ? null
+                : new BinancePrivateStreamEvent(
+                    eventType,
+                    eventTimeUtc,
+                    [],
+                    [],
+                    [orderUpdate]);
         }
 
-        return new BinancePrivateStreamEvent(
-            eventType,
-            eventTimeUtc,
-            ParseBalances(accountUpdateElement, eventTimeUtc),
-            ParsePositions(accountUpdateElement, eventTimeUtc));
+        logger.LogDebug("Ignoring unsupported Binance private stream event type {EventType}.", eventType);
+        return null;
     }
 
     private static IReadOnlyCollection<ExchangeBalanceSnapshot> ParseBalances(JsonElement accountUpdateElement, DateTime eventTimeUtc)
@@ -224,6 +244,53 @@ public sealed class BinancePrivateStreamClient(
             .OrderBy(position => position.Symbol, StringComparer.Ordinal)
             .ThenBy(position => position.PositionSide, StringComparer.Ordinal)
             .ToArray();
+    }
+
+    private static BinanceOrderStatusSnapshot? ParseOrderUpdate(JsonElement orderUpdateElement, DateTime fallbackTimestampUtc)
+    {
+        var symbol = orderUpdateElement.TryGetProperty("s", out var symbolElement)
+            ? NormalizeCode(symbolElement.GetString())
+            : null;
+        var exchangeOrderId = orderUpdateElement.TryGetProperty("i", out var orderIdElement)
+            ? orderIdElement.ToString()
+            : null;
+        var clientOrderId = orderUpdateElement.TryGetProperty("c", out var clientOrderIdElement)
+            ? clientOrderIdElement.GetString()?.Trim()
+            : null;
+        var status = orderUpdateElement.TryGetProperty("X", out var statusElement)
+            ? NormalizeCode(statusElement.GetString())
+            : null;
+        var originalQuantity = TryReadDecimal(orderUpdateElement, "q");
+        var executedQuantity = TryReadDecimal(orderUpdateElement, "z");
+        var cumulativeQuoteQuantity = TryReadDecimal(orderUpdateElement, "Z");
+        var averagePrice = TryReadDecimal(orderUpdateElement, "ap");
+        var lastExecutedQuantity = TryReadDecimal(orderUpdateElement, "l");
+        var lastExecutedPrice = TryReadDecimal(orderUpdateElement, "L");
+        var eventTimeUtc = TryReadUnixMilliseconds(orderUpdateElement, "T", fallbackTimestampUtc);
+
+        if (string.IsNullOrWhiteSpace(symbol) ||
+            string.IsNullOrWhiteSpace(exchangeOrderId) ||
+            string.IsNullOrWhiteSpace(clientOrderId) ||
+            string.IsNullOrWhiteSpace(status) ||
+            originalQuantity is null ||
+            executedQuantity is null)
+        {
+            return null;
+        }
+
+        return new BinanceOrderStatusSnapshot(
+            symbol,
+            exchangeOrderId,
+            clientOrderId,
+            status,
+            originalQuantity.Value,
+            executedQuantity.Value,
+            cumulativeQuoteQuantity ?? 0m,
+            averagePrice ?? 0m,
+            lastExecutedQuantity ?? 0m,
+            lastExecutedPrice ?? 0m,
+            eventTimeUtc,
+            "Binance.PrivateStream.OrderTradeUpdate");
     }
 
     private static decimal? TryReadDecimal(JsonElement element, string propertyName)

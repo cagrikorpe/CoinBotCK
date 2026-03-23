@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using CoinBot.Application.Abstractions.Auditing;
+using CoinBot.Application.Abstractions.DemoPortfolio;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Observability;
@@ -8,6 +9,7 @@ using Microsoft.Extensions.Logging;
 namespace CoinBot.Infrastructure.Execution;
 
 public sealed class ExecutionGate(
+    IDemoSessionService demoSessionService,
     IGlobalExecutionSwitchService globalExecutionSwitchService,
     IDataLatencyCircuitBreaker dataLatencyCircuitBreaker,
     ITradingModeResolver tradingModeResolver,
@@ -58,6 +60,40 @@ public sealed class ExecutionGate(
                 CreateMessage(latencyBlockedReason.Value, request.Environment));
         }
 
+        DemoSessionSnapshot? demoSessionSnapshot = null;
+
+        if (request.Environment == ExecutionEnvironment.Demo &&
+            !string.IsNullOrWhiteSpace(request.UserId))
+        {
+            demoSessionSnapshot = await demoSessionService.RunConsistencyCheckAsync(request.UserId, cancellationToken);
+
+            if (demoSessionSnapshot is not null &&
+                demoSessionSnapshot.ConsistencyStatus == DemoConsistencyStatus.DriftDetected)
+            {
+                using var executionActivity = CoinBotActivity.StartActivity("CoinBot.Execution.Gate");
+                ApplyTags(executionActivity, request);
+                executionActivity.SetTag("coinbot.execution.result", ExecutionGateBlockedReason.DemoSessionDriftDetected.ToString());
+
+                await auditLogService.WriteAsync(
+                    new AuditLogWriteRequest(
+                        request.Actor,
+                        request.Action,
+                        request.Target,
+                        BuildAuditContext(request.Context, latencySnapshot, demoSessionSnapshot: demoSessionSnapshot),
+                        request.CorrelationId,
+                        MapOutcome(ExecutionGateBlockedReason.DemoSessionDriftDetected),
+                        request.Environment.ToString()),
+                    cancellationToken);
+
+                logger.LogWarning("Execution stage blocked the request because the active demo session drifted.");
+
+                throw new ExecutionGateRejectedException(
+                    ExecutionGateBlockedReason.DemoSessionDriftDetected,
+                    request.Environment,
+                    CreateMessage(ExecutionGateBlockedReason.DemoSessionDriftDetected, request.Environment));
+            }
+        }
+
         var snapshot = await globalExecutionSwitchService.GetSnapshotAsync(cancellationToken);
         TradingModeResolution modeResolution;
 
@@ -91,7 +127,7 @@ public sealed class ExecutionGate(
                 request.Actor,
                 request.Action,
                 request.Target,
-                BuildAuditContext(request.Context, latencySnapshot, modeResolution),
+                BuildAuditContext(request.Context, latencySnapshot, modeResolution, demoSessionSnapshot),
                 request.CorrelationId,
                 blockedReason is null ? "Allowed" : MapOutcome(blockedReason.Value),
                 request.Environment.ToString()),
@@ -247,6 +283,7 @@ public sealed class ExecutionGate(
             ExecutionGateBlockedReason.StaleMarketData => "Blocked:StaleMarketData",
             ExecutionGateBlockedReason.ClockDriftExceeded => "Blocked:ClockDriftExceeded",
             ExecutionGateBlockedReason.DataLatencyGuardUnavailable => "Blocked:DataLatencyGuardUnavailable",
+            ExecutionGateBlockedReason.DemoSessionDriftDetected => "Blocked:DemoSessionDriftDetected",
             _ => "Blocked:Unknown"
         };
     }
@@ -271,6 +308,8 @@ public sealed class ExecutionGate(
                 "Execution blocked because clock drift exceeded the safety threshold.",
             ExecutionGateBlockedReason.DataLatencyGuardUnavailable =>
                 "Execution blocked because the data latency guard could not be evaluated.",
+            ExecutionGateBlockedReason.DemoSessionDriftDetected =>
+                "Execution blocked because the active demo session consistency watchdog detected drift.",
             _ => "Execution blocked by an unknown gate decision."
         };
     }
@@ -278,7 +317,8 @@ public sealed class ExecutionGate(
     private static string? BuildAuditContext(
         string? requestContext,
         DegradedModeSnapshot latencySnapshot,
-        TradingModeResolution? modeResolution = null)
+        TradingModeResolution? modeResolution = null,
+        DemoSessionSnapshot? demoSessionSnapshot = null)
     {
         var contextParts = new List<string>();
 
@@ -296,11 +336,29 @@ public sealed class ExecutionGate(
                 $"ResolvedMode={modeResolution.EffectiveMode}; Source={modeResolution.ResolutionSource}; Reason={modeResolution.Reason}");
         }
 
+        if (demoSessionSnapshot is not null)
+        {
+            contextParts.Add(
+                $"DemoSessionState={demoSessionSnapshot.State}; DemoConsistency={demoSessionSnapshot.ConsistencyStatus}; DemoSessionSequence={demoSessionSnapshot.SequenceNumber}; DemoDrift={Truncate(demoSessionSnapshot.LastDriftSummary, 160) ?? "none"}");
+        }
+
         var combinedContext = string.Join(" | ", contextParts);
 
         return combinedContext.Length <= 2048
             ? combinedContext
             : combinedContext[..2048];
+    }
+
+    private static string? Truncate(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return value.Length <= maxLength
+            ? value
+            : value[..maxLength];
     }
 }
 

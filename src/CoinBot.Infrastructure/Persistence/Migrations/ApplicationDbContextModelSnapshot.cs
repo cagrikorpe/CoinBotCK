@@ -619,6 +619,83 @@ namespace CoinBot.Infrastructure.Persistence.Migrations
                     b.ToTable("DemoPositions", (string)null);
                 });
 
+            modelBuilder.Entity("CoinBot.Domain.Entities.DemoSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("ClosedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ConsistencyStatus")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)")
+                        .HasDefaultValue("Unknown");
+
+                    b.Property<DateTime>("CreatedDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime?>("LastConsistencyCheckedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("LastDriftDetectedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("LastDriftSummary")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<string>("OwnerUserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<decimal>("SeedAmount")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
+                    b.Property<string>("SeedAsset")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<int>("SequenceNumber")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("StartedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)")
+                        .HasDefaultValue("Active");
+
+                    b.Property<DateTime>("UpdatedDate")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OwnerUserId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_DemoSessions_OwnerUserId_Active")
+                        .HasFilter("[State] = N'Active' AND [IsDeleted] = 0");
+
+                    b.HasIndex("OwnerUserId", "SequenceNumber")
+                        .IsUnique();
+
+                    b.HasIndex("OwnerUserId", "State", "ConsistencyStatus");
+
+                    b.ToTable("DemoSessions", (string)null);
+                });
+
             modelBuilder.Entity("CoinBot.Domain.Entities.DemoWallet", b =>
                 {
                     b.Property<Guid>("Id")
@@ -957,6 +1034,263 @@ namespace CoinBot.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("ExchangePositions", (string)null);
+                });
+
+            modelBuilder.Entity("CoinBot.Domain.Entities.ExecutionOrder", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal?>("AverageFillPrice")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
+                    b.Property<string>("BaseAsset")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<Guid?>("BotId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("ExchangeAccountId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ExecutionEnvironment")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("ExecutorKind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("ExternalOrderId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("FailureCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("FailureDetail")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<decimal>("FilledQuantity")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)")
+                        .HasDefaultValue(0m);
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime?>("LastDriftDetectedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("LastFilledAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("LastReconciledAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("LastStateChangedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("OrderType")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<string>("OwnerUserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("ParentCorrelationId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<decimal>("Price")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
+                    b.Property<decimal>("Quantity")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
+                    b.Property<string>("QuoteAsset")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("ReconciliationStatus")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)")
+                        .HasDefaultValue("Unknown");
+
+                    b.Property<string>("ReconciliationSummary")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<Guid?>("ReplacesExecutionOrderId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("RootCorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("Side")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<string>("SignalType")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<decimal?>("StopLossPrice")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
+                    b.Property<string>("StrategyKey")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<Guid>("StrategySignalId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("SubmittedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Symbol")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<decimal?>("TakeProfitPrice")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
+                    b.Property<string>("Timeframe")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<Guid>("TradingStrategyId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("TradingStrategyVersionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("UpdatedDate")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BotId");
+
+                    b.HasIndex("ExchangeAccountId");
+
+                    b.HasIndex("OwnerUserId");
+
+                    b.HasIndex("ReplacesExecutionOrderId");
+
+                    b.HasIndex("StrategySignalId");
+
+                    b.HasIndex("OwnerUserId", "IdempotencyKey")
+                        .IsUnique();
+
+                    b.HasIndex("ExecutorKind", "State", "LastReconciledAtUtc");
+
+                    b.HasIndex("OwnerUserId", "State", "LastStateChangedAtUtc");
+
+                    b.ToTable("ExecutionOrders", (string)null);
+                });
+
+            modelBuilder.Entity("CoinBot.Domain.Entities.ExecutionOrderTransition", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime>("CreatedDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Detail")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<string>("EventCode")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<Guid>("ExecutionOrderId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime>("OccurredAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("OwnerUserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("ParentCorrelationId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<int>("SequenceNumber")
+                        .HasColumnType("int");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<DateTime>("UpdatedDate")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OwnerUserId");
+
+                    b.HasIndex("ExecutionOrderId", "OccurredAtUtc");
+
+                    b.HasIndex("ExecutionOrderId", "SequenceNumber")
+                        .IsUnique();
+
+                    b.ToTable("ExecutionOrderTransitions", (string)null);
                 });
 
             modelBuilder.Entity("CoinBot.Domain.Entities.GlobalExecutionSwitch", b =>
@@ -1824,6 +2158,15 @@ namespace CoinBot.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("CoinBot.Domain.Entities.DemoSession", b =>
+                {
+                    b.HasOne("CoinBot.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("CoinBot.Domain.Entities.DemoWallet", b =>
                 {
                     b.HasOne("CoinBot.Infrastructure.Identity.ApplicationUser", null)
@@ -1877,6 +2220,30 @@ namespace CoinBot.Infrastructure.Persistence.Migrations
                     b.HasOne("CoinBot.Domain.Entities.ExchangeAccount", null)
                         .WithMany()
                         .HasForeignKey("ExchangeAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("CoinBot.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("CoinBot.Domain.Entities.ExecutionOrder", b =>
+                {
+                    b.HasOne("CoinBot.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("CoinBot.Domain.Entities.ExecutionOrderTransition", b =>
+                {
+                    b.HasOne("CoinBot.Domain.Entities.ExecutionOrder", null)
+                        .WithMany()
+                        .HasForeignKey("ExecutionOrderId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 

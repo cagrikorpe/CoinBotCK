@@ -2,6 +2,7 @@ using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Application.Abstractions.ExchangeCredentials;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -112,6 +113,7 @@ public sealed class BinancePrivateStreamManager(
                 }
 
                 currentState.Apply(streamEvent);
+                await ApplyExecutionOrderUpdatesAsync(streamEvent.OrderUpdates, cancellationToken);
 
                 var snapshot = currentState.CreateSnapshot(
                     account.ExchangeAccountId,
@@ -394,6 +396,28 @@ public sealed class BinancePrivateStreamManager(
             listenKeyRenewedAtUtc,
             lastPrivateStreamEventAtUtc,
             cancellationToken);
+    }
+
+    private async Task ApplyExecutionOrderUpdatesAsync(
+        IReadOnlyCollection<BinanceOrderStatusSnapshot> orderUpdates,
+        CancellationToken cancellationToken)
+    {
+        if (orderUpdates.Count == 0)
+        {
+            return;
+        }
+
+        using var scope = serviceScopeFactory.CreateScope();
+        using var systemScope = scope.ServiceProvider
+            .GetRequiredService<IDataScopeContextAccessor>()
+            .BeginScope(hasIsolationBypass: true);
+        var lifecycleService = scope.ServiceProvider.GetRequiredService<ExecutionOrderLifecycleService>();
+
+        foreach (var orderUpdate in orderUpdates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await lifecycleService.ApplyExchangeUpdateAsync(orderUpdate, cancellationToken);
+        }
     }
 
     private sealed class ExchangeAccountSnapshotState(ExchangeAccountSnapshot snapshot)

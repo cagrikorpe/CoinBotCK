@@ -9,6 +9,7 @@ namespace CoinBot.Infrastructure.DemoPortfolio;
 
 public sealed class DemoPortfolioAccountingService(
     ApplicationDbContext dbContext,
+    IDemoSessionService demoSessionService,
     TimeProvider timeProvider,
     ILogger<DemoPortfolioAccountingService> logger) : IDemoPortfolioAccountingService
 {
@@ -23,9 +24,10 @@ public sealed class DemoPortfolioAccountingService(
     {
         var ownerUserId = NormalizeRequired(request.OwnerUserId, nameof(request.OwnerUserId));
         EnsureDemoEnvironment(request.Environment);
+        var session = await demoSessionService.EnsureActiveSessionAsync(ownerUserId, cancellationToken);
         var operationId = NormalizeOperationId(request.OperationId);
 
-        if (await FindTransactionAsync(ownerUserId, operationId, cancellationToken) is DemoLedgerTransaction existingTransaction)
+        if (await FindTransactionAsync(ownerUserId, operationId, session.StartedAtUtc, cancellationToken) is DemoLedgerTransaction existingTransaction)
         {
             return await BuildReplayResultAsync(existingTransaction, cancellationToken);
         }
@@ -53,6 +55,7 @@ public sealed class DemoPortfolioAccountingService(
         dbContext.DemoLedgerTransactions.Add(transaction);
         dbContext.DemoLedgerEntries.AddRange(entries);
         await dbContext.SaveChangesAsync(cancellationToken);
+        await demoSessionService.RunConsistencyCheckAsync(ownerUserId, cancellationToken);
 
         logger.LogDebug(
             "Demo portfolio transaction {OperationId} applied as {TransactionType}.",
@@ -68,9 +71,10 @@ public sealed class DemoPortfolioAccountingService(
     {
         var ownerUserId = NormalizeRequired(request.OwnerUserId, nameof(request.OwnerUserId));
         EnsureDemoEnvironment(request.Environment);
+        var session = await demoSessionService.EnsureActiveSessionAsync(ownerUserId, cancellationToken);
         var operationId = NormalizeOperationId(request.OperationId);
 
-        if (await FindTransactionAsync(ownerUserId, operationId, cancellationToken) is DemoLedgerTransaction existingTransaction)
+        if (await FindTransactionAsync(ownerUserId, operationId, session.StartedAtUtc, cancellationToken) is DemoLedgerTransaction existingTransaction)
         {
             return await BuildReplayResultAsync(existingTransaction, cancellationToken);
         }
@@ -99,6 +103,7 @@ public sealed class DemoPortfolioAccountingService(
         dbContext.DemoLedgerTransactions.Add(transaction);
         dbContext.DemoLedgerEntries.AddRange(entries);
         await dbContext.SaveChangesAsync(cancellationToken);
+        await demoSessionService.RunConsistencyCheckAsync(ownerUserId, cancellationToken);
 
         logger.LogDebug(
             "Demo portfolio transaction {OperationId} applied as {TransactionType}.",
@@ -114,9 +119,10 @@ public sealed class DemoPortfolioAccountingService(
     {
         var ownerUserId = NormalizeRequired(request.OwnerUserId, nameof(request.OwnerUserId));
         EnsureDemoEnvironment(request.Environment);
+        var session = await demoSessionService.EnsureActiveSessionAsync(ownerUserId, cancellationToken);
         var operationId = NormalizeOperationId(request.OperationId);
 
-        if (await FindTransactionAsync(ownerUserId, operationId, cancellationToken) is DemoLedgerTransaction existingTransaction)
+        if (await FindTransactionAsync(ownerUserId, operationId, session.StartedAtUtc, cancellationToken) is DemoLedgerTransaction existingTransaction)
         {
             return await BuildReplayResultAsync(existingTransaction, cancellationToken);
         }
@@ -145,6 +151,7 @@ public sealed class DemoPortfolioAccountingService(
         dbContext.DemoLedgerTransactions.Add(transaction);
         dbContext.DemoLedgerEntries.AddRange(entries);
         await dbContext.SaveChangesAsync(cancellationToken);
+        await demoSessionService.RunConsistencyCheckAsync(ownerUserId, cancellationToken);
 
         logger.LogDebug(
             "Demo portfolio transaction {OperationId} applied as {TransactionType}.",
@@ -160,9 +167,10 @@ public sealed class DemoPortfolioAccountingService(
     {
         var ownerUserId = NormalizeRequired(request.OwnerUserId, nameof(request.OwnerUserId));
         EnsureDemoEnvironment(request.Environment);
+        var session = await demoSessionService.EnsureActiveSessionAsync(ownerUserId, cancellationToken);
         var operationId = NormalizeOperationId(request.OperationId);
 
-        if (await FindTransactionAsync(ownerUserId, operationId, cancellationToken) is DemoLedgerTransaction existingTransaction)
+        if (await FindTransactionAsync(ownerUserId, operationId, session.StartedAtUtc, cancellationToken) is DemoLedgerTransaction existingTransaction)
         {
             return await BuildReplayResultAsync(existingTransaction, cancellationToken);
         }
@@ -290,6 +298,8 @@ public sealed class DemoPortfolioAccountingService(
             await dbContext.SaveChangesAsync(cancellationToken);
         }
 
+        await demoSessionService.RunConsistencyCheckAsync(ownerUserId, cancellationToken);
+
         logger.LogDebug(
             "Demo portfolio transaction {OperationId} applied as {TransactionType}.",
             operationId,
@@ -304,9 +314,10 @@ public sealed class DemoPortfolioAccountingService(
     {
         var ownerUserId = NormalizeRequired(request.OwnerUserId, nameof(request.OwnerUserId));
         EnsureDemoEnvironment(request.Environment);
+        var session = await demoSessionService.EnsureActiveSessionAsync(ownerUserId, cancellationToken);
         var operationId = NormalizeOperationId(request.OperationId);
 
-        if (await FindTransactionAsync(ownerUserId, operationId, cancellationToken) is DemoLedgerTransaction existingTransaction)
+        if (await FindTransactionAsync(ownerUserId, operationId, session.StartedAtUtc, cancellationToken) is DemoLedgerTransaction existingTransaction)
         {
             return await BuildReplayResultAsync(existingTransaction, cancellationToken);
         }
@@ -372,6 +383,8 @@ public sealed class DemoPortfolioAccountingService(
                 await dbContext.SaveChangesAsync(cancellationToken);
             }
 
+            await demoSessionService.RunConsistencyCheckAsync(ownerUserId, cancellationToken);
+
             return BuildResult(transaction, entries, position, isReplay: false);
         }
 
@@ -385,6 +398,8 @@ public sealed class DemoPortfolioAccountingService(
             await UpdateBotOpenPositionCountAsync(bot, cancellationToken);
             await dbContext.SaveChangesAsync(cancellationToken);
         }
+
+        await demoSessionService.RunConsistencyCheckAsync(ownerUserId, cancellationToken);
         return BuildResult(transaction, Array.Empty<DemoLedgerEntry>(), position, isReplay: false);
     }
 
@@ -1178,13 +1193,15 @@ public sealed class DemoPortfolioAccountingService(
     private async Task<DemoLedgerTransaction?> FindTransactionAsync(
         string ownerUserId,
         string operationId,
+        DateTime sessionStartedAtUtc,
         CancellationToken cancellationToken)
     {
         return await dbContext.DemoLedgerTransactions
             .AsNoTracking()
             .SingleOrDefaultAsync(
                 entity => entity.OwnerUserId == ownerUserId &&
-                          entity.OperationId == operationId,
+                          entity.OperationId == operationId &&
+                          entity.CreatedDate >= sessionStartedAtUtc,
                 cancellationToken);
     }
 

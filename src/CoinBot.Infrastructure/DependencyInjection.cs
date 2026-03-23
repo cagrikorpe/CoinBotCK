@@ -84,6 +84,12 @@ public static class DependencyInjection
             .Validate(
                 options => options.StopDataThresholdSeconds >= options.StaleDataThresholdSeconds,
                 "StopDataThresholdSeconds must be greater than or equal to StaleDataThresholdSeconds.");
+        services.AddOptions<DemoFillSimulatorOptions>()
+            .Bind(configuration.GetSection("ExecutionSafety:DemoFillSimulator"))
+            .ValidateDataAnnotations();
+        services.AddOptions<DemoSessionOptions>()
+            .Bind(configuration.GetSection("ExecutionSafety:DemoSession"))
+            .ValidateDataAnnotations();
         services.AddOptions<InMemoryCacheOptions>()
             .Bind(configuration.GetSection("Caching:InMemory"))
             .ValidateDataAnnotations();
@@ -128,7 +134,15 @@ public static class DependencyInjection
         services.AddScoped<IGlobalExecutionSwitchService, GlobalExecutionSwitchService>();
         services.AddScoped<IDataLatencyCircuitBreaker, DataLatencyCircuitBreaker>();
         services.AddScoped<IDemoPortfolioAccountingService, DemoPortfolioAccountingService>();
+        services.AddScoped<DemoConsistencyWatchdogService>();
+        services.AddScoped<IDemoSessionService, DemoSessionService>();
+        services.AddScoped<DemoFillSimulator>();
+        services.AddScoped<ExecutionOrderLifecycleService>();
+        services.AddScoped<ExecutionReconciliationService>();
+        services.AddScoped<VirtualExecutor>();
+        services.AddScoped<BinanceExecutor>();
         services.AddScoped<IExecutionGate, ExecutionGate>();
+        services.AddScoped<IExecutionEngine, ExecutionEngine>();
         services.AddScoped<IRiskPolicyEvaluator, RiskPolicyEvaluator>();
         services.AddScoped<IStrategySignalService, StrategySignalService>();
         services.AddScoped<IStrategyVersionService, StrategyVersionService>();
@@ -190,6 +204,7 @@ public static class DependencyInjection
         services.AddHostedService<ExchangeBalanceSyncWorker>();
         services.AddHostedService<ExchangePositionSyncWorker>();
         services.AddHostedService<ExchangeAppStateSyncWorker>();
+        services.AddHostedService<ExecutionReconciliationWorker>();
 
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseSqlServer(connectionString, sqlOptions =>

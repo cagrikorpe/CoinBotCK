@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using CoinBot.Application.Abstractions.Exchange;
+using CoinBot.Domain.Enums;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -16,6 +17,157 @@ public sealed class BinancePrivateRestClient(
     ILogger<BinancePrivateRestClient> logger) : IBinancePrivateRestClient
 {
     private readonly BinancePrivateDataOptions optionsValue = options.Value;
+
+    public async Task<BinanceOrderPlacementResult> PlaceOrderAsync(
+        BinanceOrderPlacementRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var submittedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+        var timestamp = timeProvider.GetUtcNow().ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
+        var parameters = new List<KeyValuePair<string, string>>
+        {
+            new("symbol", NormalizeCode(request.Symbol) ?? string.Empty),
+            new("side", request.Side == ExecutionOrderSide.Buy ? "BUY" : "SELL"),
+            new("type", request.OrderType == ExecutionOrderType.Market ? "MARKET" : "LIMIT"),
+            new("quantity", FormatDecimal(request.Quantity)),
+            new("newClientOrderId", request.ClientOrderId.Trim()),
+            new("timestamp", timestamp),
+            new("recvWindow", optionsValue.RecvWindowMilliseconds.ToString(CultureInfo.InvariantCulture))
+        };
+
+        if (request.OrderType == ExecutionOrderType.Limit)
+        {
+            parameters.Add(new("timeInForce", "GTC"));
+            parameters.Add(new("price", FormatDecimal(request.Price)));
+        }
+
+        var unsignedQuery = string.Join(
+            "&",
+            parameters.Select(parameter =>
+                $"{parameter.Key}={Uri.EscapeDataString(parameter.Value)}"));
+        var signature = ComputeSignature(unsignedQuery, request.ApiSecret);
+        var path = $"/fapi/v1/order?{unsignedQuery}&signature={signature}";
+
+        using var httpRequest = CreateApiKeyRequest(HttpMethod.Post, path, request.ApiKey);
+        using var response = await httpClient.SendAsync(httpRequest, cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Binance order placement request failed with status {(int)response.StatusCode}.");
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        var root = document.RootElement;
+        var orderId = root.TryGetProperty("orderId", out var orderIdElement)
+            ? orderIdElement.ToString()
+            : request.ClientOrderId;
+        var clientOrderId = root.TryGetProperty("clientOrderId", out var clientOrderIdElement)
+            ? clientOrderIdElement.GetString()?.Trim()
+            : request.ClientOrderId;
+
+        logger.LogInformation(
+            "Binance order placed for account {ExchangeAccountId} on {Symbol}.",
+            request.ExchangeAccountId,
+            request.Symbol);
+
+        return new BinanceOrderPlacementResult(
+            string.IsNullOrWhiteSpace(orderId) ? request.ClientOrderId : orderId,
+            string.IsNullOrWhiteSpace(clientOrderId) ? request.ClientOrderId : clientOrderId,
+            submittedAtUtc);
+    }
+
+    public async Task<BinanceOrderStatusSnapshot> GetOrderAsync(
+        BinanceOrderQueryRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (string.IsNullOrWhiteSpace(request.ExchangeOrderId) &&
+            string.IsNullOrWhiteSpace(request.ClientOrderId))
+        {
+            throw new ArgumentException("ExchangeOrderId or ClientOrderId is required.", nameof(request));
+        }
+
+        var observedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+        var timestamp = timeProvider.GetUtcNow().ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
+        var parameters = new List<KeyValuePair<string, string>>
+        {
+            new("symbol", NormalizeCode(request.Symbol) ?? string.Empty),
+            new("timestamp", timestamp),
+            new("recvWindow", optionsValue.RecvWindowMilliseconds.ToString(CultureInfo.InvariantCulture))
+        };
+
+        if (!string.IsNullOrWhiteSpace(request.ExchangeOrderId))
+        {
+            parameters.Add(new("orderId", request.ExchangeOrderId.Trim()));
+        }
+        else
+        {
+            parameters.Add(new("origClientOrderId", request.ClientOrderId!.Trim()));
+        }
+
+        var unsignedQuery = string.Join(
+            "&",
+            parameters.Select(parameter =>
+                $"{parameter.Key}={Uri.EscapeDataString(parameter.Value)}"));
+        var signature = ComputeSignature(unsignedQuery, request.ApiSecret);
+        var path = $"/fapi/v1/order?{unsignedQuery}&signature={signature}";
+
+        using var httpRequest = CreateApiKeyRequest(HttpMethod.Get, path, request.ApiKey);
+        using var response = await httpClient.SendAsync(httpRequest, cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Binance order status request failed with status {(int)response.StatusCode}.");
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        var root = document.RootElement;
+        var orderId = root.TryGetProperty("orderId", out var orderIdElement)
+            ? orderIdElement.ToString()
+            : request.ExchangeOrderId;
+        var clientOrderId = root.TryGetProperty("clientOrderId", out var clientOrderIdElement)
+            ? clientOrderIdElement.GetString()?.Trim()
+            : request.ClientOrderId;
+        var status = root.TryGetProperty("status", out var statusElement)
+            ? NormalizeCode(statusElement.GetString())
+            : null;
+        var originalQuantity = TryReadDecimal(root, "origQty") ?? 0m;
+        var executedQuantity = TryReadDecimal(root, "executedQty") ?? 0m;
+        var cumulativeQuoteQuantity = TryReadDecimal(root, "cumQuote") ?? 0m;
+        var averagePrice = TryReadDecimal(root, "avgPrice") ?? 0m;
+        var updatedAtUtc = TryReadUnixMilliseconds(root, "updateTime", observedAtUtc);
+
+        if (string.IsNullOrWhiteSpace(orderId) ||
+            string.IsNullOrWhiteSpace(clientOrderId) ||
+            string.IsNullOrWhiteSpace(status))
+        {
+            throw new InvalidOperationException("Binance order status response was incomplete.");
+        }
+
+        logger.LogDebug(
+            "Binance order status refreshed for account {ExchangeAccountId} on {Symbol}.",
+            request.ExchangeAccountId,
+            request.Symbol);
+
+        return new BinanceOrderStatusSnapshot(
+            NormalizeCode(request.Symbol) ?? request.Symbol.Trim(),
+            orderId,
+            clientOrderId,
+            status,
+            originalQuantity,
+            executedQuantity,
+            cumulativeQuoteQuantity,
+            averagePrice,
+            LastExecutedQuantity: 0m,
+            LastExecutedPrice: 0m,
+            updatedAtUtc,
+            "Binance.PrivateRest.Order");
+    }
 
     public async Task<string> StartListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
     {
@@ -136,6 +288,11 @@ public sealed class BinancePrivateRestClient(
             CryptographicOperations.ZeroMemory(secretBytes);
             CryptographicOperations.ZeroMemory(payloadBytes);
         }
+    }
+
+    private static string FormatDecimal(decimal value)
+    {
+        return value.ToString("0.##################", CultureInfo.InvariantCulture);
     }
 
     private static IReadOnlyCollection<ExchangeBalanceSnapshot> ParseBalances(JsonElement root, DateTime fallbackTimestampUtc)

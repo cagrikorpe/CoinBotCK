@@ -439,8 +439,20 @@ public sealed class DemoPortfolioAccountingServiceTests
             .Options;
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(At(0)));
         var context = new ApplicationDbContext(options, new TestDataScopeContext(ownerUserId));
+        var demoSessionService = new DemoSessionService(
+            context,
+            new DemoConsistencyWatchdogService(
+                context,
+                Microsoft.Extensions.Options.Options.Create(new DemoSessionOptions()),
+                timeProvider,
+                NullLogger<DemoConsistencyWatchdogService>.Instance),
+            new CoinBot.Infrastructure.Auditing.AuditLogService(context, new CoinBot.Infrastructure.Observability.CorrelationContextAccessor()),
+            Microsoft.Extensions.Options.Options.Create(new DemoSessionOptions()),
+            timeProvider,
+            NullLogger<DemoSessionService>.Instance);
         var service = new DemoPortfolioAccountingService(
             context,
+            demoSessionService,
             timeProvider,
             NullLogger<DemoPortfolioAccountingService>.Instance);
 

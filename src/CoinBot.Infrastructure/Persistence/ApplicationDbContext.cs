@@ -31,6 +31,8 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
     public DbSet<DegradedModeState> DegradedModeStates => Set<DegradedModeState>();
 
+    public DbSet<DemoSession> DemoSessions => Set<DemoSession>();
+
     public DbSet<DemoLedgerEntry> DemoLedgerEntries => Set<DemoLedgerEntry>();
 
     public DbSet<DemoLedgerTransaction> DemoLedgerTransactions => Set<DemoLedgerTransaction>();
@@ -38,6 +40,10 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
     public DbSet<DemoPosition> DemoPositions => Set<DemoPosition>();
 
     public DbSet<DemoWallet> DemoWallets => Set<DemoWallet>();
+
+    public DbSet<ExecutionOrder> ExecutionOrders => Set<ExecutionOrder>();
+
+    public DbSet<ExecutionOrderTransition> ExecutionOrderTransitions => Set<ExecutionOrderTransition>();
 
     public DbSet<ExchangeAccount> ExchangeAccounts => Set<ExchangeAccount>();
 
@@ -90,10 +96,13 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         ConfigureBackgroundJobLocks(builder.Entity<BackgroundJobLock>());
         ConfigureBackgroundJobStates(builder.Entity<BackgroundJobState>());
         ConfigureDegradedModeStates(builder.Entity<DegradedModeState>());
+        ConfigureDemoSessions(builder.Entity<DemoSession>());
         ConfigureDemoLedgerEntries(builder.Entity<DemoLedgerEntry>());
         ConfigureDemoLedgerTransactions(builder.Entity<DemoLedgerTransaction>());
         ConfigureDemoPositions(builder.Entity<DemoPosition>());
         ConfigureDemoWallets(builder.Entity<DemoWallet>());
+        ConfigureExecutionOrders(builder.Entity<ExecutionOrder>());
+        ConfigureExecutionOrderTransitions(builder.Entity<ExecutionOrderTransition>());
         ConfigureExchangeAccounts(builder.Entity<ExchangeAccount>());
         ConfigureExchangeAccountSyncStates(builder.Entity<ExchangeAccountSyncState>());
         ConfigureExchangeBalances(builder.Entity<ExchangeBalance>());
@@ -260,6 +269,46 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             .WithMany()
             .HasForeignKey(entity => entity.DemoLedgerTransactionId)
             .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private void ConfigureDemoSessions(EntityTypeBuilder<DemoSession> builder)
+    {
+        ConfigureUserOwnedEntity(builder, "DemoSessions");
+
+        builder.Property(entity => entity.SequenceNumber)
+            .IsRequired();
+
+        builder.Property(entity => entity.SeedAsset)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.SeedAmount)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.State)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .HasDefaultValue(DemoSessionState.Active)
+            .IsRequired();
+
+        builder.Property(entity => entity.ConsistencyStatus)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .HasDefaultValue(DemoConsistencyStatus.Unknown)
+            .IsRequired();
+
+        builder.Property(entity => entity.LastDriftSummary)
+            .HasMaxLength(512);
+
+        builder.HasIndex(entity => new { entity.OwnerUserId, entity.SequenceNumber })
+            .IsUnique();
+
+        builder.HasIndex(entity => entity.OwnerUserId)
+            .HasDatabaseName("IX_DemoSessions_OwnerUserId_Active")
+            .HasFilter("[State] = N'Active' AND [IsDeleted] = 0")
+            .IsUnique();
+
+        builder.HasIndex(entity => new { entity.OwnerUserId, entity.State, entity.ConsistencyStatus });
     }
 
     private void ConfigureDemoLedgerTransactions(EntityTypeBuilder<DemoLedgerTransaction> builder)
@@ -481,6 +530,158 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
         builder.HasIndex(entity => new { entity.OwnerUserId, entity.Asset })
             .IsUnique();
+    }
+
+    private void ConfigureExecutionOrders(EntityTypeBuilder<ExecutionOrder> builder)
+    {
+        ConfigureUserOwnedEntity(builder, "ExecutionOrders");
+
+        builder.Property(entity => entity.SignalType)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.StrategyKey)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.Symbol)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.Timeframe)
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.BaseAsset)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.QuoteAsset)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.Side)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.OrderType)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.Quantity)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.Price)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.FilledQuantity)
+            .HasPrecision(38, 18)
+            .HasDefaultValue(0m);
+
+        builder.Property(entity => entity.AverageFillPrice)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.StopLossPrice)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.TakeProfitPrice)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.ExecutionEnvironment)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.ExecutorKind)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.State)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.IdempotencyKey)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.RootCorrelationId)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.ParentCorrelationId)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.ExternalOrderId)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.FailureCode)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.FailureDetail)
+            .HasMaxLength(512);
+
+        builder.Property(entity => entity.ReconciliationStatus)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .HasDefaultValue(ExchangeStateDriftStatus.Unknown)
+            .IsRequired();
+
+        builder.Property(entity => entity.ReconciliationSummary)
+            .HasMaxLength(512);
+
+        builder.HasIndex(entity => new { entity.OwnerUserId, entity.IdempotencyKey })
+            .IsUnique();
+
+        builder.HasIndex(entity => entity.BotId);
+
+        builder.HasIndex(entity => entity.ExchangeAccountId);
+
+        builder.HasIndex(entity => entity.ReplacesExecutionOrderId);
+
+        builder.HasIndex(entity => entity.StrategySignalId);
+
+        builder.HasIndex(entity => new { entity.OwnerUserId, entity.State, entity.LastStateChangedAtUtc });
+
+        builder.HasIndex(entity => new { entity.ExecutorKind, entity.State, entity.LastReconciledAtUtc });
+    }
+
+    private void ConfigureExecutionOrderTransitions(EntityTypeBuilder<ExecutionOrderTransition> builder)
+    {
+        ConfigureUserOwnedEntity(builder, "ExecutionOrderTransitions");
+
+        builder.Property(entity => entity.State)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.EventCode)
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.Detail)
+            .HasMaxLength(512);
+
+        builder.Property(entity => entity.CorrelationId)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.ParentCorrelationId)
+            .HasMaxLength(128);
+
+        builder.HasIndex(entity => new { entity.ExecutionOrderId, entity.SequenceNumber })
+            .IsUnique();
+
+        builder.HasIndex(entity => new { entity.ExecutionOrderId, entity.OccurredAtUtc });
+
+        builder.HasOne<ExecutionOrder>()
+            .WithMany()
+            .HasForeignKey(entity => entity.ExecutionOrderId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 
     private void ConfigureExchangeAccounts(EntityTypeBuilder<ExchangeAccount> builder)

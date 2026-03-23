@@ -1,9 +1,14 @@
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Application.Abstractions.ExchangeCredentials;
+using CoinBot.Application.Abstractions.Auditing;
+using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Auditing;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Exchange;
 using CoinBot.Infrastructure.Identity;
+using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.UnitTests.Infrastructure.Mfa;
 using Microsoft.AspNetCore.Http;
@@ -57,11 +62,12 @@ public sealed class BinancePrivateStreamManagerTests
                         "cross",
                         0m,
                         updatedEventTimeUtc)
-                ]),
-            new BinancePrivateStreamEvent("listenKeyExpired", updatedEventTimeUtc.AddSeconds(1), [], [])
+                ],
+                []),
+            new BinancePrivateStreamEvent("listenKeyExpired", updatedEventTimeUtc.AddSeconds(1), [], [], [])
         ]);
         var snapshotHub = new ExchangeAccountSnapshotHub();
-        using var provider = BuildProvider(databaseName, databaseRoot, new FakeExchangeCredentialService(exchangeAccountId));
+        using var provider = BuildProvider(databaseName, databaseRoot, new FakeExchangeCredentialService(exchangeAccountId), timeProvider);
         var manager = new BinancePrivateStreamManager(
             provider.GetRequiredService<IServiceScopeFactory>(),
             restClient,
@@ -119,6 +125,93 @@ public sealed class BinancePrivateStreamManagerTests
         Assert.Equal(updatedEventTimeUtc, state.LastPrivateStreamEventAtUtc);
     }
 
+    [Fact]
+    public async Task RunSessionCycleAsync_AppliesOrderTradeUpdate_AsPartialFill()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        var databaseName = Guid.NewGuid().ToString("N");
+        var exchangeAccountId = Guid.NewGuid();
+        var executionOrderId = Guid.NewGuid();
+        var now = new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(now);
+        var seedSnapshot = CreateSnapshot(
+            exchangeAccountId,
+            walletBalance: 100m,
+            quantity: 1m,
+            observedAtUtc: now.UtcDateTime);
+        var updateTimeUtc = now.UtcDateTime.AddSeconds(5);
+        var restClient = new FakePrivateRestClient(seedSnapshot);
+        var streamClient = new FakePrivateStreamClient(
+        [
+            new BinancePrivateStreamEvent(
+                "ORDER_TRADE_UPDATE",
+                updateTimeUtc,
+                [],
+                [],
+                [
+                    new BinanceOrderStatusSnapshot(
+                        "BTCUSDT",
+                        "binance-order-1",
+                        ExecutionClientOrderId.Create(executionOrderId),
+                        "PARTIALLY_FILLED",
+                        0.05m,
+                        0.02m,
+                        1280m,
+                        64000m,
+                        0.02m,
+                        64000m,
+                        updateTimeUtc,
+                        "Binance.PrivateStream.OrderTradeUpdate")
+                ]),
+            new BinancePrivateStreamEvent("listenKeyExpired", updateTimeUtc.AddSeconds(1), [], [], [])
+        ]);
+        var snapshotHub = new ExchangeAccountSnapshotHub();
+        using var provider = BuildProvider(databaseName, databaseRoot, new FakeExchangeCredentialService(exchangeAccountId), timeProvider);
+        await SeedExecutionOrderAsync(provider, exchangeAccountId, executionOrderId);
+        var manager = new BinancePrivateStreamManager(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            restClient,
+            streamClient,
+            snapshotHub,
+            Options.Create(new BinancePrivateDataOptions
+            {
+                Enabled = true,
+                RestBaseUrl = "https://fapi.binance.com",
+                WebSocketBaseUrl = "wss://fstream.binance.com",
+                SessionScanIntervalSeconds = 15,
+                ReconnectDelaySeconds = 1,
+                ListenKeyRenewalIntervalMinutes = 30,
+                ReconciliationIntervalMinutes = 5,
+                RecvWindowMilliseconds = 5000
+            }),
+            timeProvider,
+            NullLogger<BinancePrivateStreamManager>.Instance);
+
+        await manager.RunSessionCycleAsync(new ExchangeSyncAccountDescriptor(exchangeAccountId, "user-private", "Binance"));
+
+        await using var scope = provider.CreateAsyncScope();
+        using var bypass = scope.ServiceProvider
+            .GetRequiredService<IDataScopeContextAccessor>()
+            .BeginScope(hasIsolationBypass: true);
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var order = await dbContext.ExecutionOrders.SingleAsync(entity => entity.Id == executionOrderId);
+        var transitions = await dbContext.ExecutionOrderTransitions
+            .Where(entity => entity.ExecutionOrderId == executionOrderId && !entity.IsDeleted)
+            .OrderBy(entity => entity.SequenceNumber)
+            .ToListAsync();
+        var auditLog = await dbContext.AuditLogs
+            .OrderByDescending(entity => entity.CreatedDate)
+            .FirstAsync();
+
+        Assert.Equal(ExecutionOrderState.PartiallyFilled, order.State);
+        Assert.Equal(0.02m, order.FilledQuantity);
+        Assert.Equal(64000m, order.AverageFillPrice);
+        Assert.Equal(updateTimeUtc, order.LastFilledAtUtc);
+        Assert.Equal([ExecutionOrderState.PartiallyFilled], transitions.Select(entity => entity.State).ToArray());
+        Assert.Equal("ExecutionOrder.ExchangeUpdate", auditLog.Action);
+        Assert.Equal("root-order-correlation-1", auditLog.CorrelationId);
+    }
+
     private static ExchangeAccountSnapshot CreateSnapshot(
         Guid exchangeAccountId,
         decimal walletBalance,
@@ -158,18 +251,65 @@ public sealed class BinancePrivateStreamManagerTests
     private static ServiceProvider BuildProvider(
         string databaseName,
         InMemoryDatabaseRoot databaseRoot,
-        IExchangeCredentialService exchangeCredentialService)
+        IExchangeCredentialService exchangeCredentialService,
+        TimeProvider timeProvider)
     {
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
+        services.AddSingleton<ICorrelationContextAccessor, CorrelationContextAccessor>();
+        services.AddSingleton(timeProvider);
         services.AddScoped<IDataScopeContextAccessor, DataScopeContextAccessor>();
         services.AddScoped<IDataScopeContext>(serviceProvider => serviceProvider.GetRequiredService<IDataScopeContextAccessor>());
         services.AddDbContext<ApplicationDbContext>(options => options.UseInMemoryDatabase(databaseName, databaseRoot));
         services.AddScoped(_ => exchangeCredentialService);
+        services.AddScoped<IAuditLogService, AuditLogService>();
         services.AddScoped<ExchangeAccountSyncStateService>();
+        services.AddScoped<ExecutionOrderLifecycleService>();
 
         return services.BuildServiceProvider();
+    }
+
+    private static async Task SeedExecutionOrderAsync(
+        ServiceProvider provider,
+        Guid exchangeAccountId,
+        Guid executionOrderId)
+    {
+        await using var scope = provider.CreateAsyncScope();
+        using var bypass = scope.ServiceProvider
+            .GetRequiredService<IDataScopeContextAccessor>()
+            .BeginScope(hasIsolationBypass: true);
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = executionOrderId,
+            OwnerUserId = "user-private",
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            ExchangeAccountId = exchangeAccountId,
+            StrategyKey = "stream-core",
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.05m,
+            Price = 65000m,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            State = ExecutionOrderState.Submitted,
+            IdempotencyKey = $"stream_{executionOrderId:N}",
+            RootCorrelationId = "root-order-correlation-1",
+            ExternalOrderId = "binance-order-1",
+            SubmittedAtUtc = new DateTime(2026, 3, 22, 11, 55, 0, DateTimeKind.Utc),
+            LastStateChangedAtUtc = new DateTime(2026, 3, 22, 11, 55, 0, DateTimeKind.Utc)
+        });
+
+        await dbContext.SaveChangesAsync();
     }
 
     private sealed class FakeExchangeCredentialService(Guid exchangeAccountId) : IExchangeCredentialService
@@ -218,6 +358,20 @@ public sealed class BinancePrivateStreamManagerTests
         public int StartListenKeyCalls { get; private set; }
 
         public int CloseListenKeyCalls { get; private set; }
+
+        public Task<BinanceOrderPlacementResult> PlaceOrderAsync(
+            BinanceOrderPlacementRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<BinanceOrderStatusSnapshot> GetOrderAsync(
+            BinanceOrderQueryRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
 
         public Task<string> StartListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
         {
