@@ -6,4 +6,10 @@ public sealed record BinanceOrderQueryRequest(
     string? ExchangeOrderId,
     string? ClientOrderId,
     string ApiKey,
-    string ApiSecret);
+    string ApiSecret)
+{
+    public override string ToString()
+    {
+        return $"{nameof(BinanceOrderQueryRequest)} {{ ExchangeAccountId = {ExchangeAccountId}, Symbol = {Symbol}, ExchangeOrderId = {ExchangeOrderId ?? "missing"}, ClientOrderId = {ClientOrderId ?? "missing"}, ApiKey = ***REDACTED***, ApiSecret = ***REDACTED*** }}";
+    }
+}

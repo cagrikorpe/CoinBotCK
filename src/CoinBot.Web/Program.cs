@@ -2,6 +2,7 @@ using System.Diagnostics;
 using CoinBot.Infrastructure;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
+using CoinBot.Web.Hubs;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Serilog;
@@ -31,7 +32,9 @@ try
 
     // Add services to the container.
     builder.Services.AddControllersWithViews();
+    builder.Services.AddSignalR();
     builder.Services.AddInfrastructure(builder.Configuration);
+    builder.Services.AddHostedService<MarketDataHubBridgeService>();
 
     var app = builder.Build();
 
@@ -79,6 +82,7 @@ try
     app.MapHealthChecks("/health/live", CreateHealthCheckOptions(static registration => registration.Tags.Contains("live")));
     app.MapHealthChecks("/health/ready", CreateHealthCheckOptions(static registration => registration.Tags.Contains("ready")));
     app.MapHealthChecks("/health/market", CreateHealthCheckOptions(static registration => registration.Tags.Contains("market")));
+    app.MapHealthChecks("/health/data-latency", CreateHealthCheckOptions(static registration => registration.Tags.Contains("data-latency")));
     app.MapHealthChecks("/health/demo-engine", CreateHealthCheckOptions(static registration => registration.Tags.Contains("demo-engine")));
 
     app.MapStaticAssets();
@@ -94,6 +98,7 @@ try
         name: "default",
         pattern: "{controller=Home}/{action=Index}/{id?}")
         .WithStaticAssets();
+    app.MapHub<MarketDataHub>("/hubs/market-data");
 
     app.Run();
 }

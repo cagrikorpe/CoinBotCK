@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("CoinBot.Infrastructure")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+dbbbddd901dd8c9c70257401be363b640afeb89f")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+4d4357a0cbd99545119510a0df49705c6bec78fc")]
 [assembly: System.Reflection.AssemblyProductAttribute("CoinBot.Infrastructure")]
 [assembly: System.Reflection.AssemblyTitleAttribute("CoinBot.Infrastructure")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

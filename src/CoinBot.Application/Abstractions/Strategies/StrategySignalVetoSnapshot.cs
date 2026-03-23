@@ -1,4 +1,3 @@
-using CoinBot.Application.Abstractions.Risk;
 using CoinBot.Domain.Enums;
 
 namespace CoinBot.Application.Abstractions.Strategies;
@@ -17,4 +16,5 @@ public sealed record StrategySignalVetoSnapshot(
     DateTime IndicatorCloseTimeUtc,
     DateTime IndicatorReceivedAtUtc,
     DateTime EvaluatedAtUtc,
-    RiskVetoResult RiskEvaluation);
+    StrategySignalConfidenceSnapshot ConfidenceSnapshot,
+    StrategySignalLogExplainabilitySnapshot UiLog);

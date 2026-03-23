@@ -1,4 +1,5 @@
 using CoinBot.Application.Abstractions.DataScope;
+using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Domain.Entities;
 using CoinBot.Infrastructure.MarketData;
@@ -83,26 +84,83 @@ public sealed class HistoricalGapFillerServiceTests
         Assert.Contains("BTCUSDT", exception.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task LoadRecentCandlesAsync_ReturnsAscendingBoundedWindow_ForChartSeed()
+    {
+        await using var harness = CreateHarness(
+            now: new DateTimeOffset(2026, 3, 22, 12, 5, 0, TimeSpan.Zero),
+            clientSnapshots: []);
+        await SeedCandlesAsync(
+            harness.Context,
+            CreateEntity("BTCUSDT", new DateTime(2026, 3, 22, 12, 0, 0, DateTimeKind.Utc)),
+            CreateEntity("BTCUSDT", new DateTime(2026, 3, 22, 12, 1, 0, DateTimeKind.Utc)),
+            CreateEntity("BTCUSDT", new DateTime(2026, 3, 22, 12, 2, 0, DateTimeKind.Utc)),
+            CreateEntity("BTCUSDT", new DateTime(2026, 3, 22, 12, 3, 0, DateTimeKind.Utc)));
+
+        var candles = await harness.Service.LoadRecentCandlesAsync("btcusdt", "1m", 2);
+
+        Assert.Equal(2, candles.Count);
+        Assert.Equal(new DateTime(2026, 3, 22, 12, 2, 0, DateTimeKind.Utc), candles.First().OpenTimeUtc);
+        Assert.Equal(new DateTime(2026, 3, 22, 12, 3, 0, DateTimeKind.Utc), candles.Last().OpenTimeUtc);
+    }
+
+    [Fact]
+    public async Task WarmIndicatorsAsync_PrimesLatestIndicatorSnapshot_FromHistoricalCandles()
+    {
+        await using var harness = CreateHarness(
+            now: new DateTimeOffset(2026, 3, 22, 12, 40, 0, TimeSpan.Zero),
+            clientSnapshots: [],
+            lookbackCandles: 34);
+        var historicalCandles = Enumerable.Range(0, 34)
+            .Select(index => CreateEntity(
+                "BTCUSDT",
+                new DateTime(2026, 3, 22, 12, 0, 0, DateTimeKind.Utc).AddMinutes(index)))
+            .ToArray();
+        await SeedCandlesAsync(harness.Context, historicalCandles);
+
+        var summary = await harness.Service.WarmIndicatorsAsync();
+        var latestSnapshot = await harness.IndicatorDataService.GetLatestAsync("BTCUSDT", "1m");
+
+        Assert.Equal("1m", summary.Interval);
+        Assert.Equal(1, summary.RequestedSymbolCount);
+        Assert.Equal(1, summary.PrimedSymbolCount);
+        Assert.Equal(34, summary.LoadedCandleCount);
+        Assert.NotNull(latestSnapshot);
+        Assert.Equal(IndicatorDataState.Ready, latestSnapshot!.State);
+        Assert.Equal(34, latestSnapshot.SampleCount);
+        Assert.True(latestSnapshot.Macd.IsReady);
+    }
+
     private static async Task SeedCandlesAsync(ApplicationDbContext context, params HistoricalMarketCandle[] entities)
     {
         context.HistoricalMarketCandles.AddRange(entities);
         await context.SaveChangesAsync();
     }
 
-    private static TestHarness CreateHarness(DateTimeOffset now, IReadOnlyCollection<MarketCandleSnapshot> clientSnapshots)
+    private static TestHarness CreateHarness(
+        DateTimeOffset now,
+        IReadOnlyCollection<MarketCandleSnapshot> clientSnapshots,
+        int lookbackCandles = 3)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
             .Options;
         var context = new ApplicationDbContext(options, new TestDataScopeContext());
+        var marketDataService = new FakeMarketDataService();
+        var indicatorDataService = new IndicatorDataService(
+            marketDataService,
+            new IndicatorStreamHub(),
+            Options.Create(new IndicatorEngineOptions()),
+            NullLogger<IndicatorDataService>.Instance);
         var service = new HistoricalGapFillerService(
             context,
             new FakeHistoricalKlineClient(clientSnapshots),
+            indicatorDataService,
             Options.Create(new HistoricalGapFillerOptions
             {
                 Enabled = true,
                 ScanIntervalMinutes = 5,
-                LookbackCandles = 3,
+                LookbackCandles = lookbackCandles,
                 MaxCandlesPerRequest = 10,
                 MaxRetryAttempts = 0,
                 RetryDelaySeconds = 1,
@@ -119,7 +177,7 @@ public sealed class HistoricalGapFillerServiceTests
             new AdjustableTimeProvider(now),
             NullLogger<HistoricalGapFillerService>.Instance);
 
-        return new TestHarness(context, service);
+        return new TestHarness(context, service, indicatorDataService);
     }
 
     private static HistoricalMarketCandle CreateEntity(string symbol, DateTime openTimeUtc)
@@ -187,13 +245,52 @@ public sealed class HistoricalGapFillerServiceTests
         public bool HasIsolationBypass => true;
     }
 
+    private sealed class FakeMarketDataService : IMarketDataService
+    {
+        public ValueTask TrackSymbolAsync(string symbol, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask TrackSymbolsAsync(IEnumerable<string> symbols, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask<MarketPriceSnapshot?> GetLatestPriceAsync(string symbol, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<MarketPriceSnapshot?>(null);
+        }
+
+        public ValueTask<SymbolMetadataSnapshot?> GetSymbolMetadataAsync(string symbol, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<SymbolMetadataSnapshot?>(null);
+        }
+
+        public async IAsyncEnumerable<MarketPriceSnapshot> WatchAsync(
+            IEnumerable<string> symbols,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await Task.CompletedTask;
+            yield break;
+        }
+    }
+
     private sealed class TestHarness(
         ApplicationDbContext context,
-        HistoricalGapFillerService service) : IAsyncDisposable
+        HistoricalGapFillerService service,
+        IIndicatorDataService indicatorDataService) : IAsyncDisposable
     {
         public ApplicationDbContext Context { get; } = context;
 
         public HistoricalGapFillerService Service { get; } = service;
+
+        public IIndicatorDataService IndicatorDataService { get; } = indicatorDataService;
 
         public async ValueTask DisposeAsync()
         {

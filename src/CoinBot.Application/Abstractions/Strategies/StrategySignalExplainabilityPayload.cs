@@ -1,5 +1,4 @@
 using CoinBot.Application.Abstractions.Indicators;
-using CoinBot.Application.Abstractions.Risk;
 using CoinBot.Domain.Enums;
 
 namespace CoinBot.Application.Abstractions.Strategies;
@@ -13,4 +12,6 @@ public sealed record StrategySignalExplainabilityPayload(
     ExecutionEnvironment Mode,
     StrategyIndicatorSnapshot IndicatorSnapshot,
     StrategyEvaluationResult RuleResultSnapshot,
-    RiskVetoResult? RiskEvaluation);
+    StrategySignalConfidenceSnapshot ConfidenceSnapshot,
+    StrategySignalLogExplainabilitySnapshot UiLog,
+    StrategySignalDuplicateSuppressionSnapshot DuplicateSignalSuppression);

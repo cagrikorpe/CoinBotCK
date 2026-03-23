@@ -28,9 +28,31 @@
                 {
                     Tone = "warning",
                     Title = "Bu ekran sistem ayarıdır",
-                    Message = "Kullanıcı bazlı tercihleri değil; platform genelindeki feature flag, retention, rollout ve maintenance ayarlarının güvenli foundation yüzeyini temsil eder.",
+                    Message = "TradeMaster + DemoMode hard gate section'i gerçek backend'e bağlıdır; diğer bloklar halen foundation amaçlı tutulur.",
                     Meta = "Global Scope"
                 })
+
+                @if (TempData["AdminExecutionSwitchSuccess"] is string successMessage)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-healthy mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Switch update</div>
+                            <div class="cb-admin-info-strip-text">@successMessage</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Applied</span>
+                    </div>
+                }
+
+                @if (TempData["AdminExecutionSwitchError"] is string errorMessage)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-danger mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Switch update rejected</div>
+                            <div class="cb-admin-info-strip-text">@errorMessage</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Blocked</span>
+                    </div>
+                }
             </div>
         </div>
     </div>
@@ -42,6 +64,7 @@
     </div>
     <div class="col-xl-9 col-lg-8">
         <div class="cb-admin-settings-shell">
+            @await Html.PartialAsync("Foundation/_AdminGlobalExecutionSwitchSection", (CoinBot.Application.Abstractions.Execution.GlobalExecutionSwitchSnapshot)ViewData["AdminExecutionSwitchSnapshot"]!)
             @await Html.PartialAsync("Foundation/_AdminFeatureFlagsSection")
             @await Html.PartialAsync("Foundation/_AdminLoggingRetentionSection")
             @await Html.PartialAsync("Foundation/_AdminAiRolloutSection")

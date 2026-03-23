@@ -1,5 +1,6 @@
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.DemoPortfolio;
+using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.DemoPortfolio;
@@ -427,6 +428,27 @@ public sealed class DemoPortfolioAccountingServiceTests
         Assert.Equal(-1m, position.Quantity);
     }
 
+    [Fact]
+    public async Task SeedWalletAsync_SyncsVirtualWalletValuation_FromLatestMarketPrice()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        await using var harness = CreateHarness(databaseRoot, "user-valuation");
+        harness.MarketDataService.SetLatestPrice("BTCUSDT", 65000m, At(0), "unit-test");
+
+        await harness.Service.SeedWalletAsync(
+            new DemoWalletSeedRequest("user-valuation", ExecutionEnvironment.Demo, "seed-btc-1", "BTC", 0.5m, At(0)));
+
+        var wallet = await harness.Context.DemoWallets.SingleAsync(entity => entity.Asset == "BTC");
+
+        Assert.Equal("BTCUSDT", wallet.ReferenceSymbol);
+        Assert.Equal("USDT", wallet.ReferenceQuoteAsset);
+        Assert.Equal(65000m, wallet.LastReferencePrice);
+        Assert.Equal(32500m, wallet.AvailableValueInReferenceQuote);
+        Assert.Equal(0m, wallet.ReservedValueInReferenceQuote);
+        Assert.Equal("unit-test", wallet.LastValuationSource);
+        Assert.Equal(At(0), wallet.LastValuationAtUtc);
+    }
+
     private static DateTime At(int minuteOffset)
     {
         return new DateTime(2026, 3, 22, 12, minuteOffset, 0, DateTimeKind.Utc);
@@ -439,6 +461,11 @@ public sealed class DemoPortfolioAccountingServiceTests
             .Options;
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(At(0)));
         var context = new ApplicationDbContext(options, new TestDataScopeContext(ownerUserId));
+        var marketDataService = new FakeMarketDataService();
+        var demoWalletValuationService = new DemoWalletValuationService(
+            marketDataService,
+            timeProvider,
+            NullLogger<DemoWalletValuationService>.Instance);
         var demoSessionService = new DemoSessionService(
             context,
             new DemoConsistencyWatchdogService(
@@ -446,6 +473,7 @@ public sealed class DemoPortfolioAccountingServiceTests
                 Microsoft.Extensions.Options.Options.Create(new DemoSessionOptions()),
                 timeProvider,
                 NullLogger<DemoConsistencyWatchdogService>.Instance),
+            demoWalletValuationService,
             new CoinBot.Infrastructure.Auditing.AuditLogService(context, new CoinBot.Infrastructure.Observability.CorrelationContextAccessor()),
             Microsoft.Extensions.Options.Options.Create(new DemoSessionOptions()),
             timeProvider,
@@ -453,10 +481,11 @@ public sealed class DemoPortfolioAccountingServiceTests
         var service = new DemoPortfolioAccountingService(
             context,
             demoSessionService,
+            demoWalletValuationService,
             timeProvider,
             NullLogger<DemoPortfolioAccountingService>.Instance);
 
-        return new TestHarness(context, service, ownerUserId);
+        return new TestHarness(context, service, marketDataService, ownerUserId);
     }
 
     private sealed class TestDataScopeContext(string ownerUserId) : IDataScopeContext
@@ -466,14 +495,61 @@ public sealed class DemoPortfolioAccountingServiceTests
         public bool HasIsolationBypass => true;
     }
 
+    private sealed class FakeMarketDataService : IMarketDataService
+    {
+        private readonly Dictionary<string, MarketPriceSnapshot> prices = new(StringComparer.Ordinal);
+
+        public void SetLatestPrice(string symbol, decimal price, DateTime observedAtUtc, string source)
+        {
+            prices[symbol] = new MarketPriceSnapshot(symbol, price, observedAtUtc, observedAtUtc, source);
+        }
+
+        public ValueTask TrackSymbolAsync(string symbol, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask TrackSymbolsAsync(IEnumerable<string> symbols, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask<MarketPriceSnapshot?> GetLatestPriceAsync(string symbol, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            prices.TryGetValue(symbol, out var snapshot);
+            return ValueTask.FromResult<MarketPriceSnapshot?>(snapshot);
+        }
+
+        public ValueTask<SymbolMetadataSnapshot?> GetSymbolMetadataAsync(string symbol, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<SymbolMetadataSnapshot?>(null);
+        }
+
+        public async IAsyncEnumerable<MarketPriceSnapshot> WatchAsync(
+            IEnumerable<string> symbols,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await Task.CompletedTask;
+            yield break;
+        }
+    }
+
     private sealed class TestHarness(
         ApplicationDbContext context,
         DemoPortfolioAccountingService service,
+        FakeMarketDataService marketDataService,
         string ownerUserId) : IAsyncDisposable
     {
         public ApplicationDbContext Context { get; } = context;
 
         public DemoPortfolioAccountingService Service { get; } = service;
+
+        public FakeMarketDataService MarketDataService { get; } = marketDataService;
 
         public async Task<TradingBot> AddBotAsync()
         {

@@ -44,6 +44,71 @@ public sealed class IndicatorDataService(
         return ValueTask.FromResult(snapshot);
     }
 
+    public async ValueTask<StrategyIndicatorSnapshot?> PrimeAsync(
+        string symbol,
+        string timeframe,
+        IReadOnlyCollection<MarketCandleSnapshot> historicalCandles,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(historicalCandles);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var normalizedSymbol = MarketDataSymbolNormalizer.Normalize(symbol);
+        var normalizedTimeframe = NormalizeTimeframe(timeframe);
+        var key = CreateKey(normalizedSymbol, normalizedTimeframe);
+        var normalizedCandles = historicalCandles
+            .Where(snapshot => snapshot.IsClosed)
+            .Select(Normalize)
+            .Where(snapshot =>
+                snapshot.Symbol == normalizedSymbol &&
+                snapshot.Interval == normalizedTimeframe)
+            .OrderBy(snapshot => snapshot.OpenTimeUtc)
+            .ToArray();
+
+        await TrackSymbolAsync(normalizedSymbol, cancellationToken);
+
+        if (normalizedCandles.Length == 0)
+        {
+            latestSnapshots.TryGetValue(key, out StrategyIndicatorSnapshot? existingSnapshot);
+            return existingSnapshot;
+        }
+
+        var latestHistoricalSnapshot = normalizedCandles[^1];
+
+        if (latestSnapshots.TryGetValue(key, out var currentSnapshot) &&
+            (currentSnapshot.CloseTimeUtc > latestHistoricalSnapshot.CloseTimeUtc ||
+             (currentSnapshot.CloseTimeUtc == latestHistoricalSnapshot.CloseTimeUtc &&
+              currentSnapshot.SampleCount >= normalizedCandles.Length)))
+        {
+            return currentSnapshot;
+        }
+
+        var seriesState = new IndicatorSeriesState(optionsValue);
+        StrategyIndicatorSnapshot? primedSnapshot = null;
+
+        foreach (var candle in normalizedCandles)
+        {
+            primedSnapshot = seriesState.Advance(candle);
+        }
+
+        if (primedSnapshot is null)
+        {
+            return currentSnapshot;
+        }
+
+        seriesStates[key] = seriesState;
+        latestSnapshots[key] = primedSnapshot;
+        streamHub.Publish(primedSnapshot);
+
+        logger.LogDebug(
+            "Central indicator engine primed {Symbol} {Timeframe} from {CandleCount} historical candles.",
+            primedSnapshot.Symbol,
+            primedSnapshot.Timeframe,
+            normalizedCandles.Length);
+
+        return primedSnapshot;
+    }
+
     public async IAsyncEnumerable<StrategyIndicatorSnapshot> WatchAsync(
         IEnumerable<IndicatorSubscription> subscriptions,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)

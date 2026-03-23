@@ -27,14 +27,17 @@ public sealed class HistoricalGapFillerWorker(
                 using var scope = serviceScopeFactory.CreateScope();
                 var gapFillerService = scope.ServiceProvider.GetRequiredService<HistoricalGapFillerService>();
                 var summary = await gapFillerService.BackfillAsync(stoppingToken);
+                var warmupSummary = await gapFillerService.WarmIndicatorsAsync(stoppingToken);
 
                 logger.LogInformation(
-                    "Historical gap filler cycle completed. Symbols={ScannedSymbolCount}, Gaps={DetectedGapCount}, Inserted={InsertedCandleCount}, SkippedDuplicates={SkippedDuplicateCount}, ContinuityVerified={ContinuityVerifiedSymbolCount}.",
+                    "Historical gap filler cycle completed. Symbols={ScannedSymbolCount}, Gaps={DetectedGapCount}, Inserted={InsertedCandleCount}, SkippedDuplicates={SkippedDuplicateCount}, ContinuityVerified={ContinuityVerifiedSymbolCount}, IndicatorPrimed={PrimedSymbolCount}, PrimedCandles={LoadedCandleCount}.",
                     summary.ScannedSymbolCount,
                     summary.DetectedGapCount,
                     summary.InsertedCandleCount,
                     summary.SkippedDuplicateCount,
-                    summary.ContinuityVerifiedSymbolCount);
+                    summary.ContinuityVerifiedSymbolCount,
+                    warmupSummary.PrimedSymbolCount,
+                    warmupSummary.LoadedCandleCount);
 
                 await Task.Delay(TimeSpan.FromMinutes(optionsValue.ScanIntervalMinutes), stoppingToken);
             }

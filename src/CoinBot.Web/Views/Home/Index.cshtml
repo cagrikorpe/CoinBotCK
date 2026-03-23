@@ -1,15 +1,22 @@
+@using System.Text.Json
+@model CoinBot.Web.ViewModels.Home.DashboardViewModel
 @{
     ViewData["Title"] = "Dashboard";
     ViewData["ActiveNav"] = "Dashboard";
-    ViewData["PageDescription"] = "Operasyonel dashboard foundation; KPI, equity, AI akışı, risk ve hızlı aksiyon alanlarını tek yüzeyde toplar.";
+    ViewData["PageDescription"] = "Operasyonel dashboard; realtime market fiyat kutuları, KPI, equity, AI akışı, risk ve hızlı aksiyon alanlarını tek yüzeyde toplar.";
     ViewData["BreadcrumbItems"] = new[] { "Control Surface", "Dashboard" };
+    var marketSymbolsJson = JsonSerializer.Serialize(Model.MarketTickers.Select(item => item.Symbol));
 }
 
 @section Scripts {
+    <script src="https://cdn.jsdelivr.net/npm/%40microsoft/signalr@9.0.0/dist/browser/signalr.min.js"></script>
     <script src="~/js/dashboard-foundation.js" asp-append-version="true"></script>
 }
 
-<div class="row">
+<div class="row"
+     data-cb-market-dashboard
+     data-cb-market-hub-url="@Model.MarketDataHubPath"
+     data-cb-market-symbols='@marketSymbolsJson'>
     <div class="col-12">
         <div class="card card-custom gutter-b cb-card cb-dashboard-hero-card">
             <div class="card-body">
@@ -17,7 +24,7 @@
                     <div>
                         <div class="cb-page-eyebrow">Operations Dashboard</div>
                         <h2 class="cb-page-title">Trading kontrol yüzeyi</h2>
-                        <p class="cb-page-description">Gerçek veri akışına bağlanmadan önce operasyon, risk ve karar yüzeyinin aynı tasarım diliyle nasıl oturacağını gösteren foundation ekranı.</p>
+                        <p class="cb-page-description">Merkezi market data hattı ile beslenen fiyat kutuları ve operasyon kartları aynı dashboard yüzeyinde buluşur.</p>
                     </div>
                     <div class="cb-toolbar">
                         <span class="cb-badge cb-badge-success">Shell ready</span>
@@ -29,6 +36,10 @@
                 @await Html.PartialAsync("Dashboard/_FreshnessBar")
             </div>
         </div>
+    </div>
+
+    <div class="col-12">
+        @await Html.PartialAsync("Dashboard/_MarketTickerCards", Model.MarketTickers)
     </div>
 
     <div class="col-12">

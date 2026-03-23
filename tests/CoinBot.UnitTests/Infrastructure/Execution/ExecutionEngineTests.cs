@@ -176,6 +176,51 @@ public sealed class ExecutionEngineTests
     }
 
     [Fact]
+    public async Task DispatchAsync_FailsClosed_WhenDemoModeKeepsLivePathShutEvenIfScopedModeResolvesLive()
+    {
+        await using var harness = CreateHarness();
+        var strategyId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        await SeedUserAsync(harness.DbContext, "user-live-blocked");
+        await SeedLiveStrategyAsync(harness.DbContext, "user-live-blocked", strategyId, "live-blocked");
+        await SeedExchangeAccountAsync(harness.DbContext, "user-live-blocked", exchangeAccountId);
+        await harness.TradingModeService.SetUserTradingModeOverrideAsync(
+            "user-live-blocked",
+            ExecutionEnvironment.Live,
+            actor: "admin-live-blocked",
+            liveApproval: new TradingModeLiveApproval("user-override-live-1"),
+            context: "User forced to live",
+            correlationId: "corr-live-blocked-1");
+        await PrimeFreshMarketDataAsync(harness, "corr-live-blocked-2");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-live-blocked",
+            context: "Execution open",
+            correlationId: "corr-live-blocked-3");
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-live-blocked",
+                strategyId: strategyId,
+                strategyKey: "live-blocked",
+                exchangeAccountId: exchangeAccountId,
+                isDemo: null),
+            CancellationToken.None);
+
+        Assert.False(result.IsDuplicate);
+        Assert.Equal(ExecutionEnvironment.Live, result.Order.ExecutionEnvironment);
+        Assert.Equal(ExecutionOrderState.Rejected, result.Order.State);
+        Assert.Equal(nameof(ExecutionGateBlockedReason.LiveExecutionBlockedByDemoMode), result.Order.FailureCode);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal(
+            [
+                ExecutionOrderState.Received,
+                ExecutionOrderState.Rejected
+            ],
+            result.Order.Transitions.Select(transition => transition.State).ToArray());
+    }
+
+    [Fact]
     public async Task DispatchAsync_SuppressesDuplicateCommand_ByIdempotencyKey()
     {
         await using var harness = CreateHarness();
@@ -309,6 +354,40 @@ public sealed class ExecutionEngineTests
         Assert.Equal(0, await harness.DbContext.ExecutionOrders.CountAsync());
     }
 
+    [Fact]
+    public async Task DispatchAsync_UsesScopedCorrelationId_WhenCommandOmitsExplicitCorrelation()
+    {
+        await using var harness = CreateHarness();
+        await SeedDemoWalletAsync(harness.DbContext, "user-corr", "USDT", 1000m);
+        harness.MarketDataService.SetLatestPrice("BTCUSDT", 65000m, harness.TimeProvider.GetUtcNow().UtcDateTime, "unit-test");
+        harness.MarketDataService.SetSymbolMetadata("BTCUSDT", "BTC", "USDT", 0.01m, 0.0001m);
+        await PrimeFreshMarketDataAsync(harness, "corr-scope-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-scope",
+            context: "Open demo execution",
+            correlationId: "corr-scope-2");
+        using var _ = harness.CorrelationContextAccessor.BeginScope(
+            new CoinBot.Infrastructure.Observability.CorrelationContext(
+                "corr-scoped-request-1",
+                "req-scoped-request-1",
+                "trace-scoped-request-1",
+                "span-scoped-request-1"));
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-corr",
+                strategyKey: "corr-core",
+                isDemo: true) with
+            {
+                CorrelationId = null,
+                ParentCorrelationId = null
+            },
+            CancellationToken.None);
+
+        Assert.Equal("corr-scoped-request-1", result.Order.RootCorrelationId);
+    }
+
     private static TestHarness CreateHarness()
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
@@ -319,6 +398,11 @@ public sealed class ExecutionEngineTests
         var correlationContextAccessor = new CorrelationContextAccessor();
         var auditLogService = new AuditLogService(dbContext, correlationContextAccessor);
         var switchService = new GlobalExecutionSwitchService(dbContext, auditLogService);
+        var marketDataService = new FakeMarketDataService();
+        var demoWalletValuationService = new DemoWalletValuationService(
+            marketDataService,
+            timeProvider,
+            NullLogger<DemoWalletValuationService>.Instance);
         var circuitBreaker = new DataLatencyCircuitBreaker(
             dbContext,
             new FakeAlertService(),
@@ -333,6 +417,7 @@ public sealed class ExecutionEngineTests
                 Options.Create(new DemoSessionOptions()),
                 timeProvider,
                 NullLogger<DemoConsistencyWatchdogService>.Instance),
+            demoWalletValuationService,
             auditLogService,
             Options.Create(new DemoSessionOptions()),
             timeProvider,
@@ -347,9 +432,9 @@ public sealed class ExecutionEngineTests
         var demoPortfolioAccountingService = new DemoPortfolioAccountingService(
             dbContext,
             demoSessionService,
+            demoWalletValuationService,
             timeProvider,
             NullLogger<DemoPortfolioAccountingService>.Instance);
-        var marketDataService = new FakeMarketDataService();
         var demoFillSimulator = new DemoFillSimulator(
             marketDataService,
             Options.Create(new DemoFillSimulatorOptions()),
@@ -378,6 +463,8 @@ public sealed class ExecutionEngineTests
             switchService,
             circuitBreaker,
             demoSessionService,
+            tradingModeService,
+            correlationContextAccessor,
             engine,
             timeProvider,
             marketDataService,
@@ -732,6 +819,8 @@ public sealed class ExecutionEngineTests
         IGlobalExecutionSwitchService switchService,
         IDataLatencyCircuitBreaker circuitBreaker,
         IDemoSessionService demoSessionService,
+        ITradingModeService tradingModeService,
+        CorrelationContextAccessor correlationContextAccessor,
         IExecutionEngine engine,
         AdjustableTimeProvider timeProvider,
         FakeMarketDataService marketDataService,
@@ -745,6 +834,10 @@ public sealed class ExecutionEngineTests
         public IDataLatencyCircuitBreaker CircuitBreaker { get; } = circuitBreaker;
 
         public IDemoSessionService DemoSessionService { get; } = demoSessionService;
+
+        public ITradingModeService TradingModeService { get; } = tradingModeService;
+
+        public CorrelationContextAccessor CorrelationContextAccessor { get; } = correlationContextAccessor;
 
         public IExecutionEngine Engine { get; } = engine;
 

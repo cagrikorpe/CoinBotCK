@@ -17,6 +17,7 @@ public sealed class SensitiveDataRedactionPolicy : IDestructuringPolicy
         "privatekey",
         "refreshtoken",
         "secret",
+        "session",
         "setcookie",
         "token"
     ];

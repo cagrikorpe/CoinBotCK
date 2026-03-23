@@ -11,4 +11,10 @@ public sealed record BinanceOrderPlacementRequest(
     decimal Price,
     string ClientOrderId,
     string ApiKey,
-    string ApiSecret);
+    string ApiSecret)
+{
+    public override string ToString()
+    {
+        return $"{nameof(BinanceOrderPlacementRequest)} {{ ExchangeAccountId = {ExchangeAccountId}, Symbol = {Symbol}, Side = {Side}, OrderType = {OrderType}, Quantity = {Quantity}, Price = {Price}, ClientOrderId = {ClientOrderId}, ApiKey = ***REDACTED***, ApiSecret = ***REDACTED*** }}";
+    }
+}

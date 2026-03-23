@@ -23,6 +23,7 @@ public sealed class SensitiveDataRedactionPolicyTests
                 ApiKey = "api-key-value",
                 Secret = "secret-value",
                 Cookie = "cookie-value",
+                SessionId = "session-id-value",
                 Visible = "visible-value",
                 Nested = new
                 {
@@ -37,6 +38,7 @@ public sealed class SensitiveDataRedactionPolicyTests
         Assert.Equal("***REDACTED***", ReadScalarValue(payload, "ApiKey"));
         Assert.Equal("***REDACTED***", ReadScalarValue(payload, "Secret"));
         Assert.Equal("***REDACTED***", ReadScalarValue(payload, "Cookie"));
+        Assert.Equal("***REDACTED***", ReadScalarValue(payload, "SessionId"));
         Assert.Equal("visible-value", ReadScalarValue(payload, "Visible"));
 
         var nested = Assert.IsType<StructureValue>(payload.Properties.Single(property => property.Name == "Nested").Value);

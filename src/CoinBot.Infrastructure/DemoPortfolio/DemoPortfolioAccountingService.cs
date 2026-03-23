@@ -10,6 +10,7 @@ namespace CoinBot.Infrastructure.DemoPortfolio;
 public sealed class DemoPortfolioAccountingService(
     ApplicationDbContext dbContext,
     IDemoSessionService demoSessionService,
+    DemoWalletValuationService demoWalletValuationService,
     TimeProvider timeProvider,
     ILogger<DemoPortfolioAccountingService> logger) : IDemoPortfolioAccountingService
 {
@@ -51,6 +52,7 @@ public sealed class DemoPortfolioAccountingService(
             OccurredAtUtc = occurredAtUtc
         };
 
+        await SyncWalletMutationsAsync(walletMutations, cancellationToken);
         var entries = CreateEntries(ownerUserId, transaction.Id, walletMutations);
         dbContext.DemoLedgerTransactions.Add(transaction);
         dbContext.DemoLedgerEntries.AddRange(entries);
@@ -99,6 +101,7 @@ public sealed class DemoPortfolioAccountingService(
             OccurredAtUtc = occurredAtUtc
         };
 
+        await SyncWalletMutationsAsync(walletMutations, cancellationToken);
         var entries = CreateEntries(ownerUserId, transaction.Id, walletMutations);
         dbContext.DemoLedgerTransactions.Add(transaction);
         dbContext.DemoLedgerEntries.AddRange(entries);
@@ -147,6 +150,7 @@ public sealed class DemoPortfolioAccountingService(
             OccurredAtUtc = occurredAtUtc
         };
 
+        await SyncWalletMutationsAsync(walletMutations, cancellationToken);
         var entries = CreateEntries(ownerUserId, transaction.Id, walletMutations);
         dbContext.DemoLedgerTransactions.Add(transaction);
         dbContext.DemoLedgerEntries.AddRange(entries);
@@ -287,6 +291,7 @@ public sealed class DemoPortfolioAccountingService(
 
         CapturePositionSnapshot(transaction, position);
 
+        await SyncWalletMutationsAsync(walletMutations, cancellationToken);
         var entries = CreateEntries(ownerUserId, transaction.Id, walletMutations);
         dbContext.DemoLedgerTransactions.Add(transaction);
         dbContext.DemoLedgerEntries.AddRange(entries);
@@ -372,6 +377,7 @@ public sealed class DemoPortfolioAccountingService(
                 transaction,
                 cancellationToken);
 
+            await SyncWalletMutationsAsync(walletMutations, cancellationToken);
             var entries = CreateEntries(ownerUserId, transaction.Id, walletMutations);
             dbContext.DemoLedgerTransactions.Add(transaction);
             dbContext.DemoLedgerEntries.AddRange(entries);
@@ -1203,6 +1209,20 @@ public sealed class DemoPortfolioAccountingService(
                           entity.OperationId == operationId &&
                           entity.CreatedDate >= sessionStartedAtUtc,
                 cancellationToken);
+    }
+
+    private async Task SyncWalletMutationsAsync(
+        IReadOnlyDictionary<string, WalletMutation> walletMutations,
+        CancellationToken cancellationToken)
+    {
+        if (walletMutations.Count == 0)
+        {
+            return;
+        }
+
+        await demoWalletValuationService.SyncAsync(
+            walletMutations.Values.Select(mutation => mutation.Wallet),
+            cancellationToken);
     }
 
     private async Task<DemoWallet> GetOrCreateWalletAsync(

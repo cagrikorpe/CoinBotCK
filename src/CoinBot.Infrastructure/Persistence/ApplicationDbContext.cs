@@ -528,6 +528,24 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         builder.Property(entity => entity.ReservedBalance)
             .HasPrecision(38, 18);
 
+        builder.Property(entity => entity.ReferenceSymbol)
+            .HasMaxLength(32);
+
+        builder.Property(entity => entity.ReferenceQuoteAsset)
+            .HasMaxLength(32);
+
+        builder.Property(entity => entity.LastReferencePrice)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.AvailableValueInReferenceQuote)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.ReservedValueInReferenceQuote)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.LastValuationSource)
+            .HasMaxLength(64);
+
         builder.HasIndex(entity => new { entity.OwnerUserId, entity.Asset })
             .IsUnique();
     }

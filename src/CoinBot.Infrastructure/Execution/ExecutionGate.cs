@@ -259,13 +259,15 @@ public sealed class ExecutionGate(
             return ExecutionGateBlockedReason.TradeMasterDisarmed;
         }
 
+        if (requestedEnvironment == ExecutionEnvironment.Live &&
+            snapshot.DemoModeEnabled)
+        {
+            return ExecutionGateBlockedReason.LiveExecutionBlockedByDemoMode;
+        }
+
         if (requestedEnvironment != modeResolution.EffectiveMode)
         {
-            return requestedEnvironment == ExecutionEnvironment.Live &&
-                   snapshot.DemoModeEnabled &&
-                   modeResolution.ResolutionSource == TradingModeResolutionSource.GlobalDefault
-                ? ExecutionGateBlockedReason.LiveExecutionBlockedByDemoMode
-                : ExecutionGateBlockedReason.RequestedEnvironmentDoesNotMatchResolvedMode;
+            return ExecutionGateBlockedReason.RequestedEnvironmentDoesNotMatchResolvedMode;
         }
 
         return null;

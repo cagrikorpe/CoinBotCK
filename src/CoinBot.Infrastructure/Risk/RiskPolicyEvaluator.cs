@@ -1,6 +1,7 @@
 using CoinBot.Application.Abstractions.Risk;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -17,6 +18,13 @@ public sealed class RiskPolicyEvaluator(
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        using var riskActivity = CoinBotActivity.StartActivity("CoinBot.Risk.Policy");
+        riskActivity.SetTag("coinbot.risk.strategy_id", request.TradingStrategyId.ToString());
+        riskActivity.SetTag("coinbot.risk.strategy_version_id", request.TradingStrategyVersionId.ToString());
+        riskActivity.SetTag("coinbot.risk.signal_type", request.SignalType.ToString());
+        riskActivity.SetTag("coinbot.risk.environment", request.Environment.ToString());
+        riskActivity.SetTag("coinbot.risk.symbol", request.Symbol);
+        riskActivity.SetTag("coinbot.risk.timeframe", request.Timeframe);
 
         var evaluatedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
         var isVirtualCheck = request.Environment == ExecutionEnvironment.Demo;
@@ -49,6 +57,8 @@ public sealed class RiskPolicyEvaluator(
                 : await BuildLiveSnapshotAsync(request.OwnerUserId, riskProfile, evaluatedAtUtc, cancellationToken);
 
             var reasonCode = ResolveReasonCode(riskProfile, snapshot);
+            riskActivity.SetTag("coinbot.risk.reason", reasonCode.ToString());
+            riskActivity.SetTag("coinbot.risk.is_vetoed", reasonCode != RiskVetoReasonCode.None);
 
             return new RiskVetoResult(
                 IsVetoed: reasonCode != RiskVetoReasonCode.None,
@@ -57,6 +67,8 @@ public sealed class RiskPolicyEvaluator(
         }
         catch (Exception exception)
         {
+            riskActivity.SetTag("coinbot.risk.reason", RiskVetoReasonCode.AccountEquityUnavailable.ToString());
+            riskActivity.SetTag("coinbot.risk.is_vetoed", true);
             logger.LogWarning(
                 exception,
                 "Risk policy evaluation failed closed for StrategyVersionId {StrategyVersionId}, SignalType {SignalType}, Symbol {Symbol}, Environment {Environment}.",

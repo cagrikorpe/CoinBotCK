@@ -1,9 +1,11 @@
+using System.Text.Json;
 using CoinBot.Application.Abstractions.ExchangeCredentials;
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Auditing;
 using CoinBot.Infrastructure.Credentials;
+using CoinBot.Infrastructure.Exchange;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.UnitTests.Infrastructure.Mfa;
@@ -41,8 +43,12 @@ public sealed class ExchangeCredentialServiceTests
         Assert.NotNull(exchangeAccount.CredentialFingerprint);
         Assert.Equal("credential-v1", exchangeAccount.CredentialKeyVersion);
         Assert.Equal(ExchangeCredentialStatus.PendingValidation, exchangeAccount.CredentialStatus);
+        Assert.Equal("user-01", auditLog.Actor);
         Assert.Equal("ExchangeCredential.Stored", auditLog.Action);
+        Assert.Equal("corr-store-001", auditLog.CorrelationId);
         Assert.Equal("Applied", auditLog.Outcome);
+        Assert.Contains("AccessMode=EncryptedWrite", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("Materials=ApiKey,ApiSecret", auditLog.Context, StringComparison.Ordinal);
         Assert.DoesNotContain("api-key-001", auditLog.Context ?? string.Empty, StringComparison.Ordinal);
         Assert.DoesNotContain("api-secret-001", auditLog.Context ?? string.Empty, StringComparison.Ordinal);
     }
@@ -142,8 +148,68 @@ public sealed class ExchangeCredentialServiceTests
         Assert.Equal(ExchangeCredentialStatus.Active, accessResult.State.Status);
         Assert.NotNull(exchangeAccount.CredentialLastAccessedAtUtc);
         Assert.Equal("Validated", auditLogs[1].Outcome);
+        Assert.Equal("corr-exec-003", auditLogs[^1].CorrelationId);
         Assert.Equal("Allowed", auditLogs[^1].Outcome);
+        Assert.Contains("Purpose=Execution", auditLogs[^1].Context, StringComparison.Ordinal);
+        Assert.Contains("AccessMode=DecryptRead", auditLogs[^1].Context, StringComparison.Ordinal);
+        Assert.Contains("Materials=ApiKey,ApiSecret", auditLogs[^1].Context, StringComparison.Ordinal);
         Assert.DoesNotContain("api-secret-003", auditLogs[^1].Context ?? string.Empty, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SecretCarrierTypes_RedactSecrets_FromToString_AndSerializedAccessResponse()
+    {
+        var storeRequest = new StoreExchangeCredentialsRequest(
+            Guid.NewGuid(),
+            "api-key-store",
+            "api-secret-store",
+            "user-redact",
+            "corr-redact-1");
+        var accessResult = new ExchangeCredentialAccessResult(
+            "api-key-access",
+            "api-secret-access",
+            new ExchangeCredentialStateSnapshot(
+                Guid.NewGuid(),
+                ExchangeCredentialStatus.Active,
+                "fingerprint",
+                "credential-v1",
+                StoredAtUtc: new DateTime(2026, 3, 22, 12, 0, 0, DateTimeKind.Utc),
+                LastValidatedAtUtc: null,
+                LastAccessedAtUtc: null,
+                LastRotatedAtUtc: null,
+                RevalidateAfterUtc: null,
+                RotateAfterUtc: null));
+        var placementRequest = new BinanceOrderPlacementRequest(
+            Guid.NewGuid(),
+            "BTCUSDT",
+            ExecutionOrderSide.Buy,
+            ExecutionOrderType.Market,
+            0.1m,
+            65000m,
+            "client-order-1",
+            "api-key-place",
+            "api-secret-place");
+        var queryRequest = new BinanceOrderQueryRequest(
+            Guid.NewGuid(),
+            "BTCUSDT",
+            "exchange-order-1",
+            "client-order-1",
+            "api-key-query",
+            "api-secret-query");
+
+        var serializedAccessResult = JsonSerializer.Serialize(accessResult);
+
+        Assert.DoesNotContain("api-key-store", storeRequest.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("api-secret-store", storeRequest.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("api-key-access", accessResult.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("api-secret-access", accessResult.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("api-key-place", placementRequest.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("api-secret-place", placementRequest.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("api-key-query", queryRequest.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("api-secret-query", queryRequest.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("api-key-access", serializedAccessResult, StringComparison.Ordinal);
+        Assert.DoesNotContain("api-secret-access", serializedAccessResult, StringComparison.Ordinal);
+        Assert.Contains("\"State\":", serializedAccessResult, StringComparison.Ordinal);
     }
 
     [Fact]

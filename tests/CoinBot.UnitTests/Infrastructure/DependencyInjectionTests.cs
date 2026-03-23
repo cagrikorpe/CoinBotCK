@@ -20,6 +20,7 @@ using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Mfa;
 using CoinBot.Infrastructure.Observability;
+using Microsoft.Extensions.Hosting;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authorization.Infrastructure;
@@ -49,11 +50,15 @@ public sealed class DependencyInjectionTests
         var dataLatencyCircuitBreaker = provider.GetRequiredService<IDataLatencyCircuitBreaker>();
         var demoPortfolioAccountingService = provider.GetRequiredService<IDemoPortfolioAccountingService>();
         var demoSessionService = provider.GetRequiredService<IDemoSessionService>();
+        var demoWalletValuationService = provider.GetRequiredService<DemoWalletValuationService>();
         var demoConsistencyWatchdogService = provider.GetRequiredService<DemoConsistencyWatchdogService>();
         var demoFillSimulator = provider.GetRequiredService<DemoFillSimulator>();
         var executionOrderLifecycleService = provider.GetRequiredService<ExecutionOrderLifecycleService>();
         var executionReconciliationService = provider.GetRequiredService<ExecutionReconciliationService>();
+        var virtualExecutionWatchdogService = provider.GetRequiredService<VirtualExecutionWatchdogService>();
+        var hostedServices = provider.GetServices<IHostedService>().ToArray();
         var healthCheckService = provider.GetRequiredService<HealthCheckService>();
+        var healthCheckOptions = provider.GetRequiredService<IOptions<HealthCheckServiceOptions>>().Value;
         var tradingModeResolver = provider.GetRequiredService<ITradingModeResolver>();
         var tradingModeService = provider.GetRequiredService<ITradingModeService>();
         var identityOptions = provider.GetRequiredService<IOptions<IdentityOptions>>().Value;
@@ -159,11 +164,14 @@ public sealed class DependencyInjectionTests
         Assert.NotNull(dataLatencyCircuitBreaker);
         Assert.NotNull(demoPortfolioAccountingService);
         Assert.NotNull(demoSessionService);
+        Assert.NotNull(demoWalletValuationService);
         Assert.NotNull(demoConsistencyWatchdogService);
         Assert.NotNull(demoFillSimulator);
         Assert.NotNull(executionOrderLifecycleService);
         Assert.NotNull(executionReconciliationService);
+        Assert.NotNull(virtualExecutionWatchdogService);
         Assert.NotNull(healthCheckService);
+        Assert.Contains(healthCheckOptions.Registrations, registration => registration.Name == "data-latency");
         Assert.NotNull(tradingModeResolver);
         Assert.NotNull(tradingModeService);
         Assert.NotNull(executionGate);
@@ -192,6 +200,7 @@ public sealed class DependencyInjectionTests
         Assert.NotNull(emailOtpService);
         Assert.NotNull(mfaCodeValidator);
         Assert.NotNull(mfaManagementService);
+        Assert.Contains(hostedServices, service => service is VirtualExecutionWatchdogWorker);
     }
 
     [Theory]

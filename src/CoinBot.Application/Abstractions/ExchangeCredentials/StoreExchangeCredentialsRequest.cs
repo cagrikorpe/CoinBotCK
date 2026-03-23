@@ -5,4 +5,10 @@ public sealed record StoreExchangeCredentialsRequest(
     string ApiKey,
     string ApiSecret,
     string Actor,
-    string? CorrelationId = null);
+    string? CorrelationId = null)
+{
+    public override string ToString()
+    {
+        return $"{nameof(StoreExchangeCredentialsRequest)} {{ ExchangeAccountId = {ExchangeAccountId}, ApiKey = ***REDACTED***, ApiSecret = ***REDACTED***, Actor = {Actor}, CorrelationId = {CorrelationId ?? "missing"} }}";
+    }
+}

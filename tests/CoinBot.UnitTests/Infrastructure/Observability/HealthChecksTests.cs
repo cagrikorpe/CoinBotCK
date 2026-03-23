@@ -1,3 +1,4 @@
+using CoinBot.Application.Abstractions.Alerts;
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Domain.Entities;
@@ -67,6 +68,36 @@ public sealed class HealthChecksTests
         var result = await marketHealthCheck.CheckHealthAsync(new HealthCheckContext());
 
         Assert.Equal(HealthStatus.Unhealthy, result.Status);
+    }
+
+    [Fact]
+    public async Task DataLatencyHealthCheck_ReturnsDegraded_WhenMarketDataAgeReachesThreeSeconds()
+    {
+        var now = new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(now);
+        await using var dbContext = CreateDbContext();
+        var alertService = new FakeAlertService();
+        var correlationContextAccessor = new CorrelationContextAccessor();
+        var circuitBreaker = new DataLatencyCircuitBreaker(
+            dbContext,
+            alertService,
+            Options.Create(new DataLatencyGuardOptions()),
+            timeProvider,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<DataLatencyCircuitBreaker>.Instance);
+
+        await circuitBreaker.RecordHeartbeatAsync(
+            new DataLatencyHeartbeat("binance-btcusdt", now.UtcDateTime),
+            correlationId: "corr-health-latency-001");
+
+        timeProvider.Advance(TimeSpan.FromSeconds(3));
+
+        var healthCheck = new DataLatencyHealthCheck(circuitBreaker, correlationContextAccessor);
+        var result = await healthCheck.CheckHealthAsync(new HealthCheckContext());
+
+        Assert.Equal(HealthStatus.Degraded, result.Status);
+        Assert.Equal("Degraded", result.Data["stateCode"]);
+        Assert.Equal("MarketDataLatencyBreached", result.Data["reasonCode"]);
+        Assert.Equal("3000", result.Data["latestDataAgeMilliseconds"]);
     }
 
     [Fact]
@@ -156,5 +187,13 @@ public sealed class HealthChecksTests
         public string? UserId => null;
 
         public bool HasIsolationBypass => true;
+    }
+
+    private sealed class FakeAlertService : IAlertService
+    {
+        public Task SendAsync(AlertNotification notification, CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
     }
 }

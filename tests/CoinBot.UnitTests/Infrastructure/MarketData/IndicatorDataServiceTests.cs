@@ -109,6 +109,57 @@ public sealed class IndicatorDataServiceTests
         Assert.Null(latestSnapshot.Bollinger.LowerBand);
     }
 
+    [Fact]
+    public async Task PrimeAsync_PrimesReadySnapshot_FromHistoricalCandles()
+    {
+        var marketDataService = new FakeMarketDataService();
+        var service = CreateService(marketDataService);
+        using var consumerCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        await using var consumer = service
+            .WatchAsync([new IndicatorSubscription("BTCUSDT", "1m")], consumerCts.Token)
+            .GetAsyncEnumerator(consumerCts.Token);
+
+        var moveNextTask = consumer.MoveNextAsync().AsTask();
+        var historicalCandles = Enumerable.Range(0, 34)
+            .Select(index => CreateClosedCandleSnapshot("BTCUSDT", index, 100m))
+            .ToArray();
+
+        var snapshot = await service.PrimeAsync("BTCUSDT", "1m", historicalCandles);
+
+        Assert.True(await moveNextTask);
+        Assert.NotNull(snapshot);
+        Assert.Equal(IndicatorDataState.Ready, snapshot!.State);
+        Assert.Equal(34, snapshot.SampleCount);
+        Assert.True(snapshot.Rsi.IsReady);
+        Assert.True(snapshot.Macd.IsReady);
+        Assert.True(snapshot.Bollinger.IsReady);
+        Assert.Equal(snapshot, consumer.Current);
+        Assert.Equal(["BTCUSDT"], marketDataService.TrackedSymbols);
+    }
+
+    [Fact]
+    public async Task PrimeAsync_DoesNotOverwriteFresherLiveSnapshot_WhenHistoricalSeedIsOlder()
+    {
+        var service = CreateService(new FakeMarketDataService());
+
+        for (var index = 0; index < 35; index++)
+        {
+            await service.RecordAcceptedCandleAsync(CreateClosedCandleSnapshot("BTCUSDT", index, 100m));
+        }
+
+        var fresherSnapshot = await service.GetLatestAsync("BTCUSDT", "1m");
+        var historicalCandles = Enumerable.Range(0, 34)
+            .Select(index => CreateClosedCandleSnapshot("BTCUSDT", index, 100m))
+            .ToArray();
+
+        var primedSnapshot = await service.PrimeAsync("BTCUSDT", "1m", historicalCandles);
+
+        Assert.NotNull(fresherSnapshot);
+        Assert.NotNull(primedSnapshot);
+        Assert.Equal(fresherSnapshot, primedSnapshot);
+        Assert.Equal(35, primedSnapshot!.SampleCount);
+    }
+
     private static IndicatorDataService CreateService(FakeMarketDataService marketDataService)
     {
         return new IndicatorDataService(

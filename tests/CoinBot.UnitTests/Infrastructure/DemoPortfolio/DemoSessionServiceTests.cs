@@ -1,6 +1,7 @@
 using CoinBot.Application.Abstractions.Auditing;
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.DemoPortfolio;
+using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Auditing;
@@ -214,6 +215,11 @@ public sealed class DemoSessionServiceTests
             .Options;
         var dbContext = new ApplicationDbContext(options, new TestDataScopeContext());
         var auditLogService = new AuditLogService(dbContext, new CorrelationContextAccessor());
+        var marketDataService = new FakeMarketDataService();
+        var demoWalletValuationService = new DemoWalletValuationService(
+            marketDataService,
+            timeProvider,
+            NullLogger<DemoWalletValuationService>.Instance);
         var service = new DemoSessionService(
             dbContext,
             new DemoConsistencyWatchdogService(
@@ -221,6 +227,7 @@ public sealed class DemoSessionServiceTests
                 Options.Create(new DemoSessionOptions()),
                 timeProvider,
                 NullLogger<DemoConsistencyWatchdogService>.Instance),
+            demoWalletValuationService,
             auditLogService,
             Options.Create(new DemoSessionOptions()),
             timeProvider,
@@ -234,6 +241,42 @@ public sealed class DemoSessionServiceTests
         public string? UserId => null;
 
         public bool HasIsolationBypass => true;
+    }
+
+    private sealed class FakeMarketDataService : IMarketDataService
+    {
+        public ValueTask TrackSymbolAsync(string symbol, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask TrackSymbolsAsync(IEnumerable<string> symbols, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask<MarketPriceSnapshot?> GetLatestPriceAsync(string symbol, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<MarketPriceSnapshot?>(null);
+        }
+
+        public ValueTask<SymbolMetadataSnapshot?> GetSymbolMetadataAsync(string symbol, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<SymbolMetadataSnapshot?>(null);
+        }
+
+        public async IAsyncEnumerable<MarketPriceSnapshot> WatchAsync(
+            IEnumerable<string> symbols,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await Task.CompletedTask;
+            yield break;
+        }
     }
 
     private sealed class TestHarness(

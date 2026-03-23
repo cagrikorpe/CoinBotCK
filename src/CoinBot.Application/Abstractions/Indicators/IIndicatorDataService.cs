@@ -11,6 +11,12 @@ public interface IIndicatorDataService
         string timeframe,
         CancellationToken cancellationToken = default);
 
+    ValueTask<StrategyIndicatorSnapshot?> PrimeAsync(
+        string symbol,
+        string timeframe,
+        IReadOnlyCollection<CoinBot.Application.Abstractions.MarketData.MarketCandleSnapshot> historicalCandles,
+        CancellationToken cancellationToken = default);
+
     IAsyncEnumerable<StrategyIndicatorSnapshot> WatchAsync(
         IEnumerable<IndicatorSubscription> subscriptions,
         CancellationToken cancellationToken = default);

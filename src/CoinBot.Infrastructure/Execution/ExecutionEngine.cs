@@ -99,6 +99,9 @@ public sealed class ExecutionEngine(
         var transitions = new List<ExecutionOrderTransition>();
 
         using var activity = CoinBotActivity.StartActivity("CoinBot.Execution.Dispatch");
+        activity.SetTag("coinbot.correlation_id", rootCorrelationId);
+        activity.SetTag("coinbot.execution.root_correlation_id", rootCorrelationId);
+        activity.SetTag("coinbot.execution.parent_correlation_id", order.ParentCorrelationId ?? "none");
         activity.SetTag("coinbot.execution.environment", requestedEnvironment.ToString());
         activity.SetTag("coinbot.execution.executor", executor.Kind.ToString());
         activity.SetTag("coinbot.execution.signal_id", normalizedCommand.StrategySignalId.ToString());

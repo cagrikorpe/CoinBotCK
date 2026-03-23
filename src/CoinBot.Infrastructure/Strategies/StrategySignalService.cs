@@ -6,6 +6,7 @@ using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.MarketData;
+using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -28,6 +29,8 @@ public sealed class StrategySignalService(
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.EvaluationContext);
+        using var signalActivity = CoinBotActivity.StartActivity("CoinBot.Signal.Generate");
+        signalActivity.SetTag("coinbot.signal.strategy_version_id", request.TradingStrategyVersionId.ToString());
 
         var version = await dbContext.TradingStrategyVersions
             .SingleOrDefaultAsync(
@@ -44,11 +47,17 @@ public sealed class StrategySignalService(
                 $"Trading strategy '{version.TradingStrategyId}' was not found.");
 
         var normalizedContext = NormalizeContext(request.EvaluationContext);
+        signalActivity.SetTag("coinbot.signal.strategy_id", strategy.Id.ToString());
+        signalActivity.SetTag("coinbot.signal.environment", normalizedContext.Mode.ToString());
+        signalActivity.SetTag("coinbot.signal.symbol", normalizedContext.IndicatorSnapshot.Symbol);
+        signalActivity.SetTag("coinbot.signal.timeframe", normalizedContext.IndicatorSnapshot.Timeframe);
         var evaluationResult = evaluator.Evaluate(version.DefinitionJson, normalizedContext);
         var candidateSignalTypes = GetCandidateSignalTypes(evaluationResult);
+        signalActivity.SetTag("coinbot.signal.candidate_count", candidateSignalTypes.Count);
 
         if (candidateSignalTypes.Count == 0)
         {
+            signalActivity.SetTag("coinbot.signal.result", "NoSignals");
             logger.LogInformation(
                 "Strategy signal generation produced no persisted signals for StrategyVersionId {StrategyVersionId}.",
                 version.Id);
@@ -102,6 +111,7 @@ public sealed class StrategySignalService(
                     normalizedContext.IndicatorSnapshot.Symbol,
                     normalizedContext.IndicatorSnapshot.Timeframe),
                 cancellationToken);
+            var confidenceSnapshot = CreateConfidenceSnapshot(signalType, evaluationResult, riskEvaluation);
 
             if (riskEvaluation.IsVetoed)
             {
@@ -119,12 +129,12 @@ public sealed class StrategySignalService(
 
                 if (veto is null)
                 {
-                    veto = CreateVetoEntity(strategy, version, signalType, normalizedContext, riskEvaluation);
+                    veto = CreateVetoEntity(strategy, version, signalType, normalizedContext, riskEvaluation, confidenceSnapshot);
                     dbContext.TradingStrategySignalVetoes.Add(veto);
                     hasPendingChanges = true;
                 }
 
-                vetoSnapshots.Add(ToVetoSnapshot(veto, riskEvaluation));
+                vetoSnapshots.Add(ToVetoSnapshot(veto, confidenceSnapshot));
 
                 logger.LogInformation(
                     "Strategy signal vetoed for StrategyVersionId {StrategyVersionId}, SignalType {SignalType}, Symbol {Symbol}, Timeframe {Timeframe}, ReasonCode {ReasonCode}.",
@@ -137,7 +147,14 @@ public sealed class StrategySignalService(
                 continue;
             }
 
-            var signal = CreateSignalEntity(strategy, version, signalType, normalizedContext, evaluationResult, riskEvaluation);
+            var signal = CreateSignalEntity(
+                strategy,
+                version,
+                signalType,
+                normalizedContext,
+                evaluationResult,
+                confidenceSnapshot,
+                riskEvaluation.Snapshot.EvaluatedAtUtc);
             dbContext.TradingStrategySignals.Add(signal);
             persistedSignals.Add(signal);
             hasPendingChanges = true;
@@ -148,12 +165,25 @@ public sealed class StrategySignalService(
             await dbContext.SaveChangesAsync(cancellationToken);
         }
 
+        signalActivity.SetTag("coinbot.signal.persisted_count", persistedSignals.Count);
+        signalActivity.SetTag("coinbot.signal.veto_count", vetoSnapshots.Count);
+        signalActivity.SetTag("coinbot.signal.suppressed_duplicate_count", suppressedDuplicateCount);
+        signalActivity.SetTag(
+            "coinbot.signal.result",
+            persistedSignals.Count > 0
+                ? "Persisted"
+                : vetoSnapshots.Count > 0
+                    ? "Vetoed"
+                    : suppressedDuplicateCount > 0
+                        ? "Suppressed"
+                        : "NoSignals");
+
         var snapshots = persistedSignals
             .Select(signal => ToSnapshot(
                 signal,
                 normalizedContext.IndicatorSnapshot,
                 evaluationResult,
-                DeserializeOptional<RiskVetoResult>(signal.RiskEvaluationJson)))
+                DeserializeConfidenceSnapshot(signal.RiskEvaluationJson)))
             .ToArray();
 
         foreach (var signal in snapshots)
@@ -187,9 +217,9 @@ public sealed class StrategySignalService(
 
         var indicatorSnapshot = DeserializeRequired<StrategyIndicatorSnapshot>(signal.IndicatorSnapshotJson);
         var evaluationResult = DeserializeRequired<StrategyEvaluationResult>(signal.RuleResultSnapshotJson);
-        var riskEvaluation = DeserializeOptional<RiskVetoResult>(signal.RiskEvaluationJson);
+        var confidenceSnapshot = DeserializeConfidenceSnapshot(signal.RiskEvaluationJson);
 
-        return ToSnapshot(signal, indicatorSnapshot, evaluationResult, riskEvaluation);
+        return ToSnapshot(signal, indicatorSnapshot, evaluationResult, confidenceSnapshot);
     }
 
     public async Task<StrategySignalVetoSnapshot?> GetVetoAsync(
@@ -204,9 +234,9 @@ public sealed class StrategySignalService(
             return null;
         }
 
-        var riskEvaluation = DeserializeRequired<RiskVetoResult>(veto.RiskEvaluationJson);
+        var confidenceSnapshot = DeserializeRequiredConfidenceSnapshot(veto.RiskEvaluationJson);
 
-        return ToVetoSnapshot(veto, riskEvaluation);
+        return ToVetoSnapshot(veto, confidenceSnapshot);
     }
 
     private static StrategyEvaluationContext NormalizeContext(StrategyEvaluationContext context)
@@ -251,7 +281,8 @@ public sealed class StrategySignalService(
         StrategySignalType signalType,
         StrategyEvaluationContext context,
         StrategyEvaluationResult evaluationResult,
-        RiskVetoResult riskEvaluation)
+        StrategySignalConfidenceSnapshot confidenceSnapshot,
+        DateTime generatedAtUtc)
     {
         return new TradingStrategySignal
         {
@@ -267,11 +298,11 @@ public sealed class StrategySignalService(
             IndicatorOpenTimeUtc = context.IndicatorSnapshot.OpenTimeUtc,
             IndicatorCloseTimeUtc = context.IndicatorSnapshot.CloseTimeUtc,
             IndicatorReceivedAtUtc = context.IndicatorSnapshot.ReceivedAtUtc,
-            GeneratedAtUtc = riskEvaluation.Snapshot.EvaluatedAtUtc,
+            GeneratedAtUtc = generatedAtUtc,
             ExplainabilitySchemaVersion = ExplainabilitySchemaVersion,
             IndicatorSnapshotJson = JsonSerializer.Serialize(context.IndicatorSnapshot, SerializerOptions),
             RuleResultSnapshotJson = JsonSerializer.Serialize(evaluationResult, SerializerOptions),
-            RiskEvaluationJson = JsonSerializer.Serialize(riskEvaluation, SerializerOptions)
+            RiskEvaluationJson = JsonSerializer.Serialize(confidenceSnapshot, SerializerOptions)
         };
     }
 
@@ -280,7 +311,8 @@ public sealed class StrategySignalService(
         TradingStrategyVersion version,
         StrategySignalType signalType,
         StrategyEvaluationContext context,
-        RiskVetoResult riskEvaluation)
+        RiskVetoResult riskEvaluation,
+        StrategySignalConfidenceSnapshot confidenceSnapshot)
     {
         return new TradingStrategySignalVeto
         {
@@ -298,7 +330,7 @@ public sealed class StrategySignalService(
             IndicatorReceivedAtUtc = context.IndicatorSnapshot.ReceivedAtUtc,
             EvaluatedAtUtc = riskEvaluation.Snapshot.EvaluatedAtUtc,
             ReasonCode = riskEvaluation.ReasonCode,
-            RiskEvaluationJson = JsonSerializer.Serialize(riskEvaluation, SerializerOptions)
+            RiskEvaluationJson = JsonSerializer.Serialize(confidenceSnapshot, SerializerOptions)
         };
     }
 
@@ -306,8 +338,10 @@ public sealed class StrategySignalService(
         TradingStrategySignal signal,
         StrategyIndicatorSnapshot indicatorSnapshot,
         StrategyEvaluationResult evaluationResult,
-        RiskVetoResult? riskEvaluation)
+        StrategySignalConfidenceSnapshot? confidenceSnapshot)
     {
+        var resolvedConfidenceSnapshot = confidenceSnapshot ?? CreateUnavailableConfidenceSnapshot();
+
         return new StrategySignalSnapshot(
             signal.Id,
             signal.TradingStrategyId,
@@ -331,12 +365,19 @@ public sealed class StrategySignalService(
                 signal.ExecutionEnvironment,
                 indicatorSnapshot,
                 evaluationResult,
-                riskEvaluation));
+                resolvedConfidenceSnapshot,
+                CreateSignalUiLogSnapshot(
+                    signal.SignalType,
+                    signal.Symbol,
+                    signal.Timeframe,
+                    resolvedConfidenceSnapshot,
+                    evaluationResult),
+                CreateDuplicateSuppressionSnapshot(signal)));
     }
 
     private static StrategySignalVetoSnapshot ToVetoSnapshot(
         TradingStrategySignalVeto veto,
-        RiskVetoResult riskEvaluation)
+        StrategySignalConfidenceSnapshot confidenceSnapshot)
     {
         return new StrategySignalVetoSnapshot(
             veto.Id,
@@ -352,7 +393,287 @@ public sealed class StrategySignalService(
             veto.IndicatorCloseTimeUtc,
             veto.IndicatorReceivedAtUtc,
             veto.EvaluatedAtUtc,
-            riskEvaluation);
+            confidenceSnapshot,
+            CreateVetoUiLogSnapshot(veto, confidenceSnapshot));
+    }
+
+    private static StrategySignalConfidenceSnapshot CreateConfidenceSnapshot(
+        StrategySignalType signalType,
+        StrategyEvaluationResult evaluationResult,
+        RiskVetoResult riskEvaluation)
+    {
+        var relevantRules = GetRelevantRuleRoots(signalType, evaluationResult)
+            .SelectMany(EnumerateLeafResults)
+            .ToArray();
+        var totalRuleCount = relevantRules.Length;
+        var matchedRuleCount = relevantRules.Count(rule => rule.Matched);
+        var rawScore = totalRuleCount == 0
+            ? riskEvaluation.IsVetoed
+                ? 0
+                : 100
+            : (int)Math.Round((matchedRuleCount * 100m) / totalRuleCount, MidpointRounding.AwayFromZero);
+        var score = riskEvaluation.IsVetoed
+            ? Math.Min(rawScore, 39)
+            : rawScore;
+        var band = ResolveConfidenceBand(score);
+        var summary = riskEvaluation.IsVetoed
+            ? $"Risk approval failed: {FormatRiskReason(riskEvaluation.ReasonCode)}."
+            : $"Signal approved with {matchedRuleCount}/{totalRuleCount} matching strategy rules.";
+
+        return new StrategySignalConfidenceSnapshot(
+            score,
+            band,
+            matchedRuleCount,
+            totalRuleCount,
+            IsDeterministic: true,
+            IsRiskApproved: !riskEvaluation.IsVetoed,
+            IsVetoed: riskEvaluation.IsVetoed,
+            RiskReasonCode: riskEvaluation.ReasonCode,
+            IsVirtualRiskCheck: riskEvaluation.Snapshot.IsVirtualCheck,
+            Summary: summary);
+    }
+
+    private static StrategySignalConfidenceSnapshot CreateLegacyConfidenceSnapshot(RiskVetoResult riskEvaluation)
+    {
+        var score = riskEvaluation.IsVetoed
+            ? 39
+            : 100;
+
+        return new StrategySignalConfidenceSnapshot(
+            score,
+            ResolveConfidenceBand(score),
+            MatchedRuleCount: 0,
+            TotalRuleCount: 0,
+            IsDeterministic: true,
+            IsRiskApproved: !riskEvaluation.IsVetoed,
+            IsVetoed: riskEvaluation.IsVetoed,
+            RiskReasonCode: riskEvaluation.ReasonCode,
+            IsVirtualRiskCheck: riskEvaluation.Snapshot.IsVirtualCheck,
+            Summary: riskEvaluation.IsVetoed
+                ? $"Legacy risk evaluation vetoed the signal: {FormatRiskReason(riskEvaluation.ReasonCode)}."
+                : "Legacy risk evaluation approved the signal.");
+    }
+
+    private static StrategySignalConfidenceSnapshot CreateUnavailableConfidenceSnapshot()
+    {
+        return new StrategySignalConfidenceSnapshot(
+            ScorePercentage: 0,
+            Band: StrategySignalConfidenceBand.Low,
+            MatchedRuleCount: 0,
+            TotalRuleCount: 0,
+            IsDeterministic: true,
+            IsRiskApproved: false,
+            IsVetoed: false,
+            RiskReasonCode: RiskVetoReasonCode.None,
+            IsVirtualRiskCheck: false,
+            Summary: "Confidence snapshot unavailable.");
+    }
+
+    private static StrategySignalConfidenceBand ResolveConfidenceBand(int scorePercentage)
+    {
+        return scorePercentage switch
+        {
+            >= 85 => StrategySignalConfidenceBand.High,
+            >= 60 => StrategySignalConfidenceBand.Medium,
+            _ => StrategySignalConfidenceBand.Low
+        };
+    }
+
+    private static StrategySignalLogExplainabilitySnapshot CreateSignalUiLogSnapshot(
+        StrategySignalType signalType,
+        string symbol,
+        string timeframe,
+        StrategySignalConfidenceSnapshot confidenceSnapshot,
+        StrategyEvaluationResult evaluationResult)
+    {
+        var ruleDrivers = GetRelevantRuleRoots(signalType, evaluationResult)
+            .SelectMany(EnumerateLeafResults)
+            .Where(rule => rule.Matched)
+            .Select(FormatRuleDriver)
+            .Distinct(StringComparer.Ordinal)
+            .Take(3)
+            .ToArray();
+
+        var drivers = confidenceSnapshot.IsVetoed
+            ? (new[] { $"Risk gate: {FormatRiskReason(confidenceSnapshot.RiskReasonCode)}" })
+                .Concat(ruleDrivers)
+                .Take(3)
+                .ToArray()
+            : ruleDrivers;
+        var title = confidenceSnapshot.IsVetoed
+            ? $"{signalType} signal vetoed"
+            : $"{signalType} signal created";
+        var summary = confidenceSnapshot.IsVetoed
+            ? $"{symbol} {timeframe} {signalType.ToString().ToLowerInvariant()} signal vetoed because {FormatRiskReason(confidenceSnapshot.RiskReasonCode)}."
+            : $"{symbol} {timeframe} {signalType.ToString().ToLowerInvariant()} signal created from matching strategy rules.";
+
+        return new StrategySignalLogExplainabilitySnapshot(
+            title,
+            summary,
+            drivers,
+            [
+                symbol,
+                timeframe,
+                signalType.ToString(),
+                $"Confidence {confidenceSnapshot.ScorePercentage}%",
+                confidenceSnapshot.IsVetoed
+                    ? $"Veto {confidenceSnapshot.RiskReasonCode}"
+                    : confidenceSnapshot.Band.ToString()
+            ]);
+    }
+
+    private static StrategySignalLogExplainabilitySnapshot CreateVetoUiLogSnapshot(
+        TradingStrategySignalVeto veto,
+        StrategySignalConfidenceSnapshot confidenceSnapshot)
+    {
+        return new StrategySignalLogExplainabilitySnapshot(
+            $"{veto.SignalType} signal vetoed",
+            $"{veto.Symbol} {veto.Timeframe} {veto.SignalType.ToString().ToLowerInvariant()} signal vetoed because {FormatRiskReason(confidenceSnapshot.RiskReasonCode)}.",
+            [
+                $"Risk gate: {FormatRiskReason(confidenceSnapshot.RiskReasonCode)}",
+                confidenceSnapshot.Summary
+            ],
+            [
+                veto.Symbol,
+                veto.Timeframe,
+                veto.SignalType.ToString(),
+                $"Confidence {confidenceSnapshot.ScorePercentage}%",
+                $"Veto {confidenceSnapshot.RiskReasonCode}"
+            ]);
+    }
+
+    private static StrategySignalDuplicateSuppressionSnapshot CreateDuplicateSuppressionSnapshot(TradingStrategySignal signal)
+    {
+        return new StrategySignalDuplicateSuppressionSnapshot(
+            Enabled: true,
+            WasSuppressed: false,
+            Fingerprint: CreateDuplicateFingerprint(
+                signal.TradingStrategyVersionId,
+                signal.SignalType,
+                signal.Symbol,
+                signal.Timeframe,
+                signal.IndicatorCloseTimeUtc));
+    }
+
+    private static string CreateDuplicateFingerprint(
+        Guid tradingStrategyVersionId,
+        StrategySignalType signalType,
+        string symbol,
+        string timeframe,
+        DateTime indicatorCloseTimeUtc)
+    {
+        return $"{tradingStrategyVersionId:N}:{signalType}:{symbol}:{timeframe}:{indicatorCloseTimeUtc:O}";
+    }
+
+    private static IReadOnlyCollection<StrategyRuleResultSnapshot> GetRelevantRuleRoots(
+        StrategySignalType signalType,
+        StrategyEvaluationResult evaluationResult)
+    {
+        var rules = new List<StrategyRuleResultSnapshot>(capacity: 2);
+
+        switch (signalType)
+        {
+            case StrategySignalType.Entry when evaluationResult.EntryRuleResult is not null:
+                rules.Add(evaluationResult.EntryRuleResult);
+                break;
+            case StrategySignalType.Exit when evaluationResult.ExitRuleResult is not null:
+                rules.Add(evaluationResult.ExitRuleResult);
+                break;
+        }
+
+        if (evaluationResult.RiskRuleResult is not null)
+        {
+            rules.Add(evaluationResult.RiskRuleResult);
+        }
+
+        return rules;
+    }
+
+    private static IEnumerable<StrategyRuleResultSnapshot> EnumerateLeafResults(StrategyRuleResultSnapshot root)
+    {
+        if (root.Children.Count == 0)
+        {
+            yield return root;
+            yield break;
+        }
+
+        foreach (var child in root.Children)
+        {
+            foreach (var leaf in EnumerateLeafResults(child))
+            {
+                yield return leaf;
+            }
+        }
+    }
+
+    private static string FormatRuleDriver(StrategyRuleResultSnapshot rule)
+    {
+        if (string.IsNullOrWhiteSpace(rule.Path))
+        {
+            return "Grouped rule matched.";
+        }
+
+        var leftLabel = FormatPathLabel(rule.Path);
+        var comparison = FormatComparison(rule.Comparison);
+        var leftValue = rule.LeftValue ?? "?";
+
+        if (rule.OperandKind == StrategyRuleOperandKind.Path && !string.IsNullOrWhiteSpace(rule.Operand))
+        {
+            return $"{leftLabel} {leftValue} {comparison} {FormatPathLabel(rule.Operand)} {rule.RightValue ?? "?"}";
+        }
+
+        return $"{leftLabel} {leftValue} {comparison} {rule.RightValue ?? rule.Operand ?? "?"}";
+    }
+
+    private static string FormatPathLabel(string path)
+    {
+        return path.Trim().ToLowerInvariant() switch
+        {
+            "context.mode" => "Mode",
+            "indicator.samplecount" => "Sample Count",
+            "indicator.requiredsamplecount" => "Required Sample Count",
+            "indicator.state" => "Indicator State",
+            "indicator.rsi.value" => "RSI",
+            "indicator.rsi.isready" => "RSI Ready",
+            "indicator.macd.macdline" => "MACD Line",
+            "indicator.macd.signalline" => "MACD Signal",
+            "indicator.macd.histogram" => "MACD Histogram",
+            "indicator.macd.isready" => "MACD Ready",
+            "indicator.bollinger.middleband" => "Bollinger Mid",
+            "indicator.bollinger.upperband" => "Bollinger Upper",
+            "indicator.bollinger.lowerband" => "Bollinger Lower",
+            "indicator.bollinger.isready" => "Bollinger Ready",
+            _ => path
+        };
+    }
+
+    private static string FormatComparison(StrategyRuleComparisonOperator? comparison)
+    {
+        return comparison switch
+        {
+            StrategyRuleComparisonOperator.Equals => "=",
+            StrategyRuleComparisonOperator.NotEquals => "!=",
+            StrategyRuleComparisonOperator.GreaterThan => ">",
+            StrategyRuleComparisonOperator.GreaterThanOrEqual => ">=",
+            StrategyRuleComparisonOperator.LessThan => "<",
+            StrategyRuleComparisonOperator.LessThanOrEqual => "<=",
+            _ => "?"
+        };
+    }
+
+    private static string FormatRiskReason(RiskVetoReasonCode reasonCode)
+    {
+        return reasonCode switch
+        {
+            RiskVetoReasonCode.None => "risk gate passed",
+            RiskVetoReasonCode.RiskProfileMissing => "risk profile missing",
+            RiskVetoReasonCode.KillSwitchEnabled => "kill switch enabled",
+            RiskVetoReasonCode.AccountEquityUnavailable => "account equity unavailable",
+            RiskVetoReasonCode.DailyLossLimitBreached => "daily loss limit breached",
+            RiskVetoReasonCode.ExposureLimitBreached => "exposure limit breached",
+            RiskVetoReasonCode.LeverageLimitBreached => "leverage limit breached",
+            _ => reasonCode.ToString()
+        };
     }
 
     private static string NormalizeTimeframe(string timeframe)
@@ -381,6 +702,32 @@ public sealed class StrategySignalService(
         return string.IsNullOrWhiteSpace(json)
             ? default
             : JsonSerializer.Deserialize<T>(json, SerializerOptions);
+    }
+
+    private static StrategySignalConfidenceSnapshot? DeserializeConfidenceSnapshot(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<StrategySignalConfidenceSnapshot>(json, SerializerOptions);
+        }
+        catch (JsonException)
+        {
+            var legacyRiskEvaluation = DeserializeOptional<RiskVetoResult>(json);
+            return legacyRiskEvaluation is null
+                ? null
+                : CreateLegacyConfidenceSnapshot(legacyRiskEvaluation);
+        }
+    }
+
+    private static StrategySignalConfidenceSnapshot DeserializeRequiredConfidenceSnapshot(string json)
+    {
+        return DeserializeConfidenceSnapshot(json)
+            ?? throw new InvalidOperationException("Strategy signal confidence payload could not be deserialized.");
     }
 
     private static JsonSerializerOptions CreateSerializerOptions()

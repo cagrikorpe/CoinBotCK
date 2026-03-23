@@ -51,6 +51,8 @@ public sealed class ExchangeCredentialService(
             outcome: "Applied",
             request.CorrelationId,
             purpose: null,
+            accessMode: "EncryptedWrite",
+            materials: "ApiKey,ApiSecret",
             cancellationToken);
 
         return state;
@@ -82,6 +84,8 @@ public sealed class ExchangeCredentialService(
                 MapBlockedOutcome(effectiveStatus),
                 request.CorrelationId,
                 request.Purpose,
+                accessMode: "DecryptReadAttemptBlocked",
+                materials: "ApiKey,ApiSecret",
                 cancellationToken);
 
             throw new InvalidOperationException(CreateBlockedAccessMessage(request.Purpose, effectiveStatus));
@@ -108,6 +112,8 @@ public sealed class ExchangeCredentialService(
                 outcome: "Blocked:DecryptFailed",
                 request.CorrelationId,
                 request.Purpose,
+                accessMode: "DecryptReadFailed",
+                materials: "ApiKey,ApiSecret",
                 cancellationToken);
 
             throw new InvalidOperationException("Exchange credentials are unavailable because decryption failed.");
@@ -124,6 +130,8 @@ public sealed class ExchangeCredentialService(
             outcome: "Allowed",
             request.CorrelationId,
             request.Purpose,
+            accessMode: "DecryptRead",
+            materials: "ApiKey,ApiSecret",
             cancellationToken);
 
         return new ExchangeCredentialAccessResult(apiKey, apiSecret, accessState);
@@ -167,6 +175,8 @@ public sealed class ExchangeCredentialService(
             outcome: request.IsValid ? "Validated" : "ValidationFailed",
             request.CorrelationId,
             purpose: ExchangeCredentialAccessPurpose.Validation,
+            accessMode: "ValidationStateWrite",
+            materials: "MetadataOnly",
             cancellationToken);
 
         return state;
@@ -257,6 +267,8 @@ public sealed class ExchangeCredentialService(
         string outcome,
         string? correlationId,
         ExchangeCredentialAccessPurpose? purpose,
+        string accessMode,
+        string materials,
         CancellationToken cancellationToken)
     {
         await auditLogService.WriteAsync(
@@ -264,7 +276,7 @@ public sealed class ExchangeCredentialService(
                 actor,
                 action,
                 $"ExchangeCredential/{exchangeAccountId}",
-                BuildAuditContext(state, purpose),
+                BuildAuditContext(state, purpose, accessMode, materials),
                 correlationId,
                 outcome,
                 "PrivatePlane"),
@@ -273,10 +285,14 @@ public sealed class ExchangeCredentialService(
 
     private static string BuildAuditContext(
         ExchangeCredentialStateSnapshot state,
-        ExchangeCredentialAccessPurpose? purpose)
+        ExchangeCredentialAccessPurpose? purpose,
+        string accessMode,
+        string materials)
     {
         var contextParts = new List<string>
         {
+            $"AccessMode={accessMode}",
+            $"Materials={materials}",
             $"Status={state.Status}",
             $"KeyVersion={state.KeyVersion ?? "missing"}",
             $"Fingerprint={ShortFingerprint(state.Fingerprint)}",

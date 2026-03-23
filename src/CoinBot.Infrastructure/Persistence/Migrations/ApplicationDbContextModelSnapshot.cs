@@ -711,6 +711,10 @@ namespace CoinBot.Infrastructure.Persistence.Migrations
                         .HasPrecision(38, 18)
                         .HasColumnType("decimal(38,18)");
 
+                    b.Property<decimal?>("AvailableValueInReferenceQuote")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
                     b.Property<DateTime>("CreatedDate")
                         .HasColumnType("datetime2");
 
@@ -720,12 +724,35 @@ namespace CoinBot.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("LastActivityAtUtc")
                         .HasColumnType("datetime2");
 
+                    b.Property<decimal?>("LastReferencePrice")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
+                    b.Property<DateTime?>("LastValuationAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("LastValuationSource")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
                     b.Property<string>("OwnerUserId")
                         .IsRequired()
                         .HasMaxLength(450)
                         .HasColumnType("nvarchar(450)");
 
+                    b.Property<string>("ReferenceQuoteAsset")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("ReferenceSymbol")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
                     b.Property<decimal>("ReservedBalance")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
+                    b.Property<decimal?>("ReservedValueInReferenceQuote")
                         .HasPrecision(38, 18)
                         .HasColumnType("decimal(38,18)");
 

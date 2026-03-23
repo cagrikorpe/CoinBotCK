@@ -1,6 +1,14 @@
+using System.Text.Json.Serialization;
+
 namespace CoinBot.Application.Abstractions.ExchangeCredentials;
 
 public sealed record ExchangeCredentialAccessResult(
-    string ApiKey,
-    string ApiSecret,
-    ExchangeCredentialStateSnapshot State);
+    [property: JsonIgnore] string ApiKey,
+    [property: JsonIgnore] string ApiSecret,
+    ExchangeCredentialStateSnapshot State)
+{
+    public override string ToString()
+    {
+        return $"{nameof(ExchangeCredentialAccessResult)} {{ ApiKey = ***REDACTED***, ApiSecret = ***REDACTED***, State = {State} }}";
+    }
+}

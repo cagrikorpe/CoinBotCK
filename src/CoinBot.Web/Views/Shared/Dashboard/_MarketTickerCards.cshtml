@@ -1,0 +1,44 @@
+@model IReadOnlyCollection<CoinBot.Web.ViewModels.Home.DashboardMarketTickerViewModel>
+@using System.Globalization
+
+<div class="row row-cols-1 row-cols-md-2 row-cols-xl-3">
+    @foreach (var item in Model)
+    {
+        var priceText = item.Price.HasValue
+            ? item.Price.Value.ToString("0.########", CultureInfo.InvariantCulture)
+            : "Veri bekleniyor";
+        var metaText = string.IsNullOrWhiteSpace(item.QuoteAsset)
+            ? "Metadata bekleniyor"
+            : $"Tick {item.TickSize?.ToString("0.########", CultureInfo.InvariantCulture) ?? "—"} • Step {item.StepSize?.ToString("0.########", CultureInfo.InvariantCulture) ?? "—"}";
+        var statusClass = item.IsTradingEnabled
+            ? "cb-badge-success"
+            : "cb-badge-warning";
+        var freshnessText = item.ReceivedAtUtc.HasValue
+            ? item.ReceivedAtUtc.Value.ToString("HH:mm:ss 'UTC'", CultureInfo.InvariantCulture)
+            : "Henüz veri yok";
+    <div class="col d-flex">
+        <div class="card card-custom gutter-b cb-card cb-stat-card cb-dashboard-kpi-card w-100" data-cb-market-card data-cb-symbol="@item.Symbol">
+            <div class="card-body">
+                <div class="cb-stat-top">
+                    <span class="cb-stat-label">@item.Symbol</span>
+                    <span class="cb-badge @statusClass" data-cb-market-status data-cb-symbol="@item.Symbol">@item.TradingStatus</span>
+                </div>
+                <div class="cb-stat-value cb-numeric-strong" data-cb-market-price data-cb-symbol="@item.Symbol">@priceText</div>
+                <div class="cb-dashboard-kpi-footer">
+                    <span class="cb-dashboard-kpi-dot @(item.IsTradingEnabled ? "is-positive" : "is-neutral")"></span>
+                    <span class="cb-stat-help" data-cb-market-meta data-cb-symbol="@item.Symbol">@metaText</span>
+                </div>
+                <div class="cb-dashboard-card-meta mt-4">
+                    <span data-cb-market-pair data-cb-symbol="@item.Symbol">
+                        @(string.IsNullOrWhiteSpace(item.QuoteAsset) ? item.Symbol : $"{item.BaseAsset}/{item.QuoteAsset}")
+                    </span>
+                    <span> • </span>
+                    <span data-cb-market-updated data-cb-symbol="@item.Symbol">@freshnessText</span>
+                    <span> • </span>
+                    <span data-cb-market-source data-cb-symbol="@item.Symbol">@item.Source</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    }
+</div>

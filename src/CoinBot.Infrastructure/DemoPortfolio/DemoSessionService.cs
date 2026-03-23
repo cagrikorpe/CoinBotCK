@@ -14,6 +14,7 @@ namespace CoinBot.Infrastructure.DemoPortfolio;
 public sealed class DemoSessionService(
     ApplicationDbContext dbContext,
     DemoConsistencyWatchdogService demoConsistencyWatchdogService,
+    DemoWalletValuationService demoWalletValuationService,
     IAuditLogService auditLogService,
     IOptions<DemoSessionOptions> options,
     TimeProvider timeProvider,
@@ -305,6 +306,8 @@ public sealed class DemoSessionService(
             });
         }
 
+        await demoWalletValuationService.SyncAsync(wallets, cancellationToken);
+
         foreach (var position in positions)
         {
             positionCount++;
@@ -408,6 +411,8 @@ public sealed class DemoSessionService(
             wallet.ReservedBalance = 0m;
             wallet.LastActivityAtUtc = observedAtUtc;
         }
+
+        await demoWalletValuationService.SyncAsync(wallets, cancellationToken);
     }
 
     private async Task ResetPositionsAsync(string ownerUserId, DateTime observedAtUtc, ISet<Guid> affectedBotIds, CancellationToken cancellationToken)
@@ -468,6 +473,7 @@ public sealed class DemoSessionService(
         wallet.AvailableBalance = amount;
         wallet.ReservedBalance = 0m;
         wallet.LastActivityAtUtc = occurredAtUtc;
+        await demoWalletValuationService.SyncAsync(wallet, cancellationToken);
 
         var transactionId = Guid.NewGuid();
         var transaction = new DemoLedgerTransaction

@@ -1,5 +1,8 @@
 using System.Linq;
+using System.Security.Claims;
+using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Contracts.Common;
+using CoinBot.Domain.Enums;
 using CoinBot.Web.ViewModels.Admin;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -10,6 +13,14 @@ namespace CoinBot.Web.Areas.Admin.Controllers;
 [Authorize(Policy = ApplicationPolicies.AdminPortalAccess)]
 public sealed class AdminController : Controller
 {
+    private const string ExecutionSwitchSnapshotViewDataKey = "AdminExecutionSwitchSnapshot";
+    private readonly IGlobalExecutionSwitchService globalExecutionSwitchService;
+
+    public AdminController(IGlobalExecutionSwitchService globalExecutionSwitchService)
+    {
+        this.globalExecutionSwitchService = globalExecutionSwitchService;
+    }
+
     [AllowAnonymous]
     public IActionResult Login()
     {
@@ -240,7 +251,7 @@ public sealed class AdminController : Controller
     }
 
     [Authorize(Policy = ApplicationPolicies.PlatformAdministration)]
-    public IActionResult Settings()
+    public async Task<IActionResult> Settings(CancellationToken cancellationToken)
     {
         ApplyShellMeta(
             title: "Global Ayarlar",
@@ -248,7 +259,72 @@ public sealed class AdminController : Controller
             activeNav: "Settings",
             breadcrumbItems: new[] { "Super Admin", "Platform", "Global Ayarlar" });
 
+        ViewData[ExecutionSwitchSnapshotViewDataKey] = await globalExecutionSwitchService.GetSnapshotAsync(cancellationToken);
+
         return View();
+    }
+
+    [HttpPost]
+    [Authorize(Policy = ApplicationPolicies.PlatformAdministration)]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> SetTradeMasterState(bool isArmed, string? reason, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await globalExecutionSwitchService.SetTradeMasterStateAsync(
+                isArmed ? TradeMasterSwitchState.Armed : TradeMasterSwitchState.Disarmed,
+                ResolveAdminActor(),
+                BuildSwitchContext("TradeMaster", reason),
+                HttpContext.TraceIdentifier,
+                cancellationToken);
+
+            TempData["AdminExecutionSwitchSuccess"] = isArmed
+                ? "TradeMaster armed. Emir zinciri backend hard gate uzerinden acildi."
+                : "TradeMaster disarmed. Emir zinciri fail-closed duruma alindi.";
+        }
+        catch (Exception exception)
+        {
+            TempData["AdminExecutionSwitchError"] = exception.Message;
+        }
+
+        return RedirectToAction(nameof(Settings));
+    }
+
+    [HttpPost]
+    [Authorize(Policy = ApplicationPolicies.PlatformAdministration)]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> SetDemoMode(bool isEnabled, string? reason, string? liveApprovalReference, CancellationToken cancellationToken)
+    {
+        try
+        {
+            TradingModeLiveApproval? liveApproval = null;
+
+            if (!isEnabled)
+            {
+                var approvalReference = liveApprovalReference?.Trim();
+                liveApproval = string.IsNullOrWhiteSpace(approvalReference)
+                    ? null
+                    : new TradingModeLiveApproval(approvalReference);
+            }
+
+            await globalExecutionSwitchService.SetDemoModeAsync(
+                isEnabled,
+                ResolveAdminActor(),
+                liveApproval,
+                BuildSwitchContext("DemoMode", reason),
+                HttpContext.TraceIdentifier,
+                cancellationToken);
+
+            TempData["AdminExecutionSwitchSuccess"] = isEnabled
+                ? "DemoMode enabled. Live execution yolu backend hard gate ile kapatildi."
+                : "DemoMode disabled. Live execution yalnizca approval reference ile acildi.";
+        }
+        catch (Exception exception)
+        {
+            TempData["AdminExecutionSwitchError"] = exception.Message;
+        }
+
+        return RedirectToAction(nameof(Settings));
     }
 
     private void ApplyShellMeta(string title, string description, string activeNav, string[] breadcrumbItems)
@@ -357,5 +433,22 @@ public sealed class AdminController : Controller
             StatusBadge = statusBadge,
             Strip = strip
         };
+    }
+
+    private string ResolveAdminActor()
+    {
+        var subjectId = User.FindFirstValue(ClaimTypes.NameIdentifier)?.Trim();
+        return string.IsNullOrWhiteSpace(subjectId) ? "admin:unknown" : $"admin:{subjectId}";
+    }
+
+    private static string BuildSwitchContext(string scope, string? reason)
+    {
+        var context = string.IsNullOrWhiteSpace(reason)
+            ? $"AdminSettings.{scope}"
+            : $"AdminSettings.{scope} | Reason={reason.Trim()}";
+
+        return context.Length <= 512
+            ? context
+            : context[..512];
     }
 }

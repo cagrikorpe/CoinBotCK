@@ -1,4 +1,5 @@
 using System.Globalization;
+using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Domain.Entities;
 using CoinBot.Infrastructure.Persistence;
@@ -11,6 +12,7 @@ namespace CoinBot.Infrastructure.MarketData;
 public sealed class HistoricalGapFillerService(
     ApplicationDbContext dbContext,
     IBinanceHistoricalKlineClient historicalKlineClient,
+    IIndicatorDataService indicatorDataService,
     IOptions<HistoricalGapFillerOptions> options,
     IOptions<BinanceMarketDataOptions> binanceOptions,
     TimeProvider timeProvider,
@@ -27,7 +29,14 @@ public sealed class HistoricalGapFillerService(
 
     public async Task<HistoricalGapFillRunSummary> BackfillAsync(CancellationToken cancellationToken = default)
     {
-        var configuredSymbols = GetConfiguredSymbols();
+        return await BackfillAsync(GetConfiguredSymbols(), cancellationToken);
+    }
+
+    public async Task<HistoricalGapFillRunSummary> BackfillAsync(
+        IReadOnlyCollection<string> symbols,
+        CancellationToken cancellationToken = default)
+    {
+        var configuredSymbols = NormalizeSymbols(symbols);
 
         if (configuredSymbols.Count == 0)
         {
@@ -74,6 +83,93 @@ public sealed class HistoricalGapFillerService(
             InsertedCandleCount: insertedCandleCount,
             SkippedDuplicateCount: skippedDuplicateCount,
             ContinuityVerifiedSymbolCount: verifiedSymbols);
+    }
+
+    public ValueTask<IReadOnlyCollection<string>> GetConfiguredSymbolsSnapshotAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(GetConfiguredSymbols());
+    }
+
+    public async Task<IReadOnlyCollection<MarketCandleSnapshot>> LoadRecentCandlesAsync(
+        string symbol,
+        string interval,
+        int maxCandles,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (maxCandles <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxCandles), "The candle count must be greater than zero.");
+        }
+
+        var normalizedSymbol = MarketDataSymbolNormalizer.Normalize(symbol);
+        var normalizedInterval = NormalizeRequired(interval, nameof(interval));
+        var entities = await dbContext.HistoricalMarketCandles
+            .AsNoTracking()
+            .Where(entity =>
+                !entity.IsDeleted &&
+                entity.Symbol == normalizedSymbol &&
+                entity.Interval == normalizedInterval)
+            .OrderByDescending(entity => entity.OpenTimeUtc)
+            .Take(maxCandles)
+            .ToListAsync(cancellationToken);
+
+        entities.Reverse();
+
+        return entities
+            .Select(MapMarketCandleSnapshot)
+            .ToArray();
+    }
+
+    public async Task<HistoricalIndicatorWarmupSummary> WarmIndicatorsAsync(CancellationToken cancellationToken = default)
+    {
+        return await WarmIndicatorsAsync(GetConfiguredSymbols(), cancellationToken);
+    }
+
+    public async Task<HistoricalIndicatorWarmupSummary> WarmIndicatorsAsync(
+        IReadOnlyCollection<string> symbols,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedSymbols = NormalizeSymbols(symbols);
+        var normalizedInterval = NormalizeRequired(binanceOptionsValue.KlineInterval, nameof(binanceOptionsValue.KlineInterval));
+        var primedSymbolCount = 0;
+        var loadedCandleCount = 0;
+
+        foreach (var symbol in normalizedSymbols)
+        {
+            var candles = await LoadRecentCandlesAsync(
+                symbol,
+                normalizedInterval,
+                optionsValue.LookbackCandles,
+                cancellationToken);
+
+            if (candles.Count == 0)
+            {
+                continue;
+            }
+
+            var snapshot = await indicatorDataService.PrimeAsync(
+                symbol,
+                normalizedInterval,
+                candles,
+                cancellationToken);
+
+            if (snapshot is null)
+            {
+                continue;
+            }
+
+            primedSymbolCount++;
+            loadedCandleCount += candles.Count;
+        }
+
+        return new HistoricalIndicatorWarmupSummary(
+            normalizedInterval,
+            normalizedSymbols.Count,
+            primedSymbolCount,
+            loadedCandleCount);
     }
 
     private async Task<IReadOnlyCollection<HistoricalGapRange>> DetectGapsAsync(
@@ -443,6 +539,43 @@ public sealed class HistoricalGapFillerService(
             ReceivedAtUtc = NormalizeTimestamp(snapshot.ReceivedAtUtc),
             Source = snapshot.Source.Trim()
         };
+    }
+
+    private static MarketCandleSnapshot MapMarketCandleSnapshot(HistoricalMarketCandle entity)
+    {
+        return new MarketCandleSnapshot(
+            entity.Symbol,
+            entity.Interval,
+            NormalizeTimestamp(entity.OpenTimeUtc),
+            NormalizeTimestamp(entity.CloseTimeUtc),
+            entity.OpenPrice,
+            entity.HighPrice,
+            entity.LowPrice,
+            entity.ClosePrice,
+            entity.Volume,
+            IsClosed: true,
+            NormalizeTimestamp(entity.ReceivedAtUtc),
+            entity.Source);
+    }
+
+    private static IReadOnlyCollection<string> NormalizeSymbols(IReadOnlyCollection<string> symbols)
+    {
+        ArgumentNullException.ThrowIfNull(symbols);
+        return symbols.Count == 0
+            ? Array.Empty<string>()
+            : MarketDataSymbolNormalizer.NormalizeMany(symbols);
+    }
+
+    private static string NormalizeRequired(string? value, string parameterName)
+    {
+        var normalizedValue = value?.Trim();
+
+        if (string.IsNullOrWhiteSpace(normalizedValue))
+        {
+            throw new ArgumentException("The value is required.", parameterName);
+        }
+
+        return normalizedValue;
     }
 
     private static DateTime NormalizeTimestamp(DateTime value)

@@ -1,8 +1,10 @@
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Indicators;
+using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.Infrastructure.Risk;
 using CoinBot.Infrastructure.Strategies;
@@ -57,11 +59,19 @@ public sealed class StrategySignalServiceTests
         Assert.Equal("BTCUSDT", loadedSignal.ExplainabilityPayload.IndicatorSnapshot.Symbol);
         Assert.NotNull(loadedSignal.ExplainabilityPayload.RuleResultSnapshot.EntryRuleResult);
         Assert.NotNull(loadedSignal.ExplainabilityPayload.RuleResultSnapshot.RiskRuleResult);
-        Assert.NotNull(loadedSignal.ExplainabilityPayload.RiskEvaluation);
         Assert.True(loadedSignal.ExplainabilityPayload.RuleResultSnapshot.EntryRuleResult!.Matched);
         Assert.True(loadedSignal.ExplainabilityPayload.RuleResultSnapshot.RiskRuleResult!.Matched);
-        Assert.False(loadedSignal.ExplainabilityPayload.RiskEvaluation!.IsVetoed);
-        Assert.True(loadedSignal.ExplainabilityPayload.RiskEvaluation.Snapshot.IsVirtualCheck);
+        Assert.Equal(100, loadedSignal.ExplainabilityPayload.ConfidenceSnapshot.ScorePercentage);
+        Assert.Equal(StrategySignalConfidenceBand.High, loadedSignal.ExplainabilityPayload.ConfidenceSnapshot.Band);
+        Assert.False(loadedSignal.ExplainabilityPayload.ConfidenceSnapshot.IsVetoed);
+        Assert.True(loadedSignal.ExplainabilityPayload.ConfidenceSnapshot.IsVirtualRiskCheck);
+        Assert.Equal("Entry signal created", loadedSignal.ExplainabilityPayload.UiLog.Title);
+        Assert.Contains("RSI 28 <= 30", loadedSignal.ExplainabilityPayload.UiLog.Drivers, StringComparer.Ordinal);
+        Assert.True(loadedSignal.ExplainabilityPayload.DuplicateSignalSuppression.Enabled);
+        Assert.False(loadedSignal.ExplainabilityPayload.DuplicateSignalSuppression.WasSuppressed);
+        Assert.Contains(version.Id.ToString("N"), loadedSignal.ExplainabilityPayload.DuplicateSignalSuppression.Fingerprint, StringComparison.Ordinal);
+        Assert.DoesNotContain("CurrentEquity", persistedSignal.RiskEvaluationJson ?? string.Empty, StringComparison.Ordinal);
+        Assert.DoesNotContain("CurrentDailyLossAmount", persistedSignal.RiskEvaluationJson ?? string.Empty, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -116,19 +126,63 @@ public sealed class StrategySignalServiceTests
 
         Assert.Empty(result.Signals);
         var veto = Assert.Single(result.Vetoes);
+        var persistedVeto = await dbContext.TradingStrategySignalVetoes.SingleAsync();
         Assert.Equal(0, result.SuppressedDuplicateCount);
         Assert.True(result.EvaluationResult.EntryMatched);
         Assert.True(result.EvaluationResult.RiskPassed);
         Assert.Empty(await dbContext.TradingStrategySignals.ToListAsync());
         Assert.Equal(1, await dbContext.TradingStrategySignalVetoes.CountAsync());
-        Assert.Equal(RiskVetoReasonCode.DailyLossLimitBreached, veto.RiskEvaluation.ReasonCode);
-        Assert.True(veto.RiskEvaluation.Snapshot.IsVirtualCheck);
-        Assert.Equal(750m, veto.RiskEvaluation.Snapshot.CurrentDailyLossAmount);
+        Assert.Equal(RiskVetoReasonCode.DailyLossLimitBreached, veto.ConfidenceSnapshot.RiskReasonCode);
+        Assert.True(veto.ConfidenceSnapshot.IsVetoed);
+        Assert.True(veto.ConfidenceSnapshot.IsVirtualRiskCheck);
+        Assert.Equal(39, veto.ConfidenceSnapshot.ScorePercentage);
+        Assert.Equal("Entry signal vetoed", veto.UiLog.Title);
+        Assert.DoesNotContain("CurrentEquity", persistedVeto.RiskEvaluationJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("CurrentDailyLossAmount", persistedVeto.RiskEvaluationJson, StringComparison.Ordinal);
 
         var loadedVeto = await service.GetVetoAsync(veto.StrategySignalVetoId);
 
         Assert.NotNull(loadedVeto);
-        Assert.Equal(RiskVetoReasonCode.DailyLossLimitBreached, loadedVeto!.RiskEvaluation.ReasonCode);
+        Assert.Equal(RiskVetoReasonCode.DailyLossLimitBreached, loadedVeto!.ConfidenceSnapshot.RiskReasonCode);
+        Assert.Equal("Entry signal vetoed", loadedVeto.UiLog.Title);
+    }
+
+    [Fact]
+    public async Task GenerateAsync_PersistsSignal_WhenUsingIndicatorEngineProducedSnapshot()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-signal-4", "indicator-engine");
+        var version = CreateVersion(strategy, 2, CreateIndicatorReadyDefinitionJson());
+
+        dbContext.TradingStrategies.Add(strategy);
+        dbContext.TradingStrategyVersions.Add(version);
+        dbContext.RiskProfiles.Add(CreateRiskProfile(strategy.OwnerUserId, "EngineReady", 5m, 80m, 2m));
+        dbContext.DemoWallets.Add(CreateDemoWallet(strategy.OwnerUserId, "USDT", 10000m));
+        await dbContext.SaveChangesAsync();
+
+        var indicatorDataService = new IndicatorDataService(
+            new FakeMarketDataService(),
+            new IndicatorStreamHub(),
+            Microsoft.Extensions.Options.Options.Create(new IndicatorEngineOptions()),
+            NullLogger<IndicatorDataService>.Instance);
+        var historicalCandles = Enumerable.Range(0, 34)
+            .Select(index => CreateHistoricalIndicatorCandle(index))
+            .ToArray();
+        var latestSnapshot = await indicatorDataService.PrimeAsync("BTCUSDT", "1m", historicalCandles);
+        var service = CreateService(dbContext, timeProvider);
+
+        var result = await service.GenerateAsync(
+            new GenerateStrategySignalsRequest(
+                version.Id,
+                new StrategyEvaluationContext(ExecutionEnvironment.Demo, latestSnapshot!)));
+
+        var signal = Assert.Single(result.Signals);
+
+        Assert.True(result.EvaluationResult.EntryMatched);
+        Assert.Equal(StrategySignalType.Entry, signal.SignalType);
+        Assert.Equal("BTCUSDT", signal.Symbol);
+        Assert.Equal("1m", signal.Timeframe);
     }
 
     private static StrategySignalService CreateService(ApplicationDbContext dbContext, TimeProvider timeProvider)
@@ -294,10 +348,96 @@ public sealed class StrategySignalServiceTests
             """;
     }
 
+    private static string CreateIndicatorReadyDefinitionJson()
+    {
+        return
+            """
+            {
+              "schemaVersion": 1,
+              "entry": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Demo"
+                  },
+                  {
+                    "path": "indicator.macd.isReady",
+                    "comparison": "equals",
+                    "value": true
+                  },
+                  {
+                    "path": "indicator.state",
+                    "comparison": "equals",
+                    "value": "Ready"
+                  }
+                ]
+              }
+            }
+            """;
+    }
+
+    private static MarketCandleSnapshot CreateHistoricalIndicatorCandle(int minuteOffset)
+    {
+        var openTimeUtc = new DateTime(2026, 3, 22, 12, 0, 0, DateTimeKind.Utc).AddMinutes(minuteOffset);
+        var closeTimeUtc = openTimeUtc.AddMinutes(1).AddMilliseconds(-1);
+
+        return new MarketCandleSnapshot(
+            "BTCUSDT",
+            "1m",
+            openTimeUtc,
+            closeTimeUtc,
+            OpenPrice: 100m,
+            HighPrice: 100m,
+            LowPrice: 100m,
+            ClosePrice: 100m,
+            Volume: 10m,
+            IsClosed: true,
+            ReceivedAtUtc: closeTimeUtc,
+            Source: "UnitTest.History");
+    }
+
     private sealed class TestDataScopeContext : IDataScopeContext
     {
         public string? UserId => null;
 
         public bool HasIsolationBypass => true;
+    }
+
+    private sealed class FakeMarketDataService : IMarketDataService
+    {
+        public ValueTask TrackSymbolAsync(string symbol, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask TrackSymbolsAsync(IEnumerable<string> symbols, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask<MarketPriceSnapshot?> GetLatestPriceAsync(string symbol, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<MarketPriceSnapshot?>(null);
+        }
+
+        public ValueTask<SymbolMetadataSnapshot?> GetSymbolMetadataAsync(string symbol, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<SymbolMetadataSnapshot?>(null);
+        }
+
+        public async IAsyncEnumerable<MarketPriceSnapshot> WatchAsync(
+            IEnumerable<string> symbols,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await Task.CompletedTask;
+            yield break;
+        }
     }
 }

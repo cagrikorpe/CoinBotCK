@@ -36,6 +36,7 @@ public sealed class GlobalExecutionSwitchServiceTests
         Assert.Equal("corr-001", auditLog.CorrelationId);
         Assert.Equal("Applied", auditLog.Outcome);
         Assert.Equal(nameof(ExecutionEnvironment.Demo), auditLog.Environment);
+        Assert.NotEqual(default, auditLog.CreatedDate);
     }
 
     [Fact]
@@ -63,6 +64,7 @@ public sealed class GlobalExecutionSwitchServiceTests
         Assert.Equal("corr-002", auditLog.CorrelationId);
         Assert.Equal("Applied", auditLog.Outcome);
         Assert.Equal(nameof(ExecutionEnvironment.Live), auditLog.Environment);
+        Assert.NotEqual(default, auditLog.CreatedDate);
     }
 
     [Fact]

@@ -134,12 +134,14 @@ public static class DependencyInjection
         services.AddScoped<IAlertService, AlertingService>();
         services.AddScoped<IGlobalExecutionSwitchService, GlobalExecutionSwitchService>();
         services.AddScoped<IDataLatencyCircuitBreaker, DataLatencyCircuitBreaker>();
+        services.AddScoped<DemoWalletValuationService>();
         services.AddScoped<IDemoPortfolioAccountingService, DemoPortfolioAccountingService>();
         services.AddScoped<DemoConsistencyWatchdogService>();
         services.AddScoped<IDemoSessionService, DemoSessionService>();
         services.AddScoped<DemoFillSimulator>();
         services.AddScoped<ExecutionOrderLifecycleService>();
         services.AddScoped<ExecutionReconciliationService>();
+        services.AddScoped<VirtualExecutionWatchdogService>();
         services.AddScoped<VirtualExecutor>();
         services.AddScoped<BinanceExecutor>();
         services.AddScoped<IExecutionGate, ExecutionGate>();
@@ -207,6 +209,7 @@ public static class DependencyInjection
         services.AddHostedService<ExchangePositionSyncWorker>();
         services.AddHostedService<ExchangeAppStateSyncWorker>();
         services.AddHostedService<ExecutionReconciliationWorker>();
+        services.AddHostedService<VirtualExecutionWatchdogWorker>();
 
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseSqlServer(connectionString, sqlOptions =>
@@ -216,6 +219,7 @@ public static class DependencyInjection
             .AddCheck("live", () => HealthCheckResult.Healthy("The service is accepting requests."), tags: ["live"])
             .AddCheck<DatabaseHealthCheck>("db", tags: ["ready", "db"])
             .AddCheck<MarketHealthCheck>("market", tags: ["ready", "market"])
+            .AddCheck<DataLatencyHealthCheck>("data-latency", tags: ["ready", "market", "data-latency"])
             .AddCheck<DemoEngineHealthCheck>("demo-engine", tags: ["ready", "demo-engine"]);
 
         services

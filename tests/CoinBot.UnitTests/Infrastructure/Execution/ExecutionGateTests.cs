@@ -2,11 +2,13 @@ using CoinBot.Application.Abstractions.Alerts;
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.DemoPortfolio;
 using CoinBot.Application.Abstractions.Execution;
+using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Auditing;
 using CoinBot.Infrastructure.DemoPortfolio;
 using CoinBot.Infrastructure.Execution;
+using CoinBot.Infrastructure.Identity;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.UnitTests.Infrastructure.Mfa;
@@ -219,6 +221,41 @@ public sealed class ExecutionGateTests
     }
 
     [Fact]
+    public async Task EnsureExecutionAllowedAsync_BlocksLiveExecutionWhenDemoModeIsEnabled_EvenIfUserOverrideResolvesLive()
+    {
+        await using var harness = CreateHarness();
+        await PrimeFreshMarketDataAsync(harness, "corr-550");
+        await SeedUserAsync(
+            harness.DbContext,
+            "user-live-override",
+            ExecutionEnvironment.Live,
+            harness.TimeProvider.GetUtcNow().UtcDateTime.AddMinutes(-5));
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-override",
+            context: "Execution open",
+            correlationId: "corr-551");
+
+        var exception = await Assert.ThrowsAsync<ExecutionGateRejectedException>(() =>
+            harness.ExecutionGate.EnsureExecutionAllowedAsync(
+                new ExecutionGateRequest(
+                    Actor: "worker-override",
+                    Action: "TradeExecution.Dispatch",
+                    Target: "bot-override",
+                    Environment: ExecutionEnvironment.Live,
+                    Context: "Live dispatch attempt against user override",
+                    CorrelationId: "corr-552",
+                    UserId: "user-live-override")));
+
+        var auditLog = await harness.DbContext.AuditLogs
+            .SingleAsync(entity => entity.Action == "TradeExecution.Dispatch");
+
+        Assert.Equal(ExecutionGateBlockedReason.LiveExecutionBlockedByDemoMode, exception.Reason);
+        Assert.Equal("Blocked:LiveExecutionClosedByDemoMode", auditLog.Outcome);
+        Assert.Contains("ResolvedMode=Live; Source=UserOverride", auditLog.Context, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task EnsureExecutionAllowedAsync_BlocksWhenMarketDataIsStale()
     {
         await using var harness = CreateHarness();
@@ -301,6 +338,11 @@ public sealed class ExecutionGateTests
             timeProvider,
             NullLogger<DataLatencyCircuitBreaker>.Instance);
         var tradingModeService = new TradingModeService(dbContext, auditLogService);
+        var marketDataService = new FakeMarketDataService();
+        var demoWalletValuationService = new DemoWalletValuationService(
+            marketDataService,
+            timeProvider,
+            NullLogger<DemoWalletValuationService>.Instance);
         var demoSessionService = new DemoSessionService(
             dbContext,
             new DemoConsistencyWatchdogService(
@@ -308,6 +350,7 @@ public sealed class ExecutionGateTests
                 Options.Create(new DemoSessionOptions()),
                 timeProvider,
                 NullLogger<DemoConsistencyWatchdogService>.Instance),
+            demoWalletValuationService,
             auditLogService,
             Options.Create(new DemoSessionOptions()),
             timeProvider,
@@ -330,6 +373,28 @@ public sealed class ExecutionGateTests
             correlationId);
     }
 
+    private static async Task SeedUserAsync(
+        ApplicationDbContext dbContext,
+        string userId,
+        ExecutionEnvironment? modeOverride,
+        DateTime? approvedAtUtc = null)
+    {
+        dbContext.Users.Add(new ApplicationUser
+        {
+            Id = userId,
+            UserName = userId,
+            NormalizedUserName = userId.ToUpperInvariant(),
+            Email = $"{userId}@example.test",
+            NormalizedEmail = $"{userId}@example.test".ToUpperInvariant(),
+            FullName = userId,
+            TradingModeOverride = modeOverride,
+            TradingModeApprovedAtUtc = approvedAtUtc,
+            TradingModeApprovalReference = approvedAtUtc.HasValue ? "approval-user-override" : null
+        });
+
+        await dbContext.SaveChangesAsync();
+    }
+
     private sealed class TestDataScopeContext : IDataScopeContext
     {
         public string? UserId => null;
@@ -342,6 +407,42 @@ public sealed class ExecutionGateTests
         public Task SendAsync(AlertNotification notification, CancellationToken cancellationToken = default)
         {
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FakeMarketDataService : IMarketDataService
+    {
+        public ValueTask TrackSymbolAsync(string symbol, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask TrackSymbolsAsync(IEnumerable<string> symbols, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask<MarketPriceSnapshot?> GetLatestPriceAsync(string symbol, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<MarketPriceSnapshot?>(null);
+        }
+
+        public ValueTask<SymbolMetadataSnapshot?> GetSymbolMetadataAsync(string symbol, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<SymbolMetadataSnapshot?>(null);
+        }
+
+        public async IAsyncEnumerable<MarketPriceSnapshot> WatchAsync(
+            IEnumerable<string> symbols,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await Task.CompletedTask;
+            yield break;
         }
     }
 
