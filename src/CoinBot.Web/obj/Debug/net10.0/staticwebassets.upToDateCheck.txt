@@ -367,6 +367,7 @@ D:\CkBot\Code\CoinBot\src\CoinBot.Web\wwwroot\metronic\assets\plugins\custom\tin
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\wwwroot\metronic\assets\plugins\custom\tinymce\skins\content\default\content.min.css
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\wwwroot\metronic\assets\js\pages\crud\datatables\basic\NetteTablo.js
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\wwwroot\metronic\assets\js\pages\crud\ktdatatable\advanced\horizontal.js
+D:\CkBot\Code\CoinBot\src\CoinBot.Web\wwwroot\js\mfa-qr.js
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\wwwroot\metronic\custom\apps\education\school\statistics.html
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\wwwroot\metronic\crud\forms\widgets\nouislider.html
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\wwwroot\metronic\assets\plugins\custom\tinymce\plugins\textpattern\plugin.min.js
@@ -754,6 +755,7 @@ wwwroot\js\bot-foundation.js
 wwwroot\js\dashboard-foundation.js
 wwwroot\js\exchange-foundation.js
 wwwroot\js\log-center-foundation.js
+wwwroot\js\mfa-qr.js
 wwwroot\js\notifications-foundation.js
 wwwroot\js\paper-trading-foundation.js
 wwwroot\js\positions-foundation.js

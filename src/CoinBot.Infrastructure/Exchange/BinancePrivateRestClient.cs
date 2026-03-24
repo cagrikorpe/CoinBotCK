@@ -9,6 +9,7 @@ using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -17,10 +18,10 @@ namespace CoinBot.Infrastructure.Exchange;
 public sealed class BinancePrivateRestClient(
     HttpClient httpClient,
     IOptions<BinancePrivateDataOptions> options,
-    ITraceService traceService,
     TimeProvider timeProvider,
     ILogger<BinancePrivateRestClient> logger,
-    IMonitoringTelemetryCollector? monitoringTelemetryCollector = null) : IBinancePrivateRestClient
+    IMonitoringTelemetryCollector? monitoringTelemetryCollector = null,
+    IServiceScopeFactory? serviceScopeFactory = null) : IBinancePrivateRestClient
 {
     private readonly BinancePrivateDataOptions optionsValue = options.Value;
 
@@ -681,7 +682,7 @@ public sealed class BinancePrivateRestClient(
         long latencyMs,
         CancellationToken cancellationToken)
     {
-        return traceService.WriteExecutionTraceAsync(
+        return WriteExecutionTraceAsync(
             new ExecutionTraceWriteRequest(
                 request.CommandId ?? request.ClientOrderId,
                 request.UserId ?? "system:unknown",
@@ -707,7 +708,7 @@ public sealed class BinancePrivateRestClient(
         long latencyMs,
         CancellationToken cancellationToken)
     {
-        return traceService.WriteExecutionTraceAsync(
+        return WriteExecutionTraceAsync(
             new ExecutionTraceWriteRequest(
                 request.CommandId ?? request.ClientOrderId ?? request.ExchangeOrderId ?? "cancel:unknown",
                 request.UserId ?? "system:unknown",
@@ -722,6 +723,26 @@ public sealed class BinancePrivateRestClient(
                 exchangeCode,
                 latencyMs > int.MaxValue ? int.MaxValue : (int)latencyMs),
             cancellationToken);
+    }
+
+    private async Task WriteExecutionTraceAsync(
+        ExecutionTraceWriteRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (serviceScopeFactory is null)
+        {
+            return;
+        }
+
+        await using var scope = serviceScopeFactory.CreateAsyncScope();
+        var traceService = scope.ServiceProvider.GetService<ITraceService>();
+
+        if (traceService is null)
+        {
+            return;
+        }
+
+        await traceService.WriteExecutionTraceAsync(request, cancellationToken);
     }
 
     private static BinanceOrderStatusSnapshot BuildOrderStatusSnapshot(

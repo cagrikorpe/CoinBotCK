@@ -216,3 +216,4 @@ D:\CkBot\Code\CoinBot\tests\CoinBot.UnitTests\bin\Debug\net10.0\Serilog.Sinks.De
 D:\CkBot\Code\CoinBot\tests\CoinBot.UnitTests\bin\Debug\net10.0\Serilog.Sinks.File.dll
 D:\CkBot\Code\CoinBot\tests\CoinBot.UnitTests\bin\Debug\net10.0\CoinBot.Web.dll
 D:\CkBot\Code\CoinBot\tests\CoinBot.UnitTests\bin\Debug\net10.0\CoinBot.Web.pdb
+D:\CkBot\Code\CoinBot\tests\CoinBot.UnitTests\bin\Debug\net10.0\QRCoder.dll

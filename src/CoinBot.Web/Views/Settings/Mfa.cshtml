@@ -1,3 +1,6 @@
+@using System.Collections.Generic
+@using System.Text.Json
+@using QRCoder
 @model CoinBot.Web.ViewModels.Settings.MfaSettingsViewModel
 @{
     ViewData["Title"] = "2FA Yönetimi";
@@ -54,6 +57,33 @@
                             <div class="cb-section-title">Authenticator kurulumu</div>
                             @if (Model.HasPendingAuthenticatorEnrollment && !string.IsNullOrWhiteSpace(Model.DisplaySharedKey))
                             {
+                                var authenticatorUri = Model.AuthenticatorUri;
+
+                                if (!string.IsNullOrWhiteSpace(authenticatorUri))
+                                {
+                                    using var qrCodeData = new QRCodeGenerator().CreateQrCode(authenticatorUri, QRCodeGenerator.ECCLevel.L);
+                                    var qrMatrix = new List<string>(qrCodeData.ModuleMatrix.Count);
+
+                                    foreach (var row in qrCodeData.ModuleMatrix)
+                                    {
+                                        var rowChars = new char[row.Count];
+
+                                        for (var index = 0; index < row.Count; index++)
+                                        {
+                                            rowChars[index] = row[index] ? '1' : '0';
+                                        }
+
+                                        qrMatrix.Add(new string(rowChars));
+                                    }
+
+                                    <div class="mt-5">
+                                        <div id="cb-authenticator-qr"
+                                             class="d-inline-block border rounded bg-white p-3"
+                                             data-cb-qr-matrix='@JsonSerializer.Serialize(qrMatrix)'
+                                             role="img"
+                                             aria-label="Authenticator QR kodu"></div>
+                                    </div>
+                                }
                                 <div class="cb-notice cb-notice-warning mt-4">
                                     Authenticator uygulamasina su anahtari ekleyin ve olusan 6 haneli kodu asagidan dogrulayin.
                                 </div>
@@ -127,3 +157,7 @@
         </div>
     </div>
 </div>
+
+@section Scripts {
+    <script src="~/js/mfa-qr.js" asp-append-version="true"></script>
+}

@@ -1965,6 +1965,10 @@
               "target": "Package",
               "version": "[10.0.5, )"
             },
+            "QRCoder": {
+              "target": "Package",
+              "version": "[1.4.3, )"
+            },
             "Serilog.AspNetCore": {
               "target": "Package",
               "version": "[9.0.0, )"
