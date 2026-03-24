@@ -1,3 +1,13 @@
+@using CoinBot.Application.Abstractions.Administration
+@{
+    var snapshot = ViewData["AdminNotificationsPageSnapshot"] as AdminNotificationsPageSnapshot;
+    var alerts = snapshot?.Alerts ?? Array.Empty<AdminNotificationSnapshot>();
+    var categories = alerts
+        .GroupBy(alert => alert.Category)
+        .Select(group => new { Label = group.Key, Count = group.Count(), Tone = group.First().CategoryTone })
+        .ToArray();
+}
+
 <div class="card card-custom gutter-b cb-card cb-admin-card">
     <div class="card-body">
         <div class="cb-admin-panel-head">
@@ -6,17 +16,22 @@
                 <div class="cb-admin-section-title">Alarm kategori ve okunma görünümü</div>
             </div>
             <div class="cb-admin-inline-actions cb-admin-inline-actions-compact">
-                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Unread first", Tone = "warning", IconText = "UR" })
-                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Read history", Tone = "info", IconText = "RD" })
+                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = snapshot is null ? "Veri yok" : $"{alerts.Count} alert", Tone = "info", IconText = "UR" })
             </div>
         </div>
 
         <div class="cb-admin-category-strip mt-5">
-            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "AI", Tone = "degraded", IconText = "AI" })
-            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Risk", Tone = "critical", IconText = "RK" })
-            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Worker", Tone = "warning", IconText = "WK" })
-            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Security", Tone = "critical", IconText = "SC" })
-            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "System", Tone = "info", IconText = "SY" })
+            @if (categories.Length == 0)
+            {
+                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Empty", Tone = "neutral", IconText = "AL" })
+            }
+            else
+            {
+                @foreach (var category in categories)
+                {
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = $"{category.Label} ({category.Count})", Tone = category.Tone, IconText = "AL" })
+                }
+            }
         </div>
     </div>
 </div>

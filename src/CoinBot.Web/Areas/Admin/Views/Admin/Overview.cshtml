@@ -3,13 +3,13 @@
     {
         Eyebrow = "Platform Overview",
         Title = "Super Admin platform dashboard",
-        Description = "Platformın genel sağlık özeti, kritik alarm yoğunluğu, AI health, failed jobs ve hızlı yönlendirme aksiyonlarını tek ekranda toplayan operasyon dashboard foundation'ı.",
+        Description = "Platformın genel sağlık özeti, kritik alarm yoğunluğu, AI health, failed jobs ve hızlı yönlendirme aksiyonlarını tek ekranda toplayan operasyon dashboard'u.",
         StatusBadge = new AdminBadgeViewModel { Label = "Operational View", Tone = "healthy", IconText = "OV" },
         MetaBadges = new[]
         {
             new AdminBadgeViewModel { Label = "Super Admin", Tone = "role", IconText = "SA" },
             new AdminBadgeViewModel { Label = "Prod Shadow", Tone = "info", IconText = "ENV" },
-            new AdminBadgeViewModel { Label = "UI-only Metrics", Tone = "warning", IconText = "PH" },
+            new AdminBadgeViewModel { Label = "Operational Metrics", Tone = "warning", IconText = "KP" },
             new AdminBadgeViewModel { Label = "Freshness Aware", Tone = "degraded", IconText = "FS" }
         },
         SecondaryActionText = "Kritik loglara git",

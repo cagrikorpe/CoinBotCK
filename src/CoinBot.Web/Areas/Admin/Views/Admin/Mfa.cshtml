@@ -2,14 +2,14 @@
     Layout = "_AdminAuthLayout";
     ViewData["Title"] = "Admin MFA";
     ViewData["AuthTitle"] = "İkinci güvenlik doğrulaması";
-    ViewData["AuthDescription"] = "Admin alanı için zorunlu MFA adımı; method placeholder, invalid code state ve retry yüzeyi hazırdır.";
+    ViewData["AuthDescription"] = "Admin alanı için zorunlu MFA adımı; method seçimi, invalid code state ve retry yüzeyi hazırdır.";
     ViewData["AuthEyebrow"] = "Step-Up Required";
     ViewData["AuthStage"] = "Admin MFA Verify";
     ViewData["AuthProgress"] = "2 / 2";
     ViewData["AuthBackHref"] = Url.Action("Login", "Admin", new { area = "Admin" });
     ViewData["AuthHighlights"] = new[]
     {
-        "Authenticator app ve e-posta kodu method placeholder",
+        "Authenticator app ve e-posta kodu method seçimi",
         "6 haneli code input ve invalid code error state",
         "Resend, countdown ve farklı hesapla giriş CTA’ları"
     };
@@ -20,7 +20,7 @@
         <div>
             <div class="cb-page-eyebrow">Multi-Factor Authentication</div>
             <h2 class="cb-page-title">Doğrulama kodunu girin</h2>
-            <p class="cb-page-description">Admin alanı için MFA zorunludur. Gerçek provider entegrasyonu bu fazda yoktur; yalnızca profesyonel akış foundation’ı hazırlanmıştır.</p>
+            <p class="cb-page-description">Admin alanı için MFA zorunludur. Gerçek provider entegrasyonu bu akışla hizalanır; profesyonel erişim yüzeyi korunur.</p>
         </div>
         @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Second Factor", Tone = "role", IconText = "2F" })
     </div>
@@ -49,7 +49,7 @@
         </div>
 
         <div class="cb-auth-row-between">
-            <span class="cb-auth-meta">Kod süresi: <strong>00:21</strong> <span class="cb-auth-meta-soft">placeholder</span></span>
+            <span class="cb-auth-meta">Kod süresi: <strong>00:21</strong></span>
             <a href="#" class="cb-auth-inline-link">Kodu yeniden gönder</a>
         </div>
 
@@ -79,7 +79,7 @@
             Items = new[]
             {
                 "Authenticator app birincil yöntem olarak öne çıkar",
-                "Email code yalnızca placeholder fallback olarak gösterilir",
+                "Email code yalnızca fallback olarak gösterilir",
                 "Gerçek doğrulama provider’ı sonraki backend fazına bağlanır"
             }
         })

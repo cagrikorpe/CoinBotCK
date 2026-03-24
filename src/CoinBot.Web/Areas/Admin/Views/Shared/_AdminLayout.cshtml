@@ -2,7 +2,7 @@
 @inject IAdminShellReadModelService AdminShellReadModelService
 @{
     var pageTitle = ViewData["Title"]?.ToString() ?? "Super Admin";
-    var pageDescription = ViewData["PageDescription"]?.ToString() ?? "Admin shell foundation hazır.";
+    var pageDescription = ViewData["PageDescription"]?.ToString() ?? "Admin shell hazır.";
     var healthSnapshot = await AdminShellReadModelService.GetHealthSnapshotAsync();
 
     ViewData["AdminShellHealthSnapshot"] = healthSnapshot;
@@ -68,7 +68,7 @@
                     <div class="container-fluid d-flex flex-column flex-md-row align-items-center justify-content-between">
                         <div class="order-2 order-md-1">
                             <span class="text-muted font-weight-bold mr-2">@DateTime.UtcNow.Year ©</span>
-                            <span class="text-white-50">CoinBot Super Admin Shell / Foundation</span>
+                            <span class="text-white-50">CoinBot Super Admin Shell</span>
                         </div>
                         <div class="nav nav-dark cb-footer-nav">
                             <a asp-area="Admin" asp-controller="Admin" asp-action="Overview" class="nav-link pl-0 pr-5">Genel Bakış</a>

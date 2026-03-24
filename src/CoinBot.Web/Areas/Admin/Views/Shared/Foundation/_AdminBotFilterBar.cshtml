@@ -1,91 +1,91 @@
+@using CoinBot.Application.Abstractions.Administration
+@{
+    var snapshot = ViewData["AdminBotOperationsPageSnapshot"] as AdminBotOperationsPageSnapshot;
+    var query = snapshot?.Query ?? string.Empty;
+    var status = snapshot?.StatusFilter ?? string.Empty;
+    var mode = snapshot?.ModeFilter ?? string.Empty;
+}
+
 <div class="card card-custom gutter-b cb-card cb-admin-card">
     <div class="card-body">
         <div class="cb-admin-table-header">
             <div>
                 <div class="cb-admin-section-kicker">Filter Toolbar</div>
                 <div class="cb-admin-section-title">Bot filtreleri</div>
-                <p class="cb-admin-section-description mb-0">Kullanıcı, durum, market, strategy ve risk profili bazında global bot izleme görünümü hazırlanır.</p>
+                <p class="cb-admin-section-description mb-0">Kullanıcı, durum ve mode filtreleri gerçek bot snapshot verisini daraltır.</p>
             </div>
-            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Scoped Filters", Tone = "info", IconText = "FL" })
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = snapshot is null ? "Veri yok" : $"{snapshot.Bots.Count} bot", Tone = "info", IconText = "FL" })
         </div>
 
-        <div class="cb-admin-filter-bar cb-admin-bot-filter-bar">
+        <form asp-area="Admin" asp-controller="Admin" asp-action="BotOperations" method="get" class="cb-admin-filter-bar cb-admin-bot-filter-bar mt-6">
             <div class="cb-filter-field">
                 <label class="cb-form-label">Bot adı ara</label>
-                <input class="form-control cb-form-control" placeholder="Bot adı / kullanıcı / template placeholder" />
-            </div>
-            <div class="cb-filter-field">
-                <label class="cb-form-label">Kullanıcı</label>
-                <select class="form-control cb-form-control">
-                    <option>Tüm kullanıcılar</option>
-                    <option>Ops Primary</option>
-                    <option>Risk Watch</option>
-                    <option>Paper Lab</option>
-                </select>
+                <input type="text" name="query" value="@query" class="form-control cb-form-control" aria-label="Bot adı / kullanıcı / template" />
             </div>
             <div class="cb-filter-field">
                 <label class="cb-form-label">Durum</label>
-                <select class="form-control cb-form-control">
-                    <option>Tüm durumlar</option>
-                    <option>Aktif</option>
-                    <option>Durduruldu</option>
-                    <option>Hata</option>
-                    <option>Taslak</option>
+                <select name="status" class="form-control cb-form-control">
+                    <option value="">Tüm durumlar</option>
+                    @if (string.Equals(status, "Aktif", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <option value="Aktif" selected="selected">Aktif</option>
+                    }
+                    else
+                    {
+                        <option value="Aktif">Aktif</option>
+                    }
+                    @if (string.Equals(status, "Durduruldu", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <option value="Durduruldu" selected="selected">Durduruldu</option>
+                    }
+                    else
+                    {
+                        <option value="Durduruldu">Durduruldu</option>
+                    }
                 </select>
             </div>
             <div class="cb-filter-field">
-                <label class="cb-form-label">Market</label>
-                <select class="form-control cb-form-control">
-                    <option>Spot + Futures</option>
-                    <option>Spot</option>
-                    <option>Futures</option>
-                </select>
-            </div>
-            <div class="cb-filter-field">
-                <label class="cb-form-label">Paper / Live</label>
-                <select class="form-control cb-form-control">
-                    <option>Tümü</option>
-                    <option>Paper</option>
-                    <option>Live</option>
-                </select>
-            </div>
-            <div class="cb-filter-field">
-                <label class="cb-form-label">Strategy tipi</label>
-                <select class="form-control cb-form-control">
-                    <option>Tüm strategy'ler</option>
-                    <option>Momentum</option>
-                    <option>Breakout</option>
-                    <option>Mean reversion</option>
-                </select>
-            </div>
-            <div class="cb-filter-field">
-                <label class="cb-form-label">Risk profili</label>
-                <select class="form-control cb-form-control">
-                    <option>Tüm profiller</option>
-                    <option>Conservative</option>
-                    <option>Balanced</option>
-                    <option>Aggressive</option>
-                </select>
-            </div>
-            <div class="cb-filter-field">
-                <label class="cb-form-label">Sıralama</label>
-                <select class="form-control cb-form-control">
-                    <option>Son aksiyon</option>
-                    <option>Hata yoğunluğu</option>
-                    <option>Risk seviyesi</option>
+                <label class="cb-form-label">Mode</label>
+                <select name="mode" class="form-control cb-form-control">
+                    <option value="">Tümü</option>
+                    @if (string.Equals(mode, "Live", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <option value="Live" selected="selected">Live</option>
+                    }
+                    else
+                    {
+                        <option value="Live">Live</option>
+                    }
+                    @if (string.Equals(mode, "Demo", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <option value="Demo" selected="selected">Demo</option>
+                    }
+                    else
+                    {
+                        <option value="Demo">Demo</option>
+                    }
                 </select>
             </div>
             <div class="cb-admin-filter-actions">
-                <button type="button" class="btn btn-primary font-weight-bolder">Filtreyi uygula</button>
-                <button type="button" class="btn btn-light-primary font-weight-bold">Temizle</button>
+                <a asp-area="Admin" asp-controller="Admin" asp-action="BotOperations" class="btn btn-light-primary font-weight-bold">Temizle</a>
+                <button type="submit" class="btn btn-primary font-weight-bolder">Filtreyi uygula</button>
             </div>
-        </div>
+        </form>
 
         <div class="cb-admin-filter-summary mt-5">
-            <span class="cb-admin-filter-chip">Live</span>
-            <span class="cb-admin-filter-chip">Futures</span>
-            <span class="cb-admin-filter-chip">Risk dikkat</span>
-            <span class="cb-admin-filter-chip">Sıralama: son aksiyon</span>
+            <span class="cb-admin-filter-chip">Live / Demo</span>
+            @if (!string.IsNullOrWhiteSpace(status))
+            {
+                <span class="cb-admin-filter-chip">Durum: @status</span>
+            }
+            @if (!string.IsNullOrWhiteSpace(mode))
+            {
+                <span class="cb-admin-filter-chip">Mode: @mode</span>
+            }
+            @if (!string.IsNullOrWhiteSpace(query))
+            {
+                <span class="cb-admin-filter-chip">Query: @query</span>
+            }
         </div>
     </div>
 </div>

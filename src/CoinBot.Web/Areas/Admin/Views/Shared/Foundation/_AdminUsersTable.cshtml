@@ -1,97 +1,107 @@
+@using CoinBot.Application.Abstractions.Administration
 @{
-    var users = new[]
-    {
-        new { Id = "usr-001", Display = "Ops Primary", Handle = "primary-ops", StatusLabel = "Aktif", StatusTone = "healthy", Plan = "Enterprise", LastLogin = "12 dk önce", LastLoginMeta = "Fresh", LastLoginTone = "healthy", MfaLabel = "MFA Açık", MfaTone = "healthy", Bots = "12", Exchanges = "4", RiskLabel = "Risk normal", RiskTone = "info", ExchangeLabel = "Exchange bağlı", ExchangeTone = "healthy" },
-        new { Id = "usr-014", Display = "Runtime Watch", Handle = "runtime-watch", StatusLabel = "Kilitli", StatusTone = "critical", Plan = "Pro", LastLogin = "2 gün önce", LastLoginMeta = "Stale", LastLoginTone = "warning", MfaLabel = "MFA Kapalı", MfaTone = "degraded", Bots = "5", Exchanges = "2", RiskLabel = "Risk dikkat", RiskTone = "warning", ExchangeLabel = "Exchange bağlı", ExchangeTone = "healthy" },
-        new { Id = "usr-027", Display = "Review Pending", Handle = "review-pending", StatusLabel = "Doğrulama bekliyor", StatusTone = "warning", Plan = "Starter", LastLogin = "Henüz yok", LastLoginMeta = "Onboarding", LastLoginTone = "neutral", MfaLabel = "Bilinmiyor", MfaTone = "neutral", Bots = "0", Exchanges = "0", RiskLabel = "Risk normal", RiskTone = "info", ExchangeLabel = "Exchange yok", ExchangeTone = "neutral" },
-        new { Id = "usr-031", Display = "Security Hold", Handle = "security-hold", StatusLabel = "Pasif", StatusTone = "neutral", Plan = "Pro", LastLogin = "9 gün önce", LastLoginMeta = "Delayed", LastLoginTone = "warning", MfaLabel = "MFA Açık", MfaTone = "healthy", Bots = "2", Exchanges = "1", RiskLabel = "Risk dikkat", RiskTone = "warning", ExchangeLabel = "Exchange uyarı", ExchangeTone = "warning" }
-    };
+    var snapshot = ViewData["AdminUsersPageSnapshot"] as AdminUsersPageSnapshot;
+    var users = snapshot?.Users ?? Array.Empty<AdminUserListItemSnapshot>();
+    var summaryTiles = snapshot?.SummaryTiles ?? Array.Empty<AdminStatTileSnapshot>();
 }
+
 <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-table-card">
     <div class="card-body">
         <div class="cb-admin-table-header">
             <div>
                 <div class="cb-admin-section-kicker">User List</div>
                 <div class="cb-admin-section-title">Kullanıcı yönetimi listesi</div>
-                <p class="cb-admin-section-description mb-0">Durum, MFA, bot ve exchange summary sinyalleri aynı satır içinde okunabilir yoğunlukta tutulur.</p>
+                <p class="cb-admin-section-description mb-0">Durum, MFA, bot ve exchange summary sinyalleri gerçek snapshot verisinden okunur.</p>
             </div>
             <div class="cb-admin-inline-actions">
-                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Bulk actions hazır", Tone = "neutral", IconText = "BA" })
-                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Read-only placeholder", Tone = "warning", IconText = "PH" })
+                @foreach (var tile in summaryTiles.Take(2))
+                {
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+                    {
+                        Label = $"{tile.Label}: {tile.Value}",
+                        Tone = tile.Tone,
+                        IconText = "US"
+                    })
+                }
             </div>
         </div>
 
-        <div class="table-responsive cb-admin-table-wrap">
+        <div class="cb-admin-summary-grid cb-admin-user-summary-grid mt-5">
+            @foreach (var tile in summaryTiles)
+            {
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">@tile.Label</span>
+                    <strong>@tile.Value</strong>
+                    <small>@tile.Meta</small>
+                </div>
+            }
+        </div>
+
+        <div class="table-responsive cb-admin-table-wrap mt-5">
             <table class="table table-borderless cb-admin-table cb-admin-users-table mb-0">
                 <thead>
                     <tr>
                         <th>Kullanıcı</th>
                         <th>Durum</th>
-                        <th>Plan</th>
-                        <th>Son giriş</th>
                         <th>MFA</th>
+                        <th>Rol</th>
                         <th>Bot</th>
                         <th>Exchange</th>
-                        <th>Risk</th>
-                        <th class="text-right">Aksiyon</th>
+                        <th>Son aktivite</th>
+                        <th>Aksiyon</th>
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach (var user in users)
+                    @if (users.Count == 0)
                     {
                         <tr>
-                            <td>
-                                <div class="cb-admin-user-cell">
-                                    <span class="cb-admin-user-avatar">@user.Display.Substring(0, 1)</span>
-                                    <div>
-                                        <strong class="cb-admin-user-name">@user.Display</strong>
-                                        <div class="cb-admin-user-meta">@user.Handle · @user.Id</div>
-                                    </div>
-                                </div>
-                            </td>
-                            <td>
-                                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = user.StatusLabel, Tone = user.StatusTone, IconText = "ST" })
-                            </td>
-                            <td>
-                                <div class="cb-admin-mini-stat">
-                                    <strong>@user.Plan</strong>
-                                    <small>Paket placeholder</small>
-                                </div>
-                            </td>
-                            <td>
-                                <div class="cb-admin-mini-stat">
-                                    <strong>@user.LastLogin</strong>
-                                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = user.LastLoginMeta, Tone = user.LastLoginTone, IconText = "LG" })
-                                </div>
-                            </td>
-                            <td>
-                                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = user.MfaLabel, Tone = user.MfaTone, IconText = "2F" })
-                            </td>
-                            <td>
-                                <div class="cb-admin-mini-stat">
-                                    <strong>@user.Bots</strong>
-                                    <small>bağlı bot</small>
-                                </div>
-                            </td>
-                            <td>
-                                <div class="cb-admin-mini-stat">
-                                    <strong>@user.Exchanges</strong>
-                                    <small>@user.ExchangeLabel</small>
-                                </div>
-                            </td>
-                            <td>
-                                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = user.RiskLabel, Tone = user.RiskTone, IconText = "RK" })
-                            </td>
-                            <td class="text-right">
-                                <div class="cb-admin-table-actions justify-content-end">
-                                    <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_admin_user_drawer">Detay</button>
-                                    <a asp-area="Admin" asp-controller="Admin" asp-action="UserDetail" asp-route-id="@user.Id" class="btn btn-xs btn-light-primary font-weight-bold">Sayfa</a>
-                                    <button type="button" class="btn btn-xs btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_admin_critical_confirm_modal" data-cb-modal-title="Kullanıcıyı askıya al" data-cb-modal-message="Bu kullanıcı için erişim kısıtlaması uygulanmadan önce audit reason ve gerekirse step-up security beklenir." data-cb-modal-confirm="Askıya al" data-cb-modal-tone="danger">Askıya al</button>
-                                    <button type="button" class="btn btn-xs btn-light-warning font-weight-bold" data-toggle="modal" data-target="#cb_admin_confirm_modal" data-cb-modal-title="Kullanıcı askısını kaldır" data-cb-modal-message="Bu aksiyon gerçek unlock yapmaz; kontrollü açma akışı foundation olarak gösterilir." data-cb-modal-confirm="Aç">Aç</button>
-                                    <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_user_note_modal" data-cb-modal-title="Kullanıcı notu ekle" data-cb-modal-message="İç kullanım admin notu; kullanıcıya görünmez ve gerçek persistence bu fazda yoktur." data-cb-modal-confirm="Notu kaydet">Not</button>
-                                </div>
+                            <td colspan="8">
+                                @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+                                {
+                                    Title = "Kullanıcı bulunamadı",
+                                    Message = "Filtrelerle eşleşen kullanıcı yok. Filtreyi temizleyin veya yeni bir query deneyin.",
+                                    IconText = "US",
+                                    ActionText = "Filtreyi temizle",
+                                    ActionHref = Url.Action("Users", "Admin", new { area = "Admin" }),
+                                    SecondaryActionText = "Destek araçları",
+                                    SecondaryActionHref = Url.Action("SupportTools", "Admin", new { area = "Admin" })
+                                })
                             </td>
                         </tr>
+                    }
+                    else
+                    {
+                        foreach (var user in users)
+                        {
+                            <tr>
+                                <td>
+                                    <div class="cb-admin-user-cell">
+                                        <span class="cb-admin-user-avatar">@user.DisplayName.Substring(0, 1)</span>
+                                        <div>
+                                            <strong class="cb-admin-user-name">@user.DisplayName</strong>
+                                            <div class="cb-admin-user-meta">@user.UserName · @(user.Email ?? user.UserId)</div>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td>@await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = user.StatusLabel, Tone = user.StatusTone, IconText = "ST" })</td>
+                                <td>@await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = user.MfaLabel, Tone = user.MfaTone, IconText = "2F" })</td>
+                                <td><div class="cb-admin-mini-stat"><strong>@user.RoleSummary</strong><small>Role</small></div></td>
+                                <td><div class="cb-admin-mini-stat"><strong>@user.BotCount</strong><small>Bot bağlı</small></div></td>
+                                <td><div class="cb-admin-mini-stat"><strong>@user.ExchangeCount</strong><small>Exchange bağlı</small></div></td>
+                                <td>
+                                    <div class="cb-admin-mini-stat">
+                                        <strong>@user.LastActivityLabel</strong>
+                                        <small>@(user.LastActivityAtUtc?.ToString("yyyy-MM-dd HH:mm:ss") ?? "Veri yok") UTC</small>
+                                    </div>
+                                </td>
+                                <td>
+                                    <div class="cb-admin-table-actions justify-content-end">
+                                        <a asp-area="Admin" asp-controller="Admin" asp-action="UserDetail" asp-route-id="@user.UserId" class="btn btn-xs btn-light-primary font-weight-bold">Detay</a>
+                                        <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" asp-route-userId="@user.UserId" class="btn btn-xs btn-light-primary font-weight-bold">Loglar</a>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
                     }
                 </tbody>
             </table>

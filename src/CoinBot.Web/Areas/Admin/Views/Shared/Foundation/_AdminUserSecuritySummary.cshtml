@@ -1,30 +1,58 @@
+@using CoinBot.Application.Abstractions.Administration
+@{
+    var snapshot = ViewData["AdminUserDetailPageSnapshot"] as AdminUserDetailPageSnapshot;
+}
+
 <div class="card card-custom gutter-b cb-card cb-admin-card">
     <div class="card-body">
         <div class="cb-admin-section-kicker">Security Status</div>
         <div class="cb-admin-section-title">Güvenlik durumu</div>
-        <div class="cb-admin-summary-grid mt-5 cb-admin-user-summary-grid">
-            <div class="cb-admin-summary-card">
-                <span class="cb-admin-summary-label">MFA</span>
-                <strong>Açık</strong>
-                <small>Step-up security ile uyumlu</small>
-            </div>
-            <div class="cb-admin-summary-card">
-                <span class="cb-admin-summary-label">Son giriş</span>
-                <strong>12 dk önce</strong>
-                <small>Fresh login signal</small>
-            </div>
-            <div class="cb-admin-summary-card">
-                <span class="cb-admin-summary-label">Güvenlik olayı</span>
-                <strong>1 warning placeholder</strong>
-                <small>Re-auth gerekebilir notu</small>
-            </div>
-        </div>
-        @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+
+        @if (snapshot is null)
         {
-            Tone = "warning",
-            Title = "Security attention",
-            Message = "Kilitli, askıda veya MFA kapalı senaryolarında bu blok aynı görsel dil ile warning seviyesine çıkabilir.",
-            Meta = "Session / device placeholder"
-        })
+            @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+            {
+                Title = "Güvenlik detayı yok",
+                Message = "Kullanıcı güvenlik snapshot'u bulunamadı.",
+                IconText = "SC",
+                ActionText = "Kullanıcı listesi",
+                ActionHref = Url.Action("Users", "Admin", new { area = "Admin" }),
+                SecondaryActionText = "Security events",
+                SecondaryActionHref = Url.Action("SecurityEvents", "Admin", new { area = "Admin" })
+            })
+        }
+        else
+        {
+            <div class="cb-admin-summary-grid mt-5 cb-admin-user-summary-grid">
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">MFA</span>
+                    <strong>@snapshot.MfaLabel</strong>
+                    <small>@snapshot.MfaTone</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Durum</span>
+                    <strong>@snapshot.StatusLabel</strong>
+                    <small>@snapshot.StatusTone</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Trading mode</span>
+                    <strong>@snapshot.TradingModeLabel</strong>
+                    <small>@snapshot.TradingModeTone</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Son güvenlik olayı</span>
+                    <strong>@(snapshot.LastSecurityEventAtUtc.HasValue ? snapshot.LastSecurityEventAtUtc.Value.ToString("yyyy-MM-dd HH:mm:ss") : "Veri yok") UTC</strong>
+                    <small>@(snapshot.LastSecurityEventAtUtc.HasValue ? "Activity feed bağlantılı" : "Olay yok")</small>
+                </div>
+            </div>
+
+            @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+            {
+                Tone = snapshot.StatusTone == "critical" ? "critical" : snapshot.MfaTone,
+                Title = "Security attention",
+                Message = $"{snapshot.DisplayName} için güvenlik sinyalleri audit ve security events ile çapraz kontrol edilir.",
+                Meta = snapshot.LastRefreshedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")
+            })
+        }
     </div>
 </div>

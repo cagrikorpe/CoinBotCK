@@ -224,7 +224,6 @@ D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\odj2uvrx1q-{0
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\mbeoocrqzf-{0}-8tk2petmcf-8tk2petmcf.gz
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\jm7w3bv340-{0}-ifvp1vcio8-ifvp1vcio8.gz
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\vb90v05aj4-{0}-1xmh86637q-1xmh86637q.gz
-D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\1r3u17mj09-{0}-cezhl15omc-cezhl15omc.gz
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\v3hnc666ts-{0}-ucud65myha-ucud65myha.gz
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\gfn4g21if3-{0}-polzauqrdo-polzauqrdo.gz
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\lcgls8qp25-{0}-omgez13i4c-omgez13i4c.gz
@@ -976,3 +975,4 @@ D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\iwa1zeo39c-{0
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\bin\Debug\net10.0\QRCoder.dll
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\hg2cmqnddt-{0}-6dl7az8a0y-6dl7az8a0y.gz
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\tez6at2ddz-{0}-yatdzc6i45-yatdzc6i45.gz
+D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\1r3u17mj09-{0}-kdo7rbgwsz-kdo7rbgwsz.gz

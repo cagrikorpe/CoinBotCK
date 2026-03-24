@@ -1,55 +1,57 @@
+@using CoinBot.Application.Abstractions.Administration
+@{
+    var snapshot = ViewData["AdminSecurityEventsPageSnapshot"] as AdminSecurityEventsPageSnapshot;
+    var events = snapshot?.Events ?? Array.Empty<AdminSecurityEventSnapshot>();
+}
+
 <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-panel-card">
     <div class="card-body">
         <div class="cb-admin-panel-head">
             <div>
                 <div class="cb-admin-section-kicker">Security Triage</div>
                 <div class="cb-admin-section-title">Severity triage paneli</div>
-                <p class="cb-admin-section-description mb-0">Critical, high, medium ve low yoğunluklarını hızlı filtre CTA’ları ile birlikte gösterir.</p>
+                <p class="cb-admin-section-description mb-0">Critical, high, medium ve low yoğunlukları gerçek security snapshot üzerinden gösterilir.</p>
             </div>
-            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "High focus", Tone = "critical", IconText = "TG" })
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = snapshot is null ? "Veri yok" : $"{events.Count} event", Tone = "critical", IconText = "TG" })
         </div>
 
         <div class="cb-admin-severity-grid mt-6">
             <div class="cb-admin-summary-card">
                 <span class="cb-admin-summary-label">Critical</span>
-                <strong>05</strong>
-                <small>Risky permission + brute-force placeholder</small>
+                <strong>@events.Count(item => item.SeverityTone == "critical")</strong>
+                <small>Yüksek risk</small>
             </div>
             <div class="cb-admin-summary-card">
-                <span class="cb-admin-summary-label">High</span>
-                <strong>11</strong>
-                <small>Suspicious session + invalid MFA</small>
+                <span class="cb-admin-summary-label">Warning</span>
+                <strong>@events.Count(item => item.SeverityTone == "warning")</strong>
+                <small>İnceleme</small>
             </div>
             <div class="cb-admin-summary-card">
-                <span class="cb-admin-summary-label">Medium</span>
-                <strong>18</strong>
-                <small>Failed login yoğunluğu / retry watch</small>
+                <span class="cb-admin-summary-label">Info</span>
+                <strong>@events.Count(item => item.SeverityTone == "info")</strong>
+                <small>Bilgi</small>
             </div>
             <div class="cb-admin-summary-card">
-                <span class="cb-admin-summary-label">Low</span>
-                <strong>26</strong>
-                <small>Review / masked anomaly placeholder</small>
+                <span class="cb-admin-summary-label">Toplam</span>
+                <strong>@events.Count</strong>
+                <small>Security events</small>
             </div>
         </div>
 
-        <div class="cb-admin-incident-list mt-6">
-            <div class="cb-admin-incident-item is-critical">
-                <div>
-                    <div class="cb-admin-job-title">Kısa incident summary</div>
-                    <div class="cb-admin-job-meta">Withdrawal risk flag + invalid MFA spike aynı pencereye denk geldi placeholder</div>
-                </div>
-                <button type="button" class="btn btn-xs btn-light-danger font-weight-bold">Critical filtre</button>
+        @if (events.Count > 0)
+        {
+            <div class="cb-admin-incident-list mt-6">
+                @foreach (var item in events.Take(2))
+                {
+                    <div class="cb-admin-incident-item @(item.SeverityTone == "critical" ? "is-critical" : string.Empty)">
+                        <div>
+                            <div class="cb-admin-job-title">@item.Summary</div>
+                            <div class="cb-admin-job-meta">@item.Category · @item.Module · @item.TimeLabel</div>
+                        </div>
+                        <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" asp-route-query="@item.Summary" class="btn btn-xs btn-light-primary font-weight-bold">Audit</a>
+                    </div>
+                }
             </div>
-            <div class="cb-admin-incident-item">
-                <div>
-                    <div class="cb-admin-job-title">Hızlı filtre CTA</div>
-                    <div class="cb-admin-job-meta">Failed login, suspicious session ve admin critical action akışları tek tık filtre placeholder</div>
-                </div>
-                <div class="cb-admin-inline-actions cb-admin-inline-actions-compact">
-                    <button type="button" class="btn btn-xs btn-light-primary font-weight-bold">MFA</button>
-                    <button type="button" class="btn btn-xs btn-light-primary font-weight-bold">Session</button>
-                </div>
-            </div>
-        </div>
+        }
     </div>
 </div>

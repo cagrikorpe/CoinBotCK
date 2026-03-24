@@ -1,32 +1,60 @@
+@using CoinBot.Application.Abstractions.Administration
+@{
+    var snapshot = ViewData["AdminUserDetailPageSnapshot"] as AdminUserDetailPageSnapshot;
+}
+
 <div class="card card-custom gutter-b cb-card cb-admin-card">
     <div class="card-body">
         <div class="cb-admin-section-kicker">Profile Summary</div>
         <div class="cb-admin-section-title">Profil özeti</div>
-        <div class="cb-admin-profile-list mt-5">
-            <div class="cb-admin-profile-row">
-                <span>Kullanıcı</span>
-                <strong>@(ViewData["AdminEntityLabel"]?.ToString() ?? "Ops Primary")</strong>
+
+        @if (snapshot is null)
+        {
+            @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+            {
+                Title = "Kullanıcı detayı yok",
+                Message = "Bu kullanıcı için detail snapshot bulunamadı.",
+                IconText = "ID",
+                ActionText = "Kullanıcı listesi",
+                ActionHref = Url.Action("Users", "Admin", new { area = "Admin" }),
+                SecondaryActionText = "Destek araçları",
+                SecondaryActionHref = Url.Action("SupportTools", "Admin", new { area = "Admin" })
+            })
+        }
+        else
+        {
+            <div class="cb-admin-profile-list mt-5">
+                <div class="cb-admin-profile-row">
+                    <span>Kullanıcı</span>
+                    <strong>@snapshot.DisplayName</strong>
+                </div>
+                <div class="cb-admin-profile-row">
+                    <span>Identifier</span>
+                    <strong>@snapshot.UserId</strong>
+                </div>
+                <div class="cb-admin-profile-row">
+                    <span>Kullanıcı adı</span>
+                    <strong>@snapshot.UserName</strong>
+                </div>
+                <div class="cb-admin-profile-row">
+                    <span>E-posta</span>
+                    <strong>@(snapshot.Email ?? "Kayıt yok")</strong>
+                </div>
+                <div class="cb-admin-profile-row">
+                    <span>Roller</span>
+                    <strong>@snapshot.RoleSummary</strong>
+                </div>
+                <div class="cb-admin-profile-row">
+                    <span>Son yenilenme</span>
+                    <strong>@snapshot.LastRefreshedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC</strong>
+                </div>
             </div>
-            <div class="cb-admin-profile-row">
-                <span>Identifier</span>
-                <strong>@(ViewData["AdminEntityId"]?.ToString() ?? "usr-placeholder-01")</strong>
+
+            <div class="cb-admin-badge-stack mt-5">
+                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = snapshot.StatusLabel, Tone = snapshot.StatusTone, IconText = "ST" })
+                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = snapshot.MfaLabel, Tone = snapshot.MfaTone, IconText = "2F" })
+                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = snapshot.TradingModeLabel, Tone = snapshot.TradingModeTone, IconText = "TM" })
             </div>
-            <div class="cb-admin-profile-row">
-                <span>Kayıt zamanı</span>
-                <strong>14 gün önce</strong>
-            </div>
-            <div class="cb-admin-profile-row">
-                <span>Plan / Paket</span>
-                <strong>Enterprise placeholder</strong>
-            </div>
-            <div class="cb-admin-profile-row">
-                <span>Tenant / Scope</span>
-                <strong>Global tenant</strong>
-            </div>
-        </div>
-        <div class="cb-admin-badge-stack mt-5">
-            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Aktif", Tone = "healthy", IconText = "ST" })
-            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Yüksek öncelikli hesap", Tone = "info", IconText = "PR" })
-        </div>
+        }
     </div>
 </div>

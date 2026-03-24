@@ -3,7 +3,7 @@
     {
         Eyebrow = "Security Triage",
         Title = "Güvenlik Olayları",
-        Description = "Failed login yoğunluğu, invalid MFA, suspicious session, risky exchange permission ve admin critical action sinyallerini güvenlik odaklı triage ve detail drawer ile toplayan Super Admin monitoring foundation ekranı.",
+        Description = "Failed login yoğunluğu, invalid MFA, suspicious session, risky exchange permission ve admin critical action sinyallerini güvenlik odaklı triage ve detail drawer ile toplayan Super Admin güvenlik izleme yüzeyi.",
         StatusBadge = new AdminBadgeViewModel { Label = "Security Watch", Tone = "critical", IconText = "SC" },
         MetaBadges = new[]
         {
@@ -13,8 +13,8 @@
         },
         SecondaryActionText = "Audit / log merkezi",
         SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" }),
-        PrimaryActionText = "Security detail drawer",
-        PrimaryActionHref = "#cb_admin_security_drawer"
+        PrimaryActionText = "Notifications",
+        PrimaryActionHref = Url.Action("Notifications", "Admin", new { area = "Admin" })
     };
 }
 
@@ -27,9 +27,9 @@
                 @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
                 {
                     Tone = "critical",
-                    Title = "Security events foundation",
-                    Message = "Gerçek brute-force detection, IP/device anomaly backend, MFA event stream veya auto response bu fazda bağlı değildir. Ekran; security summary, triage paneli, event listesi ve detail drawer akışını UI seviyesinde hazırlar.",
-                    Meta = "Masked / UI only"
+                    Title = "Security events",
+                    Message = "Gerçek brute-force detection, IP/device anomaly backend ve MFA event stream bu yüzeyde bir araya gelir. Ekran; security summary, triage paneli ve event listesiyle çalışır.",
+                    Meta = "Masked / ready"
                 })
 
                 <div class="mt-6">
@@ -52,6 +52,15 @@
     </div>
 
     <div class="col-12">
-        @await Html.PartialAsync("Foundation/_AdminSecurityStatesShowcase")
+        @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+        {
+            Title = "Security events hazır",
+            Message = "Güvenlik olayları gerçek audit/read-model verisiyle doldurulur. Olay yoksa empty-state gösterilir.",
+            IconText = "SC",
+            ActionText = "Audit / loglar",
+            ActionHref = Url.Action("Audit", "Admin", new { area = "Admin" }),
+            SecondaryActionText = "Sistem sağlığı",
+            SecondaryActionHref = Url.Action("SystemHealth", "Admin", new { area = "Admin" })
+        })
     </div>
 </div>

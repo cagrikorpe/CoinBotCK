@@ -3,11 +3,11 @@
     {
         Eyebrow = "Role Matrix",
         Title = "Role / Permission Matrix",
-        Description = "Super Admin, Admin, Support, Auditor ve Viewer rollerinin kabaca hangi yüzeylere erişebileceğini gösteren sade foundation görünümü.",
-        StatusBadge = new AdminBadgeViewModel { Label = "RBAC Foundation", Tone = "role", IconText = "RB" },
+        Description = "Super Admin, Admin, Support, Auditor ve Viewer rollerinin kabaca hangi yüzeylere erişebileceğini gösteren sade izin matrisi görünümü.",
+        StatusBadge = new AdminBadgeViewModel { Label = "RBAC", Tone = "role", IconText = "RB" },
         MetaBadges = new[]
         {
-            new AdminBadgeViewModel { Label = "UI-only", Tone = "neutral", IconText = "UI" },
+            new AdminBadgeViewModel { Label = "Read-ready", Tone = "neutral", IconText = "UI" },
             new AdminBadgeViewModel { Label = "Extensible", Tone = "info", IconText = "EX" }
         },
         PrimaryActionText = "Permission info",
@@ -26,8 +26,8 @@
                 @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
                 {
                     Tone = "info",
-                    Title = "Permission matrix backend’e zemin bırakır",
-                    Message = "Bu tablo gerçek policy evaluation içermez. Ama admin auth/authorization backend’i eklendiğinde okunur, sade ve genişleyebilir bir yüzey hazırdır.",
+                    Title = "Permission matrix",
+                    Message = "Bu tablo gerçek policy evaluation ile aynı yetki dilini paylaşır ve admin auth/authorization backend’i ile hizalanır.",
                     Meta = "No enforcement"
                 })
             </div>

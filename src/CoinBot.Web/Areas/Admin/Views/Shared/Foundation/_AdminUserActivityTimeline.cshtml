@@ -1,3 +1,9 @@
+@using CoinBot.Application.Abstractions.Administration
+@{
+    var snapshot = ViewData["AdminUserDetailPageSnapshot"] as AdminUserDetailPageSnapshot;
+    var activity = snapshot?.Activity ?? Array.Empty<AdminUserActivitySnapshot>();
+}
+
 <div class="card card-custom gutter-b cb-card cb-admin-card">
     <div class="card-body">
         <div class="cb-admin-panel-head">
@@ -5,29 +11,34 @@
                 <div class="cb-admin-section-kicker">Recent Activity</div>
                 <div class="cb-admin-section-title">Son aktiviteler</div>
             </div>
-            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Timeline", Tone = "neutral", IconText = "TL" })
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = snapshot is null ? "Veri yok" : $"{activity.Count} event", Tone = "neutral", IconText = "TL" })
         </div>
-        <div class="cb-admin-activity-list mt-5">
-            <div class="cb-admin-activity-item">
-                <strong>Son giriş</strong>
-                <span>Web paneline başarılı giriş placeholder</span>
-                <small>12 dk önce</small>
+
+        @if (snapshot is null || activity.Count == 0)
+        {
+            @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+            {
+                Title = "Aktivite yok",
+                Message = "Bu kullanıcı için activity snapshot bulunamadı.",
+                IconText = "TL",
+                ActionText = "Audit / loglar",
+                ActionHref = Url.Action("Audit", "Admin", new { area = "Admin", userId = snapshot?.UserId }),
+                SecondaryActionText = "Kullanıcı listesi",
+                SecondaryActionHref = Url.Action("Users", "Admin", new { area = "Admin" })
+            })
+        }
+        else
+        {
+            <div class="cb-admin-activity-list mt-5">
+                @foreach (var item in activity)
+                {
+                    <div class="cb-admin-activity-item">
+                        <strong>@item.Title</strong>
+                        <span>@item.Summary</span>
+                        <small>@item.TimeLabel · @item.Module · @item.TimestampUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC</small>
+                    </div>
+                }
             </div>
-            <div class="cb-admin-activity-item">
-                <strong>Bot değişikliği</strong>
-                <span>Paper bot profili güncellendi placeholder</span>
-                <small>3 saat önce</small>
-            </div>
-            <div class="cb-admin-activity-item">
-                <strong>Exchange değişikliği</strong>
-                <span>Bağlantı sync ayarı değişti placeholder</span>
-                <small>Dün</small>
-            </div>
-            <div class="cb-admin-activity-item">
-                <strong>MFA değişikliği</strong>
-                <span>Recovery flow gözden geçirildi placeholder</span>
-                <small>3 gün önce</small>
-            </div>
-        </div>
+        }
     </div>
 </div>

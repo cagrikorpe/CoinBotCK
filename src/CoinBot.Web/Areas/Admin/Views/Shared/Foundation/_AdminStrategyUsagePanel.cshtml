@@ -1,48 +1,68 @@
+@using CoinBot.Application.Abstractions.Administration
 @{
-    var templates = new[]
-    {
-        new { Name = "Momentum Core", Usage = "412", Risk = "Balanced", Problem = "Stable", Tone = "healthy", Note = "Spot + live kombinasyonunda en yaygın template" },
-        new { Name = "Breakout Surge", Usage = "265", Risk = "Aggressive", Problem = "Watch", Tone = "warning", Note = "Veto oranı artan ama hâlâ yoğun kullanılan template" },
-        new { Name = "Mean Reversion Lite", Usage = "188", Risk = "Conservative", Problem = "Stable", Tone = "info", Note = "Paper ve low-vol kullanım yoğunluğu placeholder" },
-        new { Name = "AI Assisted Hybrid", Usage = "94", Risk = "Balanced", Problem = "Problemli", Tone = "critical", Note = "Low confidence cluster ile en çok ilişkilenen template" }
-    };
+    var snapshot = ViewData["AdminStrategyAiMonitoringPageSnapshot"] as AdminStrategyAiMonitoringPageSnapshot;
+    var rows = snapshot?.UsageRows ?? Array.Empty<AdminStrategyUsageSnapshot>();
 }
+
 <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-table-card">
     <div class="card-body">
         <div class="cb-admin-panel-head">
             <div>
                 <div class="cb-admin-section-kicker">Strategy Usage</div>
                 <div class="cb-admin-section-title">Aktif strategy template kullanımı</div>
-                <p class="cb-admin-section-description mb-0">En çok kullanılan template'ler, problemli strategy badge'leri ve risk etiketi aynı panelde operasyonel taranabilirlik için toplanır.</p>
+                <p class="cb-admin-section-description mb-0">Template kullanımı ve veto oranı gerçek strategy snapshot verisinden okunur.</p>
             </div>
-            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Template Watch", Tone = "info", IconText = "ST" })
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = snapshot is null ? "Veri yok" : $"{rows.Count} template", Tone = "info", IconText = "ST" })
         </div>
 
-        <div class="cb-admin-strategy-usage-grid mt-6">
-            @foreach (var template in templates)
+        @if (rows.Count == 0)
+        {
+            @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
             {
-                <div class="cb-admin-alert-item @(template.Tone == "critical" ? "cb-admin-alert-item-critical" : template.Tone == "warning" ? "cb-admin-alert-item-warning" : "cb-admin-alert-item-info")">
-                    <div class="d-flex align-items-start justify-content-between gap-4">
-                        <div>
-                            <strong>@template.Name</strong>
-                            <small>@template.Note</small>
+                Title = "Strategy verisi yok",
+                Message = "Bu filtre için strategy usage sonucu bulunamadı.",
+                IconText = "ST",
+                ActionText = "Bot operasyonları",
+                ActionHref = Url.Action("BotOperations", "Admin", new { area = "Admin" }),
+                SecondaryActionText = "Audit / loglar",
+                SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" })
+            })
+        }
+        else
+        {
+            <div class="cb-admin-strategy-usage-grid mt-6">
+                @foreach (var row in rows)
+                {
+                    <div class="cb-admin-alert-item @(row.HealthTone == "critical" ? "cb-admin-alert-item-critical" : row.HealthTone == "warning" ? "cb-admin-alert-item-warning" : "cb-admin-alert-item-info")">
+                        <div class="d-flex align-items-start justify-content-between gap-4">
+                            <div>
+                                <strong>@row.DisplayName</strong>
+                                <small>@row.Note</small>
+                            </div>
+                            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = row.HealthLabel, Tone = row.HealthTone, IconText = "PB" })
                         </div>
-                        @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = template.Problem, Tone = template.Tone, IconText = "PB" })
+                        <div class="cb-admin-summary-grid cb-admin-strategy-usage-meta">
+                            <div class="cb-admin-summary-card">
+                                <span class="cb-admin-summary-label">Kullanım</span>
+                                <strong class="cb-mono">@row.SignalCount</strong>
+                                <small>Signal sayısı</small>
+                            </div>
+                            <div class="cb-admin-summary-card">
+                                <span class="cb-admin-summary-label">Veto</span>
+                                <strong class="cb-mono">@row.VetoCount</strong>
+                                <small>Oran @($"{row.VetoRate:P0}")</small>
+                            </div>
+                        </div>
+                        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4">
+                            <div>
+                                <div class="cb-admin-info-strip-title">Son sinyal</div>
+                                <div class="cb-admin-info-strip-text">@row.LatestSignalType · @row.LatestSignalAtLabel</div>
+                            </div>
+                            <span class="cb-admin-info-strip-meta">Veto: @(string.IsNullOrWhiteSpace(row.LatestVetoReason) ? "Yok" : row.LatestVetoReason)</span>
+                        </div>
                     </div>
-                    <div class="cb-admin-summary-grid cb-admin-strategy-usage-meta">
-                        <div class="cb-admin-summary-card">
-                            <span class="cb-admin-summary-label">Kullanım</span>
-                            <strong class="cb-mono">@template.Usage</strong>
-                            <small>Active runtime placeholder</small>
-                        </div>
-                        <div class="cb-admin-summary-card">
-                            <span class="cb-admin-summary-label">Risk etiketi</span>
-                            <strong>@template.Risk</strong>
-                            <small>Risk profile ilişkisi placeholder</small>
-                        </div>
-                    </div>
-                </div>
-            }
-        </div>
+                }
+            </div>
+        }
     </div>
 </div>

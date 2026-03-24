@@ -1,3 +1,73 @@
+@model CoinBot.Application.Abstractions.Administration.LogCenterPageSnapshot
+@using System.Linq
+@using CoinBot.Application.Abstractions.Administration
+@using CoinBot.Web.ViewModels.Foundation
+@{
+    var selectedEntry = ViewData["LogCenterSelectedEntry"] as LogCenterEntrySnapshot ?? Model.Entries.FirstOrDefault();
+
+    string ResolveBadgeClass(string tone)
+    {
+        return tone.ToLowerInvariant() switch
+        {
+            "critical" => "cb-badge cb-badge-danger",
+            "warning" => "cb-badge cb-badge-warning",
+            "degraded" => "cb-badge cb-badge-warning",
+            "healthy" => "cb-badge cb-badge-success",
+            "info" => "cb-badge cb-badge-info",
+            _ => "cb-badge cb-badge-neutral"
+        };
+    }
+
+    string? ResolveTraceHref()
+    {
+        if (selectedEntry is null)
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(selectedEntry.DecisionId) || !string.IsNullOrWhiteSpace(selectedEntry.ExecutionAttemptId))
+        {
+            return Url.Action(
+                "TraceDetail",
+                "Admin",
+                new
+                {
+                    area = "Admin",
+                    correlationId = selectedEntry.CorrelationId,
+                    decisionId = selectedEntry.DecisionId,
+                    executionAttemptId = selectedEntry.ExecutionAttemptId
+                });
+        }
+
+        return null;
+    }
+
+    string? ResolveIncidentHref()
+    {
+        return selectedEntry is null || string.IsNullOrWhiteSpace(selectedEntry.IncidentReference)
+            ? null
+            : Url.Action("IncidentDetail", "Admin", new { area = "Admin", incidentReference = selectedEntry.IncidentReference });
+    }
+
+    string? ResolveApprovalHref()
+    {
+        return selectedEntry is null || string.IsNullOrWhiteSpace(selectedEntry.ApprovalReference)
+            ? null
+            : Url.Action("ApprovalDetail", "Admin", new { area = "Admin", approvalReference = selectedEntry.ApprovalReference });
+    }
+
+    string ResolveAuditHref()
+    {
+        if (selectedEntry is null)
+        {
+            return Url.Action("Audit", "Admin", new { area = "Admin" })!;
+        }
+
+        var query = selectedEntry.CorrelationId ?? selectedEntry.Reference;
+        return Url.Action("Audit", "Admin", new { area = "Admin", query })!;
+    }
+}
+
 <aside class="cb-drawer cb-log-drawer" id="cb_logcenter_detail_drawer" aria-hidden="true">
     <div class="cb-drawer-header">
         <div>
@@ -7,44 +77,98 @@
         <button type="button" class="btn btn-xs btn-icon btn-light" data-cb-drawer-close><span>&times;</span></button>
     </div>
     <div class="cb-drawer-body">
-        <div class="cb-inline-stack mb-4">
-            <span class="cb-badge cb-badge-danger" id="cb_log_drawer_severity">Critical</span>
-            <span class="cb-badge cb-badge-warning" id="cb_log_drawer_category">Risk</span>
-            <span class="cb-badge cb-badge-neutral" id="cb_log_drawer_trace">Özet olay</span>
-        </div>
-
-        <div class="cb-open-close-grid mb-5">
-            <div class="cb-rule-setting-item"><span class="cb-form-label">Zaman</span><strong class="cb-mono d-block mt-2" id="cb_log_drawer_time">21 Mar · 09:42</strong></div>
-            <div class="cb-rule-setting-item"><span class="cb-form-label">Kaynak modül</span><strong class="d-block mt-2" id="cb_log_drawer_source">Risk Merkezi</strong></div>
-        </div>
-
-        <div class="cb-section">
-            <div class="cb-section-title">Olay özeti</div>
-            <p class="text-muted mb-0" id="cb_log_drawer_message">Log satırı ürün diliyle özetlenir; ham JSON, token, cookie veya hassas alanlar gösterilmez.</p>
-        </div>
-
-        <div class="cb-section mt-6">
-            <div class="cb-section-title">İlgili etiketler</div>
-            <div class="cb-ai-chip-list mt-4">
-                <span class="cb-badge cb-badge-neutral" id="cb_log_drawer_tag1">Risk</span>
-                <span class="cb-badge cb-badge-neutral" id="cb_log_drawer_tag2">Alpha Desk</span>
-                <span class="cb-badge cb-badge-neutral" id="cb_log_drawer_tag3">Manual review</span>
+        @if (selectedEntry is null)
+        {
+            @await Html.PartialAsync("Foundation/_EmptyState", new UiStateViewModel
+            {
+                IconText = "LG",
+                Title = "Kayıt seçin",
+                Message = "Listeden bir log kaydı seçildiğinde correlation root, raw JSON ve ilgili deep linkler burada görünür.",
+                ActionText = "Filtrelere dön",
+                ActionHref = "#cb_log_filter_query",
+                SecondaryActionText = "Audit search",
+                SecondaryActionHref = ResolveAuditHref()
+            })
+        }
+        else
+        {
+            <div class="cb-inline-stack mb-4">
+                <span class="cb-badge @ResolveBadgeClass(selectedEntry.Tone)" id="cb_log_drawer_severity">@(selectedEntry.Severity ?? selectedEntry.Tone)</span>
+                <span class="cb-badge cb-badge-neutral" id="cb_log_drawer_category">@selectedEntry.Kind</span>
+                <span class="cb-badge cb-badge-neutral" id="cb_log_drawer_trace">@(selectedEntry.CorrelationId ?? selectedEntry.Reference)</span>
             </div>
-        </div>
 
-        <div class="cb-section mt-6">
-            <div class="cb-section-title">Davranış / privacy notu</div>
-            <div class="cb-bot-mini-validation" id="cb_log_drawer_privacy">Detaylı davranış izleme açık olsa bile secret, token, tam request body ve hassas kimlik alanları kaydedilmez.</div>
-        </div>
+            <div class="cb-admin-summary-grid mt-4">
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Reference</span>
+                    <strong class="cb-mono" id="cb_log_drawer_reference">@selectedEntry.Reference</strong>
+                    <small>@selectedEntry.Status</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Correlation</span>
+                    <strong class="cb-mono" id="cb_log_drawer_correlation">@(selectedEntry.CorrelationId ?? "-")</strong>
+                    <small>@(selectedEntry.DecisionId ?? selectedEntry.ExecutionAttemptId ?? selectedEntry.IncidentReference ?? selectedEntry.ApprovalReference ?? "-")</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Actor / Symbol</span>
+                    <strong id="cb_log_drawer_actor">@(selectedEntry.UserId ?? "-")</strong>
+                    <small id="cb_log_drawer_symbol">@(selectedEntry.Symbol ?? selectedEntry.Source ?? "n/a")</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Created</span>
+                    <strong class="cb-mono" id="cb_log_drawer_time">@selectedEntry.CreatedAtUtc.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") UTC</strong>
+                    <small id="cb_log_drawer_source">@(selectedEntry.Source ?? "n/a")</small>
+                </div>
+            </div>
 
-        <div class="cb-section mt-6">
-            <div class="cb-section-title">Sonraki aksiyon</div>
-            <div class="cb-bot-mini-validation" id="cb_log_drawer_action">İlgili modüle giderek ayarı, strategy davranışını veya risk limitini gözden geçir.</div>
-        </div>
+            <div class="cb-admin-badge-stack mt-5" id="cb_log_drawer_tags">
+                @foreach (var tag in selectedEntry.Tags)
+                {
+                    <span class="cb-badge cb-badge-neutral">@tag</span>
+                }
+            </div>
+
+            <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
+                <div>
+                    <div class="cb-admin-info-strip-title">@selectedEntry.Title</div>
+                    <div class="cb-admin-info-strip-text" id="cb_log_drawer_message">@selectedEntry.Summary</div>
+                </div>
+                <span class="cb-admin-info-strip-meta">@selectedEntry.Kind</span>
+            </div>
+
+            <div class="mt-5">
+                <div class="cb-section-title">Raw JSON viewer</div>
+                <details class="mt-3" open>
+                    <summary class="text-muted">Masked payload</summary>
+                    <pre class="mt-3 mb-0"><code id="cb_log_drawer_raw_json">@(selectedEntry.RawJson ?? "{}")</code></pre>
+                </details>
+            </div>
+
+            <div class="cb-section mt-6">
+                <div class="cb-section-title">Davranış / privacy notu</div>
+                <div class="cb-bot-mini-validation" id="cb_log_drawer_privacy">Masking standardı aktif: API key, secret, signature, auth header ve hassas payload alanları düz metin gösterilmez.</div>
+            </div>
+
+            <div class="cb-section mt-6">
+                <div class="cb-section-title">Sonraki aksiyon</div>
+                <div class="cb-bot-mini-validation" id="cb_log_drawer_action">İlgili trace, incident veya approval detayına geçip zinciri devam ettirebilirsin.</div>
+            </div>
+        }
     </div>
     <div class="cb-drawer-footer">
-        <a asp-controller="Settings" asp-action="Index" class="btn btn-light-primary font-weight-bold" id="cb_log_drawer_settings">Ayarlar'a git</a>
-        <button type="button" class="btn btn-primary font-weight-bolder" id="cb_log_drawer_cta" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="İlgili modüle git" data-cb-modal-message="İlgili modüle yönlendirme CTA'sı foundation seviyesinde hazırlanmıştır." data-cb-modal-confirm="Tamam">İlgili ekrana git</button>
+        @if (ResolveTraceHref() is string traceHref)
+        {
+            <a href="@traceHref" class="btn btn-light-primary font-weight-bold" id="cb_log_drawer_trace_link">Trace detail</a>
+        }
+        @if (ResolveIncidentHref() is string incidentHref)
+        {
+            <a href="@incidentHref" class="btn btn-light-primary font-weight-bold" id="cb_log_drawer_incident_link">Incident detail</a>
+        }
+        @if (ResolveApprovalHref() is string approvalHref)
+        {
+            <a href="@approvalHref" class="btn btn-light-primary font-weight-bold" id="cb_log_drawer_approval_link">Approval detail</a>
+        }
+        <a href="@ResolveAuditHref()" class="btn btn-light font-weight-bold" id="cb_log_drawer_audit_link">Audit search</a>
         <button type="button" class="btn btn-light" data-cb-drawer-close>Kapat</button>
     </div>
 </aside>

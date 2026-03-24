@@ -3,7 +3,7 @@
     {
         Eyebrow = "Global Bot Ops",
         Title = "Bot Operasyonları",
-        Description = "Platform genelindeki kullanıcı botlarını durum, market, risk ve AI etkisi sinyalleriyle tek ekranda izleyen Super Admin operations foundation ekranı.",
+        Description = "Platform genelindeki kullanıcı botlarını durum, market, risk ve AI etkisi sinyalleriyle tek ekranda izleyen Super Admin operasyon yüzeyi.",
         StatusBadge = new AdminBadgeViewModel { Label = "Bot Ops", Tone = "warning", IconText = "BT" },
         MetaBadges = new[]
         {
@@ -13,8 +13,8 @@
         },
         SecondaryActionText = "Exchange hesapları",
         SecondaryActionHref = Url.Action("ExchangeAccounts", "Admin", new { area = "Admin" }),
-        PrimaryActionText = "Force stop rehberi",
-        PrimaryActionHref = "#cb_admin_bot_force_stop_modal"
+        PrimaryActionText = "System health",
+        PrimaryActionHref = Url.Action("SystemHealth", "Admin", new { area = "Admin" })
     };
 }
 
@@ -27,9 +27,9 @@
                 @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
                 {
                     Tone = "warning",
-                    Title = "Global bot operations foundation",
-                    Message = "Gerçek runtime, start/stop, force stop veya event stream backend'i bağlı değildir. Bu ekran; durum yoğunluğu, risk sinyali, bulk operation strip ve detail drawer akışlarını UI seviyesinde hazırlar.",
-                    Meta = "UI-only"
+                    Title = "Global bot operations",
+                    Message = "Gerçek runtime, start/stop ve event stream backend'i bu yüzeyle hizalanır. Bu ekran; durum yoğunluğu, risk sinyali ve bot detaylarını gerçek snapshot ile gösterir.",
+                    Meta = "Operational"
                 })
 
                 <div class="mt-6">
@@ -41,7 +41,6 @@
 
     <div class="col-xl-8">
         @await Html.PartialAsync("Foundation/_AdminBotFilterBar")
-        @await Html.PartialAsync("Foundation/_AdminBulkBotActionsStrip")
         @await Html.PartialAsync("Foundation/_AdminBotOperationsTable")
     </div>
 
@@ -50,6 +49,15 @@
     </div>
 
     <div class="col-12">
-        @await Html.PartialAsync("Foundation/_AdminBotStatesShowcase")
+        @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+        {
+            Title = "Bot operasyonları hazır",
+            Message = "Listeler ve summary kartları gerçek bot snapshot verisiyle doldurulur. Sonuç yoksa ürün seviyesi empty-state görünür.",
+            IconText = "BT",
+            ActionText = "Exchange hesapları",
+            ActionHref = Url.Action("ExchangeAccounts", "Admin", new { area = "Admin" }),
+            SecondaryActionText = "Sistem sağlığı",
+            SecondaryActionHref = Url.Action("SystemHealth", "Admin", new { area = "Admin" })
+        })
     </div>
 </div>

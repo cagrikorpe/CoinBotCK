@@ -1,32 +1,27 @@
+@using CoinBot.Application.Abstractions.Administration
+@{
+    var snapshot = ViewData["AdminBotOperationsPageSnapshot"] as AdminBotOperationsPageSnapshot;
+    var tiles = snapshot?.SummaryTiles ?? Array.Empty<AdminStatTileSnapshot>();
+}
+
 <div class="cb-admin-summary-grid cb-admin-bot-summary-grid">
-    <div class="cb-admin-summary-card">
-        <span class="cb-admin-summary-label">Toplam bot</span>
-        <strong class="cb-mono">1,284</strong>
-        <small>Global bot envanteri placeholder</small>
-    </div>
-    <div class="cb-admin-summary-card">
-        <span class="cb-admin-summary-label">Aktif bot</span>
-        <strong class="cb-mono">742</strong>
-        <small>Runtime heartbeat penceresinde aktif görünen botlar</small>
-    </div>
-    <div class="cb-admin-summary-card">
-        <span class="cb-admin-summary-label">Hata durumu</span>
-        <strong class="cb-mono">41</strong>
-        <small>Force stop veya retry incelemesi bekleyen botlar</small>
-    </div>
-    <div class="cb-admin-summary-card">
-        <span class="cb-admin-summary-label">Paper / Live</span>
-        <strong>348 / 936</strong>
-        <small>Test ve canlı dağılımı aynı kartta özetlenir</small>
-    </div>
-    <div class="cb-admin-summary-card">
-        <span class="cb-admin-summary-label">Futures bot</span>
-        <strong class="cb-mono">412</strong>
-        <small>Spot / futures operasyon dağılımı placeholder</small>
-    </div>
-    <div class="cb-admin-summary-card">
-        <span class="cb-admin-summary-label">Dikkat gereken</span>
-        <strong class="cb-mono">96</strong>
-        <small>Risk, stale veya error sinyali olan botlar</small>
-    </div>
+    @if (tiles.Count == 0)
+    {
+        <div class="cb-admin-summary-card">
+            <span class="cb-admin-summary-label">Bot snapshot</span>
+            <strong>Veri yok</strong>
+            <small>Filtre sonucu boş</small>
+        </div>
+    }
+    else
+    {
+        @foreach (var tile in tiles)
+        {
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">@tile.Label</span>
+                <strong class="cb-mono">@tile.Value</strong>
+                <small>@tile.Meta</small>
+            </div>
+        }
+    }
 </div>

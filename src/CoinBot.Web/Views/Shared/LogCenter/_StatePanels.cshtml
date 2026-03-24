@@ -1,23 +1,74 @@
+@model CoinBot.Application.Abstractions.Administration.LogCenterPageSnapshot
 @using CoinBot.Web.ViewModels.Foundation
-<div class="d-none" data-cb-logcenter-page-panel="loading">
-    @await Html.PartialAsync("Foundation/_LoadingState", new UiLoadingStateViewModel
-    {
-        Title = "Log merkezi yükleniyor",
-        Message = "Summary, filtre toolbar ve log akışı skeleton yüzeylerle hazırlanıyor.",
-        CardCount = 3,
-        LineCount = 4
-    })
-</div>
+@{
+    var lastUpdatedText = Model.Summary.LastUpdatedAtUtc is null
+        ? "n/a"
+        : Model.Summary.LastUpdatedAtUtc.Value.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") + " UTC";
+}
 
-<div class="d-none" data-cb-logcenter-page-panel="error">
-    @await Html.PartialAsync("Foundation/_ErrorState", new UiStateViewModel
-    {
-        IconText = "!",
-        Title = "Log merkezi yüklenemedi",
-        Message = "Gerçek backend sonradan bağlandığında retry ve destekleyici açıklama yüzeyi aynı foundation üstüne oturacaktır.",
-        ActionText = "Tekrar dene",
-        ActionHref = "#",
-        SecondaryActionText = "Dashboard'a git",
-        SecondaryActionHref = "/"
-    })
-</div>
+@if (Model.HasError)
+{
+    <div class="card card-custom gutter-b cb-card">
+        <div class="card-body">
+            @await Html.PartialAsync("Foundation/_ErrorState", new UiStateViewModel
+            {
+                IconText = "!",
+                Title = "Log center verisi alınamadı",
+                Message = "Read-model veya database bağlantısı geçici olarak yanıt vermedi. Filtreleri daraltıp tekrar deneyin ya da sistem sağlığını kontrol edin.",
+                ActionText = "Log center filters",
+                ActionHref = Url.Action("Index", "LogCenter"),
+                SecondaryActionText = "System health",
+                SecondaryActionHref = Url.Action("SystemHealth", "Admin", new { area = "Admin" })
+            })
+        </div>
+    </div>
+}
+else if (Model.Entries.Count == 0)
+{
+    <div class="card card-custom gutter-b cb-card">
+        <div class="card-body">
+            @await Html.PartialAsync("Foundation/_EmptyState", new UiStateViewModel
+            {
+                IconText = "LG",
+                Title = "Filtrelere uyan kayıt yok",
+                Message = "Seçili filtreler DecisionTrace, ExecutionTrace, AdminAuditLog, Incident ve Approval akışlarında eşleşme üretmedi. Farklı correlation, status veya tarih aralığı ile tekrar deneyin.",
+                ActionText = "Filtreleri temizle",
+                ActionHref = Url.Action("Index", "LogCenter"),
+                SecondaryActionText = "Audit search",
+                SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" })
+            })
+        </div>
+    </div>
+}
+else
+{
+    <div class="card card-custom gutter-b cb-card">
+        <div class="card-body">
+            <div class="cb-admin-info-strip cb-admin-info-strip-info">
+                <div>
+                    <div class="cb-admin-info-strip-title">Snapshot status</div>
+                    <div class="cb-admin-info-strip-text">Log center read-model canlı DB snapshot üzerinden çalışır. LastUpdatedAtUtc, critical row sayısı ve retention worker durumu aşağıda özetlenir.</div>
+                </div>
+                <span class="cb-admin-info-strip-meta">@lastUpdatedText</span>
+            </div>
+
+            <div class="cb-admin-summary-grid mt-5">
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Critical rows</span>
+                    <strong class="cb-mono">@Model.Summary.CriticalRows</strong>
+                    <small>@(Model.HasError ? "Error" : "Healthy snapshot")</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Retention</span>
+                    <strong>@(Model.Retention.Enabled ? "Enabled" : "Disabled")</strong>
+                    <small>@Model.Retention.DecisionTraceRetentionDays gün decision / @Model.Retention.ExecutionTraceRetentionDays gün execution</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Export safety</span>
+                    <strong>Masked CSV</strong>
+                    <small>Secrets ve PII düz metin çıkmaz</small>
+                </div>
+            </div>
+        </div>
+    </div>
+}

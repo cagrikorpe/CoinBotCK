@@ -1,3 +1,8 @@
+@using CoinBot.Application.Abstractions.Administration
+@{
+    var snapshot = ViewData["AdminUserDetailPageSnapshot"] as AdminUserDetailPageSnapshot;
+}
+
 <div class="card card-custom gutter-b cb-card cb-admin-card">
     <div class="card-body">
         <div class="cb-admin-panel-head">
@@ -5,25 +10,51 @@
                 <div class="cb-admin-section-kicker">Risk Summary</div>
                 <div class="cb-admin-section-title">Risk ayarı özeti</div>
             </div>
-            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Risk dikkat", Tone = "warning", IconText = "RK" })
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = snapshot?.RiskLabel ?? "Veri yok", Tone = snapshot?.RiskTone ?? "neutral", IconText = "RK" })
         </div>
-        <div class="cb-admin-summary-grid mt-5 cb-admin-user-summary-grid">
-            <div class="cb-admin-summary-card">
-                <span class="cb-admin-summary-label">Risk profili</span>
-                <strong>Balanced placeholder</strong>
-                <small>Admin quick review</small>
+
+        @if (snapshot is null)
+        {
+            @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+            {
+                Title = "Risk detayı yok",
+                Message = "Kullanıcı risk snapshot'u bulunamadı.",
+                IconText = "RK",
+                ActionText = "Kullanıcı listesi",
+                ActionHref = Url.Action("Users", "Admin", new { area = "Admin" }),
+                SecondaryActionText = "Bot operasyonları",
+                SecondaryActionHref = Url.Action("BotOperations", "Admin", new { area = "Admin" })
+            })
+        }
+        else
+        {
+            <div class="cb-admin-summary-grid mt-5 cb-admin-user-summary-grid">
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Risk profili</span>
+                    <strong>@snapshot.RiskLabel</strong>
+                    <small>@snapshot.RiskTone</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Trading mode</span>
+                    <strong>@snapshot.TradingModeLabel</strong>
+                    <small>@snapshot.TradingModeTone</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Bot / Exchange</span>
+                    <strong>@snapshot.Bots.Count / @snapshot.ExchangeAccounts.Count</strong>
+                    <small>Envanter</small>
+                </div>
             </div>
-            <div class="cb-admin-summary-card">
-                <span class="cb-admin-summary-label">Trade limit</span>
-                <strong>Scoped limit</strong>
-                <small>Gerçek backend değeri yok</small>
+
+            <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
+                <div>
+                    <div class="cb-admin-info-strip-title">Risk kontrolü</div>
+                    <div class="cb-admin-info-strip-text">Bot ve exchange sayıları ile güvenlik durumu birlikte değerlendirilir.</div>
+                </div>
+                <span class="cb-admin-info-strip-meta">@snapshot.LastRefreshedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC</span>
             </div>
-            <div class="cb-admin-summary-card">
-                <span class="cb-admin-summary-label">Son değişiklik</span>
-                <strong>3 gün önce</strong>
-                <small>Koruma seviyesi normal</small>
-            </div>
-        </div>
+        }
+
         <a asp-area="Admin" asp-controller="Admin" asp-action="Settings" class="btn btn-light-primary font-weight-bold mt-5">Risk ayarlarına git</a>
     </div>
 </div>

@@ -3,7 +3,7 @@
     {
         Eyebrow = "Identity Workspace",
         Title = "Kullanıcılar",
-        Description = "Kullanıcı listesi, filtre barı, güvenlik sinyalleri ve kontrollü admin aksiyonları için operasyonel kullanıcı yönetimi foundation ekranı.",
+        Description = "Kullanıcı listesi, filtre barı, güvenlik sinyalleri ve kontrollü admin aksiyonları için operasyonel kullanıcı yönetimi yüzeyi.",
         StatusBadge = new AdminBadgeViewModel { Label = "User Ops", Tone = "info", IconText = "US" },
         MetaBadges = new[]
         {
@@ -12,7 +12,7 @@
         },
         SecondaryActionText = "Role matrix",
         SecondaryActionHref = Url.Action("RoleMatrix", "Admin", new { area = "Admin" }),
-        PrimaryActionText = "Örnek kullanıcı detayı",
+        PrimaryActionText = "Kullanıcı detayı",
         PrimaryActionHref = Url.Action("UserDetail", "Admin", new { area = "Admin", id = "usr-001" })
     };
 }
@@ -26,9 +26,9 @@
                 @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
                 {
                     Tone = "info",
-                    Title = "User management foundation",
-                    Message = "Arama, filtre, durum badge'leri, detay drawer ve admin aksiyonları aynı yüzeyde toplanır. Gerçek backend paging ve enforcement bu fazda bağlı değildir.",
-                    Meta = "UI-only user ops"
+                    Title = "User management",
+                    Message = "Arama, filtre, durum badge'leri ve gerçek kullanıcı detay sayfası aynı yüzeyde toplanır. Backend paging ve policy enforcement bu akışla hizalanır.",
+                    Meta = "User ops"
                 })
 
                 <div class="mt-6">
@@ -47,45 +47,30 @@
         {
             Eyebrow = "Admin actions",
             Title = "Kontrollü kullanıcı aksiyonları",
-            Description = "Askıya alma, açma, not ekleme ve detail drawer akışları mevcut admin confirm/re-auth foundation'ı ile hizalanır.",
+                    Description = "Askıya alma, açma ve not akışı yalnız gerçek backend endpoint'lere bağlı kalır.",
             BadgeLabel = "User Ops",
             BadgeTone = "warning",
             Items = new[]
             {
-                "Suspend / unsuspend placeholder",
-                "Admin note modal",
-                "Detail drawer + detail page ayrımı",
-                "Audit ve risk ekranlarına yönlendirme"
+                "User detail page",
+                "Audit ve risk ekranlarına yönlendirme",
+                "Role matrix görünürlüğü"
             },
             ActionText = "Kullanıcı detayı",
             ActionHref = Url.Action("UserDetail", "Admin", new { area = "Admin", id = "usr-014" })
         })
-
-        <div class="card card-custom gutter-b cb-card cb-admin-card">
-            <div class="card-body">
-                <div class="cb-admin-section-kicker">Status language</div>
-                <div class="cb-admin-section-title">Durum / badge standardı</div>
-                <div class="cb-admin-badge-stack mt-5">
-                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Aktif", Tone = "healthy", IconText = "ST" })
-                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Pasif", Tone = "neutral", IconText = "ST" })
-                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Kilitli", Tone = "critical", IconText = "ST" })
-                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Doğrulama bekliyor", Tone = "warning", IconText = "VR" })
-                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "MFA Açık", Tone = "healthy", IconText = "2F" })
-                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "MFA Kapalı", Tone = "degraded", IconText = "2F" })
-                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Exchange yok", Tone = "neutral", IconText = "EX" })
-                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Risk dikkat", Tone = "warning", IconText = "RK" })
-                </div>
-
-                <div class="cb-admin-inline-actions mt-6">
-                    <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_admin_user_drawer">Detail drawer</button>
-                    <button type="button" class="btn btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_admin_critical_confirm_modal" data-cb-modal-title="Kullanıcıyı askıya al" data-cb-modal-message="Bu kullanıcı aksiyonu gerçek suspend işlemi yapmaz; kontrollü destructive action dili için hazırlanmıştır." data-cb-modal-confirm="Askıya al" data-cb-modal-tone="danger">Askıya al</button>
-                    <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_user_note_modal" data-cb-modal-title="Admin notu ekle" data-cb-modal-message="İç kullanım notu; gerçek persistence ve audit pipeline bu fazda yoktur." data-cb-modal-confirm="Notu kaydet">Not ekle</button>
-                </div>
-            </div>
-        </div>
     </div>
 
     <div class="col-12">
-        @await Html.PartialAsync("Foundation/_AdminUserStatesShowcase")
+        @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+        {
+            Title = "Kullanıcı görünümü hazır",
+            Message = "Liste ve detail ekranları gerçek snapshot verisiyle doldurulur. Sonuç yoksa ürün seviyesi empty-state gösterilir.",
+            IconText = "US",
+            ActionText = "Kullanıcı listesi",
+            ActionHref = Url.Action("Users", "Admin", new { area = "Admin" }),
+            SecondaryActionText = "Destek araçları",
+            SecondaryActionHref = Url.Action("SupportTools", "Admin", new { area = "Admin" })
+        })
     </div>
 </div>

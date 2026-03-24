@@ -1,42 +1,67 @@
+@using CoinBot.Application.Abstractions.Administration
+@{
+    var retention = ViewData["AdminLogCenterRetentionSnapshot"] as LogCenterRetentionSnapshot;
+    var retentionEnabled = retention?.Enabled;
+    var retentionTone = retentionEnabled is null ? "info" : retentionEnabled.Value ? "healthy" : "critical";
+    var retentionLabel = retentionEnabled is null ? "Unknown" : retentionEnabled.Value ? "Enabled" : "Disabled";
+    var lastRunText = retention?.LastRunAtUtc is null
+        ? "n/a"
+        : retention.LastRunAtUtc.Value.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") + " UTC";
+}
 <section id="cb_admin_settings_logging" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
     <div class="card-body">
         <div class="cb-admin-section-kicker">Logging &amp; Retention</div>
-        <div class="cb-admin-section-title">Varsayılan logging ve retention ayarları</div>
-        <p class="cb-admin-section-description">Log saklama süresi, archive/export davranışı ve log level placeholder alanları sistem seviyesinde ayrıldı.</p>
+        <div class="cb-admin-section-title">Log saklama ve güvenli export</div>
+        <p class="cb-admin-section-description">DecisionTrace, ExecutionTrace, AdminAuditLog, Incident ve Approval kayıtları retention worker tarafından temizlenir; export aynı masking standardını kullanır.</p>
 
-        <div class="cb-admin-settings-form-grid mt-6">
-            <div class="form-group mb-0">
-                <label class="cb-form-label">Default retention</label>
-                <select class="form-control cb-form-control">
-                    <option>30 gün placeholder</option>
-                    <option selected>90 gün placeholder</option>
-                    <option>180 gün placeholder</option>
-                </select>
-                <div class="cb-field-feedback">Gerçek retention policy backend’i bağlı değildir.</div>
+        <div class="cb-admin-summary-grid mt-6">
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Retention state</span>
+                <strong>@retentionLabel</strong>
+                <small>Log center retention snapshot</small>
             </div>
-            <div class="form-group mb-0">
-                <label class="cb-form-label">Logging level</label>
-                <select class="form-control cb-form-control">
-                    <option>Info placeholder</option>
-                    <option selected>Warning placeholder</option>
-                    <option>Error placeholder</option>
-                </select>
-                <div class="cb-field-feedback">Production-safe log seviyesi için placeholder seçim alanı.</div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Batch size</span>
+                <strong class="cb-mono">@(retention?.BatchSize.ToString() ?? "n/a")</strong>
+                <small>Retention worker batch cap</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Last run</span>
+                <strong class="cb-mono">@lastRunText</strong>
+                <small>@(retention?.LastRunSummary ?? "No retention run yet")</small>
             </div>
         </div>
 
-        <div class="cb-admin-summary-grid">
-            <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Retention scope</span><strong>Audit + runtime</strong><small>Varsayılan saklama yüzeyi</small></div>
-            <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Archive/export</span><strong>Planned</strong><small>FAZ-SA-8 log/export placeholder ile uyumlu</small></div>
-            <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Masking</span><strong>Strict</strong><small>Secrets ve hassas veriler dışarı verilmez</small></div>
+        <div class="cb-admin-profile-list mt-5">
+            <div class="cb-admin-profile-row">
+                <span>DecisionTrace</span>
+                <strong>@(retention?.DecisionTraceRetentionDays.ToString() ?? "n/a") gün</strong>
+            </div>
+            <div class="cb-admin-profile-row">
+                <span>ExecutionTrace</span>
+                <strong>@(retention?.ExecutionTraceRetentionDays.ToString() ?? "n/a") gün</strong>
+            </div>
+            <div class="cb-admin-profile-row">
+                <span>AdminAuditLog</span>
+                <strong>@(retention?.AdminAuditLogRetentionDays.ToString() ?? "n/a") gün</strong>
+            </div>
+            <div class="cb-admin-profile-row">
+                <span>Incident / Approval</span>
+                <strong>@((retention is null) ? "n/a" : $"{retention.IncidentRetentionDays} gün / {retention.ApprovalRetentionDays} gün")</strong>
+            </div>
         </div>
 
-        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6">
+        <div class="cb-admin-info-strip cb-admin-info-strip-@retentionTone mt-6">
             <div>
                 <div class="cb-admin-info-strip-title">Logging &amp; retention notu</div>
-                <div class="cb-admin-info-strip-text">Aşırı verbose log seviyesi, maliyet ve hassas veri riski yaratabileceği için sistem ayarı olarak ayrı ele alınır.</div>
+                <div class="cb-admin-info-strip-text">Retention enforcement ve archive temizliği arka planda çalışan worker ile yapılır. Export ve log merkezinde masking standardı korunur; secrets, tokens ve hassas payload alanları düz metin görünmez.</div>
             </div>
-            <span class="cb-admin-info-strip-meta">Guarded</span>
+            <span class="cb-admin-info-strip-meta">Fail-closed</span>
+        </div>
+
+        <div class="mt-6 cb-admin-inline-actions cb-admin-inline-actions-compact">
+            <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-primary font-weight-bolder">Audit search</a>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="SystemHealth" class="btn btn-light-primary font-weight-bold">System health</a>
         </div>
     </div>
 </section>

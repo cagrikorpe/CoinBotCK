@@ -3,7 +3,7 @@
     {
         Eyebrow = "Platform Alerts",
         Title = "Bildirim / Alarm Merkezi",
-        Description = "AI, risk, worker, security ve system alarm sinyallerini unread/read ayrımı, severity filtreleri ve detail drawer ile tek merkezde toplayan Super Admin notification center foundation ekranı.",
+        Description = "AI, risk, worker, security ve system alarm sinyallerini unread/read ayrımı, severity filtreleri ve detail drawer ile tek merkezde toplayan Super Admin alarm merkezi.",
         StatusBadge = new AdminBadgeViewModel { Label = "Alert Hub", Tone = "warning", IconText = "AL" },
         MetaBadges = new[]
         {
@@ -13,8 +13,8 @@
         },
         SecondaryActionText = "Audit / log merkezi",
         SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" }),
-        PrimaryActionText = "Alarm detail drawer",
-        PrimaryActionHref = "#cb_admin_alert_drawer"
+        PrimaryActionText = "Security events",
+        PrimaryActionHref = Url.Action("SecurityEvents", "Admin", new { area = "Admin" })
     };
 }
 
@@ -48,6 +48,15 @@
     </div>
 
     <div class="col-12">
-        @await Html.PartialAsync("Foundation/_AdminAlertStatesShowcase")
+        @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+        {
+            Title = "Alarm merkezi hazır",
+            Message = "Alarm listesi monitoring snapshot ve incident feed ile doldurulur. Alarm yoksa empty-state gösterilir.",
+            IconText = "AL",
+            ActionText = "System health",
+            ActionHref = Url.Action("SystemHealth", "Admin", new { area = "Admin" }),
+            SecondaryActionText = "Audit / loglar",
+            SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" })
+        })
     </div>
 </div>

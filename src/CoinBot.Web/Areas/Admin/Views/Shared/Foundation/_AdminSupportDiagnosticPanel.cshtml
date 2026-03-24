@@ -1,44 +1,48 @@
+@using CoinBot.Application.Abstractions.Administration
+@{
+    var snapshot = ViewData["AdminSupportLookupPageSnapshot"] as AdminSupportLookupSnapshot;
+    var diagnostics = snapshot?.Diagnostics ?? Array.Empty<AdminUserActivitySnapshot>();
+}
+
 <div class="card card-custom gutter-b cb-card cb-admin-card">
     <div class="card-body">
         <div class="d-flex align-items-start justify-content-between gap-3 flex-wrap">
             <div>
                 <div class="cb-admin-section-kicker">Read-only Diagnostic</div>
                 <div class="cb-admin-section-title">Tanı paneli</div>
-                <p class="cb-admin-section-description mb-0">Son hata, exchange problemi, risk uyarısı ve log özeti yalnızca okunur şekilde gösterilir.</p>
+                <p class="cb-admin-section-description mb-0">Son audit activity, güvenlik olayları ve bot sinyalleri yalnızca okunur şekilde gösterilir.</p>
             </div>
-            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Read-only", Tone = "warning", IconText = "RO" })
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Read-only", Tone = "warning", IconText = "RO" })
         </div>
 
-        <div class="row mt-4">
-            <div class="col-md-6 mb-4">
-                <div class="cb-admin-summary-card h-100">
-                    <span class="cb-admin-summary-label">Son hata</span>
-                    <strong>Bot execution guard placeholder</strong>
-                    <small>2 dk önce · Bot Operations</small>
-                </div>
+        @if (diagnostics.Count == 0)
+        {
+            @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+            {
+                Title = "Tanı verisi yok",
+                Message = "Lookup sonucu için diagnostic feed bulunamadı.",
+                IconText = "RO",
+                ActionText = "Audit / loglar",
+                ActionHref = Url.Action("Audit", "Admin", new { area = "Admin", query = snapshot?.Query }),
+                SecondaryActionText = "Support tools",
+                SecondaryActionHref = Url.Action("SupportTools", "Admin", new { area = "Admin" })
+            })
+        }
+        else
+        {
+            <div class="row mt-4">
+                @foreach (var item in diagnostics.Take(4))
+                {
+                    <div class="col-md-6 mb-4">
+                        <div class="cb-admin-summary-card h-100">
+                            <span class="cb-admin-summary-label">@item.Module</span>
+                            <strong>@item.Title</strong>
+                            <small>@item.Summary · @item.TimeLabel</small>
+                        </div>
+                    </div>
+                }
             </div>
-            <div class="col-md-6 mb-4">
-                <div class="cb-admin-summary-card h-100">
-                    <span class="cb-admin-summary-label">Son exchange problemi</span>
-                    <strong>Permission mismatch watch</strong>
-                    <small>11 dk önce · Exchange Accounts</small>
-                </div>
-            </div>
-            <div class="col-md-6 mb-4">
-                <div class="cb-admin-summary-card h-100">
-                    <span class="cb-admin-summary-label">Son risk uyarısı</span>
-                    <strong>Daily cap soft warning</strong>
-                    <small>27 dk önce · Risk Center placeholder</small>
-                </div>
-            </div>
-            <div class="col-md-6 mb-4">
-                <div class="cb-admin-summary-card h-100">
-                    <span class="cb-admin-summary-label">Son log özeti</span>
-                    <strong>Security + runtime correlation</strong>
-                    <small>Audit akışı ve user trace placeholder</small>
-                </div>
-            </div>
-        </div>
+        }
 
         <div class="cb-admin-info-strip cb-admin-info-strip-info mt-2">
             <div>

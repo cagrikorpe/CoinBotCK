@@ -1,5 +1,6 @@
 using CoinBot.Web.Controllers;
 using CoinBot.Web.ViewModels.Auth;
+using CoinBot.Contracts.Common;
 using Microsoft.AspNetCore.Authorization;
 
 namespace CoinBot.UnitTests.Web;
@@ -13,13 +14,21 @@ public sealed class WebAuthorizationSurfaceTests
     [InlineData(typeof(PaperTradingController))]
     [InlineData(typeof(SettingsController))]
     [InlineData(typeof(NotificationsController))]
-    [InlineData(typeof(LogCenterController))]
     [InlineData(typeof(AiRobotController))]
     public void ProtectedControllers_RequireAuthenticatedUser(Type controllerType)
     {
         Assert.Contains(
             controllerType.GetCustomAttributes(typeof(AuthorizeAttribute), inherit: true).Cast<AuthorizeAttribute>(),
             attribute => string.IsNullOrWhiteSpace(attribute.Policy));
+    }
+
+    [Fact]
+    public void LogCenterController_RequiresAuditReadPolicy()
+    {
+        var attribute = Assert.Single(
+            typeof(LogCenterController).GetCustomAttributes(typeof(AuthorizeAttribute), inherit: true).Cast<AuthorizeAttribute>());
+
+        Assert.Equal(ApplicationPolicies.AuditRead, attribute.Policy);
     }
 
     [Fact]

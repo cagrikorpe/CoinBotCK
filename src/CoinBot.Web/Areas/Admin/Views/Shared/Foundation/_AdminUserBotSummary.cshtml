@@ -1,3 +1,9 @@
+@using CoinBot.Application.Abstractions.Administration
+@{
+    var snapshot = ViewData["AdminUserDetailPageSnapshot"] as AdminUserDetailPageSnapshot;
+    var bots = snapshot?.Bots ?? Array.Empty<AdminUserBotSnapshot>();
+}
+
 <div class="card card-custom gutter-b cb-card cb-admin-card">
     <div class="card-body">
         <div class="cb-admin-panel-head">
@@ -5,25 +11,76 @@
                 <div class="cb-admin-section-kicker">Bot Summary</div>
                 <div class="cb-admin-section-title">Bot özeti</div>
             </div>
-            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "5 aktif / 2 pasif", Tone = "info", IconText = "BT" })
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = snapshot is null ? "Veri yok" : $"{bots.Count} bot", Tone = snapshot is null ? "neutral" : "info", IconText = "BT" })
         </div>
-        <div class="cb-admin-summary-grid mt-5 cb-admin-user-summary-grid">
-            <div class="cb-admin-summary-card">
-                <span class="cb-admin-summary-label">Toplam bot</span>
-                <strong>7</strong>
-                <small>Kullanıcıya bağlı bot placeholder</small>
+
+        @if (snapshot is null)
+        {
+            @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+            {
+                Title = "Bot detayı yok",
+                Message = "Kullanıcı için bot snapshot'u bulunamadı.",
+                IconText = "BT",
+                ActionText = "Bot operasyonları",
+                ActionHref = Url.Action("BotOperations", "Admin", new { area = "Admin" }),
+                SecondaryActionText = "Kullanıcı listesi",
+                SecondaryActionHref = Url.Action("Users", "Admin", new { area = "Admin" })
+            })
+        }
+        else
+        {
+            <div class="cb-admin-summary-grid mt-5 cb-admin-user-summary-grid">
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Toplam bot</span>
+                    <strong>@bots.Count</strong>
+                    <small>Kullanıcıya bağlı bot</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Aktif</span>
+                    <strong>@bots.Count(bot => bot.StatusTone == "healthy")</strong>
+                    <small>Çalışıyor</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Açık pozisyon</span>
+                    <strong>@bots.Sum(bot => bot.OpenPositionCount)</strong>
+                    <small>Exposure</small>
+                </div>
             </div>
-            <div class="cb-admin-summary-card">
-                <span class="cb-admin-summary-label">Paper / Live</span>
-                <strong>4 / 3</strong>
-                <small>Mini dağılım</small>
+
+            <div class="table-responsive mt-5">
+                <table class="table table-borderless cb-admin-table mb-0">
+                    <thead>
+                        <tr>
+                            <th>Bot</th>
+                            <th>Durum</th>
+                            <th>Mode</th>
+                            <th>Open orders</th>
+                            <th>Open positions</th>
+                            <th>Son hata</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var bot in bots)
+                        {
+                            <tr>
+                                <td>
+                                    <div class="cb-admin-mini-stat">
+                                        <strong>@bot.Name</strong>
+                                        <small>@bot.StrategyKey</small>
+                                    </div>
+                                </td>
+                                <td>@await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = bot.StatusLabel, Tone = bot.StatusTone, IconText = "ST" })</td>
+                                <td>@await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = bot.ModeLabel, Tone = bot.ModeTone, IconText = "MD" })</td>
+                                <td>@bot.OpenOrderCount</td>
+                                <td>@bot.OpenPositionCount</td>
+                                <td class="text-muted">@bot.LastError</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
             </div>
-            <div class="cb-admin-summary-card">
-                <span class="cb-admin-summary-label">Sorunlu bot</span>
-                <strong>1 dikkat</strong>
-                <small>Runtime warning placeholder</small>
-            </div>
-        </div>
+        }
+
         <a asp-area="Admin" asp-controller="Admin" asp-action="BotOperations" class="btn btn-light-primary font-weight-bold mt-5">Bot operasyonlarına git</a>
     </div>
 </div>

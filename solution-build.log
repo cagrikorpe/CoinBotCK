@@ -1,0 +1,11 @@
+Build started 3/24/2026 7:02:04 PM.
+     1>Project "D:\CkBot\Code\CoinBot\CoinBot.sln" on node 1 (default targets).
+     1>ValidateSolutionConfiguration:
+         Building solution configuration "Debug|Any CPU".
+     1>Done Building Project "D:\CkBot\Code\CoinBot\CoinBot.sln" (default targets) -- FAILED.
+
+Build FAILED.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:01.86

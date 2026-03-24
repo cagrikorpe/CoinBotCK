@@ -1,76 +1,108 @@
-<div class="cb-filter-bar cb-admin-filter-bar cb-admin-user-filter-bar">
+@using CoinBot.Application.Abstractions.Administration
+@{
+    var snapshot = ViewData["AdminUsersPageSnapshot"] as AdminUsersPageSnapshot;
+    var query = snapshot?.Query ?? string.Empty;
+    var status = snapshot?.StatusFilter ?? string.Empty;
+    var mfa = snapshot?.MfaFilter ?? string.Empty;
+    var resultCount = snapshot?.Users.Count ?? 0;
+}
+
+<form asp-area="Admin" asp-controller="Admin" asp-action="Users" method="get" class="cb-filter-bar cb-admin-filter-bar cb-admin-user-filter-bar">
     <div class="cb-filter-field cb-admin-user-search-field">
         <label class="cb-form-label">Arama</label>
-        <input class="form-control cb-form-control" placeholder="Kullanıcı adı, email veya external id" />
+        <input type="text" name="query" value="@query" class="form-control cb-form-control" aria-label="Kullanıcı adı, email veya external id" />
     </div>
     <div class="cb-filter-field">
         <label class="cb-form-label">Durum</label>
-        <select class="form-control cb-form-control">
-            <option>Tüm durumlar</option>
-            <option>Aktif</option>
-            <option>Pasif</option>
-            <option>Kilitli</option>
-            <option>Doğrulama bekliyor</option>
+        <select name="status" class="form-control cb-form-control">
+            <option value="">Tüm durumlar</option>
+            @if (string.Equals(status, "Aktif", StringComparison.OrdinalIgnoreCase))
+            {
+                <option value="Aktif" selected="selected">Aktif</option>
+            }
+            else
+            {
+                <option value="Aktif">Aktif</option>
+            }
+            @if (string.Equals(status, "Pasif", StringComparison.OrdinalIgnoreCase))
+            {
+                <option value="Pasif" selected="selected">Pasif</option>
+            }
+            else
+            {
+                <option value="Pasif">Pasif</option>
+            }
+            @if (string.Equals(status, "Kilitli", StringComparison.OrdinalIgnoreCase))
+            {
+                <option value="Kilitli" selected="selected">Kilitli</option>
+            }
+            else
+            {
+                <option value="Kilitli">Kilitli</option>
+            }
+            @if (string.Equals(status, "Doğrulama bekliyor", StringComparison.OrdinalIgnoreCase))
+            {
+                <option value="Doğrulama bekliyor" selected="selected">Doğrulama bekliyor</option>
+            }
+            else
+            {
+                <option value="Doğrulama bekliyor">Doğrulama bekliyor</option>
+            }
         </select>
     </div>
     <div class="cb-filter-field">
         <label class="cb-form-label">MFA</label>
-        <select class="form-control cb-form-control">
-            <option>Tüm MFA durumları</option>
-            <option>Açık</option>
-            <option>Kapalı</option>
-            <option>Bilinmiyor</option>
+        <select name="mfa" class="form-control cb-form-control">
+            <option value="">Tüm MFA durumları</option>
+            @if (string.Equals(mfa, "MFA Açık", StringComparison.OrdinalIgnoreCase))
+            {
+                <option value="MFA Açık" selected="selected">Açık</option>
+            }
+            else
+            {
+                <option value="MFA Açık">Açık</option>
+            }
+            @if (string.Equals(mfa, "MFA Kapalı", StringComparison.OrdinalIgnoreCase))
+            {
+                <option value="MFA Kapalı" selected="selected">Kapalı</option>
+            }
+            else
+            {
+                <option value="MFA Kapalı">Kapalı</option>
+            }
         </select>
     </div>
     <div class="cb-filter-field">
-        <label class="cb-form-label">Plan / Paket</label>
-        <select class="form-control cb-form-control">
-            <option>Tüm planlar</option>
-            <option>Starter</option>
-            <option>Pro</option>
-            <option>Enterprise</option>
-        </select>
+        <label class="cb-form-label">Rol</label>
+        <input type="text" class="form-control cb-form-control" value="@(snapshot is null ? string.Empty : snapshot.Users.SelectMany(user => user.RoleSummary.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)).Distinct(StringComparer.OrdinalIgnoreCase).FirstOrDefault() ?? string.Empty)" disabled />
     </div>
     <div class="cb-filter-field">
-        <label class="cb-form-label">Son giriş</label>
-        <select class="form-control cb-form-control">
-            <option>Tüm aralıklar</option>
-            <option>Son 24 saat</option>
-            <option>Son 7 gün</option>
-            <option>Stale</option>
-        </select>
-    </div>
-    <div class="cb-filter-field">
-        <label class="cb-form-label">Bot bağlantısı</label>
-        <select class="form-control cb-form-control">
-            <option>Tümü</option>
-            <option>Botu var</option>
-            <option>Botu yok</option>
-        </select>
-    </div>
-    <div class="cb-filter-field">
-        <label class="cb-form-label">Exchange</label>
-        <select class="form-control cb-form-control">
-            <option>Tümü</option>
-            <option>Bağlı</option>
-            <option>Bağlı değil</option>
-        </select>
+        <label class="cb-form-label">Son güncelleme</label>
+        <input type="text" class="form-control cb-form-control" value="@(snapshot?.LastRefreshedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") ?? "-") UTC" disabled />
     </div>
     <div class="cb-filter-field cb-filter-actions cb-admin-user-filter-actions">
-        <button type="button" class="btn btn-light-primary font-weight-bold">Temizle</button>
-        <button type="button" class="btn btn-primary font-weight-bolder">Filtreyi uygula</button>
+        <a asp-area="Admin" asp-controller="Admin" asp-action="Users" class="btn btn-light-primary font-weight-bold">Temizle</a>
+        <button type="submit" class="btn btn-primary font-weight-bolder">Filtreyi uygula</button>
     </div>
-</div>
+</form>
 
 <div class="cb-admin-filter-summary mt-5">
     <div class="cb-admin-filter-summary-copy">
-        <strong>Toplam sonuç placeholder:</strong> 128 kullanıcı
-        <span>Aktif filtreler kullanıcı operasyon görünümünü daraltır; gerçek backend filtering bu fazda bağlı değildir.</span>
+        <strong>Toplam sonuç: @resultCount kullanıcı</strong>
+        <span>Gerçek kullanıcı, MFA, bot ve exchange snapshot verisi ile filtrelenir.</span>
     </div>
     <div class="cb-admin-filter-chip-list">
-        <span class="cb-admin-filter-chip">Durum: Aktif</span>
-        <span class="cb-admin-filter-chip">MFA: Açık</span>
-        <span class="cb-admin-filter-chip">Exchange: Bağlı</span>
-        <span class="cb-admin-filter-chip">Son giriş: 7 gün</span>
+        @if (!string.IsNullOrWhiteSpace(status))
+        {
+            <span class="cb-admin-filter-chip">Durum: @status</span>
+        }
+        @if (!string.IsNullOrWhiteSpace(mfa))
+        {
+            <span class="cb-admin-filter-chip">MFA: @mfa</span>
+        }
+        @if (!string.IsNullOrWhiteSpace(query))
+        {
+            <span class="cb-admin-filter-chip">Query: @query</span>
+        }
     </div>
 </div>

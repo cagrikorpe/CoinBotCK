@@ -1,7 +1,9 @@
+@using System.Linq
+@using System.Security.Claims
 @using CoinBot.Application.Abstractions.Administration
 @{
     var pageTitle = ViewData["Title"]?.ToString() ?? "Super Admin";
-    var pageDescription = ViewData["PageDescription"]?.ToString() ?? "Admin shell foundation hazır.";
+    var pageDescription = ViewData["PageDescription"]?.ToString() ?? "Admin shell hazır.";
     var breadcrumbItems = ViewData["BreadcrumbItems"] as string[] ?? new[] { "Super Admin", pageTitle };
     var healthSnapshot = ViewData["AdminShellHealthSnapshot"] as AdminShellHealthSnapshot;
     var environmentLabel = healthSnapshot?.EnvironmentBadge ?? ViewData["AdminEnvironment"]?.ToString() ?? "DEMO";
@@ -11,6 +13,24 @@
     var roleKey = ViewData["AdminRoleKey"]?.ToString() ?? "SuperAdmin";
     var freshnessLabel = ViewData["AdminFreshnessLabel"]?.ToString() ?? "Fresh";
     var searchQuery = ViewData["AdminSearchQuery"]?.ToString() ?? string.Empty;
+    var isAuthenticated = User.Identity?.IsAuthenticated == true;
+    var displayName = User.Claims.FirstOrDefault(claim => claim.Type == ClaimTypes.Name)?.Value
+        ?? User.Identity?.Name
+        ?? roleLabel;
+    var userInitialsSource = string.Concat(displayName.Where(char.IsLetterOrDigit).Take(2)).ToUpperInvariant();
+    var userInitials = string.IsNullOrWhiteSpace(userInitialsSource) ? "SA" : userInitialsSource;
+    var alertLabel = healthSnapshot?.SystemState == CoinBot.Domain.Enums.GlobalSystemStateKind.Degraded
+        ? "1"
+        : healthSnapshot?.IsManualOverride == true
+            ? "!"
+            : "0";
+    var alertTitle = healthSnapshot is null
+        ? "System health snapshot unavailable"
+        : healthSnapshot.SystemState == CoinBot.Domain.Enums.GlobalSystemStateKind.Degraded
+            ? $"System degraded · {healthSnapshot.ReasonCode}"
+            : healthSnapshot.IsManualOverride
+                ? $"Manual override · {healthSnapshot.ReasonCode}"
+                : $"System healthy · {healthSnapshot.ReasonCode}";
     var environmentTone = environmentLabel == "LIVE"
         ? "critical"
         : environmentLabel == "DEGRADED"
@@ -63,20 +83,20 @@
                         <path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
                     </svg>
                 </span>
-                <input name="query" type="text" class="form-control border-0 bg-transparent" value="@searchQuery" placeholder="CorrelationId / DecisionId / ExecutionAttemptId / IncidentId / UserId" />
+                <input name="query" type="text" class="form-control border-0 bg-transparent" value="@searchQuery" aria-label="CorrelationId / DecisionId / ExecutionAttemptId / IncidentId / UserId" />
             </form>
 
             <div class="cb-topbar-actions">
                 <button type="button" class="btn btn-light-primary font-weight-bold cb-topbar-action" data-toggle="modal" data-target="#cb_admin_reauth_modal" data-cb-modal-title="Step-up security" data-cb-modal-message="Kritik admin aksiyonları öncesinde parola ve MFA ile yeniden doğrulama istenebilir." data-cb-modal-confirm="Doğrulama">Re-auth</button>
 
-                <button type="button" class="btn btn-icon btn-clean cb-icon-button cb-admin-alert-button" title="Kritik alarm indicator placeholder">
-                    <span class="cb-icon-badge cb-admin-alert-count">2</span>
+                <a asp-area="Admin" asp-controller="Admin" asp-action="SystemHealth" class="btn btn-icon btn-clean cb-icon-button cb-admin-alert-button" title="@alertTitle">
+                    <span class="cb-icon-badge cb-admin-alert-count">@alertLabel</span>
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none">
                         <path d="M12 4l7 13H5L12 4Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"></path>
                         <path d="M12 9v4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path>
                         <circle cx="12" cy="16.5" r="1" fill="currentColor"></circle>
                     </svg>
-                </button>
+                </a>
 
                 @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = environmentLabel, Tone = environmentTone, IconText = "ENV" })
                 @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = stateLabel, Tone = stateLabel == "Active" ? "healthy" : stateLabel == "Degraded" ? "degraded" : "critical", IconText = "GS" })
@@ -85,18 +105,18 @@
 
                 <div class="dropdown">
                     <button class="btn btn-clean d-flex align-items-center px-2 py-2" type="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-                        <span class="cb-user-avatar cb-admin-user-avatar">SA</span>
+                        <span class="cb-user-avatar cb-admin-user-avatar">@userInitials</span>
                         <span class="cb-user-meta d-none d-md-inline-block">
-                            <span class="cb-user-name">Root Operator</span>
-                            <span class="cb-user-role">Profile placeholder</span>
+                            <span class="cb-user-name">@displayName</span>
+                            <span class="cb-user-role">@roleLabel</span>
                         </span>
                     </button>
                     <div class="dropdown-menu dropdown-menu-right dropdown-menu-anim-up dropdown-menu-lg p-0 cb-dropdown-menu cb-admin-dropdown-menu">
                         <div class="cb-dropdown-header cb-admin-dropdown-header">
-                            <div class="cb-user-avatar cb-admin-user-avatar">SA</div>
+                            <div class="cb-user-avatar cb-admin-user-avatar">@userInitials</div>
                             <div>
-                                <div class="font-weight-bolder text-white">Root Operator</div>
-                                <div class="text-white-50">Profile / session placeholder</div>
+                                <div class="font-weight-bolder text-white">@displayName</div>
+                                <div class="text-white-50">@roleLabel · @(isAuthenticated ? "Session live" : "Guest")</div>
                             </div>
                         </div>
                         <div class="navi navi-hover py-2">
@@ -115,6 +135,10 @@
                             <a asp-area="Admin" asp-controller="Admin" asp-action="Login" class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75">
                                 <span class="navi-text">Admin access</span>
                                 @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "MFA", Tone = "warning" })
+                            </a>
+                            <a asp-controller="Auth" asp-action="Logout" class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75">
+                                <span class="navi-text">Çıkış yap</span>
+                                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Auth", Tone = "neutral" })
                             </a>
                             <a asp-controller="Home" asp-action="Index" asp-area="" class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75">
                                 <span class="navi-text">Kullanıcı paneline dön</span>

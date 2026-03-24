@@ -3,7 +3,7 @@
     {
         Eyebrow = "Session Boundary",
         Title = "Session Expired",
-        Description = "Admin alanında oturum süresi dolduğunda yeniden giriş veya yeniden doğrulama için temiz, profesyonel bir placeholder ekranı gösterilir.",
+        Description = "Admin alanında oturum süresi dolduğunda yeniden giriş veya yeniden doğrulama için temiz, profesyonel bir güvenlik ekranı gösterilir.",
         StatusBadge = new AdminBadgeViewModel { Label = "Session Expired", Tone = "warning", IconText = "SE" },
         MetaBadges = new[]
         {
@@ -28,14 +28,14 @@
                     Tone = "warning",
                     Title = "Oturum sınırı ve yeniden doğrulama görünürdür",
                     Message = "Admin session timeout, idle warning ve multi-device uyarıları shell içinde açıklayıcı banner’lar ile gösterilir.",
-                    Meta = "Placeholder only"
+                    Meta = "Session boundary"
                 })
 
                 <div class="cb-admin-security-state-grid mt-6">
                     @await Html.PartialAsync("Foundation/_AdminErrorState", new UiStateViewModel
                     {
                         Title = "Yüksek ayrıcalıklı oturum süren doldu",
-                        Message = "Yüksek ayrıcalıklı alanda boşta kalma süresi veya yeniden doğrulama gereksinimi nedeniyle oturum geçersiz sayıldı placeholder. Yeniden giriş veya step-up ile devam edilebilir.",
+                        Message = "Yüksek ayrıcalıklı alanda boşta kalma süresi veya yeniden doğrulama gereksinimi nedeniyle oturum geçersiz sayıldı. Yeniden giriş veya step-up ile devam edilebilir.",
                         IconText = "!",
                         ActionText = "Yeniden giriş",
                         ActionHref = Url.Action("Login", "Admin", new { area = "Admin" }),

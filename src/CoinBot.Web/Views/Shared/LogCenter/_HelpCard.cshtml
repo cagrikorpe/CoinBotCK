@@ -1,10 +1,45 @@
+@model CoinBot.Application.Abstractions.Administration.LogCenterPageSnapshot
+@{
+    var retention = Model.Retention;
+    var lastRunText = retention.LastRunAtUtc is null
+        ? "n/a"
+        : retention.LastRunAtUtc.Value.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") + " UTC";
+}
+
 <div class="card card-custom gutter-b cb-card">
     <div class="card-body">
-        <div class="cb-section-title">Kısa bilgi</div>
+        <div class="cb-section-title">Retention / export</div>
+        <div class="cb-admin-profile-list mt-4">
+            <div class="cb-admin-profile-row">
+                <span>Retention</span>
+                <strong>@(retention.Enabled ? "Enabled" : "Disabled")</strong>
+            </div>
+            <div class="cb-admin-profile-row">
+                <span>Last run</span>
+                <strong class="cb-mono">@lastRunText</strong>
+            </div>
+            <div class="cb-admin-profile-row">
+                <span>Batch size</span>
+                <strong class="cb-mono">@retention.BatchSize</strong>
+            </div>
+            <div class="cb-admin-profile-row">
+                <span>Masking</span>
+                <strong>Strict</strong>
+            </div>
+        </div>
+
+        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
+            <div>
+                <div class="cb-admin-info-strip-title">Güvenli export notu</div>
+                <div class="cb-admin-info-strip-text">Export edilen CSV, aynı masked read-model satırlarını kullanır. API key, secret, signature, auth header ve hassas payload alanları düz metin olarak dışarı çıkmaz.</div>
+            </div>
+            <span class="cb-admin-info-strip-meta">CSV masked</span>
+        </div>
+
         <div class="cb-inline-stack cb-inline-stack-vertical mt-4">
-            <div class="cb-notice cb-notice-info">Audit, AI, risk, security ve system olayları ürün diline çevrilmiş özetlerle gösterilir.</div>
-            <div class="cb-notice cb-notice-warning">Detaylı davranış izleme açıksa olay hacmi artabilir; yine de secret/token/API secret gibi alanlar gösterilmez.</div>
-            <div class="cb-notice cb-notice-success">Log detayları sorun analizi, kullanıcı akışı denetimi ve operasyonel gözlem için foundation yüzey hazırlar.</div>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-light-primary font-weight-bold">Audit search</a>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="SystemHealth" class="btn btn-light font-weight-bold">System health</a>
+            <a asp-controller="LogCenter" asp-action="Index" class="btn btn-light-warning font-weight-bold">Log center filters</a>
         </div>
     </div>
 </div>

@@ -28,6 +28,82 @@ public sealed class AdminControllerTests
     }
 
     [Fact]
+    public void Overview_SetsProductLevelShellDescription()
+    {
+        var controller = CreateController(new FakeGlobalExecutionSwitchService());
+
+        var result = controller.Overview();
+
+        Assert.IsType<ViewResult>(result);
+        var pageDescription = controller.ViewData["PageDescription"]?.ToString() ?? string.Empty;
+
+        Assert.DoesNotContain("foundation", pageDescription, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("placeholder", pageDescription, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task AdminWorkspaceScreens_LoadRealSnapshots_AndAvoidPlaceholderData()
+    {
+        var now = new DateTime(2026, 3, 24, 14, 0, 0, DateTimeKind.Utc);
+        var workspaceService = new FakeAdminWorkspaceReadModelService
+        {
+            UsersSnapshot = AdminUsersPageSnapshot.Empty(now),
+            UserDetailSnapshot = new AdminUserDetailPageSnapshot(
+                "usr-123",
+                "Demo User",
+                "demo.user@coinbot.local",
+                "demo@coinbot.local",
+                "SuperAdmin",
+                "Aktif",
+                "healthy",
+                "MFA Açık",
+                "healthy",
+                "Live",
+                "critical",
+                "Risk normal",
+                "healthy",
+                [],
+                [],
+                [],
+                [],
+                [],
+                now,
+                now),
+            BotOperationsSnapshot = AdminBotOperationsPageSnapshot.Empty(now),
+            StrategyAiMonitoringSnapshot = AdminStrategyAiMonitoringPageSnapshot.Empty(now),
+            SupportSnapshot = AdminSupportLookupSnapshot.Empty(now),
+            SecurityEventsSnapshot = AdminSecurityEventsPageSnapshot.Empty(now),
+            NotificationsSnapshot = AdminNotificationsPageSnapshot.Empty(now)
+        };
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            workspaceReadModelService: workspaceService);
+
+        Assert.IsType<ViewResult>(await controller.Users("demo", "Aktif", "MFA Açık", CancellationToken.None));
+        Assert.Same(workspaceService.UsersSnapshot, controller.ViewData["AdminUsersPageSnapshot"]);
+
+        Assert.IsType<ViewResult>(await controller.UserDetail("usr-123", CancellationToken.None));
+        Assert.Same(workspaceService.UserDetailSnapshot, controller.ViewData["AdminUserDetailPageSnapshot"]);
+        Assert.Equal("usr-123", controller.ViewData["AdminEntityId"]);
+        Assert.Equal("Demo User", controller.ViewData["AdminEntityLabel"]);
+
+        Assert.IsType<ViewResult>(await controller.BotOperations("bot", "Aktif", "Live", CancellationToken.None));
+        Assert.Same(workspaceService.BotOperationsSnapshot, controller.ViewData["AdminBotOperationsPageSnapshot"]);
+
+        Assert.IsType<ViewResult>(await controller.StrategyAiMonitoring("momentum", CancellationToken.None));
+        Assert.Same(workspaceService.StrategyAiMonitoringSnapshot, controller.ViewData["AdminStrategyAiMonitoringPageSnapshot"]);
+
+        Assert.IsType<ViewResult>(await controller.SupportTools("usr-123", CancellationToken.None));
+        Assert.Same(workspaceService.SupportSnapshot, controller.ViewData["AdminSupportLookupPageSnapshot"]);
+
+        Assert.IsType<ViewResult>(await controller.SecurityEvents("failed", "Critical", "Auth", CancellationToken.None));
+        Assert.Same(workspaceService.SecurityEventsSnapshot, controller.ViewData["AdminSecurityEventsPageSnapshot"]);
+
+        Assert.IsType<ViewResult>(await controller.Notifications("warning", "Incident", CancellationToken.None));
+        Assert.Same(workspaceService.NotificationsSnapshot, controller.ViewData["AdminNotificationsPageSnapshot"]);
+    }
+
+    [Fact]
     public async Task Settings_LoadsSnapshots_AndMarksOpsAdminAsReadOnly()
     {
         var executionSnapshot = new GlobalExecutionSwitchSnapshot(
@@ -47,11 +123,23 @@ public sealed class AdminControllerTests
             UpdatedFromIp: "ip:masked",
             Version: 3,
             IsPersisted: true);
+        var retentionSnapshot = new LogCenterRetentionSnapshot(
+            true,
+            DecisionTraceRetentionDays: 45,
+            ExecutionTraceRetentionDays: 45,
+            AdminAuditLogRetentionDays: 90,
+            IncidentRetentionDays: 180,
+            ApprovalRetentionDays: 180,
+            BatchSize: 250,
+            LastRunAtUtc: new DateTime(2026, 3, 24, 9, 30, 0, DateTimeKind.Utc),
+            LastRunSummary: "LogCenter.Retention.Completed | DecisionTrace=1; ExecutionTrace=1");
         var switchService = new FakeGlobalExecutionSwitchService { Snapshot = executionSnapshot };
         var stateService = new FakeGlobalSystemStateService { Snapshot = globalSystemStateSnapshot };
+        var retentionService = new FakeLogCenterRetentionService { Snapshot = retentionSnapshot };
         var controller = CreateController(
             switchService,
             stateService,
+            logCenterRetentionService: retentionService,
             roles: [ApplicationRoles.OpsAdmin]);
 
         var result = await controller.Settings(CancellationToken.None);
@@ -59,9 +147,11 @@ public sealed class AdminControllerTests
         Assert.IsType<ViewResult>(result);
         Assert.Equal(1, switchService.GetSnapshotCalls);
         Assert.Equal(1, stateService.GetSnapshotCalls);
+        Assert.Equal(1, retentionService.GetSnapshotCalls);
         Assert.Same(executionSnapshot, controller.ViewData["AdminExecutionSwitchSnapshot"]);
         Assert.Same(globalSystemStateSnapshot, controller.ViewData["AdminGlobalSystemStateSnapshot"]);
         Assert.IsType<GlobalPolicySnapshot>(controller.ViewData["AdminGlobalPolicySnapshot"]);
+        Assert.Same(retentionSnapshot, controller.ViewData["AdminLogCenterRetentionSnapshot"]);
         Assert.Equal(false, controller.ViewData["AdminCanEditGlobalPolicy"]);
         Assert.Equal("OpsAdmin", controller.ViewData["AdminRoleKey"]);
     }
@@ -866,9 +956,11 @@ public sealed class AdminControllerTests
         FakeAdminAuditLogService? auditLogService = null,
         FakeTraceService? traceService = null,
         FakeApiCredentialValidationService? apiCredentialValidationService = null,
+        FakeAdminWorkspaceReadModelService? workspaceReadModelService = null,
         FakeApprovalWorkflowService? approvalWorkflowService = null,
         FakeAdminGovernanceReadModelService? governanceReadModelService = null,
         FakeAdminMonitoringReadModelService? monitoringReadModelService = null,
+        FakeLogCenterRetentionService? logCenterRetentionService = null,
         FakeGlobalPolicyEngine? globalPolicyEngine = null,
         FakeCrisisEscalationService? crisisEscalationService = null,
         string userId = "admin-01",
@@ -891,9 +983,11 @@ public sealed class AdminControllerTests
             adminAuditLogService: auditLogService ?? new FakeAdminAuditLogService(),
             traceService: traceService ?? new FakeTraceService(),
             apiCredentialValidationService: apiCredentialValidationService ?? new FakeApiCredentialValidationService(),
+            adminWorkspaceReadModelService: workspaceReadModelService ?? new FakeAdminWorkspaceReadModelService(),
             approvalWorkflowService: approvalWorkflowService,
             adminGovernanceReadModelService: governanceReadModelService,
             adminMonitoringReadModelService: monitoringReadModelService ?? new FakeAdminMonitoringReadModelService(),
+            logCenterRetentionService: logCenterRetentionService ?? new FakeLogCenterRetentionService(),
             globalPolicyEngine: globalPolicyEngine ?? new FakeGlobalPolicyEngine(),
             crisisEscalationService: crisisEscalationService)
         {
@@ -1351,6 +1445,58 @@ public sealed class AdminControllerTests
         }
     }
 
+    private sealed class FakeAdminWorkspaceReadModelService : IAdminWorkspaceReadModelService
+    {
+        public AdminUsersPageSnapshot UsersSnapshot { get; set; } = AdminUsersPageSnapshot.Empty(DateTime.UtcNow);
+
+        public AdminUserDetailPageSnapshot? UserDetailSnapshot { get; set; }
+
+        public AdminBotOperationsPageSnapshot BotOperationsSnapshot { get; set; } = AdminBotOperationsPageSnapshot.Empty(DateTime.UtcNow);
+
+        public AdminStrategyAiMonitoringPageSnapshot StrategyAiMonitoringSnapshot { get; set; } = AdminStrategyAiMonitoringPageSnapshot.Empty(DateTime.UtcNow);
+
+        public AdminSupportLookupSnapshot SupportSnapshot { get; set; } = AdminSupportLookupSnapshot.Empty(DateTime.UtcNow);
+
+        public AdminSecurityEventsPageSnapshot SecurityEventsSnapshot { get; set; } = AdminSecurityEventsPageSnapshot.Empty(DateTime.UtcNow);
+
+        public AdminNotificationsPageSnapshot NotificationsSnapshot { get; set; } = AdminNotificationsPageSnapshot.Empty(DateTime.UtcNow);
+
+        public Task<AdminUsersPageSnapshot> GetUsersAsync(string? query = null, string? status = null, string? mfa = null, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(UsersSnapshot);
+        }
+
+        public Task<AdminUserDetailPageSnapshot?> GetUserDetailAsync(string userId, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(UserDetailSnapshot);
+        }
+
+        public Task<AdminBotOperationsPageSnapshot> GetBotOperationsAsync(string? query = null, string? status = null, string? mode = null, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(BotOperationsSnapshot);
+        }
+
+        public Task<AdminStrategyAiMonitoringPageSnapshot> GetStrategyAiMonitoringAsync(string? query = null, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(StrategyAiMonitoringSnapshot);
+        }
+
+        public Task<AdminSupportLookupSnapshot> GetSupportLookupAsync(string? query = null, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(SupportSnapshot);
+        }
+
+        public Task<AdminSecurityEventsPageSnapshot> GetSecurityEventsAsync(string? query = null, string? severity = null, string? module = null, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(SecurityEventsSnapshot);
+        }
+
+        public Task<AdminNotificationsPageSnapshot> GetNotificationsAsync(string? severity = null, string? category = null, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(NotificationsSnapshot);
+        }
+    }
+
     private sealed class FakeAdminMonitoringReadModelService : IAdminMonitoringReadModelService
     {
         public MonitoringDashboardSnapshot Snapshot { get; set; } = MonitoringDashboardSnapshot.Empty(new DateTime(2026, 3, 24, 12, 0, 0, DateTimeKind.Utc));
@@ -1367,6 +1513,33 @@ public sealed class AdminControllerTests
         public Task<MonitoringDashboardSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
         {
             return Task.FromResult(Snapshot);
+        }
+    }
+
+    private sealed class FakeLogCenterRetentionService : ILogCenterRetentionService
+    {
+        public LogCenterRetentionSnapshot Snapshot { get; set; } = new(
+            Enabled: true,
+            DecisionTraceRetentionDays: 365,
+            ExecutionTraceRetentionDays: 365,
+            AdminAuditLogRetentionDays: 365,
+            IncidentRetentionDays: 730,
+            ApprovalRetentionDays: 730,
+            BatchSize: 250,
+            LastRunAtUtc: null,
+            LastRunSummary: null);
+
+        public int GetSnapshotCalls { get; private set; }
+
+        public Task<LogCenterRetentionSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
+        {
+            GetSnapshotCalls++;
+            return Task.FromResult(Snapshot);
+        }
+
+        public Task<LogCenterRetentionRunSnapshot> ApplyAsync(CancellationToken cancellationToken = default)
+        {
+            throw new NotImplementedException();
         }
     }
 

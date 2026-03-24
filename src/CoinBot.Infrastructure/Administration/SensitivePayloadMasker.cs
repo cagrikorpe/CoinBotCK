@@ -171,6 +171,30 @@ public static class SensitivePayloadMasker
 
         if (separatorIndex <= 0)
         {
+            var colonIndex = segment.IndexOf(':');
+
+            if (colonIndex > 0)
+            {
+                var headerName = segment[..colonIndex];
+
+                if (IsSensitiveKey(headerName))
+                {
+                    return $"{headerName}: ***REDACTED***";
+                }
+            }
+
+            var bearerIndex = segment.IndexOf("Bearer ", StringComparison.OrdinalIgnoreCase);
+
+            if (bearerIndex >= 0)
+            {
+                return $"{segment[..(bearerIndex + "Bearer ".Length)]}***REDACTED***";
+            }
+
+            if (ContainsSensitiveFragment(segment))
+            {
+                return "***REDACTED***";
+            }
+
             return segment;
         }
 
@@ -187,5 +211,10 @@ public static class SensitivePayloadMasker
         var normalizedKey = string.Concat(key.Where(char.IsLetterOrDigit)).ToLowerInvariant();
 
         return SensitiveNameFragments.Any(fragment => normalizedKey.Contains(fragment, StringComparison.Ordinal));
+    }
+
+    private static bool ContainsSensitiveFragment(string value)
+    {
+        return SensitiveNameFragments.Any(fragment => value.Contains(fragment, StringComparison.OrdinalIgnoreCase));
     }
 }

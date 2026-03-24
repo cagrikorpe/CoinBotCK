@@ -3,27 +3,27 @@
         <div class="cb-admin-panel-head">
             <div>
                 <div class="cb-admin-section-kicker">Policy CTA</div>
-                <div class="cb-admin-section-title">Notification policy placeholder</div>
+                <div class="cb-admin-section-title">Notification policy</div>
             </div>
             @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Read / Unread", Tone = "info", IconText = "NP" })
         </div>
 
         <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-6">
             <div>
-                <div class="cb-admin-info-strip-title">Bildirim policy ekranı sonraki faza hazır</div>
-                <div class="cb-admin-info-strip-text">Alarm routing, escalation, rule ve channel tercihleri gerçek backend olmadan yalnızca CTA foundation olarak ayrıldı.</div>
+                <div class="cb-admin-info-strip-title">Bildirim policy yönlendirmesi</div>
+                <div class="cb-admin-info-strip-text">Alarm routing ve güvenlik incelemesi için gerçek admin ekranlarına yönlendirme yapılır.</div>
             </div>
             <span class="cb-admin-info-strip-meta">Policy</span>
         </div>
 
         <div class="cb-admin-quick-actions-list mt-6">
-            <button type="button" class="cb-admin-action-item border-0 text-left" data-toggle="modal" data-target="#cb_admin_alert_policy_modal">
+            <a asp-area="Admin" asp-controller="Admin" asp-action="Notifications" class="cb-admin-action-item">
                 <div>
                     <strong>Notification policy ekranına git</strong>
-                    <small>Rule/source, severity ve escalation ayarları için placeholder CTA</small>
+                    <small>Rule/source ve severity akışı</small>
                 </div>
                 <span>→</span>
-            </button>
+            </a>
             <a asp-area="Admin" asp-controller="Admin" asp-action="SecurityEvents" class="cb-admin-action-item">
                 <div>
                     <strong>Security alarmlarını aç</strong>

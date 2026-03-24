@@ -3,7 +3,7 @@
     {
         Eyebrow = "Global AI Ops",
         Title = "Strategy / AI İzleme",
-        Description = "Platform genelindeki strategy template kullanımı, AI health, confidence/veto sinyalleri ve explainability örneklerini tek ekranda özetleyen Super Admin monitoring foundation ekranı.",
+        Description = "Platform genelindeki strategy template kullanımı, AI health, confidence/veto sinyalleri ve explainability örneklerini tek ekranda özetleyen Super Admin AI izleme yüzeyi.",
         StatusBadge = new AdminBadgeViewModel { Label = "AI Watch", Tone = "degraded", IconText = "AI" },
         MetaBadges = new[]
         {
@@ -13,8 +13,8 @@
         },
         SecondaryActionText = "Bot operasyonları",
         SecondaryActionHref = Url.Action("BotOperations", "Admin", new { area = "Admin" }),
-        PrimaryActionText = "Explainability sample",
-        PrimaryActionHref = "#cb_admin_ai_explain_modal"
+        PrimaryActionText = "Audit / loglar",
+        PrimaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" })
     };
 }
 
@@ -27,9 +27,9 @@
                 @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
                 {
                     Tone = "warning",
-                    Title = "Global strategy / AI monitoring foundation",
-                    Message = "Gerçek AI backend, model scoring, cluster analizi veya strategy health pipeline bu fazda bağlı değildir. Ekran; usage yoğunluğu, model health, veto/confidence ve explainability akışlarını UI seviyesinde hazırlar.",
-                    Meta = "UI-only monitoring"
+                    Title = "Global strategy / AI monitoring",
+                    Message = "Gerçek AI backend, model scoring, cluster analizi ve strategy health pipeline bu yüzeyle hizalanır. Ekran; usage yoğunluğu, model health, veto/confidence ve explainability snapshot'larını gösterir.",
+                    Meta = "Operational monitoring"
                 })
 
                 <div class="mt-6">
@@ -46,11 +46,19 @@
 
     <div class="col-xl-5">
         @await Html.PartialAsync("Foundation/_AdminGlobalAiHealthPanel")
-        @await Html.PartialAsync("Foundation/_AdminExplainabilitySamplePanel")
         @await Html.PartialAsync("Foundation/_AdminStrategyAiHelpCard")
     </div>
 
     <div class="col-12">
-        @await Html.PartialAsync("Foundation/_AdminStrategyAiStatesShowcase")
+        @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+        {
+            Title = "Strategy / AI hazır",
+            Message = "Strategy usage, veto ve health alanları gerçek snapshot verisiyle doldurulur. Veri yoksa empty-state gösterilir.",
+            IconText = "AI",
+            ActionText = "Bot operasyonları",
+            ActionHref = Url.Action("BotOperations", "Admin", new { area = "Admin" }),
+            SecondaryActionText = "Audit / loglar",
+            SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" })
+        })
     </div>
 </div>

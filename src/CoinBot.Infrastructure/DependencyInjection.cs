@@ -138,6 +138,9 @@ public static class DependencyInjection
             .Validate(
                 options => options.ListenKeyRenewalIntervalMinutes < 60,
                 "ListenKeyRenewalIntervalMinutes must be less than 60.");
+        services.AddOptions<LogCenterRetentionOptions>()
+            .Bind(configuration.GetSection("LogCenter:Retention"))
+            .ValidateDataAnnotations();
         services.AddOptions<IndicatorEngineOptions>()
             .Bind(configuration.GetSection("MarketData:Indicators"))
             .ValidateDataAnnotations()
@@ -159,6 +162,7 @@ public static class DependencyInjection
         services.AddScoped<ICrisisIncidentHook, CrisisIncidentHook>();
         services.AddScoped<IApprovalWorkflowService, ApprovalWorkflowService>();
         services.AddScoped<IAdminGovernanceReadModelService, AdminGovernanceReadModelService>();
+        services.AddScoped<IAdminWorkspaceReadModelService, AdminWorkspaceReadModelService>();
         services.AddScoped<ICrisisEscalationService, CrisisEscalationService>();
         services.AddScoped<IAdminShellReadModelService, AdminShellReadModelService>();
         services.AddScoped<IAdminMonitoringReadModelService, AdminMonitoringReadModelService>();
@@ -166,6 +170,8 @@ public static class DependencyInjection
         services.AddScoped<IAuditLogService, AuditLogService>();
         services.AddScoped<IExchangeCredentialService, ExchangeCredentialService>();
         services.AddScoped<IAlertService, AlertingService>();
+        services.AddScoped<ILogCenterReadModelService, LogCenterReadModelService>();
+        services.AddScoped<ILogCenterRetentionService, LogCenterRetentionService>();
         services.AddScoped<IGlobalExecutionSwitchService, GlobalExecutionSwitchService>();
         services.AddScoped<IGlobalSystemStateService, GlobalSystemStateService>();
         services.AddScoped<IGlobalPolicyEngine, GlobalPolicyEngine>();
@@ -252,6 +258,7 @@ public static class DependencyInjection
         services.AddHostedService<ExchangeAppStateSyncWorker>();
         services.AddHostedService<ExecutionReconciliationWorker>();
         services.AddHostedService<MonitoringSnapshotWorker>();
+        services.AddHostedService<LogCenterRetentionWorker>();
         services.AddHostedService<VirtualExecutionWatchdogWorker>();
         services.AddHostedService<AutonomySelfHealingWorker>();
 

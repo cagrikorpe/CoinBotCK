@@ -31,6 +31,7 @@ public sealed class AdminController : Controller
     private const string GlobalPolicySnapshotViewDataKey = "AdminGlobalPolicySnapshot";
     private const string GlobalPolicySuccessTempDataKey = "AdminGlobalPolicySuccess";
     private const string GlobalPolicyErrorTempDataKey = "AdminGlobalPolicyError";
+    private const string AdminLogCenterRetentionSnapshotViewDataKey = "AdminLogCenterRetentionSnapshot";
     private const string ApprovalSuccessTempDataKey = "AdminApprovalSuccess";
     private const string ApprovalErrorTempDataKey = "AdminApprovalError";
     private const string CrisisPreviewViewDataKey = "AdminCrisisEscalationPreview";
@@ -45,9 +46,11 @@ public sealed class AdminController : Controller
     private readonly IAdminAuditLogService adminAuditLogService;
     private readonly IAdminCommandRegistry adminCommandRegistry;
     private readonly IAdminGovernanceReadModelService? adminGovernanceReadModelService;
+    private readonly IAdminWorkspaceReadModelService adminWorkspaceReadModelService;
     private readonly IAdminMonitoringReadModelService? adminMonitoringReadModelService;
     private readonly IApprovalWorkflowService? approvalWorkflowService;
     private readonly ICrisisEscalationService? crisisEscalationService;
+    private readonly ILogCenterRetentionService? logCenterRetentionService;
     private readonly IGlobalPolicyEngine? globalPolicyEngine;
     private readonly IGlobalExecutionSwitchService globalExecutionSwitchService;
     private readonly IGlobalSystemStateService globalSystemStateService;
@@ -60,9 +63,11 @@ public sealed class AdminController : Controller
         IAdminAuditLogService adminAuditLogService,
         ITraceService traceService,
         IApiCredentialValidationService apiCredentialValidationService,
+        IAdminWorkspaceReadModelService adminWorkspaceReadModelService,
         IApprovalWorkflowService? approvalWorkflowService = null,
         IAdminGovernanceReadModelService? adminGovernanceReadModelService = null,
         IAdminMonitoringReadModelService? adminMonitoringReadModelService = null,
+        ILogCenterRetentionService? logCenterRetentionService = null,
         IGlobalPolicyEngine? globalPolicyEngine = null,
         ICrisisEscalationService? crisisEscalationService = null)
     {
@@ -72,9 +77,11 @@ public sealed class AdminController : Controller
         this.adminAuditLogService = adminAuditLogService;
         this.traceService = traceService;
         this.apiCredentialValidationService = apiCredentialValidationService;
+        this.adminWorkspaceReadModelService = adminWorkspaceReadModelService;
         this.approvalWorkflowService = approvalWorkflowService;
         this.adminGovernanceReadModelService = adminGovernanceReadModelService;
         this.adminMonitoringReadModelService = adminMonitoringReadModelService;
+        this.logCenterRetentionService = logCenterRetentionService;
         this.globalPolicyEngine = globalPolicyEngine;
         this.crisisEscalationService = crisisEscalationService;
     }
@@ -90,12 +97,12 @@ public sealed class AdminController : Controller
     {
         ApplyAdminAccessMeta(
             title: "Admin MFA",
-            description: "Admin alanında zorunlu ikinci doğrulama adımı için profesyonel MFA foundation ekranı.",
+            description: "Admin alanında zorunlu ikinci doğrulama adımı için profesyonel erişim yüzeyi.",
             stage: "Admin MFA",
             progress: "2 / 2",
             highlights: new[]
             {
-                "Authenticator ve email code placeholder",
+                "Authenticator ve email code",
                 "OTP input, resend ve countdown state'leri",
                 "Step-up security ile aynı ürün dilini korur"
             },
@@ -109,7 +116,7 @@ public sealed class AdminController : Controller
     {
         ApplyShellMeta(
             title: "Access Denied",
-            description: "Admin alanında yetkisiz erişim durumları için yönlendirici ve profesyonel ekran foundation'ı.",
+            description: "Admin alanında yetkisiz erişim durumları için yönlendirici ve profesyonel ekran.",
             activeNav: "Overview",
             breadcrumbItems: new[] { "Super Admin", "Security", "Access Denied" });
 
@@ -133,7 +140,7 @@ public sealed class AdminController : Controller
     {
         ApplyShellMeta(
             title: "Session Expired",
-            description: "Idle timeout, re-auth ve session boundary uyarıları için admin placeholder ekranı.",
+            description: "Idle timeout, re-auth ve session boundary uyarıları için admin güvenlik ekranı.",
             activeNav: "Overview",
             breadcrumbItems: new[] { "Super Admin", "Security", "Session Expired" });
 
@@ -145,7 +152,7 @@ public sealed class AdminController : Controller
     {
         ApplyShellMeta(
             title: "Role Matrix",
-            description: "Rol bazlı kaba erişim görünümü ve permission matrix foundation ekranı.",
+            description: "Rol bazlı kaba erişim görünümü ve permission matrix ekranı.",
             activeNav: "Users",
             breadcrumbItems: new[] { "Super Admin", "Identity", "Role Matrix" });
 
@@ -265,10 +272,10 @@ public sealed class AdminController : Controller
             CreatePlaceholder(
                 eyebrow: "Search",
                 title: "Global Search",
-                description: "CorrelationId, DecisionId, ExecutionAttemptId, IncidentId ve UserId icin ortak admin arama giris noktasi hazirlandi. Exact-match queryler ilgili detail ekranina yonlenir.",
+                description: "CorrelationId, DecisionId, ExecutionAttemptId, IncidentId ve UserId icin ortak admin arama giris noktasi kuruldu. Exact-match queryler ilgili detail ekranina yonlenir.",
                 hintTitle: string.IsNullOrWhiteSpace(normalizedQuery)
-                    ? "Trace aramaya hazir"
-                    : $"Hazir query: {Truncate(normalizedQuery, 48)}",
+                    ? "Trace search ready"
+                    : $"Query: {Truncate(normalizedQuery, 48)}",
                 hintMessage: string.IsNullOrWhiteSpace(normalizedQuery)
                     ? "Topbar arama kutusu CorrelationId / DecisionId / ExecutionAttemptId icin Trace detail'e, IncidentId icin Incident detail'e, diger queryler icin Audit listesine gider."
                     : "Correlation, decision, execution ve incident aramalari ilgili detail ekranina; diger queryler audit merkezine yonlendirilir.",
@@ -297,7 +304,7 @@ public sealed class AdminController : Controller
     {
         ApplyShellMeta(
             title: "Genel Bakış",
-            description: "Super Admin platform overview; kullanıcı, exchange, bot, AI, alarm ve worker özetini tek ekranda toplayan operasyon dashboard foundation'ı.",
+            description: "Kullanıcı, exchange, bot, AI, alarm ve worker özetini tek ekranda toplayan operasyon dashboard'u.",
             activeNav: "Overview",
             breadcrumbItems: new[] { "Super Admin", "Genel Bakış" });
 
@@ -305,29 +312,38 @@ public sealed class AdminController : Controller
     }
 
     [Authorize(Policy = ApplicationPolicies.IdentityAdministration)]
-    public IActionResult Users()
+    public async Task<IActionResult> Users(
+        string? query,
+        string? status,
+        string? mfa,
+        CancellationToken cancellationToken)
     {
         ApplyShellMeta(
             title: "Kullanıcılar",
-            description: "Kullanıcı listesi, filtre barı, güvenlik sinyalleri ve kontrollü admin aksiyonları için operasyonel foundation yüzeyi.",
+            description: "Kullanıcı listesi, filtre barı, güvenlik sinyalleri ve kontrollü admin aksiyonları için operasyonel kullanıcı yönetimi yüzeyi.",
             activeNav: "Users",
             breadcrumbItems: new[] { "Super Admin", "Kimlik", "Kullanıcılar" });
 
+        ViewData["AdminUsersPageSnapshot"] = await adminWorkspaceReadModelService.GetUsersAsync(query, status, mfa, cancellationToken);
         return View();
     }
 
     [Authorize(Policy = ApplicationPolicies.IdentityAdministration)]
-    public IActionResult UserDetail(string? id)
+    public async Task<IActionResult> UserDetail(string? id, CancellationToken cancellationToken)
     {
         ApplyShellMeta(
             title: "Kullanıcı Detayı",
-            description: "Profil özeti, güvenlik durumu, bot ve exchange summary ile admin aksiyonlarını bir araya getiren operasyon odaklı detail foundation.",
+            description: "Profil özeti, güvenlik durumu, bot ve exchange summary ile son aktiviteleri operasyon odaklı detay ekranında toplar.",
             activeNav: "UserDetail",
             breadcrumbItems: new[] { "Super Admin", "Kimlik", "Kullanıcı Detayı" });
 
-        ViewData["AdminEntityId"] = string.IsNullOrWhiteSpace(id) ? "usr-placeholder-01" : id;
-        ViewData["AdminEntityLabel"] = string.IsNullOrWhiteSpace(id) ? "Placeholder kullanıcı" : $"Kullanıcı {id}";
+        var snapshot = string.IsNullOrWhiteSpace(id)
+            ? null
+            : await adminWorkspaceReadModelService.GetUserDetailAsync(id, cancellationToken);
 
+        ViewData["AdminUserDetailPageSnapshot"] = snapshot;
+        ViewData["AdminEntityId"] = snapshot?.UserId ?? (string.IsNullOrWhiteSpace(id) ? "usr-unknown" : id);
+        ViewData["AdminEntityLabel"] = snapshot?.DisplayName ?? (string.IsNullOrWhiteSpace(id) ? "Kullanıcı bulunamadı" : $"Kullanıcı {id}");
         return View();
     }
 
@@ -336,7 +352,7 @@ public sealed class AdminController : Controller
     {
         ApplyShellMeta(
             title: "Exchange Hesapları",
-            description: "Platform çapındaki exchange bağlantılarını sağlık, permission, freshness ve risk bayraklarıyla izleyen admin monitoring foundation yüzeyi.",
+            description: "Platform çapındaki exchange bağlantılarını sağlık, permission, freshness ve risk bayraklarıyla izleyen admin monitoring yüzeyi.",
             activeNav: "ExchangeAccounts",
             breadcrumbItems: new[] { "Super Admin", "Operasyon", "Exchange Hesapları" });
 
@@ -345,26 +361,34 @@ public sealed class AdminController : Controller
     }
 
     [Authorize(Policy = ApplicationPolicies.TradeOperations)]
-    public IActionResult BotOperations()
+    public async Task<IActionResult> BotOperations(
+        string? query,
+        string? status,
+        string? mode,
+        CancellationToken cancellationToken)
     {
         ApplyShellMeta(
             title: "Bot Operasyonları",
-            description: "Platform genelindeki botları durum, strategy, risk ve AI etkisi perspektifiyle izleyen operasyonel admin foundation ekranı.",
+            description: "Platform genelindeki botları durum, strategy, risk ve AI etkisi perspektifiyle izleyen operasyon ekranı.",
             activeNav: "BotOperations",
             breadcrumbItems: new[] { "Super Admin", "Operasyon", "Bot Operasyonları" });
 
+        ViewData["AdminBotOperationsPageSnapshot"] = await adminWorkspaceReadModelService.GetBotOperationsAsync(query, status, mode, cancellationToken);
         return View();
     }
 
     [Authorize(Policy = ApplicationPolicies.TradeOperations)]
-    public IActionResult StrategyAiMonitoring()
+    public async Task<IActionResult> StrategyAiMonitoring(
+        string? query,
+        CancellationToken cancellationToken)
     {
         ApplyShellMeta(
             title: "Strategy / AI İzleme",
-            description: "Platform genelindeki strategy template kullanımı, AI health, confidence/veto sinyalleri ve explainability örneklerini izleyen admin monitoring foundation ekranı.",
+            description: "Strategy template kullanımı, AI health, confidence/veto sinyalleri ve explainability örneklerini izleyen admin monitoring yüzeyi.",
             activeNav: "StrategyAiMonitoring",
             breadcrumbItems: new[] { "Super Admin", "İzleme", "Strategy / AI" });
 
+        ViewData["AdminStrategyAiMonitoringPageSnapshot"] = await adminWorkspaceReadModelService.GetStrategyAiMonitoringAsync(query, cancellationToken);
         return View();
     }
 
@@ -372,7 +396,7 @@ public sealed class AdminController : Controller
     {
         ApplyShellMeta(
             title: "Sistem Sağlığı",
-            description: "API, web app, queue ve worker health sinyallerini failed jobs ve stale warning yüzeyiyle tek ekranda toplayan monitoring foundation.",
+            description: "API, web app, queue ve worker health sinyallerini failed jobs ve stale warning görünümüyle tek ekranda toplar.",
             activeNav: "SystemHealth",
             breadcrumbItems: new[] { "Super Admin", "Runtime", "Sistem Sağlığı" });
 
@@ -385,7 +409,7 @@ public sealed class AdminController : Controller
     {
         ApplyShellMeta(
             title: "Job / Worker Durumu",
-            description: "Worker health, last heartbeat, failed jobs ve retry placeholder akışlarını ortak system health foundation üstünde toplar.",
+            description: "Worker health, last heartbeat ve failed jobs akışlarını ortak system health görünümünde toplar.",
             activeNav: "Jobs",
             breadcrumbItems: new[] { "Super Admin", "Runtime", "Job / Worker" });
 
@@ -405,7 +429,7 @@ public sealed class AdminController : Controller
     {
         ApplyShellMeta(
             title: "Audit & Log Merkezi",
-            description: "Platform genelindeki audit, security, runtime, AI, trading ve admin action loglarını gelişmiş filtre ve detail drawer ile izleyen global log center foundation.",
+            description: "Platform genelindeki audit, security, runtime, AI, trading ve admin action loglarını gelişmiş filtre ve detail drawer ile izleyen global log merkezi.",
             activeNav: "Audit",
             breadcrumbItems: new[] { "Super Admin", "Gözlem", "Audit & Log" });
 
@@ -499,7 +523,7 @@ public sealed class AdminController : Controller
     {
         if (approvalWorkflowService is null)
         {
-            TempData[ApprovalErrorTempDataKey] = "Approval workflow service hazir degil.";
+            TempData[ApprovalErrorTempDataKey] = "Approval workflow service unavailable.";
             return RedirectToAction(nameof(Approvals));
         }
 
@@ -537,7 +561,7 @@ public sealed class AdminController : Controller
     {
         if (approvalWorkflowService is null)
         {
-            TempData[ApprovalErrorTempDataKey] = "Approval workflow service hazir degil.";
+            TempData[ApprovalErrorTempDataKey] = "Approval workflow service unavailable.";
             return RedirectToAction(nameof(Approvals));
         }
 
@@ -689,37 +713,47 @@ public sealed class AdminController : Controller
     }
 
     [Authorize(Policy = ApplicationPolicies.AuditRead)]
-    public IActionResult SecurityEvents()
+    public async Task<IActionResult> SecurityEvents(
+        string? query,
+        string? severity,
+        string? module,
+        CancellationToken cancellationToken)
     {
         ApplyShellMeta(
             title: "Güvenlik Olayları",
-            description: "Failed login, invalid MFA, suspicious session ve risky permission sinyallerini triage paneli ve security detail drawer ile toplayan admin security monitoring foundation.",
+            description: "Failed login, invalid MFA, suspicious session ve risky permission sinyallerini triage paneli ve security detail drawer ile toplayan admin security monitoring yüzeyi.",
             activeNav: "SecurityEvents",
             breadcrumbItems: new[] { "Super Admin", "Gözlem", "Güvenlik Olayları" });
 
+        ViewData["AdminSecurityEventsPageSnapshot"] = await adminWorkspaceReadModelService.GetSecurityEventsAsync(query, severity, module, cancellationToken);
         return View();
     }
 
     [Authorize(Policy = ApplicationPolicies.AuditRead)]
-    public IActionResult Notifications()
+    public async Task<IActionResult> Notifications(
+        string? severity,
+        string? category,
+        CancellationToken cancellationToken)
     {
         ApplyShellMeta(
             title: "Bildirim / Alarm Merkezi",
-            description: "Platform seviyesindeki kritik alarmları, unread/read akışını ve admin bildirimlerini merkezi bir alarm hub üzerinde toplayan notification center foundation.",
+            description: "Platform seviyesindeki kritik alarmları, unread/read akışını ve admin bildirimlerini merkezi bir alarm hub üzerinde toplar.",
             activeNav: "Notifications",
             breadcrumbItems: new[] { "Super Admin", "Gözlem", "Bildirim / Alarm" });
 
+        ViewData["AdminNotificationsPageSnapshot"] = await adminWorkspaceReadModelService.GetNotificationsAsync(severity, category, cancellationToken);
         return View();
     }
 
-    public IActionResult SupportTools()
+    public async Task<IActionResult> SupportTools(string? query, CancellationToken cancellationToken)
     {
         ApplyShellMeta(
             title: "Destek Araçları",
-            description: "Kullanıcı arama, read-only diagnostic panel, kritik olay özeti ve güvenli destek CTA'larını tek ekranda toplayan support operations foundation.",
+            description: "Kullanıcı arama, read-only diagnostic panel, kritik olay özeti ve güvenli destek CTA'larını tek ekranda toplar.",
             activeNav: "SupportTools",
             breadcrumbItems: new[] { "Super Admin", "Platform", "Destek Araçları" });
 
+        ViewData["AdminSupportLookupPageSnapshot"] = await adminWorkspaceReadModelService.GetSupportLookupAsync(query, cancellationToken);
         return View();
     }
 
@@ -728,13 +762,17 @@ public sealed class AdminController : Controller
     {
         ApplyShellMeta(
             title: "Global Ayarlar",
-            description: "Feature flag, retention, AI rollout, maintenance ve varsayılan politika alanlarını kullanıcı ayarlarından ayrı toplayan global admin settings foundation.",
+            description: "Feature flag, retention, AI rollout, maintenance ve varsayılan politika alanlarını kullanıcı ayarlarından ayrı toplar.",
             activeNav: "Settings",
             breadcrumbItems: new[] { "Super Admin", "Platform", "Global Ayarlar" });
 
         ViewData[ExecutionSwitchSnapshotViewDataKey] = await globalExecutionSwitchService.GetSnapshotAsync(cancellationToken);
         ViewData[GlobalSystemStateSnapshotViewDataKey] = await globalSystemStateService.GetSnapshotAsync(cancellationToken);
         ViewData[GlobalPolicySnapshotViewDataKey] = await LoadGlobalPolicySnapshotAsync(cancellationToken);
+        if (logCenterRetentionService is not null)
+        {
+            ViewData[AdminLogCenterRetentionSnapshotViewDataKey] = await logCenterRetentionService.GetSnapshotAsync(cancellationToken);
+        }
         ViewData[CrisisPreviewViewDataKey] = LoadCrisisPreviewViewModelFromTempData();
         ViewData[AdminCanEditGlobalPolicyViewDataKey] = CanEditGlobalPolicy();
 
@@ -1183,7 +1221,7 @@ public sealed class AdminController : Controller
     {
         if (crisisEscalationService is null)
         {
-            TempData[CrisisErrorTempDataKey] = "Crisis escalation service hazir degil.";
+            TempData[CrisisErrorTempDataKey] = "Crisis escalation service unavailable.";
             return RedirectToAction(nameof(Settings));
         }
 
@@ -1245,7 +1283,7 @@ public sealed class AdminController : Controller
     {
         if (crisisEscalationService is null)
         {
-            TempData[CrisisErrorTempDataKey] = "Crisis escalation service hazir degil.";
+            TempData[CrisisErrorTempDataKey] = "Crisis escalation service unavailable.";
             return RedirectToAction(nameof(Settings));
         }
 
@@ -1775,11 +1813,11 @@ public sealed class AdminController : Controller
     {
         return activeNav switch
         {
-            "Overview" => ("warning", "Delayed", "Platform özeti placeholder olduğu için bazı KPI blokları gecikmeli okunabilir; kritik karar öncesi modül detayına gidilmesi beklenir.", "Snapshot · 2 dk"),
+            "Overview" => ("warning", "Delayed", "Platform özeti read-model üzerinden okunur; kritik karar öncesi modül detayına gidilmesi beklenir.", "Snapshot · 2 dk"),
             "ExchangeAccounts" => ("critical", "Stale", "Exchange permission ve connection görünümü stale olabilir; riskli hesaplarda detay drawer ve audit/log merkezi ile çapraz kontrol önerilir.", "Exchange sync · 4 dk"),
             "SystemHealth" or "Jobs" => ("degraded", "Degraded", "Monitoring read-model background worker üzerinden yenilenir; stale worker ve dependency health sinyalleri birlikte değerlendirilmelidir.", "Heartbeat · live worker"),
-            "Audit" or "SecurityEvents" or "Notifications" => ("warning", "Delayed", $"{title} ekranı yüksek hacimli kayıtlarla çalıştığı için placeholder veriler gecikmeli olabilir.", "Trace window · 3 dk"),
-            _ => ("healthy", "Fresh", $"{title} verisi güncel placeholder akış ile gösteriliyor; yine de kritik aksiyon öncesi modül detayları kontrol edilmelidir.", "Freshness · canlı")
+            "Audit" or "SecurityEvents" or "Notifications" => ("warning", "Delayed", $"{title} ekranı yüksek hacimli kayıtlarla çalıştığı için son pencere gecikmeli okunabilir.", "Trace window · 3 dk"),
+            _ => ("healthy", "Fresh", $"{title} verisi güncel shell snapshot ile gösteriliyor; yine de kritik aksiyon öncesi modül detayları kontrol edilmelidir.", "Freshness · canlı")
         };
     }
 

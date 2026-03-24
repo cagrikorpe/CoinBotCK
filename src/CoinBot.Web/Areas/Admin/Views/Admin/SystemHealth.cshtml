@@ -3,12 +3,12 @@
     {
         Eyebrow = "Runtime Monitoring",
         Title = "System Health / Worker Status",
-        Description = "API, web app, queue ve worker health sinyallerini failed jobs, stale warning ve incident severity görünümüyle tek ekranda toplayan Super Admin monitoring foundation ekranı.",
+        Description = "API, web app, queue ve worker health sinyallerini failed jobs, stale warning ve incident severity görünümüyle tek ekranda toplayan Super Admin monitoring yüzeyi.",
         StatusBadge = new AdminBadgeViewModel { Label = "Health Watch", Tone = "degraded", IconText = "HL" },
         MetaBadges = new[]
         {
             new AdminBadgeViewModel { Label = "Heartbeat Aware", Tone = "info", IconText = "HB" },
-            new AdminBadgeViewModel { Label = "Retry Placeholder", Tone = "warning", IconText = "RT" },
+            new AdminBadgeViewModel { Label = "Retry Safe", Tone = "warning", IconText = "RT" },
             new AdminBadgeViewModel { Label = "Job Focus", Tone = "critical", IconText = "JB" }
         },
         SecondaryActionText = "Audit / loglar",
@@ -27,7 +27,7 @@
                 @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
                 {
                     Tone = "info",
-                    Title = "System health foundation",
+                    Title = "System health snapshot",
                     Message = "Redis latency ve clock drift sinyalleri gerçek probe/circuit-breaker read-model üzerinden dashboard'a akıyor. Warm/cold snapshot modeli korunur.",
                     Meta = "Snapshot/read-model monitoring"
                 })

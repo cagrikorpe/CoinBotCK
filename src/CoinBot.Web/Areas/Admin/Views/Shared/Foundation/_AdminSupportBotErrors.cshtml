@@ -1,41 +1,61 @@
+@using CoinBot.Application.Abstractions.Administration
+@{
+    var snapshot = ViewData["AdminSupportLookupPageSnapshot"] as AdminSupportLookupSnapshot;
+    var bots = snapshot?.BotErrors ?? Array.Empty<AdminBotOperationSnapshot>();
+}
+
 <div class="card card-custom gutter-b cb-card cb-admin-card">
     <div class="card-body">
         <div class="cb-admin-section-kicker">Recent Bot Errors</div>
         <div class="cb-admin-section-title">Son bot hataları</div>
 
-        <div class="table-responsive mt-5">
-            <table class="table table-borderless cb-admin-table cb-admin-support-table mb-0">
-                <thead>
-                    <tr>
-                        <th>Bot</th>
-                        <th>Kullanıcı</th>
-                        <th>Kısa hata özeti</th>
-                        <th>Zaman</th>
-                        <th>Detay</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td><strong>Delta Futures Surge</strong></td>
-                        <td>usr-014</td>
-                        <td class="text-muted">Order reject placeholder / execution guard</td>
-                        <td><span class="cb-admin-freshness-time cb-mono">09:48</span></td>
-                        <td><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_admin_bot_drawer">Detay</button></td>
-                    </tr>
-                    <tr>
-                        <td><strong>Momentum Core</strong></td>
-                        <td>usr-014</td>
-                        <td class="text-muted">Cooldown / stale signal window placeholder</td>
-                        <td><span class="cb-admin-freshness-time cb-mono">09:21</span></td>
-                        <td><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_admin_bot_drawer">Detay</button></td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
+        @if (bots.Count == 0)
+        {
+            @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+            {
+                Title = "Bot hatası yok",
+                Message = "Bu arama için bot error kaydı bulunamadı.",
+                IconText = "BT",
+                ActionText = "Bot operasyonları",
+                ActionHref = Url.Action("BotOperations", "Admin", new { area = "Admin", query = snapshot?.Query }),
+                SecondaryActionText = "Audit / loglar",
+                SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin", query = snapshot?.Query })
+            })
+        }
+        else
+        {
+            <div class="table-responsive mt-5">
+                <table class="table table-borderless cb-admin-table cb-admin-support-table mb-0">
+                    <thead>
+                        <tr>
+                            <th>Bot</th>
+                            <th>Kullanıcı</th>
+                            <th>Kısa hata özeti</th>
+                            <th>Open positions</th>
+                            <th>Detay</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var bot in bots)
+                        {
+                            <tr>
+                                <td><strong>@bot.Name</strong></td>
+                                <td>@bot.OwnerDisplayName</td>
+                                <td class="text-muted">@bot.LastError</td>
+                                <td>@bot.OpenPositionCount</td>
+                                <td>
+                                    <a asp-area="Admin" asp-controller="Admin" asp-action="BotOperations" asp-route-query="@bot.Name" class="btn btn-xs btn-light-primary font-weight-bold">Bot ops</a>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
 
         <div class="cb-admin-inline-actions mt-5">
             <a asp-area="Admin" asp-controller="Admin" asp-action="BotOperations" class="btn btn-light-primary font-weight-bold">Bot operasyonlarına git</a>
-            <button type="button" class="btn btn-clean text-muted font-weight-bold" data-toggle="modal" data-target="#cb_admin_bot_force_stop_modal">Force stop foundation</button>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-clean text-muted font-weight-bold">Audit</a>
         </div>
     </div>
 </div>

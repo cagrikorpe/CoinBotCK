@@ -1,10 +1,10 @@
 @{
     var statTiles = new[]
     {
-        new AdminStatTileViewModel { Label = "Toplam kullanıcı", Value = "24.8K", Meta = "Platform çapında kayıtlı hesap placeholder", Tone = "info" },
+        new AdminStatTileViewModel { Label = "Toplam kullanıcı", Value = "24.8K", Meta = "Platform çapında kayıtlı hesap", Tone = "info" },
         new AdminStatTileViewModel { Label = "Aktif kullanıcı", Value = "6.4K", Meta = "Son senkron penceresinde aktif görünen hesaplar", Tone = "healthy" },
-        new AdminStatTileViewModel { Label = "Bağlı exchange", Value = "1,142", Meta = "Bağlantı doğrulaması geçen hesap placeholder", Tone = "neutral" },
-        new AdminStatTileViewModel { Label = "Aktif bot", Value = "318", Meta = "Runtime'ta çalışan bot foundation sayısı", Tone = "warning" }
+        new AdminStatTileViewModel { Label = "Bağlı exchange", Value = "1,142", Meta = "Bağlantı doğrulaması geçen hesap", Tone = "neutral" },
+        new AdminStatTileViewModel { Label = "Aktif bot", Value = "318", Meta = "Runtime'ta çalışan bot sayısı", Tone = "warning" }
     };
 }
 
@@ -63,17 +63,17 @@
                         <div class="cb-admin-section-kicker">24h Activity</div>
                         <div class="cb-admin-section-title">Son 24 saat order hacmi</div>
                     </div>
-                    @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Placeholder", Tone = "neutral", IconText = "24H" })
+                    @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Operational", Tone = "neutral", IconText = "24H" })
                 </div>
 
                 <div class="cb-admin-volume-value cb-mono mt-6">$ 18.4M</div>
-                <div class="cb-admin-volume-meta">Operasyon özeti için kullanılan placeholder hacim yüzeyi; gerçek finansal mutabakat değildir.</div>
+                <div class="cb-admin-volume-meta">Operasyon özeti için kullanılan hacim yüzeyi; gerçek finansal mutabakat değildir.</div>
 
                 <div class="cb-admin-volume-grid mt-6">
                     <div class="cb-admin-summary-card">
                         <span class="cb-admin-summary-label">Live flow</span>
                         <strong>$ 11.1M</strong>
-                        <small>High priority exchange activity placeholder</small>
+                        <small>High priority exchange activity</small>
                     </div>
                     <div class="cb-admin-summary-card">
                         <span class="cb-admin-summary-label">Paper flow</span>

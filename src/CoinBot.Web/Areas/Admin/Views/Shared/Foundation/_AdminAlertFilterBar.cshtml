@@ -1,71 +1,76 @@
+@using CoinBot.Application.Abstractions.Administration
+@{
+    var snapshot = ViewData["AdminNotificationsPageSnapshot"] as AdminNotificationsPageSnapshot;
+    var severity = snapshot?.SeverityFilter ?? string.Empty;
+    var category = snapshot?.CategoryFilter ?? string.Empty;
+}
+
 <div class="card card-custom gutter-b cb-card cb-admin-card">
     <div class="card-body">
         <div class="cb-admin-panel-head">
             <div>
                 <div class="cb-admin-section-kicker">Alert Filters</div>
                 <div class="cb-admin-section-title">Severity, kategori ve unread/read filtreleri</div>
-                <p class="cb-admin-section-description mb-0">Alarm akışını severity, kategori, okunma durumu, source/rule ve sıralama placeholder alanlarıyla filtreleyen toolbar foundation.</p>
+                <p class="cb-admin-section-description mb-0">Alarm akışı gerçek notification snapshot üzerinden filtrelenir.</p>
             </div>
-            <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_alert_policy_modal">Notification policy CTA</button>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="Notifications" class="btn btn-light-primary font-weight-bold">Notification policy</a>
         </div>
 
-        <div class="cb-filter-bar cb-admin-filter-bar cb-admin-alert-filter-bar mt-6">
+        <form asp-area="Admin" asp-controller="Admin" asp-action="Notifications" method="get" class="cb-filter-bar cb-admin-filter-bar cb-admin-alert-filter-bar mt-6">
             <div class="cb-filter-field">
                 <label class="cb-form-label">Severity</label>
-                <select class="form-control cb-form-control">
-                    <option>Tüm severity</option>
-                    <option>Critical</option>
-                    <option>Warning</option>
-                    <option>Info</option>
+                <select name="severity" class="form-control cb-form-control">
+                    <option value="">Tüm severity</option>
+                    @if (string.Equals(severity, "Critical", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <option value="Critical" selected="selected">Critical</option>
+                    }
+                    else
+                    {
+                        <option value="Critical">Critical</option>
+                    }
+                    @if (string.Equals(severity, "Warning", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <option value="Warning" selected="selected">Warning</option>
+                    }
+                    else
+                    {
+                        <option value="Warning">Warning</option>
+                    }
+                    @if (string.Equals(severity, "Info", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <option value="Info" selected="selected">Info</option>
+                    }
+                    else
+                    {
+                        <option value="Info">Info</option>
+                    }
                 </select>
             </div>
             <div class="cb-filter-field">
                 <label class="cb-form-label">Kategori</label>
-                <select class="form-control cb-form-control">
-                    <option>Tüm kategoriler</option>
-                    <option>AI</option>
-                    <option>Risk</option>
-                    <option>Worker</option>
-                    <option>Security</option>
-                    <option>System</option>
-                </select>
-            </div>
-            <div class="cb-filter-field">
-                <label class="cb-form-label">Okunma</label>
-                <select class="form-control cb-form-control">
-                    <option>Tümü</option>
-                    <option>Okunmamış</option>
-                    <option>Okunmuş</option>
-                </select>
-            </div>
-            <div class="cb-filter-field">
-                <label class="cb-form-label">Rule / Source</label>
-                <input class="form-control cb-form-control" placeholder="rule, source, signal placeholder" />
-            </div>
-            <div class="cb-filter-field">
-                <label class="cb-form-label">Sıralama</label>
-                <select class="form-control cb-form-control">
-                    <option>En yeni</option>
-                    <option>Severity önceliği</option>
-                    <option>Unread önce</option>
-                </select>
+                <input type="text" name="category" value="@category" class="form-control cb-form-control" aria-label="Health / Incident / Alert" />
             </div>
             <div class="cb-filter-field cb-filter-actions cb-admin-user-filter-actions">
-                <button type="button" class="btn btn-light-primary font-weight-bold">Temizle</button>
-                <button type="button" class="btn btn-primary font-weight-bolder">Uygula</button>
+                <a asp-area="Admin" asp-controller="Admin" asp-action="Notifications" class="btn btn-light-primary font-weight-bold">Temizle</a>
+                <button type="submit" class="btn btn-primary font-weight-bolder">Uygula</button>
             </div>
-        </div>
+        </form>
 
         <div class="cb-admin-filter-summary mt-5">
             <div class="cb-admin-filter-summary-copy">
                 <strong>Aktif filtre özeti</strong>
-                <span>Kritik + Unread + Worker / Security + source placeholder</span>
+                <span>@(string.IsNullOrWhiteSpace(severity) ? "All severities" : severity) · @(string.IsNullOrWhiteSpace(category) ? "All categories" : category)</span>
             </div>
             <div class="cb-admin-filter-chip-list">
-                <span class="cb-admin-filter-chip">Critical</span>
-                <span class="cb-admin-filter-chip">Unread</span>
-                <span class="cb-admin-filter-chip">Worker</span>
-                <span class="cb-admin-filter-chip">Security</span>
+                @if (!string.IsNullOrWhiteSpace(severity))
+                {
+                    <span class="cb-admin-filter-chip">@severity</span>
+                }
+                @if (!string.IsNullOrWhiteSpace(category))
+                {
+                    <span class="cb-admin-filter-chip">@category</span>
+                }
             </div>
         </div>
     </div>

@@ -1,39 +1,50 @@
+@using CoinBot.Application.Abstractions.Administration
+@{
+    var snapshot = ViewData["AdminSupportLookupPageSnapshot"] as AdminSupportLookupSnapshot;
+    var query = snapshot?.Query ?? string.Empty;
+    var matchedUsers = snapshot?.MatchedUsers ?? Array.Empty<AdminUserListItemSnapshot>();
+}
+
 <div class="card card-custom gutter-b cb-card cb-admin-card">
     <div class="card-body">
         <div class="cb-admin-section-kicker">Support Lookup</div>
         <div class="cb-admin-section-title">Kullanıcı lookup alanı</div>
-        <p class="cb-admin-section-description">Email, kullanıcı ID veya external reference placeholder ile hızlı arama yapılır. Gerçek backend lookup ve fuzzy match bu fazda yoktur.</p>
+        <p class="cb-admin-section-description">Email, kullanıcı ID veya external reference ile hızlı arama yapılır. Sonuçlar gerçek read-model snapshot'tan gelir.</p>
 
-        <div class="cb-admin-support-search-grid mt-6">
+        <form asp-area="Admin" asp-controller="Admin" asp-action="SupportTools" method="get" class="cb-admin-support-search-grid mt-6">
             <div class="form-group mb-0">
                 <label class="cb-form-label">Kullanıcı arama</label>
-                <input type="text" class="form-control cb-form-control" placeholder="user id, email veya external ref placeholder" />
+                <input type="text" name="query" value="@query" class="form-control cb-form-control" aria-label="user id, email veya external ref" />
             </div>
             <div class="form-group mb-0">
                 <label class="cb-form-label">Hızlı filtre</label>
-                <select class="form-control cb-form-control">
-                    <option>Son sorun yaşayanlar</option>
-                    <option>MFA kapalı</option>
-                    <option>Bot hatası olanlar</option>
-                    <option>Exchange uyarısı olanlar</option>
+                <select class="form-control cb-form-control" disabled>
+                    <option selected>Son sorun yaşayanlar</option>
                 </select>
             </div>
-        </div>
+        </form>
 
         <div class="cb-admin-inline-actions mt-5">
-            <button type="button" class="btn btn-primary font-weight-bolder">Ara placeholder</button>
-            <button type="button" class="btn btn-light-primary font-weight-bold">Temizle</button>
-            <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_admin_user_drawer">Detail drawer</button>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="SupportTools" class="btn btn-light-primary font-weight-bold">Temizle</a>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="Users" class="btn btn-light-primary font-weight-bold">Kullanıcılar</a>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" asp-route-query="@query" class="btn btn-light-primary font-weight-bold">Audit</a>
         </div>
 
         <div class="cb-admin-summary-card mt-6 cb-admin-support-result-card">
-            <span class="cb-admin-summary-label">Arama sonucu kartı</span>
-            <strong>usr-014 · Ops Secondary</strong>
-            <small>Bulunan kullanıcı için hızlı summary, kritik olay ve güvenli CTA alanı bu ekranın alt bölümlerinde görünür.</small>
+            <span class="cb-admin-summary-label">Arama sonucu</span>
+            <strong>@(string.IsNullOrWhiteSpace(query) ? "Arama bekleniyor" : $"{matchedUsers.Count} kullanıcı")</strong>
+            <small>@(snapshot?.EmptyStateMessage ?? "Kullanıcı, bot, exchange veya güvenlik kaydı arayın.")</small>
             <div class="cb-admin-badge-stack mt-4">
-                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Aktif", Tone = "healthy", IconText = "ST" })
-                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "MFA Açık", Tone = "healthy", IconText = "2F" })
-                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Support Scope", Tone = "info", IconText = "SP" })
+                @if (matchedUsers.Count > 0)
+                {
+                    var topUser = matchedUsers.First();
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = topUser.StatusLabel, Tone = topUser.StatusTone, IconText = "ST" })
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = topUser.MfaLabel, Tone = topUser.MfaTone, IconText = "2F" })
+                }
+                else
+                {
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Read-only", Tone = "warning", IconText = "RO" })
+                }
             </div>
         </div>
     </div>

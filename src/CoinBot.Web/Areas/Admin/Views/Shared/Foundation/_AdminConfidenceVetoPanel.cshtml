@@ -1,43 +1,43 @@
+@using CoinBot.Application.Abstractions.Administration
+@{
+    var snapshot = ViewData["AdminStrategyAiMonitoringPageSnapshot"] as AdminStrategyAiMonitoringPageSnapshot;
+    var tiles = snapshot?.HealthTiles ?? Array.Empty<AdminStatTileSnapshot>();
+}
+
 <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-panel-card">
     <div class="card-body">
         <div class="cb-admin-panel-head">
             <div>
                 <div class="cb-admin-section-kicker">Confidence / Veto</div>
                 <div class="cb-admin-section-title">Global confidence ve veto summary</div>
-                <p class="cb-admin-section-description mb-0">Chart yerine kısa trend placeholder, veto oranı ve low confidence cluster yorumuyla global AI karar kalitesi özetlenir.</p>
+                <p class="cb-admin-section-description mb-0">Confidence ve veto durumu gerçek strategy health snapshot'ından özetlenir.</p>
             </div>
-            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Veto 14%", Tone = "warning", IconText = "VT" })
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = snapshot is null ? "Veri yok" : "Snapshot", Tone = "warning", IconText = "VT" })
         </div>
 
         <div class="cb-admin-confidence-grid mt-6">
-            <div class="cb-admin-summary-card">
-                <span class="cb-admin-summary-label">Confidence trend</span>
-                <strong>Son 3 pencere aşağı yönlü</strong>
-                <small>Global confidence trend placeholder</small>
-            </div>
-            <div class="cb-admin-summary-card">
-                <span class="cb-admin-summary-label">Veto ratio</span>
-                <strong class="cb-mono">14%</strong>
-                <small>Risk guard + low confidence combined placeholder</small>
-            </div>
-            <div class="cb-admin-summary-card">
-                <span class="cb-admin-summary-label">Low confidence cluster</span>
-                <strong>Altcoin momentum bucket</strong>
-                <small>Cluster analizi placeholder / yoğunluk artışı</small>
-            </div>
-            <div class="cb-admin-summary-card">
-                <span class="cb-admin-summary-label">Kısa yorum</span>
-                <strong>Veto artışı kontrollü</strong>
-                <small>Model stop yerine guarded mode önerilir</small>
-            </div>
+            @foreach (var tile in tiles)
+            {
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">@tile.Label</span>
+                    <strong>@tile.Value</strong>
+                    <small>@tile.Meta</small>
+                </div>
+            }
         </div>
 
-        <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-6">
-            <div>
-                <div class="cb-admin-info-strip-title">Low confidence cluster placeholder</div>
-                <div class="cb-admin-info-strip-text">Likidite ve veri sürekliliği zayıf bucket'larda veto oranı yükselirken strategy adoption paneli ile birlikte okunmalıdır.</div>
-            </div>
-            <span class="cb-admin-info-strip-meta">Cluster</span>
-        </div>
+        @if (snapshot is null)
+        {
+            @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+            {
+                Title = "Confidence verisi yok",
+                Message = "Strategy health snapshot'u bulunamadı.",
+                IconText = "VT",
+                ActionText = "Strategy / AI",
+                ActionHref = Url.Action("StrategyAiMonitoring", "Admin", new { area = "Admin" }),
+                SecondaryActionText = "Audit / loglar",
+                SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" })
+            })
+        }
     </div>
 </div>

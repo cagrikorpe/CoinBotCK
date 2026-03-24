@@ -1,38 +1,71 @@
+@model CoinBot.Application.Abstractions.Administration.LogCenterPageSnapshot
+@{
+    var filters = Model.Filters;
+    var exportTake = Model.Filters.Take > 0 ? Model.Filters.Take : 100;
+}
+
 <div class="card card-custom gutter-b cb-card">
     <div class="card-body">
-        <div class="cb-filter-bar cb-filter-bar-logs">
+        <form asp-controller="LogCenter" asp-action="Index" method="get" class="cb-filter-bar cb-filter-bar-logs">
             <div class="cb-filter-field cb-filter-field-search">
-                <label class="cb-form-label">Ara</label>
-                <input type="text" class="form-control cb-form-control" placeholder="Olay özeti, modül veya kullanıcı davranışı ara" />
+                <label class="cb-form-label" for="cb_log_filter_query">Arama</label>
+                <input type="text" id="cb_log_filter_query" name="query" class="form-control cb-form-control" value="@filters.Query" />
             </div>
             <div class="cb-filter-field">
-                <label class="cb-form-label">Kategori</label>
-                <select class="form-control cb-form-control" id="cb_log_filter_category">
-                    <option>Tümü</option><option>Audit</option><option>Trading</option><option>AI</option><option>Risk</option><option>Security</option><option>System</option><option>User Activity</option>
+                <label class="cb-form-label" for="cb_log_filter_correlation">CorrelationId</label>
+                <input type="text" id="cb_log_filter_correlation" name="correlationId" class="form-control cb-form-control" value="@filters.CorrelationId" />
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label" for="cb_log_filter_decision">DecisionId</label>
+                <input type="text" id="cb_log_filter_decision" name="decisionId" class="form-control cb-form-control" value="@filters.DecisionId" />
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label" for="cb_log_filter_execution">ExecutionAttemptId</label>
+                <input type="text" id="cb_log_filter_execution" name="executionAttemptId" class="form-control cb-form-control" value="@filters.ExecutionAttemptId" />
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label" for="cb_log_filter_user">UserId</label>
+                <input type="text" id="cb_log_filter_user" name="userId" class="form-control cb-form-control" value="@filters.UserId" />
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label" for="cb_log_filter_symbol">Symbol</label>
+                <input type="text" id="cb_log_filter_symbol" name="symbol" class="form-control cb-form-control" value="@filters.Symbol" />
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label" for="cb_log_filter_status">Status</label>
+                <input type="text" id="cb_log_filter_status" name="status" class="form-control cb-form-control" value="@filters.Status" />
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label" for="cb_log_filter_from">From UTC</label>
+                <input type="date" id="cb_log_filter_from" name="fromUtc" class="form-control cb-form-control" value="@(filters.FromUtc?.ToString("yyyy-MM-dd"))" />
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label" for="cb_log_filter_to">To UTC</label>
+                <input type="date" id="cb_log_filter_to" name="toUtc" class="form-control cb-form-control" value="@(filters.ToUtc?.ToString("yyyy-MM-dd"))" />
+            </div>
+            <div class="cb-filter-field">
+                <label class="cb-form-label" for="cb_log_filter_take">Take</label>
+                <select id="cb_log_filter_take" name="take" class="form-control cb-form-control">
+                    @foreach (var option in new[] { 25, 50, 100, 250, 500, 1000 })
+                    {
+                        <option value="@option" selected="@(exportTake == option ? "selected" : null)">@option</option>
+                    }
                 </select>
-            </div>
-            <div class="cb-filter-field">
-                <label class="cb-form-label">Severity</label>
-                <select class="form-control cb-form-control" id="cb_log_filter_severity">
-                    <option>Tümü</option><option>Critical</option><option>Error</option><option>Warning</option><option>Info</option><option>Trace</option>
-                </select>
-            </div>
-            <div class="cb-filter-field">
-                <label class="cb-form-label">Zaman</label>
-                <select class="form-control cb-form-control"><option>Son 24 saat</option><option>Son 7 gün</option><option>Son 30 gün</option><option>Özel aralık</option></select>
-            </div>
-            <div class="cb-filter-field">
-                <label class="cb-form-label">Trace</label>
-                <select class="form-control cb-form-control" id="cb_log_filter_trace"><option>Tümü</option><option>Sadece activity</option><option>Trace hariç</option></select>
             </div>
             <div class="cb-filter-actions">
-                <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-logcenter-filter-clear>Filtreleri temizle</button>
+                <button type="submit" class="btn btn-light-primary font-weight-bold">Filtreleri uygula</button>
+                <button type="submit" class="btn btn-primary font-weight-bolder" formmethod="post" formaction="@Url.Action("Export", "LogCenter")">Güvenli CSV export</button>
+                <a asp-controller="LogCenter" asp-action="Index" class="btn btn-light font-weight-bold">Temizle</a>
             </div>
-        </div>
-        <div class="cb-chip-group mt-4">
-            <span class="cb-chip is-active">Risk</span>
-            <span class="cb-chip">Critical</span>
-            <span class="cb-chip">Yeni olaylar</span>
+            @Html.AntiForgeryToken()
+        </form>
+
+        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
+            <div>
+                <div class="cb-admin-info-strip-title">Filtreli görünüm</div>
+                <div class="cb-admin-info-strip-text">Exact-match correlation, decision ve execution aramaları kritik trace zincirini doğrudan daraltır. Export aynı filtre setiyle masked CSV üretir.</div>
+            </div>
+            <span class="cb-admin-info-strip-meta">@exportTake row max</span>
         </div>
     </div>
 </div>
