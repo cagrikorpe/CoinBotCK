@@ -177,9 +177,11 @@ public sealed partial class ApprovalWorkflowService
         }
     }
 
-    private static void EnsureNotExpired(ApprovalQueue queue)
+    private void EnsureNotExpired(ApprovalQueue queue)
     {
-        if (queue.Status == ApprovalQueueStatus.Expired || queue.ExpiresAtUtc <= DateTime.UtcNow)
+        var utcNow = timeProvider.GetUtcNow().UtcDateTime;
+
+        if (queue.Status == ApprovalQueueStatus.Expired || queue.ExpiresAtUtc <= utcNow)
         {
             throw new InvalidOperationException($"Approval queue '{queue.ApprovalReference}' is expired.");
         }
