@@ -1,0 +1,35 @@
+using CoinBot.Domain.Enums;
+
+namespace CoinBot.Application.Abstractions.Administration;
+
+public sealed record ApprovalQueueDetailSnapshot(
+    string ApprovalReference,
+    ApprovalQueueOperationType OperationType,
+    ApprovalQueueStatus Status,
+    IncidentSeverity Severity,
+    string Title,
+    string Summary,
+    string? TargetType,
+    string? TargetId,
+    string RequestedByUserId,
+    string Reason,
+    string PayloadJson,
+    int RequiredApprovals,
+    int ApprovalCount,
+    DateTime ExpiresAtUtc,
+    string? CorrelationId,
+    string? CommandId,
+    string? DecisionId,
+    string? ExecutionAttemptId,
+    string? IncidentReference,
+    string? SystemStateHistoryReference,
+    string? DependencyCircuitBreakerStateReference,
+    DateTime CreatedAtUtc,
+    DateTime UpdatedAtUtc,
+    DateTime? ApprovedAtUtc,
+    DateTime? ExecutedAtUtc,
+    DateTime? RejectedAtUtc,
+    DateTime? ExpiredAtUtc,
+    string? RejectReason,
+    string? ExecutionSummary,
+    IReadOnlyCollection<ApprovalActionSnapshot> Actions);

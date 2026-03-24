@@ -1,0 +1,169 @@
+@model IReadOnlyCollection<CoinBot.Application.Abstractions.Administration.ApprovalQueueListItem>
+@{
+    var canManageApprovals = ViewData["AdminCanManageApprovals"] is bool canManageValue && canManageValue;
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Governance / Approvals",
+        Title = "Approval Merkezi",
+        Description = "Pending approval kuyruklari, dual approval adimlari, expiry zorunlulugu ve audit baglantilari burada toplanir.",
+        StatusBadge = new AdminBadgeViewModel { Label = "Queue", Tone = "critical", IconText = "AP" },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = "Dual approval", Tone = "warning", IconText = "2A" },
+            new AdminBadgeViewModel { Label = "Expiry required", Tone = "critical", IconText = "EX" },
+            new AdminBadgeViewModel { Label = "Audit bound", Tone = "healthy", IconText = "AU" }
+        },
+        SecondaryActionText = "Incident merkezi",
+        SecondaryActionHref = Url.Action("Incidents", "Admin", new { area = "Admin" }),
+        PrimaryActionText = "Config history",
+        PrimaryActionHref = Url.Action("ConfigHistory", "Admin", new { area = "Admin" })
+    };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = "info",
+                    Title = "Approval queue merkezi",
+                    Message = "Approve ve reject olaylari incident, command registry ve audit log ile ayni correlation zincirine yazilir. Expiry gecen itemlar otomatik kapatilir.",
+                    Meta = Model.Count == 0 ? "No pending items" : $"{Model.Count} pending item"
+                })
+
+                @if (!canManageApprovals)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Read-only approval view</div>
+                            <div class="cb-admin-info-strip-text">Bu rolde approval aksiyonlari kapali. Liste ve detay gorulebilir, onay/reddetme sadece platform admin tarafinda aciktir.</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Read-only</span>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-table-card">
+            <div class="card-body">
+                <div class="cb-admin-table-header">
+                    <div>
+                        <div class="cb-admin-section-kicker">Pending approvals</div>
+                        <div class="cb-admin-section-title">Queue listesi</div>
+                        <p class="cb-admin-section-description mb-0">Required approvals, expiry ve target baglantilari ile birlikte en guncel pending kuyruklari gorunur.</p>
+                    </div>
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+                    {
+                        Label = $"{Model.Count} row",
+                        Tone = Model.Count > 0 ? "healthy" : "warning",
+                        IconText = "QB"
+                    })
+                </div>
+
+                <div class="table-responsive cb-admin-table-wrap">
+                    <table class="table table-borderless cb-admin-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>Reference</th>
+                                <th>Operation</th>
+                                <th>Severity</th>
+                                <th>Target</th>
+                                <th>Approvals</th>
+                                <th>ExpiresAtUtc</th>
+                                <th>Trace</th>
+                                <th>Aksiyon</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @if (Model.Count == 0)
+                            {
+                                <tr>
+                                    <td colspan="8" class="text-muted">Pending approval bulunamadi.</td>
+                                </tr>
+                            }
+                            else
+                            {
+                                foreach (var queue in Model)
+                                {
+                                    var severityTone = queue.Severity switch
+                                    {
+                                        IncidentSeverity.Critical => "critical",
+                                        IncidentSeverity.Warning => "warning",
+                                        _ => "info"
+                                    };
+                                    var statusTone = queue.Status switch
+                                    {
+                                        ApprovalQueueStatus.Approved or ApprovalQueueStatus.Executed => "healthy",
+                                        ApprovalQueueStatus.Rejected or ApprovalQueueStatus.Failed => "critical",
+                                        ApprovalQueueStatus.Expired => "warning",
+                                        _ => "warning"
+                                    };
+                                    <tr>
+                                        <td>
+                                            <div><strong>@queue.ApprovalReference</strong></div>
+                                            <small class="text-muted">CommandId=@(queue.CommandId ?? "-")</small>
+                                        </td>
+                                        <td>
+                                            <div>@queue.OperationType</div>
+                                            <small class="text-muted">Status=@queue.Status</small>
+                                        </td>
+                                        <td>
+                                            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+                                            {
+                                                Label = queue.Severity.ToString(),
+                                                Tone = severityTone,
+                                                IconText = "SV"
+                                            })
+                                        </td>
+                                        <td>
+                                            <div>@(queue.TargetType ?? "-")</div>
+                                            <small class="text-muted">@(queue.TargetId ?? "-")</small>
+                                        </td>
+                                        <td>
+                                            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+                                            {
+                                                Label = $"{queue.ApprovalCount}/{queue.RequiredApprovals}",
+                                                Tone = statusTone,
+                                                IconText = "AP"
+                                            })
+                                        </td>
+                                        <td>
+                                            <div>@queue.ExpiresAtUtc.ToString("yyyy-MM-dd HH:mm") UTC</div>
+                                            <small class="text-muted">RequestedBy=@queue.RequestedByUserId</small>
+                                        </td>
+                                        <td>
+                                            @if (!string.IsNullOrWhiteSpace(queue.CorrelationId))
+                                            {
+                                                <a asp-area="Admin"
+                                                   asp-controller="Admin"
+                                                   asp-action="TraceDetail"
+                                                   asp-route-correlationId="@queue.CorrelationId"
+                                                   class="btn btn-xs btn-light-info font-weight-bold">Trace</a>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-muted">-</span>
+                                            }
+                                        </td>
+                                        <td>
+                                            <a asp-area="Admin"
+                                               asp-controller="Admin"
+                                               asp-action="ApprovalDetail"
+                                               asp-route-approvalReference="@queue.ApprovalReference"
+                                               class="btn btn-xs btn-light-primary font-weight-bold">Detay</a>
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

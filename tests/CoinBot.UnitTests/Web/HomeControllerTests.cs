@@ -36,7 +36,7 @@ public sealed class HomeControllerTests
         var solTicker = Assert.Single(model.MarketTickers, ticker => ticker.Symbol == "SOLUSDT");
 
         Assert.Equal("/hubs/market-data", model.MarketDataHubPath);
-        Assert.Equal(["BTCUSDT", "ETHUSDT", "SOLUSDT"], marketDataService.TrackedSymbols);
+        Assert.Equal(["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"], marketDataService.TrackedSymbols);
         Assert.Equal(64000.50m, btcTicker.Price);
         Assert.Equal("TRADING", btcTicker.TradingStatus);
         Assert.Equal(0.0001m, btcTicker.StepSize);

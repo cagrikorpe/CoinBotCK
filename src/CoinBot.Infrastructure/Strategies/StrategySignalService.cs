@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.Risk;
 using CoinBot.Application.Abstractions.Strategies;
@@ -17,6 +19,9 @@ public sealed class StrategySignalService(
     ApplicationDbContext dbContext,
     IStrategyEvaluatorService evaluator,
     IRiskPolicyEvaluator riskPolicyEvaluator,
+    ITraceService traceService,
+    ICorrelationContextAccessor correlationContextAccessor,
+    TimeProvider timeProvider,
     ILogger<StrategySignalService> logger) : IStrategySignalService
 {
     private const int ExplainabilitySchemaVersion = 1;
@@ -30,6 +35,7 @@ public sealed class StrategySignalService(
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.EvaluationContext);
         using var signalActivity = CoinBotActivity.StartActivity("CoinBot.Signal.Generate");
+        var decisionStopwatch = Stopwatch.StartNew();
         signalActivity.SetTag("coinbot.signal.strategy_version_id", request.TradingStrategyVersionId.ToString());
 
         var version = await dbContext.TradingStrategyVersions
@@ -61,6 +67,26 @@ public sealed class StrategySignalService(
             logger.LogInformation(
                 "Strategy signal generation produced no persisted signals for StrategyVersionId {StrategyVersionId}.",
                 version.Id);
+
+            await traceService.WriteDecisionTraceAsync(
+                new DecisionTraceWriteRequest(
+                    version.OwnerUserId,
+                    normalizedContext.IndicatorSnapshot.Symbol,
+                    normalizedContext.IndicatorSnapshot.Timeframe,
+                    BuildStrategyVersionLabel(version),
+                    "None",
+                    "NoSignalCandidate",
+                    BuildDecisionSnapshotJson(
+                        version,
+                        normalizedContext,
+                        evaluationResult,
+                        signalType: null,
+                        decisionOutcome: "NoSignalCandidate",
+                        vetoReasonCode: null,
+                        riskScore: null,
+                        relatedEntityId: null),
+                    (int)decisionStopwatch.ElapsedMilliseconds),
+                cancellationToken);
 
             return new StrategySignalGenerationResult(
                 evaluationResult,
@@ -97,6 +123,29 @@ public sealed class StrategySignalService(
                     normalizedContext.IndicatorSnapshot.Symbol,
                     normalizedContext.IndicatorSnapshot.Timeframe,
                     normalizedContext.IndicatorSnapshot.CloseTimeUtc);
+
+                await traceService.WriteDecisionTraceAsync(
+                    new DecisionTraceWriteRequest(
+                        version.OwnerUserId,
+                        normalizedContext.IndicatorSnapshot.Symbol,
+                        normalizedContext.IndicatorSnapshot.Timeframe,
+                        BuildStrategyVersionLabel(version),
+                        signalType.ToString(),
+                        "SuppressedDuplicate",
+                        BuildDecisionSnapshotJson(
+                            version,
+                            normalizedContext,
+                            evaluationResult,
+                            signalType,
+                            "SuppressedDuplicate",
+                            vetoReasonCode: null,
+                            riskScore: null,
+                            relatedEntityId: null),
+                        (int)decisionStopwatch.ElapsedMilliseconds,
+                        CorrelationId: ResolveCorrelationId(),
+                        RiskScore: null,
+                        VetoReasonCode: null),
+                    cancellationToken);
 
                 continue;
             }
@@ -144,6 +193,29 @@ public sealed class StrategySignalService(
                     normalizedContext.IndicatorSnapshot.Timeframe,
                     riskEvaluation.ReasonCode);
 
+                await traceService.WriteDecisionTraceAsync(
+                    new DecisionTraceWriteRequest(
+                        version.OwnerUserId,
+                        normalizedContext.IndicatorSnapshot.Symbol,
+                        normalizedContext.IndicatorSnapshot.Timeframe,
+                        BuildStrategyVersionLabel(version),
+                        signalType.ToString(),
+                        "Vetoed",
+                        BuildDecisionSnapshotJson(
+                            version,
+                            normalizedContext,
+                            evaluationResult,
+                            signalType,
+                            "Vetoed",
+                            riskEvaluation.ReasonCode.ToString(),
+                            confidenceSnapshot.ScorePercentage,
+                            veto.Id),
+                        (int)decisionStopwatch.ElapsedMilliseconds,
+                        CorrelationId: ResolveCorrelationId(),
+                        RiskScore: confidenceSnapshot.ScorePercentage,
+                        VetoReasonCode: riskEvaluation.ReasonCode.ToString()),
+                    cancellationToken);
+
                 continue;
             }
 
@@ -158,6 +230,29 @@ public sealed class StrategySignalService(
             dbContext.TradingStrategySignals.Add(signal);
             persistedSignals.Add(signal);
             hasPendingChanges = true;
+
+            await traceService.WriteDecisionTraceAsync(
+                new DecisionTraceWriteRequest(
+                    version.OwnerUserId,
+                    normalizedContext.IndicatorSnapshot.Symbol,
+                    normalizedContext.IndicatorSnapshot.Timeframe,
+                    BuildStrategyVersionLabel(version),
+                    signalType.ToString(),
+                    "Persisted",
+                    BuildDecisionSnapshotJson(
+                        version,
+                        normalizedContext,
+                        evaluationResult,
+                        signalType,
+                        "Persisted",
+                        vetoReasonCode: null,
+                        riskScore: confidenceSnapshot.ScorePercentage,
+                        relatedEntityId: signal.Id),
+                    (int)decisionStopwatch.ElapsedMilliseconds,
+                    CorrelationId: ResolveCorrelationId(),
+                    RiskScore: confidenceSnapshot.ScorePercentage,
+                    StrategySignalId: signal.Id),
+                cancellationToken);
         }
 
         if (hasPendingChanges)
@@ -286,6 +381,7 @@ public sealed class StrategySignalService(
     {
         return new TradingStrategySignal
         {
+            Id = Guid.NewGuid(),
             OwnerUserId = version.OwnerUserId,
             TradingStrategyId = strategy.Id,
             TradingStrategyVersionId = version.Id,
@@ -316,6 +412,7 @@ public sealed class StrategySignalService(
     {
         return new TradingStrategySignalVeto
         {
+            Id = Guid.NewGuid(),
             OwnerUserId = version.OwnerUserId,
             TradingStrategyId = strategy.Id,
             TradingStrategyVersionId = version.Id,
@@ -736,5 +833,53 @@ public sealed class StrategySignalService(
         options.Converters.Add(new JsonStringEnumConverter());
 
         return options;
+    }
+
+    private string ResolveCorrelationId()
+    {
+        var scopedCorrelationId = correlationContextAccessor.Current?.CorrelationId;
+
+        return string.IsNullOrWhiteSpace(scopedCorrelationId)
+            ? Activity.Current?.TraceId.ToString() ?? Guid.NewGuid().ToString("N")
+            : scopedCorrelationId.Trim();
+    }
+
+    private static string BuildStrategyVersionLabel(TradingStrategyVersion version)
+    {
+        return $"StrategyVersion:{version.Id:N}:v{version.VersionNumber}:s{version.SchemaVersion}";
+    }
+
+    private string BuildDecisionSnapshotJson(
+        TradingStrategyVersion version,
+        StrategyEvaluationContext context,
+        StrategyEvaluationResult evaluationResult,
+        StrategySignalType? signalType,
+        string decisionOutcome,
+        string? vetoReasonCode,
+        int? riskScore,
+        Guid? relatedEntityId)
+    {
+        return JsonSerializer.Serialize(
+            new
+            {
+                TradingStrategyVersionId = version.Id,
+                StrategyVersionNumber = version.VersionNumber,
+                StrategySchemaVersion = version.SchemaVersion,
+                ExecutionEnvironment = context.Mode.ToString(),
+                context.IndicatorSnapshot.Symbol,
+                context.IndicatorSnapshot.Timeframe,
+                context.IndicatorSnapshot.CloseTimeUtc,
+                context.IndicatorSnapshot.ReceivedAtUtc,
+                SignalType = signalType?.ToString() ?? "None",
+                evaluationResult.EntryMatched,
+                evaluationResult.ExitMatched,
+                evaluationResult.RiskPassed,
+                DecisionOutcome = decisionOutcome,
+                VetoReasonCode = vetoReasonCode,
+                RiskScore = riskScore,
+                RelatedEntityId = relatedEntityId,
+                CapturedAtUtc = timeProvider.GetUtcNow().UtcDateTime
+            },
+            SerializerOptions);
     }
 }

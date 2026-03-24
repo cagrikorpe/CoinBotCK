@@ -1,0 +1,261 @@
+@model CoinBot.Application.Abstractions.Administration.IncidentDetailSnapshot
+@{
+    var severityTone = Model.Severity switch
+    {
+        IncidentSeverity.Critical => "critical",
+        IncidentSeverity.Warning => "warning",
+        _ => "info"
+    };
+    var statusTone = Model.Status switch
+    {
+        IncidentStatus.Resolved => "healthy",
+        IncidentStatus.PendingApproval or IncidentStatus.Open or IncidentStatus.Monitoring => "warning",
+        IncidentStatus.Rejected or IncidentStatus.Failed => "critical",
+        IncidentStatus.Expired => "warning",
+        _ => "info"
+    };
+    var traceHref = !string.IsNullOrWhiteSpace(Model.CorrelationId)
+        ? Url.Action("TraceDetail", "Admin", new { area = "Admin", correlationId = Model.CorrelationId, decisionId = Model.DecisionId, executionAttemptId = Model.ExecutionAttemptId })
+        : Url.Action("Audit", "Admin", new { area = "Admin", query = Model.IncidentReference });
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Governance / Incident Detail",
+        Title = Model.IncidentReference,
+        Description = "Incident timeline, event payloadlari ve related trace linkleri burada tek detayda sunulur.",
+        StatusBadge = new AdminBadgeViewModel { Label = Model.Status.ToString(), Tone = statusTone, IconText = "ID" },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = Model.Severity.ToString(), Tone = severityTone, IconText = "SV" },
+            new AdminBadgeViewModel { Label = $"{Model.Timeline.Count} event", Tone = "info", IconText = "TL" },
+            new AdminBadgeViewModel { Label = Model.OperationType?.ToString() ?? "No op", Tone = "warning", IconText = "OP" }
+        },
+        SecondaryActionText = "Incident listesi",
+        SecondaryActionHref = Url.Action("Incidents", "Admin", new { area = "Admin" }),
+        PrimaryActionText = string.IsNullOrWhiteSpace(Model.CorrelationId) ? "Audit search" : "Trace detail",
+        PrimaryActionHref = traceHref
+    };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = statusTone,
+                    Title = "Incident summary",
+                    Message = Model.Summary,
+                    Meta = Model.ResolvedSummary ?? (Model.Detail.Length > 128 ? Model.Detail[..128] + "..." : Model.Detail)
+                })
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-table-header mb-4">
+                    <div>
+                        <div class="cb-admin-section-kicker">Incident</div>
+                        <div class="cb-admin-section-title">Metadata</div>
+                    </div>
+                </div>
+
+                <div class="table-responsive cb-admin-table-wrap mb-0">
+                    <table class="table table-borderless cb-admin-table mb-0">
+                        <tbody>
+                            <tr>
+                                <th>CreatedByUserId</th>
+                                <td>@(Model.CreatedByUserId ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>CreatedAtUtc</th>
+                                <td>@Model.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC</td>
+                            </tr>
+                            <tr>
+                                <th>ResolvedAtUtc</th>
+                                <td>@(Model.ResolvedAtUtc?.ToString("yyyy-MM-dd HH:mm:ss") ?? "-") UTC</td>
+                            </tr>
+                            <tr>
+                                <th>ResolvedByUserId</th>
+                                <td>@(Model.ResolvedByUserId ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>ResolvedSummary</th>
+                                <td>@(Model.ResolvedSummary ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>ApprovalReference</th>
+                                <td>@(Model.ApprovalReference ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>CorrelationId</th>
+                                <td>@(Model.CorrelationId ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>CommandId</th>
+                                <td>@(Model.CommandId ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>DecisionId</th>
+                                <td>@(Model.DecisionId ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>ExecutionAttemptId</th>
+                                <td>@(Model.ExecutionAttemptId ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>SystemStateHistoryReference</th>
+                                <td>@(Model.SystemStateHistoryReference ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>BreakerReference</th>
+                                <td>@(Model.DependencyCircuitBreakerStateReference ?? "-")</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-table-header mb-4">
+                    <div>
+                        <div class="cb-admin-section-kicker">Related links</div>
+                        <div class="cb-admin-section-title">Trace / approval / audit</div>
+                    </div>
+                </div>
+
+                <div class="d-flex flex-wrap gap-2 mb-4">
+                    <a href="@traceHref" class="btn btn-light-info font-weight-bold">Trace detail</a>
+                    <a asp-area="Admin"
+                       asp-controller="Admin"
+                       asp-action="Approvals"
+                       class="btn btn-light-primary font-weight-bold">Approvals</a>
+                    @if (!string.IsNullOrWhiteSpace(Model.ApprovalReference))
+                    {
+                        <a asp-area="Admin"
+                           asp-controller="Admin"
+                           asp-action="ApprovalDetail"
+                           asp-route-approvalReference="@Model.ApprovalReference"
+                           class="btn btn-light-secondary font-weight-bold">Approval detail</a>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(Model.SystemStateHistoryReference))
+                    {
+                        <a asp-area="Admin"
+                           asp-controller="Admin"
+                           asp-action="SystemStateHistoryDetail"
+                           asp-route-historyReference="@Model.SystemStateHistoryReference"
+                           class="btn btn-light-warning font-weight-bold">State history</a>
+                    }
+                </div>
+
+                <div class="cb-admin-info-strip cb-admin-info-strip-info">
+                    <div>
+                        <div class="cb-admin-info-strip-title">Trace linkage guidance</div>
+                        <div class="cb-admin-info-strip-text">CorrelationId varsa Trace detail, yoksa audit search kullanilir. Command/decision/execution ref alanlari ayni timeline zincirinde tutulur.</div>
+                    </div>
+                    <span class="cb-admin-info-strip-meta">Linked</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-table-card">
+            <div class="card-body">
+                <div class="cb-admin-table-header">
+                    <div>
+                        <div class="cb-admin-section-kicker">Timeline</div>
+                        <div class="cb-admin-section-title">Incident events</div>
+                        <p class="cb-admin-section-description mb-0">IncidentCreated, ApprovalQueued, ApprovalRejected, StateLinked ve recovery eventleri burada zaman sirasi ile gorunur.</p>
+                    </div>
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+                    {
+                        Label = $"{Model.Timeline.Count} event",
+                        Tone = Model.Timeline.Count > 0 ? "healthy" : "warning",
+                        IconText = "EV"
+                    })
+                </div>
+
+                @if (Model.Timeline.Count == 0)
+                {
+                    <div class="text-muted">Timeline bos.</div>
+                }
+                else
+                {
+                    foreach (var incidentEvent in Model.Timeline)
+                    {
+                        var eventTone = incidentEvent.EventType switch
+                        {
+                            IncidentEventType.ApprovalRejected or IncidentEventType.ApprovalExpired or IncidentEventType.ExecutionFailed => "critical",
+                            IncidentEventType.ApprovalExecuted or IncidentEventType.IncidentResolved or IncidentEventType.RecoveryRecorded => "healthy",
+                            IncidentEventType.StateLinked or IncidentEventType.BreakerLinked or IncidentEventType.TraceLinked => "info",
+                            _ => "warning"
+                        };
+                        <div class="border-left border-primary pl-4 ml-2 mb-5">
+                            <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-2">
+                                <div class="d-flex flex-wrap align-items-center gap-2">
+                                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+                                    {
+                                        Label = incidentEvent.EventType.ToString(),
+                                        Tone = eventTone,
+                                        IconText = "EV"
+                                    })
+                                    <strong>@incidentEvent.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC</strong>
+                                    <span class="text-muted">Actor=@(incidentEvent.ActorUserId ?? "-")</span>
+                                </div>
+                                <div class="text-muted">
+                                    @if (!string.IsNullOrWhiteSpace(incidentEvent.CorrelationId))
+                                    {
+                                        <span>Correlation=@incidentEvent.CorrelationId</span>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(incidentEvent.CommandId))
+                                    {
+                                        <span class="ml-3">Command=@incidentEvent.CommandId</span>
+                                    }
+                                </div>
+                            </div>
+                            <div class="mb-2">@incidentEvent.Message</div>
+
+                            <div class="d-flex flex-wrap gap-2">
+                                @if (!string.IsNullOrWhiteSpace(incidentEvent.ApprovalReference))
+                                {
+                                    <a asp-area="Admin"
+                                       asp-controller="Admin"
+                                       asp-action="ApprovalDetail"
+                                       asp-route-approvalReference="@incidentEvent.ApprovalReference"
+                                       class="btn btn-xs btn-light-primary font-weight-bold">Approval</a>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(incidentEvent.SystemStateHistoryReference))
+                                {
+                                    <a asp-area="Admin"
+                                       asp-controller="Admin"
+                                       asp-action="SystemStateHistoryDetail"
+                                       asp-route-historyReference="@incidentEvent.SystemStateHistoryReference"
+                                       class="btn btn-xs btn-light-warning font-weight-bold">State history</a>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(incidentEvent.DependencyCircuitBreakerStateReference))
+                                {
+                                    <span class="btn btn-xs btn-light-secondary font-weight-bold disabled">Breaker=@incidentEvent.DependencyCircuitBreakerStateReference</span>
+                                }
+                            </div>
+
+                            @if (!string.IsNullOrWhiteSpace(incidentEvent.PayloadJson))
+                            {
+                                <details class="mt-3">
+                                    <summary class="text-muted">Payload</summary>
+                                    <pre class="mt-2 mb-0"><code>@incidentEvent.PayloadJson</code></pre>
+                                </details>
+                            }
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+</div>

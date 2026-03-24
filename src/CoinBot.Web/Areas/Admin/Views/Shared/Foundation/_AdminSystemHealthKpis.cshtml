@@ -1,20 +1,73 @@
 @{
-    var tiles = new[]
-    {
-        new AdminStatTileViewModel { Label = "API health", Value = "Healthy", Meta = "Nominal request path placeholder", Tone = "healthy" },
-        new AdminStatTileViewModel { Label = "Web app health", Value = "Healthy", Meta = "UI shell reachable placeholder", Tone = "healthy" },
-        new AdminStatTileViewModel { Label = "Queue health", Value = "Guarded", Meta = "Queue depth placeholder", Tone = "warning" },
-        new AdminStatTileViewModel { Label = "Overall status", Value = "Degraded", Meta = "Stale worker ve failed job etkisi", Tone = "degraded" },
-        new AdminStatTileViewModel { Label = "Stale worker", Value = "02", Meta = "Heartbeat threshold üstü placeholder", Tone = "warning" },
-        new AdminStatTileViewModel { Label = "Service uptime", Value = "17d 04h", Meta = "Uptime placeholder", Tone = "info" }
-    };
+    var dashboard = ViewData["AdminMonitoringDashboardSnapshot"] as MonitoringDashboardSnapshot
+        ?? MonitoringDashboardSnapshot.Empty(DateTime.UtcNow);
+    var nowUtc = DateTime.UtcNow;
+    var healthySentinels = dashboard.HealthSnapshots.Count(snapshot => snapshot.HealthState == MonitoringHealthState.Healthy);
+    var warningOrWorse = dashboard.HealthSnapshots.Count(snapshot => snapshot.HealthState is MonitoringHealthState.Warning or MonitoringHealthState.Degraded or MonitoringHealthState.Critical);
+    var criticalSentinels = dashboard.HealthSnapshots.Count(snapshot => snapshot.HealthState == MonitoringHealthState.Critical);
+    var healthyWorkers = dashboard.WorkerHeartbeats.Count(snapshot => snapshot.HealthState == MonitoringHealthState.Healthy);
+    var staleWorkers = dashboard.WorkerHeartbeats.Count(snapshot => snapshot.FreshnessTier == MonitoringFreshnessTier.Stale);
+    var latestUpdatedAtUtc = dashboard.HealthSnapshots
+        .Select(snapshot => snapshot.LastUpdatedAtUtc)
+        .Concat(dashboard.WorkerHeartbeats.Select(snapshot => snapshot.LastUpdatedAtUtc))
+        .DefaultIfEmpty(dashboard.LastRefreshedAtUtc)
+        .Max();
+    var oldestSnapshotAge = dashboard.HealthSnapshots
+        .Select(snapshot => snapshot.Metrics.SnapshotAgeSeconds ?? 0)
+        .Concat(dashboard.WorkerHeartbeats.Select(snapshot => snapshot.SnapshotAgeSeconds ?? 0))
+        .DefaultIfEmpty(0)
+        .Max();
+    var activeSignalR = dashboard.HealthSnapshots
+        .Select(snapshot => snapshot.Metrics.SignalRActiveConnectionCount)
+        .FirstOrDefault(value => value.HasValue)
+        ?? 0;
+    var latestDbLatency = dashboard.HealthSnapshots
+        .Select(snapshot => snapshot.Metrics.DbLatencyMs)
+        .FirstOrDefault(value => value.HasValue)
+        ?? 0;
 }
 
 <div class="row">
-    @for (var i = 0; i < tiles.Length; i++)
-    {
-        <div class="col-xl-2 col-md-4 col-sm-6">
-            @await Html.PartialAsync("Foundation/_AdminStatTile", tiles[i])
+    <div class="col-xl-2 col-md-4 col-sm-6">
+        @await Html.PartialAsync("Foundation/_AdminStatTile", new AdminStatTileViewModel { Label = "Healthy sentinels", Value = healthySentinels.ToString(), Meta = "Monitoring snapshot state", Tone = "healthy" })
+    </div>
+    <div class="col-xl-2 col-md-4 col-sm-6">
+        @await Html.PartialAsync("Foundation/_AdminStatTile", new AdminStatTileViewModel { Label = "Warning+ items", Value = warningOrWorse.ToString(), Meta = "Actionable signals", Tone = warningOrWorse > 0 ? "warning" : "healthy" })
+    </div>
+    <div class="col-xl-2 col-md-4 col-sm-6">
+        @await Html.PartialAsync("Foundation/_AdminStatTile", new AdminStatTileViewModel { Label = "Critical sentinels", Value = criticalSentinels.ToString(), Meta = "Immediate review", Tone = criticalSentinels > 0 ? "critical" : "healthy" })
+    </div>
+    <div class="col-xl-2 col-md-4 col-sm-6">
+        @await Html.PartialAsync("Foundation/_AdminStatTile", new AdminStatTileViewModel { Label = "Healthy workers", Value = healthyWorkers.ToString(), Meta = "Heartbeat read-model", Tone = healthyWorkers > 0 ? "healthy" : "warning" })
+    </div>
+    <div class="col-xl-2 col-md-4 col-sm-6">
+        @await Html.PartialAsync("Foundation/_AdminStatTile", new AdminStatTileViewModel { Label = "SignalR active", Value = activeSignalR.ToString(), Meta = "Live market connections", Tone = activeSignalR > 0 ? "info" : "warning" })
+    </div>
+    <div class="col-xl-2 col-md-4 col-sm-6">
+        @await Html.PartialAsync("Foundation/_AdminStatTile", new AdminStatTileViewModel { Label = "Oldest age", Value = oldestSnapshotAge.ToString() + "s", Meta = $"Latest update {latestUpdatedAtUtc.ToUniversalTime():HH:mm:ss} UTC", Tone = oldestSnapshotAge > 60 ? "degraded" : "info" })
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-xl-4 col-md-6">
+        <div class="cb-admin-summary-card">
+            <span class="cb-admin-summary-label">Latest DB latency</span>
+            <strong>@latestDbLatency ms</strong>
+            <small>Collected by monitoring worker</small>
         </div>
-    }
+    </div>
+    <div class="col-xl-4 col-md-6">
+        <div class="cb-admin-summary-card">
+            <span class="cb-admin-summary-label">Worker freshness</span>
+            <strong>@staleWorkers stale</strong>
+            <small>Stale worker heartbeat count</small>
+        </div>
+    </div>
+    <div class="col-xl-4 col-md-12">
+        <div class="cb-admin-summary-card">
+            <span class="cb-admin-summary-label">Dashboard refreshed</span>
+            <strong>@dashboard.LastRefreshedAtUtc.ToUniversalTime().ToString("HH:mm:ss") UTC</strong>
+            <small>@Math.Max(0, (int)Math.Round((nowUtc - dashboard.LastRefreshedAtUtc).TotalSeconds, MidpointRounding.AwayFromZero)) sn önce</small>
+        </div>
+    </div>
 </div>

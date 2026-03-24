@@ -6,7 +6,7 @@ internal static class ExecutionClientOrderId
 
     public static string Create(Guid orderId)
     {
-        return $"{Prefix}{orderId:N}";
+        return $"{Prefix}{Convert.ToBase64String(orderId.ToByteArray()).TrimEnd('=').Replace('+', '-').Replace('/', '_')}";
     }
 
     public static bool TryParse(string? value, out Guid orderId)
@@ -25,6 +25,35 @@ internal static class ExecutionClientOrderId
             return false;
         }
 
-        return Guid.TryParseExact(normalizedValue[Prefix.Length..], "N", out orderId);
+        var encodedValue = normalizedValue[Prefix.Length..];
+
+        if (Guid.TryParseExact(encodedValue, "N", out orderId))
+        {
+            return true;
+        }
+
+        try
+        {
+            var paddedValue = encodedValue.Replace('-', '+').Replace('_', '/');
+
+            if (paddedValue.Length % 4 != 0)
+            {
+                paddedValue = paddedValue.PadRight(paddedValue.Length + (4 - (paddedValue.Length % 4)), '=');
+            }
+
+            var bytes = Convert.FromBase64String(paddedValue);
+
+            if (bytes.Length != 16)
+            {
+                return false;
+            }
+
+            orderId = new Guid(bytes);
+            return true;
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
     }
 }

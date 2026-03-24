@@ -1,4 +1,8 @@
 @{
+    var executionSnapshot = (CoinBot.Application.Abstractions.Execution.GlobalExecutionSwitchSnapshot)ViewData["AdminExecutionSwitchSnapshot"]!;
+    var globalSystemStateSnapshot = (CoinBot.Application.Abstractions.Administration.GlobalSystemStateSnapshot)ViewData["AdminGlobalSystemStateSnapshot"]!;
+    var crisisPreview = ViewData["AdminCrisisEscalationPreview"] as CoinBot.Web.ViewModels.Admin.AdminCrisisEscalationPreviewViewModel;
+    var canEditGlobalPolicy = ViewData["AdminCanEditGlobalPolicy"] is bool canEditValue && canEditValue;
     var headerModel = new AdminPageHeaderViewModel
     {
         Eyebrow = "System Settings",
@@ -7,8 +11,8 @@
         StatusBadge = new AdminBadgeViewModel { Label = "System Scope", Tone = "warning", IconText = "GS" },
         MetaBadges = new[]
         {
-            new AdminBadgeViewModel { Label = "No Persist", Tone = "info", IconText = "NP" },
-            new AdminBadgeViewModel { Label = "Danger Aware", Tone = "critical", IconText = "DG" },
+            new AdminBadgeViewModel { Label = "Read-model", Tone = "info", IconText = "RM" },
+            new AdminBadgeViewModel { Label = "Audit Bound", Tone = "critical", IconText = "AU" },
             new AdminBadgeViewModel { Label = "Re-auth Ready", Tone = "warning", IconText = "RA" }
         },
         SecondaryActionText = "Support tools",
@@ -28,27 +32,104 @@
                 {
                     Tone = "warning",
                     Title = "Bu ekran sistem ayarıdır",
-                    Message = "TradeMaster + DemoMode hard gate section'i gerçek backend'e bağlıdır; diğer bloklar halen foundation amaçlı tutulur.",
+                    Message = "TradeMaster, DemoMode ve GlobalSystemState section'lari gercek backend servislerine, audit kaydina ve idempotency registry'sine baglidir; diger bloklar foundation seviyesinde kalir.",
                     Meta = "Global Scope"
                 })
 
-                @if (TempData["AdminExecutionSwitchSuccess"] is string successMessage)
+                @if (!canEditGlobalPolicy)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Read-only policy visibility</div>
+                            <div class="cb-admin-info-strip-text">Bu rolde global policy gorulebilir ancak degistirilemez. Kritik POST aksiyonlari yalnizca SuperAdmin tarafinda aciktir.</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Read-only</span>
+                    </div>
+                }
+
+                @if (TempData["AdminExecutionSwitchSuccess"] is string executionSwitchSuccessMessage)
                 {
                     <div class="cb-admin-info-strip cb-admin-info-strip-healthy mt-6">
                         <div>
                             <div class="cb-admin-info-strip-title">Switch update</div>
-                            <div class="cb-admin-info-strip-text">@successMessage</div>
+                            <div class="cb-admin-info-strip-text">@executionSwitchSuccessMessage</div>
                         </div>
                         <span class="cb-admin-info-strip-meta">Applied</span>
                     </div>
                 }
 
-                @if (TempData["AdminExecutionSwitchError"] is string errorMessage)
+                @if (TempData["AdminExecutionSwitchError"] is string executionSwitchErrorMessage)
                 {
                     <div class="cb-admin-info-strip cb-admin-info-strip-danger mt-6">
                         <div>
                             <div class="cb-admin-info-strip-title">Switch update rejected</div>
-                            <div class="cb-admin-info-strip-text">@errorMessage</div>
+                            <div class="cb-admin-info-strip-text">@executionSwitchErrorMessage</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Blocked</span>
+                    </div>
+                }
+
+                @if (TempData["AdminGlobalSystemStateSuccess"] is string globalSystemStateSuccessMessage)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-healthy mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Global system state update</div>
+                            <div class="cb-admin-info-strip-text">@globalSystemStateSuccessMessage</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Applied</span>
+                    </div>
+                }
+
+                @if (TempData["AdminGlobalSystemStateError"] is string globalSystemStateErrorMessage)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-danger mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Global system state rejected</div>
+                            <div class="cb-admin-info-strip-text">@globalSystemStateErrorMessage</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Blocked</span>
+                    </div>
+                }
+
+                @if (TempData["AdminGlobalPolicySuccess"] is string globalPolicySuccessMessage)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-healthy mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Global policy update</div>
+                            <div class="cb-admin-info-strip-text">@globalPolicySuccessMessage</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Applied</span>
+                    </div>
+                }
+
+                @if (TempData["AdminGlobalPolicyError"] is string globalPolicyErrorMessage)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-danger mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Global policy rejected</div>
+                            <div class="cb-admin-info-strip-text">@globalPolicyErrorMessage</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Blocked</span>
+                    </div>
+                }
+
+                @if (TempData["AdminCrisisEscalationSuccess"] is string crisisSuccessMessage)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-healthy mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Crisis command applied</div>
+                            <div class="cb-admin-info-strip-text">@crisisSuccessMessage</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Applied</span>
+                    </div>
+                }
+
+                @if (TempData["AdminCrisisEscalationError"] is string crisisErrorMessage)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-danger mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Crisis command blocked</div>
+                            <div class="cb-admin-info-strip-text">@crisisErrorMessage</div>
                         </div>
                         <span class="cb-admin-info-strip-meta">Blocked</span>
                     </div>
@@ -64,7 +145,9 @@
     </div>
     <div class="col-xl-9 col-lg-8">
         <div class="cb-admin-settings-shell">
-            @await Html.PartialAsync("Foundation/_AdminGlobalExecutionSwitchSection", (CoinBot.Application.Abstractions.Execution.GlobalExecutionSwitchSnapshot)ViewData["AdminExecutionSwitchSnapshot"]!)
+            @await Html.PartialAsync("Foundation/_AdminGlobalExecutionSwitchSection", executionSnapshot)
+            @await Html.PartialAsync("Foundation/_AdminGlobalSystemStateSection", globalSystemStateSnapshot)
+            @await Html.PartialAsync("Foundation/_AdminCrisisEscalationSection", crisisPreview)
             @await Html.PartialAsync("Foundation/_AdminFeatureFlagsSection")
             @await Html.PartialAsync("Foundation/_AdminLoggingRetentionSection")
             @await Html.PartialAsync("Foundation/_AdminAiRolloutSection")

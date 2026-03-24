@@ -1,0 +1,184 @@
+@model CoinBot.Application.Abstractions.Administration.SystemStateHistoryDetailSnapshot
+@{
+    var stateTone = Model.State switch
+    {
+        GlobalSystemStateKind.Active => "healthy",
+        GlobalSystemStateKind.SoftHalt or GlobalSystemStateKind.Maintenance => "warning",
+        GlobalSystemStateKind.FullHalt => "critical",
+        GlobalSystemStateKind.Degraded => "degraded",
+        _ => "info"
+    };
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Governance / State History Detail",
+        Title = Model.HistoryReference,
+        Description = "Selected system state version icin command, approval, incident ve breaker linkleri detaylandirilir.",
+        StatusBadge = new AdminBadgeViewModel { Label = Model.State.ToString(), Tone = stateTone, IconText = "SH" },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = $"v{Model.Version}", Tone = "info", IconText = "VR" },
+            new AdminBadgeViewModel { Label = Model.IsManualOverride ? "Manual" : "System", Tone = Model.IsManualOverride ? "critical" : "healthy", IconText = "MV" },
+            new AdminBadgeViewModel { Label = Model.ReasonCode, Tone = "warning", IconText = "RC" }
+        },
+        SecondaryActionText = "System state history",
+        SecondaryActionHref = Url.Action("SystemStateHistory", "Admin", new { area = "Admin" }),
+        PrimaryActionText = "Incident detail",
+        PrimaryActionHref = !string.IsNullOrWhiteSpace(Model.IncidentReference)
+            ? Url.Action("IncidentDetail", "Admin", new { area = "Admin", incidentReference = Model.IncidentReference })
+            : Url.Action("Approvals", "Admin", new { area = "Admin" })
+    };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = "info",
+                    Title = "State transition detail",
+                    Message = Model.ChangeSummary ?? (Model.Message ?? "No change summary"),
+                    Meta = Model.Source
+                })
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-table-header mb-4">
+                    <div>
+                        <div class="cb-admin-section-kicker">History metadata</div>
+                        <div class="cb-admin-section-title">Transition details</div>
+                    </div>
+                </div>
+
+                <div class="table-responsive cb-admin-table-wrap mb-0">
+                    <table class="table table-borderless cb-admin-table mb-0">
+                        <tbody>
+                            <tr>
+                                <th>CreatedAtUtc</th>
+                                <td>@Model.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC</td>
+                            </tr>
+                            <tr>
+                                <th>ReasonCode</th>
+                                <td>@Model.ReasonCode</td>
+                            </tr>
+                            <tr>
+                                <th>Message</th>
+                                <td>@(Model.Message ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>Source</th>
+                                <td>@Model.Source</td>
+                            </tr>
+                            <tr>
+                                <th>ManualOverride</th>
+                                <td>@Model.IsManualOverride</td>
+                            </tr>
+                            <tr>
+                                <th>ExpiresAtUtc</th>
+                                <td>@(Model.ExpiresAtUtc?.ToString("yyyy-MM-dd HH:mm:ss") ?? "-") UTC</td>
+                            </tr>
+                            <tr>
+                                <th>CorrelationId</th>
+                                <td>@(Model.CorrelationId ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>CommandId</th>
+                                <td>@(Model.CommandId ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>ApprovalReference</th>
+                                <td>@(Model.ApprovalReference ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>IncidentReference</th>
+                                <td>@(Model.IncidentReference ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>DependencyCircuitBreakerStateReference</th>
+                                <td>@(Model.DependencyCircuitBreakerStateReference ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>BreakerKind</th>
+                                <td>@(Model.BreakerKind ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>BreakerStateCode</th>
+                                <td>@(Model.BreakerStateCode ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>UpdatedByUserId</th>
+                                <td>@(Model.UpdatedByUserId ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>UpdatedFromIp</th>
+                                <td>@(Model.UpdatedFromIp ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>PreviousState</th>
+                                <td>@(Model.PreviousState ?? "-")</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-table-header mb-4">
+                    <div>
+                        <div class="cb-admin-section-kicker">Related links</div>
+                        <div class="cb-admin-section-title">Trace / approval / incident</div>
+                    </div>
+                </div>
+
+                <div class="d-flex flex-wrap gap-2 mb-4">
+                    @if (!string.IsNullOrWhiteSpace(Model.CorrelationId))
+                    {
+                        <a asp-area="Admin"
+                           asp-controller="Admin"
+                           asp-action="TraceDetail"
+                           asp-route-correlationId="@Model.CorrelationId"
+                           class="btn btn-light-info font-weight-bold">Trace detail</a>
+                        <a asp-area="Admin"
+                           asp-controller="Admin"
+                           asp-action="Audit"
+                           asp-route-query="@Model.CorrelationId"
+                           class="btn btn-light-primary font-weight-bold">Audit search</a>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(Model.ApprovalReference))
+                    {
+                        <a asp-area="Admin"
+                           asp-controller="Admin"
+                           asp-action="ApprovalDetail"
+                           asp-route-approvalReference="@Model.ApprovalReference"
+                           class="btn btn-light-secondary font-weight-bold">Approval detail</a>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(Model.IncidentReference))
+                    {
+                        <a asp-area="Admin"
+                           asp-controller="Admin"
+                           asp-action="IncidentDetail"
+                           asp-route-incidentReference="@Model.IncidentReference"
+                           class="btn btn-light-warning font-weight-bold">Incident detail</a>
+                    }
+                </div>
+
+                <div class="cb-admin-info-strip cb-admin-info-strip-info">
+                    <div>
+                        <div class="cb-admin-info-strip-title">Breaker linkage</div>
+                        <div class="cb-admin-info-strip-text">BreakerKind ve BreakerStateCode alanlari dependency circuit breaker state ile birlikte state history kaydina dusurulur.</div>
+                    </div>
+                    <span class="cb-admin-info-strip-meta">Linked</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

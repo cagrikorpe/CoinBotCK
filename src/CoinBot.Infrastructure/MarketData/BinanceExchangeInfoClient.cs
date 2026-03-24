@@ -1,7 +1,13 @@
+using System.Diagnostics;
 using System.Globalization;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using CoinBot.Application.Abstractions.Autonomy;
 using CoinBot.Application.Abstractions.MarketData;
+using CoinBot.Application.Abstractions.Monitoring;
+using CoinBot.Domain.Enums;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace CoinBot.Infrastructure.MarketData;
@@ -9,8 +15,11 @@ namespace CoinBot.Infrastructure.MarketData;
 public sealed class BinanceExchangeInfoClient(
     HttpClient httpClient,
     TimeProvider timeProvider,
-    ILogger<BinanceExchangeInfoClient> logger) : IBinanceExchangeInfoClient
+    ILogger<BinanceExchangeInfoClient> logger,
+    IMonitoringTelemetryCollector? monitoringTelemetryCollector = null,
+    IServiceScopeFactory? serviceScopeFactory = null) : IBinanceExchangeInfoClient
 {
+    private const string BreakerActor = "system:rest-market-data";
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true
@@ -30,30 +39,113 @@ public sealed class BinanceExchangeInfoClient(
         }
 
         var symbolsPayload = Uri.EscapeDataString(JsonSerializer.Serialize(normalizedSymbols, SerializerOptions));
-        using var response = await httpClient.GetAsync(
-            $"api/v3/exchangeInfo?symbols={symbolsPayload}",
-            cancellationToken);
+        var observedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+        var stopwatch = Stopwatch.StartNew();
+        HttpResponseMessage? response = null;
+        IReadOnlyCollection<SymbolMetadataSnapshot> results = [];
 
-        response.EnsureSuccessStatusCode();
+        try
+        {
+            response = await httpClient.GetAsync(
+                $"api/v3/exchangeInfo?symbols={symbolsPayload}",
+                cancellationToken);
 
-        await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        var payload = await JsonSerializer.DeserializeAsync<BinanceExchangeInfoResponse>(
-            responseStream,
-            SerializerOptions,
-            cancellationToken);
-        var refreshedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
-        var results = payload?.Symbols?
-            .Select(symbol => TryMapSymbol(symbol, refreshedAtUtc))
-            .OfType<SymbolMetadataSnapshot>()
-            .OrderBy(snapshot => snapshot.Symbol, StringComparer.Ordinal)
-            .ToArray()
-            ?? [];
+            response.EnsureSuccessStatusCode();
+
+            await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            var payload = await JsonSerializer.DeserializeAsync<BinanceExchangeInfoResponse>(
+                responseStream,
+                SerializerOptions,
+                cancellationToken);
+            var refreshedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+            results = payload?.Symbols?
+                .Select(symbol => TryMapSymbol(symbol, refreshedAtUtc))
+                .OfType<SymbolMetadataSnapshot>()
+                .OrderBy(snapshot => snapshot.Symbol, StringComparer.Ordinal)
+                .ToArray()
+                ?? [];
+
+            await RecordBreakerSuccessAsync(cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            await RecordBreakerFailureAsync(exception, cancellationToken);
+
+            throw;
+        }
+        finally
+        {
+            stopwatch.Stop();
+            monitoringTelemetryCollector?.RecordBinancePing(
+                stopwatch.Elapsed,
+                TryReadRateLimitUsage(response),
+                observedAtUtc);
+            response?.Dispose();
+        }
 
         logger.LogInformation(
             "Binance symbol metadata refresh returned {SymbolCount} symbols.",
-            results.Length);
+            results.Count);
 
         return results;
+    }
+
+    private static string? Truncate(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return value.Length <= maxLength
+            ? value
+            : value[..maxLength];
+    }
+
+    private async Task RecordBreakerSuccessAsync(CancellationToken cancellationToken)
+    {
+        if (serviceScopeFactory is null)
+        {
+            return;
+        }
+
+        using var scope = serviceScopeFactory.CreateScope();
+        var dependencyCircuitBreakerStateManager = scope.ServiceProvider.GetService<IDependencyCircuitBreakerStateManager>();
+
+        if (dependencyCircuitBreakerStateManager is null)
+        {
+            return;
+        }
+
+        await dependencyCircuitBreakerStateManager.RecordSuccessAsync(
+            new DependencyCircuitBreakerSuccessRequest(
+                DependencyCircuitBreakerKind.RestMarketData,
+                BreakerActor),
+            cancellationToken);
+    }
+
+    private async Task RecordBreakerFailureAsync(Exception exception, CancellationToken cancellationToken)
+    {
+        if (serviceScopeFactory is null)
+        {
+            return;
+        }
+
+        using var scope = serviceScopeFactory.CreateScope();
+        var dependencyCircuitBreakerStateManager = scope.ServiceProvider.GetService<IDependencyCircuitBreakerStateManager>();
+
+        if (dependencyCircuitBreakerStateManager is null)
+        {
+            return;
+        }
+
+        await dependencyCircuitBreakerStateManager.RecordFailureAsync(
+            new DependencyCircuitBreakerFailureRequest(
+                DependencyCircuitBreakerKind.RestMarketData,
+                BreakerActor,
+                exception.GetType().Name,
+                Truncate(exception.Message, 512) ?? "Exchange info request failed."),
+            cancellationToken);
     }
 
     private static SymbolMetadataSnapshot? TryMapSymbol(BinanceSymbolPayload symbol, DateTime refreshedAtUtc)
@@ -123,6 +215,40 @@ public sealed class BinanceExchangeInfoClient(
             DateTimeKind.Local => value.ToUniversalTime(),
             _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
         };
+    }
+
+    private static int? TryReadRateLimitUsage(HttpResponseMessage? response)
+    {
+        if (response is null)
+        {
+            return null;
+        }
+
+        var headerNames = new[]
+        {
+            "X-MBX-USED-WEIGHT-1M",
+            "X-MBX-USED-WEIGHT",
+            "X-MBX-ORDER-COUNT-10S",
+            "X-MBX-ORDER-COUNT-1M"
+        };
+
+        foreach (var headerName in headerNames)
+        {
+            if (!response.Headers.TryGetValues(headerName, out var values))
+            {
+                continue;
+            }
+
+            foreach (var value in values)
+            {
+                if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedValue))
+                {
+                    return parsedValue;
+                }
+            }
+        }
+
+        return null;
     }
 
     private sealed record BinanceExchangeInfoResponse(

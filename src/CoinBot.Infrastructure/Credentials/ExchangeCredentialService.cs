@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Auditing;
 using CoinBot.Application.Abstractions.ExchangeCredentials;
 using CoinBot.Domain.Entities;
@@ -13,6 +14,7 @@ namespace CoinBot.Infrastructure.Credentials;
 public sealed class ExchangeCredentialService(
     ApplicationDbContext dbContext,
     ICredentialCipher credentialCipher,
+    IApiCredentialValidationService apiCredentialValidationService,
     IAuditLogService auditLogService,
     IOptions<CredentialSecurityOptions> options,
     TimeProvider timeProvider) : IExchangeCredentialService
@@ -42,6 +44,18 @@ public sealed class ExchangeCredentialService(
         exchangeAccount.LastValidatedAt = null;
 
         var state = CreateSnapshot(exchangeAccount, utcNow);
+
+        await apiCredentialValidationService.UpsertStoredCredentialAsync(
+            new ApiCredentialStoreMirrorRequest(
+                exchangeAccount.Id,
+                exchangeAccount.OwnerUserId,
+                exchangeAccount.ApiKeyCiphertext!,
+                exchangeAccount.ApiSecretCiphertext!,
+                exchangeAccount.CredentialFingerprint!,
+                exchangeAccount.CredentialKeyVersion!,
+                credentialCipher.BlobVersion,
+                utcNow),
+            cancellationToken);
 
         await WriteAuditAsync(
             actor,
@@ -166,6 +180,26 @@ public sealed class ExchangeCredentialService(
         }
 
         var state = CreateSnapshot(exchangeAccount, utcNow);
+
+        await apiCredentialValidationService.RecordValidationAsync(
+            new ApiCredentialValidationRequest(
+                exchangeAccount.Id,
+                exchangeAccount.OwnerUserId,
+                request.IsKeyValid,
+                request.CanTrade,
+                request.CanWithdraw,
+                request.SupportsSpot,
+                request.SupportsFutures,
+                request.IsEnvironmentMatch,
+                request.HasTimestampSkew,
+                request.HasIpRestrictionIssue,
+                request.EnvironmentScope,
+                actor,
+                request.CorrelationId,
+                request.FailureReason,
+                request.PermissionSummary,
+                utcNow),
+            cancellationToken);
 
         await WriteAuditAsync(
             actor,

@@ -1,0 +1,107 @@
+@using CoinBot.Domain.Enums
+@model CoinBot.Application.Abstractions.Administration.GlobalSystemStateSnapshot
+@{
+    var canEditGlobalPolicy = ViewData["AdminCanEditGlobalPolicy"] is bool canEditValue && canEditValue;
+}
+
+<section id="cb_admin_settings_global_state" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+    <div class="card-body">
+        <div class="cb-admin-section-kicker">Global System State</div>
+        <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
+            <div>
+                <div class="cb-admin-section-title">Central execution state guard</div>
+                <p class="cb-admin-section-description">Tum kritik execution girisleri GlobalSystemState guard uzerinden fail-closed degerlendirilir. UI yalnizca snapshot/read-model verisi gosterir.</p>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+            {
+                Label = Model.State.ToString(),
+                Tone = Model.State == GlobalSystemStateKind.Active ? "healthy" : Model.State == GlobalSystemStateKind.Degraded ? "degraded" : "critical",
+                IconText = "GS"
+            })
+        </div>
+
+        <div class="cb-admin-summary-grid mt-6">
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Current state</span>
+                <strong>@Model.State</strong>
+                <small>Execution block: @(Model.IsExecutionBlocked ? "Yes" : "No")</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Reason code</span>
+                <strong>@Model.ReasonCode</strong>
+                <small>Source: @Model.Source</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Version</span>
+                <strong>@Model.Version</strong>
+                <small>Updated: @(Model.UpdatedAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "n/a") UTC</small>
+            </div>
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(Model.Message))
+        {
+            <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-6">
+                <div>
+                    <div class="cb-admin-info-strip-title">Operator message</div>
+                    <div class="cb-admin-info-strip-text">@Model.Message</div>
+                </div>
+                <span class="cb-admin-info-strip-meta">Message</span>
+            </div>
+        }
+
+        @if (canEditGlobalPolicy)
+        {
+            <form asp-area="Admin" asp-controller="Admin" asp-action="SetGlobalSystemState" method="post" class="mt-6" data-cb-reauth-required="true">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="commandId" value="@(Guid.NewGuid().ToString("N"))" />
+                <input type="hidden" name="reauthToken" value="" />
+
+                <div class="form-row">
+                    <div class="form-group col-lg-4">
+                        <label class="cb-form-label">State</label>
+                        <select name="state" class="form-control cb-form-control">
+                            <option value="@GlobalSystemStateKind.Active" selected="@(Model.State == GlobalSystemStateKind.Active)">Active</option>
+                            <option value="@GlobalSystemStateKind.SoftHalt" selected="@(Model.State == GlobalSystemStateKind.SoftHalt)">SoftHalt</option>
+                            <option value="@GlobalSystemStateKind.FullHalt" selected="@(Model.State == GlobalSystemStateKind.FullHalt)">FullHalt</option>
+                            <option value="@GlobalSystemStateKind.Maintenance" selected="@(Model.State == GlobalSystemStateKind.Maintenance)">Maintenance</option>
+                            <option value="@GlobalSystemStateKind.Degraded" selected="@(Model.State == GlobalSystemStateKind.Degraded)">Degraded</option>
+                        </select>
+                    </div>
+                    <div class="form-group col-lg-4">
+                        <label class="cb-form-label">Reason code</label>
+                        <input name="reasonCode" type="text" class="form-control cb-form-control" maxlength="64" value="@Model.ReasonCode" required placeholder="SYSTEM_SOFT_HALT" />
+                    </div>
+                    <div class="form-group col-lg-4">
+                        <label class="cb-form-label">Expires at (UTC)</label>
+                        <input name="expiresAtUtc" type="datetime-local" class="form-control cb-form-control" value="@(Model.ExpiresAtUtc?.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm"))" />
+                    </div>
+                </div>
+
+                <div class="form-group mb-0">
+                    <label class="cb-form-label">Operator message</label>
+                    <textarea name="message" class="form-control cb-form-control" rows="3" maxlength="512" placeholder="Kisa operator mesajı">@Model.Message</textarea>
+                </div>
+
+                <div class="form-group mt-4 mb-0">
+                    <label class="cb-form-label">Audit reason</label>
+                    <input name="reason" type="text" class="form-control cb-form-control" maxlength="256" required placeholder="Global state degisikligi nedeni" />
+                </div>
+
+                <div class="cb-admin-inline-actions mt-5">
+                    <button type="submit" class="btn btn-light-danger font-weight-bold">Apply Global State</button>
+                    <button type="button" class="btn btn-light-warning font-weight-bold" data-toggle="modal" data-target="#cb_admin_reauth_modal">Re-auth</button>
+                </div>
+            </form>
+        }
+        else
+        {
+            <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6">
+                <div>
+                    <div class="cb-admin-info-strip-title">Read-only visibility</div>
+                    <div class="cb-admin-info-strip-text">OpsAdmin ve SecurityAuditor bu state'i gorebilir ancak degistiremez. POST aksiyonlari policy bazli olarak kapali tutulur.</div>
+                </div>
+                <span class="cb-admin-info-strip-meta">Read-only</span>
+            </div>
+        }
+    </div>
+</section>

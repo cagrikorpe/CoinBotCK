@@ -1,0 +1,136 @@
+@using CoinBot.Domain.Enums
+@model CoinBot.Web.ViewModels.Admin.AdminCrisisEscalationPreviewViewModel?
+@{
+    var canEditGlobalPolicy = ViewData["AdminCanEditGlobalPolicy"] is bool canEditValue && canEditValue;
+    var level = Model?.Level ?? CrisisEscalationLevel.SoftHalt;
+    var scope = Model?.Scope ?? "GLOBAL_SOFT_HALT";
+    var reasonCode = Model?.ReasonCode ?? "CRISIS_SOFT_HALT";
+    var message = Model?.Message;
+}
+
+<section id="cb_admin_settings_crisis" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+    <div class="card-body">
+        <div class="cb-admin-section-kicker">Crisis Escalation</div>
+        <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
+            <div>
+                <div class="cb-admin-section-title">Level 1 / 2 / 3 müdahale akışı</div>
+                <p class="cb-admin-section-description">Soft Halt, Order Purge ve Emergency Flatten komutları scope + command envelope ile çalışır. Impact preview her komutta zorunludur; Level 3 ayrıca re-auth ve second approval hook ister.</p>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+            {
+                Label = Model is null ? "Preview required" : Model.Level.ToString(),
+                Tone = Model is null ? "warning" : Model.Level == CrisisEscalationLevel.EmergencyFlatten ? "critical" : "warning",
+                IconText = "CR"
+            })
+        </div>
+
+        <div class="cb-admin-info-strip cb-admin-info-strip-danger mt-6">
+            <div>
+                <div class="cb-admin-info-strip-title">Command envelope</div>
+                <div class="cb-admin-info-strip-text">Examples: <strong>GLOBAL_SOFT_HALT</strong>, <strong>GLOBAL_PURGE</strong>, <strong>GLOBAL_FLATTEN</strong>, <strong>PURGE:USER:abc</strong>, <strong>FLATTEN:USER:abc</strong>.</div>
+            </div>
+            <span class="cb-admin-info-strip-meta">Guarded</span>
+        </div>
+
+        @if (canEditGlobalPolicy)
+        {
+            <form asp-area="Admin" asp-controller="Admin" asp-action="PreviewCrisisEscalation" method="post" class="mt-6">
+                @Html.AntiForgeryToken()
+                <div class="form-row">
+                    <div class="form-group col-lg-4">
+                        <label class="cb-form-label">Level</label>
+                        <select name="level" class="form-control cb-form-control">
+                            <option value="@CrisisEscalationLevel.SoftHalt" selected="@(level == CrisisEscalationLevel.SoftHalt)">Soft Halt</option>
+                            <option value="@CrisisEscalationLevel.OrderPurge" selected="@(level == CrisisEscalationLevel.OrderPurge)">Order Purge</option>
+                            <option value="@CrisisEscalationLevel.EmergencyFlatten" selected="@(level == CrisisEscalationLevel.EmergencyFlatten)">Emergency Flatten</option>
+                        </select>
+                    </div>
+                    <div class="form-group col-lg-8">
+                        <label class="cb-form-label">Scope</label>
+                        <input name="scope" type="text" class="form-control cb-form-control" maxlength="128" value="@scope" required placeholder="GLOBAL_FLATTEN" />
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group col-lg-4">
+                        <label class="cb-form-label">Reason code</label>
+                        <input name="reasonCode" type="text" class="form-control cb-form-control" maxlength="64" value="@reasonCode" />
+                    </div>
+                    <div class="form-group col-lg-8">
+                        <label class="cb-form-label">Operator message</label>
+                        <input name="message" type="text" class="form-control cb-form-control" maxlength="512" value="@message" placeholder="Optional operator note" />
+                    </div>
+                </div>
+
+                <div class="cb-admin-inline-actions mt-5">
+                    <button type="submit" class="btn btn-light-warning font-weight-bold">Preview Impact</button>
+                </div>
+            </form>
+        }
+        else
+        {
+            <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6">
+                <div>
+                    <div class="cb-admin-info-strip-title">Read-only visibility</div>
+                    <div class="cb-admin-info-strip-text">Crisis escalation controls yalnizca SuperAdmin tarafinda aciktir.</div>
+                </div>
+                <span class="cb-admin-info-strip-meta">Read-only</span>
+            </div>
+        }
+
+        @if (Model is not null && canEditGlobalPolicy)
+        {
+            <div class="cb-admin-summary-grid mt-6">
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Affected users</span>
+                    <strong>@Model.AffectedUserCount</strong>
+                    <small>Scope: @Model.Scope</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Affected symbols</span>
+                    <strong>@Model.AffectedSymbolCount</strong>
+                    <small>Open positions: @Model.OpenPositionCount</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Pending orders</span>
+                    <strong>@Model.PendingOrderCount</strong>
+                    <small>Estimated exposure: @Model.EstimatedExposure.ToString("0.##")</small>
+                </div>
+            </div>
+
+            <form asp-area="Admin" asp-controller="Admin" asp-action="ExecuteCrisisEscalation" method="post" class="mt-6" data-cb-reauth-required="true">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="level" value="@Model.Level" />
+                <input type="hidden" name="scope" value="@Model.Scope" />
+                <input type="hidden" name="reasonCode" value="@Model.ReasonCode" />
+                <input type="hidden" name="message" value="@Model.Message" />
+                <input type="hidden" name="previewStamp" value="@Model.PreviewStamp" />
+                <input type="hidden" name="commandId" value="@(Guid.NewGuid().ToString("N"))" />
+
+                <div class="form-group mb-0">
+                    <label class="cb-form-label">Audit reason</label>
+                    <input name="reason" type="text" class="form-control cb-form-control" maxlength="256" required placeholder="Why this crisis command is needed" />
+                </div>
+
+                @if (Model.RequiresReauth)
+                {
+                    <div class="form-row mt-4">
+                        <div class="form-group col-lg-6">
+                            <label class="cb-form-label">Re-auth token</label>
+                            <input name="reauthToken" type="text" class="form-control cb-form-control" maxlength="256" required placeholder="reauth-hook" />
+                        </div>
+                        <div class="form-group col-lg-6">
+                            <label class="cb-form-label">Second approval reference</label>
+                            <input name="secondApprovalReference" type="text" class="form-control cb-form-control" maxlength="128" required placeholder="approval-ref-001" />
+                        </div>
+                    </div>
+                }
+
+                <div class="cb-admin-inline-actions mt-5">
+                    <button type="submit" class="btn btn-light-danger font-weight-bold">Execute Crisis Command</button>
+                    <button type="button" class="btn btn-light-warning font-weight-bold" data-toggle="modal" data-target="#cb_admin_reauth_modal">Re-auth</button>
+                </div>
+            </form>
+        }
+    </div>
+</section>

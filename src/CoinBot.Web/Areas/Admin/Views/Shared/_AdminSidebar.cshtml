@@ -6,19 +6,24 @@
 
     var navigation = new[]
     {
-        new { Group = "Overview", Key = "Overview", Label = "Genel Bakış", Initials = "GV", Action = "Overview", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "Admin", "Support", "Auditor", "Viewer" } },
-        new { Group = "Identity", Key = "Users", Label = "Kullanıcılar", Initials = "US", Action = "Users", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "Admin", "Support", "Auditor" } },
-        new { Group = "Identity", Key = "UserDetail", Label = "Kullanıcı Detayı", Initials = "UD", Action = "UserDetail", Badge = new AdminBadgeViewModel { Label = "Drawer", Tone = "neutral" }, VisibleTo = new[] { "SuperAdmin", "Admin", "Support", "Auditor" } },
-        new { Group = "Operations", Key = "ExchangeAccounts", Label = "Exchange Hesapları", Initials = "EX", Action = "ExchangeAccounts", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "Admin", "Support", "Auditor" } },
-        new { Group = "Operations", Key = "BotOperations", Label = "Bot Operasyonları", Initials = "BT", Action = "BotOperations", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "Admin", "Support" } },
-        new { Group = "Operations", Key = "StrategyAiMonitoring", Label = "Strategy/AI İzleme", Initials = "AI", Action = "StrategyAiMonitoring", Badge = new AdminBadgeViewModel { Label = "Watch", Tone = "info" }, VisibleTo = new[] { "SuperAdmin", "Admin", "Auditor" } },
-        new { Group = "Runtime", Key = "SystemHealth", Label = "Sistem Sağlığı", Initials = "HL", Action = "SystemHealth", Badge = new AdminBadgeViewModel { Label = "Live", Tone = "healthy" }, VisibleTo = new[] { "SuperAdmin", "Admin", "Auditor" } },
-        new { Group = "Runtime", Key = "Jobs", Label = "Job/Worker Durumu", Initials = "JB", Action = "Jobs", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "Admin", "Auditor" } },
-        new { Group = "Observability", Key = "Audit", Label = "Audit & Log Merkezi", Initials = "AU", Action = "Audit", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "Admin", "Support", "Auditor" } },
-        new { Group = "Observability", Key = "SecurityEvents", Label = "Güvenlik Olayları", Initials = "SE", Action = "SecurityEvents", Badge = new AdminBadgeViewModel { Label = "Critical", Tone = "critical" }, VisibleTo = new[] { "SuperAdmin", "Admin", "Auditor" } },
-        new { Group = "Observability", Key = "Notifications", Label = "Bildirim/Alarm Merkezi", Initials = "AL", Action = "Notifications", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "Admin", "Support", "Auditor" } },
-        new { Group = "Platform", Key = "SupportTools", Label = "Destek Araçları", Initials = "SP", Action = "SupportTools", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "Admin", "Support" } },
-        new { Group = "Platform", Key = "Settings", Label = "Global Ayarlar", Initials = "GL", Action = "Settings", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "Admin" } }
+        new { Group = "Overview", Key = "Overview", Label = "Genel Bakış", Initials = "GV", Action = "Overview", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } },
+        new { Group = "Overview", Key = "Search", Label = "Global Search", Initials = "GS", Action = "Search", Badge = (AdminBadgeViewModel?)new AdminBadgeViewModel { Label = "Stub", Tone = "info" }, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } },
+        new { Group = "Identity", Key = "Users", Label = "Kullanıcılar", Initials = "US", Action = "Users", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "OpsAdmin" } },
+        new { Group = "Identity", Key = "UserDetail", Label = "Kullanıcı Detayı", Initials = "UD", Action = "UserDetail", Badge = (AdminBadgeViewModel?)new AdminBadgeViewModel { Label = "Drawer", Tone = "neutral" }, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } },
+        new { Group = "Operations", Key = "ExchangeAccounts", Label = "Exchange Hesapları", Initials = "EX", Action = "ExchangeAccounts", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "OpsAdmin" } },
+        new { Group = "Operations", Key = "BotOperations", Label = "Bot Operasyonları", Initials = "BT", Action = "BotOperations", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "OpsAdmin" } },
+        new { Group = "Operations", Key = "StrategyAiMonitoring", Label = "Strategy/AI İzleme", Initials = "AI", Action = "StrategyAiMonitoring", Badge = (AdminBadgeViewModel?)new AdminBadgeViewModel { Label = "Watch", Tone = "info" }, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } },
+        new { Group = "Runtime", Key = "SystemHealth", Label = "Sistem Sağlığı", Initials = "HL", Action = "SystemHealth", Badge = (AdminBadgeViewModel?)new AdminBadgeViewModel { Label = "Snapshot", Tone = "healthy" }, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } },
+        new { Group = "Runtime", Key = "Jobs", Label = "Job/Worker Durumu", Initials = "JB", Action = "Jobs", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } },
+        new { Group = "Observability", Key = "Audit", Label = "Audit & Log Merkezi", Initials = "AU", Action = "Audit", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } },
+        new { Group = "Observability", Key = "SecurityEvents", Label = "Güvenlik Olayları", Initials = "SE", Action = "SecurityEvents", Badge = (AdminBadgeViewModel?)new AdminBadgeViewModel { Label = "Critical", Tone = "critical" }, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } },
+        new { Group = "Observability", Key = "Notifications", Label = "Bildirim/Alarm Merkezi", Initials = "AL", Action = "Notifications", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } },
+        new { Group = "Governance", Key = "Approvals", Label = "Approval Merkezi", Initials = "AP", Action = "Approvals", Badge = (AdminBadgeViewModel?)new AdminBadgeViewModel { Label = "Queue", Tone = "critical" }, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } },
+        new { Group = "Governance", Key = "Incidents", Label = "Incident Merkezi", Initials = "IN", Action = "Incidents", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } },
+        new { Group = "Governance", Key = "ConfigHistory", Label = "Config History", Initials = "CH", Action = "ConfigHistory", Badge = (AdminBadgeViewModel?)new AdminBadgeViewModel { Label = "Version", Tone = "info" }, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } },
+        new { Group = "Governance", Key = "SystemStateHistory", Label = "State History", Initials = "SH", Action = "SystemStateHistory", Badge = (AdminBadgeViewModel?)new AdminBadgeViewModel { Label = "Timeline", Tone = "warning" }, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } },
+        new { Group = "Platform", Key = "SupportTools", Label = "Destek Araçları", Initials = "SP", Action = "SupportTools", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } },
+        new { Group = "Platform", Key = "Settings", Label = "Global Ayarlar", Initials = "GL", Action = "Settings", Badge = (AdminBadgeViewModel?)new AdminBadgeViewModel { Label = currentRoleKey == "SuperAdmin" ? "Write" : "Read", Tone = currentRoleKey == "SuperAdmin" ? "critical" : "info" }, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } }
     };
 
     var visibleNavigation = navigation.Where(item => item.VisibleTo.Contains(currentRoleKey)).ToArray();
@@ -60,7 +65,7 @@
                 @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = hiddenCount + " gizli bölüm", Tone = "warning", IconText = "HD" })
             }
         </div>
-        <small>Gerçek role-based enforcement bağlı değil; menü görünürlüğü foundation olarak ayrıldı. Kritik ekranlar yine access denied ve re-auth akışlarıyla korunur.</small>
+        <small>Menu görünürlüğü admin claim/policy wiring ile hizalıdır. Write aksiyonları ayrıca server-side policy ve antiforgery ile korunur.</small>
     </div>
 
     <div class="aside-menu-wrapper flex-column-fluid" id="kt_aside_menu_wrapper">
@@ -77,7 +82,7 @@
                     {
                         var isActive = string.Equals(activeNav, item.Key, StringComparison.OrdinalIgnoreCase);
                         <li class="menu-item @(isActive ? "menu-item-active" : string.Empty)" aria-haspopup="true">
-                            <a asp-area="Admin" asp-controller="Admin" asp-action="@item.Action" asp-route-role="@currentRoleKey" class="menu-link">
+                            <a asp-area="Admin" asp-controller="Admin" asp-action="@item.Action" class="menu-link">
                                 <span class="menu-icon">
                                     <span class="cb-menu-icon cb-admin-menu-icon @(isActive ? "is-active" : string.Empty)">@item.Initials</span>
                                 </span>

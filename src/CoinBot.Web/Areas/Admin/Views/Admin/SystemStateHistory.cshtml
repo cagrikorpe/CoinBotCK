@@ -1,0 +1,132 @@
+@model IReadOnlyCollection<CoinBot.Application.Abstractions.Administration.SystemStateHistoryListItem>
+@{
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Governance / State History",
+        Title = "System State History",
+        Description = "Global system state transitions, approval linkleri ve breaker baglantilari zaman serisi olarak listelenir.",
+        StatusBadge = new AdminBadgeViewModel { Label = "State", Tone = "warning", IconText = "SH" },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = "Timeline", Tone = "info", IconText = "TL" },
+            new AdminBadgeViewModel { Label = "Approval linked", Tone = "healthy", IconText = "AP" },
+            new AdminBadgeViewModel { Label = "Audit bound", Tone = "warning", IconText = "AU" }
+        },
+        SecondaryActionText = "Incident merkezi",
+        SecondaryActionHref = Url.Action("Incidents", "Admin", new { area = "Admin" }),
+        PrimaryActionText = "Config history",
+        PrimaryActionHref = Url.Action("ConfigHistory", "Admin", new { area = "Admin" })
+    };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = "info",
+                    Title = "State transition history",
+                    Message = "SetStateAsync islemleri approval, incident ve breaker referanslari ile birlikte SystemStateHistories tablosuna yazilir.",
+                    Meta = Model.Count == 0 ? "No state history" : $"{Model.Count} history"
+                })
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-table-card">
+            <div class="card-body">
+                <div class="cb-admin-table-header">
+                    <div>
+                        <div class="cb-admin-section-kicker">State history</div>
+                        <div class="cb-admin-section-title">Transition listesi</div>
+                        <p class="cb-admin-section-description mb-0">Version, reason code, approval ref ve incident ref alanlari ile sistem state timeline gorunur.</p>
+                    </div>
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+                    {
+                        Label = $"{Model.Count} row",
+                        Tone = Model.Count > 0 ? "healthy" : "warning",
+                        IconText = "SH"
+                    })
+                </div>
+
+                <div class="table-responsive cb-admin-table-wrap">
+                    <table class="table table-borderless cb-admin-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>HistoryRef</th>
+                                <th>Version</th>
+                                <th>State</th>
+                                <th>ReasonCode</th>
+                                <th>Source</th>
+                                <th>Manual</th>
+                                <th>Trace</th>
+                                <th>Aksiyon</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @if (Model.Count == 0)
+                            {
+                                <tr>
+                                    <td colspan="8" class="text-muted">State history bulunamadi.</td>
+                                </tr>
+                            }
+                            else
+                            {
+                                foreach (var history in Model)
+                                {
+                                    var stateTone = history.State switch
+                                    {
+                                        GlobalSystemStateKind.Active => "healthy",
+                                        GlobalSystemStateKind.SoftHalt or GlobalSystemStateKind.Maintenance => "warning",
+                                        GlobalSystemStateKind.FullHalt => "critical",
+                                        GlobalSystemStateKind.Degraded => "degraded",
+                                        _ => "info"
+                                    };
+                                    <tr>
+                                        <td><strong>@history.HistoryReference</strong></td>
+                                        <td>@history.Version</td>
+                                        <td>
+                                            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+                                            {
+                                                Label = history.State.ToString(),
+                                                Tone = stateTone,
+                                                IconText = "ST"
+                                            })
+                                        </td>
+                                        <td>@history.ReasonCode</td>
+                                        <td>@history.Source</td>
+                                        <td>@history.IsManualOverride</td>
+                                        <td>
+                                            @if (!string.IsNullOrWhiteSpace(history.CorrelationId))
+                                            {
+                                                <a asp-area="Admin"
+                                                   asp-controller="Admin"
+                                                   asp-action="TraceDetail"
+                                                   asp-route-correlationId="@history.CorrelationId"
+                                                   class="btn btn-xs btn-light-info font-weight-bold">Trace</a>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-muted">-</span>
+                                            }
+                                        </td>
+                                        <td>
+                                            <a asp-area="Admin"
+                                               asp-controller="Admin"
+                                               asp-action="SystemStateHistoryDetail"
+                                               asp-route-historyReference="@history.HistoryReference"
+                                               class="btn btn-xs btn-light-primary font-weight-bold">Detay</a>
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

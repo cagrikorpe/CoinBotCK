@@ -1,3 +1,4 @@
+using CoinBot.Application.Abstractions.Autonomy;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.ExchangeCredentials;
 using CoinBot.Domain.Entities;
@@ -13,8 +14,11 @@ public sealed class BinanceExecutor(
     ApplicationDbContext dbContext,
     IExchangeCredentialService exchangeCredentialService,
     IBinancePrivateRestClient privateRestClient,
-    ILogger<BinanceExecutor> logger) : IExecutionTargetExecutor
+    ILogger<BinanceExecutor> logger,
+    IDependencyCircuitBreakerStateManager? dependencyCircuitBreakerStateManager = null) : IExecutionTargetExecutor
 {
+    private const string BreakerActor = "system:order-execution";
+
     public ExecutionOrderExecutorKind Kind => ExecutionOrderExecutorKind.Binance;
 
     public async Task<ExecutionTargetDispatchResult> DispatchAsync(
@@ -50,34 +54,80 @@ public sealed class BinanceExecutor(
             throw new InvalidOperationException("Live execution is blocked because the exchange account is read-only.");
         }
 
-        var credentialAccess = await exchangeCredentialService.GetAsync(
-            new ExchangeCredentialAccessRequest(
-                exchangeAccountId,
-                command.Actor,
-                ExchangeCredentialAccessPurpose.Execution,
-                order.RootCorrelationId),
-            cancellationToken);
-        var placementResult = await privateRestClient.PlaceOrderAsync(
-            new BinanceOrderPlacementRequest(
-                exchangeAccountId,
-                command.Symbol,
-                command.Side,
-                command.OrderType,
-                command.Quantity,
-                command.Price,
-                ExecutionClientOrderId.Create(order.Id),
-                credentialAccess.ApiKey,
-                credentialAccess.ApiSecret),
-            cancellationToken);
+        try
+        {
+            var credentialAccess = await exchangeCredentialService.GetAsync(
+                new ExchangeCredentialAccessRequest(
+                    exchangeAccountId,
+                    command.Actor,
+                    ExchangeCredentialAccessPurpose.Execution,
+                    order.RootCorrelationId),
+                cancellationToken);
+            var placementResult = await privateRestClient.PlaceOrderAsync(
+                new BinanceOrderPlacementRequest(
+                    exchangeAccountId,
+                    command.Symbol,
+                    command.Side,
+                    command.OrderType,
+                    command.Quantity,
+                    command.Price,
+                    ExecutionClientOrderId.Create(order.Id),
+                    credentialAccess.ApiKey,
+                    credentialAccess.ApiSecret,
+                    order.IdempotencyKey,
+                    order.RootCorrelationId,
+                    ExecutionAttemptId: null,
+                    order.Id,
+                    command.OwnerUserId),
+                cancellationToken);
 
-        logger.LogInformation(
-            "Binance executor submitted order {ExecutionOrderId} for {Symbol}.",
-            order.Id,
-            command.Symbol);
+            if (dependencyCircuitBreakerStateManager is not null)
+            {
+                await dependencyCircuitBreakerStateManager.RecordSuccessAsync(
+                    new DependencyCircuitBreakerSuccessRequest(
+                        DependencyCircuitBreakerKind.OrderExecution,
+                        BreakerActor,
+                        order.RootCorrelationId),
+                    cancellationToken);
+            }
 
-        return new ExecutionTargetDispatchResult(
-            placementResult.OrderId,
-            placementResult.SubmittedAtUtc,
-            $"ClientOrderId={placementResult.ClientOrderId}");
+            logger.LogInformation(
+                "Binance executor submitted order {ExecutionOrderId} for {Symbol}.",
+                order.Id,
+                command.Symbol);
+
+            return new ExecutionTargetDispatchResult(
+                placementResult.OrderId,
+                placementResult.SubmittedAtUtc,
+                $"ClientOrderId={placementResult.ClientOrderId}");
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            if (dependencyCircuitBreakerStateManager is not null)
+            {
+                await dependencyCircuitBreakerStateManager.RecordFailureAsync(
+                    new DependencyCircuitBreakerFailureRequest(
+                        DependencyCircuitBreakerKind.OrderExecution,
+                        BreakerActor,
+                        exception.GetType().Name,
+                        Truncate(exception.Message, 512) ?? "Order execution failed.",
+                        order.RootCorrelationId),
+                    cancellationToken);
+            }
+
+            throw;
+        }
+    }
+
+    private static string? Truncate(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return value.Length <= maxLength
+            ? value
+            : value[..maxLength];
     }
 }

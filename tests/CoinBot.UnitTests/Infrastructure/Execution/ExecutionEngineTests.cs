@@ -1,4 +1,5 @@
 using CoinBot.Application.Abstractions.Alerts;
+using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Auditing;
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.DemoPortfolio;
@@ -8,6 +9,7 @@ using CoinBot.Application.Abstractions.ExchangeCredentials;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Administration;
 using CoinBot.Infrastructure.Auditing;
 using CoinBot.Infrastructure.DemoPortfolio;
 using CoinBot.Infrastructure.Execution;
@@ -388,6 +390,123 @@ public sealed class ExecutionEngineTests
         Assert.Equal("corr-scoped-request-1", result.Order.RootCorrelationId);
     }
 
+    [Fact]
+    public async Task DispatchAsync_UsesDecisionTraceCorrelation_WhenCommandOmitsExplicitCorrelation()
+    {
+        await using var harness = CreateHarness();
+        await SeedDemoWalletAsync(harness.DbContext, "user-decision-corr", "USDT", 1000m);
+        harness.MarketDataService.SetLatestPrice("BTCUSDT", 65000m, harness.TimeProvider.GetUtcNow().UtcDateTime, "unit-test");
+        harness.MarketDataService.SetSymbolMetadata("BTCUSDT", "BTC", "USDT", 0.01m, 0.0001m);
+        await PrimeFreshMarketDataAsync(harness, "corr-decision-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-decision",
+            context: "Open demo execution",
+            correlationId: "corr-decision-2");
+
+        var strategySignalId = Guid.NewGuid();
+        await harness.TraceService.WriteDecisionTraceAsync(
+            new DecisionTraceWriteRequest(
+                "user-decision-corr",
+                "BTCUSDT",
+                "1m",
+                "StrategyVersion:test",
+                "Entry",
+                "Persisted",
+                "{}",
+                12,
+                CorrelationId: "corr-from-decision-trace",
+                StrategySignalId: strategySignalId));
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-decision-corr",
+                strategyKey: "decision-core",
+                isDemo: true) with
+            {
+                StrategySignalId = strategySignalId,
+                CorrelationId = null,
+                ParentCorrelationId = null
+            },
+            CancellationToken.None);
+
+        Assert.Equal("corr-from-decision-trace", result.Order.RootCorrelationId);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_FailsClosed_WhenUserExecutionOverrideDisablesSession()
+    {
+        await using var harness = CreateHarness();
+        await SeedDemoWalletAsync(harness.DbContext, "user-override", "USDT", 1000m);
+        harness.MarketDataService.SetLatestPrice("BTCUSDT", 65000m, harness.TimeProvider.GetUtcNow().UtcDateTime, "unit-test");
+        harness.MarketDataService.SetSymbolMetadata("BTCUSDT", "BTC", "USDT", 0.01m, 0.0001m);
+        await PrimeFreshMarketDataAsync(harness, "corr-override-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-override",
+            context: "Open demo execution",
+            correlationId: "corr-override-2");
+
+        harness.DbContext.UserExecutionOverrides.Add(new UserExecutionOverride
+        {
+            Id = Guid.NewGuid(),
+            UserId = "user-override",
+            SessionDisabled = true
+        });
+        await harness.DbContext.SaveChangesAsync();
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-override",
+                strategyKey: "override-core",
+                isDemo: true),
+            CancellationToken.None);
+
+        Assert.Equal(ExecutionOrderState.Rejected, result.Order.State);
+        Assert.Equal("UserExecutionSessionDisabled", result.Order.FailureCode);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_AllowsAdministrativeOverride_ToBypassUserExecutionOverrideGuard()
+    {
+        await using var harness = CreateHarness();
+        await SeedDemoWalletAsync(harness.DbContext, "user-crisis", "BTC", 0m);
+        await SeedDemoWalletAsync(harness.DbContext, "user-crisis", "USDT", 5000m);
+        harness.MarketDataService.SetLatestPrice("BTCUSDT", 65000m, harness.TimeProvider.GetUtcNow().UtcDateTime, "unit-test");
+        harness.MarketDataService.SetSymbolMetadata("BTCUSDT", "BTC", "USDT", 0.01m, 0.0001m);
+        await PrimeFreshMarketDataAsync(harness, "corr-admin-override-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-override",
+            context: "Open demo execution",
+            correlationId: "corr-admin-override-2");
+
+        harness.DbContext.UserExecutionOverrides.Add(new UserExecutionOverride
+        {
+            Id = Guid.NewGuid(),
+            UserId = "user-crisis",
+            SessionDisabled = true
+        });
+        await harness.DbContext.SaveChangesAsync();
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-crisis",
+                strategyKey: "crisis-override",
+                isDemo: true) with
+            {
+                Actor = "admin:super-admin",
+                AdministrativeOverride = true,
+                AdministrativeOverrideReason = "CrisisEmergencyFlatten|PositionHash=test-hash"
+            },
+            CancellationToken.None);
+
+        Assert.Equal(ExecutionOrderState.Filled, result.Order.State);
+        Assert.Null(result.Order.FailureCode);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
     private static TestHarness CreateHarness()
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
@@ -398,6 +517,7 @@ public sealed class ExecutionEngineTests
         var correlationContextAccessor = new CorrelationContextAccessor();
         var auditLogService = new AuditLogService(dbContext, correlationContextAccessor);
         var switchService = new GlobalExecutionSwitchService(dbContext, auditLogService);
+        var globalSystemStateService = new GlobalSystemStateService(dbContext, auditLogService, timeProvider);
         var marketDataService = new FakeMarketDataService();
         var demoWalletValuationService = new DemoWalletValuationService(
             marketDataService,
@@ -424,6 +544,7 @@ public sealed class ExecutionEngineTests
             NullLogger<DemoSessionService>.Instance);
         var executionGate = new ExecutionGate(
             demoSessionService,
+            globalSystemStateService,
             switchService,
             circuitBreaker,
             tradingModeService,
@@ -440,12 +561,21 @@ public sealed class ExecutionEngineTests
             Options.Create(new DemoFillSimulatorOptions()),
             timeProvider,
             NullLogger<DemoFillSimulator>.Instance);
+        var traceService = new TraceService(
+            dbContext,
+            correlationContextAccessor,
+            timeProvider);
+        var userExecutionOverrideGuard = new UserExecutionOverrideGuard(
+            dbContext,
+            tradingModeService);
         var credentialService = new FakeExchangeCredentialService();
         var privateRestClient = new FakePrivateRestClient(timeProvider);
         var engine = new ExecutionEngine(
             dbContext,
             executionGate,
             tradingModeService,
+            traceService,
+            userExecutionOverrideGuard,
             correlationContextAccessor,
             demoPortfolioAccountingService,
             demoFillSimulator,
@@ -465,6 +595,7 @@ public sealed class ExecutionEngineTests
             demoSessionService,
             tradingModeService,
             correlationContextAccessor,
+            traceService,
             engine,
             timeProvider,
             marketDataService,
@@ -727,6 +858,13 @@ public sealed class ExecutionEngineTests
             throw new NotSupportedException();
         }
 
+        public Task<BinanceOrderStatusSnapshot> CancelOrderAsync(
+            BinanceOrderCancelRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
         public Task<string> StartListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
@@ -821,6 +959,7 @@ public sealed class ExecutionEngineTests
         IDemoSessionService demoSessionService,
         ITradingModeService tradingModeService,
         CorrelationContextAccessor correlationContextAccessor,
+        ITraceService traceService,
         IExecutionEngine engine,
         AdjustableTimeProvider timeProvider,
         FakeMarketDataService marketDataService,
@@ -838,6 +977,8 @@ public sealed class ExecutionEngineTests
         public ITradingModeService TradingModeService { get; } = tradingModeService;
 
         public CorrelationContextAccessor CorrelationContextAccessor { get; } = correlationContextAccessor;
+
+        public ITraceService TraceService { get; } = traceService;
 
         public IExecutionEngine Engine { get; } = engine;
 

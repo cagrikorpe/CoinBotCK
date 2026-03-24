@@ -1,4 +1,4 @@
-@{
+@* @{
     var items = new[]
     {
         new { Label = "Toplam bakiye", Value = "$ 24,860.42", Help = "Başlangıçtan +4.8%", Tone = "positive", Tag = "Equity" },
@@ -23,6 +23,30 @@
                     <div class="cb-stat-value cb-numeric-strong @(item.Tone == "positive" ? "cb-text-positive" : item.Tone == "negative" ? "cb-text-negative" : string.Empty)">@item.Value</div>
                     <div class="cb-dashboard-kpi-footer">
                         <span class="cb-dashboard-kpi-dot @(item.Tone == "positive" ? "is-positive" : item.Tone == "negative" ? "is-negative" : "is-neutral")"></span>
+                        <span class="cb-stat-help">@item.Help</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+ *@
+
+
+@model CoinBot.Web.ViewModels.Home.DashboardViewModel
+
+<div class="row row-cols-1 row-cols-sm-2 row-cols-xl-3 row-cols-xxl-4">
+    @foreach (var item in Model.Kpis)
+    {
+        <div class="col d-flex">
+            <div class="card card-custom gutter-b cb-card cb-stat-card cb-dashboard-kpi-card w-100">
+                <div class="card-body">
+                    <div class="cb-stat-top">
+                        <span class="cb-stat-label">@item.Label</span>
+                        <span class="cb-badge @(item.Tone == "positive" ? "cb-badge-success" : item.Tone == "negative" ? "cb-badge-danger" : "cb-badge-neutral")">@item.Tag</span>
+                    </div>
+                    <div class="cb-stat-value cb-numeric-strong @(item.Tone == "positive" ? "cb-text-positive" : item.Tone == "negative" ? "cb-text-negative" : string.Empty)">@item.Value</div>
+                    <div class="cb-dashboard-kpi-footer">
                         <span class="cb-stat-help">@item.Help</span>
                     </div>
                 </div>

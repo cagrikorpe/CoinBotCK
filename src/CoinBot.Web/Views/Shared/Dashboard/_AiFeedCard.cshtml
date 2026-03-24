@@ -1,53 +1,12 @@
-@{
-    var feedItems = new[]
-    {
-        new { Time = "09:41", Symbol = "BTCUSDT", Direction = "Long", Confidence = "84%", Reason = "Trend devamı + hacim teyidi", Tone = "success", Veto = false },
-        new { Time = "09:33", Symbol = "ETHUSDT", Direction = "Watch", Confidence = "61%", Reason = "Momentum var, giriş teyidi bekleniyor", Tone = "warning", Veto = false },
-        new { Time = "09:25", Symbol = "SOLUSDT", Direction = "Short", Confidence = "72%", Reason = "Direnç reddi + zayıf funding", Tone = "danger", Veto = true },
-        new { Time = "09:18", Symbol = "XRPUSDT", Direction = "Long", Confidence = "49%", Reason = "Düşük güven, risk filtresi izliyor", Tone = "info", Veto = false }
-    };
-}
-<div class="card card-custom gutter-b cb-card cb-dashboard-card cb-feed-card">
-    <div class="card-header border-0 pt-6">
-        <div class="card-title d-block">
-            <div class="d-flex align-items-center flex-wrap gap-2">
-                <h3 class="card-label font-weight-bolder mb-0">AI Akışı</h3>
-                <span class="cb-badge cb-badge-info">Veri topluyor</span>
+@model CoinBot.Web.ViewModels.Home.DashboardViewModel
+
+<div class="card ...">
+    <div class="cb-feed-list">
+        @foreach (var item in Model.AiFeed) // Artık Model'den besleniyor
+        {
+            <div class="cb-feed-item">
+                <div class="cb-feed-time cb-mono">@item.Time</div>
             </div>
-            <div class="text-muted mt-2">Kullanıcının AI şu an ne yapıyor sorusuna hızlı cevap verecek operasyonel akış kartı.</div>
-        </div>
-        <div class="card-toolbar">
-            <div class="cb-chip-group cb-chip-group-sm" data-cb-toggle-group>
-                <button type="button" class="cb-chip is-active" data-cb-toggle-active>Tümü</button>
-                <button type="button" class="cb-chip" data-cb-toggle-active>Öneriler</button>
-                <button type="button" class="cb-chip" data-cb-toggle-active>Vetolar</button>
-                <button type="button" class="cb-chip" data-cb-toggle-active>Yüksek güven</button>
-            </div>
-        </div>
-    </div>
-    <div class="card-body pt-2">
-        <div class="cb-feed-list">
-            @foreach (var item in feedItems)
-            {
-                <div class="cb-feed-item">
-                    <div class="cb-feed-time cb-mono">@item.Time</div>
-                    <div class="cb-feed-content">
-                        <div class="cb-feed-topline">
-                            <div class="d-flex align-items-center flex-wrap gap-2">
-                                <span class="cb-feed-symbol">@item.Symbol</span>
-                                <span class="cb-badge @(item.Tone == "success" ? "cb-badge-success" : item.Tone == "danger" ? "cb-badge-danger" : item.Tone == "warning" ? "cb-badge-warning" : "cb-badge-info")">@item.Direction</span>
-                                @if (item.Veto)
-                                {
-                                    <span class="cb-feed-veto">Veto</span>
-                                }
-                            </div>
-                            <span class="cb-feed-confidence cb-mono">@item.Confidence</span>
-                        </div>
-                        <div class="cb-feed-reason">@item.Reason</div>
-                    </div>
-                </div>
-            }
-        </div>
-        <div class="cb-dashboard-card-meta mt-6">Loading, empty ve error state bu kartta aynı liste iskeleti korunarak gösterilecek.</div>
+        }
     </div>
 </div>

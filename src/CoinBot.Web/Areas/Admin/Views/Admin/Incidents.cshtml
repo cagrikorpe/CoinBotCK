@@ -1,0 +1,151 @@
+@model IReadOnlyCollection<CoinBot.Application.Abstractions.Administration.IncidentListItem>
+@{
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Governance / Incidents",
+        Title = "Incident Merkezi",
+        Description = "Approval, crisis ve state transition olaylari correlation-bazli incident read-model ile burada toplanir.",
+        StatusBadge = new AdminBadgeViewModel { Label = "Incident", Tone = "critical", IconText = "IN" },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = "Timeline ready", Tone = "info", IconText = "TL" },
+            new AdminBadgeViewModel { Label = "Trace linked", Tone = "healthy", IconText = "TR" },
+            new AdminBadgeViewModel { Label = "Audit bound", Tone = "warning", IconText = "AU" }
+        },
+        SecondaryActionText = "Approval merkezi",
+        SecondaryActionHref = Url.Action("Approvals", "Admin", new { area = "Admin" }),
+        PrimaryActionText = "System state history",
+        PrimaryActionHref = Url.Action("SystemStateHistory", "Admin", new { area = "Admin" })
+    };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = "info",
+                    Title = "Incident timeline merkezi",
+                    Message = "Incident kayitlari approval queue, crisis escalation, breaker linkleri ve trace correlation ile birlikte yazilir.",
+                    Meta = Model.Count == 0 ? "No incidents" : $"{Model.Count} incident"
+                })
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-table-card">
+            <div class="card-body">
+                <div class="cb-admin-table-header">
+                    <div>
+                        <div class="cb-admin-section-kicker">Incident list</div>
+                        <div class="cb-admin-section-title">Kritik olaylar</div>
+                        <p class="cb-admin-section-description mb-0">Correlation, command, approval ve incident ref alanlari ile olaylar arasindaki zinciri bir bakista gorun.</p>
+                    </div>
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+                    {
+                        Label = $"{Model.Count} row",
+                        Tone = Model.Count > 0 ? "healthy" : "warning",
+                        IconText = "IC"
+                    })
+                </div>
+
+                <div class="table-responsive cb-admin-table-wrap">
+                    <table class="table table-borderless cb-admin-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>Reference</th>
+                                <th>Severity</th>
+                                <th>Status</th>
+                                <th>Title</th>
+                                <th>Trace</th>
+                                <th>Events</th>
+                                <th>UpdatedAtUtc</th>
+                                <th>Aksiyon</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @if (Model.Count == 0)
+                            {
+                                <tr>
+                                    <td colspan="8" class="text-muted">Incident kaydi yok.</td>
+                                </tr>
+                            }
+                            else
+                            {
+                                foreach (var incident in Model)
+                                {
+                                    var severityTone = incident.Severity switch
+                                    {
+                                        IncidentSeverity.Critical => "critical",
+                                        IncidentSeverity.Warning => "warning",
+                                        _ => "info"
+                                    };
+                                    var statusTone = incident.Status switch
+                                    {
+                                        IncidentStatus.Resolved => "healthy",
+                                        IncidentStatus.PendingApproval or IncidentStatus.Open or IncidentStatus.Monitoring => "warning",
+                                        IncidentStatus.Rejected or IncidentStatus.Failed => "critical",
+                                        IncidentStatus.Expired => "warning",
+                                        _ => "info"
+                                    };
+                                    <tr>
+                                        <td>
+                                            <div><strong>@incident.IncidentReference</strong></div>
+                                            <small class="text-muted">CommandId=@(incident.CommandId ?? "-")</small>
+                                        </td>
+                                        <td>
+                                            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+                                            {
+                                                Label = incident.Severity.ToString(),
+                                                Tone = severityTone,
+                                                IconText = "SV"
+                                            })
+                                        </td>
+                                        <td>
+                                            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+                                            {
+                                                Label = incident.Status.ToString(),
+                                                Tone = statusTone,
+                                                IconText = "ST"
+                                            })
+                                        </td>
+                                        <td>
+                                            <div>@incident.Title</div>
+                                            <small class="text-muted">@incident.Summary</small>
+                                        </td>
+                                        <td>
+                                            @if (!string.IsNullOrWhiteSpace(incident.CorrelationId))
+                                            {
+                                                <a asp-area="Admin"
+                                                   asp-controller="Admin"
+                                                   asp-action="TraceDetail"
+                                                   asp-route-correlationId="@incident.CorrelationId"
+                                                   class="btn btn-xs btn-light-info font-weight-bold">Trace</a>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-muted">-</span>
+                                            }
+                                        </td>
+                                        <td>@incident.EventCount</td>
+                                        <td>@incident.UpdatedAtUtc.ToString("yyyy-MM-dd HH:mm") UTC</td>
+                                        <td>
+                                            <a asp-area="Admin"
+                                               asp-controller="Admin"
+                                               asp-action="IncidentDetail"
+                                               asp-route-incidentReference="@incident.IncidentReference"
+                                               class="btn btn-xs btn-light-primary font-weight-bold">Detay</a>
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

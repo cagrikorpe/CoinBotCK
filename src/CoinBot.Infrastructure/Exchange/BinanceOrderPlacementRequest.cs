@@ -11,10 +11,15 @@ public sealed record BinanceOrderPlacementRequest(
     decimal Price,
     string ClientOrderId,
     string ApiKey,
-    string ApiSecret)
+    string ApiSecret,
+    string? CommandId = null,
+    string? CorrelationId = null,
+    string? ExecutionAttemptId = null,
+    Guid? ExecutionOrderId = null,
+    string? UserId = null)
 {
     public override string ToString()
     {
-        return $"{nameof(BinanceOrderPlacementRequest)} {{ ExchangeAccountId = {ExchangeAccountId}, Symbol = {Symbol}, Side = {Side}, OrderType = {OrderType}, Quantity = {Quantity}, Price = {Price}, ClientOrderId = {ClientOrderId}, ApiKey = ***REDACTED***, ApiSecret = ***REDACTED*** }}";
+        return $"{nameof(BinanceOrderPlacementRequest)} {{ ExchangeAccountId = {ExchangeAccountId}, Symbol = {Symbol}, Side = {Side}, OrderType = {OrderType}, Quantity = {Quantity}, Price = {Price}, ClientOrderId = {ClientOrderId}, CommandId = {CommandId ?? "missing"}, CorrelationId = {CorrelationId ?? "missing"}, ExecutionAttemptId = {ExecutionAttemptId ?? "missing"}, ExecutionOrderId = {ExecutionOrderId?.ToString() ?? "missing"}, UserId = {UserId ?? "missing"}, ApiKey = ***REDACTED***, ApiSecret = ***REDACTED*** }}";
     }
 }

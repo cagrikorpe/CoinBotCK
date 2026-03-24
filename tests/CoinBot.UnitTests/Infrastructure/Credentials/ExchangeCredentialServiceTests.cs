@@ -1,6 +1,8 @@
 using System.Text.Json;
+using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.ExchangeCredentials;
 using CoinBot.Application.Abstractions.DataScope;
+using CoinBot.Infrastructure.Administration;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Auditing;
@@ -33,6 +35,7 @@ public sealed class ExchangeCredentialServiceTests
                 "corr-store-001"));
 
         var exchangeAccount = await harness.DbContext.ExchangeAccounts.SingleAsync(entity => entity.Id == exchangeAccountId);
+        var mirroredCredential = await harness.DbContext.ApiCredentials.SingleAsync(entity => entity.ExchangeAccountId == exchangeAccountId);
         var auditLog = await harness.DbContext.AuditLogs.SingleAsync();
 
         Assert.Equal(ExchangeCredentialStatus.PendingValidation, state.Status);
@@ -41,6 +44,8 @@ public sealed class ExchangeCredentialServiceTests
         Assert.DoesNotContain("api-key-001", exchangeAccount.ApiKeyCiphertext!, StringComparison.Ordinal);
         Assert.DoesNotContain("api-secret-001", exchangeAccount.ApiSecretCiphertext!, StringComparison.Ordinal);
         Assert.NotNull(exchangeAccount.CredentialFingerprint);
+        Assert.Equal(exchangeAccount.CredentialFingerprint, mirroredCredential.CredentialFingerprint);
+        Assert.Equal("Pending", mirroredCredential.ValidationStatus);
         Assert.Equal("credential-v1", exchangeAccount.CredentialKeyVersion);
         Assert.Equal(ExchangeCredentialStatus.PendingValidation, exchangeAccount.CredentialStatus);
         Assert.Equal("user-01", auditLog.Actor);
@@ -138,6 +143,7 @@ public sealed class ExchangeCredentialServiceTests
                 "corr-exec-003"));
 
         var exchangeAccount = await harness.DbContext.ExchangeAccounts.SingleAsync(entity => entity.Id == exchangeAccountId);
+        var validationRecord = await harness.DbContext.ApiCredentialValidations.SingleAsync(entity => entity.ExchangeAccountId == exchangeAccountId);
         var auditLogs = await harness.DbContext.AuditLogs
             .OrderBy(entity => entity.CreatedDate)
             .ToListAsync();
@@ -147,6 +153,7 @@ public sealed class ExchangeCredentialServiceTests
         Assert.Equal("api-secret-003", accessResult.ApiSecret);
         Assert.Equal(ExchangeCredentialStatus.Active, accessResult.State.Status);
         Assert.NotNull(exchangeAccount.CredentialLastAccessedAtUtc);
+        Assert.Equal("Valid", validationRecord.ValidationStatus);
         Assert.Equal("Validated", auditLogs[1].Outcome);
         Assert.Equal("corr-exec-003", auditLogs[^1].CorrelationId);
         Assert.Equal("Allowed", auditLogs[^1].Outcome);
@@ -350,7 +357,14 @@ public sealed class ExchangeCredentialServiceTests
         var auditLogService = new AuditLogService(dbContext, new CorrelationContextAccessor());
         var keyResolver = new CredentialKeyResolver(configuration, securityOptions);
         var credentialCipher = new Aes256CredentialCipher(keyResolver);
-        var service = new ExchangeCredentialService(dbContext, credentialCipher, auditLogService, securityOptions, timeProvider);
+        var apiCredentialValidationService = new ApiCredentialValidationService(dbContext, timeProvider);
+        var service = new ExchangeCredentialService(
+            dbContext,
+            credentialCipher,
+            apiCredentialValidationService,
+            auditLogService,
+            securityOptions,
+            timeProvider);
 
         return new TestHarness(dbContext, service, timeProvider, environmentVariableName, previousEnvironmentValue);
     }

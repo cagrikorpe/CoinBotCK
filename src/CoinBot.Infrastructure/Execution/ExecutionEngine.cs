@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.DemoPortfolio;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Domain.Entities;
@@ -16,6 +17,8 @@ public sealed class ExecutionEngine(
     ApplicationDbContext dbContext,
     IExecutionGate executionGate,
     ITradingModeResolver tradingModeResolver,
+    ITraceService traceService,
+    IUserExecutionOverrideGuard userExecutionOverrideGuard,
     ICorrelationContextAccessor correlationContextAccessor,
     IDemoPortfolioAccountingService demoPortfolioAccountingService,
     DemoFillSimulator demoFillSimulator,
@@ -40,7 +43,10 @@ public sealed class ExecutionEngine(
         ArgumentNullException.ThrowIfNull(command);
 
         var normalizedCommand = NormalizeCommand(command);
-        var rootCorrelationId = ResolveRootCorrelationId(normalizedCommand.CorrelationId);
+        var decisionTrace = string.IsNullOrWhiteSpace(normalizedCommand.CorrelationId)
+            ? await traceService.GetDecisionTraceByStrategySignalIdAsync(normalizedCommand.StrategySignalId, cancellationToken)
+            : null;
+        var rootCorrelationId = ResolveRootCorrelationId(normalizedCommand.CorrelationId, decisionTrace?.CorrelationId);
         var idempotencyKey = ResolveIdempotencyKey(normalizedCommand);
         var existingOrderId = await dbContext.ExecutionOrders
             .IgnoreQueryFilters()
@@ -128,7 +134,11 @@ public sealed class ExecutionEngine(
                     Action: "TradeExecution.Dispatch",
                     Target: $"ExecutionOrder/{order.Id}",
                     Environment: requestedEnvironment,
-                    Context: BuildGateContext(normalizedCommand.Context, order.Id, idempotencyKey),
+                    Context: BuildGateContext(
+                        normalizedCommand.Context,
+                        order.Id,
+                        idempotencyKey,
+                        normalizedCommand.AdministrativeOverride ? normalizedCommand.AdministrativeOverrideReason : null),
                     CorrelationId: rootCorrelationId,
                     UserId: normalizedCommand.OwnerUserId,
                     BotId: normalizedCommand.BotId,
@@ -151,6 +161,48 @@ public sealed class ExecutionEngine(
                 $"Dispatch started via {executor.Kind}.",
                 lastTransition.CorrelationId,
                 cancellationToken);
+
+            if (!normalizedCommand.AdministrativeOverride)
+            {
+                var overrideEvaluation = await userExecutionOverrideGuard.EvaluateAsync(
+                    new UserExecutionOverrideEvaluationRequest(
+                        normalizedCommand.OwnerUserId,
+                        normalizedCommand.Symbol,
+                        requestedEnvironment,
+                        normalizedCommand.Side,
+                        normalizedCommand.Quantity,
+                        normalizedCommand.Price,
+                        normalizedCommand.BotId,
+                        normalizedCommand.StrategyKey),
+                    cancellationToken);
+
+                if (overrideEvaluation.IsBlocked)
+                {
+                    order.FailureCode = overrideEvaluation.BlockCode;
+                    order.FailureDetail = Truncate(overrideEvaluation.Message, 512);
+
+                    await PersistTransitionAsync(
+                        order,
+                        transitions,
+                        ExecutionOrderState.Rejected,
+                        "UserExecutionOverrideBlocked",
+                        Truncate(overrideEvaluation.Message, 512),
+                        lastTransition.CorrelationId,
+                        cancellationToken);
+
+                    logger.LogWarning(
+                        "Execution engine rejected order {ExecutionOrderId} because of user execution override {BlockCode}.",
+                        order.Id,
+                        overrideEvaluation.BlockCode);
+
+                    await UpdateBotOpenOrderCountAsync(order.BotId, cancellationToken);
+                    await dbContext.SaveChangesAsync(cancellationToken);
+
+                    return new ExecutionDispatchResult(
+                        await GetSnapshotAsync(order.Id, cancellationToken),
+                        IsDuplicate: false);
+                }
+            }
 
             var dispatchResult = await executor.DispatchAsync(order, normalizedCommand, cancellationToken);
             order.ExternalOrderId = NormalizeOptional(dispatchResult.ExternalOrderId);
@@ -603,13 +655,20 @@ public sealed class ExecutionEngine(
         return resolution.EffectiveMode;
     }
 
-    private string ResolveRootCorrelationId(string? correlationId)
+    private string ResolveRootCorrelationId(string? correlationId, string? fallbackCorrelationId = null)
     {
         var normalizedCorrelationId = NormalizeOptional(correlationId);
 
         if (!string.IsNullOrWhiteSpace(normalizedCorrelationId))
         {
             return normalizedCorrelationId;
+        }
+
+        var normalizedFallbackCorrelationId = NormalizeOptional(fallbackCorrelationId);
+
+        if (!string.IsNullOrWhiteSpace(normalizedFallbackCorrelationId))
+        {
+            return normalizedFallbackCorrelationId;
         }
 
         var scopedCorrelationId = correlationContextAccessor.Current?.CorrelationId;
@@ -640,9 +699,11 @@ public sealed class ExecutionEngine(
             ParentCorrelationId = NormalizeOptional(command.ParentCorrelationId),
             Context = NormalizeOptional(command.Context),
             StopLossPrice = ValidateOptionalPositive(command.StopLossPrice, nameof(command.StopLossPrice)),
-            TakeProfitPrice = ValidateOptionalPositive(command.TakeProfitPrice, nameof(command.TakeProfitPrice))
+            TakeProfitPrice = ValidateOptionalPositive(command.TakeProfitPrice, nameof(command.TakeProfitPrice)),
+            AdministrativeOverrideReason = NormalizeOptional(command.AdministrativeOverrideReason)
         };
 
+        ValidateAdministrativeOverride(normalizedCommand);
         ValidateProtectiveTargets(normalizedCommand);
         return normalizedCommand;
     }
@@ -685,7 +746,7 @@ public sealed class ExecutionEngine(
         return $"exec_{Convert.ToHexStringLower(hash)[..48]}";
     }
 
-    private static string BuildGateContext(string? requestContext, Guid orderId, string idempotencyKey)
+    private static string BuildGateContext(string? requestContext, Guid orderId, string idempotencyKey, string? administrativeOverrideReason = null)
     {
         var contextParts = new List<string>();
 
@@ -697,7 +758,31 @@ public sealed class ExecutionEngine(
         contextParts.Add($"ExecutionOrderId={orderId}");
         contextParts.Add($"IdempotencyKey={ShortHash(idempotencyKey)}");
 
+        if (!string.IsNullOrWhiteSpace(administrativeOverrideReason))
+        {
+            contextParts.Add($"AdministrativeOverride={administrativeOverrideReason}");
+        }
+
         return string.Join(" | ", contextParts);
+    }
+
+    private static void ValidateAdministrativeOverride(ExecutionCommand command)
+    {
+        if (!command.AdministrativeOverride)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(command.AdministrativeOverrideReason))
+        {
+            throw new InvalidOperationException("Administrative override requires a reason.");
+        }
+
+        if (!command.Actor.StartsWith("admin:", StringComparison.OrdinalIgnoreCase) &&
+            !command.Actor.StartsWith("system:", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Administrative override can only be used by administrative actors.");
+        }
     }
 
     private static string CreateTransitionCorrelationId()

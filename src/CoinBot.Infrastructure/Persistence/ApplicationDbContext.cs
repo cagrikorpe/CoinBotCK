@@ -23,6 +23,20 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         hasIsolationBypass = dataScopeContext.HasIsolationBypass;
     }
 
+    public DbSet<AdminAuditLog> AdminAuditLogs => Set<AdminAuditLog>();
+
+    public DbSet<AdminCommandRegistryEntry> AdminCommandRegistryEntries => Set<AdminCommandRegistryEntry>();
+
+    public DbSet<ApiCredential> ApiCredentials => Set<ApiCredential>();
+
+    public DbSet<ApiCredentialValidation> ApiCredentialValidations => Set<ApiCredentialValidation>();
+
+    public DbSet<ApprovalAction> ApprovalActions => Set<ApprovalAction>();
+
+    public DbSet<ApprovalQueue> ApprovalQueues => Set<ApprovalQueue>();
+
+    public DbSet<AutonomyReviewQueueEntry> AutonomyReviewQueueEntries => Set<AutonomyReviewQueueEntry>();
+
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
     public DbSet<BackgroundJobLock> BackgroundJobLocks => Set<BackgroundJobLock>();
@@ -30,6 +44,10 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
     public DbSet<BackgroundJobState> BackgroundJobStates => Set<BackgroundJobState>();
 
     public DbSet<DegradedModeState> DegradedModeStates => Set<DegradedModeState>();
+
+    public DbSet<DependencyCircuitBreakerState> DependencyCircuitBreakerStates => Set<DependencyCircuitBreakerState>();
+
+    public DbSet<DecisionTrace> DecisionTraces => Set<DecisionTrace>();
 
     public DbSet<DemoSession> DemoSessions => Set<DemoSession>();
 
@@ -45,6 +63,8 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
     public DbSet<ExecutionOrderTransition> ExecutionOrderTransitions => Set<ExecutionOrderTransition>();
 
+    public DbSet<ExecutionTrace> ExecutionTraces => Set<ExecutionTrace>();
+
     public DbSet<ExchangeAccount> ExchangeAccounts => Set<ExchangeAccount>();
 
     public DbSet<ExchangeAccountSyncState> ExchangeAccountSyncStates => Set<ExchangeAccountSyncState>();
@@ -53,7 +73,21 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
     public DbSet<ExchangePosition> ExchangePositions => Set<ExchangePosition>();
 
+    public DbSet<HealthSnapshot> HealthSnapshots => Set<HealthSnapshot>();
+
     public DbSet<GlobalExecutionSwitch> GlobalExecutionSwitches => Set<GlobalExecutionSwitch>();
+
+    public DbSet<GlobalSystemState> GlobalSystemStates => Set<GlobalSystemState>();
+
+    public DbSet<Incident> Incidents => Set<Incident>();
+
+    public DbSet<IncidentEvent> IncidentEvents => Set<IncidentEvent>();
+
+    public DbSet<SystemStateHistory> SystemStateHistories => Set<SystemStateHistory>();
+
+    public DbSet<RiskPolicy> RiskPolicies => Set<RiskPolicy>();
+
+    public DbSet<RiskPolicyVersion> RiskPolicyVersions => Set<RiskPolicyVersion>();
 
     public DbSet<HistoricalMarketCandle> HistoricalMarketCandles => Set<HistoricalMarketCandle>();
 
@@ -73,8 +107,13 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
     public DbSet<TradingStrategyVersion> TradingStrategyVersions => Set<TradingStrategyVersion>();
 
+    public DbSet<WorkerHeartbeat> WorkerHeartbeats => Set<WorkerHeartbeat>();
+
+    public DbSet<UserExecutionOverride> UserExecutionOverrides => Set<UserExecutionOverride>();
+
     public override int SaveChanges()
     {
+        ApplyAppendOnlyRules();
         ApplyOwnershipRules();
         ApplyAuditRules();
         return base.SaveChanges();
@@ -82,6 +121,7 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
+        ApplyAppendOnlyRules();
         ApplyOwnershipRules();
         ApplyAuditRules();
         return base.SaveChangesAsync(cancellationToken);
@@ -92,10 +132,19 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         base.OnModelCreating(builder);
 
         ConfigureApplicationUsers(builder.Entity<ApplicationUser>());
+        ConfigureAdminAuditLogs(builder.Entity<AdminAuditLog>());
+        ConfigureAdminCommandRegistryEntries(builder.Entity<AdminCommandRegistryEntry>());
+        ConfigureApiCredentials(builder.Entity<ApiCredential>());
+        ConfigureApiCredentialValidations(builder.Entity<ApiCredentialValidation>());
+        ConfigureApprovalActions(builder.Entity<ApprovalAction>());
+        ConfigureApprovalQueues(builder.Entity<ApprovalQueue>());
+        ConfigureAutonomyReviewQueueEntries(builder.Entity<AutonomyReviewQueueEntry>());
         ConfigureAuditLogs(builder.Entity<AuditLog>());
         ConfigureBackgroundJobLocks(builder.Entity<BackgroundJobLock>());
         ConfigureBackgroundJobStates(builder.Entity<BackgroundJobState>());
         ConfigureDegradedModeStates(builder.Entity<DegradedModeState>());
+        ConfigureDependencyCircuitBreakerStates(builder.Entity<DependencyCircuitBreakerState>());
+        ConfigureDecisionTraces(builder.Entity<DecisionTrace>());
         ConfigureDemoSessions(builder.Entity<DemoSession>());
         ConfigureDemoLedgerEntries(builder.Entity<DemoLedgerEntry>());
         ConfigureDemoLedgerTransactions(builder.Entity<DemoLedgerTransaction>());
@@ -103,20 +152,30 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         ConfigureDemoWallets(builder.Entity<DemoWallet>());
         ConfigureExecutionOrders(builder.Entity<ExecutionOrder>());
         ConfigureExecutionOrderTransitions(builder.Entity<ExecutionOrderTransition>());
+        ConfigureExecutionTraces(builder.Entity<ExecutionTrace>());
         ConfigureExchangeAccounts(builder.Entity<ExchangeAccount>());
         ConfigureExchangeAccountSyncStates(builder.Entity<ExchangeAccountSyncState>());
         ConfigureExchangeBalances(builder.Entity<ExchangeBalance>());
         ConfigureExchangePositions(builder.Entity<ExchangePosition>());
+        ConfigureHealthSnapshots(builder.Entity<HealthSnapshot>());
+        ConfigureIncidentEvents(builder.Entity<IncidentEvent>());
+        ConfigureIncidents(builder.Entity<Incident>());
         ConfigureGlobalExecutionSwitches(builder.Entity<GlobalExecutionSwitch>());
+        ConfigureGlobalSystemStates(builder.Entity<GlobalSystemState>());
+        ConfigureSystemStateHistories(builder.Entity<SystemStateHistory>());
         ConfigureHistoricalMarketCandles(builder.Entity<HistoricalMarketCandle>());
         ConfigureMfaEmailOtpChallenges(builder.Entity<MfaEmailOtpChallenge>());
         ConfigureMfaRecoveryCodes(builder.Entity<MfaRecoveryCode>());
+        ConfigureRiskPolicies(builder.Entity<RiskPolicy>());
+        ConfigureRiskPolicyVersions(builder.Entity<RiskPolicyVersion>());
         ConfigureRiskProfiles(builder.Entity<RiskProfile>());
         ConfigureTradingBots(builder.Entity<TradingBot>());
         ConfigureTradingStrategies(builder.Entity<TradingStrategy>());
         ConfigureTradingStrategySignals(builder.Entity<TradingStrategySignal>());
         ConfigureTradingStrategySignalVetoes(builder.Entity<TradingStrategySignalVeto>());
         ConfigureTradingStrategyVersions(builder.Entity<TradingStrategyVersion>());
+        ConfigureWorkerHeartbeats(builder.Entity<WorkerHeartbeat>());
+        ConfigureUserExecutionOverrides(builder.Entity<UserExecutionOverride>());
     }
 
     private string? CurrentUserId => currentUserId;
@@ -137,6 +196,378 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
         builder.Property(user => user.TradingModeApprovalReference)
             .HasMaxLength(128);
+    }
+
+    private static void ConfigureAdminAuditLogs(EntityTypeBuilder<AdminAuditLog> builder)
+    {
+        builder.ToTable("AdminAuditLogs");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.ActorUserId)
+            .HasMaxLength(450)
+            .IsRequired();
+
+        builder.Property(entity => entity.ActionType)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.TargetType)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.TargetId)
+            .HasMaxLength(256);
+
+        builder.Property(entity => entity.OldValueSummary)
+            .HasMaxLength(2048);
+
+        builder.Property(entity => entity.NewValueSummary)
+            .HasMaxLength(2048);
+
+        builder.Property(entity => entity.Reason)
+            .HasMaxLength(512)
+            .IsRequired();
+
+        builder.Property(entity => entity.IpAddress)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.UserAgent)
+            .HasMaxLength(256);
+
+        builder.Property(entity => entity.CorrelationId)
+            .HasMaxLength(128);
+
+        builder.HasIndex(entity => new { entity.TargetType, entity.CreatedAtUtc });
+        builder.HasIndex(entity => entity.CorrelationId);
+    }
+
+    private static void ConfigureAdminCommandRegistryEntries(EntityTypeBuilder<AdminCommandRegistryEntry> builder)
+    {
+        builder.ToTable("AdminCommandRegistry");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.CommandId)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.CommandType)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.ActorUserId)
+            .HasMaxLength(450)
+            .IsRequired();
+
+        builder.Property(entity => entity.ScopeKey)
+            .HasMaxLength(256)
+            .IsRequired();
+
+        builder.Property(entity => entity.PayloadHash)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.Status)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.ResultSummary)
+            .HasMaxLength(512);
+
+        builder.Property(entity => entity.CorrelationId)
+            .HasMaxLength(128);
+
+        builder.HasIndex(entity => entity.CommandId)
+            .IsUnique();
+
+        builder.HasIndex(entity => new { entity.CommandType, entity.ScopeKey, entity.StartedAtUtc });
+    }
+
+    private static void ConfigureApiCredentials(EntityTypeBuilder<ApiCredential> builder)
+    {
+        builder.ToTable("ApiCredentials");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.ExchangeAccountId)
+            .IsRequired();
+
+        builder.Property(entity => entity.OwnerUserId)
+            .HasMaxLength(450)
+            .IsRequired();
+
+        builder.Property(entity => entity.ApiKeyCiphertext)
+            .HasMaxLength(4096)
+            .IsRequired();
+
+        builder.Property(entity => entity.ApiSecretCiphertext)
+            .HasMaxLength(4096)
+            .IsRequired();
+
+        builder.Property(entity => entity.CredentialFingerprint)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.KeyVersion)
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.ValidationStatus)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.PermissionSummary)
+            .HasMaxLength(256);
+
+        builder.Property(entity => entity.LastFailureReason)
+            .HasMaxLength(512);
+
+        builder.HasIndex(entity => entity.ExchangeAccountId)
+            .IsUnique();
+
+        builder.HasIndex(entity => new { entity.ValidationStatus, entity.LastValidatedAtUtc });
+    }
+
+    private static void ConfigureApiCredentialValidations(EntityTypeBuilder<ApiCredentialValidation> builder)
+    {
+        builder.ToTable("ApiCredentialValidations");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.OwnerUserId)
+            .HasMaxLength(450)
+            .IsRequired();
+
+        builder.Property(entity => entity.EnvironmentScope)
+            .HasMaxLength(32);
+
+        builder.Property(entity => entity.ValidationStatus)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.PermissionSummary)
+            .HasMaxLength(256)
+            .IsRequired();
+
+        builder.Property(entity => entity.FailureReason)
+            .HasMaxLength(512);
+
+        builder.Property(entity => entity.CorrelationId)
+            .HasMaxLength(128);
+
+        builder.HasIndex(entity => new { entity.ExchangeAccountId, entity.ValidatedAtUtc });
+        builder.HasIndex(entity => new { entity.ApiCredentialId, entity.ValidatedAtUtc });
+
+        builder.HasOne<ApiCredential>()
+            .WithMany()
+            .HasForeignKey(entity => entity.ApiCredentialId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureApprovalQueues(EntityTypeBuilder<ApprovalQueue> builder)
+    {
+        builder.ToTable("ApprovalQueues");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.ApprovalReference)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.OperationType)
+            .HasConversion<string>()
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.Status)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.Severity)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.Title)
+            .HasMaxLength(256)
+            .IsRequired();
+
+        builder.Property(entity => entity.Summary)
+            .HasMaxLength(512)
+            .IsRequired();
+
+        builder.Property(entity => entity.TargetType)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.TargetId)
+            .HasMaxLength(256);
+
+        builder.Property(entity => entity.RequestedByUserId)
+            .HasMaxLength(450)
+            .IsRequired();
+
+        builder.Property(entity => entity.RequiredApprovals)
+            .IsRequired();
+
+        builder.Property(entity => entity.ApprovalCount)
+            .IsRequired();
+
+        builder.Property(entity => entity.ExpiresAtUtc)
+            .IsRequired();
+
+        builder.Property(entity => entity.Reason)
+            .HasMaxLength(512)
+            .IsRequired();
+
+        builder.Property(entity => entity.PayloadJson)
+            .HasMaxLength(8192)
+            .IsRequired();
+
+        builder.Property(entity => entity.PayloadHash)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.CorrelationId)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.CommandId)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.DecisionId)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.ExecutionAttemptId)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.IncidentReference)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.SystemStateHistoryReference)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.DependencyCircuitBreakerStateReference)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.RejectReason)
+            .HasMaxLength(512);
+
+        builder.Property(entity => entity.ExecutionSummary)
+            .HasMaxLength(2048);
+
+        builder.Property(entity => entity.LastActorUserId)
+            .HasMaxLength(450);
+
+        builder.HasIndex(entity => entity.ApprovalReference)
+            .IsUnique();
+
+        builder.HasIndex(entity => new { entity.Status, entity.ExpiresAtUtc });
+        builder.HasIndex(entity => entity.CorrelationId);
+        builder.HasIndex(entity => entity.CommandId);
+        builder.HasIndex(entity => entity.IncidentReference);
+        builder.HasIndex(entity => entity.SystemStateHistoryReference);
+    }
+
+    private static void ConfigureApprovalActions(EntityTypeBuilder<ApprovalAction> builder)
+    {
+        builder.ToTable("ApprovalActions");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.ApprovalQueueId)
+            .IsRequired();
+
+        builder.Property(entity => entity.ApprovalReference)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.ActionType)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.Sequence)
+            .IsRequired();
+
+        builder.Property(entity => entity.ActorUserId)
+            .HasMaxLength(450)
+            .IsRequired();
+
+        builder.Property(entity => entity.Reason)
+            .HasMaxLength(512);
+
+        builder.Property(entity => entity.CorrelationId)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.CommandId)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.DecisionId)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.ExecutionAttemptId)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.IncidentReference)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.SystemStateHistoryReference)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.DependencyCircuitBreakerStateReference)
+            .HasMaxLength(128);
+
+        builder.HasIndex(entity => new { entity.ApprovalQueueId, entity.Sequence })
+            .IsUnique();
+
+        builder.HasIndex(entity => entity.ApprovalReference);
+
+        builder.HasOne<ApprovalQueue>()
+            .WithMany()
+            .HasForeignKey(entity => entity.ApprovalQueueId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureAutonomyReviewQueueEntries(EntityTypeBuilder<AutonomyReviewQueueEntry> builder)
+    {
+        builder.ToTable("AutonomyReviewQueue");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.ApprovalId)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.ScopeKey)
+            .HasMaxLength(256)
+            .IsRequired();
+
+        builder.Property(entity => entity.SuggestedAction)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.ConfidenceScore)
+            .HasPrecision(5, 4);
+
+        builder.Property(entity => entity.AffectedUsersCsv)
+            .HasMaxLength(2048)
+            .IsRequired();
+
+        builder.Property(entity => entity.AffectedSymbolsCsv)
+            .HasMaxLength(2048)
+            .IsRequired();
+
+        builder.Property(entity => entity.Reason)
+            .HasMaxLength(512)
+            .IsRequired();
+
+        builder.Property(entity => entity.Status)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.CorrelationId)
+            .HasMaxLength(128);
+
+        builder.HasIndex(entity => entity.ApprovalId)
+            .IsUnique();
+
+        builder.HasIndex(entity => new { entity.Status, entity.ExpiresAtUtc });
     }
 
     private static void ConfigureAuditLogs(EntityTypeBuilder<AuditLog> builder)
@@ -241,6 +672,224 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             .HasConversion<string>()
             .HasMaxLength(64)
             .IsRequired();
+    }
+
+    private static void ConfigureDependencyCircuitBreakerStates(EntityTypeBuilder<DependencyCircuitBreakerState> builder)
+    {
+        builder.ToTable("DependencyCircuitBreakerStates");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.BreakerKind)
+            .HasConversion<string>()
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.StateCode)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.LastErrorCode)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.LastErrorMessage)
+            .HasMaxLength(512);
+
+        builder.Property(entity => entity.CorrelationId)
+            .HasMaxLength(128);
+
+        builder.HasIndex(entity => entity.BreakerKind)
+            .IsUnique();
+    }
+
+    private static void ConfigureDecisionTraces(EntityTypeBuilder<DecisionTrace> builder)
+    {
+        builder.ToTable("DecisionTraces");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.CorrelationId)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.DecisionId)
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.UserId)
+            .HasMaxLength(450)
+            .IsRequired();
+
+        builder.Property(entity => entity.Symbol)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.Timeframe)
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.StrategyVersion)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.SignalType)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.DecisionOutcome)
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.VetoReasonCode)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.SnapshotJson)
+            .HasMaxLength(8192)
+            .IsRequired();
+
+        builder.HasIndex(entity => entity.CorrelationId);
+        builder.HasIndex(entity => entity.DecisionId)
+            .IsUnique();
+        builder.HasIndex(entity => new { entity.UserId, entity.CreatedAtUtc });
+        builder.HasIndex(entity => entity.StrategySignalId);
+    }
+
+    private static void ConfigureIncidentEvents(EntityTypeBuilder<IncidentEvent> builder)
+    {
+        builder.ToTable("IncidentEvents");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.IncidentId)
+            .IsRequired();
+
+        builder.Property(entity => entity.IncidentReference)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.EventType)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.Message)
+            .HasMaxLength(1024)
+            .IsRequired();
+
+        builder.Property(entity => entity.ActorUserId)
+            .HasMaxLength(450);
+
+        builder.Property(entity => entity.CorrelationId)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.CommandId)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.DecisionId)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.ExecutionAttemptId)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.ApprovalReference)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.SystemStateHistoryReference)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.DependencyCircuitBreakerStateReference)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.PayloadJson)
+            .HasMaxLength(8192);
+
+        builder.HasIndex(entity => new { entity.IncidentId, entity.CreatedDate });
+        builder.HasIndex(entity => entity.IncidentReference);
+        builder.HasIndex(entity => entity.CorrelationId);
+
+        builder.HasOne<Incident>()
+            .WithMany()
+            .HasForeignKey(entity => entity.IncidentId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureIncidents(EntityTypeBuilder<Incident> builder)
+    {
+        builder.ToTable("Incidents");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.IncidentReference)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.Severity)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.Status)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.OperationType)
+            .HasConversion<string>()
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.Title)
+            .HasMaxLength(256)
+            .IsRequired();
+
+        builder.Property(entity => entity.Summary)
+            .HasMaxLength(512)
+            .IsRequired();
+
+        builder.Property(entity => entity.Detail)
+            .HasMaxLength(8192)
+            .IsRequired();
+
+        builder.Property(entity => entity.TargetType)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.TargetId)
+            .HasMaxLength(256);
+
+        builder.Property(entity => entity.CorrelationId)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.CommandId)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.DecisionId)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.ExecutionAttemptId)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.ApprovalReference)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.SystemStateHistoryReference)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.DependencyCircuitBreakerStateReference)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.CreatedByUserId)
+            .HasMaxLength(450);
+
+        builder.Property(entity => entity.ResolvedByUserId)
+            .HasMaxLength(450);
+
+        builder.Property(entity => entity.ResolvedSummary)
+            .HasMaxLength(512);
+
+        builder.HasIndex(entity => entity.IncidentReference)
+            .IsUnique();
+
+        builder.HasIndex(entity => new { entity.Status, entity.CreatedDate });
+        builder.HasIndex(entity => entity.CorrelationId);
+        builder.HasIndex(entity => entity.CommandId);
+        builder.HasIndex(entity => entity.ApprovalReference);
+        builder.HasIndex(entity => new { entity.TargetType, entity.TargetId });
     }
 
     private void ConfigureDemoLedgerEntries(EntityTypeBuilder<DemoLedgerEntry> builder)
@@ -702,6 +1351,52 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             .OnDelete(DeleteBehavior.Restrict);
     }
 
+    private static void ConfigureExecutionTraces(EntityTypeBuilder<ExecutionTrace> builder)
+    {
+        builder.ToTable("ExecutionTraces");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.CorrelationId)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.ExecutionAttemptId)
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.CommandId)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.UserId)
+            .HasMaxLength(450)
+            .IsRequired();
+
+        builder.Property(entity => entity.Provider)
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.Endpoint)
+            .HasMaxLength(256)
+            .IsRequired();
+
+        builder.Property(entity => entity.RequestMasked)
+            .HasMaxLength(4096);
+
+        builder.Property(entity => entity.ResponseMasked)
+            .HasMaxLength(4096);
+
+        builder.Property(entity => entity.ExchangeCode)
+            .HasMaxLength(64);
+
+        builder.HasIndex(entity => entity.CorrelationId);
+        builder.HasIndex(entity => entity.ExecutionAttemptId)
+            .IsUnique();
+        builder.HasIndex(entity => new { entity.CommandId, entity.CreatedAtUtc });
+        builder.HasIndex(entity => new { entity.UserId, entity.CreatedAtUtc });
+        builder.HasIndex(entity => entity.ExecutionOrderId);
+    }
+
     private void ConfigureExchangeAccounts(EntityTypeBuilder<ExchangeAccount> builder)
     {
         ConfigureUserOwnedEntity(builder, "ExchangeAccounts");
@@ -854,6 +1549,120 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
         builder.Property(entity => entity.LiveModeApprovalReference)
             .HasMaxLength(128);
+    }
+
+    private static void ConfigureGlobalSystemStates(EntityTypeBuilder<GlobalSystemState> builder)
+    {
+        builder.ToTable("GlobalSystemStates");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.State)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.ReasonCode)
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.Message)
+            .HasMaxLength(512);
+
+        builder.Property(entity => entity.Source)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.CorrelationId)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.UpdatedByUserId)
+            .HasMaxLength(450);
+
+        builder.Property(entity => entity.UpdatedFromIp)
+            .HasMaxLength(128);
+
+        builder.HasIndex(entity => entity.State);
+    }
+
+    private static void ConfigureSystemStateHistories(EntityTypeBuilder<SystemStateHistory> builder)
+    {
+        builder.ToTable("SystemStateHistories");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.GlobalSystemStateId)
+            .IsRequired();
+
+        builder.Property(entity => entity.HistoryReference)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.Version)
+            .IsRequired();
+
+        builder.Property(entity => entity.State)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.ReasonCode)
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.Message)
+            .HasMaxLength(512);
+
+        builder.Property(entity => entity.Source)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.CorrelationId)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.CommandId)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.ApprovalReference)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.IncidentReference)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.DependencyCircuitBreakerStateReference)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.BreakerKind)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.BreakerStateCode)
+            .HasMaxLength(32);
+
+        builder.Property(entity => entity.UpdatedByUserId)
+            .HasMaxLength(450);
+
+        builder.Property(entity => entity.UpdatedFromIp)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.PreviousState)
+            .HasMaxLength(32);
+
+        builder.Property(entity => entity.ChangeSummary)
+            .HasMaxLength(512);
+
+        builder.HasIndex(entity => entity.HistoryReference)
+            .IsUnique();
+
+        builder.HasIndex(entity => new { entity.GlobalSystemStateId, entity.Version })
+            .IsUnique();
+
+        builder.HasIndex(entity => entity.CorrelationId);
+        builder.HasIndex(entity => entity.CommandId);
+        builder.HasIndex(entity => entity.ApprovalReference);
+        builder.HasIndex(entity => entity.IncidentReference);
+
+        builder.HasOne<GlobalSystemState>()
+            .WithMany()
+            .HasForeignKey(entity => entity.GlobalSystemStateId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigureHistoricalMarketCandles(EntityTypeBuilder<HistoricalMarketCandle> builder)
@@ -1187,6 +1996,176 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             .OnDelete(DeleteBehavior.Restrict);
     }
 
+    private static void ConfigureHealthSnapshots(EntityTypeBuilder<HealthSnapshot> builder)
+    {
+        builder.ToTable("HealthSnapshots");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.SnapshotKey)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.SentinelName)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.DisplayName)
+            .HasMaxLength(256)
+            .IsRequired();
+
+        builder.Property(entity => entity.HealthState)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.FreshnessTier)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.CircuitBreakerState)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.Detail)
+            .HasMaxLength(2048);
+
+        builder.HasIndex(entity => entity.SnapshotKey)
+            .IsUnique();
+
+        builder.HasIndex(entity => new { entity.SentinelName, entity.LastUpdatedAtUtc });
+    }
+
+    private static void ConfigureRiskPolicies(EntityTypeBuilder<RiskPolicy> builder)
+    {
+        builder.ToTable("RiskPolicies");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.PolicyKey)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.PolicyJson)
+            .IsRequired();
+
+        builder.Property(entity => entity.PolicyHash)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.LastUpdatedByUserId)
+            .HasMaxLength(450);
+
+        builder.Property(entity => entity.LastChangeSummary)
+            .HasMaxLength(512);
+
+        builder.HasIndex(entity => entity.PolicyKey)
+            .IsUnique();
+    }
+
+    private static void ConfigureRiskPolicyVersions(EntityTypeBuilder<RiskPolicyVersion> builder)
+    {
+        builder.ToTable("RiskPolicyVersions");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.CreatedByUserId)
+            .HasMaxLength(450)
+            .IsRequired();
+
+        builder.Property(entity => entity.Source)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.CorrelationId)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.ChangeSummary)
+            .HasMaxLength(512)
+            .IsRequired();
+
+        builder.Property(entity => entity.PolicyJson)
+            .IsRequired();
+
+        builder.Property(entity => entity.DiffJson);
+
+        builder.HasIndex(entity => new { entity.RiskPolicyId, entity.Version })
+            .IsUnique();
+
+        builder.HasIndex(entity => new { entity.RiskPolicyId, entity.CreatedAtUtc });
+
+        builder.HasOne<RiskPolicy>()
+            .WithMany()
+            .HasForeignKey(entity => entity.RiskPolicyId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureWorkerHeartbeats(EntityTypeBuilder<WorkerHeartbeat> builder)
+    {
+        builder.ToTable("WorkerHeartbeats");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.WorkerKey)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.WorkerName)
+            .HasMaxLength(256)
+            .IsRequired();
+
+        builder.Property(entity => entity.HealthState)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.FreshnessTier)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.CircuitBreakerState)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.LastErrorCode)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.LastErrorMessage)
+            .HasMaxLength(1024);
+
+        builder.Property(entity => entity.Detail)
+            .HasMaxLength(2048);
+
+        builder.HasIndex(entity => entity.WorkerKey)
+            .IsUnique();
+
+        builder.HasIndex(entity => new { entity.WorkerName, entity.LastUpdatedAtUtc });
+    }
+
+    private static void ConfigureUserExecutionOverrides(EntityTypeBuilder<UserExecutionOverride> builder)
+    {
+        builder.ToTable("UserExecutionOverrides");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.UserId)
+            .HasMaxLength(450)
+            .IsRequired();
+
+        builder.Property(entity => entity.AllowedSymbolsCsv)
+            .HasMaxLength(512);
+
+        builder.Property(entity => entity.DeniedSymbolsCsv)
+            .HasMaxLength(512);
+
+        builder.Property(entity => entity.LeverageCap)
+            .HasPrecision(18, 8);
+
+        builder.Property(entity => entity.MaxOrderSize)
+            .HasPrecision(38, 18);
+
+        builder.HasIndex(entity => entity.UserId)
+            .IsUnique();
+    }
+
     private void ConfigureUserOwnedEntity<TEntity>(EntityTypeBuilder<TEntity> builder, string tableName)
         where TEntity : UserOwnedEntity
     {
@@ -1262,6 +2241,17 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         if (string.IsNullOrWhiteSpace(CurrentUserId) || !string.Equals(ownerUserId, CurrentUserId, StringComparison.Ordinal))
         {
             throw new InvalidOperationException($"User scope mismatch detected for entity '{entityName}'.");
+        }
+    }
+
+    private void ApplyAppendOnlyRules()
+    {
+        foreach (var entry in ChangeTracker.Entries<AdminAuditLog>())
+        {
+            if (entry.State is EntityState.Modified or EntityState.Deleted)
+            {
+                throw new InvalidOperationException("AdminAuditLog is append-only and cannot be updated or deleted.");
+            }
         }
     }
 

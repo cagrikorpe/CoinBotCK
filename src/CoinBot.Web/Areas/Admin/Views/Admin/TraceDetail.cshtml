@@ -1,0 +1,95 @@
+@model CoinBot.Application.Abstractions.Administration.AdminTraceDetailSnapshot
+@using CoinBot.Web.ViewModels.Admin
+@{
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Trace Detail",
+        Title = "Correlation Trace Detail",
+        Description = "Decision ve execution kayitlarini ayni correlation anahtari altinda maskeli ve sorgulanabilir olarak sunar.",
+        StatusBadge = new AdminBadgeViewModel { Label = "Detail", Tone = "info", IconText = "DT" },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = $"{Model.DecisionTraces.Count} decision", Tone = "healthy", IconText = "DC" },
+            new AdminBadgeViewModel { Label = $"{Model.ExecutionTraces.Count} execution", Tone = "warning", IconText = "EX" }
+        },
+        SecondaryActionText = "Trace listesi",
+        SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin", query = Model.CorrelationId })
+    };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = "info",
+                    Title = "Correlation root",
+                    Message = Model.CorrelationId,
+                    Meta = "Masked request/response only"
+                })
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-6">
+        <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-table-card">
+            <div class="card-body">
+                <div class="cb-admin-table-header">
+                    <div>
+                        <div class="cb-admin-section-kicker">Decision Trace</div>
+                        <div class="cb-admin-section-title">Decision listesi</div>
+                    </div>
+                </div>
+
+                @if (Model.DecisionTraces.Count == 0)
+                {
+                    <p class="text-muted mb-0">Decision trace kaydi yok.</p>
+                }
+                else
+                {
+                    foreach (var decision in Model.DecisionTraces)
+                    {
+                        <div class="mb-5 pb-5 border-bottom">
+                            <div><strong>@decision.DecisionId</strong> · @decision.DecisionOutcome · @decision.Symbol / @decision.Timeframe</div>
+                            <div class="text-muted">@decision.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC · Risk=@(decision.RiskScore?.ToString() ?? "-") @(string.IsNullOrWhiteSpace(decision.VetoReasonCode) ? string.Empty : $"· Veto={decision.VetoReasonCode}")</div>
+                            <pre class="mt-3 mb-0"><code>@decision.SnapshotJson</code></pre>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-6">
+        <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-table-card">
+            <div class="card-body">
+                <div class="cb-admin-table-header">
+                    <div>
+                        <div class="cb-admin-section-kicker">Execution Trace</div>
+                        <div class="cb-admin-section-title">Execution listesi</div>
+                    </div>
+                </div>
+
+                @if (Model.ExecutionTraces.Count == 0)
+                {
+                    <p class="text-muted mb-0">Execution trace kaydi yok.</p>
+                }
+                else
+                {
+                    foreach (var execution in Model.ExecutionTraces)
+                    {
+                        <div class="mb-5 pb-5 border-bottom">
+                            <div><strong>@execution.ExecutionAttemptId</strong> · @execution.Provider · @execution.Endpoint</div>
+                            <div class="text-muted">@execution.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC · Status=@(execution.HttpStatusCode?.ToString() ?? "-") · ExchangeCode=@(execution.ExchangeCode ?? "-") · Latency=@(execution.LatencyMs?.ToString() ?? "-") ms</div>
+                            <pre class="mt-3"><code>@(execution.RequestMasked ?? "{}")</code></pre>
+                            <pre class="mb-0"><code>@(execution.ResponseMasked ?? "{}")</code></pre>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+</div>

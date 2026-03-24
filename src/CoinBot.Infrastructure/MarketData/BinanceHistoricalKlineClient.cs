@@ -1,6 +1,9 @@
 using System.Globalization;
 using System.Text.Json;
+using CoinBot.Application.Abstractions.Autonomy;
 using CoinBot.Application.Abstractions.MarketData;
+using CoinBot.Domain.Enums;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace CoinBot.Infrastructure.MarketData;
@@ -8,8 +11,11 @@ namespace CoinBot.Infrastructure.MarketData;
 public sealed class BinanceHistoricalKlineClient(
     HttpClient httpClient,
     TimeProvider timeProvider,
-    ILogger<BinanceHistoricalKlineClient> logger) : IBinanceHistoricalKlineClient
+    ILogger<BinanceHistoricalKlineClient> logger,
+    IServiceScopeFactory? serviceScopeFactory = null) : IBinanceHistoricalKlineClient
 {
+    private const string BreakerActor = "system:rest-market-data";
+
     public async Task<IReadOnlyCollection<MarketCandleSnapshot>> GetClosedCandlesAsync(
         string symbol,
         string interval,
@@ -34,38 +40,107 @@ public sealed class BinanceHistoricalKlineClient(
         var requestUri =
             $"api/v3/klines?symbol={Uri.EscapeDataString(normalizedSymbol)}&interval={Uri.EscapeDataString(normalizedInterval)}&startTime={ToUnixMilliseconds(normalizedStartOpenTimeUtc)}&endTime={ToUnixMilliseconds(requestEndTimeUtc)}&limit={limit}";
 
-        using var response = await httpClient.GetAsync(requestUri, cancellationToken);
-        response.EnsureSuccessStatusCode();
-
-        await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var document = await JsonDocument.ParseAsync(responseStream, cancellationToken: cancellationToken);
-        var receivedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
-        var snapshots = new List<MarketCandleSnapshot>();
-
-        if (document.RootElement.ValueKind != JsonValueKind.Array)
+        try
         {
-            return Array.Empty<MarketCandleSnapshot>();
-        }
+            using var response = await httpClient.GetAsync(requestUri, cancellationToken);
+            response.EnsureSuccessStatusCode();
 
-        foreach (var item in document.RootElement.EnumerateArray())
-        {
-            var snapshot = TryMapSnapshot(item, normalizedSymbol, normalizedInterval, receivedAtUtc);
+            await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var document = await JsonDocument.ParseAsync(responseStream, cancellationToken: cancellationToken);
+            var receivedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+            var snapshots = new List<MarketCandleSnapshot>();
 
-            if (snapshot is not null)
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
             {
-                snapshots.Add(snapshot);
+                return Array.Empty<MarketCandleSnapshot>();
             }
+
+            foreach (var item in document.RootElement.EnumerateArray())
+            {
+                var snapshot = TryMapSnapshot(item, normalizedSymbol, normalizedInterval, receivedAtUtc);
+
+                if (snapshot is not null)
+                {
+                    snapshots.Add(snapshot);
+                }
+            }
+
+            await RecordBreakerSuccessAsync(cancellationToken);
+
+            logger.LogInformation(
+                "Binance historical kline backfill returned {CandleCount} closed candles for {Symbol} {Interval}.",
+                snapshots.Count,
+                normalizedSymbol,
+                normalizedInterval);
+
+            return snapshots
+                .OrderBy(snapshot => snapshot.OpenTimeUtc)
+                .ToArray();
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            await RecordBreakerFailureAsync(exception, cancellationToken);
+
+            throw;
+        }
+    }
+
+    private static string? Truncate(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
         }
 
-        logger.LogInformation(
-            "Binance historical kline backfill returned {CandleCount} closed candles for {Symbol} {Interval}.",
-            snapshots.Count,
-            normalizedSymbol,
-            normalizedInterval);
+        return value.Length <= maxLength
+            ? value
+            : value[..maxLength];
+    }
 
-        return snapshots
-            .OrderBy(snapshot => snapshot.OpenTimeUtc)
-            .ToArray();
+    private async Task RecordBreakerSuccessAsync(CancellationToken cancellationToken)
+    {
+        if (serviceScopeFactory is null)
+        {
+            return;
+        }
+
+        using var scope = serviceScopeFactory.CreateScope();
+        var dependencyCircuitBreakerStateManager = scope.ServiceProvider.GetService<IDependencyCircuitBreakerStateManager>();
+
+        if (dependencyCircuitBreakerStateManager is null)
+        {
+            return;
+        }
+
+        await dependencyCircuitBreakerStateManager.RecordSuccessAsync(
+            new DependencyCircuitBreakerSuccessRequest(
+                DependencyCircuitBreakerKind.RestMarketData,
+                BreakerActor),
+            cancellationToken);
+    }
+
+    private async Task RecordBreakerFailureAsync(Exception exception, CancellationToken cancellationToken)
+    {
+        if (serviceScopeFactory is null)
+        {
+            return;
+        }
+
+        using var scope = serviceScopeFactory.CreateScope();
+        var dependencyCircuitBreakerStateManager = scope.ServiceProvider.GetService<IDependencyCircuitBreakerStateManager>();
+
+        if (dependencyCircuitBreakerStateManager is null)
+        {
+            return;
+        }
+
+        await dependencyCircuitBreakerStateManager.RecordFailureAsync(
+            new DependencyCircuitBreakerFailureRequest(
+                DependencyCircuitBreakerKind.RestMarketData,
+                BreakerActor,
+                exception.GetType().Name,
+                Truncate(exception.Message, 512) ?? "Historical kline request failed."),
+            cancellationToken);
     }
 
     private static MarketCandleSnapshot? TryMapSnapshot(

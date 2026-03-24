@@ -8,6 +8,10 @@ public interface IBinancePrivateRestClient
         BinanceOrderPlacementRequest request,
         CancellationToken cancellationToken = default);
 
+    Task<BinanceOrderStatusSnapshot> CancelOrderAsync(
+        BinanceOrderCancelRequest request,
+        CancellationToken cancellationToken = default);
+
     Task<BinanceOrderStatusSnapshot> GetOrderAsync(
         BinanceOrderQueryRequest request,
         CancellationToken cancellationToken = default);

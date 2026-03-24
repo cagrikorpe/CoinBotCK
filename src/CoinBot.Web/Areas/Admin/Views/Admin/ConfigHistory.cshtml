@@ -1,0 +1,164 @@
+@{
+    var snapshot = (GlobalPolicySnapshot)ViewData["AdminGlobalPolicySnapshot"]!;
+    var canEditGlobalPolicy = ViewData["AdminCanEditGlobalPolicy"] is bool canEditValue && canEditValue;
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Governance / Config History",
+        Title = "Config History",
+        Description = "Global policy version history, diff ozeti ve rollback zinciri bu ekranda izlenir.",
+        StatusBadge = new AdminBadgeViewModel { Label = $"v{snapshot.CurrentVersion}", Tone = "info", IconText = "CF" },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = snapshot.Policy.AutonomyPolicy.Mode.ToString(), Tone = "warning", IconText = "AU" },
+            new AdminBadgeViewModel { Label = $"{snapshot.Policy.SymbolRestrictions.Count} restriction", Tone = "healthy", IconText = "SR" },
+            new AdminBadgeViewModel { Label = $"{snapshot.Versions.Count} version", Tone = "info", IconText = "VR" }
+        },
+        SecondaryActionText = "System state history",
+        SecondaryActionHref = Url.Action("SystemStateHistory", "Admin", new { area = "Admin" }),
+        PrimaryActionText = "Approvals",
+        PrimaryActionHref = Url.Action("Approvals", "Admin", new { area = "Admin" })
+    };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = "info",
+                    Title = "Policy version read model",
+                    Message = "RiskPolicyVersions uzerinden gelen history burada listelenir. Her version change summary, diff ve source ile gorunur.",
+                    Meta = snapshot.LastChangeSummary ?? "No change summary"
+                })
+
+                @if (!canEditGlobalPolicy)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Read-only policy history</div>
+                            <div class="cb-admin-info-strip-text">Bu rolde policy degistirme kapali, ama version history gorulebilir.</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Read-only</span>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-4">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-table-header mb-3">
+                    <div>
+                        <div class="cb-admin-section-kicker">Current config</div>
+                        <div class="cb-admin-section-title">Live policy snapshot</div>
+                    </div>
+                </div>
+
+                <div class="table-responsive cb-admin-table-wrap mb-0">
+                    <table class="table table-borderless cb-admin-table mb-0">
+                        <tbody>
+                            <tr>
+                                <th>PolicyKey</th>
+                                <td>@snapshot.Policy.PolicyKey</td>
+                            </tr>
+                            <tr>
+                                <th>CurrentVersion</th>
+                                <td>@snapshot.CurrentVersion</td>
+                            </tr>
+                            <tr>
+                                <th>LastUpdatedAtUtc</th>
+                                <td>@snapshot.LastUpdatedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC</td>
+                            </tr>
+                            <tr>
+                                <th>LastUpdatedByUserId</th>
+                                <td>@(snapshot.LastUpdatedByUserId ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>LastChangeSummary</th>
+                                <td>@(snapshot.LastChangeSummary ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>AutonomyMode</th>
+                                <td>@snapshot.Policy.AutonomyPolicy.Mode</td>
+                            </tr>
+                            <tr>
+                                <th>ManualApprovalForLive</th>
+                                <td>@snapshot.Policy.AutonomyPolicy.RequireManualApprovalForLive</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-8">
+        <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-table-card">
+            <div class="card-body">
+                <div class="cb-admin-table-header">
+                    <div>
+                        <div class="cb-admin-section-kicker">Version history</div>
+                        <div class="cb-admin-section-title">Config history listesi</div>
+                        <p class="cb-admin-section-description mb-0">Version, diff count, source ve rollback izi ile birlikte son policy commitleri gorunur.</p>
+                    </div>
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+                    {
+                        Label = $"{snapshot.Versions.Count} version",
+                        Tone = snapshot.Versions.Count > 0 ? "healthy" : "warning",
+                        IconText = "VR"
+                    })
+                </div>
+
+                <div class="table-responsive cb-admin-table-wrap">
+                    <table class="table table-borderless cb-admin-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>Version</th>
+                                <th>CreatedAtUtc</th>
+                                <th>CreatedBy</th>
+                                <th>ChangeSummary</th>
+                                <th>Diff</th>
+                                <th>Source</th>
+                                <th>Rollback</th>
+                                <th>Aksiyon</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @if (snapshot.Versions.Count == 0)
+                            {
+                                <tr>
+                                    <td colspan="8" class="text-muted">Config history bulunamadi.</td>
+                                </tr>
+                            }
+                            else
+                            {
+                                foreach (var version in snapshot.Versions)
+                                {
+                                    <tr>
+                                        <td>@version.Version</td>
+                                        <td>@version.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm") UTC</td>
+                                        <td>@version.CreatedByUserId</td>
+                                        <td>@version.ChangeSummary</td>
+                                        <td>@version.DiffEntries.Count</td>
+                                        <td>@(version.Source ?? "-")</td>
+                                        <td>@(version.RolledBackFromVersion?.ToString() ?? "-")</td>
+                                        <td>
+                                            <a asp-area="Admin"
+                                               asp-controller="Admin"
+                                               asp-action="ConfigHistoryDetail"
+                                               asp-route-version="@version.Version"
+                                               class="btn btn-xs btn-light-primary font-weight-bold">Detay</a>
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

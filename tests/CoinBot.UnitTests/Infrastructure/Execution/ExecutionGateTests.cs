@@ -1,3 +1,4 @@
+using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Alerts;
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.DemoPortfolio;
@@ -5,6 +6,7 @@ using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Administration;
 using CoinBot.Infrastructure.Auditing;
 using CoinBot.Infrastructure.DemoPortfolio;
 using CoinBot.Infrastructure.Execution;
@@ -256,6 +258,46 @@ public sealed class ExecutionGateTests
     }
 
     [Fact]
+    public async Task EnsureExecutionAllowedAsync_BlocksWhenGlobalSystemStateIsMaintenance()
+    {
+        await using var harness = CreateHarness();
+        await PrimeFreshMarketDataAsync(harness, "corr-gs-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-gs",
+            context: "Execution open",
+            correlationId: "corr-gs-2");
+        await harness.GlobalSystemStateService.SetStateAsync(
+            new GlobalSystemStateSetRequest(
+                GlobalSystemStateKind.Maintenance,
+                "PLANNED_MAINTENANCE",
+                "Controlled window",
+                "AdminPortal.Settings",
+                "corr-gs-3",
+                IsManualOverride: true,
+                ExpiresAtUtc: null,
+                UpdatedByUserId: "super-admin",
+                UpdatedFromIp: "ip:masked"));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            harness.ExecutionGate.EnsureExecutionAllowedAsync(
+                new ExecutionGateRequest(
+                    Actor: "worker-gs",
+                    Action: "TradeExecution.Dispatch",
+                    Target: "bot-gs",
+                    Environment: ExecutionEnvironment.Demo,
+                    Context: "Dispatch during maintenance",
+                    CorrelationId: "corr-gs-4")));
+
+        var auditLog = await harness.DbContext.AuditLogs
+            .SingleAsync(entity => entity.Action == "TradeExecution.Dispatch");
+
+        Assert.Contains("Maintenance", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("Blocked:GlobalSystemMaintenance", auditLog.Outcome);
+        Assert.Contains("GlobalSystemReason=PLANNED_MAINTENANCE", auditLog.Context, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task EnsureExecutionAllowedAsync_BlocksWhenMarketDataIsStale()
     {
         await using var harness = CreateHarness();
@@ -331,6 +373,7 @@ public sealed class ExecutionGateTests
         var dbContext = new ApplicationDbContext(options, new TestDataScopeContext());
         var auditLogService = new AuditLogService(dbContext, new CorrelationContextAccessor());
         var switchService = new GlobalExecutionSwitchService(dbContext, auditLogService);
+        var globalSystemStateService = new GlobalSystemStateService(dbContext, auditLogService, timeProvider);
         var circuitBreaker = new DataLatencyCircuitBreaker(
             dbContext,
             new FakeAlertService(),
@@ -357,13 +400,14 @@ public sealed class ExecutionGateTests
             NullLogger<DemoSessionService>.Instance);
         var executionGate = new ExecutionGate(
             demoSessionService,
+            globalSystemStateService,
             switchService,
             circuitBreaker,
             tradingModeService,
             auditLogService,
             NullLogger<ExecutionGate>.Instance);
 
-        return new TestHarness(dbContext, switchService, circuitBreaker, executionGate, timeProvider);
+        return new TestHarness(dbContext, switchService, globalSystemStateService, circuitBreaker, executionGate, timeProvider);
     }
 
     private static async Task PrimeFreshMarketDataAsync(TestHarness harness, string correlationId)
@@ -449,6 +493,7 @@ public sealed class ExecutionGateTests
     private sealed class TestHarness(
         ApplicationDbContext dbContext,
         IGlobalExecutionSwitchService switchService,
+        IGlobalSystemStateService globalSystemStateService,
         IDataLatencyCircuitBreaker circuitBreaker,
         IExecutionGate executionGate,
         AdjustableTimeProvider timeProvider) : IAsyncDisposable
@@ -456,6 +501,8 @@ public sealed class ExecutionGateTests
         public ApplicationDbContext DbContext { get; } = dbContext;
 
         public IGlobalExecutionSwitchService SwitchService { get; } = switchService;
+
+        public IGlobalSystemStateService GlobalSystemStateService { get; } = globalSystemStateService;
 
         public IDataLatencyCircuitBreaker CircuitBreaker { get; } = circuitBreaker;
 

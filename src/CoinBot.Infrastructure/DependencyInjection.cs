@@ -1,4 +1,6 @@
 using CoinBot.Application.Abstractions.Alerts;
+using CoinBot.Application.Abstractions.Administration;
+using CoinBot.Application.Abstractions.Autonomy;
 using CoinBot.Application.Abstractions.Auditing;
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.DemoPortfolio;
@@ -8,10 +10,14 @@ using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Application.Abstractions.Mfa;
+using CoinBot.Application.Abstractions.Monitoring;
+using CoinBot.Application.Abstractions.Policy;
 using CoinBot.Application.Abstractions.Risk;
 using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Contracts.Common;
 using CoinBot.Infrastructure.Alerts;
+using CoinBot.Infrastructure.Administration;
+using CoinBot.Infrastructure.Autonomy;
 using CoinBot.Infrastructure.Auditing;
 using CoinBot.Infrastructure.Credentials;
 using CoinBot.Infrastructure.DemoPortfolio;
@@ -20,7 +26,9 @@ using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Identity;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Mfa;
+using CoinBot.Infrastructure.Monitoring;
 using CoinBot.Infrastructure.Observability;
+using CoinBot.Infrastructure.Policy;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.Infrastructure.Risk;
 using CoinBot.Infrastructure.Strategies;
@@ -88,6 +96,15 @@ public static class DependencyInjection
         services.AddOptions<DemoFillSimulatorOptions>()
             .Bind(configuration.GetSection("ExecutionSafety:DemoFillSimulator"))
             .ValidateDataAnnotations();
+        services.AddOptions<AutonomyOptions>()
+            .Bind(configuration.GetSection("Autonomy"))
+            .ValidateDataAnnotations();
+        services.AddOptions<DependencyCircuitBreakerOptions>()
+            .Bind(configuration.GetSection("Autonomy:DependencyCircuitBreaker"))
+            .ValidateDataAnnotations()
+            .Validate(
+                options => options.CooldownSeconds >= 5,
+                "CooldownSeconds must be at least 5 seconds.");
         services.AddOptions<DemoSessionOptions>()
             .Bind(configuration.GetSection("ExecutionSafety:DemoSession"))
             .ValidateDataAnnotations();
@@ -129,10 +146,30 @@ public static class DependencyInjection
                 "MacdSlowPeriod must be greater than MacdFastPeriod.");
         services.AddScoped<IDataScopeContextAccessor, DataScopeContextAccessor>();
         services.AddScoped<IDataScopeContext>(serviceProvider => serviceProvider.GetRequiredService<IDataScopeContextAccessor>());
+        services.AddScoped<IAdminAuditLogService, AdminAuditLogService>();
+        services.AddScoped<IAdminCommandRegistry, AdminCommandRegistryService>();
+        services.AddScoped<IAutonomyIncidentHook, AutonomyIncidentHook>();
+        services.AddScoped<IAutonomyReviewQueueService, AutonomyReviewQueueService>();
+        services.AddScoped<IDependencyCircuitBreakerStateManager, DependencyCircuitBreakerStateManager>();
+        services.AddScoped<ISelfHealingExecutor, SelfHealingExecutor>();
+        services.AddScoped<IAutonomyService, AutonomyService>();
+        services.AddScoped<IWorkerRetryCoordinator, WorkerRetryCoordinator>();
+        services.AddScoped<ICacheRebuildCoordinator, MarketDataCacheRebuildCoordinator>();
+        services.AddScoped<ICrisisEscalationAuthorizationService, CrisisEscalationAuthorizationService>();
+        services.AddScoped<ICrisisIncidentHook, CrisisIncidentHook>();
+        services.AddScoped<IApprovalWorkflowService, ApprovalWorkflowService>();
+        services.AddScoped<IAdminGovernanceReadModelService, AdminGovernanceReadModelService>();
+        services.AddScoped<ICrisisEscalationService, CrisisEscalationService>();
+        services.AddScoped<IAdminShellReadModelService, AdminShellReadModelService>();
+        services.AddScoped<IAdminMonitoringReadModelService, AdminMonitoringReadModelService>();
+        services.AddScoped<IApiCredentialValidationService, ApiCredentialValidationService>();
         services.AddScoped<IAuditLogService, AuditLogService>();
         services.AddScoped<IExchangeCredentialService, ExchangeCredentialService>();
         services.AddScoped<IAlertService, AlertingService>();
         services.AddScoped<IGlobalExecutionSwitchService, GlobalExecutionSwitchService>();
+        services.AddScoped<IGlobalSystemStateService, GlobalSystemStateService>();
+        services.AddScoped<IGlobalPolicyEngine, GlobalPolicyEngine>();
+        services.AddScoped<ITraceService, TraceService>();
         services.AddScoped<IDataLatencyCircuitBreaker, DataLatencyCircuitBreaker>();
         services.AddScoped<DemoWalletValuationService>();
         services.AddScoped<IDemoPortfolioAccountingService, DemoPortfolioAccountingService>();
@@ -146,6 +183,7 @@ public static class DependencyInjection
         services.AddScoped<BinanceExecutor>();
         services.AddScoped<IExecutionGate, ExecutionGate>();
         services.AddScoped<IExecutionEngine, ExecutionEngine>();
+        services.AddScoped<IUserExecutionOverrideGuard, UserExecutionOverrideGuard>();
         services.AddScoped<IRiskPolicyEvaluator, RiskPolicyEvaluator>();
         services.AddScoped<IStrategySignalService, StrategySignalService>();
         services.AddScoped<IStrategyVersionService, StrategyVersionService>();
@@ -163,12 +201,15 @@ public static class DependencyInjection
         services.AddSingleton<MarketDataCachePolicyProvider>();
         services.AddSingleton<SharedSymbolRegistry>();
         services.AddSingleton<ISharedSymbolRegistry>(serviceProvider => serviceProvider.GetRequiredService<SharedSymbolRegistry>());
+        services.AddSingleton<IWebSocketReconnectCoordinator, WebSocketReconnectCoordinator>();
+        services.AddSingleton<ISignalRReconnectCoordinator, SignalRReconnectCoordinator>();
         services.AddSingleton<MarketPriceStreamHub>();
         services.AddSingleton<MarketDataService>();
         services.AddSingleton<IMarketDataService>(serviceProvider => serviceProvider.GetRequiredService<MarketDataService>());
         services.AddSingleton<IndicatorStreamHub>();
         services.AddSingleton<IndicatorDataService>();
         services.AddSingleton<IIndicatorDataService>(serviceProvider => serviceProvider.GetRequiredService<IndicatorDataService>());
+        services.AddSingleton<IMonitoringTelemetryCollector, MonitoringTelemetryCollector>();
         services.AddSingleton<ExchangeAccountSnapshotHub>();
         services.AddSingleton<CandleContinuityValidator>();
         services.AddSingleton<CandleDataQualityGuard>();
@@ -209,7 +250,9 @@ public static class DependencyInjection
         services.AddHostedService<ExchangePositionSyncWorker>();
         services.AddHostedService<ExchangeAppStateSyncWorker>();
         services.AddHostedService<ExecutionReconciliationWorker>();
+        services.AddHostedService<MonitoringSnapshotWorker>();
         services.AddHostedService<VirtualExecutionWatchdogWorker>();
+        services.AddHostedService<AutonomySelfHealingWorker>();
 
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseSqlServer(connectionString, sqlOptions =>
@@ -278,6 +321,8 @@ public static class DependencyInjection
                 policy.RequireAuthenticatedUser();
                 policy.RequireRole(
                     ApplicationRoles.SuperAdmin,
+                    ApplicationRoles.OpsAdmin,
+                    ApplicationRoles.SecurityAuditor,
                     ApplicationRoles.Admin,
                     ApplicationRoles.Support,
                     ApplicationRoles.Auditor);
@@ -287,28 +332,28 @@ public static class DependencyInjection
             options.AddPolicy(ApplicationPolicies.IdentityAdministration, policy =>
             {
                 policy.RequireAuthenticatedUser();
-                policy.RequireRole(ApplicationRoles.SuperAdmin, ApplicationRoles.Admin);
+                policy.RequireRole(ApplicationRoles.SuperAdmin, ApplicationRoles.OpsAdmin, ApplicationRoles.Admin);
                 policy.RequireClaim(ApplicationClaimTypes.Permission, ApplicationPermissions.IdentityAdministration);
             });
 
             options.AddPolicy(ApplicationPolicies.TradeOperations, policy =>
             {
                 policy.RequireAuthenticatedUser();
-                policy.RequireRole(ApplicationRoles.SuperAdmin, ApplicationRoles.Admin, ApplicationRoles.User);
+                policy.RequireRole(ApplicationRoles.SuperAdmin, ApplicationRoles.OpsAdmin, ApplicationRoles.Admin, ApplicationRoles.User);
                 policy.RequireClaim(ApplicationClaimTypes.Permission, ApplicationPermissions.TradeOperations);
             });
 
             options.AddPolicy(ApplicationPolicies.RiskManagement, policy =>
             {
                 policy.RequireAuthenticatedUser();
-                policy.RequireRole(ApplicationRoles.SuperAdmin, ApplicationRoles.Admin, ApplicationRoles.User);
+                policy.RequireRole(ApplicationRoles.SuperAdmin, ApplicationRoles.OpsAdmin, ApplicationRoles.Admin, ApplicationRoles.User);
                 policy.RequireClaim(ApplicationClaimTypes.Permission, ApplicationPermissions.RiskManagement);
             });
 
             options.AddPolicy(ApplicationPolicies.ExchangeManagement, policy =>
             {
                 policy.RequireAuthenticatedUser();
-                policy.RequireRole(ApplicationRoles.SuperAdmin, ApplicationRoles.Admin, ApplicationRoles.User);
+                policy.RequireRole(ApplicationRoles.SuperAdmin, ApplicationRoles.OpsAdmin, ApplicationRoles.Admin, ApplicationRoles.User);
                 policy.RequireClaim(ApplicationClaimTypes.Permission, ApplicationPermissions.ExchangeManagement);
             });
 
@@ -317,6 +362,8 @@ public static class DependencyInjection
                 policy.RequireAuthenticatedUser();
                 policy.RequireRole(
                     ApplicationRoles.SuperAdmin,
+                    ApplicationRoles.OpsAdmin,
+                    ApplicationRoles.SecurityAuditor,
                     ApplicationRoles.Admin,
                     ApplicationRoles.Support,
                     ApplicationRoles.Auditor);
@@ -326,7 +373,7 @@ public static class DependencyInjection
             options.AddPolicy(ApplicationPolicies.PlatformAdministration, policy =>
             {
                 policy.RequireAuthenticatedUser();
-                policy.RequireRole(ApplicationRoles.SuperAdmin, ApplicationRoles.Admin);
+                policy.RequireRole(ApplicationRoles.SuperAdmin);
                 policy.RequireClaim(ApplicationClaimTypes.Permission, ApplicationPermissions.PlatformAdministration);
             });
         });

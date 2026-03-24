@@ -1,6 +1,13 @@
+@using CoinBot.Application.Abstractions.Administration
+@inject IAdminShellReadModelService AdminShellReadModelService
 @{
     var pageTitle = ViewData["Title"]?.ToString() ?? "Super Admin";
     var pageDescription = ViewData["PageDescription"]?.ToString() ?? "Admin shell foundation hazır.";
+    var healthSnapshot = await AdminShellReadModelService.GetHealthSnapshotAsync();
+
+    ViewData["AdminShellHealthSnapshot"] = healthSnapshot;
+    ViewData["AdminEnvironment"] = healthSnapshot.EnvironmentBadge;
+    ViewData["AdminLastUpdatedAtUtc"] = healthSnapshot.LastUpdatedAtUtc;
 }
 <!DOCTYPE html>
 <html lang="tr">
@@ -47,6 +54,7 @@
                     <div class="d-flex flex-column-fluid">
                         <div class="container-fluid metronic-page-content cb-content-container cb-admin-content-container">
                             <div class="cb-admin-banner-stack">
+                                @await Html.PartialAsync("_AdminHealthStrip")
                                 @await Html.PartialAsync("Foundation/_AdminActivityBanner")
                                 @await Html.PartialAsync("Foundation/_AdminSessionWarnings")
                                 @await Html.PartialAsync("Foundation/_AdminGlobalStaleStrip")

@@ -1,40 +1,52 @@
+@{
+    var dashboard = ViewData["AdminMonitoringDashboardSnapshot"] as MonitoringDashboardSnapshot
+        ?? MonitoringDashboardSnapshot.Empty(DateTime.UtcNow);
+    var nowUtc = DateTime.UtcNow;
+    var snapshotAgeSeconds = Math.Max(0, (int)Math.Round((nowUtc - dashboard.LastRefreshedAtUtc).TotalSeconds, MidpointRounding.AwayFromZero));
+    var healthFreshCount = dashboard.HealthSnapshots.Count(snapshot => snapshot.FreshnessTier == MonitoringFreshnessTier.Hot);
+    var healthWarmCount = dashboard.HealthSnapshots.Count(snapshot => snapshot.FreshnessTier == MonitoringFreshnessTier.Warm);
+    var healthColdCount = dashboard.HealthSnapshots.Count(snapshot => snapshot.FreshnessTier == MonitoringFreshnessTier.Cold);
+    var healthStaleCount = dashboard.HealthSnapshots.Count(snapshot => snapshot.FreshnessTier == MonitoringFreshnessTier.Stale);
+    var workerStaleCount = dashboard.WorkerHeartbeats.Count(snapshot => snapshot.FreshnessTier == MonitoringFreshnessTier.Stale);
+}
+
 <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-freshness-card cb-admin-panel-card mb-0">
     <div class="card-body">
         <div class="cb-admin-panel-head">
             <div>
                 <div class="cb-admin-section-kicker">Freshness / Meta</div>
-                <div class="cb-admin-section-title">Heartbeat ve sync meta alanı</div>
+                <div class="cb-admin-section-title">Monitoring snapshot freshness</div>
             </div>
-            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Stale warning", Tone = "warning", IconText = "FS" })
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = dashboard.LastRefreshedAtUtc.ToUniversalTime().ToString("HH:mm:ss") + " UTC", Tone = "info", IconText = "SN" })
         </div>
 
         <div class="cb-admin-freshness-grid mt-6">
             <div class="cb-admin-freshness-item">
-                <span class="cb-admin-freshness-label">API probe</span>
+                <span class="cb-admin-freshness-label">Dashboard last refresh</span>
                 <div class="cb-admin-freshness-meta">
-                    <span class="cb-admin-freshness-time cb-mono">34 sn önce</span>
-                    @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Healthy", Tone = "healthy", IconText = "AP" })
+                    <span class="cb-admin-freshness-time cb-mono">@snapshotAgeSeconds sn önce</span>
+                    @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = snapshotAgeSeconds <= 10 ? "Hot" : snapshotAgeSeconds <= 60 ? "Warm" : "Cold", Tone = snapshotAgeSeconds <= 10 ? "healthy" : snapshotAgeSeconds <= 60 ? "warning" : "degraded", IconText = "FR" })
                 </div>
             </div>
             <div class="cb-admin-freshness-item">
-                <span class="cb-admin-freshness-label">Market data worker heartbeat</span>
+                <span class="cb-admin-freshness-label">Health snapshots</span>
                 <div class="cb-admin-freshness-meta">
-                    <span class="cb-admin-freshness-time cb-mono">04 dk önce</span>
-                    @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Stale", Tone = "warning", IconText = "MD" })
+                    <span class="cb-admin-freshness-time cb-mono">@dashboard.HealthSnapshots.Count</span>
+                    @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = $"{healthFreshCount} hot / {healthWarmCount} warm", Tone = "healthy", IconText = "HS" })
                 </div>
             </div>
             <div class="cb-admin-freshness-item">
-                <span class="cb-admin-freshness-label">AI scoring heartbeat</span>
+                <span class="cb-admin-freshness-label">Stale health items</span>
                 <div class="cb-admin-freshness-meta">
-                    <span class="cb-admin-freshness-time cb-mono">91 sn önce</span>
-                    @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Degraded", Tone = "degraded", IconText = "AI" })
+                    <span class="cb-admin-freshness-time cb-mono">@healthStaleCount</span>
+                    @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = healthStaleCount > 0 ? "Review" : "OK", Tone = healthStaleCount > 0 ? "warning" : "healthy", IconText = "ST" })
                 </div>
             </div>
             <div class="cb-admin-freshness-item">
-                <span class="cb-admin-freshness-label">Son global snapshot</span>
+                <span class="cb-admin-freshness-label">Worker heartbeats</span>
                 <div class="cb-admin-freshness-meta">
-                    <span class="cb-admin-freshness-time cb-mono">02 dk önce</span>
-                    @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Guarded", Tone = "info", IconText = "SN" })
+                    <span class="cb-admin-freshness-time cb-mono">@dashboard.WorkerHeartbeats.Count</span>
+                    @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = $"{workerStaleCount} stale", Tone = workerStaleCount > 0 ? "warning" : "healthy", IconText = "WK" })
                 </div>
             </div>
         </div>

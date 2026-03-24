@@ -1,20 +1,22 @@
+@model IReadOnlyCollection<CoinBot.Application.Abstractions.Administration.ApiCredentialAdminSummary>
+@using CoinBot.Web.ViewModels.Admin
 @{
     var headerModel = new AdminPageHeaderViewModel
     {
-        Eyebrow = "Connection Monitoring",
+        Eyebrow = "Credential Monitoring",
         Title = "Exchange Hesapları",
-        Description = "Platform genelindeki exchange bağlantılarını sağlık, permission, freshness ve risk bayraklarıyla tek yüzeyde izleyen Super Admin monitoring foundation ekranı.",
-        StatusBadge = new AdminBadgeViewModel { Label = "Exchange Ops", Tone = "info", IconText = "EX" },
+        Description = "Admin tarafında plaintext gostermeden masked fingerprint, permission summary ve son validation durumunu izler.",
+        StatusBadge = new AdminBadgeViewModel { Label = "Credential HQ", Tone = "info", IconText = "HQ" },
         MetaBadges = new[]
         {
-            new AdminBadgeViewModel { Label = "Paper / Live", Tone = "neutral", IconText = "PL" },
-            new AdminBadgeViewModel { Label = "Permission Aware", Tone = "warning", IconText = "PM" },
-            new AdminBadgeViewModel { Label = "No Secret View", Tone = "healthy", IconText = "SK" }
+            new AdminBadgeViewModel { Label = "No Plaintext", Tone = "healthy", IconText = "SK" },
+            new AdminBadgeViewModel { Label = "Validation", Tone = "warning", IconText = "VL" },
+            new AdminBadgeViewModel { Label = "Read Only", Tone = "neutral", IconText = "RO" }
         },
-        SecondaryActionText = "Kullanıcılara git",
-        SecondaryActionHref = Url.Action("Users", "Admin", new { area = "Admin" }),
-        PrimaryActionText = "Risk uyarı rehberi",
-        PrimaryActionHref = "#cb_admin_exchange_risk_modal"
+        SecondaryActionText = "Audit merkezi",
+        SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" }),
+        PrimaryActionText = "Kullanicilar",
+        PrimaryActionHref = Url.Action("Users", "Admin", new { area = "Admin" })
     };
 }
 
@@ -26,30 +28,16 @@
 
                 @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
                 {
-                    Tone = "warning",
-                    Title = "Exchange monitoring foundation",
-                    Message = "Gerçek Binance permission check, sync pipeline ve retry/reconnect mantığı bu fazda bağlı değildir. Ekran, stale bağlantı, permission mismatch ve withdrawal risk akışlarını UI seviyesinde hazırlar.",
-                    Meta = "UI-only monitoring"
+                    Tone = "info",
+                    Title = "Credential summary read-modeli",
+                    Message = "Admin yalniz masked fingerprint, permission summary, son validation zamani ve son hata nedenini gorur. Secret/plaintext UI'ya cikmaz.",
+                    Meta = $"{Model.Count} account"
                 })
-
-                <div class="mt-6">
-                    @await Html.PartialAsync("Foundation/_AdminExchangeSummaryMeta")
-                </div>
             </div>
         </div>
     </div>
 
-    <div class="col-xl-8">
-        @await Html.PartialAsync("Foundation/_AdminExchangeFilterBar")
-        @await Html.PartialAsync("Foundation/_AdminExchangeAccountsTable")
-    </div>
-
-    <div class="col-xl-4">
-        @await Html.PartialAsync("Foundation/_AdminExchangeRiskStrip")
-        @await Html.PartialAsync("Foundation/_AdminExchangeHelpCard")
-    </div>
-
     <div class="col-12">
-        @await Html.PartialAsync("Foundation/_AdminExchangeStatesShowcase")
+        @await Html.PartialAsync("Foundation/_AdminExchangeAccountsTable", Model)
     </div>
 </div>

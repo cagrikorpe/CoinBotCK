@@ -1,0 +1,605 @@
+using System.Diagnostics;
+using CoinBot.Application.Abstractions.DataScope;
+using CoinBot.Application.Abstractions.Execution;
+using CoinBot.Application.Abstractions.Monitoring;
+using CoinBot.Domain.Entities;
+using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+
+namespace CoinBot.Infrastructure.Monitoring;
+
+public sealed class MonitoringSnapshotWorker(
+    IServiceScopeFactory serviceScopeFactory,
+    IMonitoringTelemetryCollector telemetryCollector,
+    TimeProvider timeProvider,
+    ILogger<MonitoringSnapshotWorker> logger) : BackgroundService
+{
+    private static readonly TimeSpan WarmInterval = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan ColdInterval = TimeSpan.FromSeconds(60);
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        var nextWarmAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+        var nextColdAtUtc = nextWarmAtUtc;
+
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
+
+            try
+            {
+                if (nowUtc >= nextWarmAtUtc)
+                {
+                    await RunWarmCycleAsync(stoppingToken);
+                    nextWarmAtUtc = nowUtc.Add(WarmInterval);
+                }
+
+                if (nowUtc >= nextColdAtUtc)
+                {
+                    await RunColdCycleAsync(stoppingToken);
+                    nextColdAtUtc = nowUtc.Add(ColdInterval);
+                }
+
+                var nextDueUtc = nextWarmAtUtc < nextColdAtUtc ? nextWarmAtUtc : nextColdAtUtc;
+                var delay = nextDueUtc - timeProvider.GetUtcNow().UtcDateTime;
+
+                if (delay < TimeSpan.FromSeconds(1))
+                {
+                    delay = TimeSpan.FromSeconds(1);
+                }
+
+                await Task.Delay(delay, stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(exception, "Monitoring snapshot worker cycle failed.");
+                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+            }
+        }
+    }
+
+    internal Task RunWarmCycleAsync(CancellationToken cancellationToken = default)
+    {
+        return RunCycleAsync(includeWarmSnapshots: true, includeColdSnapshots: false, cancellationToken);
+    }
+
+    internal Task RunColdCycleAsync(CancellationToken cancellationToken = default)
+    {
+        return RunCycleAsync(includeWarmSnapshots: false, includeColdSnapshots: true, cancellationToken);
+    }
+
+    private async Task RunCycleAsync(
+        bool includeWarmSnapshots,
+        bool includeColdSnapshots,
+        CancellationToken cancellationToken)
+    {
+        var startedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+
+        using var scope = serviceScopeFactory.CreateScope();
+        using var systemScope = scope.ServiceProvider
+            .GetRequiredService<IDataScopeContextAccessor>()
+            .BeginScope(hasIsolationBypass: true);
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var circuitBreaker = scope.ServiceProvider.GetRequiredService<IDataLatencyCircuitBreaker>();
+
+        var telemetryBeforeDbProbe = telemetryCollector.CaptureSnapshot(startedAtUtc);
+        var dbLatency = await MeasureDatabaseLatencyAsync(dbContext, cancellationToken);
+        telemetryCollector.RecordDatabaseLatency(dbLatency, startedAtUtc);
+        telemetryCollector.RecordRedisLatency(null, startedAtUtc);
+        var telemetry = telemetryCollector.CaptureSnapshot(startedAtUtc);
+        var dataLatencySnapshot = await circuitBreaker.GetSnapshotAsync(cancellationToken: cancellationToken);
+
+        if (includeWarmSnapshots)
+        {
+            await UpsertMarketHealthSnapshotsAsync(
+                dbContext,
+                telemetry,
+                dataLatencySnapshot,
+                startedAtUtc,
+                cancellationToken);
+        }
+
+        if (includeColdSnapshots)
+        {
+            await UpsertDependencyHealthSnapshotAsync(
+                dbContext,
+                telemetry,
+                dataLatencySnapshot,
+                startedAtUtc,
+                cancellationToken);
+
+            await UpsertWorkerHeartbeatsAsync(
+                dbContext,
+                dataLatencySnapshot,
+                startedAtUtc,
+                cancellationToken);
+        }
+
+        logger.LogDebug(
+            "Monitoring snapshot worker cycle completed. Warm={Warm}, Cold={Cold}, BinancePingMs={BinancePingMs}, DbLatencyMs={DbLatencyMs}.",
+            includeWarmSnapshots,
+            includeColdSnapshots,
+            telemetryBeforeDbProbe.BinancePingMs?.ToString() ?? "n/a",
+            dbLatency.TotalMilliseconds.ToString("0"));
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task UpsertMarketHealthSnapshotsAsync(
+        ApplicationDbContext dbContext,
+        MonitoringTelemetrySnapshot telemetry,
+        DegradedModeSnapshot dataLatencySnapshot,
+        DateTime utcNow,
+        CancellationToken cancellationToken)
+    {
+        await UpsertHealthSnapshotAsync(
+            dbContext,
+            key: "market-watchdog",
+            sentinelName: "MarketWatchdog",
+            displayName: "Market Watchdog",
+            healthState: ResolveMarketWatchdogState(dataLatencySnapshot),
+            circuitBreakerState: MapCircuitBreakerState(dataLatencySnapshot),
+            telemetry: telemetry,
+            observedAtUtc: dataLatencySnapshot.LatestDataTimestampAtUtc ?? dataLatencySnapshot.LatestHeartbeatReceivedAtUtc ?? utcNow,
+            lastUpdatedAtUtc: utcNow,
+            workerLastHeartbeatAtUtc: dataLatencySnapshot.LatestHeartbeatReceivedAtUtc ?? utcNow,
+            consecutiveFailureCount: dataLatencySnapshot.ReasonCode == DegradedModeReasonCode.None ? 0 : 1,
+            detail: BuildMarketWatchdogDetail(dataLatencySnapshot),
+            cancellationToken);
+
+        await UpsertHealthSnapshotAsync(
+            dbContext,
+            key: "clock-drift-monitor",
+            sentinelName: "ClockDriftMonitor",
+            displayName: "Clock Drift Monitor",
+            healthState: ResolveClockDriftState(dataLatencySnapshot),
+            circuitBreakerState: MapCircuitBreakerState(dataLatencySnapshot),
+            telemetry: telemetry,
+            observedAtUtc: dataLatencySnapshot.LatestHeartbeatReceivedAtUtc ?? utcNow,
+            lastUpdatedAtUtc: utcNow,
+            workerLastHeartbeatAtUtc: dataLatencySnapshot.LatestHeartbeatReceivedAtUtc ?? utcNow,
+            consecutiveFailureCount: dataLatencySnapshot.ReasonCode == DegradedModeReasonCode.None ? 0 : 1,
+            detail: BuildClockDriftDetail(dataLatencySnapshot),
+            cancellationToken);
+
+        await UpsertHealthSnapshotAsync(
+            dbContext,
+            key: "market-data-drift-monitor",
+            sentinelName: "MarketDataDriftMonitor",
+            displayName: "Market Data Drift Monitor",
+            healthState: ResolveMarketDataDriftState(dataLatencySnapshot),
+            circuitBreakerState: MapCircuitBreakerState(dataLatencySnapshot),
+            telemetry: telemetry,
+            observedAtUtc: dataLatencySnapshot.LatestDataTimestampAtUtc ?? utcNow,
+            lastUpdatedAtUtc: utcNow,
+            workerLastHeartbeatAtUtc: dataLatencySnapshot.LatestDataTimestampAtUtc ?? dataLatencySnapshot.LatestHeartbeatReceivedAtUtc ?? utcNow,
+            consecutiveFailureCount: dataLatencySnapshot.ReasonCode == DegradedModeReasonCode.None ? 0 : 1,
+            detail: BuildMarketDataDriftDetail(dataLatencySnapshot),
+            cancellationToken);
+
+        await UpsertHealthSnapshotAsync(
+            dbContext,
+            key: "stale-data-guard",
+            sentinelName: "StaleDataGuard",
+            displayName: "Stale Data Guard",
+            healthState: ResolveStaleDataGuardState(dataLatencySnapshot),
+            circuitBreakerState: MapCircuitBreakerState(dataLatencySnapshot),
+            telemetry: telemetry,
+            observedAtUtc: dataLatencySnapshot.LatestDataTimestampAtUtc ?? dataLatencySnapshot.LatestHeartbeatReceivedAtUtc ?? utcNow,
+            lastUpdatedAtUtc: utcNow,
+            workerLastHeartbeatAtUtc: dataLatencySnapshot.LatestHeartbeatReceivedAtUtc ?? dataLatencySnapshot.LatestDataTimestampAtUtc ?? utcNow,
+            consecutiveFailureCount: dataLatencySnapshot.ReasonCode == DegradedModeReasonCode.None ? 0 : 1,
+            detail: BuildStaleDataGuardDetail(dataLatencySnapshot),
+            cancellationToken);
+    }
+
+    private async Task UpsertDependencyHealthSnapshotAsync(
+        ApplicationDbContext dbContext,
+        MonitoringTelemetrySnapshot telemetry,
+        DegradedModeSnapshot dataLatencySnapshot,
+        DateTime utcNow,
+        CancellationToken cancellationToken)
+    {
+        await UpsertHealthSnapshotAsync(
+            dbContext,
+            key: "dependency-health-monitor",
+            sentinelName: "DependencyHealthMonitor",
+            displayName: "Dependency Health Monitor",
+            healthState: ResolveDependencyHealthState(telemetry),
+            circuitBreakerState: MapCircuitBreakerState(dataLatencySnapshot),
+            telemetry: telemetry,
+            observedAtUtc: telemetry.DatabaseLatencyObservedAtUtc ?? utcNow,
+            lastUpdatedAtUtc: utcNow,
+            workerLastHeartbeatAtUtc: telemetry.DatabaseLatencyObservedAtUtc ?? utcNow,
+            consecutiveFailureCount: telemetry.DatabaseLatencyMs is null ? 1 : 0,
+            detail: BuildDependencyHealthDetail(telemetry),
+            cancellationToken);
+    }
+
+    private async Task UpsertWorkerHeartbeatsAsync(
+        ApplicationDbContext dbContext,
+        DegradedModeSnapshot dataLatencySnapshot,
+        DateTime utcNow,
+        CancellationToken cancellationToken)
+    {
+        var latestJobHeartbeat = await dbContext.BackgroundJobStates
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity => entity.LastHeartbeatAtUtc.HasValue)
+            .OrderByDescending(entity => entity.LastHeartbeatAtUtc)
+            .Select(entity => new
+            {
+                entity.JobType,
+                entity.JobKey,
+                entity.LastHeartbeatAtUtc,
+                entity.ConsecutiveFailureCount,
+                entity.LastErrorCode
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        await UpsertWorkerHeartbeatAsync(
+            dbContext,
+            key: "job-orchestration",
+            workerName: "Job Orchestration",
+            healthState: ResolveJobOrchestrationState(latestJobHeartbeat, utcNow),
+            circuitBreakerState: MapCircuitBreakerState(dataLatencySnapshot),
+            lastHeartbeatAtUtc: latestJobHeartbeat?.LastHeartbeatAtUtc ?? utcNow,
+            consecutiveFailureCount: latestJobHeartbeat?.ConsecutiveFailureCount ?? 0,
+            lastErrorCode: latestJobHeartbeat?.LastErrorCode,
+            lastErrorMessage: latestJobHeartbeat is null ? "No job heartbeat available." : $"Latest job heartbeat from {latestJobHeartbeat.JobType}/{latestJobHeartbeat.JobKey}.",
+            utcNow: utcNow,
+            cancellationToken: cancellationToken);
+
+        var latestExchangeHeartbeat = await dbContext.ExchangeAccountSyncStates
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity => entity.LastPrivateStreamEventAtUtc.HasValue || entity.LastListenKeyRenewedAtUtc.HasValue)
+            .OrderByDescending(entity => entity.LastPrivateStreamEventAtUtc ?? entity.LastListenKeyRenewedAtUtc ?? utcNow)
+            .Select(entity => new
+            {
+                entity.ExchangeAccountId,
+                entity.PrivateStreamConnectionState,
+                HeartbeatAtUtc = entity.LastPrivateStreamEventAtUtc ?? entity.LastListenKeyRenewedAtUtc ?? entity.LastStateReconciledAtUtc ?? utcNow,
+                entity.ConsecutiveStreamFailureCount,
+                entity.LastErrorCode
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        await UpsertWorkerHeartbeatAsync(
+            dbContext,
+            key: "exchange-private-stream",
+            workerName: "Exchange Private Stream",
+            healthState: ResolveExchangeStreamState(latestExchangeHeartbeat, utcNow),
+            circuitBreakerState: MapCircuitBreakerState(dataLatencySnapshot),
+            lastHeartbeatAtUtc: latestExchangeHeartbeat?.HeartbeatAtUtc ?? utcNow,
+            consecutiveFailureCount: latestExchangeHeartbeat?.ConsecutiveStreamFailureCount ?? 0,
+            lastErrorCode: latestExchangeHeartbeat?.LastErrorCode,
+            lastErrorMessage: latestExchangeHeartbeat is null ? "No private stream heartbeat available." : $"Connection state {latestExchangeHeartbeat.PrivateStreamConnectionState}.",
+            utcNow: utcNow,
+            cancellationToken: cancellationToken);
+
+        await UpsertWorkerHeartbeatAsync(
+            dbContext,
+            key: "market-data-watchdog",
+            workerName: "Market Data Watchdog",
+            healthState: ResolveMarketWatchdogState(dataLatencySnapshot),
+            circuitBreakerState: MapCircuitBreakerState(dataLatencySnapshot),
+            lastHeartbeatAtUtc: dataLatencySnapshot.LatestHeartbeatReceivedAtUtc ?? dataLatencySnapshot.LatestDataTimestampAtUtc ?? utcNow,
+            consecutiveFailureCount: dataLatencySnapshot.ReasonCode == DegradedModeReasonCode.None ? 0 : 1,
+            lastErrorCode: dataLatencySnapshot.ReasonCode.ToString(),
+            lastErrorMessage: BuildMarketWatchdogDetail(dataLatencySnapshot),
+            utcNow: utcNow,
+            cancellationToken: cancellationToken);
+
+        await UpsertWorkerHeartbeatAsync(
+            dbContext,
+            key: "monitoring-worker",
+            workerName: "Monitoring Worker",
+            healthState: MonitoringHealthState.Healthy,
+            circuitBreakerState: CircuitBreakerStateCode.Closed,
+            lastHeartbeatAtUtc: utcNow,
+            consecutiveFailureCount: 0,
+            lastErrorCode: null,
+            lastErrorMessage: "Monitoring snapshot cycle completed.",
+            utcNow: utcNow,
+            cancellationToken: cancellationToken);
+    }
+
+    private static async Task<TimeSpan> MeasureDatabaseLatencyAsync(ApplicationDbContext dbContext, CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        await dbContext.Database.CanConnectAsync(cancellationToken);
+        stopwatch.Stop();
+        return stopwatch.Elapsed;
+    }
+
+    private static async Task UpsertHealthSnapshotAsync(
+        ApplicationDbContext dbContext,
+        string key,
+        string sentinelName,
+        string displayName,
+        MonitoringHealthState healthState,
+        CircuitBreakerStateCode circuitBreakerState,
+        MonitoringTelemetrySnapshot telemetry,
+        DateTime observedAtUtc,
+        DateTime lastUpdatedAtUtc,
+        DateTime? workerLastHeartbeatAtUtc,
+        int consecutiveFailureCount,
+        string? detail,
+        CancellationToken cancellationToken)
+    {
+        var entity = await dbContext.HealthSnapshots
+            .SingleOrDefaultAsync(item => item.SnapshotKey == key, cancellationToken);
+
+        if (entity is null)
+        {
+            entity = new CoinBot.Domain.Entities.HealthSnapshot
+            {
+                Id = Guid.NewGuid(),
+                SnapshotKey = key
+            };
+            dbContext.HealthSnapshots.Add(entity);
+        }
+
+        var ageSeconds = Math.Max(0, (int)Math.Round((lastUpdatedAtUtc - observedAtUtc).TotalSeconds, MidpointRounding.AwayFromZero));
+
+        entity.SentinelName = sentinelName;
+        entity.DisplayName = displayName;
+        entity.HealthState = healthState;
+        entity.FreshnessTier = ResolveFreshnessTier(ageSeconds);
+        entity.CircuitBreakerState = circuitBreakerState;
+        entity.LastUpdatedAtUtc = lastUpdatedAtUtc;
+        entity.ObservedAtUtc = observedAtUtc;
+        entity.WorkerLastHeartbeatAtUtc = workerLastHeartbeatAtUtc;
+        entity.ConsecutiveFailureCount = Math.Max(0, consecutiveFailureCount);
+        entity.BinancePingMs = telemetry.BinancePingMs;
+        entity.WebSocketStaleDurationSeconds = telemetry.WebSocketStaleDurationSeconds;
+        entity.LastMessageAgeSeconds = telemetry.WebSocketLastMessageAgeSeconds;
+        entity.ReconnectCount = telemetry.WebSocketReconnectCount;
+        entity.StreamGapCount = telemetry.WebSocketStreamGapCount;
+        entity.RateLimitUsage = telemetry.RateLimitUsage;
+        entity.DbLatencyMs = telemetry.DatabaseLatencyMs;
+        entity.RedisLatencyMs = telemetry.RedisLatencyMs;
+        entity.SignalRActiveConnectionCount = telemetry.SignalRActiveConnectionCount;
+        entity.SnapshotAgeSeconds = ageSeconds;
+        entity.Detail = detail;
+    }
+
+    private static async Task UpsertWorkerHeartbeatAsync(
+        ApplicationDbContext dbContext,
+        string key,
+        string workerName,
+        MonitoringHealthState healthState,
+        CircuitBreakerStateCode circuitBreakerState,
+        DateTime lastHeartbeatAtUtc,
+        int consecutiveFailureCount,
+        string? lastErrorCode,
+        string? lastErrorMessage,
+        DateTime utcNow,
+        CancellationToken cancellationToken)
+    {
+        var entity = await dbContext.WorkerHeartbeats
+            .SingleOrDefaultAsync(item => item.WorkerKey == key, cancellationToken);
+
+        if (entity is null)
+        {
+            entity = new CoinBot.Domain.Entities.WorkerHeartbeat
+            {
+                Id = Guid.NewGuid(),
+                WorkerKey = key
+            };
+            dbContext.WorkerHeartbeats.Add(entity);
+        }
+
+        var ageSeconds = Math.Max(0, (int)Math.Round((utcNow - lastHeartbeatAtUtc).TotalSeconds, MidpointRounding.AwayFromZero));
+
+        entity.WorkerName = workerName;
+        entity.HealthState = healthState;
+        entity.FreshnessTier = ResolveFreshnessTier(ageSeconds);
+        entity.CircuitBreakerState = circuitBreakerState;
+        entity.LastHeartbeatAtUtc = lastHeartbeatAtUtc;
+        entity.LastUpdatedAtUtc = utcNow;
+        entity.ConsecutiveFailureCount = Math.Max(0, consecutiveFailureCount);
+        entity.LastErrorCode = lastErrorCode;
+        entity.LastErrorMessage = lastErrorMessage;
+        entity.SnapshotAgeSeconds = ageSeconds;
+        entity.Detail = BuildWorkerHeartbeatDetail(workerName, healthState, ageSeconds);
+    }
+
+    private static MonitoringHealthState ResolveMarketWatchdogState(DegradedModeSnapshot snapshot)
+    {
+        if (snapshot.ExecutionFlowBlocked)
+        {
+            return snapshot.StateCode == DegradedModeStateCode.Stopped
+                ? MonitoringHealthState.Critical
+                : MonitoringHealthState.Degraded;
+        }
+
+        return MonitoringHealthState.Healthy;
+    }
+
+    private static MonitoringHealthState ResolveClockDriftState(DegradedModeSnapshot snapshot)
+    {
+        if (snapshot.LatestClockDriftMilliseconds is null)
+        {
+            return MonitoringHealthState.Unknown;
+        }
+
+        return snapshot.ReasonCode == DegradedModeReasonCode.ClockDriftExceeded
+            ? MonitoringHealthState.Critical
+            : snapshot.LatestClockDriftMilliseconds >= 2_000
+                ? MonitoringHealthState.Warning
+                : MonitoringHealthState.Healthy;
+    }
+
+    private static MonitoringHealthState ResolveMarketDataDriftState(DegradedModeSnapshot snapshot)
+    {
+        if (snapshot.LatestDataAgeMilliseconds is null)
+        {
+            return MonitoringHealthState.Unknown;
+        }
+
+        return snapshot.LatestDataAgeMilliseconds >= 6_000
+            ? MonitoringHealthState.Critical
+            : snapshot.LatestDataAgeMilliseconds >= 3_000
+                ? MonitoringHealthState.Warning
+                : MonitoringHealthState.Healthy;
+    }
+
+    private static MonitoringHealthState ResolveStaleDataGuardState(DegradedModeSnapshot snapshot)
+    {
+        if (snapshot.SignalFlowBlocked || snapshot.ExecutionFlowBlocked)
+        {
+            return snapshot.StateCode == DegradedModeStateCode.Stopped
+                ? MonitoringHealthState.Critical
+                : MonitoringHealthState.Degraded;
+        }
+
+        return MonitoringHealthState.Healthy;
+    }
+
+    private static MonitoringHealthState ResolveDependencyHealthState(MonitoringTelemetrySnapshot telemetry)
+    {
+        if (telemetry.DatabaseLatencyMs is null && telemetry.RedisLatencyMs is null)
+        {
+            return MonitoringHealthState.Unknown;
+        }
+
+        var databaseLatencyMs = telemetry.DatabaseLatencyMs ?? 0;
+        var redisLatencyMs = telemetry.RedisLatencyMs ?? 0;
+        var worstLatencyMs = Math.Max(databaseLatencyMs, redisLatencyMs);
+
+        if (worstLatencyMs >= 1_000)
+        {
+            return MonitoringHealthState.Critical;
+        }
+
+        if (worstLatencyMs >= 500)
+        {
+            return MonitoringHealthState.Warning;
+        }
+
+        return MonitoringHealthState.Healthy;
+    }
+
+    private static MonitoringHealthState ResolveJobOrchestrationState(object? heartbeat, DateTime utcNow)
+    {
+        if (heartbeat is null)
+        {
+            return MonitoringHealthState.Unknown;
+        }
+
+        var heartbeatAtUtc = (DateTime)heartbeat.GetType().GetProperty("LastHeartbeatAtUtc")!.GetValue(heartbeat)!;
+        var ageSeconds = Math.Max(0, (int)Math.Round((utcNow - heartbeatAtUtc).TotalSeconds, MidpointRounding.AwayFromZero));
+
+        return ageSeconds >= 300
+            ? MonitoringHealthState.Critical
+            : ageSeconds >= 60
+                ? MonitoringHealthState.Warning
+                : MonitoringHealthState.Healthy;
+    }
+
+    private static MonitoringHealthState ResolveExchangeStreamState(object? heartbeat, DateTime utcNow)
+    {
+        if (heartbeat is null)
+        {
+            return MonitoringHealthState.Unknown;
+        }
+
+        var connectionState = (ExchangePrivateStreamConnectionState)heartbeat.GetType().GetProperty("PrivateStreamConnectionState")!.GetValue(heartbeat)!;
+        var heartbeatAtUtc = (DateTime)heartbeat.GetType().GetProperty("HeartbeatAtUtc")!.GetValue(heartbeat)!;
+        var ageSeconds = Math.Max(0, (int)Math.Round((utcNow - heartbeatAtUtc).TotalSeconds, MidpointRounding.AwayFromZero));
+
+        if (connectionState is ExchangePrivateStreamConnectionState.Disconnected or ExchangePrivateStreamConnectionState.ListenKeyExpired)
+        {
+            return MonitoringHealthState.Critical;
+        }
+
+        if (connectionState is ExchangePrivateStreamConnectionState.Reconnecting or ExchangePrivateStreamConnectionState.Connecting)
+        {
+            return MonitoringHealthState.Degraded;
+        }
+
+        return ageSeconds >= 300
+            ? MonitoringHealthState.Critical
+            : ageSeconds >= 60
+                ? MonitoringHealthState.Warning
+                : MonitoringHealthState.Healthy;
+    }
+
+    private static CircuitBreakerStateCode MapCircuitBreakerState(DegradedModeSnapshot snapshot)
+    {
+        if (snapshot.IsNormal)
+        {
+            return CircuitBreakerStateCode.Closed;
+        }
+
+        return snapshot.ReasonCode switch
+        {
+            DegradedModeReasonCode.MarketDataLatencyBreached => CircuitBreakerStateCode.Retrying,
+            DegradedModeReasonCode.CandleDataGapDetected or DegradedModeReasonCode.CandleDataDuplicateDetected or DegradedModeReasonCode.CandleDataOutOfOrderDetected => CircuitBreakerStateCode.HalfOpen,
+            DegradedModeReasonCode.MarketDataUnavailable or DegradedModeReasonCode.ClockDriftExceeded or DegradedModeReasonCode.MarketDataLatencyCritical => CircuitBreakerStateCode.Cooldown,
+            _ when snapshot.StateCode == DegradedModeStateCode.Degraded => CircuitBreakerStateCode.Degraded,
+            _ => CircuitBreakerStateCode.Degraded
+        };
+    }
+
+    private static MonitoringFreshnessTier ResolveFreshnessTier(int ageSeconds)
+    {
+        if (ageSeconds <= 5)
+        {
+            return MonitoringFreshnessTier.Hot;
+        }
+
+        if (ageSeconds <= 15)
+        {
+            return MonitoringFreshnessTier.Warm;
+        }
+
+        if (ageSeconds <= 300)
+        {
+            return MonitoringFreshnessTier.Cold;
+        }
+
+        return MonitoringFreshnessTier.Stale;
+    }
+
+    private static string BuildMarketWatchdogDetail(DegradedModeSnapshot snapshot)
+    {
+        return
+            $"State={snapshot.StateCode}; Reason={snapshot.ReasonCode}; DataAgeMs={snapshot.LatestDataAgeMilliseconds?.ToString() ?? "missing"}; ClockDriftMs={snapshot.LatestClockDriftMilliseconds?.ToString() ?? "missing"}";
+    }
+
+    private static string BuildClockDriftDetail(DegradedModeSnapshot snapshot)
+    {
+        return $"ClockDriftMs={snapshot.LatestClockDriftMilliseconds?.ToString() ?? "missing"}; Reason={snapshot.ReasonCode}";
+    }
+
+    private static string BuildMarketDataDriftDetail(DegradedModeSnapshot snapshot)
+    {
+        return $"DataAgeMs={snapshot.LatestDataAgeMilliseconds?.ToString() ?? "missing"}; Reason={snapshot.ReasonCode}";
+    }
+
+    private static string BuildStaleDataGuardDetail(DegradedModeSnapshot snapshot)
+    {
+        return $"SignalBlocked={snapshot.SignalFlowBlocked}; ExecutionBlocked={snapshot.ExecutionFlowBlocked}; Reason={snapshot.ReasonCode}";
+    }
+
+    private static string BuildDependencyHealthDetail(MonitoringTelemetrySnapshot telemetry)
+    {
+        return $"DbLatencyMs={telemetry.DatabaseLatencyMs?.ToString() ?? "missing"}; RedisLatencyMs={telemetry.RedisLatencyMs?.ToString() ?? "missing"}; SignalRConnections={telemetry.SignalRActiveConnectionCount}";
+    }
+
+    private static string BuildWorkerHeartbeatDetail(string workerName, MonitoringHealthState healthState, int ageSeconds)
+    {
+        return $"{workerName}; State={healthState}; AgeSeconds={ageSeconds}";
+    }
+}

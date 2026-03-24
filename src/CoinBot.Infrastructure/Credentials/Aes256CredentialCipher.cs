@@ -11,6 +11,8 @@ internal sealed class Aes256CredentialCipher(ICredentialKeyResolver keyResolver)
 
     public string KeyVersion => keyResolver.CurrentKeyVersion;
 
+    public int BlobVersion => PayloadVersion;
+
     public string Encrypt(string plaintext)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(plaintext);

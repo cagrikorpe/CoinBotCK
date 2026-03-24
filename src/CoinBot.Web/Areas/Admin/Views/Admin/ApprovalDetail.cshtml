@@ -1,0 +1,366 @@
+@model CoinBot.Application.Abstractions.Administration.ApprovalQueueDetailSnapshot
+@{
+    var canManageApprovals = ViewData["AdminCanManageApprovals"] is bool canManageValue && canManageValue;
+    var statusTone = Model.Status switch
+    {
+        ApprovalQueueStatus.Executed => "healthy",
+        ApprovalQueueStatus.Approved => "info",
+        ApprovalQueueStatus.Rejected => "critical",
+        ApprovalQueueStatus.Expired => "warning",
+        ApprovalQueueStatus.Failed => "critical",
+        ApprovalQueueStatus.Cancelled => "neutral",
+        _ => "warning"
+    };
+    var severityTone = Model.Severity switch
+    {
+        IncidentSeverity.Critical => "critical",
+        IncidentSeverity.Warning => "warning",
+        _ => "info"
+    };
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Governance / Approval Detail",
+        Title = Model.ApprovalReference,
+        Description = "Queue item, approval actions, related incident ve trace baglantilari tek detay sayfasinda gorunur.",
+        StatusBadge = new AdminBadgeViewModel { Label = Model.Status.ToString(), Tone = statusTone, IconText = "AD" },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = $"{Model.ApprovalCount}/{Model.RequiredApprovals}", Tone = statusTone, IconText = "AP" },
+            new AdminBadgeViewModel { Label = Model.Severity.ToString(), Tone = severityTone, IconText = "SV" },
+            new AdminBadgeViewModel { Label = Model.OperationType.ToString(), Tone = "info", IconText = "OP" }
+        },
+        SecondaryActionText = "Approval listesi",
+        SecondaryActionHref = Url.Action("Approvals", "Admin", new { area = "Admin" }),
+        PrimaryActionText = !string.IsNullOrWhiteSpace(Model.IncidentReference)
+            ? "Incident detay"
+            : "Trace merkezi",
+        PrimaryActionHref = !string.IsNullOrWhiteSpace(Model.IncidentReference)
+            ? Url.Action("IncidentDetail", "Admin", new { area = "Admin", incidentReference = Model.IncidentReference })
+            : Url.Action("Audit", "Admin", new { area = "Admin", query = Model.CorrelationId ?? Model.CommandId ?? Model.ApprovalReference })
+    };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+
+                @if (TempData["AdminApprovalSuccess"] is string approvalSuccessMessage)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-healthy mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Approval update</div>
+                            <div class="cb-admin-info-strip-text">@approvalSuccessMessage</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Applied</span>
+                    </div>
+                }
+
+                @if (TempData["AdminApprovalError"] is string approvalErrorMessage)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-danger mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Approval update failed</div>
+                            <div class="cb-admin-info-strip-text">@approvalErrorMessage</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Blocked</span>
+                    </div>
+                }
+
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = Model.Status == ApprovalQueueStatus.Pending ? "warning" : "info",
+                    Title = "Approval queue detail",
+                    Message = Model.Summary,
+                    Meta = Model.TargetType is null ? "No target" : $"{Model.TargetType}/{Model.TargetId ?? "none"}"
+                })
+
+                @if (!canManageApprovals)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Read-only approval detail</div>
+                            <div class="cb-admin-info-strip-text">Bu rolde approve/reject aksiyonlari kapali. Ayrintilar ve ilgili trace linkleri gorulebilir.</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Read-only</span>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-7">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-table-header mb-4">
+                    <div>
+                        <div class="cb-admin-section-kicker">Request</div>
+                        <div class="cb-admin-section-title">Queue payload</div>
+                    </div>
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+                    {
+                        Label = Model.Status.ToString(),
+                        Tone = statusTone,
+                        IconText = "ST"
+                    })
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6 mb-4">
+                        <div class="cb-admin-info-strip cb-admin-info-strip-info h-100">
+                            <div>
+                                <div class="cb-admin-info-strip-title">Operational summary</div>
+                                <div class="cb-admin-info-strip-text">@Model.Summary</div>
+                            </div>
+                            <span class="cb-admin-info-strip-meta">@Model.OperationType</span>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-4">
+                        <div class="cb-admin-info-strip cb-admin-info-strip-info h-100">
+                            <div>
+                                <div class="cb-admin-info-strip-title">Requested by</div>
+                                <div class="cb-admin-info-strip-text">@Model.RequestedByUserId</div>
+                            </div>
+                            <span class="cb-admin-info-strip-meta">Creator</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="table-responsive cb-admin-table-wrap mb-4">
+                    <table class="table table-borderless cb-admin-table mb-0">
+                        <tbody>
+                            <tr>
+                                <th>Reason</th>
+                                <td>@Model.Reason</td>
+                            </tr>
+                            <tr>
+                                <th>ExpiresAtUtc</th>
+                                <td>@Model.ExpiresAtUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC</td>
+                            </tr>
+                            <tr>
+                                <th>CorrelationId</th>
+                                <td>@(Model.CorrelationId ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>CommandId</th>
+                                <td>@(Model.CommandId ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>DecisionId</th>
+                                <td>@(Model.DecisionId ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>ExecutionAttemptId</th>
+                                <td>@(Model.ExecutionAttemptId ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>IncidentReference</th>
+                                <td>@(Model.IncidentReference ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>SystemStateHistoryReference</th>
+                                <td>@(Model.SystemStateHistoryReference ?? "-")</td>
+                            </tr>
+                            <tr>
+                                <th>BreakerReference</th>
+                                <td>@(Model.DependencyCircuitBreakerStateReference ?? "-")</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="cb-admin-table-header mb-3">
+                    <div>
+                        <div class="cb-admin-section-kicker">Payload</div>
+                        <div class="cb-admin-section-title">Serialized request</div>
+                    </div>
+                </div>
+                <pre class="mb-0 p-4 bg-light rounded"><code>@Model.PayloadJson</code></pre>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-5">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-table-header mb-4">
+                    <div>
+                        <div class="cb-admin-section-kicker">Related</div>
+                        <div class="cb-admin-section-title">Trace and incident links</div>
+                    </div>
+                </div>
+
+                <div class="d-flex flex-wrap gap-2 mb-4">
+                    @if (!string.IsNullOrWhiteSpace(Model.CorrelationId))
+                    {
+                        <a asp-area="Admin"
+                           asp-controller="Admin"
+                           asp-action="TraceDetail"
+                           asp-route-correlationId="@Model.CorrelationId"
+                           asp-route-decisionId="@Model.DecisionId"
+                           asp-route-executionAttemptId="@Model.ExecutionAttemptId"
+                           class="btn btn-light-info font-weight-bold">Trace detail</a>
+                        <a asp-area="Admin"
+                           asp-controller="Admin"
+                           asp-action="Audit"
+                           asp-route-query="@Model.CorrelationId"
+                           class="btn btn-light-primary font-weight-bold">Audit search</a>
+                    }
+                    else
+                    {
+                        <span class="text-muted">CorrelationId yok.</span>
+                    }
+
+                    @if (!string.IsNullOrWhiteSpace(Model.IncidentReference))
+                    {
+                        <a asp-area="Admin"
+                           asp-controller="Admin"
+                           asp-action="IncidentDetail"
+                           asp-route-incidentReference="@Model.IncidentReference"
+                           class="btn btn-light-secondary font-weight-bold">Incident detail</a>
+                    }
+                </div>
+
+                @if (canManageApprovals && Model.Status == ApprovalQueueStatus.Pending)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-warning mb-4">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Decision forms</div>
+                            <div class="cb-admin-info-strip-text">Approve istege optional note ekleyebilir, reject icin ise reason zorunludur.</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Actionable</span>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-12 mb-4">
+                            <form asp-area="Admin" asp-controller="Admin" asp-action="ApproveApproval" method="post" class="card card-custom cb-card cb-admin-card h-100">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="approvalReference" value="@Model.ApprovalReference" />
+                                <div class="card-body">
+                                    <div class="cb-admin-section-kicker">Approve</div>
+                                    <div class="cb-admin-section-title mb-3">First or second approval</div>
+                                    <label class="form-label">Optional note</label>
+                                    <input name="reason" class="form-control" maxlength="512" placeholder="Approval note" />
+                                    <button type="submit" class="btn btn-primary font-weight-bolder mt-4">Approve approval</button>
+                                </div>
+                            </form>
+                        </div>
+                        <div class="col-12">
+                            <form asp-area="Admin" asp-controller="Admin" asp-action="RejectApproval" method="post" class="card card-custom cb-card cb-admin-card h-100">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="approvalReference" value="@Model.ApprovalReference" />
+                                <div class="card-body">
+                                    <div class="cb-admin-section-kicker">Reject</div>
+                                    <div class="cb-admin-section-title mb-3">Reject reason required</div>
+                                    <label class="form-label">Reason</label>
+                                    <textarea name="reason" class="form-control" rows="4" maxlength="512" required placeholder="Why this approval is rejected"></textarea>
+                                    <button type="submit" class="btn btn-danger font-weight-bolder mt-4">Reject approval</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                }
+                else if (!canManageApprovals)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-info">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Decision forms unavailable</div>
+                            <div class="cb-admin-info-strip-text">Platform admin permissioni olmadan karar formu gosterilmez.</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Hidden</span>
+                    </div>
+                }
+                else
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-info">
+                        <div>
+                            <div class="cb-admin-info-strip-title">No actionable state</div>
+                            <div class="cb-admin-info-strip-text">Bu queue pending durumda degil. Onay/ret islemi kapali.</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Closed</span>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-table-card">
+            <div class="card-body">
+                <div class="cb-admin-table-header">
+                    <div>
+                        <div class="cb-admin-section-kicker">Action timeline</div>
+                        <div class="cb-admin-section-title">Approval actions</div>
+                        <p class="cb-admin-section-description mb-0">Her approval/reject adimi sequence bazli audit izine alinmistir.</p>
+                    </div>
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+                    {
+                        Label = $"{Model.Actions.Count} action",
+                        Tone = Model.Actions.Count > 0 ? "healthy" : "warning",
+                        IconText = "TL"
+                    })
+                </div>
+
+                <div class="table-responsive cb-admin-table-wrap">
+                    <table class="table table-borderless cb-admin-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>Seq</th>
+                                <th>Action</th>
+                                <th>Actor</th>
+                                <th>Reason</th>
+                                <th>Trace</th>
+                                <th>CreatedAtUtc</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @if (Model.Actions.Count == 0)
+                            {
+                                <tr>
+                                    <td colspan="6" class="text-muted">Action history yok.</td>
+                                </tr>
+                            }
+                            else
+                            {
+                                foreach (var action in Model.Actions)
+                                {
+                                    <tr>
+                                        <td>@action.Sequence</td>
+                                        <td>
+                                            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+                                            {
+                                                Label = action.ActionType.ToString(),
+                                                Tone = action.ActionType == ApprovalActionType.Approved ? "healthy" : "critical",
+                                                IconText = "AC"
+                                            })
+                                        </td>
+                                        <td>@action.ActorUserId</td>
+                                        <td>@(action.Reason ?? "-")</td>
+                                        <td>
+                                            @if (!string.IsNullOrWhiteSpace(action.CorrelationId))
+                                            {
+                                                <a asp-area="Admin"
+                                                   asp-controller="Admin"
+                                                   asp-action="TraceDetail"
+                                                   asp-route-correlationId="@action.CorrelationId"
+                                                   asp-route-decisionId="@action.DecisionId"
+                                                   asp-route-executionAttemptId="@action.ExecutionAttemptId"
+                                                   class="btn btn-xs btn-light-info font-weight-bold">Trace</a>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-muted">-</span>
+                                            }
+                                        </td>
+                                        <td>@action.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC</td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

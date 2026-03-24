@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using CoinBot.Application.Abstractions.Alerts;
+using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Auditing;
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.DemoPortfolio;
@@ -9,6 +10,7 @@ using CoinBot.Application.Abstractions.ExchangeCredentials;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Administration;
 using CoinBot.Infrastructure.Auditing;
 using CoinBot.Infrastructure.DemoPortfolio;
 using CoinBot.Infrastructure.Execution;
@@ -147,6 +149,7 @@ public sealed class VirtualExecutionWatchdogServiceTests
         var correlationContextAccessor = new CorrelationContextAccessor();
         var auditLogService = new AuditLogService(dbContext, correlationContextAccessor);
         var switchService = new GlobalExecutionSwitchService(dbContext, auditLogService);
+        var globalSystemStateService = new GlobalSystemStateService(dbContext, auditLogService, timeProvider);
         var marketDataService = new FakeMarketDataService();
         var demoWalletValuationService = new DemoWalletValuationService(
             marketDataService,
@@ -173,6 +176,7 @@ public sealed class VirtualExecutionWatchdogServiceTests
             NullLogger<DemoSessionService>.Instance);
         var executionGate = new ExecutionGate(
             demoSessionService,
+            globalSystemStateService,
             switchService,
             circuitBreaker,
             tradingModeService,
@@ -189,12 +193,21 @@ public sealed class VirtualExecutionWatchdogServiceTests
             Options.Create(new DemoFillSimulatorOptions()),
             timeProvider,
             NullLogger<DemoFillSimulator>.Instance);
+        var traceService = new TraceService(
+            dbContext,
+            correlationContextAccessor,
+            timeProvider);
+        var userExecutionOverrideGuard = new UserExecutionOverrideGuard(
+            dbContext,
+            tradingModeService);
         var credentialService = new FakeExchangeCredentialService();
         var privateRestClient = new FakePrivateRestClient(timeProvider);
         var engine = new ExecutionEngine(
             dbContext,
             executionGate,
             tradingModeService,
+            traceService,
+            userExecutionOverrideGuard,
             correlationContextAccessor,
             demoPortfolioAccountingService,
             demoFillSimulator,
@@ -346,6 +359,13 @@ public sealed class VirtualExecutionWatchdogServiceTests
 
         public Task<BinanceOrderStatusSnapshot> GetOrderAsync(
             BinanceOrderQueryRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<BinanceOrderStatusSnapshot> CancelOrderAsync(
+            BinanceOrderCancelRequest request,
             CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();

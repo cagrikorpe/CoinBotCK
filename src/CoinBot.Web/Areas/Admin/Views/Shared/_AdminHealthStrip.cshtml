@@ -1,0 +1,59 @@
+@using CoinBot.Application.Abstractions.Administration
+@using CoinBot.Domain.Enums
+@{
+    var snapshot = ViewData["AdminShellHealthSnapshot"] as AdminShellHealthSnapshot;
+
+    if (snapshot is null)
+    {
+        return;
+    }
+
+    var environmentTone = snapshot.EnvironmentBadge switch
+    {
+        "LIVE" => "critical",
+        "DEGRADED" => "degraded",
+        _ => "warning"
+    };
+    var stateTone = snapshot.SystemState == GlobalSystemStateKind.Active
+        ? "healthy"
+        : snapshot.SystemState == GlobalSystemStateKind.Degraded
+            ? "degraded"
+            : "critical";
+}
+
+<div class="cb-admin-info-strip @(snapshot.SystemState == GlobalSystemStateKind.Active ? "cb-admin-info-strip-info" : "cb-admin-info-strip-warning")">
+    <div class="d-flex flex-wrap align-items-center gap-3">
+        @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+        {
+            Label = snapshot.EnvironmentBadge,
+            Tone = environmentTone,
+            IconText = "ENV"
+        })
+        @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+        {
+            Label = snapshot.SystemState.ToString(),
+            Tone = stateTone,
+            IconText = "GS"
+        })
+        @if (snapshot.IsManualOverride)
+        {
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+            {
+                Label = "Manual Override",
+                Tone = "warning",
+                IconText = "MO"
+            })
+        }
+    </div>
+    <div>
+        <div class="cb-admin-info-strip-title">Admin health snapshot</div>
+        <div class="cb-admin-info-strip-text">
+            ReasonCode: @snapshot.ReasonCode
+            @if (!string.IsNullOrWhiteSpace(snapshot.Message))
+            {
+                <text> | @snapshot.Message</text>
+            }
+        </div>
+    </div>
+    <span class="cb-admin-info-strip-meta">LastUpdatedAtUtc: @(snapshot.LastUpdatedAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "n/a")</span>
+</div>

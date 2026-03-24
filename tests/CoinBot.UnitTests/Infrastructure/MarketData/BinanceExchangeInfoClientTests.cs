@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.UnitTests.Infrastructure.Mfa;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -33,10 +34,12 @@ public sealed class BinanceExchangeInfoClientTests
         {
             BaseAddress = new Uri("https://api.binance.com/")
         };
+        var telemetryCollector = new RecordingMonitoringTelemetryCollector();
         var client = new BinanceExchangeInfoClient(
             httpClient,
             new AdjustableTimeProvider(now),
-            NullLogger<BinanceExchangeInfoClient>.Instance);
+            NullLogger<BinanceExchangeInfoClient>.Instance,
+            telemetryCollector);
 
         var snapshots = await client.GetSymbolMetadataAsync(["btcusdt"]);
 
@@ -53,6 +56,10 @@ public sealed class BinanceExchangeInfoClientTests
         Assert.Equal(now.UtcDateTime, snapshot.RefreshedAtUtc);
         Assert.Contains("exchangeInfo", handler.LastRequestUri, StringComparison.Ordinal);
         Assert.Contains("BTCUSDT", Uri.UnescapeDataString(handler.LastRequestUri), StringComparison.Ordinal);
+        Assert.Equal(1, telemetryCollector.BinancePingCount);
+        Assert.Equal(17, telemetryCollector.LastRateLimitUsage);
+        Assert.NotNull(telemetryCollector.LastBinancePingLatency);
+        Assert.Equal(now.UtcDateTime, telemetryCollector.LastObservedAtUtc);
     }
 
     private sealed class StubHttpMessageHandler(string jsonPayload) : HttpMessageHandler
@@ -67,8 +74,67 @@ public sealed class BinanceExchangeInfoClientTests
             {
                 Content = new StringContent(jsonPayload, Encoding.UTF8, "application/json")
             };
+            response.Headers.TryAddWithoutValidation("X-MBX-USED-WEIGHT-1M", "17");
 
             return Task.FromResult(response);
+        }
+    }
+
+    private sealed class RecordingMonitoringTelemetryCollector : IMonitoringTelemetryCollector
+    {
+        public int BinancePingCount { get; private set; }
+
+        public TimeSpan? LastBinancePingLatency { get; private set; }
+
+        public int? LastRateLimitUsage { get; private set; }
+
+        public DateTime? LastObservedAtUtc { get; private set; }
+
+        public void RecordBinancePing(TimeSpan latency, int? rateLimitUsage = null, DateTime? observedAtUtc = null)
+        {
+            BinancePingCount++;
+            LastBinancePingLatency = latency;
+            LastRateLimitUsage = rateLimitUsage;
+            LastObservedAtUtc = observedAtUtc;
+        }
+
+        public void RecordWebSocketActivity(DateTime lastMessageAtUtc, int reconnectCount, int streamGapCount, int? lastMessageAgeSeconds = null, int? staleDurationSeconds = null)
+        {
+        }
+
+        public void RecordSignalRConnectionCount(int activeConnectionCount, DateTime? observedAtUtc = null)
+        {
+        }
+
+        public void AdjustSignalRConnectionCount(int delta, DateTime? observedAtUtc = null)
+        {
+        }
+
+        public void RecordDatabaseLatency(TimeSpan latency, DateTime? observedAtUtc = null)
+        {
+        }
+
+        public void RecordRedisLatency(TimeSpan? latency, DateTime? observedAtUtc = null)
+        {
+        }
+
+        public MonitoringTelemetrySnapshot CaptureSnapshot(DateTime? capturedAtUtc = null)
+        {
+            return new MonitoringTelemetrySnapshot(
+                capturedAtUtc ?? DateTime.UtcNow,
+                LastBinancePingLatency is null ? null : (int)Math.Round(LastBinancePingLatency.Value.TotalMilliseconds),
+                LastObservedAtUtc,
+                LastRateLimitUsage,
+                null,
+                null,
+                null,
+                0,
+                0,
+                null,
+                null,
+                null,
+                null,
+                0);
         }
     }
 }

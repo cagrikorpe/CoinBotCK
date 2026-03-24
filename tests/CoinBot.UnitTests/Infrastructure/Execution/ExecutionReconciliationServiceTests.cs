@@ -171,6 +171,13 @@ public sealed class ExecutionReconciliationServiceTests
             return Task.FromResult(snapshot);
         }
 
+        public Task<BinanceOrderStatusSnapshot> CancelOrderAsync(
+            BinanceOrderCancelRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
         public Task<string> StartListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();

@@ -10,6 +10,20 @@ public static class ApplicationRoleClaims
         [
             .. ApplicationPermissions.All
         ],
+        [ApplicationRoles.OpsAdmin] =
+        [
+            ApplicationPermissions.AdminPortalAccess,
+            ApplicationPermissions.IdentityAdministration,
+            ApplicationPermissions.TradeOperations,
+            ApplicationPermissions.RiskManagement,
+            ApplicationPermissions.ExchangeManagement,
+            ApplicationPermissions.AuditRead
+        ],
+        [ApplicationRoles.SecurityAuditor] =
+        [
+            ApplicationPermissions.AdminPortalAccess,
+            ApplicationPermissions.AuditRead
+        ],
         [ApplicationRoles.Admin] =
         [
             ApplicationPermissions.AdminPortalAccess,
@@ -17,8 +31,7 @@ public static class ApplicationRoleClaims
             ApplicationPermissions.TradeOperations,
             ApplicationPermissions.RiskManagement,
             ApplicationPermissions.ExchangeManagement,
-            ApplicationPermissions.AuditRead,
-            ApplicationPermissions.PlatformAdministration
+            ApplicationPermissions.AuditRead
         ],
         [ApplicationRoles.Support] =
         [

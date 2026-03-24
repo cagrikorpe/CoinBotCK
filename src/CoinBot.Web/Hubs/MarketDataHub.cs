@@ -1,4 +1,5 @@
 using CoinBot.Application.Abstractions.MarketData;
+using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Web.ViewModels.Home;
 using CoinBot.Application.Abstractions.Indicators;
@@ -11,7 +12,8 @@ namespace CoinBot.Web.Hubs;
 public sealed class MarketDataHub(
     IMarketDataService marketDataService,
     ISharedSymbolRegistry symbolRegistry,
-    ILogger<MarketDataHub> logger) : Hub
+    ILogger<MarketDataHub> logger,
+    IMonitoringTelemetryCollector? monitoringTelemetryCollector = null) : Hub
 {
     public async Task<IReadOnlyCollection<DashboardMarketTickerViewModel>> SubscribeSymbolsAsync(
         IEnumerable<string> symbols)
@@ -46,6 +48,18 @@ public sealed class MarketDataHub(
             normalizedSymbols.Count);
 
         return snapshots;
+    }
+
+    public override async Task OnConnectedAsync()
+    {
+        monitoringTelemetryCollector?.AdjustSignalRConnectionCount(1);
+        await base.OnConnectedAsync();
+    }
+
+    public override async Task OnDisconnectedAsync(Exception? exception)
+    {
+        monitoringTelemetryCollector?.AdjustSignalRConnectionCount(-1);
+        await base.OnDisconnectedAsync(exception);
     }
 
     public async Task<MarketChartSeedSnapshot> GetChartSeedAsync(

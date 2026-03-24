@@ -1,10 +1,13 @@
 using CoinBot.Application.Abstractions.DataScope;
+using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Application.Abstractions.Strategies;
+using CoinBot.Infrastructure.Administration;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.MarketData;
+using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.Infrastructure.Risk;
 using CoinBot.Infrastructure.Strategies;
@@ -37,6 +40,7 @@ public sealed class StrategySignalServiceTests
 
         var signal = Assert.Single(result.Signals);
         var persistedSignal = await dbContext.TradingStrategySignals.SingleAsync();
+        var decisionTrace = await dbContext.DecisionTraces.SingleAsync();
         var loadedSignal = await service.GetAsync(signal.StrategySignalId);
 
         Assert.Equal(0, result.SuppressedDuplicateCount);
@@ -72,6 +76,9 @@ public sealed class StrategySignalServiceTests
         Assert.Contains(version.Id.ToString("N"), loadedSignal.ExplainabilityPayload.DuplicateSignalSuppression.Fingerprint, StringComparison.Ordinal);
         Assert.DoesNotContain("CurrentEquity", persistedSignal.RiskEvaluationJson ?? string.Empty, StringComparison.Ordinal);
         Assert.DoesNotContain("CurrentDailyLossAmount", persistedSignal.RiskEvaluationJson ?? string.Empty, StringComparison.Ordinal);
+        Assert.Equal(signal.StrategySignalId, decisionTrace.StrategySignalId);
+        Assert.Equal("Persisted", decisionTrace.DecisionOutcome);
+        Assert.Equal("BTCUSDT", decisionTrace.Symbol);
     }
 
     [Fact]
@@ -187,6 +194,8 @@ public sealed class StrategySignalServiceTests
 
     private static StrategySignalService CreateService(ApplicationDbContext dbContext, TimeProvider timeProvider)
     {
+        var correlationContextAccessor = new CorrelationContextAccessor();
+
         return new StrategySignalService(
             dbContext,
             new StrategyEvaluatorService(new StrategyRuleParser()),
@@ -194,6 +203,12 @@ public sealed class StrategySignalServiceTests
                 dbContext,
                 timeProvider,
                 NullLogger<RiskPolicyEvaluator>.Instance),
+            new TraceService(
+                dbContext,
+                correlationContextAccessor,
+                timeProvider),
+            correlationContextAccessor,
+            timeProvider,
             NullLogger<StrategySignalService>.Instance);
     }
 

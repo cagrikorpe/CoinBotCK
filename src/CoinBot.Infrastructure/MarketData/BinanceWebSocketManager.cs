@@ -1,4 +1,8 @@
 using CoinBot.Application.Abstractions.MarketData;
+using CoinBot.Application.Abstractions.Monitoring;
+using CoinBot.Application.Abstractions.Autonomy;
+using CoinBot.Domain.Enums;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -15,13 +19,20 @@ public sealed class BinanceWebSocketManager(
     IMarketDataHeartbeatRecorder heartbeatRecorder,
     IOptions<BinanceMarketDataOptions> options,
     TimeProvider timeProvider,
-    ILogger<BinanceWebSocketManager> logger) : BackgroundService
+    ILogger<BinanceWebSocketManager> logger,
+    IMonitoringTelemetryCollector? monitoringTelemetryCollector = null,
+    IWebSocketReconnectCoordinator? webSocketReconnectCoordinator = null,
+    IServiceScopeFactory? serviceScopeFactory = null) : BackgroundService
 {
+    private const string BreakerActor = "system:market-data-websocket";
     private static readonly TimeSpan InterruptionPollInterval = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan IdleDelay = TimeSpan.FromSeconds(1);
     private readonly BinanceMarketDataOptions optionsValue = options.Value;
     private readonly TimeSpan exchangeInfoRefreshInterval = TimeSpan.FromMinutes(options.Value.ExchangeInfoRefreshIntervalMinutes);
     private readonly TimeSpan reconnectDelay = TimeSpan.FromSeconds(options.Value.ReconnectDelaySeconds);
+    private int reconnectCount;
+    private int streamGapCount;
+    private DateTime? lastMessageReceivedAtUtc;
     private bool seedSymbolsRegistered;
     private DateTime nextMetadataRefreshAtUtc = DateTime.MinValue;
 
@@ -45,10 +56,14 @@ public sealed class BinanceWebSocketManager(
             }
             catch (Exception exception)
             {
+                await RecordBreakerFailureAsync(exception, stoppingToken);
+
                 logger.LogWarning(
                     exception,
                     "Binance market data plane cycle failed. Reconnecting after a backoff.");
 
+                reconnectCount++;
+                RecordTelemetry();
                 await Task.Delay(reconnectDelay, stoppingToken);
             }
         }
@@ -91,6 +106,8 @@ public sealed class BinanceWebSocketManager(
         TrackedSymbolSnapshot trackedSymbols,
         CancellationToken cancellationToken)
     {
+        var reconnectGeneration = webSocketReconnectCoordinator?.GetGeneration() ?? 0L;
+        var hasRecordedHealthyState = false;
         await using var enumerator = candleStreamClient
             .StreamAsync(trackedSymbols.Symbols, cancellationToken)
             .GetAsyncEnumerator(cancellationToken);
@@ -104,7 +121,7 @@ public sealed class BinanceWebSocketManager(
 
             if (completedTask != moveNextTask)
             {
-                if (ShouldRestartStream(trackedSymbols.Version))
+                if (ShouldRestartStream(trackedSymbols.Version, reconnectGeneration))
                 {
                     return;
                 }
@@ -118,10 +135,19 @@ public sealed class BinanceWebSocketManager(
             }
 
             var snapshot = enumerator.Current;
+            lastMessageReceivedAtUtc = snapshot.ReceivedAtUtc;
 
             if (!snapshot.IsClosed)
             {
+                RecordTelemetry();
                 continue;
+            }
+
+            if (!hasRecordedHealthyState &&
+                serviceScopeFactory is not null)
+            {
+                await RecordBreakerSuccessAsync(cancellationToken);
+                hasRecordedHealthyState = true;
             }
 
             var guardResult = dataQualityGuard.Evaluate(snapshot);
@@ -143,6 +169,11 @@ public sealed class BinanceWebSocketManager(
             {
                 await indicatorDataService.RecordRejectedCandleAsync(snapshot, guardResult, cancellationToken);
 
+                if (guardResult.GuardReasonCode is DegradedModeReasonCode.CandleDataGapDetected or DegradedModeReasonCode.CandleDataDuplicateDetected or DegradedModeReasonCode.CandleDataOutOfOrderDetected)
+                {
+                    streamGapCount++;
+                }
+
                 logger.LogWarning(
                     "Candle data quality guard blocked {Symbol} {Interval} with reason {ReasonCode}.",
                     snapshot.Symbol,
@@ -151,17 +182,98 @@ public sealed class BinanceWebSocketManager(
             }
 
             await heartbeatRecorder.RecordAsync(guardResult, cancellationToken);
+            RecordTelemetry();
 
-            if (ShouldRestartStream(trackedSymbols.Version))
+            if (ShouldRestartStream(trackedSymbols.Version, reconnectGeneration))
             {
                 return;
             }
         }
     }
 
-    private bool ShouldRestartStream(long trackedSymbolVersion)
+    private bool ShouldRestartStream(long trackedSymbolVersion, long reconnectGeneration)
     {
         return symbolRegistry.GetTrackedSymbolsSnapshot().Version != trackedSymbolVersion ||
-               timeProvider.GetUtcNow().UtcDateTime >= nextMetadataRefreshAtUtc;
+               timeProvider.GetUtcNow().UtcDateTime >= nextMetadataRefreshAtUtc ||
+               (webSocketReconnectCoordinator?.GetGeneration() ?? reconnectGeneration) != reconnectGeneration;
+    }
+
+    private void RecordTelemetry()
+    {
+        if (monitoringTelemetryCollector is null)
+        {
+            return;
+        }
+
+        var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
+        var lastMessageAtUtc = lastMessageReceivedAtUtc ?? nowUtc;
+        var ageSeconds = lastMessageReceivedAtUtc is null
+            ? (int?)null
+            : Math.Max(0, (int)Math.Round((nowUtc - lastMessageAtUtc).TotalSeconds, MidpointRounding.AwayFromZero));
+
+        monitoringTelemetryCollector.RecordWebSocketActivity(
+            lastMessageAtUtc,
+            reconnectCount,
+            streamGapCount,
+            lastMessageAgeSeconds: ageSeconds,
+            staleDurationSeconds: ageSeconds);
+    }
+
+    private static string? Truncate(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return value.Length <= maxLength
+            ? value
+            : value[..maxLength];
+    }
+
+    private async Task RecordBreakerFailureAsync(Exception exception, CancellationToken cancellationToken)
+    {
+        if (serviceScopeFactory is null)
+        {
+            return;
+        }
+
+        using var scope = serviceScopeFactory.CreateScope();
+        var dependencyCircuitBreakerStateManager = scope.ServiceProvider.GetService<IDependencyCircuitBreakerStateManager>();
+
+        if (dependencyCircuitBreakerStateManager is null)
+        {
+            return;
+        }
+
+        await dependencyCircuitBreakerStateManager.RecordFailureAsync(
+            new DependencyCircuitBreakerFailureRequest(
+                DependencyCircuitBreakerKind.WebSocket,
+                BreakerActor,
+                exception.GetType().Name,
+                Truncate(exception.Message, 512) ?? "WebSocket cycle failed."),
+            cancellationToken);
+    }
+
+    private async Task RecordBreakerSuccessAsync(CancellationToken cancellationToken)
+    {
+        if (serviceScopeFactory is null)
+        {
+            return;
+        }
+
+        using var scope = serviceScopeFactory.CreateScope();
+        var dependencyCircuitBreakerStateManager = scope.ServiceProvider.GetService<IDependencyCircuitBreakerStateManager>();
+
+        if (dependencyCircuitBreakerStateManager is null)
+        {
+            return;
+        }
+
+        await dependencyCircuitBreakerStateManager.RecordSuccessAsync(
+            new DependencyCircuitBreakerSuccessRequest(
+                DependencyCircuitBreakerKind.WebSocket,
+                BreakerActor),
+            cancellationToken);
     }
 }

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Auditing;
 using CoinBot.Application.Abstractions.DemoPortfolio;
 using CoinBot.Application.Abstractions.Execution;
@@ -10,6 +11,7 @@ namespace CoinBot.Infrastructure.Execution;
 
 public sealed class ExecutionGate(
     IDemoSessionService demoSessionService,
+    IGlobalSystemStateService globalSystemStateService,
     IGlobalExecutionSwitchService globalExecutionSwitchService,
     IDataLatencyCircuitBreaker dataLatencyCircuitBreaker,
     ITradingModeResolver tradingModeResolver,
@@ -20,6 +22,42 @@ public sealed class ExecutionGate(
         ExecutionGateRequest request,
         CancellationToken cancellationToken = default)
     {
+        if (TryResolveAdministrativeOverrideReason(request.Context, out var administrativeOverrideReason))
+        {
+            var switchSnapshot = await globalExecutionSwitchService.GetSnapshotAsync(cancellationToken);
+
+            await auditLogService.WriteAsync(
+                new AuditLogWriteRequest(
+                    request.Actor,
+                    request.Action,
+                    request.Target,
+                    BuildAuditContext(
+                        request.Context,
+                        new DegradedModeSnapshot(
+                            DegradedModeStateCode.Normal,
+                            DegradedModeReasonCode.None,
+                            SignalFlowBlocked: false,
+                            ExecutionFlowBlocked: false,
+                            LatestDataTimestampAtUtc: null,
+                            LatestHeartbeatReceivedAtUtc: null,
+                            LatestDataAgeMilliseconds: null,
+                            LatestClockDriftMilliseconds: null,
+                            LastStateChangedAtUtc: null,
+                            IsPersisted: false),
+                        administrativeOverrideReason: administrativeOverrideReason),
+                    request.CorrelationId,
+                    "Allowed:AdministrativeOverride",
+                    request.Environment.ToString()),
+                cancellationToken);
+
+            logger.LogWarning(
+                "Execution gate accepted an administrative override for {Target}. Reason={AdministrativeOverrideReason}",
+                request.Target,
+                administrativeOverrideReason);
+
+            return switchSnapshot;
+        }
+
         using var signalActivity = CoinBotActivity.StartActivity("CoinBot.Signal.Intake");
         ApplyTags(signalActivity, request);
         logger.LogInformation(
@@ -60,6 +98,58 @@ public sealed class ExecutionGate(
                 CreateMessage(latencyBlockedReason.Value, request.Environment));
         }
 
+        GlobalSystemStateSnapshot globalSystemStateSnapshot;
+
+        try
+        {
+            globalSystemStateSnapshot = await globalSystemStateService.GetSnapshotAsync(cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            using var executionActivity = CoinBotActivity.StartActivity("CoinBot.Execution.Gate");
+            ApplyTags(executionActivity, request);
+            executionActivity.SetTag("coinbot.execution.result", "GlobalSystemStateUnavailable");
+
+            await auditLogService.WriteAsync(
+                new AuditLogWriteRequest(
+                    request.Actor,
+                    request.Action,
+                    request.Target,
+                    BuildAuditContext(request.Context, latencySnapshot),
+                    request.CorrelationId,
+                    "Blocked:GlobalSystemStateUnavailable",
+                    request.Environment.ToString()),
+                cancellationToken);
+
+            logger.LogWarning(exception, "Execution stage failed closed because global system state could not be evaluated.");
+
+            throw new InvalidOperationException("Execution blocked because global system state could not be evaluated.", exception);
+        }
+
+        if (globalSystemStateSnapshot.IsExecutionBlocked)
+        {
+            using var executionActivity = CoinBotActivity.StartActivity("CoinBot.Execution.Gate");
+            ApplyTags(executionActivity, request);
+            executionActivity.SetTag("coinbot.execution.result", $"GlobalSystem:{globalSystemStateSnapshot.State}");
+
+            await auditLogService.WriteAsync(
+                new AuditLogWriteRequest(
+                    request.Actor,
+                    request.Action,
+                    request.Target,
+                    BuildAuditContext(request.Context, latencySnapshot, globalSystemStateSnapshot: globalSystemStateSnapshot),
+                    request.CorrelationId,
+                    BuildGlobalSystemOutcome(globalSystemStateSnapshot.State),
+                    request.Environment.ToString()),
+                cancellationToken);
+
+            logger.LogWarning(
+                "Execution stage blocked because global system state is {GlobalSystemState}.",
+                globalSystemStateSnapshot.State);
+
+            throw new InvalidOperationException(CreateGlobalSystemStateMessage(globalSystemStateSnapshot));
+        }
+
         DemoSessionSnapshot? demoSessionSnapshot = null;
 
         if (request.Environment == ExecutionEnvironment.Demo &&
@@ -75,14 +165,14 @@ public sealed class ExecutionGate(
                 executionActivity.SetTag("coinbot.execution.result", ExecutionGateBlockedReason.DemoSessionDriftDetected.ToString());
 
                 await auditLogService.WriteAsync(
-                    new AuditLogWriteRequest(
-                        request.Actor,
-                        request.Action,
-                        request.Target,
-                        BuildAuditContext(request.Context, latencySnapshot, demoSessionSnapshot: demoSessionSnapshot),
-                        request.CorrelationId,
-                        MapOutcome(ExecutionGateBlockedReason.DemoSessionDriftDetected),
-                        request.Environment.ToString()),
+                new AuditLogWriteRequest(
+                    request.Actor,
+                    request.Action,
+                    request.Target,
+                    BuildAuditContext(request.Context, latencySnapshot, demoSessionSnapshot: demoSessionSnapshot, globalSystemStateSnapshot: globalSystemStateSnapshot),
+                    request.CorrelationId,
+                    MapOutcome(ExecutionGateBlockedReason.DemoSessionDriftDetected),
+                    request.Environment.ToString()),
                     cancellationToken);
 
                 logger.LogWarning("Execution stage blocked the request because the active demo session drifted.");
@@ -127,7 +217,7 @@ public sealed class ExecutionGate(
                 request.Actor,
                 request.Action,
                 request.Target,
-                BuildAuditContext(request.Context, latencySnapshot, modeResolution, demoSessionSnapshot),
+                BuildAuditContext(request.Context, latencySnapshot, modeResolution, demoSessionSnapshot, globalSystemStateSnapshot),
                 request.CorrelationId,
                 blockedReason is null ? "Allowed" : MapOutcome(blockedReason.Value),
                 request.Environment.ToString()),
@@ -316,11 +406,32 @@ public sealed class ExecutionGate(
         };
     }
 
+    private static string BuildGlobalSystemOutcome(GlobalSystemStateKind state)
+    {
+        return state switch
+        {
+            GlobalSystemStateKind.SoftHalt => "Blocked:GlobalSystemSoftHalt",
+            GlobalSystemStateKind.FullHalt => "Blocked:GlobalSystemFullHalt",
+            GlobalSystemStateKind.Maintenance => "Blocked:GlobalSystemMaintenance",
+            GlobalSystemStateKind.Degraded => "Blocked:GlobalSystemDegraded",
+            _ => "Blocked:GlobalSystemState"
+        };
+    }
+
+    private static string CreateGlobalSystemStateMessage(GlobalSystemStateSnapshot snapshot)
+    {
+        return string.IsNullOrWhiteSpace(snapshot.Message)
+            ? $"Execution blocked because global system state is {snapshot.State}."
+            : $"Execution blocked because global system state is {snapshot.State}: {snapshot.Message}";
+    }
+
     private static string? BuildAuditContext(
         string? requestContext,
         DegradedModeSnapshot latencySnapshot,
         TradingModeResolution? modeResolution = null,
-        DemoSessionSnapshot? demoSessionSnapshot = null)
+        DemoSessionSnapshot? demoSessionSnapshot = null,
+        GlobalSystemStateSnapshot? globalSystemStateSnapshot = null,
+        string? administrativeOverrideReason = null)
     {
         var contextParts = new List<string>();
 
@@ -344,6 +455,17 @@ public sealed class ExecutionGate(
                 $"DemoSessionState={demoSessionSnapshot.State}; DemoConsistency={demoSessionSnapshot.ConsistencyStatus}; DemoSessionSequence={demoSessionSnapshot.SequenceNumber}; DemoDrift={Truncate(demoSessionSnapshot.LastDriftSummary, 160) ?? "none"}");
         }
 
+        if (globalSystemStateSnapshot is not null)
+        {
+            contextParts.Add(
+                $"GlobalSystemState={globalSystemStateSnapshot.State}; GlobalSystemReason={globalSystemStateSnapshot.ReasonCode}; GlobalSystemVersion={globalSystemStateSnapshot.Version}; GlobalSystemManual={globalSystemStateSnapshot.IsManualOverride}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(administrativeOverrideReason))
+        {
+            contextParts.Add($"AdministrativeOverride={Truncate(administrativeOverrideReason, 256)}");
+        }
+
         var combinedContext = string.Join(" | ", contextParts);
 
         return combinedContext.Length <= 2048
@@ -361,6 +483,32 @@ public sealed class ExecutionGate(
         return value.Length <= maxLength
             ? value
             : value[..maxLength];
+    }
+
+    private static bool TryResolveAdministrativeOverrideReason(string? context, out string? reason)
+    {
+        reason = null;
+
+        if (string.IsNullOrWhiteSpace(context))
+        {
+            return false;
+        }
+
+        var prefix = "AdministrativeOverride=";
+        var segments = context.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        foreach (var segment in segments)
+        {
+            if (!segment.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            reason = segment[prefix.Length..].Trim();
+            return !string.IsNullOrWhiteSpace(reason);
+        }
+
+        return false;
     }
 }
 

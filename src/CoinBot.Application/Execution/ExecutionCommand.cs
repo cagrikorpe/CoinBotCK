@@ -27,4 +27,6 @@ public sealed record ExecutionCommand(
     string? Context = null,
     decimal? StopLossPrice = null,
     decimal? TakeProfitPrice = null,
-    Guid? ReplacesExecutionOrderId = null);
+    Guid? ReplacesExecutionOrderId = null,
+    bool AdministrativeOverride = false,
+    string? AdministrativeOverrideReason = null);

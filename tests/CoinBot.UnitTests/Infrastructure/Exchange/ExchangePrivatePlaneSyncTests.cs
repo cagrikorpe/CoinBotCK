@@ -234,6 +234,13 @@ public sealed class ExchangePrivatePlaneSyncTests
             throw new NotSupportedException();
         }
 
+        public Task<BinanceOrderStatusSnapshot> CancelOrderAsync(
+            BinanceOrderCancelRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
         public Task<string> StartListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();

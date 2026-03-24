@@ -1,20 +1,23 @@
+@model IReadOnlyCollection<CoinBot.Application.Abstractions.Administration.AdminTraceListItem>
+@using CoinBot.Web.ViewModels.Admin
 @{
+    var query = ViewData["AdminTraceQuery"] as string;
     var headerModel = new AdminPageHeaderViewModel
     {
-        Eyebrow = "Global Trace Workspace",
+        Eyebrow = "Correlation Trace",
         Title = "Audit & Log Merkezi",
-        Description = "Platform genelindeki audit, security, runtime, AI, trading, admin action ve user activity kayıtlarını okunabilir filtreler, severity görünümü ve detail drawer ile tek ekranda toplayan Super Admin log center foundation ekranı.",
-        StatusBadge = new AdminBadgeViewModel { Label = "Log Center", Tone = "info", IconText = "LG" },
+        Description = "CorrelationId tabanli decision ve execution trace read-modeli; signal -> decision -> execution zinciri minimal admin listesi.",
+        StatusBadge = new AdminBadgeViewModel { Label = "Trace Index", Tone = "info", IconText = "TR" },
         MetaBadges = new[]
         {
-            new AdminBadgeViewModel { Label = "PII Safe", Tone = "healthy", IconText = "OK" },
-            new AdminBadgeViewModel { Label = "Retention Aware", Tone = "warning", IconText = "RT" },
-            new AdminBadgeViewModel { Label = "Export Placeholder", Tone = "neutral", IconText = "EX" }
+            new AdminBadgeViewModel { Label = "Masked", Tone = "healthy", IconText = "MS" },
+            new AdminBadgeViewModel { Label = "Read Model", Tone = "warning", IconText = "RM" },
+            new AdminBadgeViewModel { Label = "No Live Query", Tone = "neutral", IconText = "NL" }
         },
         SecondaryActionText = "Sistem sağlığı",
         SecondaryActionHref = Url.Action("SystemHealth", "Admin", new { area = "Admin" }),
-        PrimaryActionText = "Export placeholder",
-        PrimaryActionHref = "#cb_admin_log_export_modal"
+        PrimaryActionText = "Global search",
+        PrimaryActionHref = Url.Action("Search", "Admin", new { area = "Admin" })
     };
 }
 
@@ -26,33 +29,82 @@
 
                 @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
                 {
-                    Tone = "warning",
-                    Title = "Global audit / log center foundation",
-                    Message = "Gerçek logging backend, export pipeline, retention enforcement veya correlation store bu fazda bağlı değildir. Ekran; global log listesi, kategori/severity akışı, detail drawer ve retention meta yüzeylerini UI seviyesinde hazırlar.",
-                    Meta = "UI-only monitoring"
+                    Tone = "info",
+                    Title = "Correlation zinciri admin read-modeli",
+                    Message = "Liste snapshot/read-model verisinden beslenir. Canli trading path veya agir trace sorgusu admin UI'ya bind edilmez.",
+                    Meta = string.IsNullOrWhiteSpace(query) ? "Recent traces" : $"Query={query}"
                 })
-
-                <div class="mt-6">
-                    @await Html.PartialAsync("Foundation/_AdminAuditSummaryMeta")
-                </div>
             </div>
         </div>
     </div>
 
     <div class="col-12">
-        @await Html.PartialAsync("Foundation/_AdminAuditFilterBar")
-    </div>
+        <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-table-card">
+            <div class="card-body">
+                <div class="cb-admin-table-header">
+                    <div>
+                        <div class="cb-admin-section-kicker">Trace List</div>
+                        <div class="cb-admin-section-title">Correlation trace listesi</div>
+                        <p class="cb-admin-section-description mb-0">Decision sayisi, execution sayisi, kullanici ve provider son dokunusunu tek satirda gorursunuz.</p>
+                    </div>
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+                    {
+                        Label = $"{Model.Count} row",
+                        Tone = Model.Count > 0 ? "healthy" : "warning",
+                        IconText = "LS"
+                    })
+                </div>
 
-    <div class="col-xl-8">
-        @await Html.PartialAsync("Foundation/_AdminAuditCategoryStrip")
-        @await Html.PartialAsync("Foundation/_AdminAuditLogList")
-    </div>
-
-    <div class="col-xl-4">
-        @await Html.PartialAsync("Foundation/_AdminAuditRetentionInfo")
-    </div>
-
-    <div class="col-12">
-        @await Html.PartialAsync("Foundation/_AdminAuditStatesShowcase")
+                <div class="table-responsive cb-admin-table-wrap">
+                    <table class="table table-borderless cb-admin-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>CorrelationId</th>
+                                <th>User</th>
+                                <th>Symbol</th>
+                                <th>Decision</th>
+                                <th>Execution</th>
+                                <th>Provider</th>
+                                <th>LastUpdatedAtUtc</th>
+                                <th>Aksiyon</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @if (Model.Count == 0)
+                            {
+                                <tr>
+                                    <td colspan="8" class="text-muted">Trace bulunamadi. Query, CorrelationId, DecisionId veya ExecutionAttemptId ile tekrar deneyin.</td>
+                                </tr>
+                            }
+                            else
+                            {
+                                foreach (var row in Model)
+                                {
+                                    <tr>
+                                        <td><strong>@row.CorrelationId</strong></td>
+                                        <td>@(row.UserId ?? "-")</td>
+                                        <td>@((row.Symbol is null ? "-" : $"{row.Symbol} / {row.Timeframe ?? "?"}"))</td>
+                                        <td>
+                                            <div>@(row.DecisionOutcome ?? "-")</div>
+                                            <small class="text-muted">Count=@row.DecisionCount @(string.IsNullOrWhiteSpace(row.VetoReasonCode) ? string.Empty : $"| Veto={row.VetoReasonCode}")</small>
+                                        </td>
+                                        <td>@row.ExecutionCount</td>
+                                        <td>@(row.LatestExecutionProvider ?? "-")</td>
+                                        <td>@row.LastUpdatedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                        <td>
+                                            <a asp-area="Admin"
+                                               asp-controller="Admin"
+                                               asp-action="TraceDetail"
+                                               asp-route-correlationId="@row.CorrelationId"
+                                               class="btn btn-xs btn-light-primary font-weight-bold">Detay</a>
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
     </div>
 </div>

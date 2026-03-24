@@ -1,5 +1,7 @@
+using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Alerts;
 using CoinBot.Application.Abstractions.Auditing;
+using CoinBot.Application.Abstractions.Autonomy;
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.DemoPortfolio;
 using CoinBot.Application.Abstractions.ExchangeCredentials;
@@ -8,18 +10,23 @@ using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Application.Abstractions.Mfa;
+using CoinBot.Application.Abstractions.Monitoring;
+using CoinBot.Application.Abstractions.Policy;
 using CoinBot.Application.Abstractions.Risk;
 using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Contracts.Common;
 using CoinBot.Infrastructure;
 using CoinBot.Infrastructure.Alerts;
+using CoinBot.Infrastructure.Autonomy;
 using CoinBot.Infrastructure.Credentials;
 using CoinBot.Infrastructure.DemoPortfolio;
 using CoinBot.Infrastructure.Exchange;
 using CoinBot.Infrastructure.Execution;
+using CoinBot.Infrastructure.Monitoring;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Mfa;
 using CoinBot.Infrastructure.Observability;
+using CoinBot.Infrastructure.Policy;
 using Microsoft.Extensions.Hosting;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
@@ -47,6 +54,12 @@ public sealed class DependencyInjectionTests
         var correlationContextAccessor = provider.GetRequiredService<ICorrelationContextAccessor>();
         var exchangeCredentialService = provider.GetRequiredService<IExchangeCredentialService>();
         var globalExecutionSwitchService = provider.GetRequiredService<IGlobalExecutionSwitchService>();
+        var globalSystemStateService = provider.GetRequiredService<IGlobalSystemStateService>();
+        var adminAuditLogService = provider.GetRequiredService<IAdminAuditLogService>();
+        var adminCommandRegistry = provider.GetRequiredService<IAdminCommandRegistry>();
+        var adminShellReadModelService = provider.GetRequiredService<IAdminShellReadModelService>();
+        var adminMonitoringReadModelService = provider.GetRequiredService<IAdminMonitoringReadModelService>();
+        var apiCredentialValidationService = provider.GetRequiredService<IApiCredentialValidationService>();
         var dataLatencyCircuitBreaker = provider.GetRequiredService<IDataLatencyCircuitBreaker>();
         var demoPortfolioAccountingService = provider.GetRequiredService<IDemoPortfolioAccountingService>();
         var demoSessionService = provider.GetRequiredService<IDemoSessionService>();
@@ -73,12 +86,23 @@ public sealed class DependencyInjectionTests
         var indicatorOptions = provider.GetRequiredService<IOptions<IndicatorEngineOptions>>().Value;
         var mfaOptions = provider.GetRequiredService<IOptions<MfaOptions>>().Value;
         var credentialSecurityOptions = provider.GetRequiredService<IOptions<CredentialSecurityOptions>>().Value;
+        var autonomyOptions = provider.GetRequiredService<IOptions<AutonomyOptions>>().Value;
+        var dependencyCircuitBreakerOptions = provider.GetRequiredService<IOptions<DependencyCircuitBreakerOptions>>().Value;
         var cookieOptions = provider
             .GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
             .Get(IdentityConstants.ApplicationScheme);
         var executionGate = provider.GetRequiredService<IExecutionGate>();
         var executionEngine = provider.GetRequiredService<IExecutionEngine>();
+        var traceService = provider.GetRequiredService<ITraceService>();
+        var userExecutionOverrideGuard = provider.GetRequiredService<IUserExecutionOverrideGuard>();
+        var globalPolicyEngine = provider.GetRequiredService<IGlobalPolicyEngine>();
         var riskPolicyEvaluator = provider.GetRequiredService<IRiskPolicyEvaluator>();
+        var autonomyReviewQueueService = provider.GetRequiredService<IAutonomyReviewQueueService>();
+        var autonomyService = provider.GetRequiredService<IAutonomyService>();
+        var breakerStateManager = provider.GetRequiredService<IDependencyCircuitBreakerStateManager>();
+        var selfHealingExecutor = provider.GetRequiredService<ISelfHealingExecutor>();
+        var webSocketReconnectCoordinator = provider.GetRequiredService<IWebSocketReconnectCoordinator>();
+        var signalRReconnectCoordinator = provider.GetRequiredService<ISignalRReconnectCoordinator>();
         var marketDataService = provider.GetRequiredService<IMarketDataService>();
         var indicatorDataService = provider.GetRequiredService<IIndicatorDataService>();
         var strategyEvaluatorService = provider.GetRequiredService<IStrategyEvaluatorService>();
@@ -94,6 +118,7 @@ public sealed class DependencyInjectionTests
         var exchangeAccountSnapshotHub = provider.GetRequiredService<ExchangeAccountSnapshotHub>();
         var privateRestClient = provider.GetRequiredService<IBinancePrivateRestClient>();
         var privateStreamClient = provider.GetRequiredService<IBinancePrivateStreamClient>();
+        var monitoringTelemetryCollector = provider.GetRequiredService<IMonitoringTelemetryCollector>();
         var exchangeAccountSyncStateService = provider.GetRequiredService<ExchangeAccountSyncStateService>();
         var exchangeBalanceSyncService = provider.GetRequiredService<ExchangeBalanceSyncService>();
         var exchangePositionSyncService = provider.GetRequiredService<ExchangePositionSyncService>();
@@ -150,6 +175,13 @@ public sealed class DependencyInjectionTests
         Assert.Equal(6, mfaOptions.EmailOtpCodeLength);
         Assert.Equal(10, mfaOptions.EmailOtpLifetimeMinutes);
         Assert.Equal(30, mfaOptions.TotpTimeStepSeconds);
+        Assert.Equal(15, autonomyOptions.SelfHealingIntervalSeconds);
+        Assert.Equal(0.85m, autonomyOptions.DefaultConfidenceScore);
+        Assert.Equal(0.35m, autonomyOptions.MaxFalsePositiveProbability);
+        Assert.Equal(30, autonomyOptions.ReviewQueueTtlMinutes);
+        Assert.Equal(3, dependencyCircuitBreakerOptions.FailureThreshold);
+        Assert.Equal(60, dependencyCircuitBreakerOptions.CooldownSeconds);
+        Assert.Equal(30, dependencyCircuitBreakerOptions.ReviewQueueTtlMinutes);
         Assert.Equal(CredentialSecurityKeyProvider.Environment, credentialSecurityOptions.Provider);
         Assert.Equal("credential-v1", credentialSecurityOptions.KeyVersion);
         Assert.Equal("COINBOT_CREDENTIAL_ENCRYPTION_KEY_BASE64", credentialSecurityOptions.EnvironmentVariableName);
@@ -161,6 +193,12 @@ public sealed class DependencyInjectionTests
         Assert.NotNull(correlationContextAccessor);
         Assert.NotNull(exchangeCredentialService);
         Assert.NotNull(globalExecutionSwitchService);
+        Assert.NotNull(globalSystemStateService);
+        Assert.NotNull(adminAuditLogService);
+        Assert.NotNull(adminCommandRegistry);
+        Assert.NotNull(adminShellReadModelService);
+        Assert.NotNull(adminMonitoringReadModelService);
+        Assert.NotNull(apiCredentialValidationService);
         Assert.NotNull(dataLatencyCircuitBreaker);
         Assert.NotNull(demoPortfolioAccountingService);
         Assert.NotNull(demoSessionService);
@@ -176,7 +214,16 @@ public sealed class DependencyInjectionTests
         Assert.NotNull(tradingModeService);
         Assert.NotNull(executionGate);
         Assert.NotNull(executionEngine);
+        Assert.NotNull(traceService);
+        Assert.NotNull(userExecutionOverrideGuard);
+        Assert.NotNull(globalPolicyEngine);
         Assert.NotNull(riskPolicyEvaluator);
+        Assert.NotNull(autonomyReviewQueueService);
+        Assert.NotNull(autonomyService);
+        Assert.NotNull(breakerStateManager);
+        Assert.NotNull(selfHealingExecutor);
+        Assert.NotNull(webSocketReconnectCoordinator);
+        Assert.NotNull(signalRReconnectCoordinator);
         Assert.NotNull(marketDataService);
         Assert.NotNull(indicatorDataService);
         Assert.NotNull(strategyEvaluatorService);
@@ -192,6 +239,7 @@ public sealed class DependencyInjectionTests
         Assert.NotNull(exchangeAccountSnapshotHub);
         Assert.NotNull(privateRestClient);
         Assert.NotNull(privateStreamClient);
+        Assert.NotNull(monitoringTelemetryCollector);
         Assert.NotNull(exchangeAccountSyncStateService);
         Assert.NotNull(exchangeBalanceSyncService);
         Assert.NotNull(exchangePositionSyncService);
@@ -201,16 +249,18 @@ public sealed class DependencyInjectionTests
         Assert.NotNull(mfaCodeValidator);
         Assert.NotNull(mfaManagementService);
         Assert.Contains(hostedServices, service => service is VirtualExecutionWatchdogWorker);
+        Assert.Contains(hostedServices, service => service is MonitoringSnapshotWorker);
+        Assert.Contains(hostedServices, service => service is AutonomySelfHealingWorker);
     }
 
     [Theory]
-    [InlineData(ApplicationPolicies.AdminPortalAccess, ApplicationPermissions.AdminPortalAccess, ApplicationRoles.SuperAdmin, ApplicationRoles.Support)]
-    [InlineData(ApplicationPolicies.IdentityAdministration, ApplicationPermissions.IdentityAdministration, ApplicationRoles.SuperAdmin, ApplicationRoles.Admin)]
-    [InlineData(ApplicationPolicies.TradeOperations, ApplicationPermissions.TradeOperations, ApplicationRoles.User, ApplicationRoles.Admin)]
-    [InlineData(ApplicationPolicies.RiskManagement, ApplicationPermissions.RiskManagement, ApplicationRoles.User, ApplicationRoles.Admin)]
-    [InlineData(ApplicationPolicies.ExchangeManagement, ApplicationPermissions.ExchangeManagement, ApplicationRoles.User, ApplicationRoles.Admin)]
-    [InlineData(ApplicationPolicies.AuditRead, ApplicationPermissions.AuditRead, ApplicationRoles.Support, ApplicationRoles.Auditor)]
-    [InlineData(ApplicationPolicies.PlatformAdministration, ApplicationPermissions.PlatformAdministration, ApplicationRoles.SuperAdmin, ApplicationRoles.Admin)]
+    [InlineData(ApplicationPolicies.AdminPortalAccess, ApplicationPermissions.AdminPortalAccess, ApplicationRoles.SuperAdmin, ApplicationRoles.SecurityAuditor)]
+    [InlineData(ApplicationPolicies.IdentityAdministration, ApplicationPermissions.IdentityAdministration, ApplicationRoles.SuperAdmin, ApplicationRoles.OpsAdmin)]
+    [InlineData(ApplicationPolicies.TradeOperations, ApplicationPermissions.TradeOperations, ApplicationRoles.User, ApplicationRoles.OpsAdmin)]
+    [InlineData(ApplicationPolicies.RiskManagement, ApplicationPermissions.RiskManagement, ApplicationRoles.User, ApplicationRoles.OpsAdmin)]
+    [InlineData(ApplicationPolicies.ExchangeManagement, ApplicationPermissions.ExchangeManagement, ApplicationRoles.User, ApplicationRoles.OpsAdmin)]
+    [InlineData(ApplicationPolicies.AuditRead, ApplicationPermissions.AuditRead, ApplicationRoles.OpsAdmin, ApplicationRoles.SecurityAuditor)]
+    [InlineData(ApplicationPolicies.PlatformAdministration, ApplicationPermissions.PlatformAdministration, ApplicationRoles.SuperAdmin, ApplicationRoles.SuperAdmin)]
     public void AddInfrastructure_RegistersExpectedPolicies(string policyName, string permission, string firstRole, string secondRole)
     {
         var provider = BuildServiceProvider();
@@ -241,6 +291,19 @@ public sealed class DependencyInjectionTests
         Assert.Contains(ApplicationPermissions.RiskManagement, userPermissions);
         Assert.DoesNotContain(ApplicationPermissions.TradeOperations, supportPermissions);
         Assert.Contains(ApplicationPermissions.AuditRead, supportPermissions);
+    }
+
+    [Fact]
+    public void ApplicationRoleClaims_AssignsReadOnlyPermissionsToSecurityAuditor_AndNoPlatformAdministrationToOpsAdmin()
+    {
+        var securityAuditorPermissions = ApplicationRoleClaims.GetPermissions(ApplicationRoles.SecurityAuditor);
+        var opsAdminPermissions = ApplicationRoleClaims.GetPermissions(ApplicationRoles.OpsAdmin);
+
+        Assert.Contains(ApplicationPermissions.AdminPortalAccess, securityAuditorPermissions);
+        Assert.Contains(ApplicationPermissions.AuditRead, securityAuditorPermissions);
+        Assert.DoesNotContain(ApplicationPermissions.TradeOperations, securityAuditorPermissions);
+        Assert.Contains(ApplicationPermissions.TradeOperations, opsAdminPermissions);
+        Assert.DoesNotContain(ApplicationPermissions.PlatformAdministration, opsAdminPermissions);
     }
 
     private static ServiceProvider BuildServiceProvider()

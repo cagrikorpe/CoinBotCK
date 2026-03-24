@@ -1,32 +1,239 @@
+@{
+    var snapshot = ViewData["AdminGlobalPolicySnapshot"] as GlobalPolicySnapshot
+        ?? GlobalPolicySnapshot.CreateDefault(DateTime.UtcNow);
+    var canEditGlobalPolicy = ViewData["AdminCanEditGlobalPolicy"] is bool canEditValue && canEditValue;
+    var policyJson = JsonSerializer.Serialize(
+        snapshot.Policy,
+        new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            WriteIndented = true
+        });
+    var versions = snapshot.Versions
+        .OrderByDescending(version => version.Version)
+        .ToArray();
+    var rollbackVersions = versions
+        .Where(version => version.Version < snapshot.CurrentVersion)
+        .ToArray();
+    var restrictionPreview = snapshot.Policy.SymbolRestrictions.Count == 0
+        ? "None"
+        : string.Join(", ", snapshot.Policy.SymbolRestrictions.Take(3).Select(item => $"{item.Symbol}:{item.State}"));
+}
+
 <section id="cb_admin_settings_risk" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
     <div class="card-body">
-        <div class="cb-admin-section-kicker">Default Risk Policy Template</div>
-        <div class="cb-admin-section-title">Varsayılan risk policy şablonu</div>
-        <p class="cb-admin-section-description">Yeni kullanıcı veya bot yüzeylerine uygulanabilecek default risk template alanı placeholder olarak ayrıldı.</p>
-
-        <div class="cb-admin-settings-form-grid mt-6">
-            <div class="form-group mb-0">
-                <label class="cb-form-label">Template scope</label>
-                <select class="form-control cb-form-control">
-                    <option selected>Balanced default placeholder</option>
-                    <option>Conservative default placeholder</option>
-                    <option>Aggressive sandbox placeholder</option>
-                </select>
+        <div class="cb-admin-section-kicker">Global Policy Engine</div>
+        <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
+            <div>
+                <div class="cb-admin-section-title">RiskPolicy, versioning ve rollback</div>
+                <p class="cb-admin-section-description">Execution katmani global policy'yi asamaz. Bu section JSON policy edit, diff history ve rollback akisini admin panelde görünür kilar.</p>
             </div>
-            <div class="form-group mb-0">
-                <label class="cb-form-label">Protection mode</label>
-                <select class="form-control cb-form-control">
-                    <option selected>Guard rails enabled</option>
-                    <option>Manual review required</option>
-                    <option>Shadow enforcement</option>
-                </select>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+            {
+                Label = $"v{snapshot.CurrentVersion}",
+                Tone = snapshot.IsPersisted ? "healthy" : "warning",
+                IconText = "PV"
+            })
+        </div>
+
+        <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-6">
+            <div>
+                <div class="cb-admin-info-strip-title">Global policy guard</div>
+                <div class="cb-admin-info-strip-text">ObserveOnly, ReviewOnly, ReduceOnly ve CloseOnly sinyalleri bu policy engine üzerinden evaluate edilir. Change history audit ile birlikte versionlanir ve rollback edilebilir.</div>
+            </div>
+            <span class="cb-admin-info-strip-meta">Policy locked</span>
+        </div>
+
+        <div class="cb-admin-summary-grid mt-6">
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Policy key</span>
+                <strong>@snapshot.Policy.PolicyKey</strong>
+                <small>Current version: @snapshot.CurrentVersion</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Autonomy</span>
+                <strong>@snapshot.Policy.AutonomyPolicy.Mode</strong>
+                <small>Manual approval live: @(snapshot.Policy.AutonomyPolicy.RequireManualApprovalForLive ? "Yes" : "No")</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Execution guard</span>
+                <strong>@(snapshot.Policy.ExecutionGuardPolicy.MaxOrderNotional?.ToString("0.##") ?? "none")</strong>
+                <small>CloseOnly blocks new positions: @(snapshot.Policy.ExecutionGuardPolicy.CloseOnlyBlocksNewPositions ? "Yes" : "No")</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Restrictions</span>
+                <strong>@snapshot.Policy.SymbolRestrictions.Count</strong>
+                <small>Blocked / review-only / reduce-only / close-only</small>
             </div>
         </div>
 
-        <div class="cb-admin-summary-grid">
-            <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Risk template</span><strong>Balanced default</strong><small>Trade limit ve loss guard placeholder</small></div>
-            <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Rollout scope</span><strong>New bots only</strong><small>Global policy yerine controlled zemin</small></div>
-            <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Review</span><strong>Admin gated</strong><small>Kritik değişiklikler destructive confirm ile yapılır</small></div>
+        <div class="cb-admin-summary-grid mt-4">
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Last updated</span>
+                <strong>@snapshot.LastUpdatedAtUtc.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") UTC</strong>
+                <small>Updated by @(snapshot.LastUpdatedByUserId ?? "system")</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Persisted</span>
+                <strong>@(snapshot.IsPersisted ? "Yes" : "No")</strong>
+                <small>@(string.IsNullOrWhiteSpace(snapshot.LastChangeSummary) ? "No change summary" : snapshot.LastChangeSummary)</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Version history</span>
+                <strong>@versions.Length</strong>
+                <small>Rollback eligible versions: @rollbackVersions.Length</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Symbol restrictions</span>
+                <strong>@restrictionPreview</strong>
+                <small>@(snapshot.Policy.SymbolRestrictions.Count > 3 ? "More restrictions available in history" : "Visible in policy JSON")</small>
+            </div>
         </div>
+
+        @if (versions.Length > 0)
+        {
+            <div class="mt-6">
+                <div class="cb-admin-section-title">Version history</div>
+                <p class="cb-admin-section-description">Diff entries version snapshot icinde tutulur. En yeni version ustte, rollback ise tarihsel versiyona geri doner.</p>
+
+                <div class="cb-admin-worker-list mt-4">
+                    @foreach (var version in versions)
+                    {
+                        <div class="cb-admin-worker-item">
+                            <div class="cb-admin-worker-main">
+                                <div class="cb-admin-worker-title-row">
+                                    <div>
+                                        <div class="cb-admin-job-title">Version @version.Version</div>
+                                        <div class="cb-admin-job-meta">@version.ChangeSummary</div>
+                                    </div>
+                                    <div class="cb-admin-badge-stack">
+                                        @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+                                        {
+                                            Label = version.Version == snapshot.CurrentVersion ? "Current" : "History",
+                                            Tone = version.Version == snapshot.CurrentVersion ? "healthy" : "info",
+                                            IconText = "VS"
+                                        })
+                                        @if (version.RolledBackFromVersion is int rolledBackFromVersion)
+                                        {
+                                            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+                                            {
+                                                Label = $"Rolled back from v{rolledBackFromVersion}",
+                                                Tone = "warning",
+                                                IconText = "RB"
+                                            })
+                                        }
+                                    </div>
+                                </div>
+
+                                <div class="cb-admin-worker-meta-grid mt-4">
+                                    <div class="cb-admin-summary-card">
+                                        <span class="cb-admin-summary-label">Created</span>
+                                        <strong>@version.CreatedAtUtc.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") UTC</strong>
+                                        <small>By @version.CreatedByUserId</small>
+                                    </div>
+                                    <div class="cb-admin-summary-card">
+                                        <span class="cb-admin-summary-label">Source</span>
+                                        <strong>@(version.Source ?? "n/a")</strong>
+                                        <small>Correlation: @(version.CorrelationId ?? "n/a")</small>
+                                    </div>
+                                    <div class="cb-admin-summary-card">
+                                        <span class="cb-admin-summary-label">Diff entries</span>
+                                        <strong>@version.DiffEntries.Count</strong>
+                                        <small>Rollback trace includes these diff rows</small>
+                                    </div>
+                                </div>
+
+                                @if (version.DiffEntries.Count > 0)
+                                {
+                                    <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4">
+                                        <div>
+                                            <div class="cb-admin-info-strip-title">Diff preview</div>
+                                            <div class="cb-admin-info-strip-text">@string.Join(" | ", version.DiffEntries.Take(3).Select(entry => $"{entry.Path}: {entry.Before ?? "null"} -> {entry.After ?? "null"}"))</div>
+                                        </div>
+                                        <span class="cb-admin-info-strip-meta">@version.DiffEntries.Count changes</span>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+
+        @if (canEditGlobalPolicy)
+        {
+            <form asp-area="Admin" asp-controller="Admin" asp-action="UpdateGlobalPolicy" method="post" class="mt-6" data-cb-reauth-required="true">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="commandId" value="@(Guid.NewGuid().ToString("N"))" />
+                <input type="hidden" name="reauthToken" value="" />
+
+                <div class="form-group mb-0">
+                    <label class="cb-form-label">Policy JSON</label>
+                    <textarea name="policyJson" class="form-control cb-form-control" rows="16" maxlength="8192" required>@policyJson</textarea>
+                </div>
+
+                <div class="form-group mt-4 mb-0">
+                    <label class="cb-form-label">Audit reason</label>
+                    <input name="reason" type="text" class="form-control cb-form-control" maxlength="256" required placeholder="Global policy degisikligi nedeni" />
+                </div>
+
+                <div class="cb-admin-inline-actions mt-5">
+                    <button type="submit" class="btn btn-light-primary font-weight-bold">Apply Policy JSON</button>
+                    <button type="button" class="btn btn-light-warning font-weight-bold" data-toggle="modal" data-target="#cb_admin_reauth_modal">Re-auth</button>
+                </div>
+            </form>
+
+            <form asp-area="Admin" asp-controller="Admin" asp-action="RollbackGlobalPolicy" method="post" class="mt-6" data-cb-reauth-required="true">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="commandId" value="@(Guid.NewGuid().ToString("N"))" />
+                <input type="hidden" name="reauthToken" value="" />
+
+                <div class="form-row">
+                    <div class="form-group col-lg-4 mb-0">
+                        <label class="cb-form-label">Rollback target version</label>
+                        @if (rollbackVersions.Length == 0)
+                        {
+                            <select name="targetVersion" class="form-control cb-form-control" disabled="disabled">
+                                <option value="">Rollback history yok</option>
+                            </select>
+                        }
+                        else
+                        {
+                            <select name="targetVersion" class="form-control cb-form-control">
+                                @foreach (var version in rollbackVersions)
+                                {
+                                    <option value="@version.Version">v@version.Version - @version.ChangeSummary</option>
+                                }
+                            </select>
+                        }
+                    </div>
+                    <div class="form-group col-lg-8 mb-0">
+                        <label class="cb-form-label">Audit reason</label>
+                        <input name="reason" type="text" class="form-control cb-form-control" maxlength="256" required placeholder="Rollback nedeni" />
+                    </div>
+                </div>
+
+                <div class="cb-admin-inline-actions mt-5">
+                    @if (rollbackVersions.Length == 0)
+                    {
+                        <button type="submit" class="btn btn-light-danger font-weight-bold" disabled="disabled">Rollback Selected Version</button>
+                    }
+                    else
+                    {
+                        <button type="submit" class="btn btn-light-danger font-weight-bold">Rollback Selected Version</button>
+                    }
+                    <button type="button" class="btn btn-light-warning font-weight-bold" data-toggle="modal" data-target="#cb_admin_critical_confirm_modal">Critical flow</button>
+                </div>
+            </form>
+        }
+        else
+        {
+            <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6">
+                <div>
+                    <div class="cb-admin-info-strip-title">Read-only policy visibility</div>
+                    <div class="cb-admin-info-strip-text">Bu rolde policy snapshot, diff ve version history gorulebilir ancak degistirilemez. Rollback ve JSON update sadece SuperAdmin tarafinda aciktir.</div>
+                </div>
+                <span class="cb-admin-info-strip-meta">Read-only</span>
+            </div>
+        }
     </div>
 </section>
