@@ -210,6 +210,7 @@ public static class DependencyInjection
         services.AddSingleton<IndicatorDataService>();
         services.AddSingleton<IIndicatorDataService>(serviceProvider => serviceProvider.GetRequiredService<IndicatorDataService>());
         services.AddSingleton<IMonitoringTelemetryCollector, MonitoringTelemetryCollector>();
+        services.AddSingleton<IRedisLatencyProbe, RedisLatencyProbe>();
         services.AddSingleton<ExchangeAccountSnapshotHub>();
         services.AddSingleton<CandleContinuityValidator>();
         services.AddSingleton<CandleDataQualityGuard>();

@@ -30,7 +30,10 @@ public sealed class TraceService(
             DecisionOutcome = NormalizeRequired(request.DecisionOutcome, 64, nameof(request.DecisionOutcome)),
             VetoReasonCode = NormalizeOptional(request.VetoReasonCode, 64),
             LatencyMs = Math.Max(0, request.LatencyMs),
-            SnapshotJson = NormalizeRequired(request.SnapshotJson, 8192, nameof(request.SnapshotJson)),
+            SnapshotJson = NormalizeRequired(
+                SensitivePayloadMasker.Mask(request.SnapshotJson, 8192),
+                8192,
+                nameof(request.SnapshotJson)),
             CreatedAtUtc = request.CreatedAtUtc?.ToUniversalTime() ?? timeProvider.GetUtcNow().UtcDateTime
         };
 
@@ -52,9 +55,12 @@ public sealed class TraceService(
             CommandId = NormalizeRequired(request.CommandId, 128, nameof(request.CommandId)),
             UserId = NormalizeRequired(request.UserId, 450, nameof(request.UserId)),
             Provider = NormalizeRequired(request.Provider, 64, nameof(request.Provider)),
-            Endpoint = NormalizeRequired(request.Endpoint, 256, nameof(request.Endpoint)),
-            RequestMasked = NormalizeOptional(request.RequestMasked, 4096),
-            ResponseMasked = NormalizeOptional(request.ResponseMasked, 4096),
+            Endpoint = NormalizeRequired(
+                SensitivePayloadMasker.Mask(request.Endpoint, 256),
+                256,
+                nameof(request.Endpoint)),
+            RequestMasked = NormalizeOptional(SensitivePayloadMasker.Mask(request.RequestMasked, 4096), 4096),
+            ResponseMasked = NormalizeOptional(SensitivePayloadMasker.Mask(request.ResponseMasked, 4096), 4096),
             HttpStatusCode = request.HttpStatusCode,
             ExchangeCode = NormalizeOptional(request.ExchangeCode, 64),
             LatencyMs = request.LatencyMs.HasValue

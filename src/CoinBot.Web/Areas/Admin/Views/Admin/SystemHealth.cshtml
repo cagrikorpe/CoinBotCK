@@ -26,10 +26,10 @@
 
                 @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
                 {
-                    Tone = "warning",
+                    Tone = "info",
                     Title = "System health foundation",
-                    Message = "Gerçek health endpoint, worker runtime, job retry veya uptime kaynağı bu fazda bağlı değildir. Ekran; health KPI, worker freshness, failed jobs ve severity/incident akışlarını UI seviyesinde hazırlar.",
-                    Meta = "UI-only monitoring"
+                    Message = "Redis latency ve clock drift sinyalleri gerçek probe/circuit-breaker read-model üzerinden dashboard'a akıyor. Warm/cold snapshot modeli korunur.",
+                    Meta = "Snapshot/read-model monitoring"
                 })
 
                 <div class="mt-6">

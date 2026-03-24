@@ -164,24 +164,7 @@ public sealed class ExchangeCredentialService(
             throw new InvalidOperationException("Exchange credentials cannot be validated because no encrypted credential set exists.");
         }
 
-        if (request.IsValid)
-        {
-            exchangeAccount.CredentialStatus = ExchangeCredentialStatus.Active;
-            exchangeAccount.LastValidatedAt = utcNow;
-            exchangeAccount.CredentialRevalidateAfterUtc = utcNow.AddDays(optionsValue.RevalidationIntervalDays);
-            exchangeAccount.CredentialRotateAfterUtc ??= utcNow.AddDays(optionsValue.RotationIntervalDays);
-            exchangeAccount.CredentialLastRotatedAtUtc ??= exchangeAccount.CredentialStoredAtUtc ?? utcNow;
-        }
-        else
-        {
-            exchangeAccount.CredentialStatus = ExchangeCredentialStatus.Invalid;
-            exchangeAccount.LastValidatedAt = null;
-            exchangeAccount.CredentialRevalidateAfterUtc = null;
-        }
-
-        var state = CreateSnapshot(exchangeAccount, utcNow);
-
-        await apiCredentialValidationService.RecordValidationAsync(
+        var validationSnapshot = await apiCredentialValidationService.RecordValidationAsync(
             new ApiCredentialValidationRequest(
                 exchangeAccount.Id,
                 exchangeAccount.OwnerUserId,
@@ -201,12 +184,34 @@ public sealed class ExchangeCredentialService(
                 utcNow),
             cancellationToken);
 
+        var isValid = string.Equals(
+            validationSnapshot.ValidationStatus,
+            "Valid",
+            StringComparison.OrdinalIgnoreCase);
+
+        if (isValid)
+        {
+            exchangeAccount.CredentialStatus = ExchangeCredentialStatus.Active;
+            exchangeAccount.LastValidatedAt = validationSnapshot.ValidatedAtUtc;
+            exchangeAccount.CredentialRevalidateAfterUtc = utcNow.AddDays(optionsValue.RevalidationIntervalDays);
+            exchangeAccount.CredentialRotateAfterUtc ??= utcNow.AddDays(optionsValue.RotationIntervalDays);
+            exchangeAccount.CredentialLastRotatedAtUtc ??= exchangeAccount.CredentialStoredAtUtc ?? utcNow;
+        }
+        else
+        {
+            exchangeAccount.CredentialStatus = ExchangeCredentialStatus.Invalid;
+            exchangeAccount.LastValidatedAt = null;
+            exchangeAccount.CredentialRevalidateAfterUtc = null;
+        }
+
+        var state = CreateSnapshot(exchangeAccount, utcNow);
+
         await WriteAuditAsync(
             actor,
             "ExchangeCredential.ValidationSet",
             request.ExchangeAccountId,
             state,
-            outcome: request.IsValid ? "Validated" : "ValidationFailed",
+            outcome: isValid ? "Validated" : "ValidationFailed",
             request.CorrelationId,
             purpose: ExchangeCredentialAccessPurpose.Validation,
             accessMode: "ValidationStateWrite",

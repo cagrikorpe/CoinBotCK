@@ -104,7 +104,8 @@ public sealed partial class CrisisEscalationServiceTests
         Assert.Equal(2m, exchangePosition.Quantity);
         Assert.Equal([ExecutionOrderState.Submitted, ExecutionOrderState.Received], orderStates);
         Assert.Equal("Level=SoftHalt | Scope=GLOBAL_SOFT_HALT | PurgedOrders=0 | FlattenDispatches=0 | FlattenReused=0 | Failures=0 | Reason=Stabilize execution entry", result.Summary);
-        Assert.Single(harness.IncidentHook.RecoveryRequests);
+        var recoveryRequest = Assert.Single(harness.IncidentHook.RecoveryRequests);
+        Assert.Equal("cmd-soft-001", recoveryRequest.CommandId);
         Assert.Empty(harness.IncidentHook.IncidentRequests);
     }
 
@@ -172,6 +173,7 @@ public sealed partial class CrisisEscalationServiceTests
         Assert.Equal(1, result.PurgedOrderCount);
         Assert.Equal(0, result.FailedOperationCount);
         Assert.Empty(harness.ExecutionEngine.DispatchCalls);
+        Assert.Equal("cmd-purge-001", Assert.Single(harness.IncidentHook.RecoveryRequests).CommandId);
     }
 
     [Fact]
@@ -328,8 +330,8 @@ public sealed partial class CrisisEscalationServiceTests
         Assert.Equal(0, result.FlattenAttemptCount);
         Assert.Equal(1, result.FailedOperationCount);
         Assert.Single(harness.ExecutionEngine.DispatchCalls);
-        Assert.Single(harness.IncidentHook.IncidentRequests);
-        Assert.Single(harness.IncidentHook.RecoveryRequests);
+        Assert.Equal("cmd-failure-001", Assert.Single(harness.IncidentHook.IncidentRequests).CommandId);
+        Assert.Equal("cmd-failure-001", Assert.Single(harness.IncidentHook.RecoveryRequests).CommandId);
         Assert.Contains("Failures=1", result.Summary, StringComparison.Ordinal);
     }
 

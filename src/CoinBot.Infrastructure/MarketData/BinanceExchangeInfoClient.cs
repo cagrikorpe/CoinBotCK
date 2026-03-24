@@ -20,6 +20,7 @@ public sealed class BinanceExchangeInfoClient(
     IServiceScopeFactory? serviceScopeFactory = null) : IBinanceExchangeInfoClient
 {
     private const string BreakerActor = "system:rest-market-data";
+    private static readonly TimeSpan ServerTimeProbeTimeout = TimeSpan.FromSeconds(5);
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true
@@ -88,6 +89,60 @@ public sealed class BinanceExchangeInfoClient(
             results.Count);
 
         return results;
+    }
+
+    public async Task<DateTime?> GetServerTimeUtcAsync(CancellationToken cancellationToken = default)
+    {
+        HttpResponseMessage? response = null;
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(ServerTimeProbeTimeout);
+
+        try
+        {
+            response = await httpClient.GetAsync("api/v3/time", timeoutCts.Token);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                logger.LogDebug(
+                    "Binance server time probe returned HTTP {StatusCode}.",
+                    (int)response.StatusCode);
+
+                return null;
+            }
+
+            await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            var payload = await JsonSerializer.DeserializeAsync<BinanceServerTimeResponse>(
+                responseStream,
+                SerializerOptions,
+                cancellationToken);
+
+            if (payload is null || payload.ServerTime <= 0)
+            {
+                return null;
+            }
+
+            return DateTimeOffset.FromUnixTimeMilliseconds(payload.ServerTime).UtcDateTime;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+        catch (Exception exception)
+        {
+            logger.LogDebug(
+                exception,
+                "Binance server time probe failed.");
+
+            return null;
+        }
+        finally
+        {
+            response?.Dispose();
+        }
     }
 
     private static string? Truncate(string? value, int maxLength)
@@ -253,6 +308,9 @@ public sealed class BinanceExchangeInfoClient(
 
     private sealed record BinanceExchangeInfoResponse(
         [property: JsonPropertyName("symbols")] IReadOnlyCollection<BinanceSymbolPayload>? Symbols);
+
+    private sealed record BinanceServerTimeResponse(
+        [property: JsonPropertyName("serverTime")] long ServerTime);
 
     private sealed record BinanceSymbolPayload(
         [property: JsonPropertyName("symbol")] string? Symbol,

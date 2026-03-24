@@ -16,9 +16,7 @@
             <table class="table table-borderless cb-admin-table cb-admin-exchange-table mb-0">
                 <thead>
                     <tr>
-                        <th>Kullanici</th>
-                        <th>Exchange</th>
-                        <th>Hesap</th>
+                        <th>Provider</th>
                         <th>Fingerprint</th>
                         <th>Validation</th>
                         <th>Permission</th>
@@ -31,7 +29,7 @@
                     @if (Model.Count == 0)
                     {
                         <tr>
-                            <td colspan="9" class="text-muted">Credential summary bulunamadi.</td>
+                            <td colspan="7" class="text-muted">Credential summary bulunamadi.</td>
                         </tr>
                     }
                     else
@@ -44,14 +42,7 @@
                                     ? "warning"
                                     : "critical";
                             <tr>
-                                <td>@row.OwnerUserId</td>
                                 <td>@row.ExchangeName</td>
-                                <td>
-                                    <div class="cb-admin-mini-stat">
-                                        <strong>@row.DisplayName</strong>
-                                        <small>@(row.IsReadOnly ? "ReadOnly" : "Trading")</small>
-                                    </div>
-                                </td>
                                 <td><code>@(row.MaskedFingerprint ?? "missing")</code></td>
                                 <td>
                                     @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
@@ -71,11 +62,6 @@
                                            asp-action="Audit"
                                            asp-route-query="@row.OwnerUserId"
                                            class="btn btn-xs btn-light-primary font-weight-bold">Trace</a>
-                                        <a asp-area="Admin"
-                                           asp-controller="Admin"
-                                           asp-action="UserDetail"
-                                           asp-route-id="@row.OwnerUserId"
-                                           class="btn btn-xs btn-light-primary font-weight-bold">Kullanici</a>
                                     </div>
                                 </td>
                             </tr>

@@ -5,21 +5,28 @@ using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Persistence;
+using CoinBot.Infrastructure.Execution;
+using CoinBot.Infrastructure.MarketData;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace CoinBot.Infrastructure.Monitoring;
 
 public sealed class MonitoringSnapshotWorker(
     IServiceScopeFactory serviceScopeFactory,
     IMonitoringTelemetryCollector telemetryCollector,
+    IRedisLatencyProbe redisLatencyProbe,
+    IBinanceExchangeInfoClient exchangeInfoClient,
+    IOptions<DataLatencyGuardOptions> dataLatencyGuardOptions,
     TimeProvider timeProvider,
     ILogger<MonitoringSnapshotWorker> logger) : BackgroundService
 {
     private static readonly TimeSpan WarmInterval = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan ColdInterval = TimeSpan.FromSeconds(60);
+    private readonly int clockDriftThresholdMilliseconds = checked(dataLatencyGuardOptions.Value.ClockDriftThresholdSeconds * 1000);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -92,18 +99,23 @@ public sealed class MonitoringSnapshotWorker(
 
         var telemetryBeforeDbProbe = telemetryCollector.CaptureSnapshot(startedAtUtc);
         var dbLatency = await MeasureDatabaseLatencyAsync(dbContext, cancellationToken);
+        var redisProbeResult = await redisLatencyProbe.ProbeAsync(cancellationToken);
         telemetryCollector.RecordDatabaseLatency(dbLatency, startedAtUtc);
-        telemetryCollector.RecordRedisLatency(null, startedAtUtc);
+        telemetryCollector.RecordRedisLatency(redisProbeResult.Latency, startedAtUtc);
         var telemetry = telemetryCollector.CaptureSnapshot(startedAtUtc);
         var dataLatencySnapshot = await circuitBreaker.GetSnapshotAsync(cancellationToken: cancellationToken);
 
         if (includeWarmSnapshots)
         {
+            var exchangeServerTimeUtc = await exchangeInfoClient.GetServerTimeUtcAsync(cancellationToken);
+            var warmSnapshotAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+
             await UpsertMarketHealthSnapshotsAsync(
                 dbContext,
                 telemetry,
                 dataLatencySnapshot,
-                startedAtUtc,
+                exchangeServerTimeUtc,
+                warmSnapshotAtUtc,
                 cancellationToken);
         }
 
@@ -112,6 +124,7 @@ public sealed class MonitoringSnapshotWorker(
             await UpsertDependencyHealthSnapshotAsync(
                 dbContext,
                 telemetry,
+                redisProbeResult,
                 dataLatencySnapshot,
                 startedAtUtc,
                 cancellationToken);
@@ -124,11 +137,13 @@ public sealed class MonitoringSnapshotWorker(
         }
 
         logger.LogDebug(
-            "Monitoring snapshot worker cycle completed. Warm={Warm}, Cold={Cold}, BinancePingMs={BinancePingMs}, DbLatencyMs={DbLatencyMs}.",
+            "Monitoring snapshot worker cycle completed. Warm={Warm}, Cold={Cold}, BinancePingMs={BinancePingMs}, DbLatencyMs={DbLatencyMs}, RedisLatencyMs={RedisLatencyMs}, RedisProbe={RedisProbe}.",
             includeWarmSnapshots,
             includeColdSnapshots,
             telemetryBeforeDbProbe.BinancePingMs?.ToString() ?? "n/a",
-            dbLatency.TotalMilliseconds.ToString("0"));
+            dbLatency.TotalMilliseconds.ToString("0"),
+            redisProbeResult.Latency?.TotalMilliseconds.ToString("0") ?? "n/a",
+            redisProbeResult.Status);
 
         await dbContext.SaveChangesAsync(cancellationToken);
     }
@@ -137,9 +152,14 @@ public sealed class MonitoringSnapshotWorker(
         ApplicationDbContext dbContext,
         MonitoringTelemetrySnapshot telemetry,
         DegradedModeSnapshot dataLatencySnapshot,
+        DateTime? exchangeServerTimeUtc,
         DateTime utcNow,
         CancellationToken cancellationToken)
     {
+        int? clockDriftMilliseconds = exchangeServerTimeUtc is null
+            ? null
+            : ToMilliseconds(Math.Abs((utcNow - exchangeServerTimeUtc.Value).TotalMilliseconds));
+
         await UpsertHealthSnapshotAsync(
             dbContext,
             key: "market-watchdog",
@@ -160,14 +180,14 @@ public sealed class MonitoringSnapshotWorker(
             key: "clock-drift-monitor",
             sentinelName: "ClockDriftMonitor",
             displayName: "Clock Drift Monitor",
-            healthState: ResolveClockDriftState(dataLatencySnapshot),
+            healthState: ResolveClockDriftState(clockDriftMilliseconds),
             circuitBreakerState: MapCircuitBreakerState(dataLatencySnapshot),
             telemetry: telemetry,
-            observedAtUtc: dataLatencySnapshot.LatestHeartbeatReceivedAtUtc ?? utcNow,
+            observedAtUtc: utcNow,
             lastUpdatedAtUtc: utcNow,
-            workerLastHeartbeatAtUtc: dataLatencySnapshot.LatestHeartbeatReceivedAtUtc ?? utcNow,
-            consecutiveFailureCount: dataLatencySnapshot.ReasonCode == DegradedModeReasonCode.None ? 0 : 1,
-            detail: BuildClockDriftDetail(dataLatencySnapshot),
+            workerLastHeartbeatAtUtc: utcNow,
+            consecutiveFailureCount: clockDriftMilliseconds is null ? 1 : 0,
+            detail: BuildClockDriftDetail(clockDriftMilliseconds, utcNow, exchangeServerTimeUtc),
             cancellationToken);
 
         await UpsertHealthSnapshotAsync(
@@ -204,6 +224,7 @@ public sealed class MonitoringSnapshotWorker(
     private async Task UpsertDependencyHealthSnapshotAsync(
         ApplicationDbContext dbContext,
         MonitoringTelemetrySnapshot telemetry,
+        RedisLatencyProbeResult redisProbeResult,
         DegradedModeSnapshot dataLatencySnapshot,
         DateTime utcNow,
         CancellationToken cancellationToken)
@@ -213,14 +234,14 @@ public sealed class MonitoringSnapshotWorker(
             key: "dependency-health-monitor",
             sentinelName: "DependencyHealthMonitor",
             displayName: "Dependency Health Monitor",
-            healthState: ResolveDependencyHealthState(telemetry),
+            healthState: ResolveDependencyHealthState(telemetry, redisProbeResult),
             circuitBreakerState: MapCircuitBreakerState(dataLatencySnapshot),
             telemetry: telemetry,
-            observedAtUtc: telemetry.DatabaseLatencyObservedAtUtc ?? utcNow,
+            observedAtUtc: telemetry.RedisLatencyObservedAtUtc ?? telemetry.DatabaseLatencyObservedAtUtc ?? utcNow,
             lastUpdatedAtUtc: utcNow,
-            workerLastHeartbeatAtUtc: telemetry.DatabaseLatencyObservedAtUtc ?? utcNow,
-            consecutiveFailureCount: telemetry.DatabaseLatencyMs is null ? 1 : 0,
-            detail: BuildDependencyHealthDetail(telemetry),
+            workerLastHeartbeatAtUtc: telemetry.RedisLatencyObservedAtUtc ?? telemetry.DatabaseLatencyObservedAtUtc ?? utcNow,
+            consecutiveFailureCount: (redisProbeResult.Status == RedisProbeStatus.Failed || telemetry.DatabaseLatencyMs is null) ? 1 : 0,
+            detail: BuildDependencyHealthDetail(telemetry, redisProbeResult),
             cancellationToken);
     }
 
@@ -426,16 +447,16 @@ public sealed class MonitoringSnapshotWorker(
         return MonitoringHealthState.Healthy;
     }
 
-    private static MonitoringHealthState ResolveClockDriftState(DegradedModeSnapshot snapshot)
+    private MonitoringHealthState ResolveClockDriftState(int? clockDriftMilliseconds)
     {
-        if (snapshot.LatestClockDriftMilliseconds is null)
+        if (clockDriftMilliseconds is null)
         {
             return MonitoringHealthState.Unknown;
         }
 
-        return snapshot.ReasonCode == DegradedModeReasonCode.ClockDriftExceeded
+        return clockDriftMilliseconds >= clockDriftThresholdMilliseconds
             ? MonitoringHealthState.Critical
-            : snapshot.LatestClockDriftMilliseconds >= 2_000
+            : clockDriftMilliseconds >= Math.Max(1, clockDriftThresholdMilliseconds / 2)
                 ? MonitoringHealthState.Warning
                 : MonitoringHealthState.Healthy;
     }
@@ -466,8 +487,22 @@ public sealed class MonitoringSnapshotWorker(
         return MonitoringHealthState.Healthy;
     }
 
-    private static MonitoringHealthState ResolveDependencyHealthState(MonitoringTelemetrySnapshot telemetry)
+    private static MonitoringHealthState ResolveDependencyHealthState(
+        MonitoringTelemetrySnapshot telemetry,
+        RedisLatencyProbeResult redisProbeResult)
     {
+        if (redisProbeResult.Status == RedisProbeStatus.NotConfigured)
+        {
+            return MonitoringHealthState.Unknown;
+        }
+
+        if (redisProbeResult.Status == RedisProbeStatus.Failed)
+        {
+            return telemetry.DatabaseLatencyMs is >= 1_000
+                ? MonitoringHealthState.Critical
+                : MonitoringHealthState.Degraded;
+        }
+
         if (telemetry.DatabaseLatencyMs is null && telemetry.RedisLatencyMs is null)
         {
             return MonitoringHealthState.Unknown;
@@ -572,15 +607,33 @@ public sealed class MonitoringSnapshotWorker(
         return MonitoringFreshnessTier.Stale;
     }
 
+    private static int ToMilliseconds(double value)
+    {
+        if (value <= 0)
+        {
+            return 0;
+        }
+
+        if (value >= int.MaxValue)
+        {
+            return int.MaxValue;
+        }
+
+        return (int)Math.Round(value, MidpointRounding.AwayFromZero);
+    }
+
     private static string BuildMarketWatchdogDetail(DegradedModeSnapshot snapshot)
     {
         return
             $"State={snapshot.StateCode}; Reason={snapshot.ReasonCode}; DataAgeMs={snapshot.LatestDataAgeMilliseconds?.ToString() ?? "missing"}; ClockDriftMs={snapshot.LatestClockDriftMilliseconds?.ToString() ?? "missing"}";
     }
 
-    private static string BuildClockDriftDetail(DegradedModeSnapshot snapshot)
+    private static string BuildClockDriftDetail(
+        int? clockDriftMilliseconds,
+        DateTime localClockUtc,
+        DateTime? exchangeServerTimeUtc)
     {
-        return $"ClockDriftMs={snapshot.LatestClockDriftMilliseconds?.ToString() ?? "missing"}; Reason={snapshot.ReasonCode}";
+        return $"ClockDriftMs={clockDriftMilliseconds?.ToString() ?? "missing"}; LocalClockUtc={localClockUtc:O}; ExchangeServerTimeUtc={exchangeServerTimeUtc?.ToString("O") ?? "missing"}; Probe={(exchangeServerTimeUtc is null ? "Unavailable" : "Succeeded")}";
     }
 
     private static string BuildMarketDataDriftDetail(DegradedModeSnapshot snapshot)
@@ -593,9 +646,11 @@ public sealed class MonitoringSnapshotWorker(
         return $"SignalBlocked={snapshot.SignalFlowBlocked}; ExecutionBlocked={snapshot.ExecutionFlowBlocked}; Reason={snapshot.ReasonCode}";
     }
 
-    private static string BuildDependencyHealthDetail(MonitoringTelemetrySnapshot telemetry)
+    private static string BuildDependencyHealthDetail(
+        MonitoringTelemetrySnapshot telemetry,
+        RedisLatencyProbeResult redisProbeResult)
     {
-        return $"DbLatencyMs={telemetry.DatabaseLatencyMs?.ToString() ?? "missing"}; RedisLatencyMs={telemetry.RedisLatencyMs?.ToString() ?? "missing"}; SignalRConnections={telemetry.SignalRActiveConnectionCount}";
+        return $"DbLatencyMs={telemetry.DatabaseLatencyMs?.ToString() ?? "missing"}; RedisLatencyMs={telemetry.RedisLatencyMs?.ToString() ?? "missing"}; RedisProbe={redisProbeResult.Status}; RedisEndpoint={redisProbeResult.Endpoint ?? "missing"}; RedisFailureCode={redisProbeResult.FailureCode ?? "none"}; SignalRConnections={telemetry.SignalRActiveConnectionCount}";
     }
 
     private static string BuildWorkerHeartbeatDetail(string workerName, MonitoringHealthState healthState, int ageSeconds)

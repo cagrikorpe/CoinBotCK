@@ -19,7 +19,7 @@ public sealed class AdminFoundationIntegrationTests
     public async Task AdminFoundationServices_IntegrateAcrossStateSwitchReadModelAndIdempotency()
     {
         var databaseName = $"CoinBotAdminFoundationInt_{Guid.NewGuid():N}";
-        var connectionString = $"Server=(localdb)\\MSSQLLocalDB;Database={databaseName};Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=True";
+        var connectionString = ResolveConnectionString(databaseName);
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddMemoryCache();
@@ -88,6 +88,18 @@ public sealed class AdminFoundationIntegrationTests
         Assert.Equal(GlobalSystemStateKind.Degraded, systemState.State);
 
         await dbContext.Database.EnsureDeletedAsync();
+    }
+
+    private static string ResolveConnectionString(string databaseName)
+    {
+        var configuredConnectionString = Environment.GetEnvironmentVariable("COINBOT_INTEGRATION_SQLSERVER_CONNECTION_STRING");
+
+        if (!string.IsNullOrWhiteSpace(configuredConnectionString))
+        {
+            return configuredConnectionString.Replace("{Database}", databaseName, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return $"Server=(localdb)\\MSSQLLocalDB;Database={databaseName};Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=True";
     }
 
     private sealed class TestDataScopeContext : IDataScopeContext

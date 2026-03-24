@@ -27,7 +27,8 @@ public sealed class CrisisIncidentHook(
             request.Scope,
             request.Summary,
             request.Detail,
-            request.CorrelationId);
+            request.CorrelationId,
+            request.CommandId);
 
         var (incident, isNew) = await ResolveIncidentAsync(normalizedRequest, IncidentStatus.Open, cancellationToken);
         incident.Severity = ResolveSeverity(normalizedRequest.Level);
@@ -39,6 +40,7 @@ public sealed class CrisisIncidentHook(
         incident.TargetType = "CrisisEscalation";
         incident.TargetId = normalizedRequest.Scope;
         incident.CorrelationId = normalizedRequest.CorrelationId;
+        incident.CommandId = normalizedRequest.CommandId;
         incident.CreatedByUserId = normalizedRequest.ActorUserId;
         incident.ResolvedAtUtc = null;
         incident.ResolvedByUserId = null;
@@ -53,6 +55,7 @@ public sealed class CrisisIncidentHook(
             Message = normalizedRequest.Summary,
             ActorUserId = normalizedRequest.ActorUserId,
             CorrelationId = normalizedRequest.CorrelationId,
+            CommandId = normalizedRequest.CommandId,
             PayloadJson = BuildPayloadJson(normalizedRequest)
         });
 
@@ -83,7 +86,8 @@ public sealed class CrisisIncidentHook(
             request.Scope,
             request.Summary,
             detail: null,
-            request.CorrelationId);
+            request.CorrelationId,
+            request.CommandId);
 
         var (incident, isNew) = await ResolveIncidentAsync(normalizedRequest, IncidentStatus.Resolved, cancellationToken);
         incident.Severity = ResolveSeverity(normalizedRequest.Level);
@@ -91,6 +95,7 @@ public sealed class CrisisIncidentHook(
         incident.OperationType = ApprovalQueueOperationType.CrisisEscalationExecute;
         incident.Title = string.IsNullOrWhiteSpace(incident.Title) ? normalizedRequest.Summary : incident.Title;
         incident.Summary = string.IsNullOrWhiteSpace(incident.Summary) ? normalizedRequest.Summary : incident.Summary;
+        incident.CommandId = normalizedRequest.CommandId ?? incident.CommandId;
         incident.ResolvedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
         incident.ResolvedByUserId = normalizedRequest.ActorUserId;
         incident.ResolvedSummary = normalizedRequest.Summary;
@@ -104,6 +109,7 @@ public sealed class CrisisIncidentHook(
             Message = normalizedRequest.Summary,
             ActorUserId = normalizedRequest.ActorUserId,
             CorrelationId = normalizedRequest.CorrelationId,
+            CommandId = normalizedRequest.CommandId,
             PayloadJson = BuildPayloadJson(normalizedRequest)
         });
 
@@ -132,14 +138,17 @@ public sealed class CrisisIncidentHook(
         var incident = await dbContext.Incidents
             .SingleOrDefaultAsync(
                 entity =>
-                    entity.CorrelationId == request.CorrelationId &&
                     entity.TargetType == "CrisisEscalation" &&
                     entity.TargetId == request.Scope &&
                     entity.Status != IncidentStatus.Resolved &&
                     entity.Status != IncidentStatus.Rejected &&
                     entity.Status != IncidentStatus.Expired &&
                     entity.Status != IncidentStatus.Cancelled &&
-                    entity.Status != IncidentStatus.Failed,
+                    entity.Status != IncidentStatus.Failed &&
+                    (
+                        (!string.IsNullOrWhiteSpace(request.CommandId) && entity.CommandId == request.CommandId) ||
+                        entity.CorrelationId == request.CorrelationId
+                    ),
                 cancellationToken);
 
         if (incident is not null)
@@ -160,6 +169,7 @@ public sealed class CrisisIncidentHook(
             TargetType = "CrisisEscalation",
             TargetId = request.Scope,
             CorrelationId = request.CorrelationId,
+            CommandId = request.CommandId,
             CreatedByUserId = request.ActorUserId
         };
 
@@ -194,7 +204,8 @@ public sealed class CrisisIncidentHook(
         string scope,
         string summary,
         string? detail,
-        string? correlationId)
+        string? correlationId,
+        string? commandId)
     {
         return new NormalizedCrisisRequest(
             actorUserId.Trim(),
@@ -202,7 +213,8 @@ public sealed class CrisisIncidentHook(
             scope.Trim(),
             Truncate(summary, 512) ?? "Crisis incident",
             Truncate(detail, 8192),
-            Truncate(correlationId, 128));
+            Truncate(correlationId, 128),
+            Truncate(commandId, 128));
     }
 
     private static string? Truncate(string? value, int maxLength)
@@ -224,5 +236,6 @@ public sealed class CrisisIncidentHook(
         string Scope,
         string Summary,
         string? Detail,
-        string? CorrelationId);
+        string? CorrelationId,
+        string? CommandId);
 }

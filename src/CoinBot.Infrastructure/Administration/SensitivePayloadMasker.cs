@@ -95,15 +95,29 @@ public static class SensitivePayloadMasker
                         continue;
                     }
 
+                    if (MaskJsonStringValue(property.Value, out var maskedValue))
+                    {
+                        jsonObject[property.Key] = maskedValue;
+                        continue;
+                    }
+
                     MaskJsonNode(property.Value);
                 }
 
                 break;
             case JsonArray jsonArray:
-                foreach (var item in jsonArray)
+                for (var index = 0; index < jsonArray.Count; index++)
                 {
+                    var item = jsonArray[index];
+
                     if (item is null)
                     {
+                        continue;
+                    }
+
+                    if (MaskJsonStringValue(item, out var maskedValue))
+                    {
+                        jsonArray[index] = maskedValue;
                         continue;
                     }
 
@@ -112,6 +126,19 @@ public static class SensitivePayloadMasker
 
                 break;
         }
+    }
+
+    private static bool MaskJsonStringValue(JsonNode node, out string maskedValue)
+    {
+        maskedValue = string.Empty;
+
+        if (node is not JsonValue jsonValue || !jsonValue.TryGetValue<string>(out var stringValue))
+        {
+            return false;
+        }
+
+        maskedValue = MaskDelimitedSegments(stringValue);
+        return true;
     }
 
     private static string MaskDelimitedSegments(string rawValue)

@@ -273,6 +273,11 @@ public sealed class BinanceWebSocketManagerTests
             RequestedSymbols = symbols.OrderBy(symbol => symbol, StringComparer.Ordinal).ToArray();
             return Task.FromResult(snapshots);
         }
+
+        public Task<DateTime?> GetServerTimeUtcAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<DateTime?>(null);
+        }
     }
 
     private sealed class FakeCandleStreamClient(IReadOnlyCollection<MarketCandleSnapshot> snapshots) : IBinanceCandleStreamClient

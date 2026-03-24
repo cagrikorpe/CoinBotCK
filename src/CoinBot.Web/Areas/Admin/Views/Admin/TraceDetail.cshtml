@@ -1,6 +1,15 @@
 @model CoinBot.Application.Abstractions.Administration.AdminTraceDetailSnapshot
+@using System.Linq
 @using CoinBot.Web.ViewModels.Admin
 @{
+    var primaryDecision = Model.DecisionTraces.FirstOrDefault();
+    var primaryExecution = Model.ExecutionTraces.FirstOrDefault();
+    var decisionSummary = primaryDecision is null
+        ? "Decision=n/a"
+        : $"Decision={primaryDecision.DecisionId} · Signal={(primaryDecision.StrategySignalId?.ToString() ?? "-")} · Outcome={primaryDecision.DecisionOutcome} · Risk={(primaryDecision.RiskScore?.ToString() ?? "-")} · Latency={primaryDecision.LatencyMs}ms{(string.IsNullOrWhiteSpace(primaryDecision.VetoReasonCode) ? string.Empty : $" · Veto={primaryDecision.VetoReasonCode}")}";
+    var executionSummary = primaryExecution is null
+        ? "Execution=n/a"
+        : $"Execution={primaryExecution.ExecutionAttemptId} · Provider={primaryExecution.Provider} · Status={(primaryExecution.HttpStatusCode?.ToString() ?? "-")} · Latency={(primaryExecution.LatencyMs?.ToString() ?? "-")}ms";
     var headerModel = new AdminPageHeaderViewModel
     {
         Eyebrow = "Trace Detail",
@@ -12,7 +21,7 @@
             new AdminBadgeViewModel { Label = $"{Model.DecisionTraces.Count} decision", Tone = "healthy", IconText = "DC" },
             new AdminBadgeViewModel { Label = $"{Model.ExecutionTraces.Count} execution", Tone = "warning", IconText = "EX" }
         },
-        SecondaryActionText = "Trace listesi",
+        SecondaryActionText = "Audit search",
         SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin", query = Model.CorrelationId })
     };
 }
@@ -28,8 +37,34 @@
                     Tone = "info",
                     Title = "Correlation root",
                     Message = Model.CorrelationId,
-                    Meta = "Masked request/response only"
+                    Meta = $"{decisionSummary} | {executionSummary}"
                 })
+
+                <div class="d-flex flex-wrap gap-2 mt-4">
+                    <a asp-area="Admin"
+                       asp-controller="Admin"
+                       asp-action="Audit"
+                       asp-route-query="@Model.CorrelationId"
+                       class="btn btn-light-primary font-weight-bold">Audit search</a>
+                    @if (primaryDecision is not null)
+                    {
+                        <a asp-area="Admin"
+                           asp-controller="Admin"
+                           asp-action="TraceDetail"
+                           asp-route-correlationId="@Model.CorrelationId"
+                           asp-route-decisionId="@primaryDecision.DecisionId"
+                           class="btn btn-light-info font-weight-bold">Focus decision</a>
+                    }
+                    @if (primaryExecution is not null)
+                    {
+                        <a asp-area="Admin"
+                           asp-controller="Admin"
+                           asp-action="TraceDetail"
+                           asp-route-correlationId="@Model.CorrelationId"
+                           asp-route-executionAttemptId="@primaryExecution.ExecutionAttemptId"
+                           class="btn btn-light-warning font-weight-bold">Focus execution</a>
+                    }
+                </div>
             </div>
         </div>
     </div>
@@ -54,8 +89,20 @@
                     {
                         <div class="mb-5 pb-5 border-bottom">
                             <div><strong>@decision.DecisionId</strong> · @decision.DecisionOutcome · @decision.Symbol / @decision.Timeframe</div>
-                            <div class="text-muted">@decision.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC · Risk=@(decision.RiskScore?.ToString() ?? "-") @(string.IsNullOrWhiteSpace(decision.VetoReasonCode) ? string.Empty : $"· Veto={decision.VetoReasonCode}")</div>
-                            <pre class="mt-3 mb-0"><code>@decision.SnapshotJson</code></pre>
+                            <div class="text-muted">@decision.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC · Risk=@(decision.RiskScore?.ToString() ?? "-") · Latency=@decision.LatencyMs ms @(string.IsNullOrWhiteSpace(decision.VetoReasonCode) ? string.Empty : $"· Veto={decision.VetoReasonCode}")</div>
+                            <div class="text-muted">SignalId=@(decision.StrategySignalId?.ToString() ?? "-")</div>
+                            <div class="d-flex flex-wrap gap-2 mt-3">
+                                <a asp-area="Admin"
+                                   asp-controller="Admin"
+                                   asp-action="TraceDetail"
+                                   asp-route-correlationId="@Model.CorrelationId"
+                                   asp-route-decisionId="@decision.DecisionId"
+                                   class="btn btn-xs btn-light-info font-weight-bold">Focus decision</a>
+                            </div>
+                            <details class="mt-3">
+                                <summary class="text-muted">Snapshot JSON</summary>
+                                <pre class="mt-2 mb-0"><code>@decision.SnapshotJson</code></pre>
+                            </details>
                         </div>
                     }
                 }
@@ -84,8 +131,23 @@
                         <div class="mb-5 pb-5 border-bottom">
                             <div><strong>@execution.ExecutionAttemptId</strong> · @execution.Provider · @execution.Endpoint</div>
                             <div class="text-muted">@execution.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC · Status=@(execution.HttpStatusCode?.ToString() ?? "-") · ExchangeCode=@(execution.ExchangeCode ?? "-") · Latency=@(execution.LatencyMs?.ToString() ?? "-") ms</div>
-                            <pre class="mt-3"><code>@(execution.RequestMasked ?? "{}")</code></pre>
-                            <pre class="mb-0"><code>@(execution.ResponseMasked ?? "{}")</code></pre>
+                            <div class="text-muted">CommandId=@execution.CommandId</div>
+                            <div class="d-flex flex-wrap gap-2 mt-3">
+                                <a asp-area="Admin"
+                                   asp-controller="Admin"
+                                   asp-action="TraceDetail"
+                                   asp-route-correlationId="@Model.CorrelationId"
+                                   asp-route-executionAttemptId="@execution.ExecutionAttemptId"
+                                   class="btn btn-xs btn-light-warning font-weight-bold">Focus execution</a>
+                            </div>
+                            <details class="mt-3">
+                                <summary class="text-muted">Request masked</summary>
+                                <pre class="mt-2"><code>@(execution.RequestMasked ?? "{}")</code></pre>
+                            </details>
+                            <details class="mt-3">
+                                <summary class="text-muted">Response masked</summary>
+                                <pre class="mt-2 mb-0"><code>@(execution.ResponseMasked ?? "{}")</code></pre>
+                            </details>
                         </div>
                     }
                 }

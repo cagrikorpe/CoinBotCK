@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>QRCoder</id>
+    <version>1.4.3</version>
+    <authors>QRCoder</authors>
+    <description>Local cache mirror for build-only restore.</description>
+  </metadata>
+</package>

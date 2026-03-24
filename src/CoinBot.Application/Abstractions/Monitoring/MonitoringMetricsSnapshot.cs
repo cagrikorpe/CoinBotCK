@@ -9,6 +9,7 @@ public sealed record MonitoringMetricsSnapshot(
     int? RateLimitUsage,
     int? DbLatencyMs,
     int? RedisLatencyMs,
+    int? ClockDriftMs,
     int? SignalRActiveConnectionCount,
     DateTime? WorkerLastHeartbeatAtUtc,
     int? ConsecutiveFailureCount,

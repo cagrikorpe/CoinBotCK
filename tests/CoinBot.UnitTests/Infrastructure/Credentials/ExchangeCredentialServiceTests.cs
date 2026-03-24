@@ -164,6 +164,49 @@ public sealed class ExchangeCredentialServiceTests
     }
 
     [Fact]
+    public async Task SetValidationStateAsync_RejectsCredentials_WhenWithdrawalPermissionIsEnabled()
+    {
+        await using var harness = CreateHarness();
+        var exchangeAccountId = await CreateExchangeAccountAsync(harness.DbContext);
+
+        await harness.Service.StoreAsync(
+            new StoreExchangeCredentialsRequest(
+                exchangeAccountId,
+                "api-key-006",
+                "api-secret-006",
+                "user-06",
+                "corr-store-006"));
+
+        var validationState = await harness.Service.SetValidationStateAsync(
+            new SetExchangeCredentialValidationStateRequest(
+                exchangeAccountId,
+                true,
+                "user-06",
+                "corr-validate-006",
+                IsKeyValid: true,
+                CanTrade: true,
+                CanWithdraw: true,
+                SupportsSpot: true,
+                SupportsFutures: true,
+                EnvironmentScope: "live",
+                IsEnvironmentMatch: true,
+                HasTimestampSkew: false,
+                HasIpRestrictionIssue: false,
+                FailureReason: null,
+                PermissionSummary: null));
+
+        var exchangeAccount = await harness.DbContext.ExchangeAccounts.SingleAsync(entity => entity.Id == exchangeAccountId);
+        var validationRecord = await harness.DbContext.ApiCredentialValidations.SingleAsync(entity => entity.ExchangeAccountId == exchangeAccountId);
+
+        Assert.Equal(ExchangeCredentialStatus.Invalid, validationState.Status);
+        Assert.Equal(ExchangeCredentialStatus.Invalid, exchangeAccount.CredentialStatus);
+        Assert.Equal("Invalid", validationRecord.ValidationStatus);
+        Assert.Equal("Withdraw permission must stay disabled.", validationRecord.FailureReason);
+        Assert.Equal("Trade=Y; Withdraw=Y; Spot=Y; Futures=Y; Env=live", validationRecord.PermissionSummary);
+        Assert.Null(exchangeAccount.LastValidatedAt);
+    }
+
+    [Fact]
     public void SecretCarrierTypes_RedactSecrets_FromToString_AndSerializedAccessResponse()
     {
         var storeRequest = new StoreExchangeCredentialsRequest(

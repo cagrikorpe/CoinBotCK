@@ -2,6 +2,8 @@
     var dashboard = ViewData["AdminMonitoringDashboardSnapshot"] as MonitoringDashboardSnapshot
         ?? MonitoringDashboardSnapshot.Empty(DateTime.UtcNow);
     var nowUtc = DateTime.UtcNow;
+    var dependencySnapshot = dashboard.HealthSnapshots.FirstOrDefault(snapshot => snapshot.SnapshotKey == "dependency-health-monitor");
+    var clockDriftSnapshot = dashboard.HealthSnapshots.FirstOrDefault(snapshot => snapshot.SnapshotKey == "clock-drift-monitor");
     var healthySentinels = dashboard.HealthSnapshots.Count(snapshot => snapshot.HealthState == MonitoringHealthState.Healthy);
     var warningOrWorse = dashboard.HealthSnapshots.Count(snapshot => snapshot.HealthState is MonitoringHealthState.Warning or MonitoringHealthState.Degraded or MonitoringHealthState.Critical);
     var criticalSentinels = dashboard.HealthSnapshots.Count(snapshot => snapshot.HealthState == MonitoringHealthState.Critical);
@@ -21,10 +23,28 @@
         .Select(snapshot => snapshot.Metrics.SignalRActiveConnectionCount)
         .FirstOrDefault(value => value.HasValue)
         ?? 0;
-    var latestDbLatency = dashboard.HealthSnapshots
-        .Select(snapshot => snapshot.Metrics.DbLatencyMs)
-        .FirstOrDefault(value => value.HasValue)
-        ?? 0;
+    var latestDbLatency = dependencySnapshot?.Metrics.DbLatencyMs
+        ?? dashboard.HealthSnapshots.Select(snapshot => snapshot.Metrics.DbLatencyMs).FirstOrDefault(value => value.HasValue);
+    var latestRedisLatency = dependencySnapshot?.Metrics.RedisLatencyMs
+        ?? dashboard.HealthSnapshots.Select(snapshot => snapshot.Metrics.RedisLatencyMs).FirstOrDefault(value => value.HasValue);
+    var latestClockDriftMs = clockDriftSnapshot?.Metrics.ClockDriftMs
+        ?? dashboard.HealthSnapshots.Select(snapshot => snapshot.Metrics.ClockDriftMs).FirstOrDefault(value => value.HasValue);
+    var dependencyTone = dependencySnapshot?.HealthState switch
+    {
+        MonitoringHealthState.Critical => "critical",
+        MonitoringHealthState.Degraded => "degraded",
+        MonitoringHealthState.Warning => "warning",
+        MonitoringHealthState.Healthy => "healthy",
+        _ => "info"
+    };
+    var clockDriftTone = clockDriftSnapshot?.HealthState switch
+    {
+        MonitoringHealthState.Critical => "critical",
+        MonitoringHealthState.Degraded => "degraded",
+        MonitoringHealthState.Warning => "warning",
+        MonitoringHealthState.Healthy => "healthy",
+        _ => "info"
+    };
 }
 
 <div class="row">
@@ -52,8 +72,48 @@
     <div class="col-xl-4 col-md-6">
         <div class="cb-admin-summary-card">
             <span class="cb-admin-summary-label">Latest DB latency</span>
-            <strong>@latestDbLatency ms</strong>
+            <strong>@(latestDbLatency?.ToString() ?? "n/a") ms</strong>
             <small>Collected by monitoring worker</small>
+        </div>
+    </div>
+    <div class="col-xl-4 col-md-6">
+        <div class="cb-admin-summary-card">
+            <span class="cb-admin-summary-label">Redis latency</span>
+            <strong>@(latestRedisLatency?.ToString() ?? "n/a") ms</strong>
+            <small class="d-flex align-items-center gap-2">
+                <span>DependencyHealthMonitor</span>
+                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+                {
+                    Label = dependencySnapshot?.HealthState.ToString() ?? "Unknown",
+                    Tone = dependencyTone,
+                    IconText = "RD"
+                })
+            </small>
+        </div>
+    </div>
+    <div class="col-xl-4 col-md-12">
+        <div class="cb-admin-summary-card">
+            <span class="cb-admin-summary-label">Clock drift</span>
+            <strong>@(latestClockDriftMs?.ToString() ?? "n/a") ms</strong>
+            <small class="d-flex align-items-center gap-2">
+                <span>ClockDriftMonitor</span>
+                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+                {
+                    Label = clockDriftSnapshot?.HealthState.ToString() ?? "Unknown",
+                    Tone = clockDriftTone,
+                    IconText = "CD"
+                })
+            </small>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-xl-4 col-md-6">
+        <div class="cb-admin-summary-card">
+            <span class="cb-admin-summary-label">LastUpdatedAtUtc</span>
+            <strong>@latestUpdatedAtUtc.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") UTC</strong>
+            <small>Latest health or worker update</small>
         </div>
     </div>
     <div class="col-xl-4 col-md-6">

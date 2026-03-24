@@ -1,3 +1,4 @@
+using System.Globalization;
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Infrastructure.Persistence;
@@ -59,12 +60,46 @@ public sealed class AdminMonitoringReadModelService(
                 entity.RateLimitUsage,
                 entity.DbLatencyMs,
                 entity.RedisLatencyMs,
+                TryReadDetailMetric(entity.Detail, "ClockDriftMs"),
                 entity.SignalRActiveConnectionCount,
                 entity.WorkerLastHeartbeatAtUtc,
                 entity.ConsecutiveFailureCount,
                 entity.SnapshotAgeSeconds),
             entity.Detail,
             entity.ObservedAtUtc);
+    }
+
+    private static int? TryReadDetailMetric(string? detail, string metricName)
+    {
+        if (string.IsNullOrWhiteSpace(detail))
+        {
+            return null;
+        }
+
+        var segments = detail.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        foreach (var segment in segments)
+        {
+            var separatorIndex = segment.IndexOf('=');
+            if (separatorIndex <= 0)
+            {
+                continue;
+            }
+
+            var key = segment[..separatorIndex].Trim();
+            if (!string.Equals(key, metricName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var value = segment[(separatorIndex + 1)..].Trim();
+
+            return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedValue)
+                ? parsedValue
+                : null;
+        }
+
+        return null;
     }
 
     private static WorkerHeartbeat MapWorkerHeartbeat(WorkerHeartbeatEntity entity)

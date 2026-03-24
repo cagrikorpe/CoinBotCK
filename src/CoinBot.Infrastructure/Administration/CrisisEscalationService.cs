@@ -186,7 +186,8 @@ public sealed class CrisisEscalationService(
                 scope.Level,
                 scope.ScopeKey,
                 summary,
-                correlationId),
+                correlationId,
+                commandId),
             cancellationToken);
 
         logger.LogWarning(
@@ -275,6 +276,7 @@ public sealed class CrisisEscalationService(
                         "Order purge left a live order unresolved.",
                         BuildOrderDetail(order),
                         correlationId,
+                        commandId,
                         cancellationToken);
                 }
             }
@@ -287,6 +289,7 @@ public sealed class CrisisEscalationService(
                     "Order purge failed.",
                     $"{BuildOrderDetail(order)} | Error={Truncate(exception.Message, 256)}",
                     correlationId,
+                    commandId,
                     cancellationToken);
             }
         }
@@ -345,6 +348,7 @@ public sealed class CrisisEscalationService(
                         "Emergency flatten dispatch failed.",
                         $"{BuildDemoPositionDetail(position)} | State={dispatchResult.Order.State} | Failure={dispatchResult.Order.FailureDetail ?? dispatchResult.Order.FailureCode ?? "unknown"}",
                         correlationId,
+                        commandId,
                         cancellationToken);
                     continue;
                 }
@@ -360,6 +364,7 @@ public sealed class CrisisEscalationService(
                     "Emergency flatten dispatch failed.",
                     $"{BuildDemoPositionDetail(position)} | Error={Truncate(exception.Message, 256)}",
                     correlationId,
+                    commandId,
                     cancellationToken);
             }
         }
@@ -400,6 +405,7 @@ public sealed class CrisisEscalationService(
                         "Emergency flatten dispatch failed.",
                         $"{BuildExchangePositionDetail(position)} | State={dispatchResult.Order.State} | Failure={dispatchResult.Order.FailureDetail ?? dispatchResult.Order.FailureCode ?? "unknown"}",
                         correlationId,
+                        commandId,
                         cancellationToken);
                     continue;
                 }
@@ -415,6 +421,7 @@ public sealed class CrisisEscalationService(
                     "Emergency flatten dispatch failed.",
                     $"{BuildExchangePositionDetail(position)} | Error={Truncate(exception.Message, 256)}",
                     correlationId,
+                    commandId,
                     cancellationToken);
             }
         }
@@ -860,6 +867,7 @@ public sealed class CrisisEscalationService(
         string summary,
         string detail,
         string? correlationId,
+        string? commandId,
         CancellationToken cancellationToken)
     {
         await incidentHook.WriteIncidentAsync(
@@ -869,7 +877,8 @@ public sealed class CrisisEscalationService(
                 scope.ScopeKey,
                 summary,
                 detail,
-                correlationId),
+                correlationId,
+                commandId),
             cancellationToken);
     }
 

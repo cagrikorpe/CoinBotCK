@@ -8,4 +8,5 @@ public sealed record CrisisIncidentHookRequest(
     string Scope,
     string Summary,
     string Detail,
-    string? CorrelationId);
+    string? CorrelationId,
+    string? CommandId = null);

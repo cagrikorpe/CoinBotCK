@@ -256,6 +256,50 @@ public sealed class AutonomyFoundationTests
     }
 
     [Fact]
+    public async Task AutonomyService_QueuesReviewAndIncident_WhenProbeFailsAfterExecution()
+    {
+        await using var dbContext = CreateDbContext();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 24, 12, 0, 0, TimeSpan.Zero));
+        var reviewQueue = new AutonomyReviewQueueService(dbContext, new FakeAdminAuditLogService(), timeProvider);
+        var incidentHook = new FakeAutonomyIncidentHook();
+        var healingExecutor = new FakeSelfHealingExecutor
+        {
+            ProbeResult = new SelfHealingExecutionResult(false, "ProbeFailed", "post-execution probe failed")
+        };
+        var policyEngine = new FakeGlobalPolicyEngine();
+        var service = new AutonomyService(
+            dbContext,
+            policyEngine,
+            new FakeMarketDataService(),
+            new MonitoringTelemetryCollector(timeProvider, NullLogger<MonitoringTelemetryCollector>.Instance),
+            reviewQueue,
+            healingExecutor,
+            incidentHook,
+            Options.Create(new AutonomyOptions()),
+            timeProvider,
+            NullLogger<AutonomyService>.Instance);
+
+        var result = await service.EvaluateAsync(
+            new AutonomyDecisionRequest(
+                ActorUserId: "system:test",
+                SuggestedAction: AutonomySuggestedActions.CacheRebuild,
+                Reason: "Recover market data cache.",
+                ConfidenceScore: 0.88m,
+                BreakerKind: DependencyCircuitBreakerKind.RestMarketData));
+
+        var queuedItems = await reviewQueue.ListAsync(AutonomyReviewStatus.Pending);
+
+        Assert.True(result.AutoExecuted);
+        Assert.True(result.ReviewQueued);
+        Assert.Equal("ProbeFailed", result.Outcome);
+        Assert.Single(healingExecutor.ExecuteRequests);
+        Assert.Single(healingExecutor.ProbeRequests);
+        Assert.Single(queuedItems);
+        Assert.Single(incidentHook.IncidentRequests);
+        Assert.Empty(incidentHook.RecoveryRequests);
+    }
+
+    [Fact]
     public async Task SelfHealingWorker_RunOnce_RequestsAutonomyEvaluation_ForDueHalfOpenBreaker()
     {
         var fakeReviewQueue = new FakeReviewQueueService();

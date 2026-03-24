@@ -15,6 +15,19 @@ namespace CoinBot.UnitTests.Web;
 public sealed class AdminControllerTests
 {
     [Fact]
+    public void Login_RedirectsToAuthLogin_WithAdminLandingReturnUrl()
+    {
+        var controller = CreateController(new FakeGlobalExecutionSwitchService());
+
+        var result = controller.Login();
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal("Login", redirectResult.ActionName);
+        Assert.Equal("Auth", redirectResult.ControllerName);
+        Assert.Equal("/admin", redirectResult.RouteValues!["returnUrl"]);
+    }
+
+    [Fact]
     public async Task Settings_LoadsSnapshots_AndMarksOpsAdminAsReadOnly()
     {
         var executionSnapshot = new GlobalExecutionSwitchSnapshot(
@@ -274,6 +287,182 @@ public sealed class AdminControllerTests
     }
 
     [Fact]
+    public async Task Search_RedirectsToTraceDetail_WhenQueryMatchesCorrelationId()
+    {
+        var now = new DateTime(2026, 3, 24, 13, 0, 0, DateTimeKind.Utc);
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            traceService: new FakeTraceService
+            {
+                SearchResults =
+                [
+                    new AdminTraceListItem(
+                        "corr-trace-1",
+                        "user-01",
+                        "BTCUSDT",
+                        "1m",
+                        "StrategyVersion:abc",
+                        "Persisted",
+                        null,
+                        "Binance.PrivateRest",
+                        1,
+                        1,
+                        now)
+                ]
+            });
+
+        var result = await controller.Search("corr-trace-1", CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.TraceDetail), redirectResult.ActionName);
+        Assert.Equal("Admin", redirectResult.ControllerName);
+        Assert.Equal("corr-trace-1", redirectResult.RouteValues!["correlationId"]);
+        Assert.False(redirectResult.RouteValues!.ContainsKey("decisionId"));
+        Assert.False(redirectResult.RouteValues!.ContainsKey("executionAttemptId"));
+    }
+
+    [Fact]
+    public async Task Search_RedirectsToTraceDetail_WhenQueryMatchesDecisionId()
+    {
+        var now = new DateTime(2026, 3, 24, 13, 5, 0, DateTimeKind.Utc);
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            traceService: new FakeTraceService
+            {
+                SearchResults =
+                [
+                    new AdminTraceListItem(
+                        "corr-trace-2",
+                        "user-02",
+                        "ETHUSDT",
+                        "5m",
+                        "StrategyVersion:def",
+                        "Persisted",
+                        null,
+                        "Binance.PrivateRest",
+                        1,
+                        0,
+                        now)
+                ],
+                DetailSnapshot = new AdminTraceDetailSnapshot(
+                    "corr-trace-2",
+                    [
+                        new DecisionTraceSnapshot(
+                            Guid.NewGuid(),
+                            Guid.NewGuid(),
+                            "corr-trace-2",
+                            "dec-trace-2",
+                            "user-02",
+                            "ETHUSDT",
+                            "5m",
+                            "StrategyVersion:def",
+                            "Entry",
+                            72,
+                            "Persisted",
+                            null,
+                            12,
+                            "{\"decision\":\"persisted\"}",
+                            now)
+                    ],
+                    Array.Empty<ExecutionTraceSnapshot>())
+            });
+
+        var result = await controller.Search("dec-trace-2", CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.TraceDetail), redirectResult.ActionName);
+        Assert.Equal("corr-trace-2", redirectResult.RouteValues!["correlationId"]);
+        Assert.Equal("dec-trace-2", redirectResult.RouteValues!["decisionId"]);
+    }
+
+    [Fact]
+    public async Task Search_RedirectsToTraceDetail_WhenQueryMatchesExecutionAttemptId()
+    {
+        var now = new DateTime(2026, 3, 24, 13, 10, 0, DateTimeKind.Utc);
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            traceService: new FakeTraceService
+            {
+                SearchResults =
+                [
+                    new AdminTraceListItem(
+                        "corr-trace-3",
+                        "user-03",
+                        "BNBUSDT",
+                        "15m",
+                        "StrategyVersion:ghi",
+                        "Submitted",
+                        null,
+                        "Binance.PrivateRest",
+                        0,
+                        1,
+                        now)
+                ],
+                DetailSnapshot = new AdminTraceDetailSnapshot(
+                    "corr-trace-3",
+                    Array.Empty<DecisionTraceSnapshot>(),
+                    [
+                        new ExecutionTraceSnapshot(
+                            Guid.NewGuid(),
+                            Guid.NewGuid(),
+                            "corr-trace-3",
+                            "exe-trace-3",
+                            "cmd-trace-3",
+                            "user-03",
+                            "Binance.PrivateRest",
+                            "/fapi/v1/order",
+                            "{\"request\":\"masked\"}",
+                            "{\"response\":\"masked\"}",
+                            200,
+                            null,
+                            34,
+                            now)
+                    ])
+            });
+
+        var result = await controller.Search("exe-trace-3", CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.TraceDetail), redirectResult.ActionName);
+        Assert.Equal("corr-trace-3", redirectResult.RouteValues!["correlationId"]);
+        Assert.Equal("exe-trace-3", redirectResult.RouteValues!["executionAttemptId"]);
+    }
+
+    [Fact]
+    public async Task Search_RedirectsToIncidentDetail_WhenQueryMatchesIncidentReference()
+    {
+        var now = new DateTime(2026, 3, 24, 13, 15, 0, DateTimeKind.Utc);
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            governanceReadModelService: new FakeAdminGovernanceReadModelService
+            {
+                IncidentDetail = CreateIncidentDetailSnapshot(now)
+            },
+            traceService: new FakeTraceService());
+
+        var result = await controller.Search("INC-9001", CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.IncidentDetail), redirectResult.ActionName);
+        Assert.Equal("Admin", redirectResult.ControllerName);
+        Assert.Equal("INC-9001", redirectResult.RouteValues!["incidentReference"]);
+    }
+
+    [Fact]
+    public async Task Search_FallsBackToAudit_WhenNoTraceIdentifierMatches()
+    {
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            traceService: new FakeTraceService());
+
+        var result = await controller.Search("unmatched-query", CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.Audit), redirectResult.ActionName);
+        Assert.Equal("unmatched-query", redirectResult.RouteValues!["query"]);
+    }
+
+    [Fact]
     public async Task ExchangeAccounts_ReturnsMaskedCredentialSummaries()
     {
         var controller = CreateController(
@@ -469,6 +658,7 @@ public sealed class AdminControllerTests
                         RateLimitUsage: 17,
                         DbLatencyMs: 5,
                         RedisLatencyMs: null,
+                        ClockDriftMs: null,
                         SignalRActiveConnectionCount: 3,
                         WorkerLastHeartbeatAtUtc: now,
                         ConsecutiveFailureCount: 0,

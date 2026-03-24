@@ -110,6 +110,7 @@ public sealed class DependencyInjectionTests
         var strategySignalService = provider.GetRequiredService<IStrategySignalService>();
         var strategyVersionService = provider.GetRequiredService<IStrategyVersionService>();
         var sharedSymbolRegistry = provider.GetRequiredService<ISharedSymbolRegistry>();
+        var redisLatencyProbe = provider.GetRequiredService<IRedisLatencyProbe>();
         var candleContinuityValidator = provider.GetRequiredService<CandleContinuityValidator>();
         var candleDataQualityGuard = provider.GetRequiredService<CandleDataQualityGuard>();
         var candleStreamClient = provider.GetRequiredService<IBinanceCandleStreamClient>();
@@ -231,6 +232,7 @@ public sealed class DependencyInjectionTests
         Assert.NotNull(strategySignalService);
         Assert.NotNull(strategyVersionService);
         Assert.NotNull(sharedSymbolRegistry);
+        Assert.NotNull(redisLatencyProbe);
         Assert.NotNull(candleContinuityValidator);
         Assert.NotNull(candleDataQualityGuard);
         Assert.NotNull(candleStreamClient);

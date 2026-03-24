@@ -8,6 +8,11 @@
     var healthColdCount = dashboard.HealthSnapshots.Count(snapshot => snapshot.FreshnessTier == MonitoringFreshnessTier.Cold);
     var healthStaleCount = dashboard.HealthSnapshots.Count(snapshot => snapshot.FreshnessTier == MonitoringFreshnessTier.Stale);
     var workerStaleCount = dashboard.WorkerHeartbeats.Count(snapshot => snapshot.FreshnessTier == MonitoringFreshnessTier.Stale);
+    var latestUpdatedAtUtc = dashboard.HealthSnapshots
+        .Select(snapshot => snapshot.LastUpdatedAtUtc)
+        .Concat(dashboard.WorkerHeartbeats.Select(snapshot => snapshot.LastUpdatedAtUtc))
+        .DefaultIfEmpty(dashboard.LastRefreshedAtUtc)
+        .Max();
 }
 
 <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-freshness-card cb-admin-panel-card mb-0">
@@ -47,6 +52,13 @@
                 <div class="cb-admin-freshness-meta">
                     <span class="cb-admin-freshness-time cb-mono">@dashboard.WorkerHeartbeats.Count</span>
                     @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = $"{workerStaleCount} stale", Tone = workerStaleCount > 0 ? "warning" : "healthy", IconText = "WK" })
+                </div>
+            </div>
+            <div class="cb-admin-freshness-item">
+                <span class="cb-admin-freshness-label">LastUpdatedAtUtc</span>
+                <div class="cb-admin-freshness-meta">
+                    <span class="cb-admin-freshness-time cb-mono">@latestUpdatedAtUtc.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") UTC</span>
+                    @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Tracked", Tone = "info", IconText = "LU" })
                 </div>
             </div>
         </div>

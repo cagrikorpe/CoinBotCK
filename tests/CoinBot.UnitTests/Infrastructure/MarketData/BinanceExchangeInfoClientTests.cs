@@ -62,6 +62,27 @@ public sealed class BinanceExchangeInfoClientTests
         Assert.Equal(now.UtcDateTime, telemetryCollector.LastObservedAtUtc);
     }
 
+    [Fact]
+    public async Task GetServerTimeUtcAsync_MapsServerTimeToUtcDateTime()
+    {
+        var serverTime = new DateTimeOffset(2026, 3, 24, 12, 5, 30, TimeSpan.Zero);
+        var handler = new StubHttpMessageHandler(
+            $"{{\n  \"serverTime\": {serverTime.ToUnixTimeMilliseconds()}\n}}");
+        using var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("https://api.binance.com/")
+        };
+        var client = new BinanceExchangeInfoClient(
+            httpClient,
+            new AdjustableTimeProvider(serverTime),
+            NullLogger<BinanceExchangeInfoClient>.Instance);
+
+        var observedServerTime = await client.GetServerTimeUtcAsync();
+
+        Assert.Equal(serverTime.UtcDateTime, observedServerTime);
+        Assert.Contains("api/v3/time", handler.LastRequestUri, StringComparison.Ordinal);
+    }
+
     private sealed class StubHttpMessageHandler(string jsonPayload) : HttpMessageHandler
     {
         public string LastRequestUri { get; private set; } = string.Empty;

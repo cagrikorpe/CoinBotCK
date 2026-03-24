@@ -7,4 +7,5 @@ public sealed record CrisisRecoveryHookRequest(
     CrisisEscalationLevel Level,
     string Scope,
     string Summary,
-    string? CorrelationId);
+    string? CorrelationId,
+    string? CommandId = null);

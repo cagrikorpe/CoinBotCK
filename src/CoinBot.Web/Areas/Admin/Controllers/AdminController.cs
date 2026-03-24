@@ -82,20 +82,7 @@ public sealed class AdminController : Controller
     [AllowAnonymous]
     public IActionResult Login()
     {
-        ApplyAdminAccessMeta(
-            title: "Admin Login",
-            description: "Super Admin paneli için kullanıcı auth yüzeyinden ayrı, daha kontrollü giriş foundation ekranı.",
-            stage: "Admin Login",
-            progress: "1 / 2",
-            highlights: new[]
-            {
-                "Admin login kartı kullanıcı auth ekranından ayrışır",
-                "MFA zorunluluğu ilk ekranda görünür",
-                "Validation ve general error alanı güvenlik dili ile sunulur"
-            },
-            backHref: Url.Action(nameof(Overview), "Admin", new { area = "Admin" }));
-
-        return View();
+        return RedirectToAction("Login", "Auth", new { returnUrl = "/admin" });
     }
 
     [AllowAnonymous]
@@ -165,12 +152,96 @@ public sealed class AdminController : Controller
         return View();
     }
 
-    public IActionResult Search(string? query)
+    public async Task<IActionResult> Search(string? query, CancellationToken cancellationToken)
     {
         var normalizedQuery = query?.Trim();
 
         if (!string.IsNullOrWhiteSpace(normalizedQuery))
         {
+            if (adminGovernanceReadModelService is not null)
+            {
+                var incidentDetail = await adminGovernanceReadModelService.GetIncidentDetailAsync(
+                    normalizedQuery,
+                    cancellationToken);
+
+                if (incidentDetail is not null)
+                {
+                    return RedirectToAction(
+                        nameof(IncidentDetail),
+                        "Admin",
+                        new
+                        {
+                            area = "Admin",
+                            incidentReference = incidentDetail.IncidentReference
+                        });
+                }
+            }
+
+            var searchResults = await traceService.SearchAsync(
+                new AdminTraceSearchRequest(
+                    Query: normalizedQuery,
+                    Take: 20),
+                cancellationToken);
+
+            var exactCorrelationMatch = searchResults.FirstOrDefault(row =>
+                string.Equals(row.CorrelationId, normalizedQuery, StringComparison.OrdinalIgnoreCase));
+
+            if (exactCorrelationMatch is not null)
+            {
+                return RedirectToAction(
+                    nameof(TraceDetail),
+                    "Admin",
+                    new
+                    {
+                        area = "Admin",
+                        correlationId = exactCorrelationMatch.CorrelationId
+                    });
+            }
+
+            foreach (var row in searchResults)
+            {
+                var detail = await traceService.GetDetailAsync(
+                    row.CorrelationId,
+                    cancellationToken: cancellationToken);
+
+                if (detail is null)
+                {
+                    continue;
+                }
+
+                var matchingDecision = detail.DecisionTraces.FirstOrDefault(decision =>
+                    string.Equals(decision.DecisionId, normalizedQuery, StringComparison.OrdinalIgnoreCase));
+
+                if (matchingDecision is not null)
+                {
+                    return RedirectToAction(
+                        nameof(TraceDetail),
+                        "Admin",
+                        new
+                        {
+                            area = "Admin",
+                            correlationId = row.CorrelationId,
+                            decisionId = matchingDecision.DecisionId
+                        });
+                }
+
+                var matchingExecution = detail.ExecutionTraces.FirstOrDefault(execution =>
+                    string.Equals(execution.ExecutionAttemptId, normalizedQuery, StringComparison.OrdinalIgnoreCase));
+
+                if (matchingExecution is not null)
+                {
+                    return RedirectToAction(
+                        nameof(TraceDetail),
+                        "Admin",
+                        new
+                        {
+                            area = "Admin",
+                            correlationId = row.CorrelationId,
+                            executionAttemptId = matchingExecution.ExecutionAttemptId
+                        });
+                }
+            }
+
             return RedirectToAction(
                 nameof(Audit),
                 "Admin",
@@ -183,7 +254,7 @@ public sealed class AdminController : Controller
 
         ApplyShellMeta(
             title: "Global Search",
-            description: "CorrelationId, DecisionId, ExecutionAttemptId, IncidentId ve UserId bazli admin global search route stub yuzeyi.",
+            description: "CorrelationId, DecisionId, ExecutionAttemptId, IncidentId ve UserId bazli exact-match admin global search route.",
             activeNav: "Search",
             breadcrumbItems: new[] { "Super Admin", "Search", "Global Search" });
 
@@ -194,30 +265,30 @@ public sealed class AdminController : Controller
             CreatePlaceholder(
                 eyebrow: "Search",
                 title: "Global Search",
-                description: "CorrelationId, DecisionId, ExecutionAttemptId, IncidentId ve UserId icin ortak admin arama giris noktasi hazirlandi. Ilk surum route stub seviyesinde kalir.",
+                description: "CorrelationId, DecisionId, ExecutionAttemptId, IncidentId ve UserId icin ortak admin arama giris noktasi hazirlandi. Exact-match queryler ilgili detail ekranina yonlenir.",
                 hintTitle: string.IsNullOrWhiteSpace(normalizedQuery)
-                    ? "Aramaya hazir route"
+                    ? "Trace aramaya hazir"
                     : $"Hazir query: {Truncate(normalizedQuery, 48)}",
                 hintMessage: string.IsNullOrWhiteSpace(normalizedQuery)
-                    ? "Topbar arama kutusu bu route'a baglidir. Gercek index/read-model wiring sonraki fazda eklenecek."
-                    : "Ilk surumde query ekrana tasinir; correlation, decision, execution ve incident arama read-model'leri sonraki fazda baglanir.",
+                    ? "Topbar arama kutusu CorrelationId / DecisionId / ExecutionAttemptId icin Trace detail'e, IncidentId icin Incident detail'e, diger queryler icin Audit listesine gider."
+                    : "Correlation, decision, execution ve incident aramalari ilgili detail ekranina; diger queryler audit merkezine yonlendirilir.",
                 primaryActionText: "Audit merkezi",
                 primaryActionHref: Url.Action(nameof(Audit), "Admin", new { area = "Admin" }),
                 secondaryActionText: "Sistem sagligi",
                 secondaryActionHref: Url.Action(nameof(SystemHealth), "Admin", new { area = "Admin" }),
                 statusBadge: new AdminBadgeViewModel
                 {
-                    Label = string.IsNullOrWhiteSpace(normalizedQuery) ? "Route Stub" : "Prepared Query",
+                    Label = string.IsNullOrWhiteSpace(normalizedQuery) ? "Ready" : "Prepared Query",
                     Tone = "info",
                     IconText = "GS"
                 },
                 strip: new AdminInfoStripViewModel
                 {
                     Tone = "info",
-                    Title = "Search foundation hazir",
-                    Message = "Topbar aramasi agir canli sorguya baglanmadan snapshot/read-model katmanina hazirlandi.",
+                    Title = "Search ready",
+                    Message = "Topbar aramasi exact-match trace / incident detail akisini kullanir; audit fallback korunur.",
                     Meta = string.IsNullOrWhiteSpace(normalizedQuery)
-                        ? "Stub"
+                        ? "Ready"
                         : $"Q={Truncate(normalizedQuery, 36)}"
                 }));
     }
