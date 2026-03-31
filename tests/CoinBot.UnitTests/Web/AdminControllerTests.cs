@@ -589,6 +589,18 @@ public sealed class AdminControllerTests
     }
 
     [Fact]
+    public async Task Search_WhenQueryMissing_ReturnsRealSearchView()
+    {
+        var controller = CreateController(new FakeGlobalExecutionSwitchService());
+
+        var result = await controller.Search(null, CancellationToken.None);
+
+        var viewResult = Assert.IsType<ViewResult>(result);
+        Assert.Null(viewResult.Model);
+        Assert.Equal("Global Search", controller.ViewData["Title"]);
+    }
+
+    [Fact]
     public async Task Search_RedirectsToTraceDetail_WhenQueryMatchesCorrelationId()
     {
         var now = new DateTime(2026, 3, 24, 13, 0, 0, DateTimeKind.Utc);
@@ -728,6 +740,145 @@ public sealed class AdminControllerTests
         Assert.Equal(nameof(AdminController.TraceDetail), redirectResult.ActionName);
         Assert.Equal("corr-trace-3", redirectResult.RouteValues!["correlationId"]);
         Assert.Equal("exe-trace-3", redirectResult.RouteValues!["executionAttemptId"]);
+    }
+
+    [Fact]
+    public async Task Search_RedirectsToTraceDetail_WhenQueryMatchesExecutionOrderId()
+    {
+        var now = new DateTime(2026, 3, 24, 13, 12, 0, DateTimeKind.Utc);
+        var executionOrderId = Guid.NewGuid();
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            traceService: new FakeTraceService
+            {
+                SearchResults =
+                [
+                    new AdminTraceListItem(
+                        "corr-trace-4",
+                        "user-04",
+                        "SOLUSDT",
+                        "1m",
+                        "StrategyVersion:jkl",
+                        "Submitted",
+                        null,
+                        "Binance.PrivateRest",
+                        0,
+                        1,
+                        now)
+                ],
+                DetailSnapshot = new AdminTraceDetailSnapshot(
+                    "corr-trace-4",
+                    Array.Empty<DecisionTraceSnapshot>(),
+                    [
+                        new ExecutionTraceSnapshot(
+                            Guid.NewGuid(),
+                            executionOrderId,
+                            "corr-trace-4",
+                            "exe-trace-4",
+                            "cmd-trace-4",
+                            "user-04",
+                            "Binance.PrivateRest",
+                            "/fapi/v1/order",
+                            "{\"request\":\"masked\"}",
+                            "{\"response\":\"masked\"}",
+                            200,
+                            "OK",
+                            19,
+                            now)
+                    ])
+            });
+
+        var result = await controller.Search(executionOrderId.ToString(), CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.TraceDetail), redirectResult.ActionName);
+        Assert.Equal("corr-trace-4", redirectResult.RouteValues!["correlationId"]);
+        Assert.Equal("exe-trace-4", redirectResult.RouteValues!["executionAttemptId"]);
+    }
+
+    [Fact]
+    public async Task Search_RedirectsToUserDetail_WhenQueryMatchesUserId_AndOperatorHasIdentityPermission()
+    {
+        var now = new DateTime(2026, 3, 24, 13, 13, 0, DateTimeKind.Utc);
+        var workspaceService = new FakeAdminWorkspaceReadModelService
+        {
+            UserDetailSnapshot = new AdminUserDetailPageSnapshot(
+                "usr-search-1",
+                "Search User",
+                "search.user",
+                "search.user@coinbot.local",
+                "Support",
+                "Aktif",
+                "healthy",
+                "MFA Acik",
+                "healthy",
+                "Demo",
+                "info",
+                "Risk normal",
+                "healthy",
+                new AdminUserEnvironmentSnapshot("Demo", "info", "Global varsayilan", "Default demo mode.", false),
+                new AdminUserRiskOverrideSnapshot("Core", 2m, 10m, 3m, false, false, false, null, null, null, "Risk ve override hazir", "healthy", "Profil 'Core'"),
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                now,
+                now)
+        };
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            workspaceReadModelService: workspaceService);
+
+        var result = await controller.Search("usr-search-1", CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.UserDetail), redirectResult.ActionName);
+        Assert.Equal("usr-search-1", redirectResult.RouteValues!["id"]);
+    }
+
+    [Fact]
+    public async Task Search_DoesNotRedirectToUserDetail_WhenOperatorLacksIdentityPermission()
+    {
+        var now = new DateTime(2026, 3, 24, 13, 14, 0, DateTimeKind.Utc);
+        var workspaceService = new FakeAdminWorkspaceReadModelService
+        {
+            UserDetailSnapshot = new AdminUserDetailPageSnapshot(
+                "usr-search-2",
+                "Search User",
+                "search.user",
+                "search.user@coinbot.local",
+                "Support",
+                "Aktif",
+                "healthy",
+                "MFA Acik",
+                "healthy",
+                "Demo",
+                "info",
+                "Risk normal",
+                "healthy",
+                new AdminUserEnvironmentSnapshot("Demo", "info", "Global varsayilan", "Default demo mode.", false),
+                new AdminUserRiskOverrideSnapshot("Core", 2m, 10m, 3m, false, false, false, null, null, null, "Risk ve override hazir", "healthy", "Profil 'Core'"),
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                now,
+                now)
+        };
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            workspaceReadModelService: workspaceService,
+            roles: [ApplicationRoles.SecurityAuditor]);
+
+        var result = await controller.Search("usr-search-2", CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.Audit), redirectResult.ActionName);
+        Assert.Equal("usr-search-2", redirectResult.RouteValues!["query"]);
     }
 
     [Fact]

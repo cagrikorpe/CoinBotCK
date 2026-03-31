@@ -6,7 +6,7 @@
     {
         Eyebrow = "Correlation Trace",
         Title = "Audit & Log Merkezi",
-        Description = "CorrelationId tabanli decision ve execution trace read-modeli; signal -> decision -> execution zinciri odakli ve masked admin görünümü.",
+        Description = "CorrelationId, OrderId, DecisionId ve ExecutionAttemptId tabanli decision/execution trace read-modeli; signal -> decision -> risk -> execution zinciri masked admin gorunumuyle izlenir.",
         StatusBadge = new AdminBadgeViewModel { Label = "Trace Index", Tone = "info", IconText = "TR" },
         MetaBadges = new[]
         {
@@ -73,7 +73,7 @@
                             @if (Model.Count == 0)
                             {
                                 <tr>
-                                    <td colspan="8" class="text-muted">Trace bulunamadi. Query, CorrelationId, DecisionId veya ExecutionAttemptId ile tekrar deneyin.</td>
+                                    <td colspan="8" class="text-muted">Trace bulunamadi. Query, CorrelationId, OrderId, DecisionId, ExecutionAttemptId veya UserId ile tekrar deneyin.</td>
                                 </tr>
                             }
                             else

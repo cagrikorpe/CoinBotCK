@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("CoinBot.Contracts")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+b28ef36636b100d9f338b455e2b501c17f8fc945")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+a0d4d9cfcc7b4181199c4134d0fe8b521167a0b6")]
 [assembly: System.Reflection.AssemblyProductAttribute("CoinBot.Contracts")]
 [assembly: System.Reflection.AssemblyTitleAttribute("CoinBot.Contracts")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

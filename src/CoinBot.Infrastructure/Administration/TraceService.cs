@@ -103,6 +103,9 @@ public sealed class TraceService(
         var normalizedDecisionId = NormalizeOptional(request.DecisionId, 64);
         var normalizedExecutionAttemptId = NormalizeOptional(request.ExecutionAttemptId, 64);
         var normalizedUserId = NormalizeOptional(request.UserId, 450);
+        var parsedExecutionOrderId = Guid.TryParse(normalizedQuery, out var executionOrderId)
+            ? executionOrderId
+            : (Guid?)null;
 
         var decisionQuery = dbContext.DecisionTraces
             .AsNoTracking()
@@ -145,6 +148,7 @@ public sealed class TraceService(
                 entity.CorrelationId == normalizedQuery ||
                 entity.ExecutionAttemptId == normalizedQuery ||
                 entity.CommandId == normalizedQuery ||
+                (parsedExecutionOrderId.HasValue && entity.ExecutionOrderId == parsedExecutionOrderId.Value) ||
                 entity.UserId == normalizedQuery);
         }
 

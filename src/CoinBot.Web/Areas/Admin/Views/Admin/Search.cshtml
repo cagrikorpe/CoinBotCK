@@ -1,0 +1,80 @@
+@using CoinBot.Web.ViewModels.Admin
+@{
+    var query = ViewData["AdminSearchQuery"]?.ToString() ?? string.Empty;
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Global Search",
+        Title = "Admin exact-match arama",
+        Description = "CorrelationId, OrderId, DecisionId, ExecutionAttemptId, IncidentId ve UserId exact-match sorgulari ilgili detay ekranina yonlenir.",
+        StatusBadge = new AdminBadgeViewModel { Label = "Exact Match", Tone = "info", IconText = "GS" },
+        PrimaryActionText = "Audit merkezi",
+        PrimaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" }),
+        SecondaryActionText = "Log Center",
+        SecondaryActionHref = Url.Action("Index", "LogCenter", new { area = string.Empty })
+    };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = "info",
+                    Title = "Tek arama kutusu",
+                    Message = "Topbar ve bu ekran ayni backend exact-match zincirini kullanir. Eslesen kayit varsa ilgili detail ekranina gider, yoksa audit aramasina duser.",
+                    Meta = "Route -> controller -> read-model -> detail"
+                })
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-7">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Search</div>
+                <div class="cb-admin-section-title">Kimlik veya iz referansi ara</div>
+                <p class="cb-admin-section-description mb-0">Girilen deger exact-match olarak kontrol edilir. Desteklenen anahtarlar: CorrelationId, OrderId, DecisionId, ExecutionAttemptId, IncidentId ve UserId.</p>
+
+                <form asp-area="Admin" asp-controller="Admin" asp-action="Search" method="get" class="mt-6">
+                    <label class="cb-form-label" for="admin_global_search_query">Sorgu</label>
+                    <input id="admin_global_search_query" name="query" type="text" class="form-control cb-form-control" value="@query" autocomplete="off" />
+                    <div class="cb-field-feedback mt-2">OrderId icin GUID, diger alanlar icin tam referans degeri girin.</div>
+                    <div class="cb-auth-action-row mt-6">
+                        <button type="submit" class="btn btn-primary font-weight-bolder">Ara</button>
+                        <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-light-primary font-weight-bold">Audit listesi</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-5">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Targets</div>
+                <div class="cb-admin-section-title">Yonlendirme kapsami</div>
+                <div class="cb-permission-list mt-4">
+                    <div class="cb-permission-item">
+                        <span>CorrelationId / OrderId / DecisionId / ExecutionAttemptId</span>
+                        <strong>Trace Detail</strong>
+                    </div>
+                    <div class="cb-permission-item">
+                        <span>IncidentId</span>
+                        <strong>Incident Detail</strong>
+                    </div>
+                    <div class="cb-permission-item">
+                        <span>UserId</span>
+                        <strong>User Detail</strong>
+                    </div>
+                    <div class="cb-permission-item">
+                        <span>Detay eslesmedi</span>
+                        <strong>Audit fallback</strong>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

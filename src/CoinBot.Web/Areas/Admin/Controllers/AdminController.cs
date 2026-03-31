@@ -200,6 +200,23 @@ public sealed class AdminController : Controller
 
         if (!string.IsNullOrWhiteSpace(normalizedQuery))
         {
+            if (CanViewUserDirectory())
+            {
+                var userDetail = await adminWorkspaceReadModelService.GetUserDetailAsync(normalizedQuery, cancellationToken);
+
+                if (userDetail is not null)
+                {
+                    return RedirectToAction(
+                        nameof(UserDetail),
+                        "Admin",
+                        new
+                        {
+                            area = "Admin",
+                            id = userDetail.UserId
+                        });
+                }
+            }
+
             if (adminGovernanceReadModelService is not null)
             {
                 var incidentDetail = await adminGovernanceReadModelService.GetIncidentDetailAsync(
@@ -227,6 +244,9 @@ public sealed class AdminController : Controller
 
             var exactCorrelationMatch = searchResults.FirstOrDefault(row =>
                 string.Equals(row.CorrelationId, normalizedQuery, StringComparison.OrdinalIgnoreCase));
+            var parsedExecutionOrderId = Guid.TryParse(normalizedQuery, out var executionOrderId)
+                ? executionOrderId
+                : (Guid?)null;
 
             if (exactCorrelationMatch is not null)
             {
@@ -282,6 +302,25 @@ public sealed class AdminController : Controller
                             executionAttemptId = matchingExecution.ExecutionAttemptId
                         });
                 }
+
+                if (parsedExecutionOrderId.HasValue)
+                {
+                    var matchingExecutionOrder = detail.ExecutionTraces.FirstOrDefault(execution =>
+                        execution.ExecutionOrderId == parsedExecutionOrderId.Value);
+
+                    if (matchingExecutionOrder is not null)
+                    {
+                        return RedirectToAction(
+                            nameof(TraceDetail),
+                            "Admin",
+                            new
+                            {
+                                area = "Admin",
+                                correlationId = row.CorrelationId,
+                                executionAttemptId = matchingExecutionOrder.ExecutionAttemptId
+                            });
+                    }
+                }
             }
 
             return RedirectToAction(
@@ -296,43 +335,12 @@ public sealed class AdminController : Controller
 
         ApplyShellMeta(
             title: "Global Search",
-            description: "CorrelationId, DecisionId, ExecutionAttemptId, IncidentId ve UserId bazli exact-match admin global search route.",
+            description: "CorrelationId, OrderId, DecisionId, ExecutionAttemptId, IncidentId ve UserId bazli exact-match admin global search route.",
             activeNav: "Search",
             breadcrumbItems: new[] { "Super Admin", "Search", "Global Search" });
 
         ViewData["AdminSearchQuery"] = normalizedQuery;
-
-        return View(
-            "Placeholder",
-            CreatePlaceholder(
-                eyebrow: "Search",
-                title: "Global Search",
-                description: "CorrelationId, DecisionId, ExecutionAttemptId, IncidentId ve UserId icin ortak admin arama giris noktasi kuruldu. Exact-match queryler ilgili detail ekranina yonlenir.",
-                hintTitle: string.IsNullOrWhiteSpace(normalizedQuery)
-                    ? "Trace search ready"
-                    : $"Query: {Truncate(normalizedQuery, 48)}",
-                hintMessage: string.IsNullOrWhiteSpace(normalizedQuery)
-                    ? "Topbar arama kutusu CorrelationId / DecisionId / ExecutionAttemptId icin Trace detail'e, IncidentId icin Incident detail'e, diger queryler icin Audit listesine gider."
-                    : "Correlation, decision, execution ve incident aramalari ilgili detail ekranina; diger queryler audit merkezine yonlendirilir.",
-                primaryActionText: "Audit merkezi",
-                primaryActionHref: Url.Action(nameof(Audit), "Admin", new { area = "Admin" }),
-                secondaryActionText: "Sistem sagligi",
-                secondaryActionHref: Url.Action(nameof(SystemHealth), "Admin", new { area = "Admin" }),
-                statusBadge: new AdminBadgeViewModel
-                {
-                    Label = string.IsNullOrWhiteSpace(normalizedQuery) ? "Ready" : "Prepared Query",
-                    Tone = "info",
-                    IconText = "GS"
-                },
-                strip: new AdminInfoStripViewModel
-                {
-                    Tone = "info",
-                    Title = "Search ready",
-                    Message = "Topbar aramasi exact-match trace / incident detail akisini kullanir; audit fallback korunur.",
-                    Meta = string.IsNullOrWhiteSpace(normalizedQuery)
-                        ? "Ready"
-                        : $"Q={Truncate(normalizedQuery, 36)}"
-                }));
+        return View();
     }
 
     public IActionResult Overview()
@@ -2088,6 +2096,11 @@ public sealed class AdminController : Controller
     private bool CanManageApprovals()
     {
         return approvalWorkflowService is not null && User.IsInRole(ApplicationRoles.SuperAdmin);
+    }
+
+    private bool CanViewUserDirectory()
+    {
+        return User.HasClaim(ApplicationClaimTypes.Permission, ApplicationPermissions.IdentityAdministration);
     }
 
     private async Task<MonitoringDashboardSnapshot> LoadMonitoringDashboardSnapshotAsync(CancellationToken cancellationToken)

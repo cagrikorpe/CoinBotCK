@@ -105,6 +105,38 @@ public sealed class TraceServiceTests
         Assert.Contains("***REDACTED***", entity.ResponseMasked, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task SearchAsync_ReturnsTraceRow_WhenQueryMatchesExecutionOrderId()
+    {
+        await using var dbContext = CreateDbContext();
+        var service = CreateService(dbContext);
+        var executionOrderId = Guid.NewGuid();
+
+        dbContext.ExecutionTraces.Add(new CoinBot.Domain.Entities.ExecutionTrace
+        {
+            Id = Guid.NewGuid(),
+            CorrelationId = "corr-order-1",
+            ExecutionAttemptId = "exe-order-1",
+            CommandId = "cmd-order-1",
+            UserId = "user-order-1",
+            Provider = "Binance.PrivateRest",
+            Endpoint = "/fapi/v1/order",
+            ExecutionOrderId = executionOrderId,
+            CreatedAtUtc = new DateTime(2026, 3, 24, 12, 10, 0, DateTimeKind.Utc),
+            UpdatedDate = new DateTime(2026, 3, 24, 12, 10, 0, DateTimeKind.Utc)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var result = await service.SearchAsync(
+            new AdminTraceSearchRequest(
+                Query: executionOrderId.ToString(),
+                Take: 20));
+
+        var row = Assert.Single(result);
+        Assert.Equal("corr-order-1", row.CorrelationId);
+        Assert.Equal(1, row.ExecutionCount);
+    }
+
     private static TraceService CreateService(ApplicationDbContext dbContext)
     {
         return new TraceService(

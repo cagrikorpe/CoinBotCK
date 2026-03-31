@@ -975,4 +975,3 @@ D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\hg2cmqnddt-{0
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\1pofzatkyd-{0}-x8o3sfkprr-x8o3sfkprr.gz
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\9bfqu1gly8-{0}-kdo7rbgwsz-kdo7rbgwsz.gz
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\tez6at2ddz-{0}-bgc3s325qe-bgc3s325qe.gz
-D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\staticwebassets.upToDateCheck.txt
