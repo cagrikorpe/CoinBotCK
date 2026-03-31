@@ -31,27 +31,33 @@
             <div class="cb-admin-summary-grid mt-5 cb-admin-user-summary-grid">
                 <div class="cb-admin-summary-card">
                     <span class="cb-admin-summary-label">Risk profili</span>
-                    <strong>@snapshot.RiskLabel</strong>
-                    <small>@snapshot.RiskTone</small>
+                    <strong>@snapshot.RiskOverride.RiskProfileName</strong>
+                    <small>@snapshot.RiskOverride.SummaryLabel</small>
                 </div>
                 <div class="cb-admin-summary-card">
-                    <span class="cb-admin-summary-label">Trading mode</span>
-                    <strong>@snapshot.TradingModeLabel</strong>
-                    <small>@snapshot.TradingModeTone</small>
+                    <span class="cb-admin-summary-label">Maks günlük kayıp</span>
+                    <strong>@(snapshot.RiskOverride.MaxDailyLossPercentage?.ToString("0.##") ?? "-")%</strong>
+                    <small>Risk limiti</small>
                 </div>
                 <div class="cb-admin-summary-card">
-                    <span class="cb-admin-summary-label">Bot / Exchange</span>
-                    <strong>@snapshot.Bots.Count / @snapshot.ExchangeAccounts.Count</strong>
-                    <small>Envanter</small>
+                    <span class="cb-admin-summary-label">Override</span>
+                    <strong>
+                        @(snapshot.RiskOverride.SessionDisabled
+                            ? "Session kapalı"
+                            : snapshot.RiskOverride.ReduceOnly
+                                ? "Reduce-only"
+                                : "Normal")
+                    </strong>
+                    <small>Kullanıcı override durumu</small>
                 </div>
             </div>
 
             <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
                 <div>
                     <div class="cb-admin-info-strip-title">Risk kontrolü</div>
-                    <div class="cb-admin-info-strip-text">Bot ve exchange sayıları ile güvenlik durumu birlikte değerlendirilir.</div>
+                    <div class="cb-admin-info-strip-text">@snapshot.RiskOverride.SummaryText</div>
                 </div>
-                <span class="cb-admin-info-strip-meta">@snapshot.LastRefreshedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC</span>
+                <span class="cb-admin-info-strip-meta">@snapshot.RiskOverride.SummaryLabel</span>
             </div>
         }
 

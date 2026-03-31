@@ -1,10 +1,10 @@
 @{
     var pageTitle = ViewData["Title"]?.ToString() ?? "CoinBot";
     var authTitle = ViewData["AuthTitle"]?.ToString() ?? pageTitle;
-    var authDescription = ViewData["AuthDescription"]?.ToString() ?? "Güvenli giriş ve kurulum akışı foundation ekranı.";
+    var authDescription = ViewData["AuthDescription"]?.ToString() ?? "Güvenli giriş ve kurulum akışı.";
     var authEyebrow = ViewData["AuthEyebrow"]?.ToString() ?? "Secure Access";
-    var authStage = ViewData["AuthStage"]?.ToString() ?? "Foundation";
-    var authProgress = ViewData["AuthProgress"]?.ToString() ?? "Hazır";
+    var authStage = ViewData["AuthStage"]?.ToString() ?? "Access";
+    var authProgress = ViewData["AuthProgress"]?.ToString() ?? "1 / 1";
     var authBackHref = ViewData["AuthBackHref"]?.ToString();
     var authShellVariant = ViewData["AuthShellVariant"]?.ToString() ?? "default";
     var authHighlights = ViewData["AuthHighlights"] as string[] ?? new[]
@@ -40,10 +40,10 @@
                     <span class="app-logo-mark">C</span>
                     <span>
                         <span class="text-white font-size-h4 font-weight-bolder d-block">CoinBot</span>
-                        <span class="cb-brand-subtitle">Auth / Onboarding Foundation</span>
+                    <span class="cb-brand-subtitle">Secure Access</span>
                     </span>
                 </a>
-                <button type="button" class="btn btn-icon btn-clean cb-icon-button" id="cb_theme_toggle" title="Theme foundation toggle">
+                <button type="button" class="btn btn-icon btn-clean cb-icon-button" id="cb_theme_toggle" title="Tema görünümünü değiştir">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none">
                         <path d="M12 3v2.5M12 18.5V21M4.93 4.93l1.77 1.77M17.3 17.3l1.77 1.77M3 12h2.5M18.5 12H21M4.93 19.07l1.77-1.77M17.3 6.7l1.77-1.77" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
                         <circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.6"/>
@@ -62,7 +62,7 @@
                 <div class="cb-auth-hero-card">
                     <div class="cb-auth-hero-card-label">Aktif aşama</div>
                     <div class="cb-auth-hero-card-value">@authStage</div>
-                    <div class="cb-auth-hero-card-text">Auth, MFA, onboarding ve exchange güvenlik checkpoint ekranları aynı tasarım diliyle hazırlandı.</div>
+                    <div class="cb-auth-hero-card-text">Auth, MFA ve güvenlik checkpoint yüzeyleri tek giriş dili ve gerçek redirect akışıyla çalışır.</div>
                 </div>
 
                 <div class="cb-auth-checklist mt-8">
@@ -116,7 +116,7 @@
     <script src="~/metronic/assets/plugins/global/plugins.bundle.js" asp-append-version="true"></script>
     <script src="~/metronic/assets/js/scripts.bundle.js" asp-append-version="true"></script>
     <script src="~/js/site.js" asp-append-version="true"></script>
-    <script src="~/js/auth-foundation.js" asp-append-version="true"></script>
+    <script src="~/js/auth-ui.js" asp-append-version="true"></script>
     @await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>

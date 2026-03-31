@@ -220,10 +220,8 @@ D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\77173qlr2i-{0
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\ddrle72nrf-{0}-xequo35lve-xequo35lve.gz
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\p0y45dh8y1-{0}-61n19gt1b8-61n19gt1b8.gz
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\dez55avcnm-{0}-n3lhs5leir-n3lhs5leir.gz
-D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\odj2uvrx1q-{0}-x8o3sfkprr-x8o3sfkprr.gz
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\mbeoocrqzf-{0}-8tk2petmcf-8tk2petmcf.gz
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\jm7w3bv340-{0}-ifvp1vcio8-ifvp1vcio8.gz
-D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\vb90v05aj4-{0}-1xmh86637q-1xmh86637q.gz
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\v3hnc666ts-{0}-ucud65myha-ucud65myha.gz
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\gfn4g21if3-{0}-polzauqrdo-polzauqrdo.gz
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\lcgls8qp25-{0}-omgez13i4c-omgez13i4c.gz
@@ -974,6 +972,6 @@ D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\ref\CoinBot.Web.dll
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\iwa1zeo39c-{0}-1xo9103llp-1xo9103llp.gz
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\bin\Debug\net10.0\QRCoder.dll
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\hg2cmqnddt-{0}-6dl7az8a0y-6dl7az8a0y.gz
-D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\tez6at2ddz-{0}-yatdzc6i45-yatdzc6i45.gz
-D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\1r3u17mj09-{0}-kdo7rbgwsz-kdo7rbgwsz.gz
-D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\staticwebassets.upToDateCheck.txt
+D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\1pofzatkyd-{0}-x8o3sfkprr-x8o3sfkprr.gz
+D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\9bfqu1gly8-{0}-kdo7rbgwsz-kdo7rbgwsz.gz
+D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\tez6at2ddz-{0}-bgc3s325qe-bgc3s325qe.gz

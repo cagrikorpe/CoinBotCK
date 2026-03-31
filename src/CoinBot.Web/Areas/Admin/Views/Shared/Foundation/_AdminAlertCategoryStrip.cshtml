@@ -12,8 +12,8 @@
     <div class="card-body">
         <div class="cb-admin-panel-head">
             <div>
-                <div class="cb-admin-section-kicker">Category / Read State</div>
-                <div class="cb-admin-section-title">Alarm kategori ve okunma görünümü</div>
+                <div class="cb-admin-section-kicker">Alert Categories</div>
+                <div class="cb-admin-section-title">Alarm kategori görünümü</div>
             </div>
             <div class="cb-admin-inline-actions cb-admin-inline-actions-compact">
                 @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = snapshot is null ? "Veri yok" : $"{alerts.Count} alert", Tone = "info", IconText = "UR" })

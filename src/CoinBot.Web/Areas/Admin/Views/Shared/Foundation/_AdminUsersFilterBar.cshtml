@@ -5,6 +5,11 @@
     var status = snapshot?.StatusFilter ?? string.Empty;
     var mfa = snapshot?.MfaFilter ?? string.Empty;
     var resultCount = snapshot?.Users.Count ?? 0;
+    var visibleRoles = snapshot?.Users
+        .SelectMany(user => user.RoleSummary.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Take(3)
+        .ToArray() ?? Array.Empty<string>();
 }
 
 <form asp-area="Admin" asp-controller="Admin" asp-action="Users" method="get" class="cb-filter-bar cb-admin-filter-bar cb-admin-user-filter-bar">
@@ -72,14 +77,6 @@
             }
         </select>
     </div>
-    <div class="cb-filter-field">
-        <label class="cb-form-label">Rol</label>
-        <input type="text" class="form-control cb-form-control" value="@(snapshot is null ? string.Empty : snapshot.Users.SelectMany(user => user.RoleSummary.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)).Distinct(StringComparer.OrdinalIgnoreCase).FirstOrDefault() ?? string.Empty)" disabled />
-    </div>
-    <div class="cb-filter-field">
-        <label class="cb-form-label">Son güncelleme</label>
-        <input type="text" class="form-control cb-form-control" value="@(snapshot?.LastRefreshedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") ?? "-") UTC" disabled />
-    </div>
     <div class="cb-filter-field cb-filter-actions cb-admin-user-filter-actions">
         <a asp-area="Admin" asp-controller="Admin" asp-action="Users" class="btn btn-light-primary font-weight-bold">Temizle</a>
         <button type="submit" class="btn btn-primary font-weight-bolder">Filtreyi uygula</button>
@@ -89,7 +86,17 @@
 <div class="cb-admin-filter-summary mt-5">
     <div class="cb-admin-filter-summary-copy">
         <strong>Toplam sonuç: @resultCount kullanıcı</strong>
-        <span>Gerçek kullanıcı, MFA, bot ve exchange snapshot verisi ile filtrelenir.</span>
+        <span>
+            Gerçek kullanıcı, MFA, bot ve exchange snapshot verisi ile filtrelenir.
+            @if (snapshot is not null)
+            {
+                <text> Son yenilenme: @snapshot.LastRefreshedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC.</text>
+            }
+            @if (visibleRoles.Length > 0)
+            {
+                <text> Görünen roller: @string.Join(", ", visibleRoles).</text>
+            }
+        </span>
     </div>
     <div class="cb-admin-filter-chip-list">
         @if (!string.IsNullOrWhiteSpace(status))

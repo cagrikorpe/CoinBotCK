@@ -16,18 +16,21 @@
                 <label class="cb-form-label">Kullanıcı arama</label>
                 <input type="text" name="query" value="@query" class="form-control cb-form-control" aria-label="user id, email veya external ref" />
             </div>
-            <div class="form-group mb-0">
-                <label class="cb-form-label">Hızlı filtre</label>
-                <select class="form-control cb-form-control" disabled>
-                    <option selected>Son sorun yaşayanlar</option>
-                </select>
+            <div class="form-group mb-0 cb-filter-actions">
+                <label class="cb-form-label">Lookup aksiyonu</label>
+                <div class="cb-admin-inline-actions">
+                    <button type="submit" class="btn btn-primary font-weight-bolder">Ara</button>
+                    <a asp-area="Admin" asp-controller="Admin" asp-action="SupportTools" class="btn btn-light-primary font-weight-bold">Temizle</a>
+                </div>
             </div>
         </form>
 
         <div class="cb-admin-inline-actions mt-5">
-            <a asp-area="Admin" asp-controller="Admin" asp-action="SupportTools" class="btn btn-light-primary font-weight-bold">Temizle</a>
             <a asp-area="Admin" asp-controller="Admin" asp-action="Users" class="btn btn-light-primary font-weight-bold">Kullanıcılar</a>
-            <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" asp-route-query="@query" class="btn btn-light-primary font-weight-bold">Audit</a>
+            @if (!string.IsNullOrWhiteSpace(query))
+            {
+                <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" asp-route-query="@query" class="btn btn-light-primary font-weight-bold">Audit</a>
+            }
         </div>
 
         <div class="cb-admin-summary-card mt-6 cb-admin-support-result-card">
@@ -47,5 +50,16 @@
                 }
             </div>
         </div>
+
+        @if (snapshot is not null)
+        {
+            <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
+                <div>
+                    <div class="cb-admin-info-strip-title">Son yenilenme</div>
+                    <div class="cb-admin-info-strip-text">@snapshot.LastRefreshedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC</div>
+                </div>
+                <span class="cb-admin-info-strip-meta">Snapshot</span>
+            </div>
+        }
     </div>
 </div>

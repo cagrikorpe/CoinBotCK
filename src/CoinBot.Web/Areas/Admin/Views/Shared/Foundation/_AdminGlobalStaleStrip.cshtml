@@ -1,7 +1,7 @@
 @{
     var tone = ViewData["AdminFreshnessTone"]?.ToString() ?? "healthy";
     var label = ViewData["AdminFreshnessLabel"]?.ToString() ?? "Fresh";
-    var message = ViewData["AdminFreshnessMessage"]?.ToString() ?? "Admin yüzeyi güncel placeholder akış ile okunuyor.";
+    var message = ViewData["AdminFreshnessMessage"]?.ToString() ?? "Admin yuzeyi guncel read-model snapshot uzerinden okunuyor.";
     var meta = ViewData["AdminFreshnessMeta"]?.ToString() ?? "Freshness · canlı";
     var title = ViewData["Title"]?.ToString() ?? "Admin";
     var stripToneClass = tone switch

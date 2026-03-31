@@ -1,68 +1,9 @@
+@model CoinBot.Web.ViewModels.Exchanges.UserExchangeCommandCenterPageViewModel
 @{
     ViewData["Title"] = "Borsalarım";
     ViewData["ActiveNav"] = "Exchanges";
-    ViewData["PageDescription"] = "Binance bağlantı foundation ekranı; credential formu, izin görünümü, sonuç state'leri ve senkron meta alanlarını tek yüzeyde toplar.";
+    ViewData["PageDescription"] = "Binance command center; credential özeti, permission görünürlüğü, validation history ve sync durumu tek kullanıcı yüzeyinde toplanır.";
     ViewData["BreadcrumbItems"] = new[] { "Integrations", "Borsalarım" };
 }
 
-@section Scripts {
-    <script src="~/js/exchange-foundation.js" asp-append-version="true"></script>
-}
-
-<div class="row" data-cb-exchange-connect data-cb-exchange-scenario="first">
-    <div class="col-12">
-        <div class="card card-custom gutter-b cb-card cb-exchange-hero-card">
-            <div class="card-body">
-                <div class="cb-page-header">
-                    <div>
-                        <div class="cb-page-eyebrow">Exchange Connect</div>
-                        <h2 class="cb-page-title">Binance bağlantı yüzeyi</h2>
-                        <p class="cb-page-description">Gerçek API çağrısı olmadan, kullanıcıya neyi girmesi ve neyi vermemesi gerektiğini açık gösteren exchange connection foundation ekranı.</p>
-                    </div>
-                    <div class="cb-toolbar">
-                        <span class="cb-badge cb-badge-info">Binance</span>
-                        <span class="cb-badge cb-badge-neutral">UI-only foundation</span>
-                        <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_shell_drawer">Yardım</button>
-                    </div>
-                </div>
-
-                <div class="cb-exchange-hero-grid mt-6">
-                    <div class="cb-notice cb-notice-info">
-                        API key yalnızca trade ve account read için hazırlanmalı; withdrawal yetkili key kullanılmamalıdır.
-                    </div>
-                    <div class="cb-notice cb-notice-warning">
-                        Live moda geçmeden önce permission check, IP whitelist ve paper mod testleri tamamlanmalıdır.
-                    </div>
-                </div>
-
-                <div class="cb-section mt-6">
-                    <div class="cb-section-title">Durum Senaryoları</div>
-                    <div class="cb-page-description mt-2">Foundation state'lerini görmek için bir senaryo seçin. Bu seçim gerçek entegrasyon yapmaz; yalnızca UI yüzeyini değiştirir.</div>
-                    <div class="cb-chip-group mt-4" data-cb-toggle-group>
-                        <button type="button" class="cb-chip is-active" data-cb-toggle-active data-cb-exchange-scenario-trigger="first">İlk kez geliyor</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-exchange-scenario-trigger="success">Test başarılı</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-exchange-scenario-trigger="missing">Eksik permission</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-exchange-scenario-trigger="risky">Riskli yapı</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-exchange-scenario-trigger="stale">Stale bağlantı</button>
-                    </div>
-                </div>
-
-                @await Html.PartialAsync("Exchanges/_FreshnessMeta")
-            </div>
-        </div>
-    </div>
-
-    <div class="col-xl-7">
-        @await Html.PartialAsync("Exchanges/_ConnectionForm")
-        @await Html.PartialAsync("Exchanges/_SecurityGuidanceCard")
-    </div>
-
-    <div class="col-xl-5">
-        @await Html.PartialAsync("Exchanges/_PermissionCheckCard")
-        @await Html.PartialAsync("Exchanges/_ConnectionResultCard")
-    </div>
-
-    <div class="col-12">
-        @await Html.PartialAsync("Exchanges/_StatePatternsCard")
-    </div>
-</div>
+@await Html.PartialAsync("Exchanges/_UserExchangeCommandCenter", Model)

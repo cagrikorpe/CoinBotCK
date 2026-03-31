@@ -93,8 +93,7 @@
                         </div>
 
                         <div class="cb-admin-worker-actions">
-                            <button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-drawer-target="#cb_admin_worker_drawer">Detay</button>
-                            <button type="button" class="btn btn-xs btn-light-warning font-weight-bold" data-toggle="modal" data-target="#cb_admin_job_retry_modal" data-cb-modal-title="Retry / recheck" data-cb-modal-message="Worker heartbeat snapshot read-only gösterilir; gerçek retry aksiyonu bu fazda devrede değildir." data-cb-modal-confirm="Retry başlat">Retry</button>
+                            <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-xs btn-light-primary font-weight-bold">Audit</a>
                         </div>
                     </div>
                 }

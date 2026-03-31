@@ -86,7 +86,10 @@ public sealed partial class LogCenterReadModelService
         bool HasInvalidDateRange)
     {
         public string? QueryLower => Query?.ToLowerInvariant();
+        public string? DecisionIdLower => DecisionId?.ToLowerInvariant();
+        public string? ExecutionAttemptIdLower => ExecutionAttemptId?.ToLowerInvariant();
         public string? StatusLower => Status?.ToLowerInvariant();
+        public string? SymbolLower => Symbol?.ToLowerInvariant();
 
         public LogCenterQueryRequest ToRequest()
         {

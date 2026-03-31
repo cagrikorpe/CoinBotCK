@@ -2,20 +2,30 @@
     var headerModel = new AdminPageHeaderViewModel
     {
         Eyebrow = "Platform Overview",
-        Title = "Super Admin platform dashboard",
-        Description = "Platformın genel sağlık özeti, kritik alarm yoğunluğu, AI health, failed jobs ve hızlı yönlendirme aksiyonlarını tek ekranda toplayan operasyon dashboard'u.",
-        StatusBadge = new AdminBadgeViewModel { Label = "Operational View", Tone = "healthy", IconText = "OV" },
+        Title = "Super Admin command center",
+        Description = "Release oncesi canli operasyon yuzeylerine tek noktadan gecis veren, sahte metrik yerine gercek route'lari one cikaran admin giris ekrani.",
+        StatusBadge = new AdminBadgeViewModel { Label = "Live Routes", Tone = "healthy", IconText = "OV" },
         MetaBadges = new[]
         {
             new AdminBadgeViewModel { Label = "Super Admin", Tone = "role", IconText = "SA" },
-            new AdminBadgeViewModel { Label = "Prod Shadow", Tone = "info", IconText = "ENV" },
-            new AdminBadgeViewModel { Label = "Operational Metrics", Tone = "warning", IconText = "KP" },
-            new AdminBadgeViewModel { Label = "Freshness Aware", Tone = "degraded", IconText = "FS" }
+            new AdminBadgeViewModel { Label = "Real Navigation", Tone = "info", IconText = "RT" },
+            new AdminBadgeViewModel { Label = "No Fake Data", Tone = "warning", IconText = "ND" },
+            new AdminBadgeViewModel { Label = "Readiness Hub", Tone = "degraded", IconText = "RH" }
         },
-        SecondaryActionText = "Kritik loglara git",
+        SecondaryActionText = "Audit / trace",
         SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" }),
-        PrimaryActionText = "Notifications paneli",
-        PrimaryActionHref = Url.Action("Notifications", "Admin", new { area = "Admin" })
+        PrimaryActionText = "System health",
+        PrimaryActionHref = Url.Action("SystemHealth", "Admin", new { area = "Admin" })
+    };
+
+    var commandCards = new[]
+    {
+        new { Eyebrow = "Runtime", Title = "System health", Description = "Sentinel, redis probe, clock drift, cooldown ve worker heartbeat read-modeli.", ActionText = "Aç", ActionHref = Url.Action("SystemHealth", "Admin", new { area = "Admin" }), Tone = "healthy" },
+        new { Eyebrow = "Observability", Title = "Audit / log center", Description = "Correlation trace, decision/execution zinciri ve masked export akisi.", ActionText = "Aç", ActionHref = Url.Action("Audit", "Admin", new { area = "Admin" }), Tone = "info" },
+        new { Eyebrow = "Governance", Title = "Approvals", Description = "Approval, reject, expiry ve audit/history zinciri.", ActionText = "Aç", ActionHref = Url.Action("Approvals", "Admin", new { area = "Admin" }), Tone = "warning" },
+        new { Eyebrow = "Governance", Title = "Incidents", Description = "Incident timeline, anomaly ve crisis baglantilari.", ActionText = "Aç", ActionHref = Url.Action("Incidents", "Admin", new { area = "Admin" }), Tone = "critical" },
+        new { Eyebrow = "Identity", Title = "Users", Description = "Gercek user HQ, credential summary ve validation history.", ActionText = "Aç", ActionHref = Url.Action("Users", "Admin", new { area = "Admin" }), Tone = "neutral" },
+        new { Eyebrow = "Control", Title = "Settings", Description = "Execution hard gate, crisis, retention ve symbol restriction yonetimi.", ActionText = "Aç", ActionHref = Url.Action("Settings", "Admin", new { area = "Admin" }), Tone = "warning" }
     };
 }
 
@@ -24,33 +34,47 @@
         <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-dashboard-card">
             <div class="card-body">
                 @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
-                @await Html.PartialAsync("Foundation/_AdminFreshnessStrip")
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = "info",
+                    Title = "Operasyon giris noktasi",
+                    Message = "Bu sayfa sabit KPI veya demo kart gostermek yerine, canli admin yuzeylerine hizli ve guvenli gecis sunar.",
+                    Meta = "No fake metrics"
+                })
             </div>
         </div>
     </div>
 
+    @foreach (var card in commandCards)
+    {
+        var buttonClass = card.Tone switch
+        {
+            "critical" => "btn-light-danger",
+            "warning" => "btn-light-warning",
+            "info" => "btn-light-info",
+            _ => "btn-light-primary"
+        };
+        <div class="col-xl-4 col-md-6">
+            <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-panel-card">
+                <div class="card-body">
+                    <div class="cb-admin-section-kicker">@card.Eyebrow</div>
+                    <div class="cb-admin-section-title">@card.Title</div>
+                    <p class="cb-admin-section-description">@card.Description</p>
+                    <div class="cb-admin-inline-actions mt-5">
+                        <a href="@card.ActionHref" class="btn @buttonClass font-weight-bold">@card.ActionText</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
     <div class="col-12">
-        @await Html.PartialAsync("Foundation/_AdminDashboardKpis")
-    </div>
-
-    <div class="col-xl-7">
-        @await Html.PartialAsync("Foundation/_AdminCriticalAlarmsPanel")
-    </div>
-
-    <div class="col-xl-5">
-        @await Html.PartialAsync("Foundation/_AdminAiHealthSummary")
-        @await Html.PartialAsync("Foundation/_AdminQuickActionsPanel")
-    </div>
-
-    <div class="col-xl-7">
-        @await Html.PartialAsync("Foundation/_AdminFailedJobsPanel")
-    </div>
-
-    <div class="col-xl-5">
-        @await Html.PartialAsync("Foundation/_AdminDashboardHelpCard")
-    </div>
-
-    <div class="col-12">
-        @await Html.PartialAsync("Foundation/_AdminDashboardStateShowcase")
+        @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+        {
+            Tone = "warning",
+            Title = "Release readiness notu",
+            Message = "Admin landing uzerinde sahte incident, job veya KPI gostergesi tutulmuyor. Izleme, governance ve ayar degisiklikleri kendi read-model ekranlarinda acilir.",
+            Meta = "Fail-closed UX"
+        })
     </div>
 </div>

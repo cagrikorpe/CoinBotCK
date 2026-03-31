@@ -70,14 +70,6 @@ build_metadata.AdditionalFiles.CssScope =
 build_metadata.AdditionalFiles.TargetPath = QXJlYXNcQWRtaW5cVmlld3NcQWRtaW5cSW5jaWRlbnRzLmNzaHRtbA==
 build_metadata.AdditionalFiles.CssScope = 
 
-[D:/CkBot/Code/CoinBot/src/CoinBot.Web/Areas/Admin/Views/Admin/Login.cshtml]
-build_metadata.AdditionalFiles.TargetPath = QXJlYXNcQWRtaW5cVmlld3NcQWRtaW5cTG9naW4uY3NodG1s
-build_metadata.AdditionalFiles.CssScope = 
-
-[D:/CkBot/Code/CoinBot/src/CoinBot.Web/Areas/Admin/Views/Admin/Mfa.cshtml]
-build_metadata.AdditionalFiles.TargetPath = QXJlYXNcQWRtaW5cVmlld3NcQWRtaW5cTWZhLmNzaHRtbA==
-build_metadata.AdditionalFiles.CssScope = 
-
 [D:/CkBot/Code/CoinBot/src/CoinBot.Web/Areas/Admin/Views/Admin/Notifications.cshtml]
 build_metadata.AdditionalFiles.TargetPath = QXJlYXNcQWRtaW5cVmlld3NcQWRtaW5cTm90aWZpY2F0aW9ucy5jc2h0bWw=
 build_metadata.AdditionalFiles.CssScope = 
@@ -490,6 +482,10 @@ build_metadata.AdditionalFiles.CssScope =
 build_metadata.AdditionalFiles.TargetPath = QXJlYXNcQWRtaW5cVmlld3NcU2hhcmVkXEZvdW5kYXRpb25cX0FkbWluVXNlckJvdFN1bW1hcnkuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
+[D:/CkBot/Code/CoinBot/src/CoinBot.Web/Areas/Admin/Views/Shared/Foundation/_AdminUserCredentialValidationHistory.cshtml]
+build_metadata.AdditionalFiles.TargetPath = QXJlYXNcQWRtaW5cVmlld3NcU2hhcmVkXEZvdW5kYXRpb25cX0FkbWluVXNlckNyZWRlbnRpYWxWYWxpZGF0aW9uSGlzdG9yeS5jc2h0bWw=
+build_metadata.AdditionalFiles.CssScope = 
+
 [D:/CkBot/Code/CoinBot/src/CoinBot.Web/Areas/Admin/Views/Shared/Foundation/_AdminUserCriticalLogs.cshtml]
 build_metadata.AdditionalFiles.TargetPath = QXJlYXNcQWRtaW5cVmlld3NcU2hhcmVkXEZvdW5kYXRpb25cX0FkbWluVXNlckNyaXRpY2FsTG9ncy5jc2h0bWw=
 build_metadata.AdditionalFiles.CssScope = 
@@ -524,10 +520,6 @@ build_metadata.AdditionalFiles.CssScope =
 
 [D:/CkBot/Code/CoinBot/src/CoinBot.Web/Areas/Admin/Views/Shared/Foundation/_AdminWorkerHealthList.cshtml]
 build_metadata.AdditionalFiles.TargetPath = QXJlYXNcQWRtaW5cVmlld3NcU2hhcmVkXEZvdW5kYXRpb25cX0FkbWluV29ya2VySGVhbHRoTGlzdC5jc2h0bWw=
-build_metadata.AdditionalFiles.CssScope = 
-
-[D:/CkBot/Code/CoinBot/src/CoinBot.Web/Areas/Admin/Views/Shared/_AdminAuthLayout.cshtml]
-build_metadata.AdditionalFiles.TargetPath = QXJlYXNcQWRtaW5cVmlld3NcU2hhcmVkXF9BZG1pbkF1dGhMYXlvdXQuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
 [D:/CkBot/Code/CoinBot/src/CoinBot.Web/Areas/Admin/Views/Shared/_AdminBadge.cshtml]
@@ -798,28 +790,8 @@ build_metadata.AdditionalFiles.CssScope =
 build_metadata.AdditionalFiles.TargetPath = Vmlld3NcU2hhcmVkXEVycm9yLmNzaHRtbA==
 build_metadata.AdditionalFiles.CssScope = 
 
-[D:/CkBot/Code/CoinBot/src/CoinBot.Web/Views/Shared/Exchanges/_ConnectionForm.cshtml]
-build_metadata.AdditionalFiles.TargetPath = Vmlld3NcU2hhcmVkXEV4Y2hhbmdlc1xfQ29ubmVjdGlvbkZvcm0uY3NodG1s
-build_metadata.AdditionalFiles.CssScope = 
-
-[D:/CkBot/Code/CoinBot/src/CoinBot.Web/Views/Shared/Exchanges/_ConnectionResultCard.cshtml]
-build_metadata.AdditionalFiles.TargetPath = Vmlld3NcU2hhcmVkXEV4Y2hhbmdlc1xfQ29ubmVjdGlvblJlc3VsdENhcmQuY3NodG1s
-build_metadata.AdditionalFiles.CssScope = 
-
-[D:/CkBot/Code/CoinBot/src/CoinBot.Web/Views/Shared/Exchanges/_FreshnessMeta.cshtml]
-build_metadata.AdditionalFiles.TargetPath = Vmlld3NcU2hhcmVkXEV4Y2hhbmdlc1xfRnJlc2huZXNzTWV0YS5jc2h0bWw=
-build_metadata.AdditionalFiles.CssScope = 
-
-[D:/CkBot/Code/CoinBot/src/CoinBot.Web/Views/Shared/Exchanges/_PermissionCheckCard.cshtml]
-build_metadata.AdditionalFiles.TargetPath = Vmlld3NcU2hhcmVkXEV4Y2hhbmdlc1xfUGVybWlzc2lvbkNoZWNrQ2FyZC5jc2h0bWw=
-build_metadata.AdditionalFiles.CssScope = 
-
-[D:/CkBot/Code/CoinBot/src/CoinBot.Web/Views/Shared/Exchanges/_SecurityGuidanceCard.cshtml]
-build_metadata.AdditionalFiles.TargetPath = Vmlld3NcU2hhcmVkXEV4Y2hhbmdlc1xfU2VjdXJpdHlHdWlkYW5jZUNhcmQuY3NodG1s
-build_metadata.AdditionalFiles.CssScope = 
-
-[D:/CkBot/Code/CoinBot/src/CoinBot.Web/Views/Shared/Exchanges/_StatePatternsCard.cshtml]
-build_metadata.AdditionalFiles.TargetPath = Vmlld3NcU2hhcmVkXEV4Y2hhbmdlc1xfU3RhdGVQYXR0ZXJuc0NhcmQuY3NodG1s
+[D:/CkBot/Code/CoinBot/src/CoinBot.Web/Views/Shared/Exchanges/_UserExchangeCommandCenter.cshtml]
+build_metadata.AdditionalFiles.TargetPath = Vmlld3NcU2hhcmVkXEV4Y2hhbmdlc1xfVXNlckV4Y2hhbmdlQ29tbWFuZENlbnRlci5jc2h0bWw=
 build_metadata.AdditionalFiles.CssScope = 
 
 [D:/CkBot/Code/CoinBot/src/CoinBot.Web/Views/Shared/Foundation/_EmptyState.cshtml]

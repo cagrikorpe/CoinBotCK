@@ -2,32 +2,32 @@
     <div class="card-body">
         <div class="cb-admin-panel-head">
             <div>
-                <div class="cb-admin-section-kicker">Policy CTA</div>
-                <div class="cb-admin-section-title">Notification policy</div>
+                <div class="cb-admin-section-kicker">Ops Links</div>
+                <div class="cb-admin-section-title">İlgili alarm yüzeyleri</div>
             </div>
-            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Read / Unread", Tone = "info", IconText = "NP" })
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Cross links", Tone = "info", IconText = "LK" })
         </div>
 
         <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-6">
             <div>
-                <div class="cb-admin-info-strip-title">Bildirim policy yönlendirmesi</div>
-                <div class="cb-admin-info-strip-text">Alarm routing ve güvenlik incelemesi için gerçek admin ekranlarına yönlendirme yapılır.</div>
+                <div class="cb-admin-info-strip-title">Alarm inceleme akışı</div>
+                <div class="cb-admin-info-strip-text">Alarm kaynağını doğrulamak için güvenlik, audit ve sistem sağlığı yüzeylerine geçiş yapılır.</div>
             </div>
-            <span class="cb-admin-info-strip-meta">Policy</span>
+            <span class="cb-admin-info-strip-meta">Ops</span>
         </div>
 
         <div class="cb-admin-quick-actions-list mt-6">
-            <a asp-area="Admin" asp-controller="Admin" asp-action="Notifications" class="cb-admin-action-item">
-                <div>
-                    <strong>Notification policy ekranına git</strong>
-                    <small>Rule/source ve severity akışı</small>
-                </div>
-                <span>→</span>
-            </a>
             <a asp-area="Admin" asp-controller="Admin" asp-action="SecurityEvents" class="cb-admin-action-item">
                 <div>
                     <strong>Security alarmlarını aç</strong>
                     <small>Şüpheli ve yüksek riskli olaylarla karşılaştır</small>
+                </div>
+                <span>→</span>
+            </a>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="cb-admin-action-item">
+                <div>
+                    <strong>Audit izini aç</strong>
+                    <small>Alarmın bağlı olduğu incident ve trace kayıtlarını incele</small>
                 </div>
                 <span>→</span>
             </a>

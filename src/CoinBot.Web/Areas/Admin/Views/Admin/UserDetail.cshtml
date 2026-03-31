@@ -1,10 +1,11 @@
 @{
     var entityId = ViewData["AdminEntityId"]?.ToString() ?? "usr-unknown";
+    var snapshot = ViewData["AdminUserDetailPageSnapshot"] as CoinBot.Application.Abstractions.Administration.AdminUserDetailPageSnapshot;
     var headerModel = new AdminPageHeaderViewModel
     {
         Eyebrow = "Identity Detail",
         Title = "Kullanıcı Detayı",
-        Description = "Profil özeti, güvenlik durumu, bot ve exchange summary ile son aktiviteleri operasyon odaklı bir admin detail screen içinde toplar.",
+        Description = "Profil özeti, güvenlik durumu, bot ve exchange summary ile son aktiviteleri operasyon odaklı detay ekranında toplar.",
         StatusBadge = new AdminBadgeViewModel { Label = entityId, Tone = "neutral", IconText = "ID" },
         MetaBadges = new[]
         {
@@ -13,8 +14,10 @@
         },
         SecondaryActionText = "Kullanıcılara dön",
         SecondaryActionHref = Url.Action("Users", "Admin", new { area = "Admin" }),
-        PrimaryActionText = "Audit / loglar",
-        PrimaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" })
+        PrimaryActionText = snapshot is null ? "Destek araçları" : "Audit / loglar",
+        PrimaryActionHref = snapshot is null
+            ? Url.Action("SupportTools", "Admin", new { area = "Admin", query = entityId })
+            : Url.Action("Audit", "Admin", new { area = "Admin", userId = entityId })
     };
 }
 
@@ -27,69 +30,86 @@
                 @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
                 {
                     Tone = "warning",
-                    Title = "Detail page",
-                    Message = "Gerçek user backend verisi, audit feed ve permission enforcement bu yüzeyde operasyonel inceleme için birleştirilir.",
-                    Meta = "Drawer + page parity"
+                    Title = "Identity detail",
+                    Message = "Gerçek kullanıcı özeti, credential geçmişi, risk override ve audit sinyalleri bu yüzeyde birlikte görünür.",
+                    Meta = "User HQ"
                 })
 
-                <div class="card card-custom gutter-b cb-card cb-admin-card mt-6">
-                    <div class="card-body">
-                        <div class="cb-admin-section-kicker">Related actions</div>
-                        <div class="cb-admin-section-title">İlişkili yüzeyler</div>
-                        <p class="cb-admin-section-description">Kullanıcı için gerçek operasyon, destek ve denetim yüzeyleri kullanılabilir.</p>
-                        <div class="cb-admin-inline-actions mt-5">
-                            <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" asp-route-userId="@entityId" class="btn btn-light-primary font-weight-bold">Audit / loglar</a>
-                            <a asp-area="Admin" asp-controller="Admin" asp-action="SupportTools" asp-route-query="@entityId" class="btn btn-light-primary font-weight-bold">Destek araçları</a>
-                            <a asp-area="Admin" asp-controller="Admin" asp-action="Users" class="btn btn-light-primary font-weight-bold">Kullanıcılar</a>
-                            <a asp-area="Admin" asp-controller="Admin" asp-action="RoleMatrix" class="btn btn-light-primary font-weight-bold">Role matrix</a>
+                @if (snapshot is null)
+                {
+                    @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+                    {
+                        Title = "Kullanıcı bulunamadı",
+                        Message = "İstenen kullanıcı kimliği için admin detail snapshot bulunamadı.",
+                        IconText = "ID",
+                        ActionText = "Kullanıcı listesi",
+                        ActionHref = Url.Action("Users", "Admin", new { area = "Admin" }),
+                        SecondaryActionText = "Destek araçları",
+                        SecondaryActionHref = Url.Action("SupportTools", "Admin", new { area = "Admin", query = entityId })
+                    })
+                }
+                else
+                {
+                    <div class="cb-admin-summary-grid cb-admin-user-summary-grid mt-6">
+                        @foreach (var tile in snapshot.SummaryTiles)
+                        {
+                            <div class="cb-admin-summary-card">
+                                <span class="cb-admin-summary-label">@tile.Label</span>
+                                <strong>@tile.Value</strong>
+                                <small>@tile.Meta</small>
+                            </div>
+                        }
+                    </div>
+
+                    <div class="card card-custom gutter-b cb-card cb-admin-card mt-6">
+                        <div class="card-body">
+                            <div class="cb-admin-section-kicker">Related actions</div>
+                            <div class="cb-admin-section-title">İlişkili yüzeyler</div>
+                            <p class="cb-admin-section-description">Kullanıcı için gerçek operasyon, destek ve denetim yüzeyleri kullanılabilir.</p>
+                            <div class="cb-admin-inline-actions mt-5">
+                                <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" asp-route-userId="@entityId" class="btn btn-light-primary font-weight-bold">Audit / loglar</a>
+                                <a asp-area="Admin" asp-controller="Admin" asp-action="SupportTools" asp-route-query="@entityId" class="btn btn-light-primary font-weight-bold">Destek araçları</a>
+                                <a asp-area="Admin" asp-controller="Admin" asp-action="SecurityEvents" asp-route-query="@entityId" class="btn btn-light-primary font-weight-bold">Güvenlik olayları</a>
+                                <a asp-area="Admin" asp-controller="Admin" asp-action="Users" class="btn btn-light-primary font-weight-bold">Kullanıcılar</a>
+                            </div>
                         </div>
                     </div>
-                </div>
+                }
             </div>
         </div>
     </div>
 
-    <div class="col-xl-4">
-        @await Html.PartialAsync("Foundation/_AdminUserProfileSummary")
-        @await Html.PartialAsync("Foundation/_AdminUserSecuritySummary")
-        @await Html.PartialAsync("Foundation/_AdminUserRiskSummary")
+    @if (snapshot is not null)
+    {
+        <div class="col-xl-4">
+            @await Html.PartialAsync("Foundation/_AdminUserProfileSummary")
+            @await Html.PartialAsync("Foundation/_AdminUserSecuritySummary")
+            @await Html.PartialAsync("Foundation/_AdminUserRiskSummary")
 
-        @await Html.PartialAsync("Foundation/_AdminSecurityHelpCard", new AdminSecurityHelpCardViewModel
-        {
-            Eyebrow = "Related actions",
-            Title = "İlişkili yüzeyler",
-            Description = "Kullanıcı için gerçek operasyon, destek ve denetim yüzeyleri kullanılabilir.",
-            BadgeLabel = "User Ops",
-            BadgeTone = "info",
-            Items = new[]
+            @await Html.PartialAsync("Foundation/_AdminSecurityHelpCard", new AdminSecurityHelpCardViewModel
             {
-                "Audit ve log inceleme",
-                "Support lookup",
-                "Role matrix ve policy görünümü"
-            },
-            ActionText = "Audit / loglar",
-            ActionHref = Url.Action("Audit", "Admin", new { area = "Admin", userId = entityId })
-        })
-    </div>
+                Eyebrow = "Related actions",
+                Title = "İlişkili yüzeyler",
+                Description = "Kullanıcı için gerçek operasyon, destek ve denetim yüzeyleri kullanılabilir.",
+                BadgeLabel = "User Ops",
+                BadgeTone = "info",
+                Items = new[]
+                {
+                    "Audit ve log inceleme",
+                    "Support lookup",
+                    "Güvenlik olayları"
+                },
+                ActionText = "Audit / loglar",
+                ActionHref = Url.Action("Audit", "Admin", new { area = "Admin", userId = entityId })
+            })
+        </div>
 
-    <div class="col-xl-8">
-        @await Html.PartialAsync("Foundation/_AdminUserBotSummary")
-        @await Html.PartialAsync("Foundation/_AdminUserExchangeSummary")
-        @await Html.PartialAsync("Foundation/_AdminUserActivityTimeline")
-        @await Html.PartialAsync("Foundation/_AdminUserCriticalLogs")
-    </div>
-
-    <div class="col-12">
-        @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
-        {
-            Title = "Kullanıcı detayı hazır",
-            Message = "Profil, bot, exchange ve activity snapshot'ları gerçek veriyle gelir. Kayıt yoksa ürün seviyesi empty-state görünür.",
-            IconText = "ID",
-            ActionText = "Kullanıcılara dön",
-            ActionHref = Url.Action("Users", "Admin", new { area = "Admin" }),
-            SecondaryActionText = "Destek araçları",
-            SecondaryActionHref = Url.Action("SupportTools", "Admin", new { area = "Admin" })
-        })
-    </div>
-
+        <div class="col-xl-8">
+            @await Html.PartialAsync("Foundation/_AdminUserBotSummary")
+            @await Html.PartialAsync("Foundation/_AdminUserExchangeSummary")
+            @await Html.PartialAsync("Foundation/_AdminUserCredentialValidationHistory")
+            @await Html.PartialAsync("Foundation/_AdminUserActivityTimeline")
+            @await Html.PartialAsync("Foundation/_AdminUserCriticalLogs")
+        </div>
+    }
 </div>

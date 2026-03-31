@@ -20,6 +20,14 @@
         PrimaryActionHref = Url.Action("Approvals", "Admin", new { area = "Admin" })
     };
     var policyJson = JsonSerializer.Serialize(selectedVersion.Policy, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true });
+    string DescribeRestrictionEffect(SymbolRestrictionState state) => state switch
+    {
+        SymbolRestrictionState.Blocked => "Tum emirler fail-closed bloklanir.",
+        SymbolRestrictionState.ReviewOnly => "Review/advisory olarak isaretlenir.",
+        SymbolRestrictionState.ReduceOnly => "Yalnizca exposure azaltan emirler gecer.",
+        SymbolRestrictionState.CloseOnly => "Yalnizca pozisyon kapatan emirler gecer.",
+        _ => "Policy evaluation uygulanir."
+    };
 }
 
 <div class="row">
@@ -151,6 +159,7 @@
                             <tr>
                                 <th>Symbol</th>
                                 <th>State</th>
+                                <th>Effective state</th>
                                 <th>Reason</th>
                                 <th>UpdatedAtUtc</th>
                                 <th>UpdatedBy</th>
@@ -160,7 +169,7 @@
                             @if (selectedVersion.Policy.SymbolRestrictions.Count == 0)
                             {
                                 <tr>
-                                    <td colspan="5" class="text-muted">Restriction yok.</td>
+                                    <td colspan="6" class="text-muted">Restriction yok.</td>
                                 </tr>
                             }
                             else
@@ -170,6 +179,7 @@
                                     <tr>
                                         <td>@restriction.Symbol</td>
                                         <td>@restriction.State</td>
+                                        <td>@DescribeRestrictionEffect(restriction.State)</td>
                                         <td>@(restriction.Reason ?? "-")</td>
                                         <td>@(restriction.UpdatedAtUtc?.ToString("yyyy-MM-dd HH:mm:ss") ?? "-") UTC</td>
                                         <td>@(restriction.UpdatedByUserId ?? "-")</td>

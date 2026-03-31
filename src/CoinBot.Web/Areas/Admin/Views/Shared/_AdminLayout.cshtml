@@ -2,7 +2,7 @@
 @inject IAdminShellReadModelService AdminShellReadModelService
 @{
     var pageTitle = ViewData["Title"]?.ToString() ?? "Super Admin";
-    var pageDescription = ViewData["PageDescription"]?.ToString() ?? "Admin shell hazır.";
+    var pageDescription = ViewData["PageDescription"]?.ToString() ?? "Admin operasyon yüzeyi.";
     var healthSnapshot = await AdminShellReadModelService.GetHealthSnapshotAsync();
 
     ViewData["AdminShellHealthSnapshot"] = healthSnapshot;
@@ -100,7 +100,7 @@
     <script src="~/metronic/assets/plugins/global/plugins.bundle.js" asp-append-version="true"></script>
     <script src="~/metronic/assets/js/scripts.bundle.js" asp-append-version="true"></script>
     <script src="~/js/site.js" asp-append-version="true"></script>
-    <script src="~/js/auth-foundation.js" asp-append-version="true"></script>
+    <script src="~/js/auth-ui.js" asp-append-version="true"></script>
     @await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>

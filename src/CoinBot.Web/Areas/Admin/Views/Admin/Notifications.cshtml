@@ -3,13 +3,13 @@
     {
         Eyebrow = "Platform Alerts",
         Title = "Bildirim / Alarm Merkezi",
-        Description = "AI, risk, worker, security ve system alarm sinyallerini unread/read ayrımı, severity filtreleri ve detail drawer ile tek merkezde toplayan Super Admin alarm merkezi.",
+        Description = "AI, risk, worker, security ve system alarm sinyallerini durum ve severity filtreleriyle tek merkezde toplayan Super Admin alarm merkezi.",
         StatusBadge = new AdminBadgeViewModel { Label = "Alert Hub", Tone = "warning", IconText = "AL" },
         MetaBadges = new[]
         {
-            new AdminBadgeViewModel { Label = "Unread Aware", Tone = "info", IconText = "UR" },
+            new AdminBadgeViewModel { Label = "State Aware", Tone = "info", IconText = "ST" },
             new AdminBadgeViewModel { Label = "Severity Filtered", Tone = "critical", IconText = "SV" },
-            new AdminBadgeViewModel { Label = "Policy CTA", Tone = "degraded", IconText = "PL" }
+            new AdminBadgeViewModel { Label = "Ops Links", Tone = "degraded", IconText = "LK" }
         },
         SecondaryActionText = "Audit / log merkezi",
         SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" }),
@@ -45,18 +45,5 @@
 
     <div class="col-xl-4">
         @await Html.PartialAsync("Foundation/_AdminAlertPolicyCta")
-    </div>
-
-    <div class="col-12">
-        @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
-        {
-            Title = "Alarm merkezi hazır",
-            Message = "Alarm listesi monitoring snapshot ve incident feed ile doldurulur. Alarm yoksa empty-state gösterilir.",
-            IconText = "AL",
-            ActionText = "System health",
-            ActionHref = Url.Action("SystemHealth", "Admin", new { area = "Admin" }),
-            SecondaryActionText = "Audit / loglar",
-            SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" })
-        })
     </div>
 </div>

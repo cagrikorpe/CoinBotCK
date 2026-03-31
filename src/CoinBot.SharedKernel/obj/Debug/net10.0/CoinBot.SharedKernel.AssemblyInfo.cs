@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("CoinBot.SharedKernel")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+545e92bf8b6af8efd4744e766cd05820c4c65058")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+b28ef36636b100d9f338b455e2b501c17f8fc945")]
 [assembly: System.Reflection.AssemblyProductAttribute("CoinBot.SharedKernel")]
 [assembly: System.Reflection.AssemblyTitleAttribute("CoinBot.SharedKernel")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

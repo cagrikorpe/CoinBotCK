@@ -1,5 +1,6 @@
 using System.Globalization;
 using CoinBot.Application.Abstractions.Administration;
+using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
@@ -11,10 +12,12 @@ namespace CoinBot.Infrastructure.Administration;
 public sealed partial class AdminWorkspaceReadModelService(
     ApplicationDbContext dbContext,
     IAdminMonitoringReadModelService monitoringReadModelService,
+    ITradingModeResolver tradingModeResolver,
     TimeProvider timeProvider) : IAdminWorkspaceReadModelService
 {
     private readonly ApplicationDbContext dbContext = dbContext;
     private readonly IAdminMonitoringReadModelService monitoringReadModelService = monitoringReadModelService;
+    private readonly ITradingModeResolver tradingModeResolver = tradingModeResolver;
     private readonly TimeProvider timeProvider = timeProvider;
 
     protected DateTime UtcNow => timeProvider.GetUtcNow().UtcDateTime;

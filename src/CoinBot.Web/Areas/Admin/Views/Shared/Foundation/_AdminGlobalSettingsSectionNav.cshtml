@@ -2,20 +2,14 @@
     <div class="card-body">
         <div class="cb-admin-section-kicker">Section Navigation</div>
         <div class="cb-admin-section-title">Global settings bölümleri</div>
-        <p class="cb-admin-section-description">Execution hard gate ve global system state bolumleri gercek backend guard'larina baglidir. Diger bolumler moduler foundation olarak ayrik tutulur.</p>
+        <p class="cb-admin-section-description">Bu menude yalnizca gercek backend write/read-model zinciri olan ayarlar tutulur.</p>
 
         <div class="cb-admin-settings-nav mt-5">
             <a class="cb-admin-settings-nav-link is-active" href="#cb_admin_settings_execution">Execution Hard Gate</a>
             <a class="cb-admin-settings-nav-link" href="#cb_admin_settings_global_state">Global System State</a>
             <a class="cb-admin-settings-nav-link cb-admin-settings-nav-link-danger" href="#cb_admin_settings_crisis">Crisis Escalation</a>
-            <a class="cb-admin-settings-nav-link" href="#cb_admin_settings_flags">Feature Flags</a>
             <a class="cb-admin-settings-nav-link" href="#cb_admin_settings_logging">Logging &amp; Retention</a>
-            <a class="cb-admin-settings-nav-link" href="#cb_admin_settings_ai_rollout">AI Rollout</a>
-            <a class="cb-admin-settings-nav-link" href="#cb_admin_settings_notifications">Notifications Default Policy</a>
             <a class="cb-admin-settings-nav-link" href="#cb_admin_settings_risk">Risk / Policy Engine</a>
-            <a class="cb-admin-settings-nav-link" href="#cb_admin_settings_maintenance">Maintenance</a>
-            <a class="cb-admin-settings-nav-link" href="#cb_admin_settings_broadcast">Emergency Broadcast</a>
-            <a class="cb-admin-settings-nav-link cb-admin-settings-nav-link-danger" href="#cb_admin_settings_danger">Danger Settings</a>
         </div>
 
         <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-6">
@@ -27,9 +21,9 @@
         </div>
 
         <div class="cb-admin-inline-actions mt-5">
-            <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_confirm_modal" data-cb-modal-title="Varsayılanlara dön" data-cb-modal-message="Global defaults görünümüne dönmek için standart confirm foundation kullanılır." data-cb-modal-confirm="Dön">Reset placeholder</button>
-            <button type="button" class="btn btn-light-warning font-weight-bold" data-toggle="modal" data-target="#cb_admin_reauth_modal" data-cb-modal-title="Step-up security" data-cb-modal-message="Global sistem ayarları değişmeden önce parola ve MFA ile yeniden doğrulama istenebilir." data-cb-modal-confirm="Doğrula">Re-auth</button>
-            <button type="button" class="btn btn-primary font-weight-bolder" data-toggle="modal" data-target="#cb_admin_critical_confirm_modal" data-cb-modal-title="Global ayarlar" data-cb-modal-message="Kritik degisikliklerde server-side policy, audit ve idempotency kayitlari zorunludur." data-cb-modal-confirm="Tamam" data-cb-modal-tone="danger">Critical flow</button>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="ConfigHistory" class="btn btn-light-primary font-weight-bold">Config history</a>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="SystemStateHistory" class="btn btn-light-warning font-weight-bold">State history</a>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-primary font-weight-bolder">Audit / trace</a>
         </div>
     </div>
 </div>

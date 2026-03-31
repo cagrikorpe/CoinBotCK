@@ -3,13 +3,13 @@
     {
         Eyebrow = "Security Triage",
         Title = "Güvenlik Olayları",
-        Description = "Failed login yoğunluğu, invalid MFA, suspicious session, risky exchange permission ve admin critical action sinyallerini güvenlik odaklı triage ve detail drawer ile toplayan Super Admin güvenlik izleme yüzeyi.",
+        Description = "Failed login yoğunluğu, invalid MFA, suspicious session, risky exchange permission ve admin critical action sinyallerini güvenlik odaklı triage ve olay listesiyle toplayan Super Admin güvenlik izleme yüzeyi.",
         StatusBadge = new AdminBadgeViewModel { Label = "Security Watch", Tone = "critical", IconText = "SC" },
         MetaBadges = new[]
         {
             new AdminBadgeViewModel { Label = "Masked PII", Tone = "healthy", IconText = "MS" },
-            new AdminBadgeViewModel { Label = "Triage Ready", Tone = "warning", IconText = "TR" },
-            new AdminBadgeViewModel { Label = "No Auto Block", Tone = "neutral", IconText = "UI" }
+            new AdminBadgeViewModel { Label = "Triage View", Tone = "warning", IconText = "TR" },
+            new AdminBadgeViewModel { Label = "Review First", Tone = "neutral", IconText = "RV" }
         },
         SecondaryActionText = "Audit / log merkezi",
         SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" }),
@@ -29,7 +29,7 @@
                     Tone = "critical",
                     Title = "Security events",
                     Message = "Gerçek brute-force detection, IP/device anomaly backend ve MFA event stream bu yüzeyde bir araya gelir. Ekran; security summary, triage paneli ve event listesiyle çalışır.",
-                    Meta = "Masked / ready"
+                    Meta = "Masked"
                 })
 
                 <div class="mt-6">
@@ -49,18 +49,5 @@
 
     <div class="col-xl-8">
         @await Html.PartialAsync("Foundation/_AdminSecurityEventList")
-    </div>
-
-    <div class="col-12">
-        @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
-        {
-            Title = "Security events hazır",
-            Message = "Güvenlik olayları gerçek audit/read-model verisiyle doldurulur. Olay yoksa empty-state gösterilir.",
-            IconText = "SC",
-            ActionText = "Audit / loglar",
-            ActionHref = Url.Action("Audit", "Admin", new { area = "Admin" }),
-            SecondaryActionText = "Sistem sağlığı",
-            SecondaryActionHref = Url.Action("SystemHealth", "Admin", new { area = "Admin" })
-        })
     </div>
 </div>

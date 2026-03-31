@@ -57,8 +57,53 @@ public sealed record AdminUserExchangeSnapshot(
     string CredentialStatusTone,
     string Fingerprint,
     string PermissionSummary,
+    string EnvironmentLabel,
+    string EnvironmentTone,
+    string SyncStatus,
+    string SyncStatusTone,
     DateTime? LastValidatedAtUtc,
+    string LastValidatedLabel,
     string? LastFailureReason);
+
+public sealed record AdminUserEnvironmentSnapshot(
+    string EffectiveEnvironmentLabel,
+    string EffectiveEnvironmentTone,
+    string ResolutionSourceLabel,
+    string ResolutionReason,
+    bool HasExplicitLiveApproval);
+
+public sealed record AdminUserRiskOverrideSnapshot(
+    string RiskProfileName,
+    decimal? MaxDailyLossPercentage,
+    decimal? MaxPositionSizePercentage,
+    decimal? MaxLeverage,
+    bool KillSwitchEnabled,
+    bool SessionDisabled,
+    bool ReduceOnly,
+    decimal? OverrideLeverageCap,
+    decimal? OverrideMaxOrderSize,
+    int? OverrideMaxDailyTrades,
+    string SummaryLabel,
+    string SummaryTone,
+    string SummaryText);
+
+public sealed record AdminUserExchangeValidationSnapshot(
+    string ExchangeAccountId,
+    string ExchangeDisplayName,
+    DateTime ValidatedAtUtc,
+    string TimeLabel,
+    string ValidationStatus,
+    string ValidationTone,
+    bool IsKeyValid,
+    bool CanTrade,
+    bool CanWithdraw,
+    bool SupportsSpot,
+    bool SupportsFutures,
+    string EnvironmentScope,
+    bool IsEnvironmentMatch,
+    string PermissionSummary,
+    string? FailureReason,
+    string? MaskedFingerprint);
 
 public sealed record AdminUserActivitySnapshot(
     DateTime TimestampUtc,
@@ -90,9 +135,12 @@ public sealed record AdminUserDetailPageSnapshot(
     string TradingModeTone,
     string RiskLabel,
     string RiskTone,
+    AdminUserEnvironmentSnapshot Environment,
+    AdminUserRiskOverrideSnapshot RiskOverride,
     IReadOnlyCollection<AdminStatTileSnapshot> SummaryTiles,
     IReadOnlyCollection<AdminUserBotSnapshot> Bots,
     IReadOnlyCollection<AdminUserExchangeSnapshot> ExchangeAccounts,
+    IReadOnlyCollection<AdminUserExchangeValidationSnapshot> ValidationHistory,
     IReadOnlyCollection<AdminUserActivitySnapshot> Activity,
     IReadOnlyCollection<AdminUserLogSnapshot> CriticalLogs,
     DateTime? LastSecurityEventAtUtc,

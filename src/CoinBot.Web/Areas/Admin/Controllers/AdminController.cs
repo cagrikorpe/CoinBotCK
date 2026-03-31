@@ -87,62 +87,103 @@ public sealed class AdminController : Controller
     }
 
     [AllowAnonymous]
-    public IActionResult Login()
+    public IActionResult Login(string? returnUrl = null)
     {
-        return RedirectToAction("Login", "Auth", new { returnUrl = "/admin" });
+        var targetReturnUrl = NormalizeAdminReturnUrl(returnUrl);
+
+        if (User.Identity?.IsAuthenticated == true)
+        {
+            return HasAdminPortalAccess()
+                ? LocalRedirect(targetReturnUrl)
+                : RedirectToAction(nameof(AccessDenied), new { returnUrl = targetReturnUrl });
+        }
+
+        return RedirectToAction("Login", "Auth", new { area = string.Empty, returnUrl = targetReturnUrl });
     }
 
     [AllowAnonymous]
-    public IActionResult Mfa()
+    public IActionResult Mfa(string? returnUrl = null, bool rememberMe = false)
     {
-        ApplyAdminAccessMeta(
-            title: "Admin MFA",
-            description: "Admin alanında zorunlu ikinci doğrulama adımı için profesyonel erişim yüzeyi.",
-            stage: "Admin MFA",
-            progress: "2 / 2",
-            highlights: new[]
-            {
-                "Authenticator ve email code",
-                "OTP input, resend ve countdown state'leri",
-                "Step-up security ile aynı ürün dilini korur"
-            },
-            backHref: Url.Action(nameof(Login), "Admin", new { area = "Admin" }));
+        var targetReturnUrl = NormalizeAdminReturnUrl(returnUrl);
 
-        return View();
+        if (User.Identity?.IsAuthenticated == true)
+        {
+            return HasAdminPortalAccess()
+                ? LocalRedirect(targetReturnUrl)
+                : RedirectToAction(nameof(AccessDenied), new { returnUrl = targetReturnUrl });
+        }
+
+        return RedirectToAction("Mfa", "Auth", new { area = string.Empty, returnUrl = targetReturnUrl, rememberMe });
     }
 
     [AllowAnonymous]
-    public IActionResult AccessDenied()
+    public IActionResult AccessDenied(string? returnUrl = null)
     {
+        var targetReturnUrl = NormalizeAdminReturnUrl(returnUrl);
+
+        if (!(User.Identity?.IsAuthenticated ?? false))
+        {
+            return RedirectToAction(nameof(Login), new { returnUrl = targetReturnUrl });
+        }
+
+        if (HasAdminPortalAccess())
+        {
+            return LocalRedirect(targetReturnUrl);
+        }
+
         ApplyShellMeta(
             title: "Access Denied",
             description: "Admin alanında yetkisiz erişim durumları için yönlendirici ve profesyonel ekran.",
             activeNav: "Overview",
             breadcrumbItems: new[] { "Super Admin", "Security", "Access Denied" });
+        ViewData["AdminAuthReturnUrl"] = targetReturnUrl;
 
         return View();
     }
 
     [AllowAnonymous]
-    public IActionResult PermissionDenied()
+    public IActionResult PermissionDenied(string? returnUrl = null)
     {
+        var targetReturnUrl = NormalizeAdminReturnUrl(returnUrl);
+
+        if (!(User.Identity?.IsAuthenticated ?? false))
+        {
+            return RedirectToAction(nameof(Login), new { returnUrl = targetReturnUrl });
+        }
+
+        if (HasAdminPortalAccess())
+        {
+            return LocalRedirect(targetReturnUrl);
+        }
+
         ApplyShellMeta(
             title: "Insufficient Permission",
             description: "Rol var ama kapsam yetersiz olduğunda gösterilecek temiz admin ekranı.",
             activeNav: "Users",
             breadcrumbItems: new[] { "Super Admin", "Security", "Insufficient Permission" });
+        ViewData["AdminAuthReturnUrl"] = targetReturnUrl;
 
         return View();
     }
 
     [AllowAnonymous]
-    public IActionResult SessionExpired()
+    public IActionResult SessionExpired(string? returnUrl = null)
     {
+        var targetReturnUrl = NormalizeAdminReturnUrl(returnUrl);
+
+        if (User.Identity?.IsAuthenticated == true)
+        {
+            return HasAdminPortalAccess()
+                ? LocalRedirect(targetReturnUrl)
+                : RedirectToAction(nameof(AccessDenied), new { returnUrl = targetReturnUrl });
+        }
+
         ApplyShellMeta(
             title: "Session Expired",
             description: "Idle timeout, re-auth ve session boundary uyarıları için admin güvenlik ekranı.",
             activeNav: "Overview",
             breadcrumbItems: new[] { "Super Admin", "Security", "Session Expired" });
+        ViewData["AdminAuthReturnUrl"] = targetReturnUrl;
 
         return View();
     }
@@ -150,13 +191,7 @@ public sealed class AdminController : Controller
     [Authorize(Policy = ApplicationPolicies.IdentityAdministration)]
     public IActionResult RoleMatrix()
     {
-        ApplyShellMeta(
-            title: "Role Matrix",
-            description: "Rol bazlı kaba erişim görünümü ve permission matrix ekranı.",
-            activeNav: "Users",
-            breadcrumbItems: new[] { "Super Admin", "Identity", "Role Matrix" });
-
-        return View();
+        return RedirectToAction(nameof(Users), new { area = "Admin" });
     }
 
     public async Task<IActionResult> Search(string? query, CancellationToken cancellationToken)
@@ -341,6 +376,11 @@ public sealed class AdminController : Controller
             ? null
             : await adminWorkspaceReadModelService.GetUserDetailAsync(id, cancellationToken);
 
+        if (snapshot is null)
+        {
+            Response.StatusCode = StatusCodes.Status404NotFound;
+        }
+
         ViewData["AdminUserDetailPageSnapshot"] = snapshot;
         ViewData["AdminEntityId"] = snapshot?.UserId ?? (string.IsNullOrWhiteSpace(id) ? "usr-unknown" : id);
         ViewData["AdminEntityLabel"] = snapshot?.DisplayName ?? (string.IsNullOrWhiteSpace(id) ? "Kullanıcı bulunamadı" : $"Kullanıcı {id}");
@@ -429,7 +469,7 @@ public sealed class AdminController : Controller
     {
         ApplyShellMeta(
             title: "Audit & Log Merkezi",
-            description: "Platform genelindeki audit, security, runtime, AI, trading ve admin action loglarını gelişmiş filtre ve detail drawer ile izleyen global log merkezi.",
+            description: "Platform genelindeki audit, security, runtime, AI, trading ve admin action loglarını gelişmiş filtreler ve trace detay sayfalarıyla izleyen global log merkezi.",
             activeNav: "Audit",
             breadcrumbItems: new[] { "Super Admin", "Gözlem", "Audit & Log" });
 
@@ -458,7 +498,7 @@ public sealed class AdminController : Controller
     {
         ApplyShellMeta(
             title: "Trace Detail",
-            description: "CorrelationId bazli signal, decision ve execution zincirini detay seviyesinde izleyen minimal admin detail ekranı.",
+            description: "CorrelationId bazli signal, decision ve execution zincirini detay seviyesinde izleyen masked admin detail ekranı.",
             activeNav: "Audit",
             breadcrumbItems: new[] { "Super Admin", "Gözlem", "Trace Detail" });
 
@@ -721,7 +761,7 @@ public sealed class AdminController : Controller
     {
         ApplyShellMeta(
             title: "Güvenlik Olayları",
-            description: "Failed login, invalid MFA, suspicious session ve risky permission sinyallerini triage paneli ve security detail drawer ile toplayan admin security monitoring yüzeyi.",
+            description: "Failed login, invalid MFA, suspicious session ve risky permission sinyallerini triage paneli ve olay listesiyle toplayan admin security monitoring yüzeyi.",
             activeNav: "SecurityEvents",
             breadcrumbItems: new[] { "Super Admin", "Gözlem", "Güvenlik Olayları" });
 
@@ -737,7 +777,7 @@ public sealed class AdminController : Controller
     {
         ApplyShellMeta(
             title: "Bildirim / Alarm Merkezi",
-            description: "Platform seviyesindeki kritik alarmları, unread/read akışını ve admin bildirimlerini merkezi bir alarm hub üzerinde toplar.",
+            description: "Platform seviyesindeki kritik alarmları, severity-kategori filtrelerini ve incident/health durumlarını merkezi bir alarm hub üzerinde toplar.",
             activeNav: "Notifications",
             breadcrumbItems: new[] { "Super Admin", "Gözlem", "Bildirim / Alarm" });
 
@@ -1433,6 +1473,184 @@ public sealed class AdminController : Controller
     [HttpPost]
     [Authorize(Policy = ApplicationPolicies.PlatformAdministration)]
     [ValidateAntiForgeryToken]
+    public async Task<IActionResult> UpdateSymbolRestrictions(
+        List<AdminSymbolRestrictionInputModel>? restrictions,
+        string? reason,
+        string? commandId,
+        string? reauthToken,
+        CancellationToken cancellationToken)
+    {
+        _ = reauthToken;
+
+        if (!CanEditGlobalPolicy())
+        {
+            TempData[GlobalPolicyErrorTempDataKey] = "Bu rolde symbol restriction degistirilemez.";
+            return RedirectToAction(nameof(Settings));
+        }
+
+        var normalizedReason = NormalizeRequiredReason(reason);
+
+        if (normalizedReason is null)
+        {
+            TempData[GlobalPolicyErrorTempDataKey] = "Audit reason zorunludur.";
+            return RedirectToAction(nameof(Settings));
+        }
+
+        if (globalPolicyEngine is null)
+        {
+            TempData[GlobalPolicyErrorTempDataKey] = "Global policy engine is unavailable.";
+            return RedirectToAction(nameof(Settings));
+        }
+
+        var actorUserId = ResolveAdminUserId();
+        var correlationId = HttpContext.TraceIdentifier;
+        var resolvedCommandId = ResolveCommandId(commandId);
+
+        GlobalPolicySnapshot currentSnapshot;
+        IReadOnlyCollection<SymbolRestriction> normalizedRestrictions;
+
+        try
+        {
+            currentSnapshot = await globalPolicyEngine.GetSnapshotAsync(cancellationToken);
+            normalizedRestrictions = TryNormalizeSymbolRestrictions(
+                    restrictions,
+                    currentSnapshot.Policy.SymbolRestrictions,
+                    actorUserId,
+                    DateTime.UtcNow,
+                    out var restrictionErrorMessage)
+                ?? throw new InvalidOperationException(restrictionErrorMessage ?? "Symbol restriction listesi okunamadi.");
+        }
+        catch (Exception exception)
+        {
+            TempData[GlobalPolicyErrorTempDataKey] = exception.Message;
+            return RedirectToAction(nameof(Settings));
+        }
+
+        var updatedPolicy = currentSnapshot.Policy with
+        {
+            SymbolRestrictions = normalizedRestrictions
+        };
+
+        var requestedSummary = BuildSymbolRestrictionSummary(updatedPolicy.SymbolRestrictions);
+        var policyUpdateRequest = new GlobalPolicyUpdateRequest(
+            updatedPolicy,
+            actorUserId,
+            normalizedReason,
+            correlationId,
+            "AdminPortal.Settings.SymbolRestrictions",
+            ResolveMaskedRemoteIpAddress(),
+            ResolveMaskedUserAgent());
+        var queuePayloadJson = approvalWorkflowService is not null
+            ? JsonSerializer.Serialize(policyUpdateRequest, PolicyJsonSerializerOptions)
+            : null;
+        var payloadHash = queuePayloadJson is not null
+            ? CreatePayloadHash(queuePayloadJson)
+            : CreatePayloadHash($"GlobalPolicy|SymbolRestrictions|{normalizedReason}|{requestedSummary}");
+        var commandStartResult = await adminCommandRegistry.TryStartAsync(
+            new AdminCommandStartRequest(
+                resolvedCommandId,
+                "Admin.Settings.SymbolRestrictions.Update",
+                actorUserId,
+                "RiskPolicy",
+                payloadHash,
+                correlationId),
+            cancellationToken);
+
+        if (!await HandleCommandStartResultAsync(
+                commandStartResult,
+                actorUserId,
+                "Admin.Settings.SymbolRestrictions.Update",
+                "RiskPolicy",
+                "GlobalRiskPolicy",
+                requestedSummary,
+                normalizedReason,
+                GlobalPolicySuccessTempDataKey,
+                GlobalPolicyErrorTempDataKey,
+                cancellationToken))
+        {
+            return RedirectToAction(nameof(Settings));
+        }
+
+        if (approvalWorkflowService is not null)
+        {
+            try
+            {
+                var approval = await approvalWorkflowService.EnqueueAsync(
+                    new ApprovalQueueEnqueueRequest(
+                        ApprovalQueueOperationType.GlobalPolicyUpdate,
+                        IncidentSeverity.Critical,
+                        "Symbol restriction update",
+                        requestedSummary,
+                        actorUserId,
+                        normalizedReason,
+                        queuePayloadJson!,
+                        RequiredApprovals: 2,
+                        ExpiresAtUtc: DateTime.UtcNow.AddHours(8),
+                        TargetType: "RiskPolicy",
+                        TargetId: "GlobalRiskPolicy",
+                        CorrelationId: correlationId,
+                        CommandId: resolvedCommandId),
+                    cancellationToken);
+
+                TempData[GlobalPolicySuccessTempDataKey] = $"Approval {approval.ApprovalReference} queued. 2 approval(s) required.";
+                return RedirectToAction(nameof(Settings));
+            }
+            catch (Exception exception)
+            {
+                await adminCommandRegistry.CompleteAsync(
+                    new AdminCommandCompletionRequest(
+                        resolvedCommandId,
+                        payloadHash,
+                        AdminCommandStatus.Failed,
+                        Truncate(exception.Message, 512),
+                        correlationId),
+                    cancellationToken);
+
+                TempData[GlobalPolicyErrorTempDataKey] = exception.Message;
+                return RedirectToAction(nameof(Settings));
+            }
+        }
+
+        try
+        {
+            var updatedSnapshot = await globalPolicyEngine.UpdateAsync(
+                policyUpdateRequest,
+                cancellationToken);
+
+            var successMessage = updatedSnapshot.Policy.SymbolRestrictions.Count == 0
+                ? $"Symbol restrictions cleared in global policy version {updatedSnapshot.CurrentVersion}."
+                : $"Symbol restrictions updated in global policy version {updatedSnapshot.CurrentVersion}.";
+            await adminCommandRegistry.CompleteAsync(
+                new AdminCommandCompletionRequest(
+                    resolvedCommandId,
+                    payloadHash,
+                    AdminCommandStatus.Completed,
+                    successMessage,
+                    correlationId),
+                cancellationToken);
+
+            TempData[GlobalPolicySuccessTempDataKey] = successMessage;
+        }
+        catch (Exception exception)
+        {
+            await adminCommandRegistry.CompleteAsync(
+                new AdminCommandCompletionRequest(
+                    resolvedCommandId,
+                    payloadHash,
+                    AdminCommandStatus.Failed,
+                    Truncate(exception.Message, 512),
+                    correlationId),
+                cancellationToken);
+
+            TempData[GlobalPolicyErrorTempDataKey] = exception.Message;
+        }
+
+        return RedirectToAction(nameof(Settings));
+    }
+
+    [HttpPost]
+    [Authorize(Policy = ApplicationPolicies.PlatformAdministration)]
+    [ValidateAntiForgeryToken]
     public async Task<IActionResult> UpdateGlobalPolicy(
         string? policyJson,
         string? reason,
@@ -1978,6 +2196,99 @@ public sealed class AdminController : Controller
             : normalizedCommandId;
     }
 
+    private static IReadOnlyCollection<SymbolRestriction>? TryNormalizeSymbolRestrictions(
+        IReadOnlyCollection<AdminSymbolRestrictionInputModel>? restrictions,
+        IReadOnlyCollection<SymbolRestriction> currentRestrictions,
+        string actorUserId,
+        DateTime utcNow,
+        out string? errorMessage)
+    {
+        errorMessage = null;
+        var normalizedRestrictions = new List<SymbolRestriction>();
+        var currentRestrictionsBySymbol = currentRestrictions.ToDictionary(
+            item => item.Symbol,
+            StringComparer.Ordinal);
+        var seenSymbols = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var candidate in restrictions ?? Array.Empty<AdminSymbolRestrictionInputModel>())
+        {
+            var hasAnyValue =
+                !string.IsNullOrWhiteSpace(candidate.Symbol) ||
+                !string.IsNullOrWhiteSpace(candidate.State) ||
+                !string.IsNullOrWhiteSpace(candidate.Reason);
+
+            if (!hasAnyValue)
+            {
+                continue;
+            }
+
+            var normalizedSymbol = NormalizeRequiredInput(candidate.Symbol, 32)?.ToUpperInvariant();
+
+            if (normalizedSymbol is null)
+            {
+                errorMessage = "Her restriction icin gecerli bir symbol zorunludur.";
+                return null;
+            }
+
+            if (!seenSymbols.Add(normalizedSymbol))
+            {
+                errorMessage = $"Duplicate restriction symbol tespit edildi: {normalizedSymbol}.";
+                return null;
+            }
+
+            var normalizedState = NormalizeRequiredInput(candidate.State, 32);
+
+            if (!Enum.TryParse<SymbolRestrictionState>(normalizedState, ignoreCase: true, out var parsedState))
+            {
+                errorMessage = $"Restriction state gecersiz: {normalizedSymbol}.";
+                return null;
+            }
+
+            var normalizedRestrictionReason = NormalizeRequiredInput(candidate.Reason, 256);
+
+            if (normalizedRestrictionReason is null)
+            {
+                errorMessage = $"Reason zorunludur: {normalizedSymbol}.";
+                return null;
+            }
+
+            if (currentRestrictionsBySymbol.TryGetValue(normalizedSymbol, out var currentRestriction) &&
+                currentRestriction.State == parsedState &&
+                string.Equals(currentRestriction.Reason, normalizedRestrictionReason, StringComparison.Ordinal))
+            {
+                normalizedRestrictions.Add(currentRestriction);
+                continue;
+            }
+
+            normalizedRestrictions.Add(new SymbolRestriction(
+                normalizedSymbol,
+                parsedState,
+                normalizedRestrictionReason,
+                utcNow,
+                actorUserId));
+        }
+
+        return normalizedRestrictions
+            .OrderBy(item => item.Symbol, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static string BuildSymbolRestrictionSummary(IReadOnlyCollection<SymbolRestriction> restrictions)
+    {
+        if (restrictions.Count == 0)
+        {
+            return "Restrictions=0";
+        }
+
+        var preview = string.Join(
+            "; ",
+            restrictions.Take(4).Select(item => $"{item.Symbol}={item.State}"));
+
+        return restrictions.Count > 4
+            ? $"Restrictions={restrictions.Count}; {preview}; more={restrictions.Count - 4}"
+            : $"Restrictions={restrictions.Count}; {preview}";
+    }
+
     private static string CreatePayloadHash(string rawPayload)
     {
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(rawPayload));
@@ -2176,6 +2487,48 @@ public sealed class AdminController : Controller
     {
         return
             $"PolicyKey={policy.PolicyKey}; Autonomy={policy.AutonomyPolicy.Mode}; RequireManualApprovalForLive={policy.AutonomyPolicy.RequireManualApprovalForLive}; MaxOrderNotional={policy.ExecutionGuardPolicy.MaxOrderNotional?.ToString("0.##") ?? "none"}; MaxPositionNotional={policy.ExecutionGuardPolicy.MaxPositionNotional?.ToString("0.##") ?? "none"}; MaxDailyTrades={policy.ExecutionGuardPolicy.MaxDailyTrades?.ToString() ?? "none"}; CloseOnlyBlocksNewPositions={policy.ExecutionGuardPolicy.CloseOnlyBlocksNewPositions}; Restrictions={policy.SymbolRestrictions.Count}";
+    }
+
+    private bool HasAdminPortalAccess()
+    {
+        return User.HasClaim(ApplicationClaimTypes.Permission, ApplicationPermissions.AdminPortalAccess);
+    }
+
+    private static string NormalizeAdminReturnUrl(string? returnUrl)
+    {
+        var normalizedValue = string.IsNullOrWhiteSpace(returnUrl)
+            ? "/admin"
+            : returnUrl.Trim();
+
+        if (!IsSafeLocalReturnUrl(normalizedValue))
+        {
+            return "/admin";
+        }
+
+        return IsAuthShellRoute(normalizedValue)
+            ? "/admin"
+            : normalizedValue;
+    }
+
+    private static bool IsSafeLocalReturnUrl(string returnUrl)
+    {
+        return returnUrl.StartsWith("/", StringComparison.Ordinal) &&
+               !returnUrl.StartsWith("//", StringComparison.Ordinal) &&
+               !returnUrl.StartsWith("/\\", StringComparison.Ordinal);
+    }
+
+    private static bool IsAuthShellRoute(string returnUrl)
+    {
+        var routePath = returnUrl.Split(['?', '#'], StringSplitOptions.None)[0];
+
+        return routePath.Equals("/Auth/Login", StringComparison.OrdinalIgnoreCase) ||
+               routePath.Equals("/Auth/Mfa", StringComparison.OrdinalIgnoreCase) ||
+               routePath.Equals("/Auth/AccessDenied", StringComparison.OrdinalIgnoreCase) ||
+               routePath.Equals("/Admin/Admin/Login", StringComparison.OrdinalIgnoreCase) ||
+               routePath.Equals("/Admin/Admin/Mfa", StringComparison.OrdinalIgnoreCase) ||
+               routePath.Equals("/Admin/Admin/AccessDenied", StringComparison.OrdinalIgnoreCase) ||
+               routePath.Equals("/Admin/Admin/PermissionDenied", StringComparison.OrdinalIgnoreCase) ||
+               routePath.Equals("/Admin/Admin/SessionExpired", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string? Truncate(string? value, int maxLength)

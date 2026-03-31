@@ -36,7 +36,7 @@ public sealed partial class LogCenterReadModelService
 
         if (!string.IsNullOrWhiteSpace(filters.Symbol))
         {
-            query = query.Where(entity => entity.Symbol == filters.Symbol);
+            query = query.Where(entity => entity.Symbol.ToLower() == filters.SymbolLower);
         }
 
         if (!string.IsNullOrWhiteSpace(filters.Status))
@@ -90,6 +90,14 @@ public sealed partial class LogCenterReadModelService
         if (!string.IsNullOrWhiteSpace(filters.UserId))
         {
             query = query.Where(entity => entity.UserId == filters.UserId);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filters.Symbol))
+        {
+            query = query.Where(entity =>
+                entity.Endpoint.ToLower().Contains(filters.SymbolLower!) ||
+                (entity.RequestMasked != null && entity.RequestMasked.ToLower().Contains(filters.SymbolLower!)) ||
+                (entity.ResponseMasked != null && entity.ResponseMasked.ToLower().Contains(filters.SymbolLower!)));
         }
 
         if (!string.IsNullOrWhiteSpace(filters.Status))
@@ -156,6 +164,34 @@ public sealed partial class LogCenterReadModelService
             query = query.Where(entity => entity.ActorUserId == filters.UserId);
         }
 
+        if (!string.IsNullOrWhiteSpace(filters.DecisionId))
+        {
+            query = query.Where(entity =>
+                (entity.TargetId != null && entity.TargetId.ToLower().Contains(filters.DecisionIdLower!)) ||
+                (entity.OldValueSummary != null && entity.OldValueSummary.ToLower().Contains(filters.DecisionIdLower!)) ||
+                (entity.NewValueSummary != null && entity.NewValueSummary.ToLower().Contains(filters.DecisionIdLower!)) ||
+                entity.Reason.ToLower().Contains(filters.DecisionIdLower!));
+        }
+
+        if (!string.IsNullOrWhiteSpace(filters.ExecutionAttemptId))
+        {
+            query = query.Where(entity =>
+                (entity.TargetId != null && entity.TargetId.ToLower().Contains(filters.ExecutionAttemptIdLower!)) ||
+                (entity.OldValueSummary != null && entity.OldValueSummary.ToLower().Contains(filters.ExecutionAttemptIdLower!)) ||
+                (entity.NewValueSummary != null && entity.NewValueSummary.ToLower().Contains(filters.ExecutionAttemptIdLower!)) ||
+                entity.Reason.ToLower().Contains(filters.ExecutionAttemptIdLower!));
+        }
+
+        if (!string.IsNullOrWhiteSpace(filters.Symbol))
+        {
+            query = query.Where(entity =>
+                entity.TargetType.ToLower().Contains(filters.SymbolLower!) ||
+                (entity.TargetId != null && entity.TargetId.ToLower().Contains(filters.SymbolLower!)) ||
+                (entity.OldValueSummary != null && entity.OldValueSummary.ToLower().Contains(filters.SymbolLower!)) ||
+                (entity.NewValueSummary != null && entity.NewValueSummary.ToLower().Contains(filters.SymbolLower!)) ||
+                entity.Reason.ToLower().Contains(filters.SymbolLower!));
+        }
+
         if (!string.IsNullOrWhiteSpace(filters.Status))
         {
             query = query.Where(entity => entity.ActionType.ToLower() == filters.StatusLower);
@@ -199,6 +235,15 @@ public sealed partial class LogCenterReadModelService
             query = query.Where(entity =>
                 entity.CreatedByUserId == filters.UserId ||
                 entity.ResolvedByUserId == filters.UserId);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filters.Symbol))
+        {
+            query = query.Where(entity =>
+                entity.Title.ToLower().Contains(filters.SymbolLower!) ||
+                entity.Summary.ToLower().Contains(filters.SymbolLower!) ||
+                entity.Detail.ToLower().Contains(filters.SymbolLower!) ||
+                (entity.TargetId != null && entity.TargetId.ToLower().Contains(filters.SymbolLower!)));
         }
 
         if (!string.IsNullOrWhiteSpace(filters.Status))
@@ -248,6 +293,13 @@ public sealed partial class LogCenterReadModelService
             query = query.Where(entity => entity.ActorUserId == filters.UserId);
         }
 
+        if (!string.IsNullOrWhiteSpace(filters.Symbol))
+        {
+            query = query.Where(entity =>
+                entity.Message.ToLower().Contains(filters.SymbolLower!) ||
+                (entity.PayloadJson != null && entity.PayloadJson.ToLower().Contains(filters.SymbolLower!)));
+        }
+
         if (!string.IsNullOrWhiteSpace(filters.Status))
         {
             query = query.Where(entity => entity.EventType.ToString().ToLower() == filters.StatusLower);
@@ -292,6 +344,18 @@ public sealed partial class LogCenterReadModelService
         if (!string.IsNullOrWhiteSpace(filters.UserId))
         {
             query = query.Where(entity => entity.RequestedByUserId == filters.UserId || entity.LastActorUserId == filters.UserId);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filters.Symbol))
+        {
+            query = query.Where(entity =>
+                entity.Title.ToLower().Contains(filters.SymbolLower!) ||
+                entity.Summary.ToLower().Contains(filters.SymbolLower!) ||
+                entity.Reason.ToLower().Contains(filters.SymbolLower!) ||
+                (entity.TargetId != null && entity.TargetId.ToLower().Contains(filters.SymbolLower!)) ||
+                entity.PayloadJson.ToLower().Contains(filters.SymbolLower!) ||
+                (entity.RejectReason != null && entity.RejectReason.ToLower().Contains(filters.SymbolLower!)) ||
+                (entity.ExecutionSummary != null && entity.ExecutionSummary.ToLower().Contains(filters.SymbolLower!)));
         }
 
         if (!string.IsNullOrWhiteSpace(filters.Status))
@@ -339,6 +403,13 @@ public sealed partial class LogCenterReadModelService
         if (!string.IsNullOrWhiteSpace(filters.UserId))
         {
             query = query.Where(entity => entity.ActorUserId == filters.UserId);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filters.Symbol))
+        {
+            query = query.Where(entity =>
+                (entity.Reason != null && entity.Reason.ToLower().Contains(filters.SymbolLower!)) ||
+                (entity.IncidentReference != null && entity.IncidentReference.ToLower().Contains(filters.SymbolLower!)));
         }
 
         if (!string.IsNullOrWhiteSpace(filters.Status))

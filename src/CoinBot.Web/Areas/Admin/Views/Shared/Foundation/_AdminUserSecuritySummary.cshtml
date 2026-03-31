@@ -35,9 +35,9 @@
                     <small>@snapshot.StatusTone</small>
                 </div>
                 <div class="cb-admin-summary-card">
-                    <span class="cb-admin-summary-label">Trading mode</span>
-                    <strong>@snapshot.TradingModeLabel</strong>
-                    <small>@snapshot.TradingModeTone</small>
+                    <span class="cb-admin-summary-label">Etkin ortam</span>
+                    <strong>@snapshot.Environment.EffectiveEnvironmentLabel</strong>
+                    <small>@snapshot.Environment.ResolutionSourceLabel</small>
                 </div>
                 <div class="cb-admin-summary-card">
                     <span class="cb-admin-summary-label">Son güvenlik olayı</span>
@@ -48,10 +48,10 @@
 
             @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
             {
-                Tone = snapshot.StatusTone == "critical" ? "critical" : snapshot.MfaTone,
+                Tone = snapshot.Environment.EffectiveEnvironmentTone == "critical" ? "critical" : snapshot.MfaTone,
                 Title = "Security attention",
-                Message = $"{snapshot.DisplayName} için güvenlik sinyalleri audit ve security events ile çapraz kontrol edilir.",
-                Meta = snapshot.LastRefreshedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")
+                Message = $"{snapshot.DisplayName} için security durumu, environment guard ve live approval görünürlüğü birlikte izlenir. {snapshot.Environment.ResolutionReason}",
+                Meta = snapshot.Environment.HasExplicitLiveApproval ? "Live approval var" : "Live approval yok"
             })
         }
     </div>

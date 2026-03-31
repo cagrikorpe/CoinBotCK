@@ -3,7 +3,7 @@
     Layout = "_AuthLayout";
     ViewData["Title"] = "MFA";
     ViewData["AuthTitle"] = "İkinci doğrulama";
-    ViewData["AuthDescription"] = "Login sonrası ikinci güvenlik katmanı için profesyonel görünen, korkutmayan MFA foundation ekranı.";
+    ViewData["AuthDescription"] = "Login sonrası ikinci güvenlik katmanını tamamlayan, gerçek doğrulama sonucuna göre yönlendiren MFA akışı.";
     ViewData["AuthEyebrow"] = "Security Check";
     ViewData["AuthStage"] = "MFA";
     ViewData["AuthProgress"] = "3 / 3";
@@ -56,7 +56,7 @@
 
         <div class="cb-auth-row-between">
             <span class="cb-auth-meta">Authenticator uygulamanizdaki guncel kodu kullanin.</span>
-            <span class="cb-auth-inline-link">Email fallback bu patch kapsaminda login ekranina baglanmadi.</span>
+            <span class="cb-auth-inline-link">Fallback yöntemi görünmüyorsa farklı hesapla giriş bağlantısını kullanın.</span>
         </div>
 
         @if (ViewContext.ModelState.ErrorCount > 0)

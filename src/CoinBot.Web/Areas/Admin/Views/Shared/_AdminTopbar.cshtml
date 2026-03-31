@@ -87,7 +87,7 @@
             </form>
 
             <div class="cb-topbar-actions">
-                <button type="button" class="btn btn-light-primary font-weight-bold cb-topbar-action" data-toggle="modal" data-target="#cb_admin_reauth_modal" data-cb-modal-title="Step-up security" data-cb-modal-message="Kritik admin aksiyonları öncesinde parola ve MFA ile yeniden doğrulama istenebilir." data-cb-modal-confirm="Doğrulama">Re-auth</button>
+                <a asp-area="Admin" asp-controller="Admin" asp-action="SecurityEvents" class="btn btn-light-primary font-weight-bold cb-topbar-action">Security events</a>
 
                 <a asp-area="Admin" asp-controller="Admin" asp-action="SystemHealth" class="btn btn-icon btn-clean cb-icon-button cb-admin-alert-button" title="@alertTitle">
                     <span class="cb-icon-badge cb-admin-alert-count">@alertLabel</span>
@@ -128,9 +128,9 @@
                                 <span class="navi-text">Audit merkezi</span>
                                 @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Trace", Tone = "info" })
                             </a>
-                            <a asp-area="Admin" asp-controller="Admin" asp-action="RoleMatrix" class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75">
-                                <span class="navi-text">Role matrix</span>
-                                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "RBAC", Tone = "role" })
+                            <a asp-area="Admin" asp-controller="Admin" asp-action="Users" class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75">
+                                <span class="navi-text">Kullanıcı erişimi</span>
+                                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Identity", Tone = "role" })
                             </a>
                             <a asp-area="Admin" asp-controller="Admin" asp-action="Login" class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75">
                                 <span class="navi-text">Admin access</span>

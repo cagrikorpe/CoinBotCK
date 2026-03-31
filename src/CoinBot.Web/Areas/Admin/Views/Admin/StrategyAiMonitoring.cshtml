@@ -48,17 +48,4 @@
         @await Html.PartialAsync("Foundation/_AdminGlobalAiHealthPanel")
         @await Html.PartialAsync("Foundation/_AdminStrategyAiHelpCard")
     </div>
-
-    <div class="col-12">
-        @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
-        {
-            Title = "Strategy / AI hazır",
-            Message = "Strategy usage, veto ve health alanları gerçek snapshot verisiyle doldurulur. Veri yoksa empty-state gösterilir.",
-            IconText = "AI",
-            ActionText = "Bot operasyonları",
-            ActionHref = Url.Action("BotOperations", "Admin", new { area = "Admin" }),
-            SecondaryActionText = "Audit / loglar",
-            SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" })
-        })
-    </div>
 </div>

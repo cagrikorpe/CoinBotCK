@@ -17,8 +17,8 @@
         },
         SecondaryActionText = "Support tools",
         SecondaryActionHref = Url.Action("SupportTools", "Admin", new { area = "Admin" }),
-        PrimaryActionText = "Step-up security",
-        PrimaryActionHref = "#cb_admin_reauth_modal"
+        PrimaryActionText = "Config history",
+        PrimaryActionHref = Url.Action("ConfigHistory", "Admin", new { area = "Admin" })
     };
 }
 
@@ -32,7 +32,7 @@
                 {
                     Tone = "warning",
                     Title = "Bu ekran sistem ayarıdır",
-                    Message = "TradeMaster, DemoMode ve GlobalSystemState section'lari gercek backend servislerine, audit kaydina ve idempotency registry'sine baglidir; diğer bloklar aynı ürün akışını paylaşır.",
+                    Message = "Bu sayfada yalnizca gercek backend write/read-model baglari bulunan execution, global state, crisis, retention ve policy alanlari gosterilir.",
                     Meta = "Global Scope"
                 })
 
@@ -148,15 +148,8 @@
             @await Html.PartialAsync("Foundation/_AdminGlobalExecutionSwitchSection", executionSnapshot)
             @await Html.PartialAsync("Foundation/_AdminGlobalSystemStateSection", globalSystemStateSnapshot)
             @await Html.PartialAsync("Foundation/_AdminCrisisEscalationSection", crisisPreview)
-            @await Html.PartialAsync("Foundation/_AdminFeatureFlagsSection")
             @await Html.PartialAsync("Foundation/_AdminLoggingRetentionSection")
-            @await Html.PartialAsync("Foundation/_AdminAiRolloutSection")
-            @await Html.PartialAsync("Foundation/_AdminNotificationDefaultsSection")
             @await Html.PartialAsync("Foundation/_AdminRiskPolicyDefaultsSection")
-            @await Html.PartialAsync("Foundation/_AdminMaintenanceSettingsSection")
-            @await Html.PartialAsync("Foundation/_AdminEmergencyBroadcastSection")
-            @await Html.PartialAsync("Foundation/_AdminGlobalDangerSettingsSection")
-            @await Html.PartialAsync("Foundation/_AdminGlobalSettingsStatesShowcase")
         </div>
     </div>
 </div>

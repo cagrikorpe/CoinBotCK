@@ -1,3 +1,5 @@
+using CoinBot.Domain.Enums;
+
 namespace CoinBot.Application.Abstractions.Autonomy;
 
 public sealed record AutonomyIncidentHookRequest(
@@ -5,4 +7,5 @@ public sealed record AutonomyIncidentHookRequest(
     string Scope,
     string Summary,
     string Detail,
-    string? CorrelationId);
+    string? CorrelationId,
+    IncidentSeverity Severity = IncidentSeverity.Warning);

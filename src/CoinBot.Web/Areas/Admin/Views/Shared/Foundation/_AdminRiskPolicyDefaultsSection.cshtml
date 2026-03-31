@@ -14,10 +14,35 @@
     var rollbackVersions = versions
         .Where(version => version.Version < snapshot.CurrentVersion)
         .ToArray();
-        var restrictionPreview = snapshot.Policy.SymbolRestrictions.Count == 0
+    var editableRestrictions = snapshot.Policy.SymbolRestrictions
+        .OrderBy(item => item.Symbol, StringComparer.Ordinal)
+        .ToArray();
+    var restrictionHistoryVersions = versions
+        .Where(version => version.DiffEntries.Any(entry => entry.Path.StartsWith("SymbolRestrictions[", StringComparison.Ordinal)))
+        .Take(6)
+        .ToArray();
+    var restrictionPreview = editableRestrictions.Length == 0
         ? "None"
-        : string.Join(", ", snapshot.Policy.SymbolRestrictions.Take(3).Select(item => $"{item.Symbol}:{item.State}"));
+        : string.Join(", ", editableRestrictions.Take(3).Select(item => $"{item.Symbol}:{item.State}"));
     var restrictionStates = Enum.GetValues<SymbolRestrictionState>();
+
+    string DescribeRestrictionEffect(SymbolRestrictionState state) => state switch
+    {
+        SymbolRestrictionState.Blocked => "Tum emirler fail-closed bloklanir.",
+        SymbolRestrictionState.ReviewOnly => "Emir yolu acik kalir, sonuc review/advisory olarak isaretlenir.",
+        SymbolRestrictionState.ReduceOnly => "Yalnizca exposure azaltan emirler gecer.",
+        SymbolRestrictionState.CloseOnly => "Yalnizca pozisyon kapatan emirler gecer.",
+        _ => "Policy evaluation uygulanir."
+    };
+
+    string GetRestrictionTone(SymbolRestrictionState state) => state switch
+    {
+        SymbolRestrictionState.Blocked => "critical",
+        SymbolRestrictionState.ReviewOnly => "warning",
+        SymbolRestrictionState.ReduceOnly => "info",
+        SymbolRestrictionState.CloseOnly => "healthy",
+        _ => "info"
+    };
 }
 
 <section id="cb_admin_settings_risk" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
@@ -25,8 +50,8 @@
         <div class="cb-admin-section-kicker">Global Policy Engine</div>
         <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
             <div>
-                <div class="cb-admin-section-title">RiskPolicy, versioning ve rollback</div>
-                <p class="cb-admin-section-description">Execution katmani global policy'yi asamaz. Bu section JSON policy edit, diff history ve rollback akisini admin panelde görünür kilar.</p>
+                <div class="cb-admin-section-title">Risk policy ve symbol restriction management</div>
+                <p class="cb-admin-section-description">Execution katmani bu policy engine'i asamaz. Symbol restriction listesi, version history ve rollback ayni global policy zinciri uzerinden yonetilir.</p>
             </div>
             @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
             {
@@ -38,8 +63,8 @@
 
         <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-6">
             <div>
-                <div class="cb-admin-info-strip-title">Global policy guard</div>
-                <div class="cb-admin-info-strip-text">ObserveOnly, ReviewOnly, ReduceOnly ve CloseOnly sinyalleri bu policy engine üzerinden evaluate edilir. Change history audit ile birlikte versionlanir ve rollback edilebilir.</div>
+                <div class="cb-admin-info-strip-title">Restriction enforcement</div>
+                <div class="cb-admin-info-strip-text">Blocked, ReviewOnly, ReduceOnly ve CloseOnly kararlari dogrudan global policy evaluation sonucuna yansir. State degisimi version history ve admin audit ile izlenir.</div>
             </div>
             <span class="cb-admin-info-strip-meta">Policy locked</span>
         </div>
@@ -62,7 +87,7 @@
             </div>
             <div class="cb-admin-summary-card">
                 <span class="cb-admin-summary-label">Restrictions</span>
-                <strong>@snapshot.Policy.SymbolRestrictions.Count</strong>
+                <strong>@editableRestrictions.Length</strong>
                 <small>Blocked / review-only / reduce-only / close-only</small>
             </div>
         </div>
@@ -84,21 +109,100 @@
                 <small>Rollback eligible versions: @rollbackVersions.Length</small>
             </div>
             <div class="cb-admin-summary-card">
-                <span class="cb-admin-summary-label">Symbol restrictions</span>
+                <span class="cb-admin-summary-label">Restriction preview</span>
                 <strong>@restrictionPreview</strong>
-                <small>@(snapshot.Policy.SymbolRestrictions.Count > 3 ? "More restrictions available in history" : "Visible in policy JSON")</small>
+                <small>@(editableRestrictions.Length > 3 ? "More restrictions are available below." : "Live registry shown below.")</small>
             </div>
         </div>
 
-        @if (versions.Length > 0)
-        {
-            <div class="mt-6">
-                <div class="cb-admin-section-title">Version history</div>
-                <p class="cb-admin-section-description">Diff entries version snapshot icinde tutulur. En yeni version ustte, rollback ise tarihsel versiyona geri doner.</p>
+        <div class="mt-6">
+            <div class="cb-admin-table-header">
+                <div>
+                    <div class="cb-admin-section-kicker">Live registry</div>
+                    <div class="cb-admin-section-title">Current symbol restrictions</div>
+                    <p class="cb-admin-section-description mb-0">Bu tablo aktif restriction kayitlarini ve execution katmaninda olusan efektif sonucu gosterir.</p>
+                </div>
+                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+                {
+                    Label = editableRestrictions.Length == 0 ? "Open universe" : $"{editableRestrictions.Length} active",
+                    Tone = editableRestrictions.Length == 0 ? "healthy" : "warning",
+                    IconText = "SR"
+                })
+            </div>
 
+            <div class="table-responsive cb-admin-table-wrap mt-4">
+                <table class="table table-borderless cb-admin-table mb-0">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Current state</th>
+                            <th>Effective state</th>
+                            <th>Reason</th>
+                            <th>Changed at</th>
+                            <th>Changed by</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (editableRestrictions.Length == 0)
+                        {
+                            <tr>
+                                <td colspan="6" class="text-muted">Aktif symbol restriction yok. Tum semboller varsayilan global policy guard'lari ile degerlendirilir.</td>
+                            </tr>
+                        }
+                        else
+                        {
+                            foreach (var restriction in editableRestrictions)
+                            {
+                                <tr>
+                                    <td>@restriction.Symbol</td>
+                                    <td>
+                                        @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+                                        {
+                                            Label = restriction.State.ToString(),
+                                            Tone = GetRestrictionTone(restriction.State),
+                                            IconText = "SR"
+                                        })
+                                    </td>
+                                    <td>@DescribeRestrictionEffect(restriction.State)</td>
+                                    <td>@restriction.Reason</td>
+                                    <td>@(restriction.UpdatedAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "-") UTC</td>
+                                    <td>@(restriction.UpdatedByUserId ?? "-")</td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="mt-6">
+            <div class="cb-admin-table-header">
+                <div>
+                    <div class="cb-admin-section-kicker">Restriction history</div>
+                    <div class="cb-admin-section-title">Version ve diff baglantisi</div>
+                    <p class="cb-admin-section-description mb-0">Restriction degisiklikleri ayni policy version zincirinde diff ve rollback baglari ile tutulur.</p>
+                </div>
+                <a asp-area="Admin" asp-controller="Admin" asp-action="ConfigHistory" class="btn btn-light-primary font-weight-bold">Config history</a>
+            </div>
+
+            @if (restrictionHistoryVersions.Length == 0)
+            {
+                <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4">
+                    <div>
+                        <div class="cb-admin-info-strip-title">Restriction history beklemede</div>
+                        <div class="cb-admin-info-strip-text">Henuz symbol restriction diff'i iceren bir policy version olusmadi.</div>
+                    </div>
+                    <span class="cb-admin-info-strip-meta">History</span>
+                </div>
+            }
+            else
+            {
                 <div class="cb-admin-worker-list mt-4">
-                    @foreach (var version in versions)
+                    @foreach (var version in restrictionHistoryVersions)
                     {
+                        var restrictionDiffs = version.DiffEntries
+                            .Where(entry => entry.Path.StartsWith("SymbolRestrictions[", StringComparison.Ordinal))
+                            .ToArray();
                         <div class="cb-admin-worker-item">
                             <div class="cb-admin-worker-main">
                                 <div class="cb-admin-worker-title-row">
@@ -109,15 +213,15 @@
                                     <div class="cb-admin-badge-stack">
                                         @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
                                         {
-                                            Label = version.Version == snapshot.CurrentVersion ? "Current" : "History",
-                                            Tone = version.Version == snapshot.CurrentVersion ? "healthy" : "info",
-                                            IconText = "VS"
+                                            Label = $"{restrictionDiffs.Length} restriction diff",
+                                            Tone = restrictionDiffs.Length > 0 ? "warning" : "info",
+                                            IconText = "DF"
                                         })
                                         @if (version.RolledBackFromVersion is int rolledBackFromVersion)
                                         {
                                             @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
                                             {
-                                                Label = $"Rolled back from v{rolledBackFromVersion}",
+                                                Label = $"Rollback from v{rolledBackFromVersion}",
                                                 Tone = "warning",
                                                 IconText = "RB"
                                             })
@@ -137,177 +241,208 @@
                                         <small>Correlation: @(version.CorrelationId ?? "n/a")</small>
                                     </div>
                                     <div class="cb-admin-summary-card">
-                                        <span class="cb-admin-summary-label">Diff entries</span>
-                                        <strong>@version.DiffEntries.Count</strong>
-                                        <small>Rollback trace includes these diff rows</small>
+                                        <span class="cb-admin-summary-label">Restriction diff</span>
+                                        <strong>@restrictionDiffs.Length</strong>
+                                        <small>History and rollback remain on the same policy version.</small>
                                     </div>
                                 </div>
 
-                                @if (version.DiffEntries.Count > 0)
-                                {
-                                    <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4">
-                                        <div>
-                                            <div class="cb-admin-info-strip-title">Diff preview</div>
-                                            <div class="cb-admin-info-strip-text">@string.Join(" | ", version.DiffEntries.Take(3).Select(entry => $"{entry.Path}: {entry.Before ?? "null"} -> {entry.After ?? "null"}"))</div>
-                                        </div>
-                                        <span class="cb-admin-info-strip-meta">@version.DiffEntries.Count changes</span>
+                                <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4">
+                                    <div>
+                                        <div class="cb-admin-info-strip-title">Restriction diff preview</div>
+                                        <div class="cb-admin-info-strip-text">@string.Join(" | ", restrictionDiffs.Take(3).Select(entry => $"{entry.Path}: {entry.Before ?? "open"} -> {entry.After ?? "removed"}"))</div>
                                     </div>
-                                }
+                                    <span class="cb-admin-info-strip-meta">@restrictionDiffs.Length change</span>
+                                </div>
+
+                                <div class="cb-admin-inline-actions mt-4">
+                                    <a asp-area="Admin"
+                                       asp-controller="Admin"
+                                       asp-action="ConfigHistoryDetail"
+                                       asp-route-version="@version.Version"
+                                       class="btn btn-light-primary font-weight-bold">Open version detail</a>
+                                </div>
                             </div>
                         </div>
                     }
                 </div>
-            </div>
-        }
+            }
+        </div>
 
         @if (canEditGlobalPolicy)
         {
-            <form asp-area="Admin" asp-controller="Admin" asp-action="UpdateGlobalPolicy" method="post" class="mt-6" data-cb-reauth-required="true" data-cb-symbol-restriction-editor>
+            <form asp-area="Admin" asp-controller="Admin" asp-action="UpdateSymbolRestrictions" method="post" class="mt-6" data-cb-reauth-required="true" data-cb-symbol-restriction-editor>
                 @Html.AntiForgeryToken()
                 <input type="hidden" name="commandId" value="@(Guid.NewGuid().ToString("N"))" />
                 <input type="hidden" name="reauthToken" value="" />
 
-                <div class="mt-6">
-                    <div class="cb-admin-section-title">Symbol restriction editor</div>
-                    <p class="cb-admin-section-description mb-0">Structured edit rows are the preferred path. Raw policy JSON remains available below as fallback and audit-friendly escape hatch.</p>
+                <div class="cb-admin-table-header">
+                    <div>
+                        <div class="cb-admin-section-kicker">Write path</div>
+                        <div class="cb-admin-section-title">Manage symbol restrictions</div>
+                        <p class="cb-admin-section-description mb-0">Bu form dogrudan backend `UpdateSymbolRestrictions` endpoint'ine POST eder. Satiri kaldirmak sembolu varsayilan open davranisa dondurur.</p>
+                    </div>
+                </div>
 
-                    <div class="table-responsive cb-admin-table-wrap mt-4 mb-0">
-                        <table class="table table-borderless cb-admin-table mb-0">
-                            <thead>
-                                <tr>
-                                    <th>Symbol</th>
-                                    <th>State</th>
-                                    <th>Reason</th>
-                                    <th>UpdatedAtUtc</th>
-                                    <th>UpdatedBy</th>
-                                    <th></th>
+                <div class="table-responsive cb-admin-table-wrap mt-4">
+                    <table class="table table-borderless cb-admin-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>State</th>
+                                <th>Effective state</th>
+                                <th>Reason</th>
+                                <th>Last changed</th>
+                                <th>Changed by</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody data-cb-symbol-restriction-rows
+                               data-cb-symbol-restriction-empty-message="Aktif restriction yok. Kaydet ile tum semboller varsayilan policy modunda kalir."
+                               data-cb-symbol-restriction-empty-colspan="7">
+                            @if (editableRestrictions.Length == 0)
+                            {
+                                <tr data-cb-symbol-restriction-empty>
+                                    <td colspan="7" class="text-muted">Aktif restriction yok. Kaydet ile tum semboller varsayilan policy modunda kalir.</td>
                                 </tr>
-                            </thead>
-                            <tbody data-cb-symbol-restriction-rows>
-                                @if (snapshot.Policy.SymbolRestrictions.Count == 0)
+                            }
+                            else
+                            {
+                                for (var index = 0; index < editableRestrictions.Length; index++)
                                 {
-                                    <tr data-cb-symbol-restriction-empty>
-                                        <td colspan="6" class="text-muted">Restriction yok. Restriction ekle ile yeni satır açabilirsiniz.</td>
+                                    var restriction = editableRestrictions[index];
+                                    <tr data-cb-symbol-restriction-row>
+                                        <td>
+                                            <input name="restrictions[@index].Symbol"
+                                                   type="text"
+                                                   class="form-control cb-form-control"
+                                                   maxlength="32"
+                                                   autocomplete="off"
+                                                   value="@restriction.Symbol"
+                                                   data-cb-symbol-restriction-symbol />
+                                        </td>
+                                        <td>
+                                            <select name="restrictions[@index].State"
+                                                    class="form-control cb-form-control"
+                                                    data-cb-symbol-restriction-state>
+                                                @foreach (var restrictionState in restrictionStates)
+                                                {
+                                                    <option value="@restrictionState" selected="@(restriction.State == restrictionState ? "selected" : null)">
+                                                        @restrictionState
+                                                    </option>
+                                                }
+                                            </select>
+                                        </td>
+                                        <td>
+                                            <span class="text-muted" data-cb-symbol-restriction-effect>@DescribeRestrictionEffect(restriction.State)</span>
+                                        </td>
+                                        <td>
+                                            <input name="restrictions[@index].Reason"
+                                                   type="text"
+                                                   class="form-control cb-form-control"
+                                                   maxlength="256"
+                                                   autocomplete="off"
+                                                   value="@restriction.Reason"
+                                                   data-cb-symbol-restriction-reason />
+                                        </td>
+                                        <td>@(restriction.UpdatedAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "-") UTC</td>
+                                        <td>@(restriction.UpdatedByUserId ?? "-")</td>
+                                        <td class="text-right">
+                                            <button type="button" class="btn btn-xs btn-light-danger font-weight-bold" data-cb-symbol-restriction-remove>Clear</button>
+                                        </td>
                                     </tr>
                                 }
-                                else
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="d-flex flex-wrap gap-2 mt-4">
+                    <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-symbol-restriction-add>Restriction ekle</button>
+                    <a asp-area="Admin" asp-controller="Admin" asp-action="ConfigHistory" class="btn btn-light-info font-weight-bold">History / rollback</a>
+                </div>
+
+                <template data-cb-symbol-restriction-template>
+                    <tr data-cb-symbol-restriction-row>
+                        <td>
+                            <input type="text"
+                                   class="form-control cb-form-control"
+                                   maxlength="32"
+                                   autocomplete="off"
+                                   value=""
+                                   placeholder="BTCUSDT"
+                                   data-cb-symbol-restriction-symbol />
+                        </td>
+                        <td>
+                            <select class="form-control cb-form-control" data-cb-symbol-restriction-state>
+                                @foreach (var restrictionState in restrictionStates)
                                 {
-                                    foreach (var restriction in snapshot.Policy.SymbolRestrictions)
-                                    {
-                                        <tr data-cb-symbol-restriction-row>
-                                            <td>
-                                                <input type="text"
-                                                       class="form-control cb-form-control"
-                                                       maxlength="32"
-                                                       value="@restriction.Symbol"
-                                                       data-cb-symbol-restriction-symbol />
-                                            </td>
-                                            <td>
-                                                <select class="form-control cb-form-control" data-cb-symbol-restriction-state>
-                                                    @foreach (var restrictionState in restrictionStates)
-                                                    {
-                                                        <option value="@restrictionState" selected="@(restriction.State == restrictionState ? "selected" : null)">
-                                                            @restrictionState
-                                                        </option>
-                                                    }
-                                                </select>
-                                            </td>
-                                            <td>
-                                                <input type="text"
-                                                       class="form-control cb-form-control"
-                                                       maxlength="256"
-                                                       value="@(restriction.Reason ?? string.Empty)"
-                                                       data-cb-symbol-restriction-reason />
-                                            </td>
-                                            <td>
-                                                <input type="text"
-                                                       class="form-control cb-form-control"
-                                                       readonly="readonly"
-                                                       value="@(restriction.UpdatedAtUtc?.ToUniversalTime().ToString("O") ?? string.Empty)"
-                                                       data-cb-symbol-restriction-updated-at />
-                                            </td>
-                                            <td>
-                                                <input type="text"
-                                                       class="form-control cb-form-control"
-                                                       readonly="readonly"
-                                                       value="@(restriction.UpdatedByUserId ?? string.Empty)"
-                                                       data-cb-symbol-restriction-updated-by />
-                                            </td>
-                                            <td class="text-right">
-                                                <button type="button" class="btn btn-xs btn-light-danger font-weight-bold" data-cb-symbol-restriction-remove>Remove</button>
-                                            </td>
-                                        </tr>
-                                    }
+                                    <option value="@restrictionState" selected="@(restrictionState == SymbolRestrictionState.Blocked ? "selected" : null)">
+                                        @restrictionState
+                                    </option>
                                 }
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <div class="d-flex flex-wrap gap-2 mt-4">
-                        <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-symbol-restriction-add>Restriction ekle</button>
-                    </div>
-
-                    <template data-cb-symbol-restriction-template>
-                        <tr data-cb-symbol-restriction-row>
-                            <td>
-                                <input type="text"
-                                       class="form-control cb-form-control"
-                                       maxlength="32"
-                                       value=""
-                                       placeholder="BTCUSDT"
-                                       data-cb-symbol-restriction-symbol />
-                            </td>
-                            <td>
-                                <select class="form-control cb-form-control" data-cb-symbol-restriction-state>
-                                    @foreach (var restrictionState in restrictionStates)
-                                    {
-                                        <option value="@restrictionState" selected="@(restrictionState == SymbolRestrictionState.Blocked ? "selected" : null)">
-                                            @restrictionState
-                                        </option>
-                                    }
-                                </select>
-                            </td>
-                            <td>
-                                <input type="text"
-                                       class="form-control cb-form-control"
-                                       maxlength="256"
-                                       value=""
-                                       placeholder="Manual review / reduce exposure / close only"
-                                       data-cb-symbol-restriction-reason />
-                            </td>
-                            <td>
-                                <input type="text" class="form-control cb-form-control" readonly="readonly" value="" data-cb-symbol-restriction-updated-at />
-                            </td>
-                            <td>
-                                <input type="text" class="form-control cb-form-control" readonly="readonly" value="" data-cb-symbol-restriction-updated-by />
-                            </td>
-                            <td class="text-right">
-                                <button type="button" class="btn btn-xs btn-light-danger font-weight-bold" data-cb-symbol-restriction-remove>Remove</button>
-                            </td>
-                        </tr>
-                    </template>
-                </div>
-
-                <div class="form-group mb-0">
-                    <label class="cb-form-label">Policy JSON</label>
-                    <details class="cb-admin-raw-json-fallback">
-                        <summary class="text-muted">Raw JSON fallback</summary>
-                        <div class="mt-3">
-                            <textarea name="policyJson" class="form-control cb-form-control" rows="16" maxlength="8192" required data-cb-policy-json-field>@policyJson</textarea>
-                        </div>
-                    </details>
-                </div>
+                            </select>
+                        </td>
+                        <td>
+                            <span class="text-muted" data-cb-symbol-restriction-effect>@DescribeRestrictionEffect(SymbolRestrictionState.Blocked)</span>
+                        </td>
+                        <td>
+                            <input type="text"
+                                   class="form-control cb-form-control"
+                                   maxlength="256"
+                                   autocomplete="off"
+                                   value=""
+                                   placeholder="Manual review / reduce exposure / close only"
+                                   data-cb-symbol-restriction-reason />
+                        </td>
+                        <td>On save</td>
+                        <td>On save</td>
+                        <td class="text-right">
+                            <button type="button" class="btn btn-xs btn-light-danger font-weight-bold" data-cb-symbol-restriction-remove>Clear</button>
+                        </td>
+                    </tr>
+                </template>
 
                 <div class="form-group mt-4 mb-0">
                     <label class="cb-form-label">Audit reason</label>
-                    <input name="reason" type="text" class="form-control cb-form-control" maxlength="256" required placeholder="Global policy degisikligi nedeni" />
+                    <input name="reason" type="text" class="form-control cb-form-control" maxlength="256" required placeholder="Restriction degisikligi nedeni" />
                 </div>
 
                 <div class="cb-admin-inline-actions mt-5">
-                    <button type="submit" class="btn btn-light-primary font-weight-bold">Apply Policy JSON</button>
-                    <button type="button" class="btn btn-light-warning font-weight-bold" data-toggle="modal" data-target="#cb_admin_reauth_modal">Re-auth</button>
+                    <button type="submit" class="btn btn-light-primary font-weight-bold">Apply symbol restrictions</button>
                 </div>
             </form>
+
+            <details class="cb-admin-raw-json-fallback mt-6">
+                <summary class="text-muted">Raw policy JSON fallback</summary>
+                <form asp-area="Admin" asp-controller="Admin" asp-action="UpdateGlobalPolicy" method="post" class="mt-4" data-cb-reauth-required="true">
+                    @Html.AntiForgeryToken()
+                    <input type="hidden" name="commandId" value="@(Guid.NewGuid().ToString("N"))" />
+                    <input type="hidden" name="reauthToken" value="" />
+
+                    <div class="cb-admin-info-strip cb-admin-info-strip-info">
+                        <div>
+                            <div class="cb-admin-info-strip-title">JSON fallback</div>
+                            <div class="cb-admin-info-strip-text">Manual JSON edit zorunlu degildir. Bu alan yalnizca ileri seviye policy degisiklikleri ve operator fallback senaryolari icin tutulur.</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Fallback</span>
+                    </div>
+
+                    <div class="form-group mt-4 mb-0">
+                        <label class="cb-form-label">Policy JSON</label>
+                        <textarea name="policyJson" class="form-control cb-form-control" rows="16" maxlength="8192" required>@policyJson</textarea>
+                    </div>
+
+                    <div class="form-group mt-4 mb-0">
+                        <label class="cb-form-label">Audit reason</label>
+                        <input name="reason" type="text" class="form-control cb-form-control" maxlength="256" required placeholder="Global policy degisikligi nedeni" />
+                    </div>
+
+                    <div class="cb-admin-inline-actions mt-5">
+                        <button type="submit" class="btn btn-light-primary font-weight-bold">Apply policy JSON</button>
+                    </div>
+                </form>
+            </details>
 
             <form asp-area="Admin" asp-controller="Admin" asp-action="RollbackGlobalPolicy" method="post" class="mt-6" data-cb-reauth-required="true">
                 @Html.AntiForgeryToken()
@@ -342,13 +477,12 @@
                 <div class="cb-admin-inline-actions mt-5">
                     @if (rollbackVersions.Length == 0)
                     {
-                        <button type="submit" class="btn btn-light-danger font-weight-bold" disabled="disabled">Rollback Selected Version</button>
+                        <button type="submit" class="btn btn-light-danger font-weight-bold" disabled="disabled">Rollback selected version</button>
                     }
                     else
                     {
-                        <button type="submit" class="btn btn-light-danger font-weight-bold">Rollback Selected Version</button>
+                        <button type="submit" class="btn btn-light-danger font-weight-bold">Rollback selected version</button>
                     }
-                    <button type="button" class="btn btn-light-warning font-weight-bold" data-toggle="modal" data-target="#cb_admin_critical_confirm_modal">Critical flow</button>
                 </div>
             </form>
 
@@ -359,7 +493,7 @@
             <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6">
                 <div>
                     <div class="cb-admin-info-strip-title">Read-only policy visibility</div>
-                    <div class="cb-admin-info-strip-text">Bu rolde policy snapshot, diff ve version history gorulebilir ancak degistirilemez. Rollback ve JSON update sadece SuperAdmin tarafinda aciktir.</div>
+                    <div class="cb-admin-info-strip-text">Bu rolde restriction registry ve version history gorulebilir ancak degistirilemez. Write endpoint yalnizca SuperAdmin tarafinda aciktir.</div>
                 </div>
                 <span class="cb-admin-info-strip-meta">Read-only</span>
             </div>

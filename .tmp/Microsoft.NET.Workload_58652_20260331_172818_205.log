@@ -1,0 +1,14 @@
+[2026-03-31 17:28:18.210] [0000E51C] === Logging started ===
+[2026-03-31 17:28:18.215] [0000E51C] Executing: "C:\Program Files\dotnet\dotnet.exe" build tests/CoinBot.IntegrationTests/CoinBot.IntegrationTests.csproj --no-restore -v:normal /bl:D:\CkBot\Code\CoinBot\.tmp\integration-build.binlog, PID: 58652, PPID: 61328
+[2026-03-31 17:28:18.217] [0000E51C] IsElevated: False
+[2026-03-31 17:28:18.217] [0000E51C] Is64BitProcess: True
+[2026-03-31 17:28:18.217] [0000E51C] RebootPending: False
+[2026-03-31 17:28:18.217] [0000E51C] ProcessorArchitecture: amd64
+[2026-03-31 17:28:18.217] [0000E51C] HostArchitecture: x64
+[2026-03-31 17:28:18.217] [0000E51C] SdkDirectory: 10.0.100
+[2026-03-31 17:28:18.217] [0000E51C] VerifySignatures: False
+[2026-03-31 17:28:18.217] [0000E51C] SDK feature band: 10.0.100
+[2026-03-31 17:28:21.328] [0000E51C] Shutting down
+[2026-03-31 17:28:21.328] [0000E51C] Shutdown completed.
+[2026-03-31 17:28:21.328] [0000E51C] Restart required: False
+[2026-03-31 17:28:21.328] [0000E51C] === Logging ended ===

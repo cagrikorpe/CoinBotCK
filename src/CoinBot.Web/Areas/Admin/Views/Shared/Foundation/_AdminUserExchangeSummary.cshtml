@@ -41,9 +41,9 @@
                     <small>Credential healthy</small>
                 </div>
                 <div class="cb-admin-summary-card">
-                    <span class="cb-admin-summary-label">Read-only</span>
-                    <strong>@exchanges.Count(item => item.PermissionSummary.Contains("Read-only", StringComparison.OrdinalIgnoreCase))</strong>
-                    <small>Trade kapalı</small>
+                    <span class="cb-admin-summary-label">Environment mismatch</span>
+                    <strong>@exchanges.Count(item => item.EnvironmentTone == "critical")</strong>
+                    <small>Fail-closed</small>
                 </div>
             </div>
 
@@ -55,6 +55,7 @@
                             <th>Durum</th>
                             <th>Fingerprint</th>
                             <th>Permission</th>
+                            <th>Environment / Sync</th>
                             <th>Last validated</th>
                         </tr>
                     </thead>
@@ -70,8 +71,24 @@
                                 </td>
                                 <td>@await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = exchange.CredentialStatus, Tone = exchange.CredentialStatusTone, IconText = "ST" })</td>
                                 <td><code>@exchange.Fingerprint</code></td>
-                                <td>@exchange.PermissionSummary</td>
-                                <td>@(exchange.LastValidatedAtUtc?.ToString("yyyy-MM-dd HH:mm:ss") ?? "Veri yok") UTC</td>
+                                <td>
+                                    <div class="cb-admin-mini-stat">
+                                        <strong>@exchange.PermissionSummary</strong>
+                                        <small>@(exchange.LastFailureReason ?? "Son hata yok")</small>
+                                    </div>
+                                </td>
+                                <td>
+                                    <div class="cb-admin-mini-stat">
+                                        <strong>@exchange.EnvironmentLabel</strong>
+                                        <small>@exchange.SyncStatus</small>
+                                    </div>
+                                </td>
+                                <td>
+                                    <div class="cb-admin-mini-stat">
+                                        <strong>@exchange.LastValidatedLabel</strong>
+                                        <small>@(exchange.LastValidatedAtUtc?.ToString("yyyy-MM-dd HH:mm:ss") ?? "Veri yok") UTC</small>
+                                    </div>
+                                </td>
                             </tr>
                         }
                     </tbody>

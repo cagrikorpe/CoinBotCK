@@ -99,6 +99,24 @@ public static class DependencyInjection
         services.AddOptions<AutonomyOptions>()
             .Bind(configuration.GetSection("Autonomy"))
             .ValidateDataAnnotations();
+        services.AddOptions<MarketAnomalyOptions>()
+            .Bind(configuration.GetSection("Autonomy:MarketAnomaly"))
+            .ValidateDataAnnotations()
+            .Validate(
+                options => options.LookbackCandles >= options.MinimumHistoricalCandles,
+                "LookbackCandles must be greater than or equal to MinimumHistoricalCandles.")
+            .Validate(
+                options => options.PriceShockSeverePercent >= options.PriceShockModeratePercent,
+                "PriceShockSeverePercent must be greater than or equal to PriceShockModeratePercent.")
+            .Validate(
+                options => options.RangeRatioSevere >= options.RangeRatioModerate,
+                "RangeRatioSevere must be greater than or equal to RangeRatioModerate.")
+            .Validate(
+                options => options.VolumeRatioSevere <= options.VolumeRatioModerate,
+                "VolumeRatioSevere must be less than or equal to VolumeRatioModerate.")
+            .Validate(
+                options => options.StaleDataCriticalSeconds >= options.StaleDataWarningSeconds,
+                "StaleDataCriticalSeconds must be greater than or equal to StaleDataWarningSeconds.");
         services.AddOptions<DependencyCircuitBreakerOptions>()
             .Bind(configuration.GetSection("Autonomy:DependencyCircuitBreaker"))
             .ValidateDataAnnotations()
@@ -156,6 +174,7 @@ public static class DependencyInjection
         services.AddScoped<IDependencyCircuitBreakerStateManager, DependencyCircuitBreakerStateManager>();
         services.AddScoped<ISelfHealingExecutor, SelfHealingExecutor>();
         services.AddScoped<IAutonomyService, AutonomyService>();
+        services.AddScoped<MarketAnomalyService>();
         services.AddScoped<IWorkerRetryCoordinator, WorkerRetryCoordinator>();
         services.AddScoped<ICacheRebuildCoordinator, MarketDataCacheRebuildCoordinator>();
         services.AddScoped<ICrisisEscalationAuthorizationService, CrisisEscalationAuthorizationService>();
@@ -169,6 +188,7 @@ public static class DependencyInjection
         services.AddScoped<IApiCredentialValidationService, ApiCredentialValidationService>();
         services.AddScoped<IAuditLogService, AuditLogService>();
         services.AddScoped<IExchangeCredentialService, ExchangeCredentialService>();
+        services.AddScoped<IUserExchangeCommandCenterService, UserExchangeCommandCenterService>();
         services.AddScoped<IAlertService, AlertingService>();
         services.AddScoped<ILogCenterReadModelService, LogCenterReadModelService>();
         services.AddScoped<ILogCenterRetentionService, LogCenterRetentionService>();
@@ -228,8 +248,21 @@ public static class DependencyInjection
         services.AddScoped<ExchangeBalanceSyncService>();
         services.AddScoped<ExchangePositionSyncService>();
         services.AddScoped<ExchangeAppStateSyncService>();
+        services.AddScoped<IBinanceCredentialProbeClient, BinanceCredentialProbeClient>();
         services.AddHttpClient<SlackAlertProvider>();
         services.AddHttpClient<TelegramAlertProvider>();
+        services.AddHttpClient("BinanceCredentialProbeSpot", (serviceProvider, client) =>
+        {
+            var marketDataOptions = serviceProvider.GetRequiredService<IOptions<BinanceMarketDataOptions>>().Value;
+            client.BaseAddress = new Uri(marketDataOptions.RestBaseUrl, UriKind.Absolute);
+            client.Timeout = TimeSpan.FromSeconds(30);
+        });
+        services.AddHttpClient("BinanceCredentialProbeFutures", (serviceProvider, client) =>
+        {
+            var privateDataOptions = serviceProvider.GetRequiredService<IOptions<BinancePrivateDataOptions>>().Value;
+            client.BaseAddress = new Uri(privateDataOptions.RestBaseUrl, UriKind.Absolute);
+            client.Timeout = TimeSpan.FromSeconds(30);
+        });
         services.AddHttpClient<IBinanceExchangeInfoClient, BinanceExchangeInfoClient>((serviceProvider, client) =>
         {
             var marketDataOptions = serviceProvider.GetRequiredService<IOptions<BinanceMarketDataOptions>>().Value;
@@ -261,6 +294,7 @@ public static class DependencyInjection
         services.AddHostedService<LogCenterRetentionWorker>();
         services.AddHostedService<VirtualExecutionWatchdogWorker>();
         services.AddHostedService<AutonomySelfHealingWorker>();
+        services.AddHostedService<MarketAnomalyWorker>();
 
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseSqlServer(connectionString, sqlOptions =>

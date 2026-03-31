@@ -27,9 +27,11 @@ using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Mfa;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Policy;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Hosting;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Authorization.Infrastructure;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Configuration;
@@ -53,6 +55,7 @@ public sealed class DependencyInjectionTests
         var alertProviders = provider.GetServices<IAlertProvider>().ToArray();
         var correlationContextAccessor = provider.GetRequiredService<ICorrelationContextAccessor>();
         var exchangeCredentialService = provider.GetRequiredService<IExchangeCredentialService>();
+        var userExchangeCommandCenterService = provider.GetRequiredService<IUserExchangeCommandCenterService>();
         var globalExecutionSwitchService = provider.GetRequiredService<IGlobalExecutionSwitchService>();
         var globalSystemStateService = provider.GetRequiredService<IGlobalSystemStateService>();
         var adminAuditLogService = provider.GetRequiredService<IAdminAuditLogService>();
@@ -87,6 +90,7 @@ public sealed class DependencyInjectionTests
         var mfaOptions = provider.GetRequiredService<IOptions<MfaOptions>>().Value;
         var credentialSecurityOptions = provider.GetRequiredService<IOptions<CredentialSecurityOptions>>().Value;
         var autonomyOptions = provider.GetRequiredService<IOptions<AutonomyOptions>>().Value;
+        var marketAnomalyOptions = provider.GetRequiredService<IOptions<MarketAnomalyOptions>>().Value;
         var dependencyCircuitBreakerOptions = provider.GetRequiredService<IOptions<DependencyCircuitBreakerOptions>>().Value;
         var cookieOptions = provider
             .GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
@@ -101,6 +105,7 @@ public sealed class DependencyInjectionTests
         var autonomyService = provider.GetRequiredService<IAutonomyService>();
         var breakerStateManager = provider.GetRequiredService<IDependencyCircuitBreakerStateManager>();
         var selfHealingExecutor = provider.GetRequiredService<ISelfHealingExecutor>();
+        var marketAnomalyService = provider.GetRequiredService<MarketAnomalyService>();
         var webSocketReconnectCoordinator = provider.GetRequiredService<IWebSocketReconnectCoordinator>();
         var signalRReconnectCoordinator = provider.GetRequiredService<ISignalRReconnectCoordinator>();
         var marketDataService = provider.GetRequiredService<IMarketDataService>();
@@ -180,6 +185,10 @@ public sealed class DependencyInjectionTests
         Assert.Equal(0.85m, autonomyOptions.DefaultConfidenceScore);
         Assert.Equal(0.35m, autonomyOptions.MaxFalsePositiveProbability);
         Assert.Equal(30, autonomyOptions.ReviewQueueTtlMinutes);
+        Assert.Equal(30, marketAnomalyOptions.SweepIntervalSeconds);
+        Assert.Equal(20, marketAnomalyOptions.MinimumHistoricalCandles);
+        Assert.Equal(0.06m, marketAnomalyOptions.PriceShockSeverePercent);
+        Assert.Equal(12, marketAnomalyOptions.StaleDataCriticalSeconds);
         Assert.Equal(3, dependencyCircuitBreakerOptions.FailureThreshold);
         Assert.Equal(60, dependencyCircuitBreakerOptions.CooldownSeconds);
         Assert.Equal(30, dependencyCircuitBreakerOptions.ReviewQueueTtlMinutes);
@@ -193,6 +202,7 @@ public sealed class DependencyInjectionTests
         Assert.NotNull(alertService);
         Assert.NotNull(correlationContextAccessor);
         Assert.NotNull(exchangeCredentialService);
+        Assert.NotNull(userExchangeCommandCenterService);
         Assert.NotNull(globalExecutionSwitchService);
         Assert.NotNull(globalSystemStateService);
         Assert.NotNull(adminAuditLogService);
@@ -223,6 +233,7 @@ public sealed class DependencyInjectionTests
         Assert.NotNull(autonomyService);
         Assert.NotNull(breakerStateManager);
         Assert.NotNull(selfHealingExecutor);
+        Assert.NotNull(marketAnomalyService);
         Assert.NotNull(webSocketReconnectCoordinator);
         Assert.NotNull(signalRReconnectCoordinator);
         Assert.NotNull(marketDataService);
@@ -253,6 +264,28 @@ public sealed class DependencyInjectionTests
         Assert.Contains(hostedServices, service => service is VirtualExecutionWatchdogWorker);
         Assert.Contains(hostedServices, service => service is MonitoringSnapshotWorker);
         Assert.Contains(hostedServices, service => service is AutonomySelfHealingWorker);
+        Assert.Contains(hostedServices, service => service is MarketAnomalyWorker);
+    }
+
+    [Fact]
+    public async Task AddInfrastructure_ConfiguresAdminAccessDeniedRedirect_ToAdminRoute()
+    {
+        var provider = BuildServiceProvider();
+        var cookieOptions = provider
+            .GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
+            .Get(IdentityConstants.ApplicationScheme);
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Path = "/admin/users";
+        var redirectContext = new RedirectContext<CookieAuthenticationOptions>(
+            httpContext,
+            new AuthenticationScheme(IdentityConstants.ApplicationScheme, IdentityConstants.ApplicationScheme, typeof(CookieAuthenticationHandler)),
+            cookieOptions,
+            new AuthenticationProperties(),
+            "/Auth/AccessDenied");
+
+        await cookieOptions.Events.OnRedirectToAccessDenied(redirectContext);
+
+        Assert.Equal("/Admin/Admin/AccessDenied", httpContext.Response.Headers.Location.ToString());
     }
 
     [Theory]

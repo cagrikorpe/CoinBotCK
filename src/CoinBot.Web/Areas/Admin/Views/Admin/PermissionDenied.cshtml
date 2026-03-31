@@ -1,19 +1,20 @@
 @{
+    var returnUrl = ViewData["AdminAuthReturnUrl"]?.ToString() ?? "/admin";
     var headerModel = new AdminPageHeaderViewModel
     {
         Eyebrow = "Scoped Permission",
         Title = "Insufficient Permission",
-        Description = "Rol var; ancak bu aksiyon için kapsam yetersiz. Ekran sert ama yardımcı olacak şekilde tasarlandı.",
+        Description = "Oturum açık; ancak istenen aksiyon için gerekli kapsam bu hesapta yok.",
         StatusBadge = new AdminBadgeViewModel { Label = "Limited Scope", Tone = "warning", IconText = "SC" },
         MetaBadges = new[]
         {
-            new AdminBadgeViewModel { Label = "Support", Tone = "neutral", IconText = "SP" },
-            new AdminBadgeViewModel { Label = "Action Guard", Tone = "warning", IconText = "GD" }
+            new AdminBadgeViewModel { Label = "Authenticated", Tone = "info", IconText = "AU" },
+            new AdminBadgeViewModel { Label = "Scope Guard", Tone = "warning", IconText = "GD" }
         },
-        PrimaryActionText = "Role matrix",
-        PrimaryActionHref = Url.Action("RoleMatrix", "Admin", new { area = "Admin" }),
-        SecondaryActionText = "Dashboard'a dön",
-        SecondaryActionHref = Url.Action("Overview", "Admin", new { area = "Admin" })
+        PrimaryActionText = "Admin overview",
+        PrimaryActionHref = Url.Action("Overview", "Admin", new { area = "Admin" }),
+        SecondaryActionText = "Ana shell",
+        SecondaryActionHref = Url.Action("Index", "Home", new { area = string.Empty })
     };
 }
 
@@ -26,8 +27,8 @@
                 @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
                 {
                     Tone = "warning",
-                    Title = "Yetki var, kapsam yetersizliği standardize edilir",
-                    Message = "Bazı roller veriyi görüntüleyebilir ama destructive veya global etkili işlemleri yapamaz. Bu ayrım role matrix ile görünür kılınır.",
+                    Title = "Kapsam guard açık kaldı",
+                    Message = "Bu oturum admin alanına girebilir; ancak hedef aksiyon için gerekli claim veya rol kapsamı bulunmadığından işlem açılmadı.",
                     Meta = "Scoped access"
                 })
 
@@ -35,12 +36,12 @@
                     @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
                     {
                         Title = "Bu işlem için rol kapsamın yetersiz",
-                        Message = "Aksiyonun tamamı yerine daha güvenli alternatifler veya read-only yüzeyler önerilir. Gerçek permission backend’i eklendiğinde bu ekran policy sonucu ile beslenir.",
+                        Message = "Daha geniş yetki gerektiren aksiyonlar fail-closed korunur. Yetkin olan başka bir hesapla devam edebilir veya admin overview'e dönebilirsin.",
                         IconText = "?",
-                        ActionText = "Audit merkezi",
-                        ActionHref = Url.Action("Audit", "Admin", new { area = "Admin" }),
-                        SecondaryActionText = "Yeniden doğrula",
-                        SecondaryActionHref = "#cb_admin_reauth_modal"
+                        ActionText = "Admin overview",
+                        ActionHref = Url.Action("Overview", "Admin", new { area = "Admin" }),
+                        SecondaryActionText = "Session yardımı",
+                        SecondaryActionHref = Url.Action("SessionExpired", "Admin", new { area = "Admin", returnUrl })
                     })
                 </div>
             </div>
@@ -51,16 +52,18 @@
         @await Html.PartialAsync("Foundation/_AdminSecurityHelpCard", new AdminSecurityHelpCardViewModel
         {
             Eyebrow = "Permission hints",
-            Title = "Role matrix ne işe yarar",
-            Description = "Rolün kabaca hangi yüzeyleri görüp hangi yüzeyleri yönetebileceğini sade bir tabloda gösterir.",
+            Title = "Kapsam yetersizliğinde güvenli sonraki adım",
+            Description = "Kritik işlem açılamadığında kullanıcıyı loop'a sokmadan overview, ana shell veya güvenli çıkış seçenekleri sunulur.",
             BadgeLabel = "RBAC",
             BadgeTone = "role",
             Items = new[]
             {
-                "Var / yok / sınırlı sinyalleri aynı dilde gösterilir",
-                "Kritik yüzeyler için ek doğrulama ihtiyacı vurgulanır",
-                "Genişletilebilir backend entegrasyonu için sade zemin bırakılır"
-            }
+                "Daha dar kapsamlı yüzeylere geri dön",
+                "Gerekirse farklı bir hesapla devam et",
+                "Session yardım ekranını kullan"
+            },
+            ActionText = "Ana shell",
+            ActionHref = Url.Action("Index", "Home", new { area = string.Empty })
         })
     </div>
 </div>

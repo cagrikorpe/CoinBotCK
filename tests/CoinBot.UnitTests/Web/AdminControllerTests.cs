@@ -6,6 +6,7 @@ using CoinBot.Application.Abstractions.Policy;
 using CoinBot.Contracts.Common;
 using CoinBot.Domain.Enums;
 using CoinBot.Web.Areas.Admin.Controllers;
+using CoinBot.Web.ViewModels.Admin;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ViewFeatures;
@@ -15,9 +16,9 @@ namespace CoinBot.UnitTests.Web;
 public sealed class AdminControllerTests
 {
     [Fact]
-    public void Login_RedirectsToAuthLogin_WithAdminLandingReturnUrl()
+    public void Login_WhenUnauthenticated_RedirectsToAuthLogin_WithAdminLandingReturnUrl()
     {
-        var controller = CreateController(new FakeGlobalExecutionSwitchService());
+        var controller = CreateController(new FakeGlobalExecutionSwitchService(), isAuthenticated: false);
 
         var result = controller.Login();
 
@@ -25,6 +26,193 @@ public sealed class AdminControllerTests
         Assert.Equal("Login", redirectResult.ActionName);
         Assert.Equal("Auth", redirectResult.ControllerName);
         Assert.Equal("/admin", redirectResult.RouteValues!["returnUrl"]);
+    }
+
+    [Fact]
+    public void Login_NormalizesAuthShellReturnUrl_ToAvoidRedirectLoop()
+    {
+        var controller = CreateController(new FakeGlobalExecutionSwitchService(), isAuthenticated: false);
+
+        var result = controller.Login("/Admin/Admin/Login?returnUrl=%2Fadmin");
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal("/admin", redirectResult.RouteValues!["returnUrl"]);
+    }
+
+    [Fact]
+    public void Login_WhenAuthenticatedWithAdminAccess_RedirectsToAdminLanding()
+    {
+        var controller = CreateController(new FakeGlobalExecutionSwitchService());
+
+        var result = controller.Login("/Admin/Admin/Users");
+
+        var redirectResult = Assert.IsType<LocalRedirectResult>(result);
+        Assert.Equal("/Admin/Admin/Users", redirectResult.Url);
+    }
+
+    [Fact]
+    public void Login_WhenAuthenticatedWithoutAdminAccess_RedirectsToAdminAccessDenied()
+    {
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            roles: [ApplicationRoles.User],
+            permissions: [ApplicationPermissions.TradeOperations]);
+
+        var result = controller.Login("/Admin/Admin/Overview");
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.AccessDenied), redirectResult.ActionName);
+        Assert.Equal("/Admin/Admin/Overview", redirectResult.RouteValues!["returnUrl"]);
+    }
+
+    [Fact]
+    public void Mfa_WhenUnauthenticated_RedirectsToAuthMfa()
+    {
+        var controller = CreateController(new FakeGlobalExecutionSwitchService(), isAuthenticated: false);
+
+        var result = controller.Mfa("/Admin/Admin/Overview", rememberMe: true);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal("Mfa", redirectResult.ActionName);
+        Assert.Equal("Auth", redirectResult.ControllerName);
+        Assert.Equal("/Admin/Admin/Overview", redirectResult.RouteValues!["returnUrl"]);
+        Assert.Equal(true, redirectResult.RouteValues["rememberMe"]);
+    }
+
+    [Fact]
+    public void Mfa_WhenAuthenticatedWithoutAdminAccess_RedirectsToAccessDenied()
+    {
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            roles: [ApplicationRoles.User],
+            permissions: [ApplicationPermissions.ExchangeManagement]);
+
+        var result = controller.Mfa("/Admin/Admin/Overview");
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.AccessDenied), redirectResult.ActionName);
+    }
+
+    [Fact]
+    public void Mfa_WhenAuthenticatedWithAdminAccess_RedirectsToAdminLanding()
+    {
+        var controller = CreateController(new FakeGlobalExecutionSwitchService());
+
+        var result = controller.Mfa("/Admin/Admin/Overview");
+
+        var redirectResult = Assert.IsType<LocalRedirectResult>(result);
+        Assert.Equal("/Admin/Admin/Overview", redirectResult.Url);
+    }
+
+    [Fact]
+    public void AccessDenied_WhenUnauthenticated_RedirectsToLogin()
+    {
+        var controller = CreateController(new FakeGlobalExecutionSwitchService(), isAuthenticated: false);
+
+        var result = controller.AccessDenied("/Admin/Admin/Users");
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.Login), redirectResult.ActionName);
+        Assert.Equal("/Admin/Admin/Users", redirectResult.RouteValues!["returnUrl"]);
+    }
+
+    [Fact]
+    public void AccessDenied_WhenAuthenticatedWithAdminAccess_RedirectsToAdminLanding()
+    {
+        var controller = CreateController(new FakeGlobalExecutionSwitchService());
+
+        var result = controller.AccessDenied("/Admin/Admin/Users");
+
+        var redirectResult = Assert.IsType<LocalRedirectResult>(result);
+        Assert.Equal("/Admin/Admin/Users", redirectResult.Url);
+    }
+
+    [Fact]
+    public void AccessDenied_WhenAuthenticatedWithoutAdminAccess_RendersView()
+    {
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            roles: [ApplicationRoles.User],
+            permissions: [ApplicationPermissions.ExchangeManagement]);
+
+        var result = controller.AccessDenied("/Admin/Admin/Users");
+
+        var viewResult = Assert.IsType<ViewResult>(result);
+        Assert.Equal("/Admin/Admin/Users", controller.ViewData["AdminAuthReturnUrl"]);
+        Assert.Null(viewResult.Model);
+    }
+
+    [Fact]
+    public void SessionExpired_WhenUnauthenticated_RendersView()
+    {
+        var controller = CreateController(new FakeGlobalExecutionSwitchService(), isAuthenticated: false);
+
+        var result = controller.SessionExpired("/Admin/Admin/Overview");
+
+        var viewResult = Assert.IsType<ViewResult>(result);
+        Assert.Equal("/Admin/Admin/Overview", controller.ViewData["AdminAuthReturnUrl"]);
+        Assert.Null(viewResult.Model);
+    }
+
+    [Fact]
+    public void SessionExpired_WhenAuthenticatedWithAdminAccess_RedirectsToAdminLanding()
+    {
+        var controller = CreateController(new FakeGlobalExecutionSwitchService());
+
+        var result = controller.SessionExpired("/Admin/Admin/Overview");
+
+        var redirectResult = Assert.IsType<LocalRedirectResult>(result);
+        Assert.Equal("/Admin/Admin/Overview", redirectResult.Url);
+    }
+
+    [Fact]
+    public void PermissionDenied_WhenUnauthenticated_RedirectsToLogin()
+    {
+        var controller = CreateController(new FakeGlobalExecutionSwitchService(), isAuthenticated: false);
+
+        var result = controller.PermissionDenied("/Admin/Admin/Users");
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.Login), redirectResult.ActionName);
+        Assert.Equal("/Admin/Admin/Users", redirectResult.RouteValues!["returnUrl"]);
+    }
+
+    [Fact]
+    public void PermissionDenied_WhenAuthenticatedWithAdminAccess_RedirectsToAdminLanding()
+    {
+        var controller = CreateController(new FakeGlobalExecutionSwitchService());
+
+        var result = controller.PermissionDenied("/Admin/Admin/Users");
+
+        var redirectResult = Assert.IsType<LocalRedirectResult>(result);
+        Assert.Equal("/Admin/Admin/Users", redirectResult.Url);
+    }
+
+    [Fact]
+    public void PermissionDenied_WhenAuthenticatedWithoutAdminAccess_RendersView()
+    {
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            roles: [ApplicationRoles.User],
+            permissions: [ApplicationPermissions.ExchangeManagement]);
+
+        var result = controller.PermissionDenied("/Admin/Admin/Users");
+
+        var viewResult = Assert.IsType<ViewResult>(result);
+        Assert.Equal("/Admin/Admin/Users", controller.ViewData["AdminAuthReturnUrl"]);
+        Assert.Null(viewResult.Model);
+    }
+
+    [Fact]
+    public void RoleMatrix_RedirectsToUsers()
+    {
+        var controller = CreateController(new FakeGlobalExecutionSwitchService());
+
+        var result = controller.RoleMatrix();
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.Users), redirectResult.ActionName);
+        Assert.Equal("Admin", redirectResult.RouteValues!["area"]);
     }
 
     [Fact]
@@ -62,6 +250,9 @@ public sealed class AdminControllerTests
                 "critical",
                 "Risk normal",
                 "healthy",
+                new AdminUserEnvironmentSnapshot("Live", "warning", "Kullanıcı override", "User override resolves to Live.", true),
+                new AdminUserRiskOverrideSnapshot("Core", 2m, 10m, 3m, false, false, false, null, null, null, "Risk ve override hazır", "healthy", "Profil 'Core'"),
+                [],
                 [],
                 [],
                 [],
@@ -101,6 +292,27 @@ public sealed class AdminControllerTests
 
         Assert.IsType<ViewResult>(await controller.Notifications("warning", "Incident", CancellationToken.None));
         Assert.Same(workspaceService.NotificationsSnapshot, controller.ViewData["AdminNotificationsPageSnapshot"]);
+    }
+
+    [Fact]
+    public async Task UserDetail_WhenSnapshotMissing_RendersProductNotFoundState_With404Status()
+    {
+        var workspaceService = new FakeAdminWorkspaceReadModelService
+        {
+            UserDetailSnapshot = null
+        };
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            workspaceReadModelService: workspaceService);
+
+        var result = await controller.UserDetail("usr-missing", CancellationToken.None);
+
+        var viewResult = Assert.IsType<ViewResult>(result);
+        Assert.Equal(StatusCodes.Status404NotFound, controller.Response.StatusCode);
+        Assert.Null(controller.ViewData["AdminUserDetailPageSnapshot"]);
+        Assert.Equal("usr-missing", controller.ViewData["AdminEntityId"]);
+        Assert.Equal("Kullanıcı usr-missing", controller.ViewData["AdminEntityLabel"]);
+        Assert.Null(viewResult.Model);
     }
 
     [Fact]
@@ -622,6 +834,102 @@ public sealed class AdminControllerTests
     }
 
     [Fact]
+    public async Task UpdateSymbolRestrictions_UsesStructuredWritePath_AndPreservesUnchangedMetadata()
+    {
+        var now = new DateTime(2026, 3, 24, 12, 30, 0, DateTimeKind.Utc);
+        var policy = new RiskPolicySnapshot(
+            "GlobalRiskPolicy",
+            new ExecutionGuardPolicy(250_000m, 500_000m, 20, CloseOnlyBlocksNewPositions: true),
+            new AutonomyPolicy(AutonomyPolicyMode.ManualApprovalRequired, RequireManualApprovalForLive: true),
+            [
+                new SymbolRestriction("BTCUSDT", SymbolRestrictionState.CloseOnly, "manual review", now, "ops-admin"),
+                new SymbolRestriction("ETHUSDT", SymbolRestrictionState.ReviewOnly, "watch closely", now.AddMinutes(-20), "ops-admin")
+            ]);
+        var policySnapshot = new GlobalPolicySnapshot(
+            policy,
+            CurrentVersion: 8,
+            LastUpdatedAtUtc: now,
+            LastUpdatedByUserId: "ops-admin",
+            LastChangeSummary: "Desk controls",
+            IsPersisted: true,
+            Versions: Array.Empty<GlobalPolicyVersionSnapshot>());
+        var policyEngine = new FakeGlobalPolicyEngine(policySnapshot);
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            globalPolicyEngine: policyEngine,
+            userId: "super-admin",
+            roles: [ApplicationRoles.SuperAdmin]);
+
+        var result = await controller.UpdateSymbolRestrictions(
+            [
+                new AdminSymbolRestrictionInputModel
+                {
+                    Symbol = "BTCUSDT",
+                    State = nameof(SymbolRestrictionState.CloseOnly),
+                    Reason = "manual review"
+                },
+                new AdminSymbolRestrictionInputModel
+                {
+                    Symbol = "ETHUSDT",
+                    State = nameof(SymbolRestrictionState.Blocked),
+                    Reason = "exchange halt"
+                }
+            ],
+            "Desk override",
+            "cmd-restriction-001",
+            reauthToken: null,
+            cancellationToken: CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        var updateRequest = Assert.Single(policyEngine.UpdateRequests);
+        var persistedRestrictions = updateRequest.Policy.SymbolRestrictions.OrderBy(item => item.Symbol, StringComparer.Ordinal).ToArray();
+        var preservedRestriction = Assert.Single(persistedRestrictions, item => item.Symbol == "BTCUSDT");
+        var changedRestriction = Assert.Single(persistedRestrictions, item => item.Symbol == "ETHUSDT");
+
+        Assert.Equal(nameof(AdminController.Settings), redirectResult.ActionName);
+        Assert.Equal("AdminPortal.Settings.SymbolRestrictions", updateRequest.Source);
+        Assert.Equal(policy.ExecutionGuardPolicy, updateRequest.Policy.ExecutionGuardPolicy);
+        Assert.Equal(policy.AutonomyPolicy, updateRequest.Policy.AutonomyPolicy);
+        Assert.Equal(now, preservedRestriction.UpdatedAtUtc);
+        Assert.Equal("ops-admin", preservedRestriction.UpdatedByUserId);
+        Assert.Equal(SymbolRestrictionState.Blocked, changedRestriction.State);
+        Assert.Equal("exchange halt", changedRestriction.Reason);
+        Assert.Equal("super-admin", changedRestriction.UpdatedByUserId);
+        Assert.NotNull(changedRestriction.UpdatedAtUtc);
+        Assert.Contains("updated", controller.TempData["AdminGlobalPolicySuccess"]?.ToString() ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task UpdateSymbolRestrictions_ReadOnlyRoleIsRejected()
+    {
+        var policyEngine = new FakeGlobalPolicyEngine(CreatePolicySnapshot(new DateTime(2026, 3, 24, 12, 30, 0, DateTimeKind.Utc)));
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            globalPolicyEngine: policyEngine,
+            roles: [ApplicationRoles.OpsAdmin]);
+
+        var result = await controller.UpdateSymbolRestrictions(
+            [
+                new AdminSymbolRestrictionInputModel
+                {
+                    Symbol = "BTCUSDT",
+                    State = nameof(SymbolRestrictionState.Blocked),
+                    Reason = "blocked"
+                }
+            ],
+            "Desk override",
+            "cmd-restriction-002",
+            reauthToken: null,
+            cancellationToken: CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+
+        Assert.Equal(nameof(AdminController.Settings), redirectResult.ActionName);
+        Assert.Empty(policyEngine.UpdateRequests);
+        Assert.Equal("Bu rolde symbol restriction degistirilemez.", controller.TempData["AdminGlobalPolicyError"]);
+    }
+
+    [Fact]
     public async Task PreviewCrisisEscalation_StoresPreviewState_AndSettingsLoadsIt()
     {
         var crisisService = new FakeCrisisEscalationService
@@ -965,15 +1273,30 @@ public sealed class AdminControllerTests
         FakeCrisisEscalationService? crisisEscalationService = null,
         string userId = "admin-01",
         string traceIdentifier = "trace-001",
-        string[]? roles = null)
+        string[]? roles = null,
+        string[]? permissions = null,
+        bool isAuthenticated = true)
     {
         roles ??= [ApplicationRoles.SuperAdmin];
-        var claims = new List<Claim> { new(ClaimTypes.NameIdentifier, userId) };
-        claims.AddRange(roles.Select(role => new Claim(ClaimTypes.Role, role)));
+        permissions ??= roles
+            .SelectMany(ApplicationRoleClaims.GetClaims)
+            .Where(claim => claim.Type == ApplicationClaimTypes.Permission)
+            .Select(claim => claim.Value)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var claims = new List<Claim>();
+
+        if (isAuthenticated)
+        {
+            claims.Add(new Claim(ClaimTypes.NameIdentifier, userId));
+            claims.AddRange(roles.Select(role => new Claim(ClaimTypes.Role, role)));
+            claims.AddRange(permissions.Select(permission => new Claim(ApplicationClaimTypes.Permission, permission)));
+        }
+
         var httpContext = new DefaultHttpContext
         {
             TraceIdentifier = traceIdentifier,
-            User = new ClaimsPrincipal(new ClaimsIdentity(claims, "TestAuth"))
+            User = new ClaimsPrincipal(new ClaimsIdentity(claims, isAuthenticated ? "TestAuth" : null))
         };
 
         return new AdminController(
@@ -1599,6 +1922,8 @@ public sealed class AdminControllerTests
     private sealed class FakeGlobalPolicyEngine : IGlobalPolicyEngine
     {
         public GlobalPolicySnapshot Snapshot { get; set; } = GlobalPolicySnapshot.CreateDefault(new DateTime(2026, 3, 24, 12, 0, 0, DateTimeKind.Utc));
+        public List<GlobalPolicyUpdateRequest> UpdateRequests { get; } = [];
+        public List<GlobalPolicyRollbackRequest> RollbackRequests { get; } = [];
 
         public FakeGlobalPolicyEngine()
         {
@@ -1621,12 +1946,14 @@ public sealed class AdminControllerTests
 
         public Task<GlobalPolicySnapshot> UpdateAsync(GlobalPolicyUpdateRequest request, CancellationToken cancellationToken = default)
         {
+            UpdateRequests.Add(request);
             Snapshot = Snapshot with { Policy = request.Policy, CurrentVersion = Snapshot.CurrentVersion + 1, LastUpdatedAtUtc = DateTime.UtcNow, LastUpdatedByUserId = request.ActorUserId, LastChangeSummary = request.Reason, IsPersisted = true };
             return Task.FromResult(Snapshot);
         }
 
         public Task<GlobalPolicySnapshot> RollbackAsync(GlobalPolicyRollbackRequest request, CancellationToken cancellationToken = default)
         {
+            RollbackRequests.Add(request);
             Snapshot = Snapshot with { CurrentVersion = Snapshot.CurrentVersion + 1, LastUpdatedAtUtc = DateTime.UtcNow, LastUpdatedByUserId = request.ActorUserId, LastChangeSummary = request.Reason, IsPersisted = true };
             return Task.FromResult(Snapshot);
         }

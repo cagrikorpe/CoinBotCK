@@ -1,4 +1,7 @@
+@using CoinBot.Application.Abstractions.Administration
 @{
+    var snapshot = ViewData["AdminUsersPageSnapshot"] as AdminUsersPageSnapshot;
+    var firstUserId = snapshot?.Users.FirstOrDefault()?.UserId;
     var headerModel = new AdminPageHeaderViewModel
     {
         Eyebrow = "Identity Workspace",
@@ -10,10 +13,12 @@
             new AdminBadgeViewModel { Label = "Super Admin", Tone = "role", IconText = "SA" },
             new AdminBadgeViewModel { Label = "Controlled Actions", Tone = "warning", IconText = "CF" }
         },
-        SecondaryActionText = "Role matrix",
-        SecondaryActionHref = Url.Action("RoleMatrix", "Admin", new { area = "Admin" }),
+        SecondaryActionText = "Destek araçları",
+        SecondaryActionHref = Url.Action("SupportTools", "Admin", new { area = "Admin" }),
         PrimaryActionText = "Kullanıcı detayı",
-        PrimaryActionHref = Url.Action("UserDetail", "Admin", new { area = "Admin", id = "usr-001" })
+        PrimaryActionHref = string.IsNullOrWhiteSpace(firstUserId)
+            ? Url.Action("Users", "Admin", new { area = "Admin" })
+            : Url.Action("UserDetail", "Admin", new { area = "Admin", id = firstUserId })
     };
 }
 
@@ -54,23 +59,12 @@
             {
                 "User detail page",
                 "Audit ve risk ekranlarına yönlendirme",
-                "Role matrix görünürlüğü"
+                "Destek araçları ve güvenlik incelemesi"
             },
             ActionText = "Kullanıcı detayı",
-            ActionHref = Url.Action("UserDetail", "Admin", new { area = "Admin", id = "usr-014" })
-        })
-    </div>
-
-    <div class="col-12">
-        @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
-        {
-            Title = "Kullanıcı görünümü hazır",
-            Message = "Liste ve detail ekranları gerçek snapshot verisiyle doldurulur. Sonuç yoksa ürün seviyesi empty-state gösterilir.",
-            IconText = "US",
-            ActionText = "Kullanıcı listesi",
-            ActionHref = Url.Action("Users", "Admin", new { area = "Admin" }),
-            SecondaryActionText = "Destek araçları",
-            SecondaryActionHref = Url.Action("SupportTools", "Admin", new { area = "Admin" })
+            ActionHref = string.IsNullOrWhiteSpace(firstUserId)
+                ? Url.Action("Users", "Admin", new { area = "Admin" })
+                : Url.Action("UserDetail", "Admin", new { area = "Admin", id = firstUserId })
         })
     </div>
 </div>

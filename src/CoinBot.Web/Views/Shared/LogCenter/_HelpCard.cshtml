@@ -19,6 +19,10 @@
                 <strong class="cb-mono">@lastRunText</strong>
             </div>
             <div class="cb-admin-profile-row">
+                <span>Last outcome</span>
+                <strong>@(string.IsNullOrWhiteSpace(retention.LastRunSummary) ? "Pending" : "Recorded")</strong>
+            </div>
+            <div class="cb-admin-profile-row">
                 <span>Batch size</span>
                 <strong class="cb-mono">@retention.BatchSize</strong>
             </div>
@@ -35,6 +39,8 @@
             </div>
             <span class="cb-admin-info-strip-meta">CSV masked</span>
         </div>
+
+        <div class="cb-bot-mini-validation mt-4">@(string.IsNullOrWhiteSpace(retention.LastRunSummary) ? "Retention worker henüz audit kaydı üretmedi." : retention.LastRunSummary)</div>
 
         <div class="cb-inline-stack cb-inline-stack-vertical mt-4">
             <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-light-primary font-weight-bold">Audit search</a>

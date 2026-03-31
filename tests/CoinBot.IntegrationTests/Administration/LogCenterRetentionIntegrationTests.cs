@@ -363,6 +363,134 @@ public sealed class LogCenterRetentionIntegrationTests
         Assert.True(dbContext.ApprovalActions.Any(entity => entity.ApprovalReference == "APR-active"));
     }
 
+    [Fact]
+    public async Task ApplyAsync_DoesNotPurgeOldOpenIncidentsOrPendingApprovals_OnSqlServer()
+    {
+        var databaseName = $"CoinBotLogRetentionProtectedInt_{Guid.NewGuid():N}";
+        var connectionString = ResolveConnectionString(databaseName);
+        var now = new DateTime(2026, 3, 24, 12, 0, 0, DateTimeKind.Utc);
+        var oldDate = now.AddDays(-60);
+
+        await using var dbContext = CreateDbContext(connectionString);
+        await dbContext.Database.EnsureDeletedAsync();
+        await dbContext.Database.EnsureCreatedAsync();
+
+        var openIncident = new Incident
+        {
+            Id = Guid.NewGuid(),
+            IncidentReference = "INC-protected",
+            Severity = IncidentSeverity.Warning,
+            Status = IncidentStatus.Open,
+            OperationType = ApprovalQueueOperationType.GlobalSystemStateUpdate,
+            Title = "Protected incident",
+            Summary = "Still active",
+            Detail = "Old but not terminal",
+            TargetType = "GlobalSystemState",
+            TargetId = "Singleton",
+            CorrelationId = "corr-protected",
+            CommandId = "cmd-protected",
+            DecisionId = "dec-protected",
+            ExecutionAttemptId = "exe-protected",
+            CreatedByUserId = "user-protected",
+            CreatedDate = oldDate,
+            UpdatedDate = oldDate
+        };
+
+        var openIncidentEvent = new IncidentEvent
+        {
+            Id = Guid.NewGuid(),
+            IncidentId = openIncident.Id,
+            IncidentReference = openIncident.IncidentReference,
+            EventType = IncidentEventType.IncidentCreated,
+            Message = "protected event",
+            ActorUserId = "user-protected",
+            CorrelationId = "corr-protected",
+            CommandId = "cmd-protected",
+            DecisionId = "dec-protected",
+            ExecutionAttemptId = "exe-protected",
+            CreatedDate = oldDate,
+            UpdatedDate = oldDate
+        };
+
+        var pendingApprovalQueue = new ApprovalQueue
+        {
+            Id = Guid.NewGuid(),
+            ApprovalReference = "APR-protected",
+            OperationType = ApprovalQueueOperationType.GlobalSystemStateUpdate,
+            Status = ApprovalQueueStatus.Pending,
+            Severity = IncidentSeverity.Warning,
+            Title = "Protected approval",
+            Summary = "Still pending",
+            TargetType = "GlobalSystemState",
+            TargetId = "Singleton",
+            RequestedByUserId = "user-protected",
+            RequiredApprovals = 2,
+            ApprovalCount = 1,
+            ExpiresAtUtc = oldDate.AddHours(1),
+            Reason = "Old but active",
+            PayloadJson = "{\"secret\":\"plain-secret\"}",
+            PayloadHash = "hash-protected",
+            CorrelationId = "corr-protected",
+            CommandId = "cmd-protected",
+            DecisionId = "dec-protected",
+            ExecutionAttemptId = "exe-protected",
+            IncidentReference = openIncident.IncidentReference,
+            CreatedDate = oldDate,
+            UpdatedDate = oldDate
+        };
+
+        var pendingApprovalAction = new ApprovalAction
+        {
+            Id = Guid.NewGuid(),
+            ApprovalQueueId = pendingApprovalQueue.Id,
+            ApprovalReference = pendingApprovalQueue.ApprovalReference,
+            ActionType = ApprovalActionType.Approved,
+            Sequence = 1,
+            ActorUserId = "user-protected",
+            Reason = "protected action",
+            CorrelationId = "corr-protected",
+            CommandId = "cmd-protected",
+            DecisionId = "dec-protected",
+            ExecutionAttemptId = "exe-protected",
+            IncidentReference = openIncident.IncidentReference,
+            CreatedDate = oldDate,
+            UpdatedDate = oldDate
+        };
+
+        dbContext.AddRange(openIncident, openIncidentEvent, pendingApprovalQueue, pendingApprovalAction);
+        await dbContext.SaveChangesAsync();
+
+        var timeProvider = new FixedTimeProvider(now);
+        var auditService = new AdminAuditLogService(dbContext, new CorrelationContextAccessor(), timeProvider);
+        var retentionService = new LogCenterRetentionService(
+            dbContext,
+            auditService,
+            Options.Create(new LogCenterRetentionOptions
+            {
+                Enabled = true,
+                DecisionTraceRetentionDays = 30,
+                ExecutionTraceRetentionDays = 30,
+                AdminAuditLogRetentionDays = 30,
+                IncidentRetentionDays = 30,
+                ApprovalRetentionDays = 30,
+                BatchSize = 100
+            }),
+            timeProvider,
+            NullLogger<LogCenterRetentionService>.Instance);
+
+        var runSnapshot = await retentionService.ApplyAsync();
+
+        Assert.Equal(0, runSnapshot.IncidentCount);
+        Assert.Equal(0, runSnapshot.IncidentEventCount);
+        Assert.Equal(0, runSnapshot.ApprovalQueueCount);
+        Assert.Equal(0, runSnapshot.ApprovalActionCount);
+
+        Assert.True(dbContext.Incidents.Any(entity => entity.IncidentReference == "INC-protected"));
+        Assert.True(dbContext.IncidentEvents.Any(entity => entity.IncidentReference == "INC-protected"));
+        Assert.True(dbContext.ApprovalQueues.Any(entity => entity.ApprovalReference == "APR-protected"));
+        Assert.True(dbContext.ApprovalActions.Any(entity => entity.ApprovalReference == "APR-protected"));
+    }
+
     private static ApplicationDbContext CreateDbContext(string connectionString)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()

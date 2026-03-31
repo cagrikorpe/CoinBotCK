@@ -3,7 +3,7 @@
     Layout = "_AuthLayout";
     ViewData["Title"] = "Onboarding";
     ViewData["AuthTitle"] = "İlk kurulum wizard'ı";
-    ViewData["AuthDescription"] = "Yeni kullanıcının trade modu, yön tercihleri, risk profili ve exchange bağlama hazırlığını anlaşılır adımlarla tamamlayacağı foundation akışı.";
+    ViewData["AuthDescription"] = "Yeni kullanıcının trade modu, yön tercihleri, risk profili ve exchange bağlama hazırlığını anlaşılır adımlarla tamamlayacağı onboarding akışı.";
     ViewData["AuthEyebrow"] = "Onboarding";
     ViewData["AuthStage"] = "Wizard";
     ViewData["AuthProgress"] = "6 adım";
@@ -31,9 +31,9 @@
         <div>
             <div class="cb-page-eyebrow">Getting Started</div>
             <h2 class="cb-page-title">İlk kurulum akışı</h2>
-            <p class="cb-page-description">Bu wizard gerçek business logic eklemeden, kullanıcının ne yapacağını adım adım anlayacağı ortak onboarding foundation'ını kurar.</p>
+            <p class="cb-page-description">Bu wizard, kullanıcının trade tercihlerini ve exchange bağlantısı öncesi kritik kararlarını adım adım gözden geçirmesini sağlar.</p>
         </div>
-        <div class="cb-badge cb-badge-info">UI-only foundation</div>
+        <div class="cb-badge cb-badge-info">Onboarding</div>
     </div>
 
     @await Html.PartialAsync("Foundation/_WizardStepper", steps)
@@ -68,7 +68,7 @@
                 </label>
             </div>
             <div class="cb-auth-alert cb-auth-alert-warning mt-6">
-                Futures seçimi daha yüksek risk uyarısı ile birlikte gösterilir; burada sadece foundation dili ve kart yapısı hazırlanmıştır.
+                Futures seçimi daha yüksek risk uyarısı ile birlikte gösterilir; bu ekran kullanıcıya risk seviyesini açık ve taranabilir biçimde anlatır.
             </div>
         </section>
 
@@ -83,7 +83,7 @@
                 <label class="cb-choice-card" data-cb-mode-dependent="futures">
                     <input type="radio" name="trade_direction" value="long_short" data-cb-summary-key="direction" data-cb-summary-text="Long + Short" />
                     <span class="cb-choice-title">Long + Short</span>
-                    <span class="cb-choice-text">Futures modunda iki yönlü işlem foundation alanı.</span>
+                    <span class="cb-choice-text">Futures modunda iki yönlü işlem seçeneği.</span>
                 </label>
                 <div class="cb-auth-summary-card">
                     <div class="cb-auth-summary-label">Risk notu</div>
@@ -114,7 +114,7 @@
                         <label class="cb-choice-card">
                             <input type="radio" name="risk_profile" value="orta" data-cb-summary-key="risk" data-cb-summary-text="Orta" />
                             <span class="cb-choice-title">Orta</span>
-                            <span class="cb-choice-text">Dengeli başlangıç profili foundation seçeneği.</span>
+                            <span class="cb-choice-text">Dengeli başlangıç profili.</span>
                         </label>
                         <label class="cb-choice-card">
                             <input type="radio" name="risk_profile" value="yuksek" data-cb-summary-key="risk" data-cb-summary-text="Yüksek" />
@@ -153,7 +153,7 @@
             <div class="cb-wizard-panel-grid">
                 <div>
                     <h3 class="cb-section-title">Kurulum özeti</h3>
-                    <p class="cb-page-description">Aşağıdaki kartlar, wizard seçimlerinin son özet görünümü için foundation alanı sağlar.</p>
+                    <p class="cb-page-description">Aşağıdaki kartlar, wizard seçimlerinin son özet görünümünü sunar.</p>
                     <div class="cb-summary-grid">
                         <div class="cb-auth-summary-card">
                             <div class="cb-auth-summary-label">Trade modu</div>
@@ -176,7 +176,7 @@
                 <div class="cb-auth-summary-card cb-auth-summary-card-emphasis">
                     <div class="cb-auth-summary-label">Exchange durumu</div>
                     <div class="cb-auth-summary-value">Bağlantı bekleniyor</div>
-                    <div class="cb-auth-summary-text">Exchange connect formu sonraki ekrana foundation olarak hazırlandı.</div>
+                    <div class="cb-auth-summary-text">Exchange connect ekranında gerçek credential doğrulaması tamamlanır.</div>
                     <a asp-controller="Onboarding" asp-action="ExchangeConnect" class="btn btn-primary font-weight-bolder mt-6">Exchange formuna geç</a>
                 </div>
             </div>

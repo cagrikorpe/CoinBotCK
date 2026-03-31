@@ -6,13 +6,13 @@
     {
         Eyebrow = "Correlation Trace",
         Title = "Audit & Log Merkezi",
-        Description = "CorrelationId tabanli decision ve execution trace read-modeli; signal -> decision -> execution zinciri minimal admin listesi.",
+        Description = "CorrelationId tabanli decision ve execution trace read-modeli; signal -> decision -> execution zinciri odakli ve masked admin görünümü.",
         StatusBadge = new AdminBadgeViewModel { Label = "Trace Index", Tone = "info", IconText = "TR" },
         MetaBadges = new[]
         {
             new AdminBadgeViewModel { Label = "Masked", Tone = "healthy", IconText = "MS" },
             new AdminBadgeViewModel { Label = "Read Model", Tone = "warning", IconText = "RM" },
-            new AdminBadgeViewModel { Label = "No Live Query", Tone = "neutral", IconText = "NL" }
+            new AdminBadgeViewModel { Label = "Focused Trace", Tone = "neutral", IconText = "FT" }
         },
         SecondaryActionText = "Sistem sağlığı",
         SecondaryActionHref = Url.Action("SystemHealth", "Admin", new { area = "Admin" }),

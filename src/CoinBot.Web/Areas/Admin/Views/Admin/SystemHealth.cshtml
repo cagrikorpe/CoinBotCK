@@ -13,8 +13,8 @@
         },
         SecondaryActionText = "Audit / loglar",
         SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" }),
-        PrimaryActionText = "Worker detail",
-        PrimaryActionHref = "#cb_admin_worker_drawer"
+        PrimaryActionText = "Incidents",
+        PrimaryActionHref = Url.Action("Incidents", "Admin", new { area = "Admin" })
     };
 }
 
@@ -48,14 +48,12 @@
     </div>
 
     <div class="col-xl-5">
-        @await Html.PartialAsync("Foundation/_AdminSeverityIncidentPanel")
-    </div>
-
-    <div class="col-12">
-        @await Html.PartialAsync("Foundation/_AdminSystemFailedJobsTable")
-    </div>
-
-    <div class="col-12">
-        @await Html.PartialAsync("Foundation/_AdminSystemHealthStatesShowcase")
+        @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+        {
+            Tone = "warning",
+            Title = "Follow-up routes",
+            Message = "Incident timeline ve audit kayitlari ayri read-model ekranlarinda tutulur. System health burada yalnizca snapshot ve heartbeat durumunu gosterir.",
+            Meta = "Snapshot only"
+        })
     </div>
 </div>

@@ -172,29 +172,11 @@ public sealed partial class AdminWorkspaceReadModelService
         var users = await dbContext.Users
             .AsNoTracking()
             .ToListAsync(cancellationToken);
-        var matchedUsers = users
+        var matchedUserEntities = users
             .Where(user => MatchesSupportQuery(user, normalizedQuery))
-            .Select(user => new AdminUserListItemSnapshot(
-                user.Id,
-                string.IsNullOrWhiteSpace(user.FullName) ? user.UserName ?? user.Email ?? user.Id : user.FullName,
-                user.UserName ?? user.Id,
-                user.Email,
-                BuildUserStatusLabel(user),
-                BuildUserStatusTone(user),
-                BuildMfaLabel(user),
-                BuildMfaTone(user),
-                string.Empty,
-                BuildTradingModeLabel(user),
-                BuildTradingModeTone(user),
-                0,
-                0,
-                user.MfaUpdatedAtUtc ?? user.TradingModeApprovedAtUtc,
-                BuildRelativeTimeLabel(now, user.MfaUpdatedAtUtc ?? user.TradingModeApprovedAtUtc),
-                BuildFreshnessTone(now, user.MfaUpdatedAtUtc ?? user.TradingModeApprovedAtUtc)))
             .Take(6)
             .ToArray();
-
-        var matchedUserIds = matchedUsers.Select(item => item.UserId).ToArray();
+        var matchedUserIds = matchedUserEntities.Select(item => item.Id).ToArray();
         var matchedBots = await dbContext.TradingBots
             .AsNoTracking()
             .Where(bot => !bot.IsDeleted && matchedUserIds.Contains(bot.OwnerUserId))
@@ -207,6 +189,35 @@ public sealed partial class AdminWorkspaceReadModelService
             .OrderByDescending(account => account.UpdatedDate)
             .Take(6)
             .ToListAsync(cancellationToken);
+        var botCountLookup = matchedBots
+            .GroupBy(bot => bot.OwnerUserId)
+            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+        var exchangeCountLookup = matchedExchanges
+            .GroupBy(account => account.OwnerUserId)
+            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+        var matchedUsers = matchedUserEntities
+            .Select(user =>
+            {
+                var activityAtUtc = user.MfaUpdatedAtUtc ?? user.TradingModeApprovedAtUtc;
+                return new AdminUserListItemSnapshot(
+                    user.Id,
+                    string.IsNullOrWhiteSpace(user.FullName) ? user.UserName ?? user.Email ?? user.Id : user.FullName,
+                    user.UserName ?? user.Id,
+                    user.Email,
+                    BuildUserStatusLabel(user),
+                    BuildUserStatusTone(user),
+                    BuildMfaLabel(user),
+                    BuildMfaTone(user),
+                    string.Empty,
+                    BuildTradingModeLabel(user),
+                    BuildTradingModeTone(user),
+                    botCountLookup.TryGetValue(user.Id, out var botCount) ? botCount : 0,
+                    exchangeCountLookup.TryGetValue(user.Id, out var exchangeCount) ? exchangeCount : 0,
+                    activityAtUtc,
+                    BuildRelativeTimeLabel(now, activityAtUtc),
+                    BuildFreshnessTone(now, activityAtUtc));
+            })
+            .ToArray();
 
         var selectedUserId = matchedUserIds.FirstOrDefault();
         var diagnostics = string.IsNullOrWhiteSpace(selectedUserId)
@@ -222,23 +233,28 @@ public sealed partial class AdminWorkspaceReadModelService
                 item.Severity,
                 item.SeverityTone))
             .ToArray();
+        var latestOrderFailures = await LoadLatestOrderFailuresAsync(cancellationToken);
         var botErrors = matchedBots.Select(bot =>
-            new AdminBotOperationSnapshot(
-                bot.Id.ToString(),
-                bot.Name,
-                bot.OwnerUserId,
-                matchedUsers.FirstOrDefault(user => user.UserId == bot.OwnerUserId)?.DisplayName ?? bot.OwnerUserId,
-                bot.IsEnabled ? "Aktif" : "Durduruldu",
-                bot.IsEnabled ? "healthy" : "neutral",
-                BuildTradingModeLabel(bot.TradingModeOverride ?? ExecutionEnvironment.Demo),
-                BuildTradingModeTone(bot.TradingModeOverride ?? ExecutionEnvironment.Demo),
-                bot.StrategyKey,
-                bot.OpenPositionCount > 0 ? "Exposure var" : "Exposure yok",
-                bot.OpenPositionCount > 0 ? "warning" : "neutral",
-                bot.IsEnabled ? "Çalışıyor" : "Durduruldu",
-                bot.OpenPositionCount > 0 ? "Open exposure" : "No failure",
-                bot.OpenOrderCount,
-                bot.OpenPositionCount))
+            latestOrderFailures.TryGetValue(bot.Id, out var failure)
+                ? new AdminBotOperationSnapshot(
+                    bot.Id.ToString(),
+                    bot.Name,
+                    bot.OwnerUserId,
+                    matchedUsers.FirstOrDefault(user => user.UserId == bot.OwnerUserId)?.DisplayName ?? bot.OwnerUserId,
+                    bot.IsEnabled ? "Aktif" : "Durduruldu",
+                    bot.IsEnabled ? "healthy" : "neutral",
+                    BuildTradingModeLabel(bot.TradingModeOverride ?? ExecutionEnvironment.Demo),
+                    BuildTradingModeTone(bot.TradingModeOverride ?? ExecutionEnvironment.Demo),
+                    bot.StrategyKey,
+                    bot.OpenPositionCount > 0 ? "Exposure var" : "Exposure yok",
+                    bot.OpenPositionCount > 0 ? "warning" : "neutral",
+                    bot.IsEnabled ? "Çalışıyor" : "Durduruldu",
+                    failure,
+                    bot.OpenOrderCount,
+                    bot.OpenPositionCount)
+                : null)
+            .Where(bot => bot is not null)
+            .Select(bot => bot!)
             .Take(4)
             .ToArray();
 

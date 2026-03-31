@@ -1,0 +1,14 @@
+[2026-03-31 17:30:23.865] [0000E930] === Logging started ===
+[2026-03-31 17:30:23.870] [0000E930] Executing: "C:\Program Files\dotnet\dotnet.exe" test tests/CoinBot.UnitTests/CoinBot.UnitTests.csproj --no-build --no-restore -v:minimal, PID: 59696, PPID: 51888
+[2026-03-31 17:30:23.872] [0000E930] IsElevated: False
+[2026-03-31 17:30:23.872] [0000E930] Is64BitProcess: True
+[2026-03-31 17:30:23.872] [0000E930] RebootPending: False
+[2026-03-31 17:30:23.872] [0000E930] ProcessorArchitecture: amd64
+[2026-03-31 17:30:23.872] [0000E930] HostArchitecture: x64
+[2026-03-31 17:30:23.872] [0000E930] SdkDirectory: 10.0.100
+[2026-03-31 17:30:23.872] [0000E930] VerifySignatures: False
+[2026-03-31 17:30:23.872] [0000E930] SDK feature band: 10.0.100
+[2026-03-31 17:30:30.593] [0000E930] Shutting down
+[2026-03-31 17:30:30.593] [0000E930] Shutdown completed.
+[2026-03-31 17:30:30.593] [0000E930] Restart required: False
+[2026-03-31 17:30:30.593] [0000E930] === Logging ended ===

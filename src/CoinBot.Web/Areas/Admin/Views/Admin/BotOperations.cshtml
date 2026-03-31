@@ -47,17 +47,4 @@
     <div class="col-xl-4">
         @await Html.PartialAsync("Foundation/_AdminBotHelpCard")
     </div>
-
-    <div class="col-12">
-        @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
-        {
-            Title = "Bot operasyonları hazır",
-            Message = "Listeler ve summary kartları gerçek bot snapshot verisiyle doldurulur. Sonuç yoksa ürün seviyesi empty-state görünür.",
-            IconText = "BT",
-            ActionText = "Exchange hesapları",
-            ActionHref = Url.Action("ExchangeAccounts", "Admin", new { area = "Admin" }),
-            SecondaryActionText = "Sistem sağlığı",
-            SecondaryActionHref = Url.Action("SystemHealth", "Admin", new { area = "Admin" })
-        })
-    </div>
 </div>
