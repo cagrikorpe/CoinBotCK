@@ -3,11 +3,11 @@
   "WorkspaceRootPath": "D:\\CkBot\\Code\\CoinBot\\",
   "Documents": [
     {
-      "AbsoluteMoniker": "D:0:0:{DCF8A5AE-2C97-4F8B-9852-852456B018F9}|src\\CoinBot.Web\\CoinBot.Web.csproj|d:\\ckbot\\code\\coinbot\\src\\coinbot.web\\appsettings.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}",
-      "RelativeMoniker": "D:0:0:{DCF8A5AE-2C97-4F8B-9852-852456B018F9}|src\\CoinBot.Web\\CoinBot.Web.csproj|solutionrelative:src\\coinbot.web\\appsettings.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}"
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\p\\WSP\\PassPulse\\_dist\\supply-chain\\sbom\\Portal.Web\\_manifest\\spdx_2.2\\manifest.spdx.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\p\\WSP\\PassPulse\\_dist\\supply-chain\\sbom\\Portal.Web\\_manifest\\spdx_2.2\\manifest.spdx.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}"
+      "AbsoluteMoniker": "D:0:0:{DCF8A5AE-2C97-4F8B-9852-852456B018F9}|src\\CoinBot.Web\\CoinBot.Web.csproj|d:\\ckbot\\code\\coinbot\\src\\coinbot.web\\appsettings.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}",
+      "RelativeMoniker": "D:0:0:{DCF8A5AE-2C97-4F8B-9852-852456B018F9}|src\\CoinBot.Web\\CoinBot.Web.csproj|solutionrelative:src\\coinbot.web\\appsettings.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}"
     },
     {
       "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\p\\WSP\\PassPulse\\_dist\\supply-chain\\sbom\\Portal.Web\\sbom-metadata.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}"
@@ -36,7 +36,7 @@
       "DocumentGroups": [
         {
           "DockedWidth": 200,
-          "SelectedChildIndex": 6,
+          "SelectedChildIndex": 7,
           "Children": [
             {
               "$type": "Bookmark",
@@ -64,20 +64,20 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 0,
+              "DocumentIndex": 1,
               "Title": "appsettings.json",
               "DocumentMoniker": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\appsettings.json",
               "RelativeDocumentMoniker": "src\\CoinBot.Web\\appsettings.json",
               "ToolTip": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\appsettings.json",
               "RelativeToolTip": "src\\CoinBot.Web\\appsettings.json",
-              "ViewState": "AgIAAFEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "ViewState": "AgIAACcAAAAAAAAAAAAAAA4AAAATAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001642|",
               "WhenOpened": "2026-03-24T17:04:48.38Z",
               "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 1,
+              "DocumentIndex": 0,
               "Title": "manifest.spdx.json",
               "DocumentMoniker": "D:\\p\\WSP\\PassPulse\\_dist\\supply-chain\\sbom\\Portal.Web\\_manifest\\spdx_2.2\\manifest.spdx.json",
               "RelativeDocumentMoniker": "..\\..\\..\\p\\WSP\\PassPulse\\_dist\\supply-chain\\sbom\\Portal.Web\\_manifest\\spdx_2.2\\manifest.spdx.json",
@@ -85,7 +85,8 @@
               "RelativeToolTip": "..\\..\\..\\p\\WSP\\PassPulse\\_dist\\supply-chain\\sbom\\Portal.Web\\_manifest\\spdx_2.2\\manifest.spdx.json",
               "ViewState": "AgIAADIBAAAAAAAAAAAAAFYBAAAkAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001642|",
-              "WhenOpened": "2026-03-23T22:31:06.311Z"
+              "WhenOpened": "2026-03-23T22:31:06.311Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",
