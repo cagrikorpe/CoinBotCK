@@ -14,6 +14,26 @@ namespace CoinBot.UnitTests.Web;
 public sealed class ExchangeConnectionControllerTests
 {
     [Fact]
+    public async Task OnboardingIndex_LoadsExchangeSnapshotIntoViewData()
+    {
+        var snapshot = new UserExchangeCommandCenterSnapshot(
+            "user-01",
+            "User One",
+            new UserExchangeEnvironmentSummary(ExecutionEnvironment.Demo, "Demo", "info", "Global varsayılan", "Demo mode", false),
+            new UserExchangeRiskOverrideSummary("Core", 2m, 10m, 3m, false, false, false, null, null, null, "Risk hazır", "healthy", "Profil hazır"),
+            [],
+            [],
+            new DateTime(2026, 3, 31, 10, 0, 0, DateTimeKind.Utc));
+        var service = new FakeUserExchangeCommandCenterService { Snapshot = snapshot };
+        var controller = CreateOnboardingController(service, "user-01");
+
+        var result = await controller.Index(CancellationToken.None);
+
+        Assert.IsType<ViewResult>(result);
+        Assert.Same(snapshot, controller.ViewData["OnboardingExchangeSnapshot"]);
+    }
+
+    [Fact]
     public async Task OnboardingExchangeConnect_LoadsRealSnapshotIntoViewModel()
     {
         var snapshot = new UserExchangeCommandCenterSnapshot(

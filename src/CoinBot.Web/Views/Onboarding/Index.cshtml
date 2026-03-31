@@ -1,3 +1,4 @@
+@using CoinBot.Application.Abstractions.ExchangeCredentials
 @using CoinBot.Web.ViewModels.Foundation
 @{
     Layout = "_AuthLayout";
@@ -24,6 +25,15 @@
         new() { Number = 5, Title = "Exchange", Caption = "Hazırlık" },
         new() { Number = 6, Title = "Özet", Caption = "Finish" }
     };
+    var exchangeSnapshot = ViewData["OnboardingExchangeSnapshot"] as UserExchangeCommandCenterSnapshot;
+    var latestExchangeAccount = exchangeSnapshot?.Accounts.FirstOrDefault();
+    var exchangeStatusValue = latestExchangeAccount?.CredentialStatusLabel ?? "Bağlantı bekleniyor";
+    var exchangeStatusText = latestExchangeAccount is null
+        ? "Exchange connect ekranında gerçek credential doğrulaması tamamlanır."
+        : !string.IsNullOrWhiteSpace(latestExchangeAccount.LastFailureReason)
+            ? latestExchangeAccount.LastFailureReason
+            : $"{latestExchangeAccount.PermissionSummary} · {latestExchangeAccount.EnvironmentLabel}";
+    var exchangeActionText = latestExchangeAccount is null ? "Exchange formuna geç" : "Credential durumunu aç";
 }
 
 <div class="cb-auth-panel cb-auth-panel-wide">
@@ -175,9 +185,9 @@
                 </div>
                 <div class="cb-auth-summary-card cb-auth-summary-card-emphasis">
                     <div class="cb-auth-summary-label">Exchange durumu</div>
-                    <div class="cb-auth-summary-value">Bağlantı bekleniyor</div>
-                    <div class="cb-auth-summary-text">Exchange connect ekranında gerçek credential doğrulaması tamamlanır.</div>
-                    <a asp-controller="Onboarding" asp-action="ExchangeConnect" class="btn btn-primary font-weight-bolder mt-6">Exchange formuna geç</a>
+                    <div class="cb-auth-summary-value">@exchangeStatusValue</div>
+                    <div class="cb-auth-summary-text">@exchangeStatusText</div>
+                    <a asp-controller="Onboarding" asp-action="ExchangeConnect" class="btn btn-primary font-weight-bolder mt-6">@exchangeActionText</a>
                 </div>
             </div>
         </section>

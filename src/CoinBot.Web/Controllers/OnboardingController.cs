@@ -10,8 +10,16 @@ namespace CoinBot.Web.Controllers;
 [Authorize]
 public sealed class OnboardingController(IUserExchangeCommandCenterService userExchangeCommandCenterService) : Controller
 {
-    public IActionResult Index()
+    public async Task<IActionResult> Index(CancellationToken cancellationToken)
     {
+        var userId = GetCurrentUserId();
+
+        if (userId is null)
+        {
+            return Challenge();
+        }
+
+        ViewData["OnboardingExchangeSnapshot"] = await userExchangeCommandCenterService.GetSnapshotAsync(userId, cancellationToken);
         return View();
     }
 
