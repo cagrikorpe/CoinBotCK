@@ -207,12 +207,76 @@ public sealed class BinanceWebSocketManagerTests
         Assert.Equal(CoinBot.Domain.Enums.DegradedModeReasonCode.CandleDataGapDetected, heartbeatRecorder.RecordedResults[1].GuardReasonCode);
     }
 
+    [Fact]
+    public async Task RunCycleAsync_DoesNotCallMoveNextConcurrently_WhenPollingForRestartSignals()
+    {
+        var now = new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(now);
+        using var memoryCache = new MemoryCache(new MemoryCacheOptions { SizeLimit = 64 });
+        var cachePolicyProvider = new MarketDataCachePolicyProvider(Options.Create(new InMemoryCacheOptions
+        {
+            SizeLimit = 64,
+            SymbolMetadataTtlMinutes = 60,
+            LatestPriceTtlSeconds = 15
+        }));
+        var symbolRegistry = new SharedSymbolRegistry(
+            memoryCache,
+            cachePolicyProvider,
+            NullLogger<SharedSymbolRegistry>.Instance);
+        var marketDataService = new MarketDataService(
+            symbolRegistry,
+            memoryCache,
+            cachePolicyProvider,
+            new MarketPriceStreamHub(),
+            NullLogger<MarketDataService>.Instance);
+        var indicatorDataService = new IndicatorDataService(
+            marketDataService,
+            new IndicatorStreamHub(),
+            Options.Create(new IndicatorEngineOptions()),
+            NullLogger<IndicatorDataService>.Instance);
+        var exchangeInfoClient = new FakeExchangeInfoClient(
+        [
+            new SymbolMetadataSnapshot(
+                "BTCUSDT",
+                "Binance",
+                "BTC",
+                "USDT",
+                0.01m,
+                0.0001m,
+                "TRADING",
+                true,
+                now.UtcDateTime)
+        ]);
+        var candleStreamClient = new BlockingCandleStreamClient();
+        var heartbeatRecorder = new FakeHeartbeatRecorder();
+        var manager = CreateManager(
+            symbolRegistry,
+            marketDataService,
+            indicatorDataService,
+            exchangeInfoClient,
+            candleStreamClient,
+            heartbeatRecorder,
+            timeProvider);
+
+        await marketDataService.TrackSymbolAsync("BTCUSDT");
+
+        var runTask = manager.RunCycleAsync();
+
+        await Task.Delay(TimeSpan.FromMilliseconds(1200));
+        Assert.False(candleStreamClient.ConcurrentMoveNextDetected);
+
+        candleStreamClient.CompleteCurrentMoveNext(false);
+        await runTask;
+
+        Assert.Equal(1, candleStreamClient.MoveNextCallCount);
+    }
+
     private static BinanceWebSocketManager CreateManager(
         SharedSymbolRegistry symbolRegistry,
         MarketDataService marketDataService,
         IndicatorDataService indicatorDataService,
         FakeExchangeInfoClient exchangeInfoClient,
-        FakeCandleStreamClient candleStreamClient,
+        IBinanceCandleStreamClient candleStreamClient,
         FakeHeartbeatRecorder heartbeatRecorder,
         AdjustableTimeProvider timeProvider)
     {
@@ -307,6 +371,73 @@ public sealed class BinanceWebSocketManagerTests
         {
             RecordedResults.Add(guardResult);
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class BlockingCandleStreamClient : IBinanceCandleStreamClient
+    {
+        private readonly TaskCompletionSource<bool> moveNextCompletionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int MoveNextCallCount { get; private set; }
+
+        public bool ConcurrentMoveNextDetected { get; private set; }
+
+        public IAsyncEnumerable<MarketCandleSnapshot> StreamAsync(
+            IReadOnlyCollection<string> symbols,
+            CancellationToken cancellationToken = default)
+        {
+            return new BlockingAsyncEnumerable(this, cancellationToken);
+        }
+
+        public void CompleteCurrentMoveNext(bool result)
+        {
+            moveNextCompletionSource.TrySetResult(result);
+        }
+
+        private sealed class BlockingAsyncEnumerable(
+            BlockingCandleStreamClient owner,
+            CancellationToken cancellationToken) : IAsyncEnumerable<MarketCandleSnapshot>, IAsyncEnumerator<MarketCandleSnapshot>
+        {
+            private bool moveNextInFlight;
+
+            public MarketCandleSnapshot Current => throw new InvalidOperationException("No candle snapshot is available.");
+
+            public IAsyncEnumerator<MarketCandleSnapshot> GetAsyncEnumerator(CancellationToken enumeratorCancellationToken = default)
+            {
+                return this;
+            }
+
+            public ValueTask DisposeAsync()
+            {
+                return ValueTask.CompletedTask;
+            }
+
+            public ValueTask<bool> MoveNextAsync()
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (moveNextInFlight)
+                {
+                    owner.ConcurrentMoveNextDetected = true;
+                }
+
+                moveNextInFlight = true;
+                owner.MoveNextCallCount++;
+
+                return AwaitMoveNextAsync();
+            }
+
+            private async ValueTask<bool> AwaitMoveNextAsync()
+            {
+                try
+                {
+                    return await owner.moveNextCompletionSource.Task;
+                }
+                finally
+                {
+                    moveNextInFlight = false;
+                }
+            }
         }
     }
 }

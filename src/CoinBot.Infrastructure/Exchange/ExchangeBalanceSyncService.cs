@@ -3,6 +3,8 @@ using CoinBot.Domain.Entities;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace CoinBot.Infrastructure.Exchange;
 
@@ -64,8 +66,9 @@ public sealed class ExchangeBalanceSyncService(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         logger.LogDebug(
-            "Exchange balances synchronized for account {ExchangeAccountId}. Count={BalanceCount}.",
+            "Exchange balances synchronized for account {ExchangeAccountId}. OwnerKey={OwnerKey}. Count={BalanceCount}.",
             snapshot.ExchangeAccountId,
+            CreateOwnerKey(snapshot.OwnerUserId),
             snapshot.Balances.Count);
     }
 
@@ -82,5 +85,12 @@ public sealed class ExchangeBalanceSyncService(
             DateTimeKind.Local => value.ToUniversalTime(),
             _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
         };
+    }
+
+    private static string CreateOwnerKey(string ownerUserId)
+    {
+        var normalizedValue = ownerUserId.Trim();
+        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(normalizedValue));
+        return Convert.ToHexString(hashBytes[..6]);
     }
 }

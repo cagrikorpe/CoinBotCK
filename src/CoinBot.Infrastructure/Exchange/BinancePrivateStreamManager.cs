@@ -27,6 +27,10 @@ public sealed class BinancePrivateStreamManager(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        logger.LogInformation(
+            "Binance private stream manager starting. Enabled={Enabled}.",
+            optionsValue.Enabled);
+
         if (!optionsValue.Enabled)
         {
             logger.LogInformation("Binance private stream manager is disabled by configuration.");

@@ -197,6 +197,98 @@ public sealed class UserWorkspaceCredentialIntegrationTests
     }
 
     [Fact]
+    public async Task UserExchangeCommandCenterService_AllowsDemoCredential_WhenWithdrawCapabilityIsUnknown()
+    {
+        var databaseName = $"CoinBotUserExchangeDemoWithdrawUnknownInt_{Guid.NewGuid():N}";
+        var connectionString = ResolveConnectionString(databaseName);
+        var options = CreateOptions(connectionString);
+        var environmentVariableName = $"COINBOT_CREDENTIAL_INT_{Guid.NewGuid():N}";
+        var previousEnvironmentValue = Environment.GetEnvironmentVariable(environmentVariableName);
+
+        Environment.SetEnvironmentVariable(environmentVariableName, PrimaryKeyBase64);
+
+        try
+        {
+            await using (var setupContext = new ApplicationDbContext(options, new TestDataScopeContext(null, hasIsolationBypass: true)))
+            {
+                await setupContext.Database.EnsureDeletedAsync();
+                await setupContext.Database.EnsureCreatedAsync();
+
+                setupContext.Users.Add(new ApplicationUser
+                {
+                    Id = "user-demo-unknown-01",
+                    UserName = "user.demo.unknown",
+                    NormalizedUserName = "USER.DEMO.UNKNOWN",
+                    Email = "user.demo.unknown@coinbot.local",
+                    NormalizedEmail = "USER.DEMO.UNKNOWN@COINBOT.LOCAL",
+                    FullName = "User Demo Unknown",
+                    TradingModeOverride = ExecutionEnvironment.Demo
+                });
+
+                await setupContext.SaveChangesAsync();
+            }
+
+            var timeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 4, 1, 11, 0, 0, TimeSpan.Zero));
+
+            await using var context = new ApplicationDbContext(options, new TestDataScopeContext("user-demo-unknown-01", hasIsolationBypass: false));
+            var service = CreateUserExchangeCommandCenterService(
+                context,
+                timeProvider,
+                environmentVariableName,
+                new BinanceCredentialProbeSnapshot(
+                    IsKeyValid: true,
+                    CanTrade: true,
+                    CanWithdraw: null,
+                    SupportsSpot: true,
+                    SupportsFutures: false,
+                    HasTimestampSkew: false,
+                    HasIpRestrictionIssue: false,
+                    SpotEnvironmentScope: "Demo",
+                    FuturesEnvironmentScope: "Demo",
+                    PermissionSummary: "Trade=Y; Withdraw=?; Spot=Y; Futures=N; Env=Demo",
+                    SafeFailureReason: null),
+                ExecutionEnvironment.Demo);
+
+            var result = await service.ConnectBinanceAsync(
+                new ConnectUserBinanceCredentialRequest(
+                    "user-demo-unknown-01",
+                    ExchangeAccountId: null,
+                    ApiKey: "api-key-int-demo-unknown",
+                    ApiSecret: "api-secret-int-demo-unknown",
+                    RequestedEnvironment: ExecutionEnvironment.Demo,
+                    RequestedTradeMode: ExchangeTradeModeSelection.Spot,
+                    Actor: "user:user-demo-unknown-01",
+                    CorrelationId: "corr-int-demo-unknown-001"));
+
+            Assert.True(result.IsValid);
+
+            await using var verifyContext = new ApplicationDbContext(options, new TestDataScopeContext(null, hasIsolationBypass: true));
+            var exchangeAccount = await verifyContext.ExchangeAccounts.SingleAsync(entity => entity.OwnerUserId == "user-demo-unknown-01");
+            var validation = await verifyContext.ApiCredentialValidations.SingleAsync(entity => entity.OwnerUserId == "user-demo-unknown-01");
+            var mirroredCredential = await verifyContext.ApiCredentials.SingleAsync(entity => entity.OwnerUserId == "user-demo-unknown-01");
+
+            Assert.Equal(ExchangeCredentialStatus.Active, exchangeAccount.CredentialStatus);
+            Assert.False(validation.CanWithdraw);
+            Assert.Equal("Valid", validation.ValidationStatus);
+            Assert.Equal("Trade=Y; Withdraw=DemoUnknown; Spot=Y; Futures=N; Env=Demo", validation.PermissionSummary);
+            Assert.Equal("Trade=Y; Withdraw=DemoUnknown; Spot=Y; Futures=N; Env=Demo", mirroredCredential.PermissionSummary);
+            Assert.Null(validation.FailureReason);
+
+            var snapshot = await service.GetSnapshotAsync("user-demo-unknown-01");
+            var account = Assert.Single(snapshot.Accounts);
+
+            Assert.Equal("Aktif", account.CredentialStatusLabel);
+            Assert.Contains("Withdraw=DemoUnknown", account.PermissionSummary, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await using var cleanupContext = new ApplicationDbContext(options, new TestDataScopeContext(null, hasIsolationBypass: true));
+            await cleanupContext.Database.EnsureDeletedAsync();
+            Environment.SetEnvironmentVariable(environmentVariableName, previousEnvironmentValue);
+        }
+    }
+
+    [Fact]
     public async Task UserExchangeCommandCenterService_FailsClosed_WhenProbeRequestThrows()
     {
         var databaseName = $"CoinBotUserExchangeProbeFailInt_{Guid.NewGuid():N}";

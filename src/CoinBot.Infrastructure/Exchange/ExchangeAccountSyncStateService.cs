@@ -104,7 +104,21 @@ public sealed class ExchangeAccountSyncStateService(ApplicationDbContext dbConte
         };
 
         dbContext.ExchangeAccountSyncStates.Add(state);
-        return state;
+
+        try
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return state;
+        }
+        catch (DbUpdateException)
+        {
+            dbContext.Entry(state).State = EntityState.Detached;
+
+            return await dbContext.ExchangeAccountSyncStates
+                .SingleAsync(
+                    entity => entity.ExchangeAccountId == exchangeAccountId && !entity.IsDeleted,
+                    cancellationToken);
+        }
     }
 
     private static string? NormalizeOptional(string? value)

@@ -1,77 +1,65 @@
-@{
-    var rows = new[]
-    {
-        new { Symbol = "BTCUSDT", Direction = "Long", DirectionTone = "success", Leverage = "3x", Entry = "63,540", Current = "64,180", Pnl = "+$ 142.70", PnlTone = "positive", Risk = "Düşük", RiskTone = "success", Updated = "12 sn önce" },
-        new { Symbol = "ETHUSDT", Direction = "Short", DirectionTone = "danger", Leverage = "5x", Entry = "3,212", Current = "3,168", Pnl = "+$ 58.14", PnlTone = "positive", Risk = "Orta", RiskTone = "warning", Updated = "27 sn önce" },
-        new { Symbol = "SOLUSDT", Direction = "Long", DirectionTone = "success", Leverage = "8x", Entry = "148.20", Current = "144.80", Pnl = "-$ 39.92", PnlTone = "negative", Risk = "Yüksek", RiskTone = "danger", Updated = "41 sn önce" }
-    };
-}
+@model CoinBot.Web.ViewModels.Home.DashboardViewModel
 <div class="card card-custom gutter-b cb-card cb-dashboard-card cb-positions-card">
     <div class="card-header border-0 pt-6">
         <div class="card-title d-block">
             <div class="d-flex align-items-center flex-wrap gap-2">
                 <h3 class="card-label font-weight-bolder mb-0">Açık Pozisyonlar</h3>
-                <span class="cb-badge cb-badge-neutral">3 satır foundation</span>
+                <span class="cb-badge cb-badge-neutral">@Model.OpenPositions.Count satır</span>
             </div>
-            <div class="text-muted mt-2">Gerçek emir/pozisyon motoru bağlandığında aynı tablo iskeleti kullanılacak.</div>
-        </div>
-        <div class="card-toolbar">
-            <div class="cb-chip-group cb-chip-group-sm" data-cb-toggle-group>
-                <button type="button" class="cb-chip is-active" data-cb-toggle-active>Tümü</button>
-                <button type="button" class="cb-chip" data-cb-toggle-active>Sadece Long</button>
-                <button type="button" class="cb-chip" data-cb-toggle-active>Sadece Short</button>
-            </div>
+            <div class="text-muted mt-2">Exchange private sync ile yazılan gerçek futures pozisyonları burada listelenir.</div>
         </div>
     </div>
     <div class="card-body pt-2">
-        <div class="cb-table-wrap">
-            <table class="table table-borderless cb-table mb-0">
-                <thead>
-                    <tr>
-                        <th>Sembol</th>
-                        <th>Yön</th>
-                        <th>Leverage</th>
-                        <th>Giriş</th>
-                        <th>Güncel</th>
-                        <th>Unrealized PnL</th>
-                        <th>Risk</th>
-                        <th>Durum</th>
-                        <th class="text-right">Aksiyon</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var row in rows)
-                    {
+        @if (Model.OpenPositions.Count == 0)
+        {
+            <div class="cb-auth-summary-card cb-auth-summary-card-stacked">
+                <div class="cb-auth-summary-label">Aktif futures pozisyonu yok</div>
+                <div class="cb-auth-summary-text">Exchange private sync yazmaya başladığında gerçek açık pozisyonlar bu tabloda görünür.</div>
+            </div>
+        }
+        else
+        {
+            <div class="cb-table-wrap">
+                <table class="table table-borderless cb-table mb-0">
+                    <thead>
                         <tr>
-                            <td>
-                                <div class="cb-position-symbol">@row.Symbol</div>
-                                <div class="cb-dashboard-card-meta">Perp placeholder</div>
-                            </td>
-                            <td><span class="cb-badge @(row.DirectionTone == "success" ? "cb-badge-success" : "cb-badge-danger")">@row.Direction</span></td>
-                            <td class="cb-numeric-cell">@row.Leverage</td>
-                            <td class="cb-numeric-cell">@row.Entry</td>
-                            <td class="cb-numeric-cell">@row.Current</td>
-                            <td class="cb-numeric-cell @(row.PnlTone == "positive" ? "cb-text-positive" : "cb-text-negative")">@row.Pnl</td>
-                            <td><span class="cb-badge @(row.RiskTone == "success" ? "cb-badge-success" : row.RiskTone == "warning" ? "cb-badge-warning" : "cb-badge-danger")">@row.Risk</span></td>
-                            <td>
-                                <div>@row.Updated</div>
-                                <div class="cb-dashboard-card-meta">İzleniyor</div>
-                            </td>
-                            <td class="text-right">
-                                <div class="cb-table-actions">
-                                    <button type="button" class="btn btn-xs btn-light-primary font-weight-bold">Detay</button>
-                                    <button type="button" class="btn btn-xs btn-light-warning font-weight-bold" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Pozisyon azalt" data-cb-modal-tone="warning" data-cb-modal-message="Bu buton pozisyon azaltma akışının confirm standardını göstermek için bırakıldı." data-cb-modal-confirm="Azalt">Azalt</button>
-                                    <button type="button" class="btn btn-xs btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_danger_modal" data-cb-modal-title="Pozisyon kapat" data-cb-modal-tone="danger" data-cb-modal-message="Gerçek close-position aksiyonu bu fazda yok. Sadece destructive action standardı hazırlanmıştır." data-cb-modal-confirm="Kapat">Kapat</button>
-                                </div>
-                            </td>
+                            <th>Sembol</th>
+                            <th>Yön</th>
+                            <th>Miktar</th>
+                            <th>Giriş</th>
+                            <th>Güncel</th>
+                            <th>Unrealized PnL</th>
+                            <th>Margin</th>
+                            <th>Durum</th>
                         </tr>
-                    }
-                </tbody>
-            </table>
-        </div>
-        <div class="cb-positions-footer mt-5">
-            <span class="cb-dashboard-card-meta">Loading, empty ve error state için aynı kart yüzeyi Foundation/_LoadingState, _EmptyState ve _ErrorState partial’ları ile tekrar kullanılabilir.</span>
-            <a asp-controller="Bots" asp-action="Index" class="btn btn-light-primary font-weight-bold">Pozisyon stratejileri</a>
-        </div>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in Model.OpenPositions)
+                        {
+                            <tr>
+                                <td>
+                                    <div class="cb-position-symbol">@row.Symbol</div>
+                                    <div class="cb-dashboard-card-meta">Futures sync</div>
+                                </td>
+                                <td><span class="cb-badge @(row.DirectionTone == "success" ? "cb-badge-success" : "cb-badge-danger")">@row.Direction</span></td>
+                                <td class="cb-numeric-cell">@row.Leverage</td>
+                                <td class="cb-numeric-cell">@row.Entry</td>
+                                <td class="cb-numeric-cell">@row.Current</td>
+                                <td class="cb-numeric-cell @(row.PnlTone == "positive" ? "cb-text-positive" : "cb-text-negative")">@row.Pnl</td>
+                                <td><span class="cb-badge @(row.RiskTone == "success" ? "cb-badge-success" : row.RiskTone == "warning" ? "cb-badge-warning" : "cb-badge-danger")">@row.Risk</span></td>
+                                <td>
+                                    <div>@row.Updated</div>
+                                    <div class="cb-dashboard-card-meta">İzleniyor</div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <div class="cb-positions-footer mt-5">
+                <span class="cb-dashboard-card-meta">Pozisyon satırları `ExchangePositions` ve anlık fiyat cache’i üzerinden üretilir.</span>
+                <a asp-controller="Exchanges" asp-action="Index" class="btn btn-light-primary font-weight-bold">Command Center</a>
+            </div>
+        }
     </div>
 </div>

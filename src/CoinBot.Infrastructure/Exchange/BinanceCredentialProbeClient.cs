@@ -132,8 +132,7 @@ public sealed class BinanceCredentialProbeClient(
         var hasTimestampSkew = code == "-1021" ||
                                normalizedMessage.Contains("timestamp", StringComparison.OrdinalIgnoreCase) ||
                                normalizedMessage.Contains("recvWindow", StringComparison.OrdinalIgnoreCase);
-        var hasIpRestrictionIssue = normalizedMessage.Contains("IP", StringComparison.OrdinalIgnoreCase) ||
-                                    normalizedMessage.Contains("whitelist", StringComparison.OrdinalIgnoreCase);
+        var hasIpRestrictionIssue = IsExplicitIpRestriction(code, normalizedMessage);
 
         return new EndpointProbeResult(
             IsSuccess: false,
@@ -182,7 +181,7 @@ public sealed class BinanceCredentialProbeClient(
             message.Contains("API-key", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("signature", StringComparison.OrdinalIgnoreCase))
         {
-            return "API key veya secret doğrulanamadı.";
+            return "API key, secret veya gerekli izinler doğrulanamadı.";
         }
 
         if (message.Contains("permissions", StringComparison.OrdinalIgnoreCase))
@@ -293,6 +292,20 @@ public sealed class BinanceCredentialProbeClient(
             CryptographicOperations.ZeroMemory(secretBytes);
             CryptographicOperations.ZeroMemory(payloadBytes);
         }
+    }
+
+    private static bool IsExplicitIpRestriction(string? code, string message)
+    {
+        if (string.Equals(code, "-2015", StringComparison.Ordinal) &&
+            message.Contains("API-key, IP, or permissions", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return message.Contains("whitelist", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("not in the ip", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("ip address", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("restricted to", StringComparison.OrdinalIgnoreCase);
     }
 
     private sealed record EndpointProbeResult(

@@ -1,10 +1,12 @@
 using CoinBot.Contracts.Common;
 using CoinBot.Infrastructure.Identity;
 using System.Data.Common;
+using Microsoft.Data.SqlClient;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace CoinBot.Infrastructure.Persistence;
@@ -18,6 +20,7 @@ public static class IdentitySeedData
         var scopedServices = scope.ServiceProvider;
         var logger = scopedServices.GetRequiredService<ILoggerFactory>().CreateLogger("CoinBot.IdentitySeed");
         var dbContext = scopedServices.GetRequiredService<ApplicationDbContext>();
+        var hostEnvironment = scopedServices.GetRequiredService<IHostEnvironment>();
         var roleManager = scopedServices.GetRequiredService<RoleManager<IdentityRole>>();
         var userManager = scopedServices.GetRequiredService<UserManager<ApplicationUser>>();
         var connectionTarget = DescribeConnectionTarget(dbContext);
@@ -30,6 +33,16 @@ public static class IdentitySeedData
             connectionTarget.IntegratedSecurity,
             connectionTarget.Encrypt,
             connectionTarget.TrustServerCertificate);
+
+        if (hostEnvironment.IsDevelopment() &&
+            !await CanReachDatabaseAsync(dbContext, logger, cancellationToken))
+        {
+            logger.LogWarning(
+                "Identity seed skipped in Development because the configured database is unreachable. DataSource={DataSource} Database={Database}",
+                connectionTarget.DataSource,
+                connectionTarget.Database);
+            return;
+        }
 
         await dbContext.Database.MigrateAsync(cancellationToken);
 
@@ -198,6 +211,51 @@ public static class IdentitySeedData
         }
 
         return null;
+    }
+
+    private static async Task<bool> CanReachDatabaseAsync(
+        ApplicationDbContext dbContext,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        var connectionString = dbContext.Database.GetConnectionString();
+
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (string.Equals(dbContext.Database.ProviderName, "Microsoft.EntityFrameworkCore.SqlServer", StringComparison.Ordinal))
+            {
+                var sqlConnectionStringBuilder = new SqlConnectionStringBuilder(connectionString)
+                {
+                    ConnectTimeout = Math.Min(
+                        Math.Max(new SqlConnectionStringBuilder(connectionString).ConnectTimeout, 1),
+                        3),
+                    Pooling = false
+                };
+
+                await using var sqlConnection = new SqlConnection(sqlConnectionStringBuilder.ConnectionString);
+                using var sqlTimeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                sqlTimeoutCancellation.CancelAfter(TimeSpan.FromSeconds(sqlConnectionStringBuilder.ConnectTimeout + 1));
+                await sqlConnection.OpenAsync(sqlTimeoutCancellation.Token);
+                await sqlConnection.CloseAsync();
+                return true;
+            }
+
+            using var genericTimeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            genericTimeoutCancellation.CancelAfter(TimeSpan.FromSeconds(3));
+            return await dbContext.Database.CanConnectAsync(genericTimeoutCancellation.Token);
+        }
+        catch (Exception exception) when (exception is SqlException or DbException or InvalidOperationException or OperationCanceledException)
+        {
+            logger.LogWarning(
+                exception,
+                "Identity seed database connectivity probe failed.");
+            return false;
+        }
     }
 
     private readonly record struct ConnectionTargetInfo(

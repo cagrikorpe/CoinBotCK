@@ -16,6 +16,10 @@ public sealed class ExchangeBalanceSyncWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        logger.LogInformation(
+            "Exchange balance sync worker starting. Enabled={Enabled}.",
+            optionsValue.Enabled);
+
         if (!optionsValue.Enabled)
         {
             logger.LogInformation("Exchange balance sync worker is disabled by configuration.");

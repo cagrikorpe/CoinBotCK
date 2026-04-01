@@ -15,6 +15,10 @@ public sealed class ExchangeAppStateSyncWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        logger.LogInformation(
+            "Exchange app-state sync worker starting. Enabled={Enabled}.",
+            optionsValue.Enabled);
+
         if (!optionsValue.Enabled)
         {
             logger.LogInformation("Exchange-app state sync worker is disabled by configuration.");

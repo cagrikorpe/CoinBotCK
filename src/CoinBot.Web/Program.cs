@@ -3,7 +3,9 @@ using CoinBot.Infrastructure;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.Web.Hubs;
+using Microsoft.Data.SqlClient;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Serilog;
 using Serilog.Events;
@@ -18,6 +20,18 @@ Log.Logger = new LoggerConfiguration()
 try
 {
     var builder = WebApplication.CreateBuilder(args);
+    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+    var sqlConnectionStringBuilder = string.IsNullOrWhiteSpace(connectionString)
+        ? null
+        : new SqlConnectionStringBuilder(connectionString);
+
+    Log.Information(
+        "Runtime configuration resolved. Environment={EnvironmentName} MarketDataBinanceEnabled={MarketDataBinanceEnabled} ExchangeSyncBinanceEnabled={ExchangeSyncBinanceEnabled} DbServer={DbServer} DbName={DbName}",
+        builder.Environment.EnvironmentName,
+        builder.Configuration.GetValue<bool>("MarketData:Binance:Enabled"),
+        builder.Configuration.GetValue<bool>("ExchangeSync:Binance:Enabled"),
+        sqlConnectionStringBuilder?.DataSource ?? "unknown",
+        sqlConnectionStringBuilder?.InitialCatalog ?? "unknown");
 
     builder.Host.UseSerilog((context, _, loggerConfiguration) =>
     {
@@ -36,9 +50,27 @@ try
     builder.Services.AddInfrastructure(builder.Configuration);
     builder.Services.AddHostedService<MarketDataHubBridgeService>();
 
+    if (builder.Environment.IsDevelopment())
+    {
+        builder.Services.Configure<HostOptions>(options =>
+        {
+            options.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore;
+            options.ServicesStartConcurrently = true;
+        });
+    }
+
     var app = builder.Build();
 
-    await app.Services.EnsureIdentitySeedDataAsync(app.Configuration);
+    try
+    {
+        await app.Services.EnsureIdentitySeedDataAsync(app.Configuration);
+    }
+    catch (Exception exception) when (app.Environment.IsDevelopment() && IsStartupDatabaseException(exception))
+    {
+        Log.Warning(
+            exception,
+            "Development startup database initialization failed. Web host will continue without automatic identity seed.");
+    }
 
     app.UseMiddleware<CorrelationContextMiddleware>();
     app.UseSerilogRequestLogging(options =>
@@ -119,4 +151,17 @@ static HealthCheckOptions CreateHealthCheckOptions(Func<HealthCheckRegistration,
         Predicate = predicate,
         ResponseWriter = HealthCheckResponseWriter.WriteAsync
     };
+}
+
+static bool IsStartupDatabaseException(Exception exception)
+{
+    for (var current = exception; current is not null; current = current.InnerException)
+    {
+        if (current is SqlException or DbUpdateException or System.Data.Common.DbException)
+        {
+            return true;
+        }
+    }
+
+    return false;
 }

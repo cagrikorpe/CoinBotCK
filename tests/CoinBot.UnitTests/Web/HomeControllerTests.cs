@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Security.Claims;
+using CoinBot.Application.Abstractions.Dashboard;
 using CoinBot.Application.Abstractions.ExchangeCredentials;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Domain.Enums;
@@ -8,6 +9,7 @@ using CoinBot.Web.Controllers;
 using CoinBot.Web.ViewModels.Home;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace CoinBot.UnitTests.Web;
@@ -20,14 +22,17 @@ public sealed class HomeControllerTests
         var marketDataService = new FakeMarketDataService();
         var symbolRegistry = new FakeSharedSymbolRegistry();
         var exchangeService = new FakeUserExchangeCommandCenterService();
+        var dashboardService = new FakeUserDashboardPortfolioReadModelService();
         var controller = new HomeController(
             exchangeService,
+            dashboardService,
             marketDataService,
             symbolRegistry,
             Options.Create(new BinanceMarketDataOptions
             {
                 SeedSymbols = ["btcusdt", "ethusdt", "solusdt"]
-            }));
+            }),
+            NullLogger<HomeController>.Instance);
         controller.ControllerContext = CreateControllerContext("user-01");
 
         marketDataService.SetLatestPrice("BTCUSDT", 64000.50m, At(0), "unit-test");
@@ -43,8 +48,11 @@ public sealed class HomeControllerTests
         var solTicker = Assert.Single(model.MarketTickers, ticker => ticker.Symbol == "SOLUSDT");
 
         Assert.Equal("/hubs/market-data", model.MarketDataHubPath);
-        Assert.Equal(["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"], marketDataService.TrackedSymbols);
+        Assert.Equal(["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT"], marketDataService.TrackedSymbols);
         Assert.Same(exchangeService.Snapshot, controller.ViewData["DashboardExchangeSnapshot"]);
+        Assert.Equal("Cuzdan bakiyesi", model.Kpis[0].Label);
+        Assert.Single(model.OpenPositions);
+        Assert.Equal("XRPUSDT", model.OpenPositions[0].Symbol);
         Assert.Equal(64000.50m, btcTicker.Price);
         Assert.Equal("TRADING", btcTicker.TradingStatus);
         Assert.Equal(0.0001m, btcTicker.StepSize);
@@ -57,9 +65,11 @@ public sealed class HomeControllerTests
     {
         var controller = new HomeController(
             new FakeUserExchangeCommandCenterService(),
+            new FakeUserDashboardPortfolioReadModelService(),
             new FakeMarketDataService(),
             new FakeSharedSymbolRegistry(),
-            Options.Create(new BinanceMarketDataOptions()));
+            Options.Create(new BinanceMarketDataOptions()),
+            NullLogger<HomeController>.Instance);
 
         var result = await controller.Index(CancellationToken.None);
 
@@ -193,6 +203,26 @@ public sealed class HomeControllerTests
         public Task<ConnectUserBinanceCredentialResult> ConnectBinanceAsync(ConnectUserBinanceCredentialRequest request, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
+        }
+    }
+
+    private sealed class FakeUserDashboardPortfolioReadModelService : IUserDashboardPortfolioReadModelService
+    {
+        public UserDashboardPortfolioSnapshot Snapshot { get; } = new(
+            1,
+            "Canli senkron bagli",
+            "positive",
+            At(0),
+            [
+                new UserDashboardBalanceSnapshot("USDT", 1500m, 1490m, 1200m, 1200m, At(0), At(0))
+            ],
+            [
+                new UserDashboardPositionSnapshot("XRPUSDT", "LONG", 25m, 0.51m, 0.51m, 15.5m, "cross", 0m, At(0), At(0))
+            ]);
+
+        public Task<UserDashboardPortfolioSnapshot> GetSnapshotAsync(string userId, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(Snapshot);
         }
     }
 }

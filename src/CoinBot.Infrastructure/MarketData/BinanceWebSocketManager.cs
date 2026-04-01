@@ -108,18 +108,19 @@ public sealed class BinanceWebSocketManager(
     {
         var reconnectGeneration = webSocketReconnectCoordinator?.GetGeneration() ?? 0L;
         var hasRecordedHealthyState = false;
+        Task<bool>? pendingMoveNextTask = null;
         await using var enumerator = candleStreamClient
             .StreamAsync(trackedSymbols.Symbols, cancellationToken)
             .GetAsyncEnumerator(cancellationToken);
 
         while (!cancellationToken.IsCancellationRequested)
         {
-            var moveNextTask = enumerator.MoveNextAsync().AsTask();
+            pendingMoveNextTask ??= enumerator.MoveNextAsync().AsTask();
             var completedTask = await Task.WhenAny(
-                moveNextTask,
+                pendingMoveNextTask,
                 Task.Delay(InterruptionPollInterval, cancellationToken));
 
-            if (completedTask != moveNextTask)
+            if (completedTask != pendingMoveNextTask)
             {
                 if (ShouldRestartStream(trackedSymbols.Version, reconnectGeneration))
                 {
@@ -129,11 +130,12 @@ public sealed class BinanceWebSocketManager(
                 continue;
             }
 
-            if (!await moveNextTask)
+            if (!await pendingMoveNextTask)
             {
                 return;
             }
 
+            pendingMoveNextTask = null;
             var snapshot = enumerator.Current;
             lastMessageReceivedAtUtc = snapshot.ReceivedAtUtc;
 

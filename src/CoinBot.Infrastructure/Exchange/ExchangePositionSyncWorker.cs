@@ -16,6 +16,10 @@ public sealed class ExchangePositionSyncWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        logger.LogInformation(
+            "Exchange position sync worker starting. Enabled={Enabled}.",
+            optionsValue.Enabled);
+
         if (!optionsValue.Enabled)
         {
             logger.LogInformation("Exchange position sync worker is disabled by configuration.");

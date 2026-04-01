@@ -171,9 +171,17 @@ public sealed class UserExchangeCommandCenterService(
                                            probe.SpotEnvironmentScope,
                                            probe.FuturesEnvironmentScope);
         var environmentMatch = requestedEnvironmentAllowed && providerEnvironmentMatch;
+        var demoWithdrawUnknownAccepted = string.IsNullOrWhiteSpace(probeUnavailableReason) &&
+                                          request.RequestedEnvironment == ExecutionEnvironment.Demo &&
+                                          effectiveEnvironment == ExecutionEnvironment.Demo &&
+                                          providerEnvironmentMatch &&
+                                          probe.IsKeyValid &&
+                                          !probe.HasTimestampSkew &&
+                                          !probe.HasIpRestrictionIssue &&
+                                          !probe.CanWithdraw.HasValue;
         var withdrawVerified = string.IsNullOrWhiteSpace(probeUnavailableReason) && probe.CanWithdraw.HasValue;
         var canWithdraw = string.IsNullOrWhiteSpace(probeUnavailableReason)
-            ? probe.CanWithdraw ?? true
+            ? probe.CanWithdraw ?? (demoWithdrawUnknownAccepted ? false : true)
             : true;
         var canTrade = string.IsNullOrWhiteSpace(probeUnavailableReason) &&
                        request.RequestedTradeMode switch
@@ -183,6 +191,7 @@ public sealed class UserExchangeCommandCenterService(
                            ExchangeTradeModeSelection.Both => probe.SupportsSpot && probe.CanTrade && probe.SupportsFutures,
                            _ => false
                        };
+        withdrawVerified = withdrawVerified || demoWithdrawUnknownAccepted;
         var isKeyValid = string.IsNullOrWhiteSpace(probeUnavailableReason) &&
                          probe.IsKeyValid &&
                          !probe.HasTimestampSkew &&
@@ -221,7 +230,7 @@ public sealed class UserExchangeCommandCenterService(
                 HasIpRestrictionIssue: probe.HasIpRestrictionIssue,
                 FailureReason: failureReason,
                 PermissionSummary: string.IsNullOrWhiteSpace(probeUnavailableReason)
-                    ? probe.PermissionSummary
+                    ? BuildEffectivePermissionSummary(probe.PermissionSummary, demoWithdrawUnknownAccepted)
                     : "Trade=?; Withdraw=?; Spot=?; Futures=?; Env=Unknown"),
             cancellationToken);
 
@@ -496,6 +505,16 @@ public sealed class UserExchangeCommandCenterService(
         }
 
         return null;
+    }
+
+    private static string BuildEffectivePermissionSummary(string permissionSummary, bool demoWithdrawUnknownAccepted)
+    {
+        if (!demoWithdrawUnknownAccepted)
+        {
+            return permissionSummary;
+        }
+
+        return permissionSummary.Replace("Withdraw=?", "Withdraw=DemoUnknown", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string ResolveProviderEnvironmentScope(
