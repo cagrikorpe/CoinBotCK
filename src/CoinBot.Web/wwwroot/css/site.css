@@ -1342,6 +1342,17 @@ body.cb-drawer-open {
   background: rgba(75, 124, 243, 0.14);
 }
 
+.cb-choice-pill.is-disabled {
+  opacity: 0.56;
+  cursor: not-allowed;
+}
+
+.cb-choice-pill.is-disabled:hover {
+  color: var(--cb-text-secondary);
+  border-color: var(--cb-border-color);
+  background: var(--cb-bg-surface-2);
+}
+
 .cb-inline-summary {
   display: flex;
   align-items: center;

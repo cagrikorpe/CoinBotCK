@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using System.Security.Claims;
 using CoinBot.Application.Abstractions.ExchangeCredentials;
 using CoinBot.Contracts.Common;
+using CoinBot.Infrastructure.Credentials;
 using CoinBot.Web.ViewModels.Exchanges;
 using Microsoft.AspNetCore.Mvc;
 
@@ -10,6 +11,9 @@ namespace CoinBot.Web.Controllers;
 [Authorize]
 public sealed class OnboardingController(IUserExchangeCommandCenterService userExchangeCommandCenterService) : Controller
 {
+    private const string CredentialSecurityConfigurationErrorMessage =
+        "Credential guvenlik yapilandirmasi eksik oldugu icin API key kaydedilemedi. Local/dev ortaminda encryption key tanimlanmadan dogrulama baslatilamaz.";
+
     public async Task<IActionResult> Index(CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
@@ -62,7 +66,7 @@ public sealed class OnboardingController(IUserExchangeCommandCenterService userE
     [Authorize(Policy = ApplicationPolicies.ExchangeManagement)]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> ConnectBinance(
-        BinanceCredentialConnectInputModel input,
+        [Bind(Prefix = "Form")] BinanceCredentialConnectInputModel input,
         CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
@@ -78,17 +82,27 @@ public sealed class OnboardingController(IUserExchangeCommandCenterService userE
             return RedirectToAction(nameof(ExchangeConnect));
         }
 
-        var result = await userExchangeCommandCenterService.ConnectBinanceAsync(
-            new ConnectUserBinanceCredentialRequest(
-                userId,
-                input.ExchangeAccountId,
-                input.ApiKey,
-                input.ApiSecret,
-                input.RequestedEnvironment,
-                input.RequestedTradeMode,
-                Actor: $"user:{userId}",
-                CorrelationId: HttpContext.TraceIdentifier),
-            cancellationToken);
+        ConnectUserBinanceCredentialResult result;
+
+        try
+        {
+            result = await userExchangeCommandCenterService.ConnectBinanceAsync(
+                new ConnectUserBinanceCredentialRequest(
+                    userId,
+                    input.ExchangeAccountId,
+                    input.ApiKey,
+                    input.ApiSecret,
+                    input.RequestedEnvironment,
+                    input.RequestedTradeMode,
+                    Actor: $"user:{userId}",
+                    CorrelationId: HttpContext.TraceIdentifier),
+                cancellationToken);
+        }
+        catch (CredentialSecurityConfigurationException)
+        {
+            TempData["ExchangeConnectError"] = CredentialSecurityConfigurationErrorMessage;
+            return RedirectToAction(nameof(ExchangeConnect));
+        }
 
         TempData[result.IsValid ? "ExchangeConnectSuccess" : "ExchangeConnectError"] = result.IsValid
             ? result.UserMessage

@@ -7,6 +7,8 @@ using CoinBot.Infrastructure.Exchange;
 using CoinBot.Infrastructure.Identity;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using System.Net.Http;
+using System.Text.Json;
 
 namespace CoinBot.Infrastructure.Credentials;
 
@@ -128,36 +130,65 @@ public sealed class UserExchangeCommandCenterService(
                 request.CorrelationId),
             cancellationToken);
 
-        var probe = await binanceCredentialProbeClient.ProbeAsync(
-            normalizedApiKey,
-            normalizedApiSecret,
-            cancellationToken);
+        var probeUnavailableReason = default(string);
+        BinanceCredentialProbeSnapshot probe;
+
+        try
+        {
+            probe = await binanceCredentialProbeClient.ProbeAsync(
+                normalizedApiKey,
+                normalizedApiSecret,
+                cancellationToken);
+        }
+        catch (HttpRequestException)
+        {
+            probe = CreateUnavailableProbeSnapshot();
+            probeUnavailableReason = "Binance doğrulama servisine şu an ulaşılamadı. Anahtar kaydedildi ancak doğrulama tamamlanamadı.";
+        }
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            probe = CreateUnavailableProbeSnapshot();
+            probeUnavailableReason = "Binance doğrulama isteği zaman aşımına uğradı. Anahtar kaydedildi ancak doğrulama tamamlanamadı.";
+        }
+        catch (JsonException)
+        {
+            probe = CreateUnavailableProbeSnapshot();
+            probeUnavailableReason = "Binance doğrulama yanıtı işlenemedi. Anahtar kaydedildi ancak doğrulama tamamlanamadı.";
+        }
+
         var effectiveEnvironment = resolution.EffectiveMode;
         var requestedEnvironmentAllowed = request.RequestedEnvironment == effectiveEnvironment;
-        var providerEnvironmentScope = ResolveProviderEnvironmentScope(
-            request.RequestedTradeMode,
-            probe.SpotEnvironmentScope,
-            probe.FuturesEnvironmentScope);
-        var providerEnvironmentMatch = IsProviderEnvironmentMatch(
-            request.RequestedTradeMode,
-            request.RequestedEnvironment,
-            probe.SpotEnvironmentScope,
-            probe.FuturesEnvironmentScope);
+        var providerEnvironmentScope = string.IsNullOrWhiteSpace(probeUnavailableReason)
+            ? ResolveProviderEnvironmentScope(
+                request.RequestedTradeMode,
+                probe.SpotEnvironmentScope,
+                probe.FuturesEnvironmentScope)
+            : "Unknown";
+        var providerEnvironmentMatch = string.IsNullOrWhiteSpace(probeUnavailableReason) &&
+                                       IsProviderEnvironmentMatch(
+                                           request.RequestedTradeMode,
+                                           request.RequestedEnvironment,
+                                           probe.SpotEnvironmentScope,
+                                           probe.FuturesEnvironmentScope);
         var environmentMatch = requestedEnvironmentAllowed && providerEnvironmentMatch;
-        var withdrawVerified = probe.CanWithdraw.HasValue;
-        var canWithdraw = probe.CanWithdraw ?? true;
-        var canTrade = request.RequestedTradeMode switch
-        {
-            ExchangeTradeModeSelection.Spot => probe.SupportsSpot && probe.CanTrade,
-            ExchangeTradeModeSelection.Futures => probe.SupportsFutures,
-            ExchangeTradeModeSelection.Both => probe.SupportsSpot && probe.CanTrade && probe.SupportsFutures,
-            _ => false
-        };
-        var isKeyValid = probe.IsKeyValid &&
+        var withdrawVerified = string.IsNullOrWhiteSpace(probeUnavailableReason) && probe.CanWithdraw.HasValue;
+        var canWithdraw = string.IsNullOrWhiteSpace(probeUnavailableReason)
+            ? probe.CanWithdraw ?? true
+            : true;
+        var canTrade = string.IsNullOrWhiteSpace(probeUnavailableReason) &&
+                       request.RequestedTradeMode switch
+                       {
+                           ExchangeTradeModeSelection.Spot => probe.SupportsSpot && probe.CanTrade,
+                           ExchangeTradeModeSelection.Futures => probe.SupportsFutures,
+                           ExchangeTradeModeSelection.Both => probe.SupportsSpot && probe.CanTrade && probe.SupportsFutures,
+                           _ => false
+                       };
+        var isKeyValid = string.IsNullOrWhiteSpace(probeUnavailableReason) &&
+                         probe.IsKeyValid &&
                          !probe.HasTimestampSkew &&
                          !probe.HasIpRestrictionIssue &&
                          withdrawVerified;
-        var failureReason = ResolveFailureReason(
+        var failureReason = probeUnavailableReason ?? ResolveFailureReason(
             probe,
             request.RequestedTradeMode,
             request.RequestedEnvironment,
@@ -189,7 +220,9 @@ public sealed class UserExchangeCommandCenterService(
                 HasTimestampSkew: probe.HasTimestampSkew,
                 HasIpRestrictionIssue: probe.HasIpRestrictionIssue,
                 FailureReason: failureReason,
-                PermissionSummary: probe.PermissionSummary),
+                PermissionSummary: string.IsNullOrWhiteSpace(probeUnavailableReason)
+                    ? probe.PermissionSummary
+                    : "Trade=?; Withdraw=?; Spot=?; Futures=?; Env=Unknown"),
             cancellationToken);
 
         exchangeAccount.IsReadOnly = !canTrade;
@@ -209,6 +242,22 @@ public sealed class UserExchangeCommandCenterService(
             failureReason,
             probe.PermissionSummary,
             providerEnvironmentScope);
+    }
+
+    private static BinanceCredentialProbeSnapshot CreateUnavailableProbeSnapshot()
+    {
+        return new BinanceCredentialProbeSnapshot(
+            IsKeyValid: false,
+            CanTrade: false,
+            CanWithdraw: null,
+            SupportsSpot: false,
+            SupportsFutures: false,
+            HasTimestampSkew: false,
+            HasIpRestrictionIssue: false,
+            SpotEnvironmentScope: "Unknown",
+            FuturesEnvironmentScope: "Unknown",
+            PermissionSummary: "Trade=?; Withdraw=?; Spot=?; Futures=?; Env=Unknown",
+            SafeFailureReason: "Binance doğrulama servisine ulaşılamadı.");
     }
 
     private async Task<ExchangeAccount> GetOrCreateBinanceAccountAsync(

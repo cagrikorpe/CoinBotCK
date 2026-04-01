@@ -2,7 +2,7 @@
 @using System.Security.Claims
 @{
     var pageTitle = ViewData["Title"]?.ToString() ?? "Dashboard";
-    var pageDescription = ViewData["PageDescription"]?.ToString() ?? "CoinBot UI foundation hazır.";
+    var pageDescription = ViewData["PageDescription"]?.ToString() ?? "CoinBot operasyon yuzeyi.";
     var activeNav = ViewData["ActiveNav"]?.ToString() ?? "Dashboard";
     var breadcrumbItems = ViewData["BreadcrumbItems"] as string[] ?? new[] { "UI Foundation", pageTitle };
     var isAuthenticated = User.Identity?.IsAuthenticated == true;
@@ -47,7 +47,6 @@
     <link rel="stylesheet" href="~/metronic/assets/css/themes/layout/brand/dark.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/metronic/assets/css/themes/layout/aside/dark.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
-    <link rel="stylesheet" href="~/CoinBot.Web.styles.css" asp-append-version="true" />
     <link rel="icon" type="image/x-icon" href="~/favicon.ico" />
     @await RenderSectionAsync("Styles", required: false)
 </head>
@@ -169,7 +168,7 @@
                                         <path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
                                     </svg>
                                 </span>
-                                <input type="text" class="form-control border-0 bg-transparent" placeholder="Global search (foundation)" />
+                                <input type="text" class="form-control border-0 bg-transparent" placeholder="Global search" />
                             </div>
 
                             <div class="cb-topbar-actions">
@@ -181,7 +180,7 @@
                                         <path d="M10 18a2 2 0 0 0 4 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
                                     </svg>
                                 </a>
-                                <button type="button" class="btn btn-icon btn-clean cb-icon-button" id="cb_theme_toggle" title="Theme foundation toggle">
+                                <button type="button" class="btn btn-icon btn-clean cb-icon-button" id="cb_theme_toggle" title="Theme toggle">
                                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none">
                                         <path d="M12 3v2.5M12 18.5V21M4.93 4.93l1.77 1.77M17.3 17.3l1.77 1.77M3 12h2.5M18.5 12H21M4.93 19.07l1.77-1.77M17.3 6.7l1.77-1.77" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
                                         <circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.6"/>

@@ -492,6 +492,17 @@ body.cb-auth-body {
   background: rgba(75, 124, 243, 0.14);
 }
 
+.cb-choice-pill.is-disabled {
+  opacity: 0.56;
+  cursor: not-allowed;
+}
+
+.cb-choice-pill.is-disabled:hover {
+  border-color: var(--cb-border-color);
+  background: rgba(255,255,255,0.04);
+  color: var(--cb-text-secondary);
+}
+
 .cb-choice-title {
   display: block;
   color: #fff;

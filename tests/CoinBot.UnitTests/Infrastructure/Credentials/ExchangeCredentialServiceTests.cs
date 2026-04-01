@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Security.Cryptography;
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.ExchangeCredentials;
 using CoinBot.Application.Abstractions.DataScope;
@@ -354,6 +355,85 @@ public sealed class ExchangeCredentialServiceTests
         Assert.Equal("api-key-005", validationResult.ApiKey);
         Assert.Equal("api-secret-005", validationResult.ApiSecret);
         Assert.Equal(ExchangeCredentialStatus.RevalidationRequired, validationResult.State.Status);
+    }
+
+    [Fact]
+    public void CredentialKeyResolver_UsesDevelopmentConfigFallback_WhenEnvironmentProviderKeyIsMissing()
+    {
+        var environmentVariableName = $"COINBOT_CREDENTIAL_TEST_{Guid.NewGuid():N}";
+        var previousEnvironmentValue = Environment.GetEnvironmentVariable(environmentVariableName);
+        var previousAspNetCoreEnvironment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
+
+        Environment.SetEnvironmentVariable(environmentVariableName, null);
+        Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Development");
+
+        try
+        {
+            var configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["CredentialSecurity:Vault:ResolvedKey"] = PrimaryKeyBase64
+                })
+                .Build();
+            var securityOptions = Options.Create(new CredentialSecurityOptions
+            {
+                Provider = CredentialSecurityKeyProvider.Environment,
+                KeyVersion = "credential-v1",
+                EnvironmentVariableName = environmentVariableName,
+                VaultKeyConfigurationPath = "CredentialSecurity:Vault:ResolvedKey"
+            });
+            var resolver = new CredentialKeyResolver(configuration, securityOptions);
+
+            var keyBytes = resolver.ResolveKeyMaterial();
+
+            try
+            {
+                Assert.Equal(32, keyBytes.Length);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(keyBytes);
+            }
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(environmentVariableName, previousEnvironmentValue);
+            Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", previousAspNetCoreEnvironment);
+        }
+    }
+
+    [Fact]
+    public void CredentialKeyResolver_ThrowsHelpfulMessage_WhenEnvironmentProviderKeyIsMissing()
+    {
+        var environmentVariableName = $"COINBOT_CREDENTIAL_TEST_{Guid.NewGuid():N}";
+        var previousEnvironmentValue = Environment.GetEnvironmentVariable(environmentVariableName);
+        var previousAspNetCoreEnvironment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
+
+        Environment.SetEnvironmentVariable(environmentVariableName, null);
+        Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", null);
+
+        try
+        {
+            var resolver = new CredentialKeyResolver(
+                new ConfigurationBuilder().Build(),
+                Options.Create(new CredentialSecurityOptions
+                {
+                    Provider = CredentialSecurityKeyProvider.Environment,
+                    KeyVersion = "credential-v1",
+                    EnvironmentVariableName = environmentVariableName,
+                    VaultKeyConfigurationPath = "CredentialSecurity:Vault:ResolvedKey"
+                }));
+
+            var exception = Assert.Throws<CredentialSecurityConfigurationException>(() => resolver.ResolveKeyMaterial());
+
+            Assert.Contains(environmentVariableName, exception.Message, StringComparison.Ordinal);
+            Assert.Contains("provider 'Environment'", exception.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(environmentVariableName, previousEnvironmentValue);
+            Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", previousAspNetCoreEnvironment);
+        }
     }
 
     private static async Task<Guid> CreateExchangeAccountAsync(ApplicationDbContext dbContext)

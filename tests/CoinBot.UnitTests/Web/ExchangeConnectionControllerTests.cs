@@ -2,11 +2,13 @@ using System.Security.Claims;
 using CoinBot.Application.Abstractions.ExchangeCredentials;
 using CoinBot.Contracts.Common;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Credentials;
 using CoinBot.Web.Controllers;
 using CoinBot.Web.ViewModels.Exchanges;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.Mvc.ViewFeatures;
 
 namespace CoinBot.UnitTests.Web;
@@ -112,6 +114,75 @@ public sealed class ExchangeConnectionControllerTests
         Assert.Equal(ApplicationPolicies.ExchangeManagement, postAttribute.Policy);
     }
 
+    [Fact]
+    public void ConnectBinance_PostActions_BindNestedFormPrefix()
+    {
+        var onboardingParameter = typeof(OnboardingController)
+            .GetMethod(nameof(OnboardingController.ConnectBinance), [typeof(BinanceCredentialConnectInputModel), typeof(CancellationToken)])!
+            .GetParameters()[0];
+        var exchangesParameter = typeof(ExchangesController)
+            .GetMethod(nameof(ExchangesController.ConnectBinance), [typeof(BinanceCredentialConnectInputModel), typeof(CancellationToken)])!
+            .GetParameters()[0];
+
+        var onboardingBind = Assert.IsType<BindAttribute>(Assert.Single(onboardingParameter.GetCustomAttributes(typeof(BindAttribute), inherit: true)));
+        var exchangesBind = Assert.IsType<BindAttribute>(Assert.Single(exchangesParameter.GetCustomAttributes(typeof(BindAttribute), inherit: true)));
+
+        Assert.Equal("Form", onboardingBind.Prefix);
+        Assert.Equal("Form", exchangesBind.Prefix);
+    }
+
+    [Fact]
+    public async Task ExchangesConnectBinance_ReturnsControlledError_WhenCredentialSecurityConfigurationIsMissing()
+    {
+        var service = new FakeUserExchangeCommandCenterService
+        {
+            ExceptionToThrow = new CredentialSecurityConfigurationException(
+                "Credential encryption key material is not available for provider 'Environment'. Configure environment variable 'COINBOT_CREDENTIAL_ENCRYPTION_KEY_BASE64'.")
+        };
+        var controller = CreateExchangesController(service, "user-03", "trace-ex-003");
+
+        var result = await controller.ConnectBinance(
+            new BinanceCredentialConnectInputModel
+            {
+                RequestedEnvironment = ExecutionEnvironment.Demo,
+                RequestedTradeMode = ExchangeTradeModeSelection.Spot,
+                ApiKey = "api-key",
+                ApiSecret = "api-secret"
+            },
+            CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+
+        Assert.Equal(nameof(ExchangesController.Index), redirectResult.ActionName);
+        Assert.Equal("Credential guvenlik yapilandirmasi eksik oldugu icin API key kaydedilemedi. Local/dev ortaminda encryption key tanimlanmadan dogrulama baslatilamaz.", controller.TempData["ExchangeConnectError"]);
+    }
+
+    [Fact]
+    public async Task OnboardingConnectBinance_ReturnsControlledError_WhenCredentialSecurityConfigurationIsMissing()
+    {
+        var service = new FakeUserExchangeCommandCenterService
+        {
+            ExceptionToThrow = new CredentialSecurityConfigurationException(
+                "Credential encryption key material is not available for provider 'Environment'. Configure environment variable 'COINBOT_CREDENTIAL_ENCRYPTION_KEY_BASE64'.")
+        };
+        var controller = CreateOnboardingController(service, "user-04");
+
+        var result = await controller.ConnectBinance(
+            new BinanceCredentialConnectInputModel
+            {
+                RequestedEnvironment = ExecutionEnvironment.Demo,
+                RequestedTradeMode = ExchangeTradeModeSelection.Spot,
+                ApiKey = "api-key",
+                ApiSecret = "api-secret"
+            },
+            CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+
+        Assert.Equal(nameof(OnboardingController.ExchangeConnect), redirectResult.ActionName);
+        Assert.Equal("Credential guvenlik yapilandirmasi eksik oldugu icin API key kaydedilemedi. Local/dev ortaminda encryption key tanimlanmadan dogrulama baslatilamaz.", controller.TempData["ExchangeConnectError"]);
+    }
+
     private static OnboardingController CreateOnboardingController(
         FakeUserExchangeCommandCenterService service,
         string userId)
@@ -167,6 +238,8 @@ public sealed class ExchangeConnectionControllerTests
             "Trade=Y; Withdraw=N; Spot=Y; Futures=N; Env=Demo",
             "Demo");
 
+        public Exception? ExceptionToThrow { get; set; }
+
         public List<ConnectUserBinanceCredentialRequest> ConnectRequests { get; } = [];
 
         public Task<UserExchangeCommandCenterSnapshot> GetSnapshotAsync(string userId, CancellationToken cancellationToken = default)
@@ -176,6 +249,11 @@ public sealed class ExchangeConnectionControllerTests
 
         public Task<ConnectUserBinanceCredentialResult> ConnectBinanceAsync(ConnectUserBinanceCredentialRequest request, CancellationToken cancellationToken = default)
         {
+            if (ExceptionToThrow is not null)
+            {
+                throw ExceptionToThrow;
+            }
+
             ConnectRequests.Add(request);
             return Task.FromResult(Result);
         }

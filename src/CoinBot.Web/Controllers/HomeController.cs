@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Security.Claims;
+using CoinBot.Application.Abstractions.ExchangeCredentials;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Web.Hubs;
@@ -12,6 +14,7 @@ namespace CoinBot.Web.Controllers;
 
 [Authorize]
 public class HomeController(
+    IUserExchangeCommandCenterService userExchangeCommandCenterService,
     IMarketDataService marketDataService,
     ISharedSymbolRegistry symbolRegistry,
     IOptions<BinanceMarketDataOptions> marketDataOptions) : Controller
@@ -20,6 +23,12 @@ public class HomeController(
 
     public async Task<IActionResult> Index(CancellationToken cancellationToken)
     {
+        var userId = HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!string.IsNullOrWhiteSpace(userId))
+        {
+            ViewData["DashboardExchangeSnapshot"] = await userExchangeCommandCenterService.GetSnapshotAsync(userId, cancellationToken);
+        }
+
         // 1. Market Tickers (Canlı Fiyatlar)
         var symbols = ResolveDashboardSymbols(marketDataOptions.Value.SeedSymbols);
         await marketDataService.TrackSymbolsAsync(symbols, cancellationToken);

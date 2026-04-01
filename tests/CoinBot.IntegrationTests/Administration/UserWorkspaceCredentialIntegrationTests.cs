@@ -197,6 +197,82 @@ public sealed class UserWorkspaceCredentialIntegrationTests
     }
 
     [Fact]
+    public async Task UserExchangeCommandCenterService_FailsClosed_WhenProbeRequestThrows()
+    {
+        var databaseName = $"CoinBotUserExchangeProbeFailInt_{Guid.NewGuid():N}";
+        var connectionString = ResolveConnectionString(databaseName);
+        var options = CreateOptions(connectionString);
+        var environmentVariableName = $"COINBOT_CREDENTIAL_INT_{Guid.NewGuid():N}";
+        var previousEnvironmentValue = Environment.GetEnvironmentVariable(environmentVariableName);
+
+        Environment.SetEnvironmentVariable(environmentVariableName, PrimaryKeyBase64);
+
+        try
+        {
+            await using (var setupContext = new ApplicationDbContext(options, new TestDataScopeContext(null, hasIsolationBypass: true)))
+            {
+                await setupContext.Database.EnsureDeletedAsync();
+                await setupContext.Database.EnsureCreatedAsync();
+
+                setupContext.Users.Add(new ApplicationUser
+                {
+                    Id = "user-probe-01",
+                    UserName = "user.probe",
+                    NormalizedUserName = "USER.PROBE",
+                    Email = "user.probe@coinbot.local",
+                    NormalizedEmail = "USER.PROBE@COINBOT.LOCAL",
+                    FullName = "User Probe",
+                    TradingModeOverride = ExecutionEnvironment.Demo
+                });
+
+                await setupContext.SaveChangesAsync();
+            }
+
+            var timeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 4, 1, 0, 45, 0, TimeSpan.Zero));
+
+            await using var context = new ApplicationDbContext(options, new TestDataScopeContext("user-probe-01", hasIsolationBypass: false));
+            var service = CreateUserExchangeCommandCenterService(
+                context,
+                timeProvider,
+                environmentVariableName,
+                new ThrowingBinanceCredentialProbeClient(new HttpRequestException("Simulated probe outage.")),
+                ExecutionEnvironment.Demo);
+
+            var result = await service.ConnectBinanceAsync(
+                new ConnectUserBinanceCredentialRequest(
+                    "user-probe-01",
+                    ExchangeAccountId: null,
+                    ApiKey: "api-key-int-probe",
+                    ApiSecret: "api-secret-int-probe",
+                    RequestedEnvironment: ExecutionEnvironment.Demo,
+                    RequestedTradeMode: ExchangeTradeModeSelection.Spot,
+                    Actor: "user:user-probe-01",
+                    CorrelationId: "corr-int-user-probe-001"));
+
+            Assert.False(result.IsValid);
+            Assert.Contains("ulaşılamadı", result.SafeFailureReason ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+            await using var verifyContext = new ApplicationDbContext(options, new TestDataScopeContext(null, hasIsolationBypass: true));
+            var exchangeAccount = await verifyContext.ExchangeAccounts.SingleAsync(entity => entity.OwnerUserId == "user-probe-01");
+            var validation = await verifyContext.ApiCredentialValidations.SingleAsync(entity => entity.OwnerUserId == "user-probe-01");
+            var mirroredCredential = await verifyContext.ApiCredentials.SingleAsync(entity => entity.OwnerUserId == "user-probe-01");
+
+            Assert.Equal(ExchangeCredentialStatus.Invalid, exchangeAccount.CredentialStatus);
+            Assert.Equal("Invalid", validation.ValidationStatus);
+            Assert.Equal("Trade=?; Withdraw=?; Spot=?; Futures=?; Env=Unknown", validation.PermissionSummary);
+            Assert.Contains("ulaşılamadı", validation.FailureReason ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("api-key-int-probe", exchangeAccount.ApiKeyCiphertext ?? string.Empty, StringComparison.Ordinal);
+            Assert.DoesNotContain("api-secret-int-probe", mirroredCredential.ApiSecretCiphertext, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await using var cleanupContext = new ApplicationDbContext(options, new TestDataScopeContext(null, hasIsolationBypass: true));
+            await cleanupContext.Database.EnsureDeletedAsync();
+            Environment.SetEnvironmentVariable(environmentVariableName, previousEnvironmentValue);
+        }
+    }
+
+    [Fact]
     public async Task AdminWorkspaceReadModelService_UserDetail_ReadsExchangeAndValidationDataAcrossUserScope()
     {
         var databaseName = $"CoinBotAdminUserHQInt_{Guid.NewGuid():N}";
@@ -406,6 +482,21 @@ public sealed class UserWorkspaceCredentialIntegrationTests
         BinanceCredentialProbeSnapshot probeSnapshot,
         ExecutionEnvironment effectiveEnvironment)
     {
+        return CreateUserExchangeCommandCenterService(
+            dbContext,
+            timeProvider,
+            environmentVariableName,
+            new FakeBinanceCredentialProbeClient(probeSnapshot),
+            effectiveEnvironment);
+    }
+
+    private static UserExchangeCommandCenterService CreateUserExchangeCommandCenterService(
+        ApplicationDbContext dbContext,
+        TimeProvider timeProvider,
+        string environmentVariableName,
+        IBinanceCredentialProbeClient probeClient,
+        ExecutionEnvironment effectiveEnvironment)
+    {
         var credentialSecurityOptions = Options.Create(new CredentialSecurityOptions
         {
             Provider = CredentialSecurityKeyProvider.Environment,
@@ -430,7 +521,7 @@ public sealed class UserWorkspaceCredentialIntegrationTests
             dbContext,
             exchangeCredentialService,
             new FakeTradingModeResolver(effectiveEnvironment, hasLiveApproval: effectiveEnvironment == ExecutionEnvironment.Live),
-            new FakeBinanceCredentialProbeClient(probeSnapshot),
+            probeClient,
             timeProvider);
     }
 
@@ -472,6 +563,14 @@ public sealed class UserWorkspaceCredentialIntegrationTests
         public Task<BinanceCredentialProbeSnapshot> ProbeAsync(string apiKey, string apiSecret, CancellationToken cancellationToken = default)
         {
             return Task.FromResult(snapshot);
+        }
+    }
+
+    private sealed class ThrowingBinanceCredentialProbeClient(Exception exception) : IBinanceCredentialProbeClient
+    {
+        public Task<BinanceCredentialProbeSnapshot> ProbeAsync(string apiKey, string apiSecret, CancellationToken cancellationToken = default)
+        {
+            return Task.FromException<BinanceCredentialProbeSnapshot>(exception);
         }
     }
 

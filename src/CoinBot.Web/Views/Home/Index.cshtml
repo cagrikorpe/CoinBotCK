@@ -1,4 +1,5 @@
 @using System.Text.Json
+@using CoinBot.Application.Abstractions.ExchangeCredentials
 @model CoinBot.Web.ViewModels.Home.DashboardViewModel
 @{
     ViewData["Title"] = "Dashboard";
@@ -6,11 +7,35 @@
     ViewData["PageDescription"] = "Operasyonel dashboard; realtime market fiyat kutuları, KPI, equity, AI akışı, risk ve hızlı aksiyon alanlarını tek yüzeyde toplar.";
     ViewData["BreadcrumbItems"] = new[] { "Control Surface", "Dashboard" };
     var marketSymbolsJson = JsonSerializer.Serialize(Model.MarketTickers.Select(item => item.Symbol));
+    var exchangeSnapshot = ViewData["DashboardExchangeSnapshot"] as UserExchangeCommandCenterSnapshot;
+    var latestExchangeAccount = exchangeSnapshot?.Accounts.FirstOrDefault();
+    var exchangeStatusLabel = latestExchangeAccount?.CredentialStatusLabel ?? "Bagli hesap yok";
+    var exchangeStatusTone = latestExchangeAccount?.CredentialStatusTone ?? "neutral";
+    var exchangeSummaryText = latestExchangeAccount is null
+        ? "Binance API key baglantisi yapilmadi. Kayit ve validation sonucu Command Center'da ve bu kartta gorunur."
+        : !string.IsNullOrWhiteSpace(latestExchangeAccount.LastFailureReason)
+            ? latestExchangeAccount.LastFailureReason
+            : $"{latestExchangeAccount.PermissionSummary} · {latestExchangeAccount.EnvironmentLabel}";
+    var exchangeActionText = latestExchangeAccount is null ? "Binance bagla" : "Command Center";
+    var exchangeBadgeClass = exchangeStatusTone == "healthy"
+        ? "cb-badge-success"
+        : exchangeStatusTone == "warning"
+            ? "cb-badge-warning"
+            : exchangeStatusTone == "critical"
+                ? "cb-badge-danger"
+                : "cb-badge-neutral";
+    var exchangeBannerStyle = exchangeStatusTone switch
+    {
+        "healthy" => "background:#ecfdf3;border:1px solid #95d5b2;color:#0f5132;padding:14px 16px;border-radius:12px;margin-top:24px;",
+        "warning" => "background:#fff8e1;border:1px solid #f5d48a;color:#6b4f00;padding:14px 16px;border-radius:12px;margin-top:24px;",
+        "critical" => "background:#fff1f2;border:1px solid #f2a8b5;color:#7a1f2f;padding:14px 16px;border-radius:12px;margin-top:24px;",
+        _ => "background:#eef7ff;border:1px solid #a9d4ff;color:#0b4f7a;padding:14px 16px;border-radius:12px;margin-top:24px;"
+    };
 }
 
 @section Scripts {
     <script src="https://cdn.jsdelivr.net/npm/%40microsoft/signalr@9.0.0/dist/browser/signalr.min.js"></script>
-    <script src="~/js/dashboard-foundation.js" asp-append-version="true"></script>
+    <script src="~/js/dashboard-ui.js" asp-append-version="true"></script>
 }
 
 <div class="row"
@@ -27,13 +52,37 @@
                         <p class="cb-page-description">Merkezi market data hattı ile beslenen fiyat kutuları ve operasyon kartları aynı dashboard yüzeyinde buluşur.</p>
                     </div>
                     <div class="cb-toolbar">
-                        <span class="cb-badge cb-badge-success">Shell ready</span>
+                        <span class="cb-badge @exchangeBadgeClass">@exchangeStatusLabel</span>
                         <button type="button" class="btn btn-light-primary font-weight-bold">Yenile</button>
-                        <a asp-controller="Onboarding" asp-action="Index" class="btn btn-primary font-weight-bolder">Kurulumu gözden geçir</a>
+                        <a asp-controller="Exchanges" asp-action="Index" class="btn btn-primary font-weight-bolder">@exchangeActionText</a>
                     </div>
                 </div>
 
                 @await Html.PartialAsync("Dashboard/_FreshnessBar")
+
+                <div data-cb-dashboard-exchange-status="true" style="@exchangeBannerStyle">
+                    <div><strong>Son Binance durumu: @exchangeStatusLabel</strong></div>
+                    <div class="mt-2">@exchangeSummaryText</div>
+                </div>
+
+                <div class="cb-auth-summary-card cb-auth-summary-card-stacked mt-6">
+                    <div class="cb-auth-summary-label">Binance baglanti durumu</div>
+                    <div class="cb-auth-summary-value">@exchangeStatusLabel</div>
+                    <div class="cb-auth-summary-text">@exchangeSummaryText</div>
+                    @if (latestExchangeAccount is not null)
+                    {
+                        <div class="cb-permission-list mt-4">
+                            <div class="cb-permission-item">
+                                <span>Fingerprint</span>
+                                <strong>@latestExchangeAccount.MaskedFingerprint</strong>
+                            </div>
+                            <div class="cb-permission-item">
+                                <span>Son validation</span>
+                                <strong>@latestExchangeAccount.LastValidatedLabel</strong>
+                            </div>
+                        </div>
+                    }
+                </div>
             </div>
         </div>
     </div>

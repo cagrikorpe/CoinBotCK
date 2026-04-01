@@ -3,6 +3,44 @@
 @model CoinBot.Web.ViewModels.Exchanges.UserExchangeCommandCenterPageViewModel
 @{
     var selectedAccountId = Model.Form.ExchangeAccountId ?? Model.Snapshot.Accounts.FirstOrDefault()?.ExchangeAccountId;
+    var effectiveEnvironment = Model.Snapshot.Environment.EffectiveEnvironment;
+    var demoSelectable = effectiveEnvironment == ExecutionEnvironment.Demo;
+    var liveSelectable = effectiveEnvironment == ExecutionEnvironment.Live;
+    var latestAccount = Model.Snapshot.Accounts
+        .OrderByDescending(account => account.LastValidatedAtUtc ?? DateTime.MinValue)
+        .ThenByDescending(account => account.ExchangeAccountId)
+        .FirstOrDefault();
+    var environmentGuardMessage = demoSelectable
+        ? $"Live secimi kilitli. {Model.Snapshot.Environment.ResolutionSourceLabel} · {Model.Snapshot.Environment.ResolutionReason}"
+        : $"Demo secimi kilitli. {Model.Snapshot.Environment.ResolutionSourceLabel} · {Model.Snapshot.Environment.ResolutionReason}";
+    var hasFlashMessage = !string.IsNullOrWhiteSpace(Model.SuccessMessage) || !string.IsNullOrWhiteSpace(Model.ErrorMessage);
+    var persistedStatusMessage = latestAccount is null
+        ? null
+        : !string.IsNullOrWhiteSpace(latestAccount.LastFailureReason)
+            ? latestAccount.LastFailureReason
+            : $"{latestAccount.CredentialStatusLabel} · {latestAccount.PermissionSummary} · {latestAccount.LastValidatedLabel}";
+    var persistedStatusClass = latestAccount?.CredentialStatusTone switch
+    {
+        "healthy" => "cb-validation-summary cb-validation-summary-success mt-6",
+        "warning" => "cb-validation-summary cb-validation-summary-warning mt-6",
+        "critical" => "cb-validation-summary cb-validation-summary-danger mt-6",
+        _ => "cb-validation-summary cb-validation-summary-info mt-6"
+    };
+    var persistentBannerTitle = latestAccount?.CredentialStatusLabel ?? "Hesap baglantisi bekleniyor";
+    var persistentBannerDetail = !string.IsNullOrWhiteSpace(Model.SuccessMessage)
+        ? Model.SuccessMessage
+        : !string.IsNullOrWhiteSpace(Model.ErrorMessage)
+            ? Model.ErrorMessage
+            : !string.IsNullOrWhiteSpace(persistedStatusMessage)
+                ? persistedStatusMessage
+                : "Ilk dogrulama sonrasi son durum burada kalici olarak gosterilir.";
+    var persistentBannerStyle = latestAccount?.CredentialStatusTone switch
+    {
+        "healthy" => "background:#ecfdf3;border:1px solid #95d5b2;color:#0f5132;padding:14px 16px;border-radius:12px;margin-top:24px;",
+        "warning" => "background:#fff8e1;border:1px solid #f5d48a;color:#6b4f00;padding:14px 16px;border-radius:12px;margin-top:24px;",
+        "critical" => "background:#fff1f2;border:1px solid #f2a8b5;color:#7a1f2f;padding:14px 16px;border-radius:12px;margin-top:24px;",
+        _ => "background:#eef7ff;border:1px solid #a9d4ff;color:#0b4f7a;padding:14px 16px;border-radius:12px;margin-top:24px;"
+    };
 }
 
 <div class="row">
@@ -74,6 +112,11 @@
                     </div>
                 </div>
 
+                <div data-cb-exchange-status-banner="true" style="@persistentBannerStyle">
+                    <div><strong>Son Binance durumu: @persistentBannerTitle</strong></div>
+                    <div class="mt-2">@persistentBannerDetail</div>
+                </div>
+
                 @if (!string.IsNullOrWhiteSpace(Model.SuccessMessage))
                 {
                     <div class="cb-validation-summary cb-validation-summary-success mt-6">@Model.SuccessMessage</div>
@@ -82,6 +125,13 @@
                 @if (!string.IsNullOrWhiteSpace(Model.ErrorMessage))
                 {
                     <div class="cb-validation-summary cb-validation-summary-danger mt-6">@Model.ErrorMessage</div>
+                }
+                else if (!hasFlashMessage && !string.IsNullOrWhiteSpace(persistedStatusMessage))
+                {
+                    <div class="@persistedStatusClass">
+                        <strong>@latestAccount!.CredentialStatusLabel</strong>
+                        <span class="ml-2">@persistedStatusMessage</span>
+                    </div>
                 }
             </div>
         </div>
@@ -101,15 +151,16 @@
                     <div class="mb-6">
                         <label asp-for="Form.RequestedEnvironment" class="cb-form-label">Ortam</label>
                         <div class="cb-inline-toggle-row">
-                            <label class="cb-choice-pill @(Model.Form.RequestedEnvironment == ExecutionEnvironment.Demo ? "is-selected" : string.Empty)">
-                                <input asp-for="Form.RequestedEnvironment" type="radio" value="@ExecutionEnvironment.Demo" />
+                            <label class="cb-choice-pill @(Model.Form.RequestedEnvironment == ExecutionEnvironment.Demo ? "is-selected" : string.Empty) @(demoSelectable ? string.Empty : "is-disabled")">
+                                <input asp-for="Form.RequestedEnvironment" type="radio" value="@ExecutionEnvironment.Demo" disabled="@(demoSelectable ? null : "disabled")" />
                                 Demo
                             </label>
-                            <label class="cb-choice-pill @(Model.Form.RequestedEnvironment == ExecutionEnvironment.Live ? "is-selected" : string.Empty)">
-                                <input asp-for="Form.RequestedEnvironment" type="radio" value="@ExecutionEnvironment.Live" />
+                            <label class="cb-choice-pill @(Model.Form.RequestedEnvironment == ExecutionEnvironment.Live ? "is-selected" : string.Empty) @(liveSelectable ? string.Empty : "is-disabled")">
+                                <input asp-for="Form.RequestedEnvironment" type="radio" value="@ExecutionEnvironment.Live" disabled="@(liveSelectable ? null : "disabled")" />
                                 Live
                             </label>
                         </div>
+                        <div class="cb-field-feedback">@environmentGuardMessage</div>
                         <div class="cb-field-feedback">Seçilen ortam, etkin kullanıcı modu ve Binance uç noktası ile birebir eşleşmek zorundadır.</div>
                     </div>
 

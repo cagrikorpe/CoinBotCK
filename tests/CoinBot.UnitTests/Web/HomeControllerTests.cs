@@ -1,8 +1,12 @@
 using System.Runtime.CompilerServices;
+using System.Security.Claims;
+using CoinBot.Application.Abstractions.ExchangeCredentials;
 using CoinBot.Application.Abstractions.MarketData;
+using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Web.Controllers;
 using CoinBot.Web.ViewModels.Home;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 
@@ -15,13 +19,16 @@ public sealed class HomeControllerTests
     {
         var marketDataService = new FakeMarketDataService();
         var symbolRegistry = new FakeSharedSymbolRegistry();
+        var exchangeService = new FakeUserExchangeCommandCenterService();
         var controller = new HomeController(
+            exchangeService,
             marketDataService,
             symbolRegistry,
             Options.Create(new BinanceMarketDataOptions
             {
                 SeedSymbols = ["btcusdt", "ethusdt", "solusdt"]
             }));
+        controller.ControllerContext = CreateControllerContext("user-01");
 
         marketDataService.SetLatestPrice("BTCUSDT", 64000.50m, At(0), "unit-test");
         symbolRegistry.SetSymbolMetadata("BTCUSDT", "BTC", "USDT", 0.01m, 0.0001m, "TRADING", true);
@@ -37,6 +44,7 @@ public sealed class HomeControllerTests
 
         Assert.Equal("/hubs/market-data", model.MarketDataHubPath);
         Assert.Equal(["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"], marketDataService.TrackedSymbols);
+        Assert.Same(exchangeService.Snapshot, controller.ViewData["DashboardExchangeSnapshot"]);
         Assert.Equal(64000.50m, btcTicker.Price);
         Assert.Equal("TRADING", btcTicker.TradingStatus);
         Assert.Equal(0.0001m, btcTicker.StepSize);
@@ -44,9 +52,37 @@ public sealed class HomeControllerTests
         Assert.Equal("BREAK", solTicker.TradingStatus);
     }
 
+    [Fact]
+    public async Task Index_SkipsExchangeSnapshot_WhenUserIdIsMissing()
+    {
+        var controller = new HomeController(
+            new FakeUserExchangeCommandCenterService(),
+            new FakeMarketDataService(),
+            new FakeSharedSymbolRegistry(),
+            Options.Create(new BinanceMarketDataOptions()));
+
+        var result = await controller.Index(CancellationToken.None);
+
+        Assert.IsType<ViewResult>(result);
+        Assert.Null(controller.ViewData["DashboardExchangeSnapshot"]);
+    }
+
     private static DateTime At(int minuteOffset)
     {
         return new DateTime(2026, 3, 23, 9, minuteOffset, 0, DateTimeKind.Utc);
+    }
+
+    private static ControllerContext CreateControllerContext(string userId)
+    {
+        var httpContext = new DefaultHttpContext();
+        httpContext.User = new ClaimsPrincipal(
+            new ClaimsIdentity(
+                [new Claim(ClaimTypes.NameIdentifier, userId)],
+                "TestAuth"));
+        return new ControllerContext
+        {
+            HttpContext = httpContext
+        };
     }
 
     private sealed class FakeMarketDataService : IMarketDataService
@@ -135,6 +171,28 @@ public sealed class HomeControllerTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             return ValueTask.FromResult<IReadOnlyCollection<SymbolMetadataSnapshot>>(snapshots.Values.ToArray());
+        }
+    }
+
+    private sealed class FakeUserExchangeCommandCenterService : IUserExchangeCommandCenterService
+    {
+        public UserExchangeCommandCenterSnapshot Snapshot { get; } = new(
+            "user-01",
+            "User One",
+            new UserExchangeEnvironmentSummary(ExecutionEnvironment.Demo, "Demo", "info", "Global varsayılan", "Demo mode", false),
+            new UserExchangeRiskOverrideSummary("Core", 2m, 10m, 3m, false, false, false, null, null, null, "Risk tamam", "healthy", "Profil tamam"),
+            [],
+            [],
+            At(0));
+
+        public Task<UserExchangeCommandCenterSnapshot> GetSnapshotAsync(string userId, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(Snapshot);
+        }
+
+        public Task<ConnectUserBinanceCredentialResult> ConnectBinanceAsync(ConnectUserBinanceCredentialRequest request, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
         }
     }
 }
