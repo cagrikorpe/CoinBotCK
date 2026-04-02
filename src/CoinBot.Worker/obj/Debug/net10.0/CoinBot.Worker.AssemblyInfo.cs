@@ -10,11 +10,11 @@
 using System;
 using System.Reflection;
 
-[assembly: Microsoft.Extensions.Configuration.UserSecrets.UserSecretsIdAttribute("dotnet-CoinBot.Worker-1877b8c3-d90c-4fb7-8c6b-a75bfdda3c80")]
+[assembly: Microsoft.Extensions.Configuration.UserSecrets.UserSecretsIdAttribute("016c8a65-b0e7-404b-a04c-0a51f7bea920")]
 [assembly: System.Reflection.AssemblyCompanyAttribute("CoinBot.Worker")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+9d16cb5747ac119eb6b1156552fbdbc08d1d65f7")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+fdd34ca7a7be6e752c11ce09ac7cc0dab268d646")]
 [assembly: System.Reflection.AssemblyProductAttribute("CoinBot.Worker")]
 [assembly: System.Reflection.AssemblyTitleAttribute("CoinBot.Worker")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

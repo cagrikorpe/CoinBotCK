@@ -20,6 +20,7 @@ namespace CoinBot.Web.Controllers;
 public class HomeController(
     IUserExchangeCommandCenterService userExchangeCommandCenterService,
     IUserDashboardPortfolioReadModelService userDashboardPortfolioReadModelService,
+    IUserDashboardOperationsReadModelService userDashboardOperationsReadModelService,
     IMarketDataService marketDataService,
     ISharedSymbolRegistry symbolRegistry,
     IOptions<BinanceMarketDataOptions> marketDataOptions,
@@ -31,10 +32,13 @@ public class HomeController(
     {
         var userId = HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
         UserDashboardPortfolioSnapshot? portfolioSnapshot = null;
+        OperationsSummaryViewModel operationsSummary = BuildAnonymousOperationsSummary();
         if (!string.IsNullOrWhiteSpace(userId))
         {
             ViewData["DashboardExchangeSnapshot"] = await userExchangeCommandCenterService.GetSnapshotAsync(userId, cancellationToken);
             portfolioSnapshot = await userDashboardPortfolioReadModelService.GetSnapshotAsync(userId, cancellationToken);
+            operationsSummary = MapOperationsSummary(
+                await userDashboardOperationsReadModelService.GetSnapshotAsync(userId, cancellationToken));
             logger.LogInformation(
                 "Dashboard portfolio snapshot loaded. UserKey={UserKey} ActiveAccounts={ActiveAccounts} Balances={Balances} Positions={Positions} SyncStatus={SyncStatus}.",
                 CreateUserKey(userId),
@@ -72,7 +76,21 @@ public class HomeController(
         // 4. Açık Pozisyonlar (İşlem Takip)
         var positions = await BuildOpenPositionsAsync(portfolioSnapshot, marketDataService, cancellationToken);
         
-        return View(new DashboardViewModel(tickers, "/hubs/market-data", kpis, aiFeed, positions));
+        return View(new DashboardViewModel(tickers, "/hubs/market-data", "/hubs/operations", kpis, operationsSummary, aiFeed, positions));
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> OperationsSummary(CancellationToken cancellationToken)
+    {
+        var userId = HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return Challenge();
+        }
+
+        var snapshot = await userDashboardOperationsReadModelService.GetSnapshotAsync(userId, cancellationToken);
+        return Json(MapOperationsSummary(snapshot));
     }
 
     [AllowAnonymous]
@@ -266,5 +284,59 @@ public class HomeController(
         var normalizedValue = userId.Trim();
         var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(normalizedValue));
         return Convert.ToHexString(hashBytes[..6]);
+    }
+
+    private static OperationsSummaryViewModel BuildAnonymousOperationsSummary()
+    {
+        return new OperationsSummaryViewModel(
+            0,
+            0,
+            0,
+            "Idle",
+            null,
+            "N/A",
+            null,
+            "Unknown",
+            "neutral",
+            "Unknown",
+            "neutral",
+            "Closed",
+            "neutral",
+            0,
+            "Risk profili okunamadi",
+            "Pozisyon limiti bekleniyor",
+            "Cooldown bilgisi yok");
+    }
+
+    private static OperationsSummaryViewModel MapOperationsSummary(UserDashboardOperationsSummarySnapshot snapshot)
+    {
+        var dailyLossSummary = snapshot.MaxDailyLossPercentage.HasValue && snapshot.CurrentDailyLossPercentage.HasValue
+            ? $"{snapshot.CurrentDailyLossPercentage.Value:0.##}% / {snapshot.MaxDailyLossPercentage.Value:0.##}%"
+            : snapshot.MaxDailyLossPercentage.HasValue
+                ? $"0% / {snapshot.MaxDailyLossPercentage.Value:0.##}%"
+                : "Risk profili yok";
+        var positionLimitSummary = snapshot.MaxOpenPositions > 0
+            ? $"{snapshot.OpenPositionCount} / {snapshot.MaxOpenPositions}"
+            : snapshot.OpenPositionCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var cooldownSummary = $"Bot {snapshot.ActiveBotCooldownCount} • Symbol {snapshot.ActiveSymbolCooldownCount}";
+
+        return new OperationsSummaryViewModel(
+            snapshot.EnabledBotCount,
+            snapshot.EnabledSymbolCount,
+            snapshot.ConflictedSymbolCount,
+            snapshot.LastJobStatus,
+            snapshot.LastJobErrorCode,
+            snapshot.LastExecutionState,
+            snapshot.LastExecutionFailureCode,
+            snapshot.WorkerHealthLabel,
+            snapshot.WorkerHealthTone,
+            snapshot.PrivateStreamHealthLabel,
+            snapshot.PrivateStreamHealthTone,
+            snapshot.BreakerLabel,
+            snapshot.BreakerTone,
+            snapshot.OpenCircuitBreakerCount,
+            dailyLossSummary,
+            positionLimitSummary,
+            cooldownSummary);
     }
 }

@@ -2,10 +2,13 @@ using System.Security.Cryptography;
 using System.Text;
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Autonomy;
+using CoinBot.Infrastructure.Alerts;
+using CoinBot.Infrastructure.Dashboard;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -19,7 +22,10 @@ public sealed class DependencyCircuitBreakerStateManager(
     IAdminAuditLogService adminAuditLogService,
     IOptions<DependencyCircuitBreakerOptions> options,
     TimeProvider timeProvider,
-    ILogger<DependencyCircuitBreakerStateManager> logger) : IDependencyCircuitBreakerStateManager
+    ILogger<DependencyCircuitBreakerStateManager> logger,
+    IAlertDispatchCoordinator? alertDispatchCoordinator = null,
+    IHostEnvironment? hostEnvironment = null,
+    UserOperationsStreamHub? userOperationsStreamHub = null) : IDependencyCircuitBreakerStateManager
 {
     private const string BreakerSource = "Autonomy.DependencyBreaker";
     private readonly DependencyCircuitBreakerOptions optionsValue = options.Value;
@@ -88,6 +94,8 @@ public sealed class DependencyCircuitBreakerStateManager(
 
         var snapshot = Map(entity, isPersisted: true);
         await WriteStateTransitionAuditAsync(normalizedActor, snapshot, previousSnapshot, cancellationToken);
+        await TrySendBreakerAlertAsync(snapshot, previousSnapshot, cancellationToken);
+        TryPublishOperationsUpdate(snapshot, previousSnapshot);
 
         if (snapshot.StateCode == CircuitBreakerStateCode.Cooldown)
         {
@@ -148,6 +156,8 @@ public sealed class DependencyCircuitBreakerStateManager(
 
         var snapshot = Map(entity, isPersisted: true);
         await WriteStateTransitionAuditAsync(normalizedActor, snapshot, previousSnapshot, cancellationToken);
+        await TrySendBreakerAlertAsync(snapshot, previousSnapshot, cancellationToken);
+        TryPublishOperationsUpdate(snapshot, previousSnapshot);
 
         if (previousSnapshot.StateCode != CircuitBreakerStateCode.Closed)
         {
@@ -192,6 +202,7 @@ public sealed class DependencyCircuitBreakerStateManager(
 
         var snapshot = Map(entity, isPersisted: true);
         await WriteStateTransitionAuditAsync(normalizedActor, snapshot, previousSnapshot, cancellationToken);
+        TryPublishOperationsUpdate(snapshot, previousSnapshot);
         return snapshot;
     }
 
@@ -396,5 +407,72 @@ public sealed class DependencyCircuitBreakerStateManager(
         return normalizedValue.Length <= maxLength
             ? normalizedValue
             : normalizedValue[..maxLength];
+    }
+
+    private async Task TrySendBreakerAlertAsync(
+        DependencyCircuitBreakerSnapshot snapshot,
+        DependencyCircuitBreakerSnapshot previousSnapshot,
+        CancellationToken cancellationToken)
+    {
+        if (alertDispatchCoordinator is null ||
+            snapshot.BreakerKind != DependencyCircuitBreakerKind.WebSocket ||
+            snapshot.StateCode == previousSnapshot.StateCode)
+        {
+            return;
+        }
+
+        var isFailureState = snapshot.StateCode is CircuitBreakerStateCode.Retrying or
+            CircuitBreakerStateCode.Cooldown or
+            CircuitBreakerStateCode.HalfOpen or
+            CircuitBreakerStateCode.Degraded;
+
+        if (!isFailureState)
+        {
+            return;
+        }
+
+        await alertDispatchCoordinator.SendAsync(
+            new CoinBot.Application.Abstractions.Alerts.AlertNotification(
+                Code: $"WEBSOCKET_{snapshot.StateCode.ToString().ToUpperInvariant()}",
+                Severity: snapshot.StateCode == CircuitBreakerStateCode.Cooldown
+                    ? CoinBot.Application.Abstractions.Alerts.AlertSeverity.Critical
+                    : CoinBot.Application.Abstractions.Alerts.AlertSeverity.Warning,
+                Title: "WebSocketDisconnected",
+                Message:
+                    $"EventType=WebSocketDisconnected; State={snapshot.StateCode}; FailureCode={snapshot.LastErrorCode ?? "none"}; Reason={snapshot.LastErrorMessage ?? "none"}; TimestampUtc={DateTime.UtcNow:O}; Environment={ResolveEnvironmentLabel()}",
+                CorrelationId: snapshot.CorrelationId),
+            $"websocket-breaker:{snapshot.StateCode}:{snapshot.LastErrorCode ?? "none"}",
+            TimeSpan.FromMinutes(5),
+            cancellationToken);
+    }
+
+    private string ResolveEnvironmentLabel()
+    {
+        var runtimeLabel = hostEnvironment?.EnvironmentName ?? "Unknown";
+        var planeLabel = hostEnvironment?.IsDevelopment() == true
+            ? "Testnet"
+            : "Live";
+
+        return $"{runtimeLabel}/{planeLabel}";
+    }
+
+    private void TryPublishOperationsUpdate(
+        DependencyCircuitBreakerSnapshot snapshot,
+        DependencyCircuitBreakerSnapshot previousSnapshot)
+    {
+        if (userOperationsStreamHub is null || snapshot.StateCode == previousSnapshot.StateCode)
+        {
+            return;
+        }
+
+        userOperationsStreamHub.Publish(
+            new UserOperationsUpdate(
+                "*",
+                "CircuitBreakerChanged",
+                null,
+                null,
+                snapshot.StateCode.ToString(),
+                snapshot.LastErrorCode,
+                timeProvider.GetUtcNow().UtcDateTime));
     }
 }

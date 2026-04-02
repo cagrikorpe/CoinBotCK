@@ -7,12 +7,15 @@ using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Application.Abstractions.Policy;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Alerts;
 using CoinBot.Infrastructure.Autonomy;
 using CoinBot.Infrastructure.Monitoring;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.UnitTests.Infrastructure.Mfa;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -145,6 +148,42 @@ public sealed class AutonomyFoundationTests
         Assert.Single(harness.IncidentHook.IncidentRequests);
         Assert.Equal(GlobalSystemStateKind.Degraded, Assert.Single(harness.GlobalStateService.SetRequests).State);
         Assert.NotEmpty(harness.AdminAuditLogService.Requests);
+    }
+
+    [Fact]
+    public async Task DependencyBreaker_SendsWebSocketAlertOncePerFailureStateChange()
+    {
+        var harness = CreateBreakerHarness();
+
+        await harness.Manager.RecordFailureAsync(
+            new DependencyCircuitBreakerFailureRequest(
+                DependencyCircuitBreakerKind.WebSocket,
+                "system:test",
+                "SocketClosed",
+                "Connection lost"));
+        await harness.Manager.RecordFailureAsync(
+            new DependencyCircuitBreakerFailureRequest(
+                DependencyCircuitBreakerKind.WebSocket,
+                "system:test",
+                "SocketClosed",
+                "Connection lost"));
+        await harness.Manager.RecordFailureAsync(
+            new DependencyCircuitBreakerFailureRequest(
+                DependencyCircuitBreakerKind.WebSocket,
+                "system:test",
+                "SocketClosed",
+                "Connection lost"));
+        await harness.Manager.RecordFailureAsync(
+            new DependencyCircuitBreakerFailureRequest(
+                DependencyCircuitBreakerKind.WebSocket,
+                "system:test",
+                "SocketClosed",
+                "Connection lost"));
+
+        Assert.Equal(2, harness.AlertCoordinator.Notifications.Count);
+        Assert.Contains(harness.AlertCoordinator.Notifications, notification => notification.Title == "WebSocketDisconnected");
+        Assert.Contains(harness.AlertCoordinator.Notifications, notification => notification.Code == "WEBSOCKET_RETRYING");
+        Assert.Contains(harness.AlertCoordinator.Notifications, notification => notification.Code == "WEBSOCKET_COOLDOWN");
     }
 
     [Fact]
@@ -342,6 +381,7 @@ public sealed class AutonomyFoundationTests
         var reviewQueueService = new AutonomyReviewQueueService(dbContext, adminAuditLogService, timeProvider);
         var incidentHook = new FakeAutonomyIncidentHook();
         var globalStateService = new FakeGlobalSystemStateService();
+        var alertCoordinator = new RecordingAlertDispatchCoordinator();
         var manager = new DependencyCircuitBreakerStateManager(
             dbContext,
             globalStateService,
@@ -350,7 +390,9 @@ public sealed class AutonomyFoundationTests
             adminAuditLogService,
             Options.Create(new DependencyCircuitBreakerOptions()),
             timeProvider,
-            NullLogger<DependencyCircuitBreakerStateManager>.Instance);
+            NullLogger<DependencyCircuitBreakerStateManager>.Instance,
+            alertCoordinator,
+            new TestHostEnvironment(Environments.Development));
 
         return new BreakerHarness(
             dbContext,
@@ -359,7 +401,8 @@ public sealed class AutonomyFoundationTests
             incidentHook,
             globalStateService,
             adminAuditLogService,
-            timeProvider);
+            timeProvider,
+            alertCoordinator);
     }
 
     private sealed class TestDataScopeContext : IDataScopeContext
@@ -556,6 +599,21 @@ public sealed class AutonomyFoundationTests
         }
     }
 
+    private sealed class RecordingAlertDispatchCoordinator : IAlertDispatchCoordinator
+    {
+        public List<CoinBot.Application.Abstractions.Alerts.AlertNotification> Notifications { get; } = [];
+
+        public Task SendAsync(
+            CoinBot.Application.Abstractions.Alerts.AlertNotification notification,
+            string dedupeKey,
+            TimeSpan cooldown,
+            CancellationToken cancellationToken = default)
+        {
+            Notifications.Add(notification);
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed class FakeAutonomyService : IAutonomyService
     {
         public List<AutonomyDecisionRequest> Requests { get; } = [];
@@ -702,7 +760,8 @@ public sealed class AutonomyFoundationTests
         FakeAutonomyIncidentHook incidentHook,
         FakeGlobalSystemStateService globalStateService,
         FakeAdminAuditLogService adminAuditLogService,
-        AdjustableTimeProvider timeProvider)
+        AdjustableTimeProvider timeProvider,
+        RecordingAlertDispatchCoordinator alertCoordinator)
     {
         public ApplicationDbContext DbContext { get; } = dbContext;
 
@@ -717,5 +776,18 @@ public sealed class AutonomyFoundationTests
         public FakeAdminAuditLogService AdminAuditLogService { get; } = adminAuditLogService;
 
         public AdjustableTimeProvider TimeProvider { get; } = timeProvider;
+
+        public RecordingAlertDispatchCoordinator AlertCoordinator { get; } = alertCoordinator;
+    }
+
+    private sealed class TestHostEnvironment(string environmentName) : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = environmentName;
+
+        public string ApplicationName { get; set; } = "CoinBot.UnitTests";
+
+        public string ContentRootPath { get; set; } = AppContext.BaseDirectory;
+
+        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 }

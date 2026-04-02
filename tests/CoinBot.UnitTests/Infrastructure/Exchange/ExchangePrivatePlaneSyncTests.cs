@@ -3,11 +3,14 @@ using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Application.Abstractions.ExchangeCredentials;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Alerts;
 using CoinBot.Infrastructure.Exchange;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.UnitTests.Infrastructure.Mfa;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace CoinBot.UnitTests.Infrastructure.Exchange;
@@ -161,6 +164,53 @@ public sealed class ExchangePrivatePlaneSyncTests
         Assert.Contains("PositionMismatches=1", state.DriftSummary, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task ExchangeAppStateSyncService_SendsSyncFailureAlert_WhenCredentialAccessIsBlocked()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        var exchangeAccountId = Guid.NewGuid();
+        await using var context = CreateContext(databaseRoot);
+        context.ExchangeAccounts.Add(new ExchangeAccount
+        {
+            Id = exchangeAccountId,
+            OwnerUserId = "user-blocked",
+            ExchangeName = "Binance",
+            DisplayName = "Primary",
+            ApiKeyCiphertext = "cipher-api-key",
+            ApiSecretCiphertext = "cipher-api-secret",
+            CredentialStatus = ExchangeCredentialStatus.Active
+        });
+        await context.SaveChangesAsync();
+
+        var alertCoordinator = new RecordingAlertDispatchCoordinator();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        var service = new ExchangeAppStateSyncService(
+            context,
+            new BlockingExchangeCredentialService(exchangeAccountId),
+            new FakePrivateRestClient(new ExchangeAccountSnapshot(
+                exchangeAccountId,
+                "user-blocked",
+                "Binance",
+                [],
+                [],
+                timeProvider.GetUtcNow().UtcDateTime,
+                timeProvider.GetUtcNow().UtcDateTime,
+                "Binance.PrivateRest.Account")),
+            new ExchangeAccountSnapshotHub(),
+            new ExchangeAccountSyncStateService(context),
+            timeProvider,
+            NullLogger<ExchangeAppStateSyncService>.Instance,
+            alertCoordinator,
+            new TestHostEnvironment(Environments.Development));
+
+        await service.RunOnceAsync();
+
+        var alert = Assert.Single(alertCoordinator.Notifications);
+        Assert.Equal("SYNC_FAILED_CREDENTIALACCESSBLOCKED", alert.Code);
+        Assert.Contains("EventType=SyncFailed", alert.Message, StringComparison.Ordinal);
+        Assert.Contains("FailureCode=CredentialAccessBlocked", alert.Message, StringComparison.Ordinal);
+    }
+
     private static ApplicationDbContext CreateContext(InMemoryDatabaseRoot databaseRoot)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -218,6 +268,47 @@ public sealed class ExchangePrivatePlaneSyncTests
         }
     }
 
+    private sealed class BlockingExchangeCredentialService(Guid exchangeAccountId) : IExchangeCredentialService
+    {
+        public Task<ExchangeCredentialAccessResult> GetAsync(
+            ExchangeCredentialAccessRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            Assert.Equal(exchangeAccountId, request.ExchangeAccountId);
+            throw new InvalidOperationException("Synchronization access blocked.");
+        }
+
+        public Task<ExchangeCredentialStateSnapshot> StoreAsync(StoreExchangeCredentialsRequest request, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<ExchangeCredentialStateSnapshot> SetValidationStateAsync(SetExchangeCredentialValidationStateRequest request, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<ExchangeCredentialStateSnapshot> GetStateAsync(Guid exchangeAccountId, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+    }
+
+    private sealed class RecordingAlertDispatchCoordinator : IAlertDispatchCoordinator
+    {
+        public List<CoinBot.Application.Abstractions.Alerts.AlertNotification> Notifications { get; } = [];
+
+        public Task SendAsync(
+            CoinBot.Application.Abstractions.Alerts.AlertNotification notification,
+            string dedupeKey,
+            TimeSpan cooldown,
+            CancellationToken cancellationToken = default)
+        {
+            Notifications.Add(notification);
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed class FakePrivateRestClient(ExchangeAccountSnapshot snapshot) : IBinancePrivateRestClient
     {
         public Task<BinanceOrderPlacementResult> PlaceOrderAsync(
@@ -266,5 +357,16 @@ public sealed class ExchangePrivatePlaneSyncTests
         {
             return Task.FromResult(snapshot);
         }
+    }
+
+    private sealed class TestHostEnvironment(string environmentName) : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = environmentName;
+
+        public string ApplicationName { get; set; } = "CoinBot.UnitTests";
+
+        public string ContentRootPath { get; set; } = AppContext.BaseDirectory;
+
+        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 }

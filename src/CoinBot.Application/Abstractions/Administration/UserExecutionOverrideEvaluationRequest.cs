@@ -10,4 +10,10 @@ public sealed record UserExecutionOverrideEvaluationRequest(
     decimal Quantity,
     decimal Price,
     Guid? BotId = null,
-    string? StrategyKey = null);
+    string? StrategyKey = null,
+    string? Context = null,
+    Guid? TradingStrategyId = null,
+    Guid? TradingStrategyVersionId = null,
+    string? Timeframe = null,
+    Guid? CurrentExecutionOrderId = null,
+    Guid? ReplacesExecutionOrderId = null);

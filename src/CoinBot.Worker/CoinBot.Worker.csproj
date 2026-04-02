@@ -4,7 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <UserSecretsId>dotnet-CoinBot.Worker-1877b8c3-d90c-4fb7-8c6b-a75bfdda3c80</UserSecretsId>
+    <UserSecretsId>016c8a65-b0e7-404b-a04c-0a51f7bea920</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>

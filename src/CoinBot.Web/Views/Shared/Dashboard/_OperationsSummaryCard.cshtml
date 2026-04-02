@@ -1,0 +1,51 @@
+@model CoinBot.Web.ViewModels.Home.DashboardViewModel
+
+<div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-5">
+        <div class="card-title">
+            <div>
+                <div class="text-muted font-weight-bold text-uppercase mb-1">Operations Summary</div>
+                <h3 class="mb-0">Bot ve guard durumu</h3>
+            </div>
+        </div>
+    </div>
+    <div class="card-body"
+         data-cb-operations-summary
+         data-cb-operations-summary-url="@Url.Action("OperationsSummary", "Home")"
+         data-cb-operations-hub-url="@Model.OperationsHubPath">
+        <div class="row">
+            <div class="col-md-4 mb-6">
+                <div class="font-size-sm text-muted text-uppercase">Etkin botlar</div>
+                <div class="font-size-h3 font-weight-bolder" data-cb-ops-enabled-bots>@Model.OperationsSummary.EnabledBotCount</div>
+                <div class="text-muted" data-cb-ops-enabled-symbols>@Model.OperationsSummary.EnabledSymbolCount sembol</div>
+                <div class="text-muted" data-cb-ops-conflicts>@Model.OperationsSummary.ConflictedSymbolCount conflict</div>
+            </div>
+            <div class="col-md-4 mb-6">
+                <div class="font-size-sm text-muted text-uppercase">Son worker / execution</div>
+                <div class="font-weight-bolder" data-cb-ops-job-state>@Model.OperationsSummary.LastJobStatus</div>
+                <div class="text-muted" data-cb-ops-job-error>@(Model.OperationsSummary.LastJobErrorCode ?? "Worker hata kodu yok")</div>
+                <div class="font-weight-bolder mt-3" data-cb-ops-execution-state>@Model.OperationsSummary.LastExecutionState</div>
+                <div class="text-muted" data-cb-ops-execution-error>@(Model.OperationsSummary.LastExecutionFailureCode ?? "Execution hata kodu yok")</div>
+            </div>
+            <div class="col-md-4 mb-6">
+                <div class="font-size-sm text-muted text-uppercase">Guard / health</div>
+                <div class="font-weight-bolder" data-cb-ops-worker-health>@Model.OperationsSummary.WorkerHealthLabel</div>
+                <div class="text-muted" data-cb-ops-stream-health>@Model.OperationsSummary.PrivateStreamHealthLabel</div>
+                <div class="font-weight-bolder mt-3" data-cb-ops-breaker>@Model.OperationsSummary.BreakerLabel</div>
+                <div class="text-muted">@Model.OperationsSummary.OpenCircuitBreakerCount aktif breaker</div>
+            </div>
+            <div class="col-md-4 mb-2">
+                <div class="font-size-sm text-muted text-uppercase">Günlük limit</div>
+                <div class="font-weight-bolder" data-cb-ops-daily-loss>@Model.OperationsSummary.DailyLossSummary</div>
+            </div>
+            <div class="col-md-4 mb-2">
+                <div class="font-size-sm text-muted text-uppercase">Open position limiti</div>
+                <div class="font-weight-bolder" data-cb-ops-position-limit>@Model.OperationsSummary.PositionLimitSummary</div>
+            </div>
+            <div class="col-md-4 mb-2">
+                <div class="font-size-sm text-muted text-uppercase">Cooldown</div>
+                <div class="font-weight-bolder" data-cb-ops-cooldown>@Model.OperationsSummary.CooldownSummary</div>
+            </div>
+        </div>
+    </div>
+</div>

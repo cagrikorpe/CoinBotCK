@@ -25,6 +25,76 @@ public sealed class BinancePrivateRestClient(
 {
     private readonly BinancePrivateDataOptions optionsValue = options.Value;
 
+    public async Task EnsureMarginTypeAsync(
+        Guid exchangeAccountId,
+        string symbol,
+        string marginType,
+        string apiKey,
+        string apiSecret,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedSymbol = NormalizeCode(symbol)
+            ?? throw new ArgumentException("The symbol is required.", nameof(symbol));
+        var normalizedMarginType = NormalizeCode(marginType)
+            ?? throw new ArgumentException("The margin type is required.", nameof(marginType));
+        var timestamp = timeProvider.GetUtcNow().ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
+        var unsignedQuery =
+            $"symbol={Uri.EscapeDataString(normalizedSymbol)}&marginType={Uri.EscapeDataString(normalizedMarginType)}&timestamp={timestamp}&recvWindow={optionsValue.RecvWindowMilliseconds.ToString(CultureInfo.InvariantCulture)}";
+        var signature = ComputeSignature(unsignedQuery, apiSecret);
+        var path = $"/fapi/v1/marginType?{unsignedQuery}&signature={signature}";
+
+        using var request = CreateApiKeyRequest(HttpMethod.Post, path, apiKey);
+        using var response = await SendAsyncWithTelemetryAsync(request, timeProvider.GetUtcNow().UtcDateTime, cancellationToken);
+
+        if (response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (string.Equals(TryReadExchangeCode(responseBody), "-4046", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"Binance margin type configuration failed with status {(int)response.StatusCode}.");
+    }
+
+    public async Task EnsureLeverageAsync(
+        Guid exchangeAccountId,
+        string symbol,
+        decimal leverage,
+        string apiKey,
+        string apiSecret,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedSymbol = NormalizeCode(symbol)
+            ?? throw new ArgumentException("The symbol is required.", nameof(symbol));
+        var normalizedLeverage = decimal.Truncate(leverage);
+
+        if (normalizedLeverage < 1m)
+        {
+            throw new ArgumentOutOfRangeException(nameof(leverage), "Leverage must be at least 1.");
+        }
+
+        var timestamp = timeProvider.GetUtcNow().ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
+        var unsignedQuery =
+            $"symbol={Uri.EscapeDataString(normalizedSymbol)}&leverage={normalizedLeverage.ToString(CultureInfo.InvariantCulture)}&timestamp={timestamp}&recvWindow={optionsValue.RecvWindowMilliseconds.ToString(CultureInfo.InvariantCulture)}";
+        var signature = ComputeSignature(unsignedQuery, apiSecret);
+        var path = $"/fapi/v1/leverage?{unsignedQuery}&signature={signature}";
+
+        using var request = CreateApiKeyRequest(HttpMethod.Post, path, apiKey);
+        using var response = await SendAsyncWithTelemetryAsync(request, timeProvider.GetUtcNow().UtcDateTime, cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException(
+                $"Binance leverage configuration failed with status {(int)response.StatusCode}.");
+        }
+    }
+
     public async Task<BinanceOrderPlacementResult> PlaceOrderAsync(
         BinanceOrderPlacementRequest request,
         CancellationToken cancellationToken = default)

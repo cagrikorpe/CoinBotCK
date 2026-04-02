@@ -602,6 +602,10 @@ build_metadata.AdditionalFiles.CssScope =
 build_metadata.AdditionalFiles.TargetPath = Vmlld3NcQmFja3Rlc3RcSW5kZXguY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
+[D:/CkBot/Code/CoinBot/src/CoinBot.Web/Views/Bots/Editor.cshtml]
+build_metadata.AdditionalFiles.TargetPath = Vmlld3NcQm90c1xFZGl0b3IuY3NodG1s
+build_metadata.AdditionalFiles.CssScope = 
+
 [D:/CkBot/Code/CoinBot/src/CoinBot.Web/Views/Bots/Index.cshtml]
 build_metadata.AdditionalFiles.TargetPath = Vmlld3NcQm90c1xJbmRleC5jc2h0bWw=
 build_metadata.AdditionalFiles.CssScope = 
@@ -776,6 +780,10 @@ build_metadata.AdditionalFiles.CssScope =
 
 [D:/CkBot/Code/CoinBot/src/CoinBot.Web/Views/Shared/Dashboard/_OpenPositionsTable.cshtml]
 build_metadata.AdditionalFiles.TargetPath = Vmlld3NcU2hhcmVkXERhc2hib2FyZFxfT3BlblBvc2l0aW9uc1RhYmxlLmNzaHRtbA==
+build_metadata.AdditionalFiles.CssScope = 
+
+[D:/CkBot/Code/CoinBot/src/CoinBot.Web/Views/Shared/Dashboard/_OperationsSummaryCard.cshtml]
+build_metadata.AdditionalFiles.TargetPath = Vmlld3NcU2hhcmVkXERhc2hib2FyZFxfT3BlcmF0aW9uc1N1bW1hcnlDYXJkLmNzaHRtbA==
 build_metadata.AdditionalFiles.CssScope = 
 
 [D:/CkBot/Code/CoinBot/src/CoinBot.Web/Views/Shared/Dashboard/_QuickActionsCard.cshtml]

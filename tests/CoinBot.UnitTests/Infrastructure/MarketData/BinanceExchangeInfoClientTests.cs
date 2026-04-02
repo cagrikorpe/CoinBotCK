@@ -22,9 +22,12 @@ public sealed class BinanceExchangeInfoClientTests
                   "status": "TRADING",
                   "baseAsset": "BTC",
                   "quoteAsset": "USDT",
+                  "pricePrecision": 2,
+                  "quantityPrecision": 4,
                   "filters": [
                     { "filterType": "PRICE_FILTER", "tickSize": "0.01000000" },
-                    { "filterType": "LOT_SIZE", "stepSize": "0.00010000" }
+                    { "filterType": "LOT_SIZE", "minQty": "0.00100000", "stepSize": "0.00010000" },
+                    { "filterType": "MIN_NOTIONAL", "notional": "100.00000000" }
                   ]
                 }
               ]
@@ -32,7 +35,7 @@ public sealed class BinanceExchangeInfoClientTests
             """);
         using var httpClient = new HttpClient(handler)
         {
-            BaseAddress = new Uri("https://api.binance.com/")
+            BaseAddress = new Uri("https://fapi.binance.com/")
         };
         var telemetryCollector = new RecordingMonitoringTelemetryCollector();
         var client = new BinanceExchangeInfoClient(
@@ -51,10 +54,15 @@ public sealed class BinanceExchangeInfoClientTests
         Assert.Equal("USDT", snapshot.QuoteAsset);
         Assert.Equal(0.01m, snapshot.TickSize);
         Assert.Equal(0.0001m, snapshot.StepSize);
+        Assert.Equal(0.001m, snapshot.MinQuantity);
+        Assert.Equal(100m, snapshot.MinNotional);
+        Assert.Equal(2, snapshot.PricePrecision);
+        Assert.Equal(4, snapshot.QuantityPrecision);
         Assert.Equal("TRADING", snapshot.TradingStatus);
         Assert.True(snapshot.IsTradingEnabled);
         Assert.Equal(now.UtcDateTime, snapshot.RefreshedAtUtc);
-        Assert.Contains("exchangeInfo", handler.LastRequestUri, StringComparison.Ordinal);
+        Assert.Contains("fapi/v1/exchangeInfo", handler.LastRequestUri, StringComparison.Ordinal);
+        Assert.Contains("symbol=BTCUSDT", handler.LastRequestUri, StringComparison.Ordinal);
         Assert.Contains("BTCUSDT", Uri.UnescapeDataString(handler.LastRequestUri), StringComparison.Ordinal);
         Assert.Equal(1, telemetryCollector.BinancePingCount);
         Assert.Equal(17, telemetryCollector.LastRateLimitUsage);
@@ -70,7 +78,7 @@ public sealed class BinanceExchangeInfoClientTests
             $"{{\n  \"serverTime\": {serverTime.ToUnixTimeMilliseconds()}\n}}");
         using var httpClient = new HttpClient(handler)
         {
-            BaseAddress = new Uri("https://api.binance.com/")
+            BaseAddress = new Uri("https://fapi.binance.com/")
         };
         var client = new BinanceExchangeInfoClient(
             httpClient,
@@ -80,7 +88,7 @@ public sealed class BinanceExchangeInfoClientTests
         var observedServerTime = await client.GetServerTimeUtcAsync();
 
         Assert.Equal(serverTime.UtcDateTime, observedServerTime);
-        Assert.Contains("api/v3/time", handler.LastRequestUri, StringComparison.Ordinal);
+        Assert.Contains("fapi/v1/time", handler.LastRequestUri, StringComparison.Ordinal);
     }
 
     private sealed class StubHttpMessageHandler(string jsonPayload) : HttpMessageHandler

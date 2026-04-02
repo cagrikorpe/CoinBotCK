@@ -2,11 +2,17 @@ namespace CoinBot.Infrastructure.Execution;
 
 internal static class ExecutionClientOrderId
 {
-    private const string Prefix = "cb_";
+    private const string DefaultPrefix = "cb_";
+    private const string DevelopmentFuturesPilotPrefix = "cbp0_";
 
     public static string Create(Guid orderId)
     {
-        return $"{Prefix}{Convert.ToBase64String(orderId.ToByteArray()).TrimEnd('=').Replace('+', '-').Replace('/', '_')}";
+        return Create(orderId, DefaultPrefix);
+    }
+
+    public static string CreateDevelopmentFuturesPilot(Guid orderId)
+    {
+        return Create(orderId, DevelopmentFuturesPilotPrefix);
     }
 
     public static bool TryParse(string? value, out Guid orderId)
@@ -19,13 +25,12 @@ internal static class ExecutionClientOrderId
         }
 
         var normalizedValue = value.Trim();
+        var encodedValue = TryStripKnownPrefix(normalizedValue);
 
-        if (!normalizedValue.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase))
+        if (encodedValue is null)
         {
             return false;
         }
-
-        var encodedValue = normalizedValue[Prefix.Length..];
 
         if (Guid.TryParseExact(encodedValue, "N", out orderId))
         {
@@ -55,5 +60,23 @@ internal static class ExecutionClientOrderId
         {
             return false;
         }
+    }
+
+    private static string Create(Guid orderId, string prefix)
+    {
+        return $"{prefix}{Convert.ToBase64String(orderId.ToByteArray()).TrimEnd('=').Replace('+', '-').Replace('/', '_')}";
+    }
+
+    private static string? TryStripKnownPrefix(string value)
+    {
+        foreach (var prefix in new[] { DefaultPrefix, DevelopmentFuturesPilotPrefix })
+        {
+            if (value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return value[prefix.Length..];
+            }
+        }
+
+        return null;
     }
 }

@@ -1,9 +1,12 @@
+using System.Globalization;
 using CoinBot.Application.Abstractions.Autonomy;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.ExchangeCredentials;
+using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Exchange;
+using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -15,7 +18,9 @@ public sealed class BinanceExecutor(
     IExchangeCredentialService exchangeCredentialService,
     IBinancePrivateRestClient privateRestClient,
     ILogger<BinanceExecutor> logger,
-    IDependencyCircuitBreakerStateManager? dependencyCircuitBreakerStateManager = null) : IExecutionTargetExecutor
+    IDependencyCircuitBreakerStateManager? dependencyCircuitBreakerStateManager = null,
+    IMarketDataService? marketDataService = null,
+    IBinanceExchangeInfoClient? exchangeInfoClient = null) : IExecutionTargetExecutor
 {
     private const string BreakerActor = "system:order-execution";
 
@@ -63,6 +68,27 @@ public sealed class BinanceExecutor(
                     ExchangeCredentialAccessPurpose.Execution,
                     order.RootCorrelationId),
                 cancellationToken);
+            var symbolMetadata = await ResolveSymbolMetadataAsync(command.Symbol, cancellationToken);
+            ValidateOrderPreflight(command, symbolMetadata);
+
+            if (TryResolveDevelopmentFuturesPilot(command.Context, out var marginType, out var leverage))
+            {
+                await privateRestClient.EnsureMarginTypeAsync(
+                    exchangeAccountId,
+                    command.Symbol,
+                    marginType!,
+                    credentialAccess.ApiKey,
+                    credentialAccess.ApiSecret,
+                    cancellationToken);
+                await privateRestClient.EnsureLeverageAsync(
+                    exchangeAccountId,
+                    command.Symbol,
+                    leverage!.Value,
+                    credentialAccess.ApiKey,
+                    credentialAccess.ApiSecret,
+                    cancellationToken);
+            }
+
             var placementResult = await privateRestClient.PlaceOrderAsync(
                 new BinanceOrderPlacementRequest(
                     exchangeAccountId,
@@ -71,7 +97,7 @@ public sealed class BinanceExecutor(
                     command.OrderType,
                     command.Quantity,
                     command.Price,
-                    ExecutionClientOrderId.Create(order.Id),
+                    BuildClientOrderId(order.Id, command.Context),
                     credentialAccess.ApiKey,
                     credentialAccess.ApiSecret,
                     order.IdempotencyKey,
@@ -117,6 +143,155 @@ public sealed class BinanceExecutor(
 
             throw;
         }
+    }
+
+    private async Task<SymbolMetadataSnapshot> ResolveSymbolMetadataAsync(
+        string symbol,
+        CancellationToken cancellationToken)
+    {
+        var cachedMetadata = marketDataService is null
+            ? null
+            : await marketDataService.GetSymbolMetadataAsync(symbol, cancellationToken);
+
+        if (cachedMetadata is not null)
+        {
+            return cachedMetadata;
+        }
+
+        if (exchangeInfoClient is null)
+        {
+            throw new ExecutionValidationException($"Symbol metadata for '{symbol}' is unavailable.");
+        }
+
+        var snapshots = await exchangeInfoClient.GetSymbolMetadataAsync([symbol], cancellationToken);
+        var resolvedSnapshot = snapshots.SingleOrDefault();
+
+        return resolvedSnapshot
+            ?? throw new ExecutionValidationException($"Symbol metadata for '{symbol}' is unavailable.");
+    }
+
+    private static void ValidateOrderPreflight(ExecutionCommand command, SymbolMetadataSnapshot metadata)
+    {
+        if (!metadata.IsTradingEnabled)
+        {
+            throw new ExecutionValidationException($"Symbol '{command.Symbol}' is not trading-enabled.");
+        }
+
+        if (metadata.MinQuantity is decimal minQuantity && command.Quantity < minQuantity)
+        {
+            throw new ExecutionValidationException(
+                $"Order quantity {command.Quantity} is below the minimum quantity {minQuantity} for '{command.Symbol}'.");
+        }
+
+        if (!IsAligned(command.Quantity, metadata.StepSize))
+        {
+            throw new ExecutionValidationException(
+                $"Order quantity {command.Quantity} does not align with step size {metadata.StepSize} for '{command.Symbol}'.");
+        }
+
+        if (metadata.QuantityPrecision is int quantityPrecision &&
+            CountFractionalDigits(command.Quantity) > quantityPrecision)
+        {
+            throw new ExecutionValidationException(
+                $"Order quantity {command.Quantity} exceeds quantity precision {quantityPrecision} for '{command.Symbol}'.");
+        }
+
+        if (metadata.MinNotional is decimal minNotional &&
+            (command.Quantity * command.Price) < minNotional)
+        {
+            throw new ExecutionValidationException(
+                $"Order notional {(command.Quantity * command.Price)} is below the minimum notional {minNotional} for '{command.Symbol}'.");
+        }
+
+        if (command.OrderType != ExecutionOrderType.Limit)
+        {
+            return;
+        }
+
+        if (!IsAligned(command.Price, metadata.TickSize))
+        {
+            throw new ExecutionValidationException(
+                $"Limit price {command.Price} does not align with tick size {metadata.TickSize} for '{command.Symbol}'.");
+        }
+
+        if (metadata.PricePrecision is int pricePrecision &&
+            CountFractionalDigits(command.Price) > pricePrecision)
+        {
+            throw new ExecutionValidationException(
+                $"Limit price {command.Price} exceeds price precision {pricePrecision} for '{command.Symbol}'.");
+        }
+    }
+
+    private static bool TryResolveDevelopmentFuturesPilot(
+        string? context,
+        out string? marginType,
+        out decimal? leverage)
+    {
+        marginType = null;
+        leverage = null;
+
+        if (!TryReadBooleanFlag(context, "DevelopmentFuturesTestnetPilot"))
+        {
+            return false;
+        }
+
+        marginType = ReadContextValue(context, "PilotMarginType");
+        leverage = decimal.TryParse(
+            ReadContextValue(context, "PilotLeverage"),
+            CultureInfo.InvariantCulture,
+            out var parsedLeverage)
+            ? parsedLeverage
+            : null;
+
+        return !string.IsNullOrWhiteSpace(marginType) && leverage.HasValue;
+    }
+
+    private static string BuildClientOrderId(Guid executionOrderId, string? context)
+    {
+        return TryReadBooleanFlag(context, "DevelopmentFuturesTestnetPilot")
+            ? ExecutionClientOrderId.CreateDevelopmentFuturesPilot(executionOrderId)
+            : ExecutionClientOrderId.Create(executionOrderId);
+    }
+
+    private static bool TryReadBooleanFlag(string? context, string key)
+    {
+        return bool.TryParse(ReadContextValue(context, key), out var value) && value;
+    }
+
+    private static string? ReadContextValue(string? context, string key)
+    {
+        if (string.IsNullOrWhiteSpace(context))
+        {
+            return null;
+        }
+
+        var prefix = $"{key}=";
+        var segments = context.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        foreach (var segment in segments)
+        {
+            if (segment.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return segment[prefix.Length..].Trim();
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsAligned(decimal value, decimal increment)
+    {
+        if (increment <= 0m)
+        {
+            return false;
+        }
+
+        return value % increment == 0m;
+    }
+
+    private static int CountFractionalDigits(decimal value)
+    {
+        return (decimal.GetBits(value)[3] >> 16) & 0x7F;
     }
 
     private static string? Truncate(string? value, int maxLength)

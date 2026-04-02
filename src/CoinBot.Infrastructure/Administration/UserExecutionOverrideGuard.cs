@@ -1,9 +1,13 @@
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Policy;
+using CoinBot.Application.Abstractions.Risk;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace CoinBot.Infrastructure.Execution;
 
@@ -11,8 +15,13 @@ public sealed class UserExecutionOverrideGuard(
     ApplicationDbContext dbContext,
     ITradingModeResolver tradingModeResolver,
     IGlobalPolicyEngine? globalPolicyEngine = null,
-    ILogger<UserExecutionOverrideGuard>? logger = null) : IUserExecutionOverrideGuard
+    ILogger<UserExecutionOverrideGuard>? logger = null,
+    IHostEnvironment? hostEnvironment = null,
+    IRiskPolicyEvaluator? riskPolicyEvaluator = null,
+    IOptions<BotExecutionPilotOptions>? botExecutionPilotOptions = null) : IUserExecutionOverrideGuard
 {
+    private readonly BotExecutionPilotOptions optionsValue = botExecutionPilotOptions?.Value ?? new BotExecutionPilotOptions();
+
     public async Task<UserExecutionOverrideEvaluationResult> EvaluateAsync(
         UserExecutionOverrideEvaluationRequest request,
         CancellationToken cancellationToken = default)
@@ -63,11 +72,94 @@ public sealed class UserExecutionOverrideGuard(
                     request.StrategyKey),
                 cancellationToken);
 
-            if (resolution.EffectiveMode != ExecutionEnvironment.Live)
+            if (resolution.EffectiveMode != ExecutionEnvironment.Live &&
+                !IsDevelopmentFuturesPilotOverrideAllowed(request.Context))
             {
                 return Block(
                     "LiveProviderBlockedByResolvedDemoMode",
                     "Live provider access blocked because the effective mode resolved to Demo.");
+            }
+        }
+
+        if (await HasSameSymbolConflictAsync(normalizedUserId, request.BotId, normalizedSymbol, cancellationToken))
+        {
+            return Block(
+                "UserExecutionSymbolConflict",
+                "Execution blocked because multiple enabled bots share the same symbol for the same user.");
+        }
+
+        var isReplacementOrder = request.ReplacesExecutionOrderId.HasValue;
+        var isReduceOnlyOrder = await IsReduceOnlyOrderAsync(
+            normalizedUserId,
+            normalizedSymbol,
+            request.Environment,
+            request.Side,
+            cancellationToken);
+
+        if (!isReplacementOrder &&
+            !isReduceOnlyOrder &&
+            request.BotId.HasValue &&
+            optionsValue.PerBotCooldownSeconds > 0 &&
+            await HasRecentExecutionAsync(
+                normalizedUserId,
+                request.BotId,
+                symbol: null,
+                TimeSpan.FromSeconds(optionsValue.PerBotCooldownSeconds),
+                request.CurrentExecutionOrderId,
+                cancellationToken))
+        {
+            return Block(
+                "UserExecutionBotCooldownActive",
+                "Execution blocked because the bot cooldown is still active.");
+        }
+
+        if (!isReplacementOrder &&
+            !isReduceOnlyOrder &&
+            optionsValue.PerSymbolCooldownSeconds > 0 &&
+            await HasRecentExecutionAsync(
+                normalizedUserId,
+                botId: null,
+                normalizedSymbol,
+                TimeSpan.FromSeconds(optionsValue.PerSymbolCooldownSeconds),
+                request.CurrentExecutionOrderId,
+                cancellationToken))
+        {
+            return Block(
+                "UserExecutionSymbolCooldownActive",
+                "Execution blocked because the symbol cooldown is still active.");
+        }
+
+        if (!isReplacementOrder &&
+            !isReduceOnlyOrder &&
+            optionsValue.MaxOpenPositionsPerUser > 0 &&
+            await ResolveOpenPositionCountAsync(normalizedUserId, request.Environment, cancellationToken) >= optionsValue.MaxOpenPositionsPerUser)
+        {
+            return Block(
+                "UserExecutionMaxOpenPositionsExceeded",
+                "Execution blocked because the maximum open position limit has been reached.");
+        }
+
+        if (riskPolicyEvaluator is not null &&
+            request.TradingStrategyId.HasValue &&
+            request.TradingStrategyVersionId.HasValue &&
+            !string.IsNullOrWhiteSpace(request.Timeframe))
+        {
+            var riskEvaluation = await riskPolicyEvaluator.EvaluateAsync(
+                new RiskPolicyEvaluationRequest(
+                    normalizedUserId,
+                    request.TradingStrategyId.Value,
+                    request.TradingStrategyVersionId.Value,
+                    StrategySignalType.Entry,
+                    request.Environment,
+                    normalizedSymbol,
+                    request.Timeframe.Trim()),
+                cancellationToken);
+
+            if (riskEvaluation.IsVetoed)
+            {
+                return Block(
+                    $"UserExecutionRisk{riskEvaluation.ReasonCode}",
+                    $"Execution blocked because risk policy vetoed the order: {riskEvaluation.ReasonCode}.");
             }
         }
 
@@ -127,7 +219,7 @@ public sealed class UserExecutionOverrideGuard(
         }
 
         if (overrideEntity.ReduceOnly &&
-            !await IsReduceOnlyOrderAsync(normalizedUserId, normalizedSymbol, request.Environment, request.Side, cancellationToken))
+            !isReduceOnlyOrder)
         {
             return Block(
                 "UserExecutionReduceOnlyRequired",
@@ -135,6 +227,88 @@ public sealed class UserExecutionOverrideGuard(
         }
 
         return Allow();
+    }
+
+    private async Task<bool> HasSameSymbolConflictAsync(
+        string userId,
+        Guid? currentBotId,
+        string symbol,
+        CancellationToken cancellationToken)
+    {
+        if (!currentBotId.HasValue)
+        {
+            return false;
+        }
+
+        var enabledBots = await dbContext.TradingBots
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.OwnerUserId == userId &&
+                entity.IsEnabled &&
+                !entity.IsDeleted)
+            .Select(entity => new { entity.Id, entity.Symbol })
+            .ToListAsync(cancellationToken);
+
+        return enabledBots
+            .Where(entity => entity.Id != currentBotId.Value)
+            .Select(entity => NormalizeSymbol(entity.Symbol))
+            .Any(item => string.Equals(item, symbol, StringComparison.Ordinal));
+    }
+
+    private async Task<bool> HasRecentExecutionAsync(
+        string userId,
+        Guid? botId,
+        string? symbol,
+        TimeSpan cooldown,
+        Guid? currentExecutionOrderId,
+        CancellationToken cancellationToken)
+    {
+        var thresholdUtc = DateTime.UtcNow.Subtract(cooldown);
+        var query = dbContext.ExecutionOrders
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.OwnerUserId == userId &&
+                (!currentExecutionOrderId.HasValue || entity.Id != currentExecutionOrderId.Value) &&
+                !entity.IsDeleted &&
+                entity.CreatedDate >= thresholdUtc);
+
+        if (botId.HasValue)
+        {
+            query = query.Where(entity => entity.BotId == botId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(symbol))
+        {
+            query = query.Where(entity => entity.Symbol == symbol);
+        }
+
+        return await query.AnyAsync(cancellationToken);
+    }
+
+    private async Task<int> ResolveOpenPositionCountAsync(
+        string userId,
+        ExecutionEnvironment environment,
+        CancellationToken cancellationToken)
+    {
+        return environment == ExecutionEnvironment.Demo
+            ? await dbContext.DemoPositions
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .CountAsync(
+                    entity => entity.OwnerUserId == userId &&
+                              entity.Quantity != 0m &&
+                              !entity.IsDeleted,
+                    cancellationToken)
+            : await dbContext.ExchangePositions
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .CountAsync(
+                    entity => entity.OwnerUserId == userId &&
+                              entity.Quantity != 0m &&
+                              !entity.IsDeleted,
+                    cancellationToken);
     }
 
     private async Task<int> ResolveTodayTradeCountAsync(string userId, CancellationToken cancellationToken)
@@ -218,5 +392,41 @@ public sealed class UserExecutionOverrideGuard(
         }
 
         return normalizedValue;
+    }
+
+    private string NormalizeSymbol(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? optionsValue.DefaultSymbol.Trim().ToUpperInvariant()
+            : value.Trim().ToUpperInvariant();
+    }
+
+    private bool IsDevelopmentFuturesPilotOverrideAllowed(string? context)
+    {
+        return hostEnvironment?.IsDevelopment() == true &&
+               TryReadBooleanFlag(context, "DevelopmentFuturesTestnetPilot");
+    }
+
+    private static bool TryReadBooleanFlag(string? context, string key)
+    {
+        if (string.IsNullOrWhiteSpace(context))
+        {
+            return false;
+        }
+
+        var prefix = $"{key}=";
+        var segments = context.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        foreach (var segment in segments)
+        {
+            if (!segment.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return bool.TryParse(segment[prefix.Length..].Trim(), out var value) && value;
+        }
+
+        return false;
     }
 }

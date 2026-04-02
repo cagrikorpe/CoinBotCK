@@ -8,6 +8,16 @@ public sealed class TradingBot : UserOwnedEntity
 
     public string StrategyKey { get; set; } = string.Empty;
 
+    public string? Symbol { get; set; }
+
+    public decimal? Quantity { get; set; }
+
+    public Guid? ExchangeAccountId { get; set; }
+
+    public decimal? Leverage { get; set; }
+
+    public string? MarginType { get; set; }
+
     public bool IsEnabled { get; set; }
 
     public ExecutionEnvironment? TradingModeOverride { get; set; }

@@ -20,6 +20,9 @@ public sealed class GlobalPolicyEngine(
     ILogger<GlobalPolicyEngine> logger) : IGlobalPolicyEngine
 {
     private static readonly object CacheKey = new();
+    private static readonly MemoryCacheEntryOptions SnapshotCacheOptions = new MemoryCacheEntryOptions()
+        .SetSize(1)
+        .SetAbsoluteExpiration(TimeSpan.FromSeconds(3));
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true
@@ -31,9 +34,10 @@ public sealed class GlobalPolicyEngine(
                 CacheKey,
                 async entry =>
                 {
-                    entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(3);
+                    entry.SetOptions(SnapshotCacheOptions);
                     return await LoadSnapshotAsync(cancellationToken);
-                })!;
+                },
+                SnapshotCacheOptions)!;
     }
 
     public async Task<GlobalPolicyEvaluationResult> EvaluateAsync(

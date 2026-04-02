@@ -1,7 +1,12 @@
 using CoinBot.Application.Abstractions.DataScope;
+using CoinBot.Application.Abstractions.Alerts;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Auditing;
+using CoinBot.Infrastructure.Execution;
+using CoinBot.Infrastructure.Identity;
 using CoinBot.Infrastructure.Jobs;
+using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.UnitTests.Infrastructure.Mfa;
 using Microsoft.EntityFrameworkCore;
@@ -63,6 +68,14 @@ public sealed class BackgroundJobOrchestrationTests
             BackgroundJobProcessResult.RetryableFailure("TransientFailure"),
             BackgroundJobProcessResult.Success()
         ]);
+        var auditLogService = new AuditLogService(context, new CorrelationContextAccessor());
+        var switchService = new GlobalExecutionSwitchService(context, auditLogService);
+        var circuitBreaker = new DataLatencyCircuitBreaker(
+            context,
+            new FakeAlertService(),
+            Options.Create(new DataLatencyGuardOptions()),
+            timeProvider,
+            NullLogger<DataLatencyCircuitBreaker>.Instance);
         var scheduler = new BotJobSchedulerService(
             context,
             new DistributedJobLockManager(
@@ -73,6 +86,8 @@ public sealed class BackgroundJobOrchestrationTests
                 NullLogger<DistributedJobLockManager>.Instance),
             processor,
             new ActiveBackgroundJobRegistry(),
+            switchService,
+            circuitBreaker,
             Options.Create(CreateOptions()),
             timeProvider,
             NullLogger<BotJobSchedulerService>.Instance);
@@ -97,6 +112,65 @@ public sealed class BackgroundJobOrchestrationTests
         Assert.Equal(BackgroundJobStatus.Succeeded, secondState.Status);
         Assert.Null(secondState.IdempotencyKey);
         Assert.Equal(0, secondState.ConsecutiveFailureCount);
+    }
+
+    [Fact]
+    public async Task Scheduler_ReReadsEnabledBotsAcrossCycles_WithoutWorkerRestart()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 2, 12, 0, 0, TimeSpan.Zero));
+        await using var context = CreateContext();
+        var bot = new TradingBot
+        {
+            OwnerUserId = "user-003",
+            Name = "Pilot Toggle",
+            StrategyKey = "pilot-toggle",
+            IsEnabled = false
+        };
+        context.TradingBots.Add(bot);
+        await context.SaveChangesAsync();
+
+        var processor = new FakeBotWorkerJobProcessor([BackgroundJobProcessResult.Success()]);
+        var auditLogService = new AuditLogService(context, new CorrelationContextAccessor());
+        var switchService = new GlobalExecutionSwitchService(context, auditLogService);
+        var circuitBreaker = new DataLatencyCircuitBreaker(
+            context,
+            new FakeAlertService(),
+            Options.Create(new DataLatencyGuardOptions()),
+            timeProvider,
+            NullLogger<DataLatencyCircuitBreaker>.Instance);
+        var scheduler = new BotJobSchedulerService(
+            context,
+            new DistributedJobLockManager(
+                context,
+                new FakeWorkerInstanceAccessor("worker-toggle"),
+                Options.Create(CreateOptions()),
+                timeProvider,
+                NullLogger<DistributedJobLockManager>.Instance),
+            processor,
+            new ActiveBackgroundJobRegistry(),
+            switchService,
+            circuitBreaker,
+            Options.Create(CreateOptions()),
+            timeProvider,
+            NullLogger<BotJobSchedulerService>.Instance);
+
+        var firstTriggeredCount = await scheduler.RunDueJobsAsync();
+
+        bot.IsEnabled = true;
+        await context.SaveChangesAsync();
+
+        var secondTriggeredCount = await scheduler.RunDueJobsAsync();
+
+        bot.IsEnabled = false;
+        await context.SaveChangesAsync();
+
+        var thirdTriggeredCount = await scheduler.RunDueJobsAsync();
+
+        Assert.Equal(0, firstTriggeredCount);
+        Assert.Equal(1, secondTriggeredCount);
+        Assert.Equal(0, thirdTriggeredCount);
+        Assert.Single(processor.Invocations);
+        Assert.Equal(bot.Id, processor.Invocations[0].BotId);
     }
 
     [Fact]
@@ -313,6 +387,14 @@ public sealed class BackgroundJobOrchestrationTests
             return Task.FromResult(remainingResults.Count > 0
                 ? remainingResults.Dequeue()
                 : BackgroundJobProcessResult.Success());
+        }
+    }
+
+    private sealed class FakeAlertService : IAlertService
+    {
+        public Task SendAsync(AlertNotification notification, CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
         }
     }
 

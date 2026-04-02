@@ -1,5 +1,6 @@
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -12,6 +13,8 @@ public sealed class BotJobSchedulerService(
     IDistributedJobLockManager distributedJobLockManager,
     IBotWorkerJobProcessor processor,
     ActiveBackgroundJobRegistry activeJobRegistry,
+    IGlobalExecutionSwitchService globalExecutionSwitchService,
+    IDataLatencyCircuitBreaker dataLatencyCircuitBreaker,
     IOptions<JobOrchestrationOptions> options,
     TimeProvider timeProvider,
     ILogger<BotJobSchedulerService> logger)
@@ -21,12 +24,19 @@ public sealed class BotJobSchedulerService(
     public async Task<int> RunDueJobsAsync(CancellationToken cancellationToken = default)
     {
         var utcNow = timeProvider.GetUtcNow().UtcDateTime;
+        var enabledBotCount = await dbContext.TradingBots
+            .IgnoreQueryFilters()
+            .CountAsync(
+                entity => entity.IsEnabled && !entity.IsDeleted,
+                cancellationToken);
         var bots = await dbContext.TradingBots
             .IgnoreQueryFilters()
             .Where(entity => entity.IsEnabled && !entity.IsDeleted)
             .OrderBy(entity => entity.Id)
             .Take(optionsValue.MaxBotsPerCycle)
             .ToListAsync(cancellationToken);
+
+        await LogPilotReadinessSummaryAsync(enabledBotCount, bots.Count, utcNow, cancellationToken);
 
         if (bots.Count == 0)
         {
@@ -105,6 +115,69 @@ public sealed class BotJobSchedulerService(
         }
 
         return triggeredCount;
+    }
+
+    private async Task LogPilotReadinessSummaryAsync(
+        int enabledBotCount,
+        int cycleCandidateCount,
+        DateTime utcNow,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var switchSnapshot = await globalExecutionSwitchService.GetSnapshotAsync(cancellationToken);
+            var latencySnapshot = await dataLatencyCircuitBreaker.GetSnapshotAsync(cancellationToken: cancellationToken);
+            var latestSyncState = await (
+                    from syncState in dbContext.ExchangeAccountSyncStates
+                        .AsNoTracking()
+                        .IgnoreQueryFilters()
+                    join exchangeAccount in dbContext.ExchangeAccounts
+                        .AsNoTracking()
+                        .IgnoreQueryFilters()
+                        on syncState.ExchangeAccountId equals exchangeAccount.Id
+                    where !syncState.IsDeleted &&
+                          !exchangeAccount.IsDeleted &&
+                          exchangeAccount.ExchangeName == "Binance" &&
+                          exchangeAccount.CredentialStatus == ExchangeCredentialStatus.Active &&
+                          !exchangeAccount.IsReadOnly
+                    orderby syncState.LastPrivateStreamEventAtUtc ??
+                            syncState.LastBalanceSyncedAtUtc ??
+                            syncState.LastPositionSyncedAtUtc ??
+                            syncState.LastStateReconciledAtUtc ??
+                            syncState.UpdatedDate descending
+                    select new
+                    {
+                        syncState.PrivateStreamConnectionState,
+                        syncState.LastPrivateStreamEventAtUtc,
+                        syncState.LastBalanceSyncedAtUtc,
+                        syncState.LastPositionSyncedAtUtc,
+                        syncState.LastStateReconciledAtUtc,
+                        syncState.LastErrorCode
+                    })
+                .FirstOrDefaultAsync(cancellationToken);
+
+            logger.LogInformation(
+                "Bot execution pilot readiness. EnabledBotCount={EnabledBotCount} CycleCandidateCount={CycleCandidateCount} TradeMasterArmed={TradeMasterArmed} DemoModeEnabled={DemoModeEnabled} LatencyState={LatencyState} LatencyReason={LatencyReason} PrivateStreamState={PrivateStreamState} LastPrivateEventAtUtc={LastPrivateEventAtUtc} LastBalanceSyncAtUtc={LastBalanceSyncAtUtc} LastPositionSyncAtUtc={LastPositionSyncAtUtc} LastReconciledAtUtc={LastReconciledAtUtc} PrivateStreamErrorCode={PrivateStreamErrorCode} UtcNow={UtcNow}.",
+                enabledBotCount,
+                cycleCandidateCount,
+                switchSnapshot.IsTradeMasterArmed,
+                switchSnapshot.DemoModeEnabled,
+                latencySnapshot.StateCode,
+                latencySnapshot.ReasonCode,
+                latestSyncState?.PrivateStreamConnectionState.ToString() ?? "Unknown",
+                latestSyncState?.LastPrivateStreamEventAtUtc,
+                latestSyncState?.LastBalanceSyncedAtUtc,
+                latestSyncState?.LastPositionSyncedAtUtc,
+                latestSyncState?.LastStateReconciledAtUtc,
+                latestSyncState?.LastErrorCode ?? "none",
+                utcNow);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(
+                exception,
+                "Bot execution pilot readiness summary could not be recorded.");
+        }
     }
 
     private async Task<Dictionary<Guid, BackgroundJobState>> EnsureStatesAsync(

@@ -1,8 +1,10 @@
 using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Application.Abstractions.ExchangeCredentials;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Alerts;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace CoinBot.Infrastructure.Exchange;
@@ -14,7 +16,9 @@ public sealed class ExchangeAppStateSyncService(
     ExchangeAccountSnapshotHub snapshotHub,
     ExchangeAccountSyncStateService syncStateService,
     TimeProvider timeProvider,
-    ILogger<ExchangeAppStateSyncService> logger)
+    ILogger<ExchangeAppStateSyncService> logger,
+    IAlertDispatchCoordinator? alertDispatchCoordinator = null,
+    IHostEnvironment? hostEnvironment = null)
 {
     private const string SystemActor = "system:exchange-app-state-sync";
 
@@ -69,11 +73,12 @@ public sealed class ExchangeAppStateSyncService(
             }
             catch (InvalidOperationException)
             {
+                var observedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
                 await syncStateService.RecordReconciliationAsync(
                     account,
                     ExchangeStateDriftStatus.Unknown,
                     "Credential access is blocked for synchronization.",
-                    timeProvider.GetUtcNow().UtcDateTime,
+                    observedAtUtc,
                     driftDetectedAtUtc: null,
                     errorCode: "CredentialAccessBlocked",
                     cancellationToken);
@@ -81,14 +86,22 @@ public sealed class ExchangeAppStateSyncService(
                 logger.LogInformation(
                     "Exchange-app reconciliation skipped for account {ExchangeAccountId} because synchronization access is blocked.",
                     account.ExchangeAccountId);
+
+                await TrySendSyncFailureAlertAsync(
+                    account.ExchangeAccountId,
+                    "CredentialAccessBlocked",
+                    "Credential access is blocked for synchronization.",
+                    observedAtUtc,
+                    cancellationToken);
             }
             catch
             {
+                var observedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
                 await syncStateService.RecordReconciliationAsync(
                     account,
                     ExchangeStateDriftStatus.Unknown,
                     "Reconciliation failed before exchange-app comparison completed.",
-                    timeProvider.GetUtcNow().UtcDateTime,
+                    observedAtUtc,
                     driftDetectedAtUtc: null,
                     errorCode: "ReconciliationFailed",
                     cancellationToken);
@@ -96,6 +109,13 @@ public sealed class ExchangeAppStateSyncService(
                 logger.LogWarning(
                     "Exchange-app reconciliation failed for account {ExchangeAccountId}.",
                     account.ExchangeAccountId);
+
+                await TrySendSyncFailureAlertAsync(
+                    account.ExchangeAccountId,
+                    "ReconciliationFailed",
+                    "Reconciliation failed before exchange-app comparison completed.",
+                    observedAtUtc,
+                    cancellationToken);
             }
         }
     }
@@ -220,4 +240,39 @@ public sealed class ExchangeAppStateSyncService(
     }
 
     private sealed record DriftResult(ExchangeStateDriftStatus Status, string Summary);
+
+    private async Task TrySendSyncFailureAlertAsync(
+        Guid exchangeAccountId,
+        string failureCode,
+        string reason,
+        DateTime observedAtUtc,
+        CancellationToken cancellationToken)
+    {
+        if (alertDispatchCoordinator is null)
+        {
+            return;
+        }
+
+        await alertDispatchCoordinator.SendAsync(
+            new CoinBot.Application.Abstractions.Alerts.AlertNotification(
+                Code: $"SYNC_FAILED_{failureCode.ToUpperInvariant()}",
+                Severity: CoinBot.Application.Abstractions.Alerts.AlertSeverity.Warning,
+                Title: "SyncFailed",
+                Message:
+                    $"EventType=SyncFailed; SyncKind=AppState; ExchangeAccountId={exchangeAccountId:N}; Result=Failed; FailureCode={failureCode}; Reason={reason}; TimestampUtc={observedAtUtc:O}; Environment={ResolveEnvironmentLabel()}",
+                CorrelationId: null),
+            $"sync-failed:app-state:{exchangeAccountId:N}:{failureCode}",
+            TimeSpan.FromMinutes(5),
+            cancellationToken);
+    }
+
+    private string ResolveEnvironmentLabel()
+    {
+        var runtimeLabel = hostEnvironment?.EnvironmentName ?? "Unknown";
+        var planeLabel = hostEnvironment?.IsDevelopment() == true
+            ? "Testnet"
+            : "Live";
+
+        return $"{runtimeLabel}/{planeLabel}";
+    }
 }

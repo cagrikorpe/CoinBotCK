@@ -100,6 +100,28 @@ public sealed class GlobalPolicyEngineTests
         Assert.Equal(3, allowedEvaluation.PolicyVersion);
     }
 
+    [Fact]
+    public async Task GetSnapshotAsync_UsesSizedCacheEntry_WhenMemoryCacheHasSizeLimit()
+    {
+        await using var dbContext = CreateDbContext();
+        using var memoryCache = new MemoryCache(new MemoryCacheOptions
+        {
+            SizeLimit = 128
+        });
+        var engine = new GlobalPolicyEngine(
+            dbContext,
+            memoryCache,
+            new FakeAdminAuditLogService(),
+            new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 1, 20, 0, 0, TimeSpan.Zero)),
+            NullLogger<GlobalPolicyEngine>.Instance);
+
+        var snapshot = await engine.GetSnapshotAsync(CancellationToken.None);
+        var cachedSnapshot = await engine.GetSnapshotAsync(CancellationToken.None);
+
+        Assert.Equal("GlobalRiskPolicy", snapshot.Policy.PolicyKey);
+        Assert.Equal(snapshot.CurrentVersion, cachedSnapshot.CurrentVersion);
+    }
+
     private static ApplicationDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()

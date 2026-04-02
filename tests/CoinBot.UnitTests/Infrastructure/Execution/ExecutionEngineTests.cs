@@ -10,6 +10,7 @@ using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
+using CoinBot.Infrastructure.Alerts;
 using CoinBot.Infrastructure.Auditing;
 using CoinBot.Infrastructure.DemoPortfolio;
 using CoinBot.Infrastructure.Execution;
@@ -19,6 +20,8 @@ using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.UnitTests.Infrastructure.Mfa;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -175,6 +178,174 @@ public sealed class ExecutionEngineTests
         Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
         Assert.Equal(1, harness.CredentialService.AccessCalls);
         Assert.Equal("binance-order-1", result.Order.ExternalOrderId);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_RoutesToBinanceExecutor_WhenDevelopmentPilotOverridesDemoMode()
+    {
+        await using var harness = CreateHarness(environmentName: Environments.Development);
+        var exchangeAccountId = Guid.NewGuid();
+        var botId = Guid.NewGuid();
+        await SeedExchangeAccountAsync(harness.DbContext, "user-pilot-live", exchangeAccountId);
+        await SeedBotAsync(harness.DbContext, "user-pilot-live", botId, "pilot-core");
+        harness.MarketDataService.SetLatestPrice("BTCUSDT", 65000m, harness.TimeProvider.GetUtcNow().UtcDateTime, "unit-test");
+        harness.MarketDataService.SetSymbolMetadata(
+            "BTCUSDT",
+            "BTC",
+            "USDT",
+            0.1m,
+            0.001m,
+            minQuantity: 0.001m,
+            minNotional: 100m,
+            pricePrecision: 1,
+            quantityPrecision: 3);
+        await PrimeFreshMarketDataAsync(harness, "corr-pilot-engine-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-pilot-engine",
+            context: "Execution open",
+            correlationId: "corr-pilot-engine-2");
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-pilot-live",
+                strategyKey: "pilot-core",
+                isDemo: false,
+                botId: botId,
+                exchangeAccountId: exchangeAccountId) with
+            {
+                Actor = "system:bot-worker",
+                Context = "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                Quantity = 0.002m,
+                Price = 65000m
+            },
+            CancellationToken.None);
+
+        Assert.Equal(ExecutionEnvironment.Live, result.Order.ExecutionEnvironment);
+        Assert.Equal(ExecutionOrderExecutorKind.Binance, result.Order.ExecutorKind);
+        Assert.Equal(ExecutionOrderState.Submitted, result.Order.State);
+        Assert.Equal(1, harness.PrivateRestClient.EnsureMarginTypeCalls);
+        Assert.Equal(1, harness.PrivateRestClient.EnsureLeverageCalls);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_FailsClosed_WhenDevelopmentPilotViolatesFuturesMinNotional()
+    {
+        await using var harness = CreateHarness(environmentName: Environments.Development);
+        var exchangeAccountId = Guid.NewGuid();
+        var botId = Guid.NewGuid();
+        await SeedExchangeAccountAsync(harness.DbContext, "user-pilot-invalid", exchangeAccountId);
+        await SeedBotAsync(harness.DbContext, "user-pilot-invalid", botId, "pilot-core");
+        harness.MarketDataService.SetLatestPrice("BTCUSDT", 65000m, harness.TimeProvider.GetUtcNow().UtcDateTime, "unit-test");
+        harness.MarketDataService.SetSymbolMetadata(
+            "BTCUSDT",
+            "BTC",
+            "USDT",
+            0.1m,
+            0.001m,
+            minQuantity: 0.001m,
+            minNotional: 100m,
+            pricePrecision: 1,
+            quantityPrecision: 4);
+        await PrimeFreshMarketDataAsync(harness, "corr-pilot-engine-3");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-pilot-engine",
+            context: "Execution open",
+            correlationId: "corr-pilot-engine-4");
+
+        var result = await harness.Engine.DispatchAsync(
+              CreateCommand(
+                  ownerUserId: "user-pilot-invalid",
+                  strategyKey: "pilot-core",
+                  isDemo: false,
+                  botId: botId,
+                exchangeAccountId: exchangeAccountId) with
+              {
+                  Actor = "system:bot-worker",
+                  Context = "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                  Quantity = 0.001m,
+                  Price = 65000m
+              },
+              CancellationToken.None);
+
+        Assert.Equal(ExecutionOrderState.Failed, result.Order.State);
+        Assert.Equal(nameof(ExecutionValidationException), result.Order.FailureCode);
+        Assert.Contains("minimum notional", result.Order.FailureDetail, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal(
+            [
+                ExecutionOrderState.Received,
+                ExecutionOrderState.GatePassed,
+                ExecutionOrderState.Dispatching,
+                ExecutionOrderState.Failed
+            ],
+            result.Order.Transitions.Select(transition => transition.State).ToArray());
+        Assert.Contains(
+            "minimum notional",
+            result.Order.Transitions.Last().Detail,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_SendsSubmittedAlert_WhenLiveOrderIsAccepted()
+    {
+        await using var harness = CreateHarness(
+            environmentName: Environments.Development,
+            alertDispatchCoordinator: new RecordingAlertDispatchCoordinator());
+        var strategyId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        await SeedUserAsync(harness.DbContext, "user-live-alert");
+        await SeedLiveStrategyAsync(harness.DbContext, "user-live-alert", strategyId, "live-alert");
+        await SeedExchangeAccountAsync(harness.DbContext, "user-live-alert", exchangeAccountId);
+        await PrimeFreshMarketDataAsync(harness, "corr-live-alert-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-live-alert",
+            context: "Open live execution",
+            correlationId: "corr-live-alert-2");
+        await harness.SwitchService.SetDemoModeAsync(
+            isEnabled: false,
+            actor: "admin-live-alert",
+            liveApproval: new TradingModeLiveApproval("live-approval-alert"),
+            context: "Switch to live",
+            correlationId: "corr-live-alert-3");
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-live-alert",
+                strategyId: strategyId,
+                strategyKey: "live-alert",
+                exchangeAccountId: exchangeAccountId,
+                isDemo: null),
+            CancellationToken.None);
+
+        var alert = Assert.Single(harness.AlertCoordinator.Notifications, notification => notification.Code == "ORDER_SUBMITTED");
+        Assert.Equal(ExecutionOrderState.Submitted, result.Order.State);
+        Assert.Equal("ORDER_SUBMITTED", alert.Code);
+        Assert.Contains("EventType=OrderSubmitted", alert.Message, StringComparison.Ordinal);
+        Assert.Contains("Symbol=BTCUSDT", alert.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("api-secret", alert.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_SendsRejectedAlert_WhenGateBlocksOrder()
+    {
+        await using var harness = CreateHarness(alertDispatchCoordinator: new RecordingAlertDispatchCoordinator());
+        await PrimeFreshMarketDataAsync(harness, "corr-reject-alert-1");
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-reject-alert",
+                strategyKey: "reject-alert-core",
+                isDemo: true),
+            CancellationToken.None);
+
+        var alert = Assert.Single(harness.AlertCoordinator.Notifications, notification => notification.Code == "ORDER_REJECTED");
+        Assert.Equal(ExecutionOrderState.Rejected, result.Order.State);
+        Assert.Equal("ORDER_REJECTED", alert.Code);
+        Assert.Contains("EventType=OrderRejected", alert.Message, StringComparison.Ordinal);
+        Assert.Contains(nameof(ExecutionGateBlockedReason.SwitchConfigurationMissing), alert.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -507,7 +678,9 @@ public sealed class ExecutionEngineTests
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
     }
 
-    private static TestHarness CreateHarness()
+    private static TestHarness CreateHarness(
+        string environmentName = "Production",
+        RecordingAlertDispatchCoordinator? alertDispatchCoordinator = null)
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -516,9 +689,25 @@ public sealed class ExecutionEngineTests
         var dbContext = new ApplicationDbContext(options, new TestDataScopeContext());
         var correlationContextAccessor = new CorrelationContextAccessor();
         var auditLogService = new AuditLogService(dbContext, correlationContextAccessor);
-        var switchService = new GlobalExecutionSwitchService(dbContext, auditLogService);
+        var runtimeEnvironment = new TestHostEnvironment(environmentName);
+        alertDispatchCoordinator ??= new RecordingAlertDispatchCoordinator();
+        var switchService = new GlobalExecutionSwitchService(
+            dbContext,
+            auditLogService,
+            alertDispatchCoordinator,
+            runtimeEnvironment);
         var globalSystemStateService = new GlobalSystemStateService(dbContext, auditLogService, timeProvider);
         var marketDataService = new FakeMarketDataService();
+        marketDataService.SetSymbolMetadata(
+            "BTCUSDT",
+            "BTC",
+            "USDT",
+            0.1m,
+            0.001m,
+            minQuantity: 0.001m,
+            minNotional: 100m,
+            pricePrecision: 1,
+            quantityPrecision: 3);
         var demoWalletValuationService = new DemoWalletValuationService(
             marketDataService,
             timeProvider,
@@ -549,7 +738,8 @@ public sealed class ExecutionEngineTests
             circuitBreaker,
             tradingModeService,
             auditLogService,
-            NullLogger<ExecutionGate>.Instance);
+            NullLogger<ExecutionGate>.Instance,
+            runtimeEnvironment);
         var demoPortfolioAccountingService = new DemoPortfolioAccountingService(
             dbContext,
             demoSessionService,
@@ -567,7 +757,8 @@ public sealed class ExecutionEngineTests
             timeProvider);
         var userExecutionOverrideGuard = new UserExecutionOverrideGuard(
             dbContext,
-            tradingModeService);
+            tradingModeService,
+            hostEnvironment: runtimeEnvironment);
         var credentialService = new FakeExchangeCredentialService();
         var privateRestClient = new FakePrivateRestClient(timeProvider);
         var engine = new ExecutionEngine(
@@ -584,9 +775,12 @@ public sealed class ExecutionEngineTests
                 dbContext,
                 credentialService,
                 privateRestClient,
-                NullLogger<BinanceExecutor>.Instance),
+                NullLogger<BinanceExecutor>.Instance,
+                marketDataService: marketDataService),
             timeProvider,
-            NullLogger<ExecutionEngine>.Instance);
+            NullLogger<ExecutionEngine>.Instance,
+            alertDispatchCoordinator,
+            runtimeEnvironment);
 
         return new TestHarness(
             dbContext,
@@ -600,7 +794,8 @@ public sealed class ExecutionEngineTests
             timeProvider,
             marketDataService,
             credentialService,
-            privateRestClient);
+            privateRestClient,
+            alertDispatchCoordinator);
     }
 
     private static async Task PrimeFreshMarketDataAsync(TestHarness harness, string correlationId)
@@ -785,6 +980,21 @@ public sealed class ExecutionEngineTests
         }
     }
 
+    private sealed class RecordingAlertDispatchCoordinator : IAlertDispatchCoordinator
+    {
+        public List<AlertNotification> Notifications { get; } = [];
+
+        public Task SendAsync(
+            AlertNotification notification,
+            string dedupeKey,
+            TimeSpan cooldown,
+            CancellationToken cancellationToken = default)
+        {
+            Notifications.Add(notification);
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed class FakeExchangeCredentialService : IExchangeCredentialService
     {
         public int AccessCalls { get; private set; }
@@ -837,6 +1047,34 @@ public sealed class ExecutionEngineTests
     private sealed class FakePrivateRestClient(TimeProvider timeProvider) : IBinancePrivateRestClient
     {
         public int PlaceOrderCalls { get; private set; }
+
+        public int EnsureMarginTypeCalls { get; private set; }
+
+        public int EnsureLeverageCalls { get; private set; }
+
+        public Task EnsureMarginTypeAsync(
+            Guid exchangeAccountId,
+            string symbol,
+            string marginType,
+            string apiKey,
+            string apiSecret,
+            CancellationToken cancellationToken = default)
+        {
+            EnsureMarginTypeCalls++;
+            return Task.CompletedTask;
+        }
+
+        public Task EnsureLeverageAsync(
+            Guid exchangeAccountId,
+            string symbol,
+            decimal leverage,
+            string apiKey,
+            string apiSecret,
+            CancellationToken cancellationToken = default)
+        {
+            EnsureLeverageCalls++;
+            return Task.CompletedTask;
+        }
 
         public Task<BinanceOrderPlacementResult> PlaceOrderAsync(
             BinanceOrderPlacementRequest request,
@@ -902,7 +1140,16 @@ public sealed class ExecutionEngineTests
             prices[symbol] = new MarketPriceSnapshot(symbol, price, observedAtUtc, observedAtUtc, source);
         }
 
-        public void SetSymbolMetadata(string symbol, string baseAsset, string quoteAsset, decimal tickSize, decimal stepSize)
+        public void SetSymbolMetadata(
+            string symbol,
+            string baseAsset,
+            string quoteAsset,
+            decimal tickSize,
+            decimal stepSize,
+            decimal? minQuantity = null,
+            decimal? minNotional = null,
+            int? pricePrecision = null,
+            int? quantityPrecision = null)
         {
             metadata[symbol] = new SymbolMetadataSnapshot(
                 symbol,
@@ -913,7 +1160,13 @@ public sealed class ExecutionEngineTests
                 stepSize,
                 "TRADING",
                 true,
-                DateTime.UtcNow);
+                DateTime.UtcNow)
+            {
+                MinQuantity = minQuantity,
+                MinNotional = minNotional,
+                PricePrecision = pricePrecision,
+                QuantityPrecision = quantityPrecision
+            };
         }
 
         public ValueTask TrackSymbolAsync(string symbol, CancellationToken cancellationToken = default)
@@ -964,7 +1217,8 @@ public sealed class ExecutionEngineTests
         AdjustableTimeProvider timeProvider,
         FakeMarketDataService marketDataService,
         FakeExchangeCredentialService credentialService,
-        FakePrivateRestClient privateRestClient) : IAsyncDisposable
+        FakePrivateRestClient privateRestClient,
+        RecordingAlertDispatchCoordinator alertCoordinator) : IAsyncDisposable
     {
         public ApplicationDbContext DbContext { get; } = dbContext;
 
@@ -990,9 +1244,22 @@ public sealed class ExecutionEngineTests
 
         public FakePrivateRestClient PrivateRestClient { get; } = privateRestClient;
 
+        public RecordingAlertDispatchCoordinator AlertCoordinator { get; } = alertCoordinator;
+
         public async ValueTask DisposeAsync()
         {
             await DbContext.DisposeAsync();
         }
+    }
+
+    private sealed class TestHostEnvironment(string environmentName) : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = environmentName;
+
+        public string ApplicationName { get; set; } = "CoinBot.UnitTests";
+
+        public string ContentRootPath { get; set; } = AppContext.BaseDirectory;
+
+        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 }

@@ -4,6 +4,8 @@ using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Alerts;
+using CoinBot.Infrastructure.Dashboard;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.MarketData;
@@ -22,7 +24,10 @@ public sealed class MonitoringSnapshotWorker(
     IBinanceExchangeInfoClient exchangeInfoClient,
     IOptions<DataLatencyGuardOptions> dataLatencyGuardOptions,
     TimeProvider timeProvider,
-    ILogger<MonitoringSnapshotWorker> logger) : BackgroundService
+    ILogger<MonitoringSnapshotWorker> logger,
+    IAlertDispatchCoordinator? alertDispatchCoordinator = null,
+    IHostEnvironment? hostEnvironment = null,
+    UserOperationsStreamHub? userOperationsStreamHub = null) : BackgroundService
 {
     private static readonly TimeSpan WarmInterval = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan ColdInterval = TimeSpan.FromSeconds(60);
@@ -266,7 +271,7 @@ public sealed class MonitoringSnapshotWorker(
             })
             .FirstOrDefaultAsync(cancellationToken);
 
-        await UpsertWorkerHeartbeatAsync(
+        var jobOrchestrationHeartbeat = await UpsertWorkerHeartbeatAsync(
             dbContext,
             key: "job-orchestration",
             workerName: "Job Orchestration",
@@ -278,6 +283,7 @@ public sealed class MonitoringSnapshotWorker(
             lastErrorMessage: latestJobHeartbeat is null ? "No job heartbeat available." : $"Latest job heartbeat from {latestJobHeartbeat.JobType}/{latestJobHeartbeat.JobKey}.",
             utcNow: utcNow,
             cancellationToken: cancellationToken);
+        await TrySendWorkerHeartbeatAlertAsync(jobOrchestrationHeartbeat, "WorkerNotHealthy", cancellationToken);
 
         var latestExchangeHeartbeat = await dbContext.ExchangeAccountSyncStates
             .AsNoTracking()
@@ -294,7 +300,7 @@ public sealed class MonitoringSnapshotWorker(
             })
             .FirstOrDefaultAsync(cancellationToken);
 
-        await UpsertWorkerHeartbeatAsync(
+        var exchangePrivateStreamHeartbeat = await UpsertWorkerHeartbeatAsync(
             dbContext,
             key: "exchange-private-stream",
             workerName: "Exchange Private Stream",
@@ -306,6 +312,7 @@ public sealed class MonitoringSnapshotWorker(
             lastErrorMessage: latestExchangeHeartbeat is null ? "No private stream heartbeat available." : $"Connection state {latestExchangeHeartbeat.PrivateStreamConnectionState}.",
             utcNow: utcNow,
             cancellationToken: cancellationToken);
+        await TrySendWorkerHeartbeatAlertAsync(exchangePrivateStreamHeartbeat, "PrivateStreamDisconnected", cancellationToken);
 
         await UpsertWorkerHeartbeatAsync(
             dbContext,
@@ -394,7 +401,7 @@ public sealed class MonitoringSnapshotWorker(
         entity.Detail = detail;
     }
 
-    private static async Task UpsertWorkerHeartbeatAsync(
+    private async Task<WorkerHeartbeatUpdateResult> UpsertWorkerHeartbeatAsync(
         ApplicationDbContext dbContext,
         string key,
         string workerName,
@@ -409,6 +416,8 @@ public sealed class MonitoringSnapshotWorker(
     {
         var entity = await dbContext.WorkerHeartbeats
             .SingleOrDefaultAsync(item => item.WorkerKey == key, cancellationToken);
+        var previousHealthState = entity?.HealthState;
+        var previousErrorCode = entity?.LastErrorCode;
 
         if (entity is null)
         {
@@ -433,6 +442,15 @@ public sealed class MonitoringSnapshotWorker(
         entity.LastErrorMessage = lastErrorMessage;
         entity.SnapshotAgeSeconds = ageSeconds;
         entity.Detail = BuildWorkerHeartbeatDetail(workerName, healthState, ageSeconds);
+
+        return new WorkerHeartbeatUpdateResult(
+            key,
+            workerName,
+            previousHealthState,
+            previousErrorCode,
+            healthState,
+            lastErrorCode,
+            lastErrorMessage);
     }
 
     private static MonitoringHealthState ResolveMarketWatchdogState(DegradedModeSnapshot snapshot)
@@ -657,4 +675,73 @@ public sealed class MonitoringSnapshotWorker(
     {
         return $"{workerName}; State={healthState}; AgeSeconds={ageSeconds}";
     }
+
+    private async Task TrySendWorkerHeartbeatAlertAsync(
+        WorkerHeartbeatUpdateResult result,
+        string eventType,
+        CancellationToken cancellationToken)
+    {
+        if (alertDispatchCoordinator is null ||
+            result.CurrentHealthState is MonitoringHealthState.Healthy or MonitoringHealthState.Unknown ||
+            result.PreviousHealthState == result.CurrentHealthState &&
+            string.Equals(result.PreviousErrorCode, result.CurrentErrorCode, StringComparison.Ordinal))
+        {
+            if (result.PreviousHealthState != result.CurrentHealthState)
+            {
+                userOperationsStreamHub?.Publish(
+                    new UserOperationsUpdate(
+                        "*",
+                        "WorkerHealthChanged",
+                        null,
+                        null,
+                        result.CurrentHealthState.ToString(),
+                        result.CurrentErrorCode,
+                        timeProvider.GetUtcNow().UtcDateTime));
+            }
+
+            return;
+        }
+
+        await alertDispatchCoordinator.SendAsync(
+            new CoinBot.Application.Abstractions.Alerts.AlertNotification(
+                Code: $"{eventType.ToUpperInvariant()}_{result.CurrentHealthState.ToString().ToUpperInvariant()}",
+                Severity: result.CurrentHealthState == MonitoringHealthState.Critical
+                    ? CoinBot.Application.Abstractions.Alerts.AlertSeverity.Critical
+                    : CoinBot.Application.Abstractions.Alerts.AlertSeverity.Warning,
+                Title: eventType,
+                Message:
+                    $"EventType={eventType}; Worker={result.WorkerName}; State={result.CurrentHealthState}; FailureCode={result.CurrentErrorCode ?? "none"}; Reason={result.LastErrorMessage ?? "none"}; TimestampUtc={timeProvider.GetUtcNow().UtcDateTime:O}; Environment={ResolveEnvironmentLabel()}",
+                CorrelationId: null),
+            $"{eventType}:{result.WorkerKey}:{result.CurrentHealthState}:{result.CurrentErrorCode ?? "none"}",
+            TimeSpan.FromMinutes(5),
+            cancellationToken);
+        userOperationsStreamHub?.Publish(
+            new UserOperationsUpdate(
+                "*",
+                "WorkerHealthChanged",
+                null,
+                null,
+                result.CurrentHealthState.ToString(),
+                result.CurrentErrorCode,
+                timeProvider.GetUtcNow().UtcDateTime));
+    }
+
+    private string ResolveEnvironmentLabel()
+    {
+        var runtimeLabel = hostEnvironment?.EnvironmentName ?? "Unknown";
+        var planeLabel = hostEnvironment?.IsDevelopment() == true
+            ? "Testnet"
+            : "Live";
+
+        return $"{runtimeLabel}/{planeLabel}";
+    }
+
+    private sealed record WorkerHeartbeatUpdateResult(
+        string WorkerKey,
+        string WorkerName,
+        MonitoringHealthState? PreviousHealthState,
+        string? PreviousErrorCode,
+        MonitoringHealthState CurrentHealthState,
+        string? CurrentErrorCode,
+        string? LastErrorMessage);
 }

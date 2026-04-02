@@ -154,8 +154,8 @@ public sealed class DependencyInjectionTests
         Assert.Equal(60, inMemoryCacheOptions.SymbolMetadataTtlMinutes);
         Assert.Equal(15, inMemoryCacheOptions.LatestPriceTtlSeconds);
         Assert.False(binanceMarketDataOptions.Enabled);
-        Assert.Equal("https://api.binance.com", binanceMarketDataOptions.RestBaseUrl);
-        Assert.Equal("wss://stream.binance.com:9443", binanceMarketDataOptions.WebSocketBaseUrl);
+        Assert.Equal("https://fapi.binance.com", binanceMarketDataOptions.RestBaseUrl);
+        Assert.Equal("wss://fstream.binance.com", binanceMarketDataOptions.WebSocketBaseUrl);
         Assert.Equal("1m", binanceMarketDataOptions.KlineInterval);
         Assert.False(historicalGapFillerOptions.Enabled);
         Assert.Equal(5, historicalGapFillerOptions.ScanIntervalMinutes);

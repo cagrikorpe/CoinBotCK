@@ -2,14 +2,18 @@ using CoinBot.Application.Abstractions.Auditing;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Alerts;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
 
 namespace CoinBot.Infrastructure.Execution;
 
 public sealed class GlobalExecutionSwitchService(
     ApplicationDbContext dbContext,
-    IAuditLogService auditLogService) : IGlobalExecutionSwitchService
+    IAuditLogService auditLogService,
+    IAlertDispatchCoordinator? alertDispatchCoordinator = null,
+    IHostEnvironment? hostEnvironment = null) : IGlobalExecutionSwitchService
 {
     public async Task<GlobalExecutionSwitchSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
     {
@@ -46,6 +50,11 @@ public sealed class GlobalExecutionSwitchService(
                 hasChanged ? "Applied" : "NoChange",
                 snapshot.EffectiveEnvironment.ToString()),
             cancellationToken);
+
+        if (hasChanged)
+        {
+            await TrySendTradeMasterAlertAsync(snapshot, correlationId, cancellationToken);
+        }
 
         return snapshot;
     }
@@ -200,5 +209,41 @@ public sealed class GlobalExecutionSwitchService(
         }
 
         return normalizedReference;
+    }
+
+    private async Task TrySendTradeMasterAlertAsync(
+        GlobalExecutionSwitchSnapshot snapshot,
+        string? correlationId,
+        CancellationToken cancellationToken)
+    {
+        if (alertDispatchCoordinator is null)
+        {
+            return;
+        }
+
+        var stateLabel = snapshot.IsTradeMasterArmed ? "Armed" : "Disarmed";
+        var modeLabel = snapshot.DemoModeEnabled ? "Demo" : "Live";
+
+        await alertDispatchCoordinator.SendAsync(
+            new CoinBot.Application.Abstractions.Alerts.AlertNotification(
+                Code: $"KILL_SWITCH_{stateLabel.ToUpperInvariant()}",
+                Severity: snapshot.IsTradeMasterArmed
+                    ? CoinBot.Application.Abstractions.Alerts.AlertSeverity.Information
+                    : CoinBot.Application.Abstractions.Alerts.AlertSeverity.Critical,
+                Title: $"KillSwitchChanged:{stateLabel}",
+                Message:
+                    $"EventType=KillSwitchChanged; Result={stateLabel}; Mode={modeLabel}; TimestampUtc={DateTime.UtcNow:O}; Environment={ResolveEnvironmentLabel(snapshot)}",
+                CorrelationId: correlationId),
+            $"kill-switch:{stateLabel}:{modeLabel}",
+            TimeSpan.FromHours(1),
+            cancellationToken);
+    }
+
+    private string ResolveEnvironmentLabel(GlobalExecutionSwitchSnapshot snapshot)
+    {
+        var runtimeLabel = hostEnvironment?.EnvironmentName ?? "Unknown";
+        var modeLabel = snapshot.DemoModeEnabled ? "Demo" : "Live";
+
+        return $"{runtimeLabel}/{modeLabel}";
     }
 }

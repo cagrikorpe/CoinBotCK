@@ -38,7 +38,7 @@ public sealed class BinanceHistoricalKlineClient(
         }
 
         var requestUri =
-            $"api/v3/klines?symbol={Uri.EscapeDataString(normalizedSymbol)}&interval={Uri.EscapeDataString(normalizedInterval)}&startTime={ToUnixMilliseconds(normalizedStartOpenTimeUtc)}&endTime={ToUnixMilliseconds(requestEndTimeUtc)}&limit={limit}";
+            $"fapi/v1/klines?symbol={Uri.EscapeDataString(normalizedSymbol)}&interval={Uri.EscapeDataString(normalizedInterval)}&startTime={ToUnixMilliseconds(normalizedStartOpenTimeUtc)}&endTime={ToUnixMilliseconds(requestEndTimeUtc)}&limit={limit}";
 
         try
         {

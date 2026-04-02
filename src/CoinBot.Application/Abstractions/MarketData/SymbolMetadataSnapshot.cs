@@ -9,4 +9,13 @@ public sealed record SymbolMetadataSnapshot(
     decimal StepSize,
     string TradingStatus,
     bool IsTradingEnabled,
-    DateTime RefreshedAtUtc);
+    DateTime RefreshedAtUtc)
+{
+    public decimal? MinQuantity { get; init; }
+
+    public decimal? MinNotional { get; init; }
+
+    public int? PricePrecision { get; init; }
+
+    public int? QuantityPrecision { get; init; }
+}

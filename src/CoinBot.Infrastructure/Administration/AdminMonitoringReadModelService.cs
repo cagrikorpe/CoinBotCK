@@ -16,6 +16,9 @@ public sealed class AdminMonitoringReadModelService(
     TimeProvider timeProvider) : IAdminMonitoringReadModelService
 {
     private static readonly object CacheKey = new();
+    private static readonly MemoryCacheEntryOptions SnapshotCacheOptions = new MemoryCacheEntryOptions()
+        .SetSize(1)
+        .SetAbsoluteExpiration(TimeSpan.FromSeconds(3));
 
     public Task<MonitoringDashboardSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
     {
@@ -23,7 +26,7 @@ public sealed class AdminMonitoringReadModelService(
                 CacheKey,
                 async entry =>
                 {
-                    entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(3);
+                    entry.SetOptions(SnapshotCacheOptions);
 
                     var healthSnapshots = await dbContext.HealthSnapshots
                         .AsNoTracking()
@@ -38,7 +41,8 @@ public sealed class AdminMonitoringReadModelService(
                         healthSnapshots.Select(MapHealthSnapshot).ToArray(),
                         workerHeartbeats.Select(MapWorkerHeartbeat).ToArray(),
                         timeProvider.GetUtcNow().UtcDateTime);
-                })!;
+                },
+                SnapshotCacheOptions)!;
     }
 
     private static HealthSnapshot MapHealthSnapshot(HealthSnapshotEntity entity)

@@ -1787,12 +1787,26 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             .HasMaxLength(128)
             .IsRequired();
 
+        builder.Property(entity => entity.Symbol)
+            .HasMaxLength(32);
+
+        builder.Property(entity => entity.Quantity)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.Leverage)
+            .HasPrecision(18, 8);
+
+        builder.Property(entity => entity.MarginType)
+            .HasMaxLength(16);
+
         builder.Property(entity => entity.TradingModeOverride)
             .HasConversion<string>()
             .HasMaxLength(32);
 
         builder.Property(entity => entity.TradingModeApprovalReference)
             .HasMaxLength(128);
+
+        builder.HasIndex(entity => entity.ExchangeAccountId);
     }
 
     private void ConfigureTradingStrategies(EntityTypeBuilder<TradingStrategy> builder)

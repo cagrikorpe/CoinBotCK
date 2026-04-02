@@ -182,6 +182,77 @@
         });
     }
 
+    function writeText(selector, value) {
+        const element = document.querySelector(selector);
+        if (element) {
+            element.textContent = value;
+        }
+    }
+
+    function applyOperationsSummary(snapshot) {
+        if (!snapshot) {
+            return;
+        }
+
+        writeText('[data-cb-ops-enabled-bots]', String(snapshot.enabledBotCount ?? snapshot.EnabledBotCount ?? '0'));
+        writeText('[data-cb-ops-enabled-symbols]', String(snapshot.enabledSymbolCount ?? snapshot.EnabledSymbolCount ?? '0') + ' sembol');
+        writeText('[data-cb-ops-conflicts]', String(snapshot.conflictedSymbolCount ?? snapshot.ConflictedSymbolCount ?? '0') + ' conflict');
+        writeText('[data-cb-ops-job-state]', snapshot.lastJobStatus ?? snapshot.LastJobStatus ?? 'Idle');
+        writeText('[data-cb-ops-job-error]', snapshot.lastJobErrorCode ?? snapshot.LastJobErrorCode ?? 'Worker hata kodu yok');
+        writeText('[data-cb-ops-execution-state]', snapshot.lastExecutionState ?? snapshot.LastExecutionState ?? 'N/A');
+        writeText('[data-cb-ops-execution-error]', snapshot.lastExecutionFailureCode ?? snapshot.LastExecutionFailureCode ?? 'Execution hata kodu yok');
+        writeText('[data-cb-ops-worker-health]', snapshot.workerHealthLabel ?? snapshot.WorkerHealthLabel ?? 'Unknown');
+        writeText('[data-cb-ops-stream-health]', snapshot.privateStreamHealthLabel ?? snapshot.PrivateStreamHealthLabel ?? 'Unknown');
+        writeText('[data-cb-ops-breaker]', snapshot.breakerLabel ?? snapshot.BreakerLabel ?? 'Closed');
+        writeText('[data-cb-ops-daily-loss]', snapshot.dailyLossSummary ?? snapshot.DailyLossSummary ?? 'Risk profili yok');
+        writeText('[data-cb-ops-position-limit]', snapshot.positionLimitSummary ?? snapshot.PositionLimitSummary ?? 'Pozisyon limiti yok');
+        writeText('[data-cb-ops-cooldown]', snapshot.cooldownSummary ?? snapshot.CooldownSummary ?? 'Cooldown bilgisi yok');
+    }
+
+    function connectOperationsHub() {
+        const summary = document.querySelector('[data-cb-operations-summary]');
+        if (!summary || !window.signalR || !window.signalR.HubConnectionBuilder) {
+            return;
+        }
+
+        const hubUrl = summary.getAttribute('data-cb-operations-hub-url');
+        const summaryUrl = summary.getAttribute('data-cb-operations-summary-url');
+        if (!hubUrl || !summaryUrl) {
+            return;
+        }
+
+        const connection = new window.signalR.HubConnectionBuilder()
+            .withUrl(hubUrl)
+            .withAutomaticReconnect()
+            .build();
+
+        function refreshSummary() {
+            return fetch(summaryUrl, { credentials: 'same-origin' })
+                .then(function (response) {
+                    if (!response.ok) {
+                        throw new Error('summary fetch failed');
+                    }
+
+                    return response.json();
+                })
+                .then(function (payload) {
+                    applyOperationsSummary(payload);
+                });
+        }
+
+        connection.on('operationsUpdated', function () {
+            refreshSummary().catch(function () { });
+        });
+
+        connection.start()
+            .then(refreshSummary)
+            .catch(function () { });
+
+        connection.onreconnected(function () {
+            refreshSummary().catch(function () { });
+        });
+    }
+
     document.addEventListener('click', function (event) {
         const chip = event.target.closest('[data-cb-toggle-active]');
         if (!chip) {
@@ -201,4 +272,5 @@
     });
 
     connectMarketDataHub();
+    connectOperationsHub();
 })();

@@ -1,0 +1,104 @@
+@model CoinBot.Web.ViewModels.Bots.BotManagementEditorViewModel
+@{
+    ViewData["Title"] = Model.IsEditMode ? "Bot Düzenle" : "Yeni Bot";
+    ViewData["ActiveNav"] = "Bots";
+    ViewData["PageDescription"] = "Pilot bot için minimum gerekli alanları yönetin.";
+    ViewData["BreadcrumbItems"] = new[] { "Automation", "Botlarım", Model.IsEditMode ? "Düzenle" : "Yeni Bot" };
+}
+
+<div class="row">
+    <div class="col-xl-8">
+        <div class="card card-custom gutter-b">
+            <div class="card-header border-0 pt-5">
+                <div class="card-title">
+                    <div>
+                        <div class="text-muted font-weight-bold text-uppercase mb-1">Pilot Bot</div>
+                        <h2 class="mb-0">@(Model.IsEditMode ? "Bot düzenle" : "Yeni bot oluştur")</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body">
+                <div asp-validation-summary="ModelOnly" class="alert alert-danger" role="alert"></div>
+
+                <form asp-action="@(Model.IsEditMode ? "Edit" : "Create")"
+                      asp-route-botId="@(Model.BotId)"
+                      method="post">
+                    @Html.AntiForgeryToken()
+
+                    <div class="form-group">
+                        <label asp-for="Form.Name">Name</label>
+                        <input asp-for="Form.Name" class="form-control" />
+                        <span asp-validation-for="Form.Name" class="text-danger"></span>
+                    </div>
+
+                    <div class="form-group">
+                        <label asp-for="Form.StrategyKey">Strategy</label>
+                        <select asp-for="Form.StrategyKey" class="form-control">
+                            <option value="">Strateji seçin</option>
+                            @foreach (var option in Model.StrategyOptions)
+                            {
+                                <option value="@option.Value">@option.Label</option>
+                            }
+                        </select>
+                        <span asp-validation-for="Form.StrategyKey" class="text-danger"></span>
+                    </div>
+
+                    <div class="form-group">
+                        <label asp-for="Form.Symbol">Symbol</label>
+                        <select asp-for="Form.Symbol" class="form-control">
+                            @foreach (var option in Model.SymbolOptions)
+                            {
+                                <option value="@option.Value">@option.Label</option>
+                            }
+                        </select>
+                        <span asp-validation-for="Form.Symbol" class="text-danger"></span>
+                    </div>
+
+                    <div class="form-group">
+                        <label asp-for="Form.Quantity">Quantity</label>
+                        <input asp-for="Form.Quantity" class="form-control" />
+                        <small class="form-text text-muted">Boş bırakırsanız worker minimum uygun quantity değerini metadata üzerinden çözer.</small>
+                        <span asp-validation-for="Form.Quantity" class="text-danger"></span>
+                    </div>
+
+                    <div class="form-group">
+                        <label asp-for="Form.ExchangeAccountId">Exchange account</label>
+                        <select asp-for="Form.ExchangeAccountId" class="form-control">
+                            <option value="">Auto-select single active Binance account</option>
+                            @foreach (var option in Model.ExchangeAccountOptions)
+                            {
+                                <option value="@option.Value">@option.Label</option>
+                            }
+                        </select>
+                        <span asp-validation-for="Form.ExchangeAccountId" class="text-danger"></span>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group col-md-6">
+                            <label asp-for="Form.Leverage">Leverage</label>
+                            <select asp-for="Form.Leverage" class="form-control">
+                                <option value="1">1</option>
+                            </select>
+                        </div>
+                        <div class="form-group col-md-6">
+                            <label asp-for="Form.MarginType">Margin type</label>
+                            <select asp-for="Form.MarginType" class="form-control">
+                                <option value="ISOLATED">ISOLATED</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group form-check">
+                        <input asp-for="Form.IsEnabled" class="form-check-input" />
+                        <label asp-for="Form.IsEnabled" class="form-check-label">Kaydetmeden sonra bot etkin olsun</label>
+                    </div>
+
+                    <div class="d-flex justify-content-between">
+                        <a asp-action="Index" class="btn btn-light">Listeye dön</a>
+                        <button type="submit" class="btn btn-primary">Kaydet</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>

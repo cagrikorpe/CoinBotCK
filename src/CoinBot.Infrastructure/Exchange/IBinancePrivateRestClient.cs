@@ -4,6 +4,28 @@ namespace CoinBot.Infrastructure.Exchange;
 
 public interface IBinancePrivateRestClient
 {
+    Task EnsureMarginTypeAsync(
+        Guid exchangeAccountId,
+        string symbol,
+        string marginType,
+        string apiKey,
+        string apiSecret,
+        CancellationToken cancellationToken = default)
+    {
+        return Task.CompletedTask;
+    }
+
+    Task EnsureLeverageAsync(
+        Guid exchangeAccountId,
+        string symbol,
+        decimal leverage,
+        string apiKey,
+        string apiSecret,
+        CancellationToken cancellationToken = default)
+    {
+        return Task.CompletedTask;
+    }
+
     Task<BinanceOrderPlacementResult> PlaceOrderAsync(
         BinanceOrderPlacementRequest request,
         CancellationToken cancellationToken = default);

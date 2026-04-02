@@ -23,9 +23,11 @@ public sealed class HomeControllerTests
         var symbolRegistry = new FakeSharedSymbolRegistry();
         var exchangeService = new FakeUserExchangeCommandCenterService();
         var dashboardService = new FakeUserDashboardPortfolioReadModelService();
+        var operationsService = new FakeUserDashboardOperationsReadModelService();
         var controller = new HomeController(
             exchangeService,
             dashboardService,
+            operationsService,
             marketDataService,
             symbolRegistry,
             Options.Create(new BinanceMarketDataOptions
@@ -48,9 +50,11 @@ public sealed class HomeControllerTests
         var solTicker = Assert.Single(model.MarketTickers, ticker => ticker.Symbol == "SOLUSDT");
 
         Assert.Equal("/hubs/market-data", model.MarketDataHubPath);
+        Assert.Equal("/hubs/operations", model.OperationsHubPath);
         Assert.Equal(["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT"], marketDataService.TrackedSymbols);
         Assert.Same(exchangeService.Snapshot, controller.ViewData["DashboardExchangeSnapshot"]);
         Assert.Equal("Cuzdan bakiyesi", model.Kpis[0].Label);
+        Assert.Equal(2, model.OperationsSummary.EnabledBotCount);
         Assert.Single(model.OpenPositions);
         Assert.Equal("XRPUSDT", model.OpenPositions[0].Symbol);
         Assert.Equal(64000.50m, btcTicker.Price);
@@ -66,6 +70,7 @@ public sealed class HomeControllerTests
         var controller = new HomeController(
             new FakeUserExchangeCommandCenterService(),
             new FakeUserDashboardPortfolioReadModelService(),
+            new FakeUserDashboardOperationsReadModelService(),
             new FakeMarketDataService(),
             new FakeSharedSymbolRegistry(),
             Options.Create(new BinanceMarketDataOptions()),
@@ -221,6 +226,37 @@ public sealed class HomeControllerTests
             ]);
 
         public Task<UserDashboardPortfolioSnapshot> GetSnapshotAsync(string userId, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(Snapshot);
+        }
+    }
+
+    private sealed class FakeUserDashboardOperationsReadModelService : IUserDashboardOperationsReadModelService
+    {
+        public UserDashboardOperationsSummarySnapshot Snapshot { get; } = new(
+            2,
+            2,
+            0,
+            "Succeeded",
+            null,
+            "Filled",
+            null,
+            "Healthy",
+            "positive",
+            "Healthy",
+            "positive",
+            "Closed",
+            "positive",
+            0,
+            1.5m,
+            10m,
+            1,
+            3,
+            1,
+            1,
+            At(0));
+
+        public Task<UserDashboardOperationsSummarySnapshot> GetSnapshotAsync(string userId, CancellationToken cancellationToken = default)
         {
             return Task.FromResult(Snapshot);
         }

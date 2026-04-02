@@ -30,6 +30,10 @@ public static class ServiceCollectionExtensions
                 options => options.MaxRetryDelaySeconds >= options.InitialRetryDelaySeconds,
                 "MaxRetryDelaySeconds must be greater than or equal to InitialRetryDelaySeconds.")
             .ValidateOnStart();
+        services.AddOptions<BotExecutionPilotOptions>()
+            .Bind(configuration.GetSection("BotExecutionPilot"))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
 
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IDataScopeContext, SystemDataScopeContext>();

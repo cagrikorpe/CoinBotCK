@@ -28,7 +28,7 @@ public sealed class BinanceHistoricalKlineClientTests
             """);
         using var httpClient = new HttpClient(handler)
         {
-            BaseAddress = new Uri("https://api.binance.com/")
+            BaseAddress = new Uri("https://fapi.binance.com/")
         };
         var client = new BinanceHistoricalKlineClient(
             httpClient,
@@ -57,7 +57,7 @@ public sealed class BinanceHistoricalKlineClientTests
         Assert.Equal(12.5m, snapshot.Volume);
         Assert.Equal(now.UtcDateTime, snapshot.ReceivedAtUtc);
         Assert.Equal("Binance.Rest.Kline", snapshot.Source);
-        Assert.Contains("api/v3/klines", handler.LastRequestUri, StringComparison.Ordinal);
+        Assert.Contains("fapi/v1/klines", handler.LastRequestUri, StringComparison.Ordinal);
         Assert.Contains("symbol=BTCUSDT", handler.LastRequestUri, StringComparison.Ordinal);
         Assert.Contains("interval=1m", handler.LastRequestUri, StringComparison.Ordinal);
         Assert.Contains("limit=50", handler.LastRequestUri, StringComparison.Ordinal);

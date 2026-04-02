@@ -40,6 +40,9 @@ public sealed class BinanceExchangeInfoClient(
         }
 
         var symbolsPayload = Uri.EscapeDataString(JsonSerializer.Serialize(normalizedSymbols, SerializerOptions));
+        var requestPath = normalizedSymbols.Count == 1
+            ? $"fapi/v1/exchangeInfo?symbol={Uri.EscapeDataString(normalizedSymbols.First())}"
+            : $"fapi/v1/exchangeInfo?symbols={symbolsPayload}";
         var observedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
         var stopwatch = Stopwatch.StartNew();
         HttpResponseMessage? response = null;
@@ -48,7 +51,7 @@ public sealed class BinanceExchangeInfoClient(
         try
         {
             response = await httpClient.GetAsync(
-                $"api/v3/exchangeInfo?symbols={symbolsPayload}",
+                requestPath,
                 cancellationToken);
 
             response.EnsureSuccessStatusCode();
@@ -99,7 +102,7 @@ public sealed class BinanceExchangeInfoClient(
 
         try
         {
-            response = await httpClient.GetAsync("api/v3/time", timeoutCts.Token);
+            response = await httpClient.GetAsync("fapi/v1/time", timeoutCts.Token);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -213,7 +216,12 @@ public sealed class BinanceExchangeInfoClient(
         }
 
         var tickSize = TryReadFilterDecimal(symbol.Filters, "PRICE_FILTER", filter => filter.TickSize);
-        var stepSize = TryReadFilterDecimal(symbol.Filters, "LOT_SIZE", filter => filter.StepSize);
+        var stepSize = TryReadFilterDecimal(symbol.Filters, "MARKET_LOT_SIZE", filter => filter.StepSize)
+            ?? TryReadFilterDecimal(symbol.Filters, "LOT_SIZE", filter => filter.StepSize);
+        var minQuantity = TryReadFilterDecimal(symbol.Filters, "MARKET_LOT_SIZE", filter => filter.MinQty)
+            ?? TryReadFilterDecimal(symbol.Filters, "LOT_SIZE", filter => filter.MinQty);
+        var minNotional = TryReadFilterDecimal(symbol.Filters, "MIN_NOTIONAL", filter => filter.Notional)
+            ?? TryReadFilterDecimal(symbol.Filters, "MIN_NOTIONAL", filter => filter.MinNotional);
 
         if (tickSize is null || stepSize is null)
         {
@@ -233,7 +241,13 @@ public sealed class BinanceExchangeInfoClient(
             StepSize: stepSize.Value,
             TradingStatus: tradingStatus,
             IsTradingEnabled: string.Equals(tradingStatus, "TRADING", StringComparison.OrdinalIgnoreCase),
-            RefreshedAtUtc: NormalizeTimestamp(refreshedAtUtc));
+            RefreshedAtUtc: NormalizeTimestamp(refreshedAtUtc))
+        {
+            MinQuantity = minQuantity,
+            MinNotional = minNotional,
+            PricePrecision = symbol.PricePrecision,
+            QuantityPrecision = symbol.QuantityPrecision
+        };
     }
 
     private static decimal? TryReadFilterDecimal(
@@ -317,10 +331,15 @@ public sealed class BinanceExchangeInfoClient(
         [property: JsonPropertyName("status")] string? Status,
         [property: JsonPropertyName("baseAsset")] string? BaseAsset,
         [property: JsonPropertyName("quoteAsset")] string? QuoteAsset,
+        [property: JsonPropertyName("pricePrecision")] int? PricePrecision,
+        [property: JsonPropertyName("quantityPrecision")] int? QuantityPrecision,
         [property: JsonPropertyName("filters")] IReadOnlyCollection<BinanceFilterPayload>? Filters);
 
     private sealed record BinanceFilterPayload(
         [property: JsonPropertyName("filterType")] string? FilterType,
         [property: JsonPropertyName("tickSize")] string? TickSize,
-        [property: JsonPropertyName("stepSize")] string? StepSize);
+        [property: JsonPropertyName("stepSize")] string? StepSize,
+        [property: JsonPropertyName("minQty")] string? MinQty,
+        [property: JsonPropertyName("minNotional")] string? MinNotional,
+        [property: JsonPropertyName("notional")] string? Notional);
 }

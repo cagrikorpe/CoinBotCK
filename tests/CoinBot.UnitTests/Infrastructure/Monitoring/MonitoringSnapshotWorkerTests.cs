@@ -3,7 +3,9 @@ using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Application.Abstractions.Monitoring;
+using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Alerts;
 using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Monitoring;
@@ -12,6 +14,8 @@ using CoinBot.UnitTests.Infrastructure.Mfa;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -61,6 +65,78 @@ public sealed class MonitoringSnapshotWorkerTests
 
         Assert.Equal(MonitoringHealthState.Critical, clockDriftSnapshot.HealthState);
         Assert.Equal("ClockDriftMs=5000; LocalClockUtc=2026-03-24T12:00:00.0000000Z; ExchangeServerTimeUtc=2026-03-24T11:59:55.0000000Z; Probe=Succeeded", clockDriftSnapshot.Detail);
+    }
+
+    [Fact]
+    public async Task RunColdCycleAsync_SendsWorkerAndPrivateStreamAlerts_WithoutDuplicateSpam()
+    {
+        var now = new DateTimeOffset(2026, 3, 24, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(now);
+        var databaseRoot = new InMemoryDatabaseRoot();
+        var services = new ServiceCollection();
+        var alertCoordinator = new RecordingAlertDispatchCoordinator();
+        services.AddLogging();
+        services.AddSingleton(timeProvider);
+        services.AddSingleton<TimeProvider>(timeProvider);
+        services.AddSingleton(databaseRoot);
+        services.AddSingleton<IMonitoringTelemetryCollector, FakeMonitoringTelemetryCollector>();
+        services.AddSingleton<IRedisLatencyProbe, FakeRedisLatencyProbe>();
+        services.AddSingleton<IBinanceExchangeInfoClient>(new FakeExchangeInfoClient(now.UtcDateTime));
+        services.AddSingleton<IAlertService, FakeAlertService>();
+        services.AddSingleton<IOptions<DataLatencyGuardOptions>>(Options.Create(new DataLatencyGuardOptions()));
+        services.AddScoped<IDataScopeContextAccessor, FakeDataScopeContextAccessor>();
+        services.AddScoped<IDataScopeContext>(serviceProvider => serviceProvider.GetRequiredService<IDataScopeContextAccessor>());
+        services.AddDbContext<ApplicationDbContext>(options =>
+            options.UseInMemoryDatabase("MonitoringSnapshotWorkerAlertTests", databaseRoot));
+        services.AddScoped<IDataLatencyCircuitBreaker, DataLatencyCircuitBreaker>();
+
+        await using var provider = services.BuildServiceProvider();
+        await using (var seedScope = provider.CreateAsyncScope())
+        {
+            using var systemScope = seedScope.ServiceProvider
+                .GetRequiredService<IDataScopeContextAccessor>()
+                .BeginScope(userId: "user-monitoring", hasIsolationBypass: true);
+            var dbContext = seedScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            dbContext.BackgroundJobStates.Add(new BackgroundJobState
+            {
+                Id = Guid.NewGuid(),
+                JobType = "BotExecution",
+                JobKey = "pilot-bot",
+                Status = BackgroundJobStatus.Running,
+                LastHeartbeatAtUtc = now.UtcDateTime.AddMinutes(-10),
+                ConsecutiveFailureCount = 2,
+                LastErrorCode = "WorkerDown"
+            });
+            dbContext.ExchangeAccountSyncStates.Add(new ExchangeAccountSyncState
+            {
+                Id = Guid.NewGuid(),
+                ExchangeAccountId = Guid.NewGuid(),
+                OwnerUserId = "user-monitoring",
+                PrivateStreamConnectionState = ExchangePrivateStreamConnectionState.Disconnected,
+                LastPrivateStreamEventAtUtc = now.UtcDateTime.AddMinutes(-10),
+                ConsecutiveStreamFailureCount = 3,
+                LastErrorCode = "ListenKeyExpired"
+            });
+            await dbContext.SaveChangesAsync();
+        }
+
+        var worker = new MonitoringSnapshotWorker(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<IMonitoringTelemetryCollector>(),
+            provider.GetRequiredService<IRedisLatencyProbe>(),
+            provider.GetRequiredService<IBinanceExchangeInfoClient>(),
+            provider.GetRequiredService<IOptions<DataLatencyGuardOptions>>(),
+            timeProvider,
+            NullLogger<MonitoringSnapshotWorker>.Instance,
+            alertCoordinator,
+            new TestHostEnvironment(Environments.Development));
+
+        await worker.RunColdCycleAsync();
+        await worker.RunColdCycleAsync();
+
+        Assert.Equal(2, alertCoordinator.Notifications.Count);
+        Assert.Contains(alertCoordinator.Notifications, notification => notification.Title == "WorkerNotHealthy");
+        Assert.Contains(alertCoordinator.Notifications, notification => notification.Title == "PrivateStreamDisconnected");
     }
 
     private sealed class FakeExchangeInfoClient(DateTime serverTimeUtc) : IBinanceExchangeInfoClient
@@ -150,6 +226,21 @@ public sealed class MonitoringSnapshotWorkerTests
         }
     }
 
+    private sealed class RecordingAlertDispatchCoordinator : IAlertDispatchCoordinator
+    {
+        public List<AlertNotification> Notifications { get; } = [];
+
+        public Task SendAsync(
+            AlertNotification notification,
+            string dedupeKey,
+            TimeSpan cooldown,
+            CancellationToken cancellationToken = default)
+        {
+            Notifications.Add(notification);
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed class FakeDataScopeContextAccessor : IDataScopeContextAccessor
     {
         private string? userId;
@@ -177,5 +268,16 @@ public sealed class MonitoringSnapshotWorkerTests
                 onDispose();
             }
         }
+    }
+
+    private sealed class TestHostEnvironment(string environmentName) : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = environmentName;
+
+        public string ApplicationName { get; set; } = "CoinBot.UnitTests";
+
+        public string ContentRootPath { get; set; } = AppContext.BaseDirectory;
+
+        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 }

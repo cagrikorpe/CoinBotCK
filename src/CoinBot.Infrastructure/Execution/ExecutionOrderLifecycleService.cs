@@ -2,9 +2,12 @@ using System.Globalization;
 using CoinBot.Application.Abstractions.Auditing;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Alerts;
+using CoinBot.Infrastructure.Dashboard;
 using CoinBot.Infrastructure.Exchange;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace CoinBot.Infrastructure.Execution;
@@ -13,17 +16,20 @@ public sealed class ExecutionOrderLifecycleService(
     ApplicationDbContext dbContext,
     IAuditLogService auditLogService,
     TimeProvider timeProvider,
-    ILogger<ExecutionOrderLifecycleService> logger)
+    ILogger<ExecutionOrderLifecycleService> logger,
+    IAlertDispatchCoordinator? alertDispatchCoordinator = null,
+    IHostEnvironment? hostEnvironment = null,
+    UserOperationsStreamHub? userOperationsStreamHub = null)
 {
     private const string SystemActor = "system:execution-order-lifecycle";
-    private static readonly IReadOnlySet<ExecutionOrderState> OpenStates = new HashSet<ExecutionOrderState>
-    {
+    private static readonly ExecutionOrderState[] OpenStates =
+    [
         ExecutionOrderState.Received,
         ExecutionOrderState.GatePassed,
         ExecutionOrderState.Dispatching,
         ExecutionOrderState.Submitted,
         ExecutionOrderState.PartiallyFilled
-    };
+    ];
 
     public async Task<bool> ApplyExchangeUpdateAsync(
         BinanceOrderStatusSnapshot snapshot,
@@ -122,6 +128,7 @@ public sealed class ExecutionOrderLifecycleService(
         var utcNow = timeProvider.GetUtcNow().UtcDateTime;
         var stateChanged = false;
         var fillProgressAdvanced = false;
+        ExecutionOrderTransition? transition = null;
 
         if (string.IsNullOrWhiteSpace(order.ExternalOrderId))
         {
@@ -139,7 +146,7 @@ public sealed class ExecutionOrderLifecycleService(
         if (ShouldPersistTransition(previousState, targetState, fillProgressAdvanced))
         {
             var lastTransition = await GetLastTransitionAsync(order.Id, cancellationToken);
-            var transition = ExecutionOrderStateMachine.Transition(
+            transition = ExecutionOrderStateMachine.Transition(
                 order,
                 sequenceNumber: (lastTransition?.SequenceNumber ?? 0) + 1,
                 targetState,
@@ -180,6 +187,20 @@ public sealed class ExecutionOrderLifecycleService(
 
         await UpdateBotOpenOrderCountAsync(order.BotId, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
+
+        if (transition is not null)
+        {
+            await TrySendExecutionAlertAsync(order, transition, normalizedSnapshot, cancellationToken);
+            userOperationsStreamHub?.Publish(
+                new UserOperationsUpdate(
+                    order.OwnerUserId,
+                    "ExecutionChanged",
+                    order.BotId,
+                    order.Id,
+                    transition.State.ToString(),
+                    order.FailureCode ?? normalizedSnapshot.Status,
+                    transition.OccurredAtUtc));
+        }
 
         logger.LogInformation(
             "Execution order {ExecutionOrderId} synchronized to state {ExecutionOrderState}.",
@@ -541,5 +562,58 @@ public sealed class ExecutionOrderLifecycleService(
         return value.HasValue
             ? FormatDecimal(value.Value)
             : "none";
+    }
+
+    private async Task TrySendExecutionAlertAsync(
+        ExecutionOrder order,
+        ExecutionOrderTransition transition,
+        BinanceOrderStatusSnapshot snapshot,
+        CancellationToken cancellationToken)
+    {
+        if (alertDispatchCoordinator is null)
+        {
+            return;
+        }
+
+        var eventType = transition.State switch
+        {
+            ExecutionOrderState.Filled => "OrderFilled",
+            ExecutionOrderState.Rejected => "OrderRejected",
+            ExecutionOrderState.Cancelled => "OrderCancelled",
+            _ => null
+        };
+
+        if (eventType is null)
+        {
+            return;
+        }
+
+        var botLabel = order.BotId.HasValue
+            ? order.BotId.Value.ToString("N")[..12]
+            : "none";
+
+        await alertDispatchCoordinator.SendAsync(
+            new CoinBot.Application.Abstractions.Alerts.AlertNotification(
+                Code: $"ORDER_{transition.State.ToString().ToUpperInvariant()}",
+                Severity: transition.State == ExecutionOrderState.Filled
+                    ? CoinBot.Application.Abstractions.Alerts.AlertSeverity.Information
+                    : CoinBot.Application.Abstractions.Alerts.AlertSeverity.Warning,
+                Title: eventType,
+                Message:
+                    $"EventType={eventType}; BotId={botLabel}; Symbol={order.Symbol}; Result={transition.State}; FailureCode={order.FailureCode ?? snapshot.Status}; ClientOrderId={snapshot.ClientOrderId}; TimestampUtc={transition.OccurredAtUtc:O}; Environment={ResolveExecutionEnvironmentLabel(order.ExecutionEnvironment)}",
+                CorrelationId: transition.CorrelationId),
+            $"order-transition:{transition.Id:N}",
+            TimeSpan.FromDays(7),
+            cancellationToken);
+    }
+
+    private string ResolveExecutionEnvironmentLabel(ExecutionEnvironment executionEnvironment)
+    {
+        var runtimeLabel = hostEnvironment?.EnvironmentName ?? "Unknown";
+        var executionLabel = hostEnvironment?.IsDevelopment() == true && executionEnvironment == ExecutionEnvironment.Live
+            ? "Testnet"
+            : executionEnvironment.ToString();
+
+        return $"{runtimeLabel}/{executionLabel}";
     }
 }

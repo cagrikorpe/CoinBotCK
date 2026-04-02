@@ -7,10 +7,10 @@ public sealed class BinanceMarketDataOptions
     public bool Enabled { get; set; }
 
     [Required]
-    public string RestBaseUrl { get; set; } = "https://api.binance.com";
+    public string RestBaseUrl { get; set; } = "https://fapi.binance.com";
 
     [Required]
-    public string WebSocketBaseUrl { get; set; } = "wss://stream.binance.com:9443";
+    public string WebSocketBaseUrl { get; set; } = "wss://fstream.binance.com";
 
     [Required]
     public string KlineInterval { get; set; } = "1m";

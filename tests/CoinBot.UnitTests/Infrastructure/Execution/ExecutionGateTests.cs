@@ -15,6 +15,8 @@ using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.UnitTests.Infrastructure.Mfa;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -223,6 +225,34 @@ public sealed class ExecutionGateTests
     }
 
     [Fact]
+    public async Task EnsureExecutionAllowedAsync_AllowsDevelopmentFuturesPilotOverride_WhenLivePathIsRequestedFromDemoMode()
+    {
+        await using var harness = CreateHarness(environmentName: Environments.Development);
+        await PrimeFreshMarketDataAsync(harness, "corr-pilot-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-pilot",
+            context: "Execution open",
+            correlationId: "corr-pilot-2");
+
+        var snapshot = await harness.ExecutionGate.EnsureExecutionAllowedAsync(
+            new ExecutionGateRequest(
+                Actor: "system:bot-worker",
+                Action: "TradeExecution.Dispatch",
+                Target: "bot-pilot",
+                Environment: ExecutionEnvironment.Live,
+                Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                CorrelationId: "corr-pilot-3"));
+
+        var auditLog = await harness.DbContext.AuditLogs
+            .SingleAsync(entity => entity.Action == "TradeExecution.Dispatch");
+
+        Assert.True(snapshot.IsPersisted);
+        Assert.Equal("Allowed", auditLog.Outcome);
+        Assert.Contains("DevelopmentFuturesTestnetPilot=True", auditLog.Context, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task EnsureExecutionAllowedAsync_BlocksLiveExecutionWhenDemoModeIsEnabled_EvenIfUserOverrideResolvesLive()
     {
         await using var harness = CreateHarness();
@@ -363,7 +393,7 @@ public sealed class ExecutionGateTests
         Assert.Contains("LatencyReason=CandleDataGapDetected", auditLog.Context, StringComparison.Ordinal);
     }
 
-    private static TestHarness CreateHarness()
+    private static TestHarness CreateHarness(string environmentName = "Production")
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -405,7 +435,8 @@ public sealed class ExecutionGateTests
             circuitBreaker,
             tradingModeService,
             auditLogService,
-            NullLogger<ExecutionGate>.Instance);
+            NullLogger<ExecutionGate>.Instance,
+            new TestHostEnvironment(environmentName));
 
         return new TestHarness(dbContext, switchService, globalSystemStateService, circuitBreaker, executionGate, timeProvider);
     }
@@ -415,6 +446,17 @@ public sealed class ExecutionGateTests
         await harness.CircuitBreaker.RecordHeartbeatAsync(
             new DataLatencyHeartbeat("binance-btcusdt", harness.TimeProvider.GetUtcNow().UtcDateTime),
             correlationId);
+    }
+
+    private sealed class TestHostEnvironment(string environmentName) : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = environmentName;
+
+        public string ApplicationName { get; set; } = "CoinBot.UnitTests";
+
+        public string ContentRootPath { get; set; } = AppContext.BaseDirectory;
+
+        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 
     private static async Task SeedUserAsync(

@@ -1,79 +1,114 @@
+@model CoinBot.Web.ViewModels.Bots.BotManagementIndexViewModel
 @{
     ViewData["Title"] = "Botlarım";
     ViewData["ActiveNav"] = "Bots";
-    ViewData["PageDescription"] = "Trading botlarını tek ekranda izlemek, oluşturmak, düzenlemek ve detay drawer içinde incelemek için operasyonel foundation ekranı.";
+    ViewData["PageDescription"] = "Pilot botlarını listeleyin, düzenleyin ve etkinleştirin.";
     ViewData["BreadcrumbItems"] = new[] { "Automation", "Botlarım" };
 }
 
-@section Scripts {
-    <script src="~/js/bot-foundation.js" asp-append-version="true"></script>
-}
-
-<div class="row" data-cb-bot-management data-cb-bot-scenario="list">
+<div class="row">
     <div class="col-12">
-        <div class="card card-custom gutter-b cb-card">
-            <div class="card-body">
-                <div class="cb-page-header">
+        <div class="card card-custom gutter-b">
+            <div class="card-header border-0 pt-5">
+                <div class="card-title">
                     <div>
-                        <div class="cb-page-eyebrow">Bot Management</div>
-                        <h2 class="cb-page-title">Bot yönetim yüzeyi</h2>
-                        <p class="cb-page-description">Bot listesini, create/edit akışını ve detail drawer temelini aynı tasarım diliyle bir araya getiren operasyonel foundation ekranı.</p>
-                    </div>
-                    <div class="cb-toolbar">
-                        <span class="cb-badge cb-badge-info">UI-only foundation</span>
-                        <button type="button"
-                                class="btn btn-primary font-weight-bolder"
-                                data-toggle="modal"
-                                data-target="#cb_bot_form_modal"
-                                data-cb-bot-form="create">
-                            Yeni Bot Oluştur
-                        </button>
+                        <div class="text-muted font-weight-bold text-uppercase mb-1">Pilot Bots</div>
+                        <h2 class="mb-0">Bot listesi</h2>
                     </div>
                 </div>
+                <div class="card-toolbar">
+                    <a asp-action="Create" class="btn btn-primary font-weight-bolder">Yeni Bot</a>
+                </div>
+            </div>
+            <div class="card-body">
+                @if (TempData["BotControlSuccess"] is string successMessage)
+                {
+                    <div class="alert alert-success" role="alert">@successMessage</div>
+                }
 
-                <div class="cb-bot-meta-row mt-6">
-                    <div class="cb-bot-meta-tile">
-                        <span class="cb-bot-meta-label">Toplam bot</span>
-                        <strong class="cb-bot-meta-value cb-mono">04</strong>
-                    </div>
-                    <div class="cb-bot-meta-tile">
-                        <span class="cb-bot-meta-label">Aktif</span>
-                        <strong class="cb-bot-meta-value cb-mono">02</strong>
-                    </div>
-                    <div class="cb-bot-meta-tile">
-                        <span class="cb-bot-meta-label">Taslak</span>
-                        <strong class="cb-bot-meta-value cb-mono">01</strong>
-                    </div>
-                    <div class="cb-bot-meta-tile cb-bot-meta-tile-warning">
-                        <span class="cb-bot-meta-label">Dikkat gereken</span>
-                        <strong class="cb-bot-meta-value cb-mono">01</strong>
-                    </div>
-                </div>
+                @if (TempData["BotControlError"] is string errorMessage)
+                {
+                    <div class="alert alert-danger" role="alert">@errorMessage</div>
+                }
 
-                <div class="cb-section mt-6">
-                    <div class="cb-section-title">Sayfa Durumları</div>
-                    <p class="cb-page-description mt-2 mb-0">Liste, empty ve error davranışlarını görmek için görünümü değiştirin. Taslak / aktif / durdurulmuş / riskli bot örnekleri normal liste görünümünde birlikte yer alır.</p>
-                    <div class="cb-chip-group mt-4" data-cb-toggle-group>
-                        <button type="button" class="cb-chip is-active" data-cb-toggle-active data-cb-bot-scenario-trigger="list">Operasyon listesi</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-bot-scenario-trigger="empty">İlk bot yok</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-bot-scenario-trigger="loading">Liste yükleniyor</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-bot-scenario-trigger="error">Liste hatası</button>
+                @if (Model.Bots.Count == 0)
+                {
+                    <div class="alert alert-info mb-0" role="alert">
+                        Henüz pilot bot yok. Yeni bot oluşturarak BTCUSDT testnet pilotunu başlatabilirsiniz.
                     </div>
-                </div>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-head-custom table-vertical-center">
+                            <thead>
+                                <tr>
+                                    <th>Bot</th>
+                                    <th>Strategy</th>
+                                    <th>Exchange</th>
+                                    <th>Pilot</th>
+                                    <th>Worker</th>
+                                    <th>Execution</th>
+                                    <th class="text-right">Aksiyon</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var bot in Model.Bots)
+                                {
+                                    <tr>
+                                        <td>
+                                            <div class="font-weight-bolder">@bot.Name</div>
+                                            <div class="text-muted small">Open orders: @bot.OpenOrderCount | Open positions: @bot.OpenPositionCount</div>
+                                        </td>
+                                        <td>
+                                            <div class="font-weight-bolder">@bot.StrategyDisplayName</div>
+                                            <div class="text-muted small">@bot.StrategyKey</div>
+                                            @if (!bot.HasPublishedStrategyVersion)
+                                            {
+                                                <div class="text-danger small">Yayınlanmış strategy versiyonu yok</div>
+                                            }
+                                        </td>
+                                        <td>
+                                            <div class="font-weight-bolder">@bot.ExchangeAccountDisplayName</div>
+                                            <div class="text-muted small">
+                                                @(bot.ExchangeAccountIsActive ? "Active" : "Inactive") / @(bot.ExchangeAccountIsWritable ? "Writable" : "ReadOnly")
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <div class="font-weight-bolder">@bot.Symbol</div>
+                                            <div class="text-muted small">Qty: @bot.QuantityDisplay</div>
+                                            <div class="text-muted small">Lev: @bot.LeverageDisplay | @bot.MarginType</div>
+                                        </td>
+                                        <td>
+                                            <div class="font-weight-bolder">@bot.LastJobStatus</div>
+                                            <div class="text-muted small">@(string.IsNullOrWhiteSpace(bot.LastJobErrorCode) ? "Hata yok" : bot.LastJobErrorCode)</div>
+                                        </td>
+                                        <td>
+                                            <div class="font-weight-bolder">@bot.LastExecutionState</div>
+                                            <div class="text-muted small">@(string.IsNullOrWhiteSpace(bot.LastExecutionFailureCode) ? "Failure yok" : bot.LastExecutionFailureCode)</div>
+                                        </td>
+                                        <td class="text-right">
+                                            <div class="d-inline-flex align-items-center">
+                                                <span class="badge @(bot.IsEnabled ? "badge-success" : "badge-secondary") mr-3">
+                                                    @(bot.IsEnabled ? "Enabled" : "Disabled")
+                                                </span>
+                                                <a asp-action="Edit" asp-route-botId="@bot.BotId" class="btn btn-sm btn-light-primary mr-2">Düzenle</a>
+                                                <form asp-action="SetEnabled" asp-route-botId="@bot.BotId" method="post" class="d-inline">
+                                                    @Html.AntiForgeryToken()
+                                                    <input type="hidden" name="isEnabled" value="@(!bot.IsEnabled)" />
+                                                    <button type="submit" class="btn btn-sm @(bot.IsEnabled ? "btn-light-danger" : "btn-light-success")">
+                                                        @(bot.IsEnabled ? "Disable" : "Enable")
+                                                    </button>
+                                                </form>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
             </div>
         </div>
     </div>
-
-    <div class="col-xl-8">
-        @await Html.PartialAsync("Bots/_BotToolbar")
-        @await Html.PartialAsync("Bots/_BotList")
-    </div>
-
-    <div class="col-xl-4">
-        @await Html.PartialAsync("Bots/_BotHelpCard")
-        @await Html.PartialAsync("Bots/_BotStatePatterns")
-    </div>
 </div>
-
-@await Html.PartialAsync("Bots/_BotFormModal")
-@await Html.PartialAsync("Bots/_BotDetailDrawer")

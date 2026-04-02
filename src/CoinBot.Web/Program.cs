@@ -49,6 +49,7 @@ try
     builder.Services.AddSignalR();
     builder.Services.AddInfrastructure(builder.Configuration);
     builder.Services.AddHostedService<MarketDataHubBridgeService>();
+    builder.Services.AddHostedService<UserOperationsHubBridgeService>();
 
     if (builder.Environment.IsDevelopment())
     {
@@ -132,6 +133,7 @@ try
         pattern: "{controller=Home}/{action=Index}/{id?}")
         .WithStaticAssets();
     app.MapHub<MarketDataHub>("/hubs/market-data");
+    app.MapHub<UserOperationsHub>("/hubs/operations");
 
     app.Run();
 }

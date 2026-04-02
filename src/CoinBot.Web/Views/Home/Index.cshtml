@@ -4,7 +4,7 @@
 @{
     ViewData["Title"] = "Dashboard";
     ViewData["ActiveNav"] = "Dashboard";
-    ViewData["PageDescription"] = "Operasyonel dashboard; realtime market fiyat kutuları, KPI, equity, AI akışı, risk ve hızlı aksiyon alanlarını tek yüzeyde toplar.";
+    ViewData["PageDescription"] = "Operasyonel dashboard; realtime market fiyat kutuları, KPI, guard ozeti ve acik pozisyonlari tek yuzeyde toplar.";
     ViewData["BreadcrumbItems"] = new[] { "Control Surface", "Dashboard" };
     var marketSymbolsJson = JsonSerializer.Serialize(Model.MarketTickers.Select(item => item.Symbol));
     var exchangeSnapshot = ViewData["DashboardExchangeSnapshot"] as UserExchangeCommandCenterSnapshot;
@@ -95,21 +95,11 @@
         @await Html.PartialAsync("Dashboard/_KpiCards")
     </div>
 
-    <div class="col-xl-8">
-        @await Html.PartialAsync("Dashboard/_EquityCurveCard")
-    </div>
-
-    <div class="col-xl-4">
-        @await Html.PartialAsync("Dashboard/_AiFeedCard")
-        @await Html.PartialAsync("Dashboard/_RiskPanel")
-        @await Html.PartialAsync("Dashboard/_QuickActionsCard")
+    <div class="col-12">
+        @await Html.PartialAsync("Dashboard/_OperationsSummaryCard", Model)
     </div>
 
     <div class="col-12">
         @await Html.PartialAsync("Dashboard/_OpenPositionsTable")
-    </div>
-
-    <div class="col-12">
-        @await Html.PartialAsync("Dashboard/_StatePatternsCard")
     </div>
 </div>

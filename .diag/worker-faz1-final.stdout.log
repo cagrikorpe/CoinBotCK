@@ -1,0 +1,1080 @@
+info: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[63]
+      User profile is available. Using 'C:\Users\cagri\AppData\Local\ASP.NET\DataProtection-Keys' as key repository and Windows DPAPI to encrypt keys at rest.
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: CoinBot.Infrastructure.MarketData.BinanceWebSocketManager[0]
+      Binance market data plane is disabled by configuration.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: D:\CkBot\Code\CoinBot
+info: CoinBot.Infrastructure.MarketData.HistoricalGapFillerWorker[0]
+      Historical gap filler worker is disabled by configuration.
+info: CoinBot.Infrastructure.Exchange.BinancePrivateStreamManager[0]
+      Binance private stream manager starting. Enabled=False.
+info: CoinBot.Infrastructure.Exchange.BinancePrivateStreamManager[0]
+      Binance private stream manager is disabled by configuration.
+info: CoinBot.Infrastructure.Exchange.ExchangeAppStateSyncWorker[0]
+      Exchange app-state sync worker starting. Enabled=False.
+info: CoinBot.Infrastructure.Exchange.ExchangeAppStateSyncWorker[0]
+      Exchange-app state sync worker is disabled by configuration.
+info: CoinBot.Infrastructure.Exchange.ExchangePositionSyncWorker[0]
+      Exchange position sync worker starting. Enabled=False.
+info: CoinBot.Infrastructure.Exchange.ExchangePositionSyncWorker[0]
+      Exchange position sync worker is disabled by configuration.
+info: CoinBot.Infrastructure.Exchange.ExchangeBalanceSyncWorker[0]
+      Exchange balance sync worker starting. Enabled=False.
+info: CoinBot.Infrastructure.Exchange.ExchangeBalanceSyncWorker[0]
+      Exchange balance sync worker is disabled by configuration.
+info: CoinBot.Infrastructure.Execution.ExecutionReconciliationWorker[0]
+      Execution reconciliation worker is disabled by configuration.
+info: CoinBot.Worker.JobKeepAliveWorker[0]
+      Job keepalive worker is disabled by configuration.
+info: CoinBot.Worker.JobWatchdogWorker[0]
+      Job watchdog worker is disabled by configuration.
+info: CoinBot.Worker.Worker[0]
+      Job scheduler worker is disabled by configuration.
+info: CoinBot.Worker.JobCleanupWorker[0]
+      Job cleanup worker is disabled by configuration.
+warn: CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogWorker[0]
+      Virtual execution watchdog worker cycle failed.
+      System.InvalidOperationException: The LINQ expression 'DbSet<ExecutionOrder>()
+          .Where(e => !(e.IsDeleted) && (int)e.ExecutionEnvironment == 0 && (int)e.ExecutorKind == 1 && ((IReadOnlySet<ExecutionOrderState>)HashSet<ExecutionOrderState> { Submitted, PartiallyFilled }).Contains(e.State))' could not be translated. Additional information: Translation of method 'System.Collections.Generic.IReadOnlySet<CoinBot.Domain.Enums.ExecutionOrderState>.Contains' failed. If this method can be mapped to your custom function, see https://go.microsoft.com/fwlink/?linkid=2132413 for more information. Either rewrite the query in a form that can be translated, or switch to client evaluation explicitly by inserting a call to 'AsEnumerable', 'AsAsyncEnumerable', 'ToList', or 'ToListAsync'. See https://go.microsoft.com/fwlink/?linkid=2101038 for more information.
+         at Microsoft.EntityFrameworkCore.Query.QueryableMethodTranslatingExpressionVisitor.Translate(Expression expression)
+         at Microsoft.EntityFrameworkCore.Query.QueryCompilationContext.CreateQueryExecutorExpression[TResult](Expression query)
+         at Microsoft.EntityFrameworkCore.Query.QueryCompilationContext.CreateQueryExecutor[TResult](Expression query)
+         at Microsoft.EntityFrameworkCore.Storage.Database.CompileQuery[TResult](Expression query, Boolean async)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.CompileQueryCore[TResult](IDatabase database, Expression query, IModel model, Boolean async)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.<>c__DisplayClass11_0`1.<ExecuteCore>b__0()
+         at Microsoft.EntityFrameworkCore.Query.Internal.CompiledQueryCache.GetOrAddQuery[TResult](Object cacheKey, Func`1 compiler)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.ExecuteCore[TResult](Expression query, Boolean async, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.ExecuteAsync[TResult](Expression query, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryProvider.ExecuteAsync[TResult](Expression expression, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryable`1.GetAsyncEnumerator(CancellationToken cancellationToken)
+         at System.Runtime.CompilerServices.ConfiguredCancelableAsyncEnumerable`1.GetAsyncEnumerator()
+         at Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync[TSource](IQueryable`1 source, CancellationToken cancellationToken)
+         at CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogService.RunOnceAsync(CancellationToken cancellationToken) in D:\CkBot\Code\CoinBot\src\CoinBot.Infrastructure\Execution\VirtualExecutionWatchdogService.cs:line 35
+         at CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogWorker.ExecuteAsync(CancellationToken stoppingToken) in D:\CkBot\Code\CoinBot\src\CoinBot.Infrastructure\Execution\VirtualExecutionWatchdogWorker.cs:line 27
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (19ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[CreatedDate], [d].[ExecutionFlowBlocked], [d].[IsDeleted], [d].[LastStateChangedAtUtc], [d].[LatestClockDriftMilliseconds], [d].[LatestDataTimestampAtUtc], [d].[LatestHeartbeatReceivedAtUtc], [d].[ReasonCode], [d].[SignalFlowBlocked], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DegradedModeStates] AS [d]
+      WHERE [d].[Id] = '3e17e8ef-3a73-45cc-8c32-a11fa55178d7'
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (20ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT 1
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (58ms) [Parameters=[@nowUtc='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SELECT [a].[Id], [a].[AffectedSymbolsCsv], [a].[AffectedUsersCsv], [a].[ApprovalId], [a].[ConfidenceScore], [a].[CorrelationId], [a].[CreatedDate], [a].[ExpiresAtUtc], [a].[IsDeleted], [a].[Reason], [a].[ScopeKey], [a].[Status], [a].[SuggestedAction], [a].[UpdatedDate]
+      FROM [AutonomyReviewQueue] AS [a]
+      WHERE [a].[IsDeleted] = CAST(0 AS bit) AND [a].[Status] = N'Pending' AND [a].[ExpiresAtUtc] <= @nowUtc
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (58ms) [Parameters=[@p0='?' (DbType = Guid), @p1='?' (Size = 128), @p2='?' (Size = 450), @p3='?' (Size = 128), @p4='?' (DbType = DateTime2), @p5='?' (Size = 128), @p6='?' (Size = 2048), @p7='?' (Size = 2048), @p8='?' (Size = 512), @p9='?' (Size = 256), @p10='?' (Size = 128), @p11='?' (Size = 256)], CommandType='Text', CommandTimeout='30']
+      SET IMPLICIT_TRANSACTIONS OFF;
+      SET NOCOUNT ON;
+      INSERT INTO [AdminAuditLogs] ([Id], [ActionType], [ActorUserId], [CorrelationId], [CreatedAtUtc], [IpAddress], [NewValueSummary], [OldValueSummary], [Reason], [TargetId], [TargetType], [UserAgent])
+      VALUES (@p0, @p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8, @p9, @p10, @p11);
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (2ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[CreatedDate], [d].[ExecutionFlowBlocked], [d].[IsDeleted], [d].[LastStateChangedAtUtc], [d].[LatestClockDriftMilliseconds], [d].[LatestDataTimestampAtUtc], [d].[LatestHeartbeatReceivedAtUtc], [d].[ReasonCode], [d].[SignalFlowBlocked], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DegradedModeStates] AS [d]
+      WHERE [d].[Id] = '3e17e8ef-3a73-45cc-8c32-a11fa55178d7'
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (2ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (2ms) [Parameters=[@p6='?' (DbType = Guid), @p0='?' (DbType = Boolean), @p1='?' (DbType = DateTime2), @p2='?' (Size = 64), @p3='?' (DbType = Boolean), @p4='?' (Size = 32), @p5='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SET IMPLICIT_TRANSACTIONS OFF;
+      SET NOCOUNT ON;
+      UPDATE [DegradedModeStates] SET [ExecutionFlowBlocked] = @p0, [LastStateChangedAtUtc] = @p1, [ReasonCode] = @p2, [SignalFlowBlocked] = @p3, [StateCode] = @p4, [UpdatedDate] = @p5
+      OUTPUT 1
+      WHERE [Id] = @p6;
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (2ms) [Parameters=[@p6='?' (DbType = Guid), @p0='?' (DbType = Boolean), @p1='?' (DbType = DateTime2), @p2='?' (Size = 64), @p3='?' (DbType = Boolean), @p4='?' (Size = 32), @p5='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SET IMPLICIT_TRANSACTIONS OFF;
+      SET NOCOUNT ON;
+      UPDATE [DegradedModeStates] SET [ExecutionFlowBlocked] = @p0, [LastStateChangedAtUtc] = @p1, [ReasonCode] = @p2, [SignalFlowBlocked] = @p3, [StateCode] = @p4, [UpdatedDate] = @p5
+      OUTPUT 1
+      WHERE [Id] = @p6;
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (2ms) [Parameters=[@p='?' (DbType = Int32), @decisionCutoffUtc='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(@p) [d].[Id]
+      FROM [DecisionTraces] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[CreatedAtUtc] < @decisionCutoffUtc
+      ORDER BY [d].[CreatedAtUtc]
+warn: CoinBot.Infrastructure.Execution.DataLatencyCircuitBreaker[0]
+      Data latency circuit breaker entered Stopped with reason MarketDataLatencyCritical.
+warn: CoinBot.Infrastructure.Execution.DataLatencyCircuitBreaker[0]
+      Data latency circuit breaker entered Stopped with reason MarketDataLatencyCritical.
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (1ms) [Parameters=[@p='?' (DbType = Int32), @executionCutoffUtc='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(@p) [e].[Id]
+      FROM [ExecutionTraces] AS [e]
+      WHERE [e].[IsDeleted] = CAST(0 AS bit) AND [e].[CreatedAtUtc] < @executionCutoffUtc
+      ORDER BY [e].[CreatedAtUtc]
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (1ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (2ms) [Parameters=[@p='?' (DbType = Int32), @adminAuditCutoffUtc='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(@p) [a].[Id]
+      FROM [AdminAuditLogs] AS [a]
+      WHERE [a].[CreatedAtUtc] < @adminAuditCutoffUtc
+      ORDER BY [a].[CreatedAtUtc]
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.LogicalHandler[100]
+      Start processing HTTP request GET https://fapi.binance.com/fapi/v1/time
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.ClientHandler[100]
+      Sending HTTP request GET https://fapi.binance.com/fapi/v1/time
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@candleInterval='?' (Size = 16), @recentWindowStartUtc='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SELECT DISTINCT [h].[Symbol]
+      FROM [HistoricalMarketCandles] AS [h]
+      WHERE [h].[IsDeleted] = CAST(0 AS bit) AND [h].[Interval] = @candleInterval AND [h].[CloseTimeUtc] >= @recentWindowStartUtc
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (2ms) [Parameters=[@incidentCutoffUtc='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SELECT [i].[Id]
+      FROM [Incidents] AS [i]
+      WHERE [i].[IsDeleted] = CAST(0 AS bit) AND [i].[CreatedDate] < @incidentCutoffUtc AND [i].[Status] IN (N'Resolved', N'Rejected', N'Expired', N'Cancelled', N'Failed')
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (1ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [w].[Id], [w].[CircuitBreakerState], [w].[ConsecutiveFailureCount], [w].[Detail], [w].[FreshnessTier], [w].[HealthState], [w].[LastErrorCode], [w].[LastErrorMessage], [w].[LastHeartbeatAtUtc], [w].[LastUpdatedAtUtc], [w].[SnapshotAgeSeconds], [w].[WorkerKey], [w].[WorkerName]
+      FROM [WorkerHeartbeats] AS [w]
+      WHERE [w].[WorkerKey] = N'market-anomaly-engine'
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (2ms) [Parameters=[@p='?' (DbType = Int32), @incidentCutoffUtc='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(@p) [i].[Id]
+      FROM [Incidents] AS [i]
+      WHERE [i].[IsDeleted] = CAST(0 AS bit) AND [i].[CreatedDate] < @incidentCutoffUtc AND [i].[Status] IN (N'Resolved', N'Rejected', N'Expired', N'Cancelled', N'Failed')
+      ORDER BY [i].[CreatedDate]
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (2ms) [Parameters=[@approvalCutoffUtc='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SELECT [a].[Id]
+      FROM [ApprovalQueues] AS [a]
+      WHERE [a].[IsDeleted] = CAST(0 AS bit) AND [a].[CreatedDate] < @approvalCutoffUtc AND [a].[Status] IN (N'Approved', N'Executed', N'Rejected', N'Expired', N'Cancelled', N'Failed')
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (2ms) [Parameters=[@p='?' (DbType = Int32), @approvalCutoffUtc='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(@p) [a].[Id]
+      FROM [ApprovalQueues] AS [a]
+      WHERE [a].[IsDeleted] = CAST(0 AS bit) AND [a].[CreatedDate] < @approvalCutoffUtc AND [a].[Status] IN (N'Approved', N'Executed', N'Rejected', N'Expired', N'Cancelled', N'Failed')
+      ORDER BY [a].[CreatedDate]
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (4ms) [Parameters=[@p0='?' (DbType = Guid), @p1='?' (Size = 128), @p2='?' (Size = 450), @p3='?' (Size = 128), @p4='?' (DbType = DateTime2), @p5='?' (Size = 128), @p6='?' (Size = 2048), @p7='?' (Size = 2048), @p8='?' (Size = 512), @p9='?' (Size = 256), @p10='?' (Size = 128), @p11='?' (Size = 256)], CommandType='Text', CommandTimeout='30']
+      SET IMPLICIT_TRANSACTIONS OFF;
+      SET NOCOUNT ON;
+      INSERT INTO [AdminAuditLogs] ([Id], [ActionType], [ActorUserId], [CorrelationId], [CreatedAtUtc], [IpAddress], [NewValueSummary], [OldValueSummary], [Reason], [TargetId], [TargetType], [UserAgent])
+      VALUES (@p0, @p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8, @p9, @p10, @p11);
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (2ms) [Parameters=[@p8='?' (DbType = Guid), @p0='?' (Size = 16), @p1='?' (DbType = Int32), @p2='?' (Size = 2048), @p3='?' (Size = 32), @p4='?' (Size = 64), @p5='?' (Size = 1024), @p6='?' (DbType = DateTime2), @p7='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SET IMPLICIT_TRANSACTIONS OFF;
+      SET NOCOUNT ON;
+      UPDATE [WorkerHeartbeats] SET [CircuitBreakerState] = @p0, [ConsecutiveFailureCount] = @p1, [Detail] = @p2, [HealthState] = @p3, [LastErrorCode] = @p4, [LastErrorMessage] = @p5, [LastHeartbeatAtUtc] = @p6, [LastUpdatedAtUtc] = @p7
+      OUTPUT 1
+      WHERE [Id] = @p8;
+info: CoinBot.Infrastructure.Autonomy.MarketAnomalyService[0]
+      Market anomaly sweep completed. Candidates=0; Evaluated=0; PolicyUpdated=0; ReviewQueued=0; Protected=0; InsufficientData=0.
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.ClientHandler[101]
+      Received HTTP response headers after 389.1387ms - 200
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.LogicalHandler[101]
+      End processing HTTP request after 398.3082ms - 200
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (1ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (6ms) [Parameters=[@p11='?' (DbType = Guid), @p0='?' (DbType = Int32), @p1='?' (Size = 16), @p2='?' (DbType = Int32), @p3='?' (DbType = Int32), @p4='?' (Size = 2048), @p5='?' (Size = 16), @p6='?' (DbType = Int32), @p7='?' (DbType = DateTime2), @p8='?' (DbType = Int32), @p9='?' (DbType = Int32), @p10='?' (DbType = Int32), @p24='?' (DbType = Guid), @p12='?' (DbType = Int32), @p13='?' (Size = 16), @p14='?' (DbType = Int32), @p15='?' (DbType = Int32), @p16='?' (Size = 2048), @p17='?' (Size = 16), @p18='?' (Size = 32), @p19='?' (DbType = Int32), @p20='?' (DbType = DateTime2), @p21='?' (DbType = Int32), @p22='?' (DbType = Int32), @p23='?' (DbType = Int32), @p35='?' (DbType = Guid), @p25='?' (DbType = Int32), @p26='?' (Size = 16), @p27='?' (DbType = Int32), @p28='?' (Size = 2048), @p29='?' (DbType = Int32), @p30='?' (DbType = DateTime2), @p31='?' (DbType = DateTime2), @p32='?' (DbType = Int32), @p33='?' (DbType = Int32), @p34='?' (DbType = DateTime2), @p48='?' (DbType = Guid), @p36='?' (DbType = Int32), @p37='?' (Size = 16), @p38='?' (DbType = Int32), @p39='?' (DbType = Int32), @p40='?' (Size = 2048), @p41='?' (Size = 16), @p42='?' (Size = 32), @p43='?' (DbType = Int32), @p44='?' (DbType = DateTime2), @p45='?' (DbType = Int32), @p46='?' (DbType = Int32), @p47='?' (DbType = Int32)], CommandType='Text', CommandTimeout='30']
+      SET NOCOUNT ON;
+      UPDATE [HealthSnapshots] SET [BinancePingMs] = @p0, [CircuitBreakerState] = @p1, [ConsecutiveFailureCount] = @p2, [DbLatencyMs] = @p3, [Detail] = @p4, [FreshnessTier] = @p5, [LastMessageAgeSeconds] = @p6, [LastUpdatedAtUtc] = @p7, [RateLimitUsage] = @p8, [SnapshotAgeSeconds] = @p9, [WebSocketStaleDurationSeconds] = @p10
+      OUTPUT 1
+      WHERE [Id] = @p11;
+      UPDATE [HealthSnapshots] SET [BinancePingMs] = @p12, [CircuitBreakerState] = @p13, [ConsecutiveFailureCount] = @p14, [DbLatencyMs] = @p15, [Detail] = @p16, [FreshnessTier] = @p17, [HealthState] = @p18, [LastMessageAgeSeconds] = @p19, [LastUpdatedAtUtc] = @p20, [RateLimitUsage] = @p21, [SnapshotAgeSeconds] = @p22, [WebSocketStaleDurationSeconds] = @p23
+      OUTPUT 1
+      WHERE [Id] = @p24;
+      UPDATE [HealthSnapshots] SET [BinancePingMs] = @p25, [CircuitBreakerState] = @p26, [DbLatencyMs] = @p27, [Detail] = @p28, [LastMessageAgeSeconds] = @p29, [LastUpdatedAtUtc] = @p30, [ObservedAtUtc] = @p31, [RateLimitUsage] = @p32, [WebSocketStaleDurationSeconds] = @p33, [WorkerLastHeartbeatAtUtc] = @p34
+      OUTPUT 1
+      WHERE [Id] = @p35;
+      UPDATE [HealthSnapshots] SET [BinancePingMs] = @p36, [CircuitBreakerState] = @p37, [ConsecutiveFailureCount] = @p38, [DbLatencyMs] = @p39, [Detail] = @p40, [FreshnessTier] = @p41, [HealthState] = @p42, [LastMessageAgeSeconds] = @p43, [LastUpdatedAtUtc] = @p44, [RateLimitUsage] = @p45, [SnapshotAgeSeconds] = @p46, [WebSocketStaleDurationSeconds] = @p47
+      OUTPUT 1
+      WHERE [Id] = @p48;
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT 1
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[CreatedDate], [d].[ExecutionFlowBlocked], [d].[IsDeleted], [d].[LastStateChangedAtUtc], [d].[LatestClockDriftMilliseconds], [d].[LatestDataTimestampAtUtc], [d].[LatestHeartbeatReceivedAtUtc], [d].[ReasonCode], [d].[SignalFlowBlocked], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DegradedModeStates] AS [d]
+      WHERE [d].[Id] = '3e17e8ef-3a73-45cc-8c32-a11fa55178d7'
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (1ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(1) [b].[JobType], [b].[JobKey], [b].[LastHeartbeatAtUtc], [b].[ConsecutiveFailureCount], [b].[LastErrorCode]
+      FROM [BackgroundJobStates] AS [b]
+      WHERE [b].[LastHeartbeatAtUtc] IS NOT NULL
+      ORDER BY [b].[LastHeartbeatAtUtc] DESC
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (1ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [w].[Id], [w].[CircuitBreakerState], [w].[ConsecutiveFailureCount], [w].[Detail], [w].[FreshnessTier], [w].[HealthState], [w].[LastErrorCode], [w].[LastErrorMessage], [w].[LastHeartbeatAtUtc], [w].[LastUpdatedAtUtc], [w].[SnapshotAgeSeconds], [w].[WorkerKey], [w].[WorkerName]
+      FROM [WorkerHeartbeats] AS [w]
+      WHERE [w].[WorkerKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (2ms) [Parameters=[@utcNow='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(1) [e].[ExchangeAccountId], [e].[PrivateStreamConnectionState], COALESCE([e].[LastPrivateStreamEventAtUtc], [e].[LastListenKeyRenewedAtUtc], [e].[LastStateReconciledAtUtc], @utcNow) AS [HeartbeatAtUtc], [e].[ConsecutiveStreamFailureCount], [e].[LastErrorCode]
+      FROM [ExchangeAccountSyncStates] AS [e]
+      WHERE [e].[LastPrivateStreamEventAtUtc] IS NOT NULL OR [e].[LastListenKeyRenewedAtUtc] IS NOT NULL
+      ORDER BY COALESCE([e].[LastPrivateStreamEventAtUtc], [e].[LastListenKeyRenewedAtUtc], @utcNow) DESC
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [w].[Id], [w].[CircuitBreakerState], [w].[ConsecutiveFailureCount], [w].[Detail], [w].[FreshnessTier], [w].[HealthState], [w].[LastErrorCode], [w].[LastErrorMessage], [w].[LastHeartbeatAtUtc], [w].[LastUpdatedAtUtc], [w].[SnapshotAgeSeconds], [w].[WorkerKey], [w].[WorkerName]
+      FROM [WorkerHeartbeats] AS [w]
+      WHERE [w].[WorkerKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [w].[Id], [w].[CircuitBreakerState], [w].[ConsecutiveFailureCount], [w].[Detail], [w].[FreshnessTier], [w].[HealthState], [w].[LastErrorCode], [w].[LastErrorMessage], [w].[LastHeartbeatAtUtc], [w].[LastUpdatedAtUtc], [w].[SnapshotAgeSeconds], [w].[WorkerKey], [w].[WorkerName]
+      FROM [WorkerHeartbeats] AS [w]
+      WHERE [w].[WorkerKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [w].[Id], [w].[CircuitBreakerState], [w].[ConsecutiveFailureCount], [w].[Detail], [w].[FreshnessTier], [w].[HealthState], [w].[LastErrorCode], [w].[LastErrorMessage], [w].[LastHeartbeatAtUtc], [w].[LastUpdatedAtUtc], [w].[SnapshotAgeSeconds], [w].[WorkerKey], [w].[WorkerName]
+      FROM [WorkerHeartbeats] AS [w]
+      WHERE [w].[WorkerKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (6ms) [Parameters=[@p10='?' (DbType = Guid), @p0='?' (DbType = Int32), @p1='?' (Size = 16), @p2='?' (DbType = Int32), @p3='?' (Size = 2048), @p4='?' (DbType = Int32), @p5='?' (DbType = DateTime2), @p6='?' (DbType = DateTime2), @p7='?' (DbType = Int32), @p8='?' (DbType = Int32), @p9='?' (DbType = DateTime2), @p19='?' (DbType = Guid), @p11='?' (Size = 16), @p12='?' (DbType = Int32), @p13='?' (Size = 2048), @p14='?' (Size = 16), @p15='?' (Size = 32), @p16='?' (DbType = DateTime2), @p17='?' (DbType = DateTime2), @p18='?' (DbType = Int32), @p26='?' (DbType = Guid), @p20='?' (Size = 16), @p21='?' (Size = 2048), @p22='?' (Size = 16), @p23='?' (Size = 32), @p24='?' (DbType = DateTime2), @p25='?' (DbType = Int32), @p36='?' (DbType = Guid), @p27='?' (Size = 16), @p28='?' (DbType = Int32), @p29='?' (Size = 2048), @p30='?' (Size = 16), @p31='?' (Size = 32), @p32='?' (Size = 64), @p33='?' (Size = 1024), @p34='?' (DbType = DateTime2), @p35='?' (DbType = Int32), @p39='?' (DbType = Guid), @p37='?' (DbType = DateTime2), @p38='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SET NOCOUNT ON;
+      UPDATE [HealthSnapshots] SET [BinancePingMs] = @p0, [CircuitBreakerState] = @p1, [DbLatencyMs] = @p2, [Detail] = @p3, [LastMessageAgeSeconds] = @p4, [LastUpdatedAtUtc] = @p5, [ObservedAtUtc] = @p6, [RateLimitUsage] = @p7, [WebSocketStaleDurationSeconds] = @p8, [WorkerLastHeartbeatAtUtc] = @p9
+      OUTPUT 1
+      WHERE [Id] = @p10;
+      UPDATE [WorkerHeartbeats] SET [CircuitBreakerState] = @p11, [ConsecutiveFailureCount] = @p12, [Detail] = @p13, [FreshnessTier] = @p14, [HealthState] = @p15, [LastHeartbeatAtUtc] = @p16, [LastUpdatedAtUtc] = @p17, [SnapshotAgeSeconds] = @p18
+      OUTPUT 1
+      WHERE [Id] = @p19;
+      UPDATE [WorkerHeartbeats] SET [CircuitBreakerState] = @p20, [Detail] = @p21, [FreshnessTier] = @p22, [HealthState] = @p23, [LastUpdatedAtUtc] = @p24, [SnapshotAgeSeconds] = @p25
+      OUTPUT 1
+      WHERE [Id] = @p26;
+      UPDATE [WorkerHeartbeats] SET [CircuitBreakerState] = @p27, [ConsecutiveFailureCount] = @p28, [Detail] = @p29, [FreshnessTier] = @p30, [HealthState] = @p31, [LastErrorCode] = @p32, [LastErrorMessage] = @p33, [LastUpdatedAtUtc] = @p34, [SnapshotAgeSeconds] = @p35
+      OUTPUT 1
+      WHERE [Id] = @p36;
+      UPDATE [WorkerHeartbeats] SET [LastHeartbeatAtUtc] = @p37, [LastUpdatedAtUtc] = @p38
+      OUTPUT 1
+      WHERE [Id] = @p39;
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT 1
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[CreatedDate], [d].[ExecutionFlowBlocked], [d].[IsDeleted], [d].[LastStateChangedAtUtc], [d].[LatestClockDriftMilliseconds], [d].[LatestDataTimestampAtUtc], [d].[LatestHeartbeatReceivedAtUtc], [d].[ReasonCode], [d].[SignalFlowBlocked], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DegradedModeStates] AS [d]
+      WHERE [d].[Id] = '3e17e8ef-3a73-45cc-8c32-a11fa55178d7'
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.LogicalHandler[100]
+      Start processing HTTP request GET https://fapi.binance.com/fapi/v1/time
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.ClientHandler[100]
+      Sending HTTP request GET https://fapi.binance.com/fapi/v1/time
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.ClientHandler[101]
+      Received HTTP response headers after 243.2303ms - 200
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.LogicalHandler[101]
+      End processing HTTP request after 243.3146ms - 200
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (1ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (5ms) [Parameters=[@p4='?' (DbType = Guid), @p0='?' (DbType = Int32), @p1='?' (Size = 2048), @p2='?' (DbType = DateTime2), @p3='?' (DbType = Int32), @p8='?' (DbType = Guid), @p5='?' (DbType = Int32), @p6='?' (DbType = DateTime2), @p7='?' (DbType = Int32), @p14='?' (DbType = Guid), @p9='?' (DbType = Int32), @p10='?' (Size = 2048), @p11='?' (DbType = DateTime2), @p12='?' (DbType = DateTime2), @p13='?' (DbType = DateTime2), @p19='?' (DbType = Guid), @p15='?' (DbType = Int32), @p16='?' (Size = 2048), @p17='?' (DbType = DateTime2), @p18='?' (DbType = Int32)], CommandType='Text', CommandTimeout='30']
+      SET NOCOUNT ON;
+      UPDATE [HealthSnapshots] SET [DbLatencyMs] = @p0, [Detail] = @p1, [LastUpdatedAtUtc] = @p2, [SnapshotAgeSeconds] = @p3
+      OUTPUT 1
+      WHERE [Id] = @p4;
+      UPDATE [HealthSnapshots] SET [DbLatencyMs] = @p5, [LastUpdatedAtUtc] = @p6, [SnapshotAgeSeconds] = @p7
+      OUTPUT 1
+      WHERE [Id] = @p8;
+      UPDATE [HealthSnapshots] SET [DbLatencyMs] = @p9, [Detail] = @p10, [LastUpdatedAtUtc] = @p11, [ObservedAtUtc] = @p12, [WorkerLastHeartbeatAtUtc] = @p13
+      OUTPUT 1
+      WHERE [Id] = @p14;
+      UPDATE [HealthSnapshots] SET [DbLatencyMs] = @p15, [Detail] = @p16, [LastUpdatedAtUtc] = @p17, [SnapshotAgeSeconds] = @p18
+      OUTPUT 1
+      WHERE [Id] = @p19;
+warn: CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogWorker[0]
+      Virtual execution watchdog worker cycle failed.
+      System.InvalidOperationException: The LINQ expression 'DbSet<ExecutionOrder>()
+          .Where(e => !(e.IsDeleted) && (int)e.ExecutionEnvironment == 0 && (int)e.ExecutorKind == 1 && ((IReadOnlySet<ExecutionOrderState>)HashSet<ExecutionOrderState> { Submitted, PartiallyFilled }).Contains(e.State))' could not be translated. Additional information: Translation of method 'System.Collections.Generic.IReadOnlySet<CoinBot.Domain.Enums.ExecutionOrderState>.Contains' failed. If this method can be mapped to your custom function, see https://go.microsoft.com/fwlink/?linkid=2132413 for more information. Either rewrite the query in a form that can be translated, or switch to client evaluation explicitly by inserting a call to 'AsEnumerable', 'AsAsyncEnumerable', 'ToList', or 'ToListAsync'. See https://go.microsoft.com/fwlink/?linkid=2101038 for more information.
+         at Microsoft.EntityFrameworkCore.Query.QueryableMethodTranslatingExpressionVisitor.Translate(Expression expression)
+         at Microsoft.EntityFrameworkCore.Query.QueryCompilationContext.CreateQueryExecutorExpression[TResult](Expression query)
+         at Microsoft.EntityFrameworkCore.Query.QueryCompilationContext.CreateQueryExecutor[TResult](Expression query)
+         at Microsoft.EntityFrameworkCore.Storage.Database.CompileQuery[TResult](Expression query, Boolean async)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.CompileQueryCore[TResult](IDatabase database, Expression query, IModel model, Boolean async)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.<>c__DisplayClass11_0`1.<ExecuteCore>b__0()
+         at Microsoft.EntityFrameworkCore.Query.Internal.CompiledQueryCache.GetOrAddQuery[TResult](Object cacheKey, Func`1 compiler)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.ExecuteCore[TResult](Expression query, Boolean async, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.ExecuteAsync[TResult](Expression query, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryProvider.ExecuteAsync[TResult](Expression expression, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryable`1.GetAsyncEnumerator(CancellationToken cancellationToken)
+         at System.Runtime.CompilerServices.ConfiguredCancelableAsyncEnumerable`1.GetAsyncEnumerator()
+         at Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync[TSource](IQueryable`1 source, CancellationToken cancellationToken)
+         at CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogService.RunOnceAsync(CancellationToken cancellationToken) in D:\CkBot\Code\CoinBot\src\CoinBot.Infrastructure\Execution\VirtualExecutionWatchdogService.cs:line 35
+         at CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogWorker.ExecuteAsync(CancellationToken stoppingToken) in D:\CkBot\Code\CoinBot\src\CoinBot.Infrastructure\Execution\VirtualExecutionWatchdogWorker.cs:line 27
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@nowUtc='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SELECT [a].[Id], [a].[AffectedSymbolsCsv], [a].[AffectedUsersCsv], [a].[ApprovalId], [a].[ConfidenceScore], [a].[CorrelationId], [a].[CreatedDate], [a].[ExpiresAtUtc], [a].[IsDeleted], [a].[Reason], [a].[ScopeKey], [a].[Status], [a].[SuggestedAction], [a].[UpdatedDate]
+      FROM [AutonomyReviewQueue] AS [a]
+      WHERE [a].[IsDeleted] = CAST(0 AS bit) AND [a].[Status] = N'Pending' AND [a].[ExpiresAtUtc] <= @nowUtc
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT 1
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[CreatedDate], [d].[ExecutionFlowBlocked], [d].[IsDeleted], [d].[LastStateChangedAtUtc], [d].[LatestClockDriftMilliseconds], [d].[LatestDataTimestampAtUtc], [d].[LatestHeartbeatReceivedAtUtc], [d].[ReasonCode], [d].[SignalFlowBlocked], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DegradedModeStates] AS [d]
+      WHERE [d].[Id] = '3e17e8ef-3a73-45cc-8c32-a11fa55178d7'
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.LogicalHandler[100]
+      Start processing HTTP request GET https://fapi.binance.com/fapi/v1/time
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.ClientHandler[100]
+      Sending HTTP request GET https://fapi.binance.com/fapi/v1/time
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.ClientHandler[101]
+      Received HTTP response headers after 243.0472ms - 200
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.LogicalHandler[101]
+      End processing HTTP request after 243.0972ms - 200
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@p4='?' (DbType = Guid), @p0='?' (DbType = Int32), @p1='?' (Size = 2048), @p2='?' (DbType = DateTime2), @p3='?' (DbType = Int32), @p8='?' (DbType = Guid), @p5='?' (DbType = Int32), @p6='?' (DbType = DateTime2), @p7='?' (DbType = Int32), @p14='?' (DbType = Guid), @p9='?' (DbType = Int32), @p10='?' (Size = 2048), @p11='?' (DbType = DateTime2), @p12='?' (DbType = DateTime2), @p13='?' (DbType = DateTime2), @p19='?' (DbType = Guid), @p15='?' (DbType = Int32), @p16='?' (Size = 2048), @p17='?' (DbType = DateTime2), @p18='?' (DbType = Int32)], CommandType='Text', CommandTimeout='30']
+      SET NOCOUNT ON;
+      UPDATE [HealthSnapshots] SET [DbLatencyMs] = @p0, [Detail] = @p1, [LastUpdatedAtUtc] = @p2, [SnapshotAgeSeconds] = @p3
+      OUTPUT 1
+      WHERE [Id] = @p4;
+      UPDATE [HealthSnapshots] SET [DbLatencyMs] = @p5, [LastUpdatedAtUtc] = @p6, [SnapshotAgeSeconds] = @p7
+      OUTPUT 1
+      WHERE [Id] = @p8;
+      UPDATE [HealthSnapshots] SET [DbLatencyMs] = @p9, [Detail] = @p10, [LastUpdatedAtUtc] = @p11, [ObservedAtUtc] = @p12, [WorkerLastHeartbeatAtUtc] = @p13
+      OUTPUT 1
+      WHERE [Id] = @p14;
+      UPDATE [HealthSnapshots] SET [DbLatencyMs] = @p15, [Detail] = @p16, [LastUpdatedAtUtc] = @p17, [SnapshotAgeSeconds] = @p18
+      OUTPUT 1
+      WHERE [Id] = @p19;
+warn: CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogWorker[0]
+      Virtual execution watchdog worker cycle failed.
+      System.InvalidOperationException: The LINQ expression 'DbSet<ExecutionOrder>()
+          .Where(e => !(e.IsDeleted) && (int)e.ExecutionEnvironment == 0 && (int)e.ExecutorKind == 1 && ((IReadOnlySet<ExecutionOrderState>)HashSet<ExecutionOrderState> { Submitted, PartiallyFilled }).Contains(e.State))' could not be translated. Additional information: Translation of method 'System.Collections.Generic.IReadOnlySet<CoinBot.Domain.Enums.ExecutionOrderState>.Contains' failed. If this method can be mapped to your custom function, see https://go.microsoft.com/fwlink/?linkid=2132413 for more information. Either rewrite the query in a form that can be translated, or switch to client evaluation explicitly by inserting a call to 'AsEnumerable', 'AsAsyncEnumerable', 'ToList', or 'ToListAsync'. See https://go.microsoft.com/fwlink/?linkid=2101038 for more information.
+         at Microsoft.EntityFrameworkCore.Query.QueryableMethodTranslatingExpressionVisitor.Translate(Expression expression)
+         at Microsoft.EntityFrameworkCore.Query.QueryCompilationContext.CreateQueryExecutorExpression[TResult](Expression query)
+         at Microsoft.EntityFrameworkCore.Query.QueryCompilationContext.CreateQueryExecutor[TResult](Expression query)
+         at Microsoft.EntityFrameworkCore.Storage.Database.CompileQuery[TResult](Expression query, Boolean async)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.CompileQueryCore[TResult](IDatabase database, Expression query, IModel model, Boolean async)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.<>c__DisplayClass11_0`1.<ExecuteCore>b__0()
+         at Microsoft.EntityFrameworkCore.Query.Internal.CompiledQueryCache.GetOrAddQuery[TResult](Object cacheKey, Func`1 compiler)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.ExecuteCore[TResult](Expression query, Boolean async, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.ExecuteAsync[TResult](Expression query, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryProvider.ExecuteAsync[TResult](Expression expression, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryable`1.GetAsyncEnumerator(CancellationToken cancellationToken)
+         at System.Runtime.CompilerServices.ConfiguredCancelableAsyncEnumerable`1.GetAsyncEnumerator()
+         at Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync[TSource](IQueryable`1 source, CancellationToken cancellationToken)
+         at CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogService.RunOnceAsync(CancellationToken cancellationToken) in D:\CkBot\Code\CoinBot\src\CoinBot.Infrastructure\Execution\VirtualExecutionWatchdogService.cs:line 35
+         at CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogWorker.ExecuteAsync(CancellationToken stoppingToken) in D:\CkBot\Code\CoinBot\src\CoinBot.Infrastructure\Execution\VirtualExecutionWatchdogWorker.cs:line 27
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT 1
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[CreatedDate], [d].[ExecutionFlowBlocked], [d].[IsDeleted], [d].[LastStateChangedAtUtc], [d].[LatestClockDriftMilliseconds], [d].[LatestDataTimestampAtUtc], [d].[LatestHeartbeatReceivedAtUtc], [d].[ReasonCode], [d].[SignalFlowBlocked], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DegradedModeStates] AS [d]
+      WHERE [d].[Id] = '3e17e8ef-3a73-45cc-8c32-a11fa55178d7'
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.LogicalHandler[100]
+      Start processing HTTP request GET https://fapi.binance.com/fapi/v1/time
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.ClientHandler[100]
+      Sending HTTP request GET https://fapi.binance.com/fapi/v1/time
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.ClientHandler[101]
+      Received HTTP response headers after 256.3315ms - 200
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.LogicalHandler[101]
+      End processing HTTP request after 256.3777ms - 200
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (5ms) [Parameters=[@p3='?' (DbType = Guid), @p0='?' (Size = 2048), @p1='?' (DbType = DateTime2), @p2='?' (DbType = Int32), @p6='?' (DbType = Guid), @p4='?' (DbType = DateTime2), @p5='?' (DbType = Int32), @p11='?' (DbType = Guid), @p7='?' (Size = 2048), @p8='?' (DbType = DateTime2), @p9='?' (DbType = DateTime2), @p10='?' (DbType = DateTime2), @p15='?' (DbType = Guid), @p12='?' (Size = 2048), @p13='?' (DbType = DateTime2), @p14='?' (DbType = Int32)], CommandType='Text', CommandTimeout='30']
+      SET NOCOUNT ON;
+      UPDATE [HealthSnapshots] SET [Detail] = @p0, [LastUpdatedAtUtc] = @p1, [SnapshotAgeSeconds] = @p2
+      OUTPUT 1
+      WHERE [Id] = @p3;
+      UPDATE [HealthSnapshots] SET [LastUpdatedAtUtc] = @p4, [SnapshotAgeSeconds] = @p5
+      OUTPUT 1
+      WHERE [Id] = @p6;
+      UPDATE [HealthSnapshots] SET [Detail] = @p7, [LastUpdatedAtUtc] = @p8, [ObservedAtUtc] = @p9, [WorkerLastHeartbeatAtUtc] = @p10
+      OUTPUT 1
+      WHERE [Id] = @p11;
+      UPDATE [HealthSnapshots] SET [Detail] = @p12, [LastUpdatedAtUtc] = @p13, [SnapshotAgeSeconds] = @p14
+      OUTPUT 1
+      WHERE [Id] = @p15;
+warn: CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogWorker[0]
+      Virtual execution watchdog worker cycle failed.
+      System.InvalidOperationException: The LINQ expression 'DbSet<ExecutionOrder>()
+          .Where(e => !(e.IsDeleted) && (int)e.ExecutionEnvironment == 0 && (int)e.ExecutorKind == 1 && ((IReadOnlySet<ExecutionOrderState>)HashSet<ExecutionOrderState> { Submitted, PartiallyFilled }).Contains(e.State))' could not be translated. Additional information: Translation of method 'System.Collections.Generic.IReadOnlySet<CoinBot.Domain.Enums.ExecutionOrderState>.Contains' failed. If this method can be mapped to your custom function, see https://go.microsoft.com/fwlink/?linkid=2132413 for more information. Either rewrite the query in a form that can be translated, or switch to client evaluation explicitly by inserting a call to 'AsEnumerable', 'AsAsyncEnumerable', 'ToList', or 'ToListAsync'. See https://go.microsoft.com/fwlink/?linkid=2101038 for more information.
+         at Microsoft.EntityFrameworkCore.Query.QueryableMethodTranslatingExpressionVisitor.Translate(Expression expression)
+         at Microsoft.EntityFrameworkCore.Query.QueryCompilationContext.CreateQueryExecutorExpression[TResult](Expression query)
+         at Microsoft.EntityFrameworkCore.Query.QueryCompilationContext.CreateQueryExecutor[TResult](Expression query)
+         at Microsoft.EntityFrameworkCore.Storage.Database.CompileQuery[TResult](Expression query, Boolean async)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.CompileQueryCore[TResult](IDatabase database, Expression query, IModel model, Boolean async)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.<>c__DisplayClass11_0`1.<ExecuteCore>b__0()
+         at Microsoft.EntityFrameworkCore.Query.Internal.CompiledQueryCache.GetOrAddQuery[TResult](Object cacheKey, Func`1 compiler)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.ExecuteCore[TResult](Expression query, Boolean async, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.ExecuteAsync[TResult](Expression query, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryProvider.ExecuteAsync[TResult](Expression expression, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryable`1.GetAsyncEnumerator(CancellationToken cancellationToken)
+         at System.Runtime.CompilerServices.ConfiguredCancelableAsyncEnumerable`1.GetAsyncEnumerator()
+         at Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync[TSource](IQueryable`1 source, CancellationToken cancellationToken)
+         at CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogService.RunOnceAsync(CancellationToken cancellationToken) in D:\CkBot\Code\CoinBot\src\CoinBot.Infrastructure\Execution\VirtualExecutionWatchdogService.cs:line 35
+         at CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogWorker.ExecuteAsync(CancellationToken stoppingToken) in D:\CkBot\Code\CoinBot\src\CoinBot.Infrastructure\Execution\VirtualExecutionWatchdogWorker.cs:line 27
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@nowUtc='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SELECT [a].[Id], [a].[AffectedSymbolsCsv], [a].[AffectedUsersCsv], [a].[ApprovalId], [a].[ConfidenceScore], [a].[CorrelationId], [a].[CreatedDate], [a].[ExpiresAtUtc], [a].[IsDeleted], [a].[Reason], [a].[ScopeKey], [a].[Status], [a].[SuggestedAction], [a].[UpdatedDate]
+      FROM [AutonomyReviewQueue] AS [a]
+      WHERE [a].[IsDeleted] = CAST(0 AS bit) AND [a].[Status] = N'Pending' AND [a].[ExpiresAtUtc] <= @nowUtc
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[CreatedDate], [d].[ExecutionFlowBlocked], [d].[IsDeleted], [d].[LastStateChangedAtUtc], [d].[LatestClockDriftMilliseconds], [d].[LatestDataTimestampAtUtc], [d].[LatestHeartbeatReceivedAtUtc], [d].[ReasonCode], [d].[SignalFlowBlocked], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DegradedModeStates] AS [d]
+      WHERE [d].[Id] = '3e17e8ef-3a73-45cc-8c32-a11fa55178d7'
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@candleInterval='?' (Size = 16), @recentWindowStartUtc='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SELECT DISTINCT [h].[Symbol]
+      FROM [HistoricalMarketCandles] AS [h]
+      WHERE [h].[IsDeleted] = CAST(0 AS bit) AND [h].[Interval] = @candleInterval AND [h].[CloseTimeUtc] >= @recentWindowStartUtc
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [w].[Id], [w].[CircuitBreakerState], [w].[ConsecutiveFailureCount], [w].[Detail], [w].[FreshnessTier], [w].[HealthState], [w].[LastErrorCode], [w].[LastErrorMessage], [w].[LastHeartbeatAtUtc], [w].[LastUpdatedAtUtc], [w].[SnapshotAgeSeconds], [w].[WorkerKey], [w].[WorkerName]
+      FROM [WorkerHeartbeats] AS [w]
+      WHERE [w].[WorkerKey] = N'market-anomaly-engine'
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (2ms) [Parameters=[@p2='?' (DbType = Guid), @p0='?' (DbType = DateTime2), @p1='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SET IMPLICIT_TRANSACTIONS OFF;
+      SET NOCOUNT ON;
+      UPDATE [WorkerHeartbeats] SET [LastHeartbeatAtUtc] = @p0, [LastUpdatedAtUtc] = @p1
+      OUTPUT 1
+      WHERE [Id] = @p2;
+info: CoinBot.Infrastructure.Autonomy.MarketAnomalyService[0]
+      Market anomaly sweep completed. Candidates=0; Evaluated=0; PolicyUpdated=0; ReviewQueued=0; Protected=0; InsufficientData=0.
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT 1
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[CreatedDate], [d].[ExecutionFlowBlocked], [d].[IsDeleted], [d].[LastStateChangedAtUtc], [d].[LatestClockDriftMilliseconds], [d].[LatestDataTimestampAtUtc], [d].[LatestHeartbeatReceivedAtUtc], [d].[ReasonCode], [d].[SignalFlowBlocked], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DegradedModeStates] AS [d]
+      WHERE [d].[Id] = '3e17e8ef-3a73-45cc-8c32-a11fa55178d7'
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.LogicalHandler[100]
+      Start processing HTTP request GET https://fapi.binance.com/fapi/v1/time
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.ClientHandler[100]
+      Sending HTTP request GET https://fapi.binance.com/fapi/v1/time
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.ClientHandler[101]
+      Received HTTP response headers after 241.4887ms - 200
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.LogicalHandler[101]
+      End processing HTTP request after 241.5387ms - 200
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@p3='?' (DbType = Guid), @p0='?' (Size = 2048), @p1='?' (DbType = DateTime2), @p2='?' (DbType = Int32), @p6='?' (DbType = Guid), @p4='?' (DbType = DateTime2), @p5='?' (DbType = Int32), @p11='?' (DbType = Guid), @p7='?' (Size = 2048), @p8='?' (DbType = DateTime2), @p9='?' (DbType = DateTime2), @p10='?' (DbType = DateTime2), @p15='?' (DbType = Guid), @p12='?' (Size = 2048), @p13='?' (DbType = DateTime2), @p14='?' (DbType = Int32)], CommandType='Text', CommandTimeout='30']
+      SET NOCOUNT ON;
+      UPDATE [HealthSnapshots] SET [Detail] = @p0, [LastUpdatedAtUtc] = @p1, [SnapshotAgeSeconds] = @p2
+      OUTPUT 1
+      WHERE [Id] = @p3;
+      UPDATE [HealthSnapshots] SET [LastUpdatedAtUtc] = @p4, [SnapshotAgeSeconds] = @p5
+      OUTPUT 1
+      WHERE [Id] = @p6;
+      UPDATE [HealthSnapshots] SET [Detail] = @p7, [LastUpdatedAtUtc] = @p8, [ObservedAtUtc] = @p9, [WorkerLastHeartbeatAtUtc] = @p10
+      OUTPUT 1
+      WHERE [Id] = @p11;
+      UPDATE [HealthSnapshots] SET [Detail] = @p12, [LastUpdatedAtUtc] = @p13, [SnapshotAgeSeconds] = @p14
+      OUTPUT 1
+      WHERE [Id] = @p15;
+warn: CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogWorker[0]
+      Virtual execution watchdog worker cycle failed.
+      System.InvalidOperationException: The LINQ expression 'DbSet<ExecutionOrder>()
+          .Where(e => !(e.IsDeleted) && (int)e.ExecutionEnvironment == 0 && (int)e.ExecutorKind == 1 && ((IReadOnlySet<ExecutionOrderState>)HashSet<ExecutionOrderState> { Submitted, PartiallyFilled }).Contains(e.State))' could not be translated. Additional information: Translation of method 'System.Collections.Generic.IReadOnlySet<CoinBot.Domain.Enums.ExecutionOrderState>.Contains' failed. If this method can be mapped to your custom function, see https://go.microsoft.com/fwlink/?linkid=2132413 for more information. Either rewrite the query in a form that can be translated, or switch to client evaluation explicitly by inserting a call to 'AsEnumerable', 'AsAsyncEnumerable', 'ToList', or 'ToListAsync'. See https://go.microsoft.com/fwlink/?linkid=2101038 for more information.
+         at Microsoft.EntityFrameworkCore.Query.QueryableMethodTranslatingExpressionVisitor.Translate(Expression expression)
+         at Microsoft.EntityFrameworkCore.Query.QueryCompilationContext.CreateQueryExecutorExpression[TResult](Expression query)
+         at Microsoft.EntityFrameworkCore.Query.QueryCompilationContext.CreateQueryExecutor[TResult](Expression query)
+         at Microsoft.EntityFrameworkCore.Storage.Database.CompileQuery[TResult](Expression query, Boolean async)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.CompileQueryCore[TResult](IDatabase database, Expression query, IModel model, Boolean async)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.<>c__DisplayClass11_0`1.<ExecuteCore>b__0()
+         at Microsoft.EntityFrameworkCore.Query.Internal.CompiledQueryCache.GetOrAddQuery[TResult](Object cacheKey, Func`1 compiler)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.ExecuteCore[TResult](Expression query, Boolean async, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.ExecuteAsync[TResult](Expression query, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryProvider.ExecuteAsync[TResult](Expression expression, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryable`1.GetAsyncEnumerator(CancellationToken cancellationToken)
+         at System.Runtime.CompilerServices.ConfiguredCancelableAsyncEnumerable`1.GetAsyncEnumerator()
+         at Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync[TSource](IQueryable`1 source, CancellationToken cancellationToken)
+         at CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogService.RunOnceAsync(CancellationToken cancellationToken) in D:\CkBot\Code\CoinBot\src\CoinBot.Infrastructure\Execution\VirtualExecutionWatchdogService.cs:line 35
+         at CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogWorker.ExecuteAsync(CancellationToken stoppingToken) in D:\CkBot\Code\CoinBot\src\CoinBot.Infrastructure\Execution\VirtualExecutionWatchdogWorker.cs:line 27
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (1ms) [Parameters=[@nowUtc='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SELECT [a].[Id], [a].[AffectedSymbolsCsv], [a].[AffectedUsersCsv], [a].[ApprovalId], [a].[ConfidenceScore], [a].[CorrelationId], [a].[CreatedDate], [a].[ExpiresAtUtc], [a].[IsDeleted], [a].[Reason], [a].[ScopeKey], [a].[Status], [a].[SuggestedAction], [a].[UpdatedDate]
+      FROM [AutonomyReviewQueue] AS [a]
+      WHERE [a].[IsDeleted] = CAST(0 AS bit) AND [a].[Status] = N'Pending' AND [a].[ExpiresAtUtc] <= @nowUtc
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT 1
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[CreatedDate], [d].[ExecutionFlowBlocked], [d].[IsDeleted], [d].[LastStateChangedAtUtc], [d].[LatestClockDriftMilliseconds], [d].[LatestDataTimestampAtUtc], [d].[LatestHeartbeatReceivedAtUtc], [d].[ReasonCode], [d].[SignalFlowBlocked], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DegradedModeStates] AS [d]
+      WHERE [d].[Id] = '3e17e8ef-3a73-45cc-8c32-a11fa55178d7'
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.LogicalHandler[100]
+      Start processing HTTP request GET https://fapi.binance.com/fapi/v1/time
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.ClientHandler[100]
+      Sending HTTP request GET https://fapi.binance.com/fapi/v1/time
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.ClientHandler[101]
+      Received HTTP response headers after 242.2585ms - 200
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.LogicalHandler[101]
+      End processing HTTP request after 242.3051ms - 200
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@p3='?' (DbType = Guid), @p0='?' (Size = 2048), @p1='?' (DbType = DateTime2), @p2='?' (DbType = Int32), @p6='?' (DbType = Guid), @p4='?' (DbType = DateTime2), @p5='?' (DbType = Int32), @p11='?' (DbType = Guid), @p7='?' (Size = 2048), @p8='?' (DbType = DateTime2), @p9='?' (DbType = DateTime2), @p10='?' (DbType = DateTime2), @p15='?' (DbType = Guid), @p12='?' (Size = 2048), @p13='?' (DbType = DateTime2), @p14='?' (DbType = Int32)], CommandType='Text', CommandTimeout='30']
+      SET NOCOUNT ON;
+      UPDATE [HealthSnapshots] SET [Detail] = @p0, [LastUpdatedAtUtc] = @p1, [SnapshotAgeSeconds] = @p2
+      OUTPUT 1
+      WHERE [Id] = @p3;
+      UPDATE [HealthSnapshots] SET [LastUpdatedAtUtc] = @p4, [SnapshotAgeSeconds] = @p5
+      OUTPUT 1
+      WHERE [Id] = @p6;
+      UPDATE [HealthSnapshots] SET [Detail] = @p7, [LastUpdatedAtUtc] = @p8, [ObservedAtUtc] = @p9, [WorkerLastHeartbeatAtUtc] = @p10
+      OUTPUT 1
+      WHERE [Id] = @p11;
+      UPDATE [HealthSnapshots] SET [Detail] = @p12, [LastUpdatedAtUtc] = @p13, [SnapshotAgeSeconds] = @p14
+      OUTPUT 1
+      WHERE [Id] = @p15;
+warn: CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogWorker[0]
+      Virtual execution watchdog worker cycle failed.
+      System.InvalidOperationException: The LINQ expression 'DbSet<ExecutionOrder>()
+          .Where(e => !(e.IsDeleted) && (int)e.ExecutionEnvironment == 0 && (int)e.ExecutorKind == 1 && ((IReadOnlySet<ExecutionOrderState>)HashSet<ExecutionOrderState> { Submitted, PartiallyFilled }).Contains(e.State))' could not be translated. Additional information: Translation of method 'System.Collections.Generic.IReadOnlySet<CoinBot.Domain.Enums.ExecutionOrderState>.Contains' failed. If this method can be mapped to your custom function, see https://go.microsoft.com/fwlink/?linkid=2132413 for more information. Either rewrite the query in a form that can be translated, or switch to client evaluation explicitly by inserting a call to 'AsEnumerable', 'AsAsyncEnumerable', 'ToList', or 'ToListAsync'. See https://go.microsoft.com/fwlink/?linkid=2101038 for more information.
+         at Microsoft.EntityFrameworkCore.Query.QueryableMethodTranslatingExpressionVisitor.Translate(Expression expression)
+         at Microsoft.EntityFrameworkCore.Query.QueryCompilationContext.CreateQueryExecutorExpression[TResult](Expression query)
+         at Microsoft.EntityFrameworkCore.Query.QueryCompilationContext.CreateQueryExecutor[TResult](Expression query)
+         at Microsoft.EntityFrameworkCore.Storage.Database.CompileQuery[TResult](Expression query, Boolean async)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.CompileQueryCore[TResult](IDatabase database, Expression query, IModel model, Boolean async)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.<>c__DisplayClass11_0`1.<ExecuteCore>b__0()
+         at Microsoft.EntityFrameworkCore.Query.Internal.CompiledQueryCache.GetOrAddQuery[TResult](Object cacheKey, Func`1 compiler)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.ExecuteCore[TResult](Expression query, Boolean async, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.ExecuteAsync[TResult](Expression query, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryProvider.ExecuteAsync[TResult](Expression expression, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryable`1.GetAsyncEnumerator(CancellationToken cancellationToken)
+         at System.Runtime.CompilerServices.ConfiguredCancelableAsyncEnumerable`1.GetAsyncEnumerator()
+         at Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync[TSource](IQueryable`1 source, CancellationToken cancellationToken)
+         at CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogService.RunOnceAsync(CancellationToken cancellationToken) in D:\CkBot\Code\CoinBot\src\CoinBot.Infrastructure\Execution\VirtualExecutionWatchdogService.cs:line 35
+         at CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogWorker.ExecuteAsync(CancellationToken stoppingToken) in D:\CkBot\Code\CoinBot\src\CoinBot.Infrastructure\Execution\VirtualExecutionWatchdogWorker.cs:line 27
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT 1
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[CreatedDate], [d].[ExecutionFlowBlocked], [d].[IsDeleted], [d].[LastStateChangedAtUtc], [d].[LatestClockDriftMilliseconds], [d].[LatestDataTimestampAtUtc], [d].[LatestHeartbeatReceivedAtUtc], [d].[ReasonCode], [d].[SignalFlowBlocked], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DegradedModeStates] AS [d]
+      WHERE [d].[Id] = '3e17e8ef-3a73-45cc-8c32-a11fa55178d7'
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(1) [b].[JobType], [b].[JobKey], [b].[LastHeartbeatAtUtc], [b].[ConsecutiveFailureCount], [b].[LastErrorCode]
+      FROM [BackgroundJobStates] AS [b]
+      WHERE [b].[LastHeartbeatAtUtc] IS NOT NULL
+      ORDER BY [b].[LastHeartbeatAtUtc] DESC
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [w].[Id], [w].[CircuitBreakerState], [w].[ConsecutiveFailureCount], [w].[Detail], [w].[FreshnessTier], [w].[HealthState], [w].[LastErrorCode], [w].[LastErrorMessage], [w].[LastHeartbeatAtUtc], [w].[LastUpdatedAtUtc], [w].[SnapshotAgeSeconds], [w].[WorkerKey], [w].[WorkerName]
+      FROM [WorkerHeartbeats] AS [w]
+      WHERE [w].[WorkerKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@utcNow='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(1) [e].[ExchangeAccountId], [e].[PrivateStreamConnectionState], COALESCE([e].[LastPrivateStreamEventAtUtc], [e].[LastListenKeyRenewedAtUtc], [e].[LastStateReconciledAtUtc], @utcNow) AS [HeartbeatAtUtc], [e].[ConsecutiveStreamFailureCount], [e].[LastErrorCode]
+      FROM [ExchangeAccountSyncStates] AS [e]
+      WHERE [e].[LastPrivateStreamEventAtUtc] IS NOT NULL OR [e].[LastListenKeyRenewedAtUtc] IS NOT NULL
+      ORDER BY COALESCE([e].[LastPrivateStreamEventAtUtc], [e].[LastListenKeyRenewedAtUtc], @utcNow) DESC
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [w].[Id], [w].[CircuitBreakerState], [w].[ConsecutiveFailureCount], [w].[Detail], [w].[FreshnessTier], [w].[HealthState], [w].[LastErrorCode], [w].[LastErrorMessage], [w].[LastHeartbeatAtUtc], [w].[LastUpdatedAtUtc], [w].[SnapshotAgeSeconds], [w].[WorkerKey], [w].[WorkerName]
+      FROM [WorkerHeartbeats] AS [w]
+      WHERE [w].[WorkerKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [w].[Id], [w].[CircuitBreakerState], [w].[ConsecutiveFailureCount], [w].[Detail], [w].[FreshnessTier], [w].[HealthState], [w].[LastErrorCode], [w].[LastErrorMessage], [w].[LastHeartbeatAtUtc], [w].[LastUpdatedAtUtc], [w].[SnapshotAgeSeconds], [w].[WorkerKey], [w].[WorkerName]
+      FROM [WorkerHeartbeats] AS [w]
+      WHERE [w].[WorkerKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [w].[Id], [w].[CircuitBreakerState], [w].[ConsecutiveFailureCount], [w].[Detail], [w].[FreshnessTier], [w].[HealthState], [w].[LastErrorCode], [w].[LastErrorMessage], [w].[LastHeartbeatAtUtc], [w].[LastUpdatedAtUtc], [w].[SnapshotAgeSeconds], [w].[WorkerKey], [w].[WorkerName]
+      FROM [WorkerHeartbeats] AS [w]
+      WHERE [w].[WorkerKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (5ms) [Parameters=[@p5='?' (DbType = Guid), @p0='?' (DbType = Int32), @p1='?' (Size = 2048), @p2='?' (DbType = DateTime2), @p3='?' (DbType = DateTime2), @p4='?' (DbType = DateTime2), @p9='?' (DbType = Guid), @p6='?' (Size = 2048), @p7='?' (DbType = DateTime2), @p8='?' (DbType = Int32), @p13='?' (DbType = Guid), @p10='?' (Size = 2048), @p11='?' (DbType = DateTime2), @p12='?' (DbType = Int32), @p18='?' (DbType = Guid), @p14='?' (Size = 2048), @p15='?' (Size = 1024), @p16='?' (DbType = DateTime2), @p17='?' (DbType = Int32), @p21='?' (DbType = Guid), @p19='?' (DbType = DateTime2), @p20='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SET NOCOUNT ON;
+      UPDATE [HealthSnapshots] SET [DbLatencyMs] = @p0, [Detail] = @p1, [LastUpdatedAtUtc] = @p2, [ObservedAtUtc] = @p3, [WorkerLastHeartbeatAtUtc] = @p4
+      OUTPUT 1
+      WHERE [Id] = @p5;
+      UPDATE [WorkerHeartbeats] SET [Detail] = @p6, [LastUpdatedAtUtc] = @p7, [SnapshotAgeSeconds] = @p8
+      OUTPUT 1
+      WHERE [Id] = @p9;
+      UPDATE [WorkerHeartbeats] SET [Detail] = @p10, [LastUpdatedAtUtc] = @p11, [SnapshotAgeSeconds] = @p12
+      OUTPUT 1
+      WHERE [Id] = @p13;
+      UPDATE [WorkerHeartbeats] SET [Detail] = @p14, [LastErrorMessage] = @p15, [LastUpdatedAtUtc] = @p16, [SnapshotAgeSeconds] = @p17
+      OUTPUT 1
+      WHERE [Id] = @p18;
+      UPDATE [WorkerHeartbeats] SET [LastHeartbeatAtUtc] = @p19, [LastUpdatedAtUtc] = @p20
+      OUTPUT 1
+      WHERE [Id] = @p21;
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT 1
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[CreatedDate], [d].[ExecutionFlowBlocked], [d].[IsDeleted], [d].[LastStateChangedAtUtc], [d].[LatestClockDriftMilliseconds], [d].[LatestDataTimestampAtUtc], [d].[LatestHeartbeatReceivedAtUtc], [d].[ReasonCode], [d].[SignalFlowBlocked], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DegradedModeStates] AS [d]
+      WHERE [d].[Id] = '3e17e8ef-3a73-45cc-8c32-a11fa55178d7'
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.LogicalHandler[100]
+      Start processing HTTP request GET https://fapi.binance.com/fapi/v1/time
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.ClientHandler[100]
+      Sending HTTP request GET https://fapi.binance.com/fapi/v1/time
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.ClientHandler[101]
+      Received HTTP response headers after 240.5681ms - 200
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.LogicalHandler[101]
+      End processing HTTP request after 240.6257ms - 200
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@p3='?' (DbType = Guid), @p0='?' (Size = 2048), @p1='?' (DbType = DateTime2), @p2='?' (DbType = Int32), @p6='?' (DbType = Guid), @p4='?' (DbType = DateTime2), @p5='?' (DbType = Int32), @p11='?' (DbType = Guid), @p7='?' (Size = 2048), @p8='?' (DbType = DateTime2), @p9='?' (DbType = DateTime2), @p10='?' (DbType = DateTime2), @p15='?' (DbType = Guid), @p12='?' (Size = 2048), @p13='?' (DbType = DateTime2), @p14='?' (DbType = Int32)], CommandType='Text', CommandTimeout='30']
+      SET NOCOUNT ON;
+      UPDATE [HealthSnapshots] SET [Detail] = @p0, [LastUpdatedAtUtc] = @p1, [SnapshotAgeSeconds] = @p2
+      OUTPUT 1
+      WHERE [Id] = @p3;
+      UPDATE [HealthSnapshots] SET [LastUpdatedAtUtc] = @p4, [SnapshotAgeSeconds] = @p5
+      OUTPUT 1
+      WHERE [Id] = @p6;
+      UPDATE [HealthSnapshots] SET [Detail] = @p7, [LastUpdatedAtUtc] = @p8, [ObservedAtUtc] = @p9, [WorkerLastHeartbeatAtUtc] = @p10
+      OUTPUT 1
+      WHERE [Id] = @p11;
+      UPDATE [HealthSnapshots] SET [Detail] = @p12, [LastUpdatedAtUtc] = @p13, [SnapshotAgeSeconds] = @p14
+      OUTPUT 1
+      WHERE [Id] = @p15;
+warn: CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogWorker[0]
+      Virtual execution watchdog worker cycle failed.
+      System.InvalidOperationException: The LINQ expression 'DbSet<ExecutionOrder>()
+          .Where(e => !(e.IsDeleted) && (int)e.ExecutionEnvironment == 0 && (int)e.ExecutorKind == 1 && ((IReadOnlySet<ExecutionOrderState>)HashSet<ExecutionOrderState> { Submitted, PartiallyFilled }).Contains(e.State))' could not be translated. Additional information: Translation of method 'System.Collections.Generic.IReadOnlySet<CoinBot.Domain.Enums.ExecutionOrderState>.Contains' failed. If this method can be mapped to your custom function, see https://go.microsoft.com/fwlink/?linkid=2132413 for more information. Either rewrite the query in a form that can be translated, or switch to client evaluation explicitly by inserting a call to 'AsEnumerable', 'AsAsyncEnumerable', 'ToList', or 'ToListAsync'. See https://go.microsoft.com/fwlink/?linkid=2101038 for more information.
+         at Microsoft.EntityFrameworkCore.Query.QueryableMethodTranslatingExpressionVisitor.Translate(Expression expression)
+         at Microsoft.EntityFrameworkCore.Query.QueryCompilationContext.CreateQueryExecutorExpression[TResult](Expression query)
+         at Microsoft.EntityFrameworkCore.Query.QueryCompilationContext.CreateQueryExecutor[TResult](Expression query)
+         at Microsoft.EntityFrameworkCore.Storage.Database.CompileQuery[TResult](Expression query, Boolean async)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.CompileQueryCore[TResult](IDatabase database, Expression query, IModel model, Boolean async)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.<>c__DisplayClass11_0`1.<ExecuteCore>b__0()
+         at Microsoft.EntityFrameworkCore.Query.Internal.CompiledQueryCache.GetOrAddQuery[TResult](Object cacheKey, Func`1 compiler)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.ExecuteAsync[TResult](Expression query, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryable`1.GetAsyncEnumerator(CancellationToken cancellationToken)
+         at System.Runtime.CompilerServices.ConfiguredCancelableAsyncEnumerable`1.GetAsyncEnumerator()
+         at Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync[TSource](IQueryable`1 source, CancellationToken cancellationToken)
+         at CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogService.RunOnceAsync(CancellationToken cancellationToken) in D:\CkBot\Code\CoinBot\src\CoinBot.Infrastructure\Execution\VirtualExecutionWatchdogService.cs:line 35
+         at CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogWorker.ExecuteAsync(CancellationToken stoppingToken) in D:\CkBot\Code\CoinBot\src\CoinBot.Infrastructure\Execution\VirtualExecutionWatchdogWorker.cs:line 27
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@nowUtc='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SELECT [a].[Id], [a].[AffectedSymbolsCsv], [a].[AffectedUsersCsv], [a].[ApprovalId], [a].[ConfidenceScore], [a].[CorrelationId], [a].[CreatedDate], [a].[ExpiresAtUtc], [a].[IsDeleted], [a].[Reason], [a].[ScopeKey], [a].[Status], [a].[SuggestedAction], [a].[UpdatedDate]
+      FROM [AutonomyReviewQueue] AS [a]
+      WHERE [a].[IsDeleted] = CAST(0 AS bit) AND [a].[Status] = N'Pending' AND [a].[ExpiresAtUtc] <= @nowUtc
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[CreatedDate], [d].[ExecutionFlowBlocked], [d].[IsDeleted], [d].[LastStateChangedAtUtc], [d].[LatestClockDriftMilliseconds], [d].[LatestDataTimestampAtUtc], [d].[LatestHeartbeatReceivedAtUtc], [d].[ReasonCode], [d].[SignalFlowBlocked], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DegradedModeStates] AS [d]
+      WHERE [d].[Id] = '3e17e8ef-3a73-45cc-8c32-a11fa55178d7'
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@candleInterval='?' (Size = 16), @recentWindowStartUtc='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SELECT DISTINCT [h].[Symbol]
+      FROM [HistoricalMarketCandles] AS [h]
+      WHERE [h].[IsDeleted] = CAST(0 AS bit) AND [h].[Interval] = @candleInterval AND [h].[CloseTimeUtc] >= @recentWindowStartUtc
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [w].[Id], [w].[CircuitBreakerState], [w].[ConsecutiveFailureCount], [w].[Detail], [w].[FreshnessTier], [w].[HealthState], [w].[LastErrorCode], [w].[LastErrorMessage], [w].[LastHeartbeatAtUtc], [w].[LastUpdatedAtUtc], [w].[SnapshotAgeSeconds], [w].[WorkerKey], [w].[WorkerName]
+      FROM [WorkerHeartbeats] AS [w]
+      WHERE [w].[WorkerKey] = N'market-anomaly-engine'
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (1ms) [Parameters=[@p2='?' (DbType = Guid), @p0='?' (DbType = DateTime2), @p1='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SET IMPLICIT_TRANSACTIONS OFF;
+      SET NOCOUNT ON;
+      UPDATE [WorkerHeartbeats] SET [LastHeartbeatAtUtc] = @p0, [LastUpdatedAtUtc] = @p1
+      OUTPUT 1
+      WHERE [Id] = @p2;
+info: CoinBot.Infrastructure.Autonomy.MarketAnomalyService[0]
+      Market anomaly sweep completed. Candidates=0; Evaluated=0; PolicyUpdated=0; ReviewQueued=0; Protected=0; InsufficientData=0.
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT 1
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[CreatedDate], [d].[ExecutionFlowBlocked], [d].[IsDeleted], [d].[LastStateChangedAtUtc], [d].[LatestClockDriftMilliseconds], [d].[LatestDataTimestampAtUtc], [d].[LatestHeartbeatReceivedAtUtc], [d].[ReasonCode], [d].[SignalFlowBlocked], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DegradedModeStates] AS [d]
+      WHERE [d].[Id] = '3e17e8ef-3a73-45cc-8c32-a11fa55178d7'
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.LogicalHandler[100]
+      Start processing HTTP request GET https://fapi.binance.com/fapi/v1/time
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.ClientHandler[100]
+      Sending HTTP request GET https://fapi.binance.com/fapi/v1/time
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.ClientHandler[101]
+      Received HTTP response headers after 250.4607ms - 200
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.LogicalHandler[101]
+      End processing HTTP request after 250.5067ms - 200
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@p3='?' (DbType = Guid), @p0='?' (Size = 2048), @p1='?' (DbType = DateTime2), @p2='?' (DbType = Int32), @p6='?' (DbType = Guid), @p4='?' (DbType = DateTime2), @p5='?' (DbType = Int32), @p11='?' (DbType = Guid), @p7='?' (Size = 2048), @p8='?' (DbType = DateTime2), @p9='?' (DbType = DateTime2), @p10='?' (DbType = DateTime2), @p15='?' (DbType = Guid), @p12='?' (Size = 2048), @p13='?' (DbType = DateTime2), @p14='?' (DbType = Int32)], CommandType='Text', CommandTimeout='30']
+      SET NOCOUNT ON;
+      UPDATE [HealthSnapshots] SET [Detail] = @p0, [LastUpdatedAtUtc] = @p1, [SnapshotAgeSeconds] = @p2
+      OUTPUT 1
+      WHERE [Id] = @p3;
+      UPDATE [HealthSnapshots] SET [LastUpdatedAtUtc] = @p4, [SnapshotAgeSeconds] = @p5
+      OUTPUT 1
+      WHERE [Id] = @p6;
+      UPDATE [HealthSnapshots] SET [Detail] = @p7, [LastUpdatedAtUtc] = @p8, [ObservedAtUtc] = @p9, [WorkerLastHeartbeatAtUtc] = @p10
+      OUTPUT 1
+      WHERE [Id] = @p11;
+      UPDATE [HealthSnapshots] SET [Detail] = @p12, [LastUpdatedAtUtc] = @p13, [SnapshotAgeSeconds] = @p14
+      OUTPUT 1
+      WHERE [Id] = @p15;
+warn: CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogWorker[0]
+      Virtual execution watchdog worker cycle failed.
+      System.InvalidOperationException: The LINQ expression 'DbSet<ExecutionOrder>()
+          .Where(e => !(e.IsDeleted) && (int)e.ExecutionEnvironment == 0 && (int)e.ExecutorKind == 1 && ((IReadOnlySet<ExecutionOrderState>)HashSet<ExecutionOrderState> { Submitted, PartiallyFilled }).Contains(e.State))' could not be translated. Additional information: Translation of method 'System.Collections.Generic.IReadOnlySet<CoinBot.Domain.Enums.ExecutionOrderState>.Contains' failed. If this method can be mapped to your custom function, see https://go.microsoft.com/fwlink/?linkid=2132413 for more information. Either rewrite the query in a form that can be translated, or switch to client evaluation explicitly by inserting a call to 'AsEnumerable', 'AsAsyncEnumerable', 'ToList', or 'ToListAsync'. See https://go.microsoft.com/fwlink/?linkid=2101038 for more information.
+         at Microsoft.EntityFrameworkCore.Query.QueryableMethodTranslatingExpressionVisitor.Translate(Expression expression)
+         at Microsoft.EntityFrameworkCore.Query.QueryCompilationContext.CreateQueryExecutorExpression[TResult](Expression query)
+         at Microsoft.EntityFrameworkCore.Query.QueryCompilationContext.CreateQueryExecutor[TResult](Expression query)
+         at Microsoft.EntityFrameworkCore.Storage.Database.CompileQuery[TResult](Expression query, Boolean async)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.CompileQueryCore[TResult](IDatabase database, Expression query, IModel model, Boolean async)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.<>c__DisplayClass11_0`1.<ExecuteCore>b__0()
+         at Microsoft.EntityFrameworkCore.Query.Internal.CompiledQueryCache.GetOrAddQuery[TResult](Object cacheKey, Func`1 compiler)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.ExecuteAsync[TResult](Expression query, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryable`1.GetAsyncEnumerator(CancellationToken cancellationToken)
+         at System.Runtime.CompilerServices.ConfiguredCancelableAsyncEnumerable`1.GetAsyncEnumerator()
+         at Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync[TSource](IQueryable`1 source, CancellationToken cancellationToken)
+         at CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogService.RunOnceAsync(CancellationToken cancellationToken) in D:\CkBot\Code\CoinBot\src\CoinBot.Infrastructure\Execution\VirtualExecutionWatchdogService.cs:line 35
+         at CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogWorker.ExecuteAsync(CancellationToken stoppingToken) in D:\CkBot\Code\CoinBot\src\CoinBot.Infrastructure\Execution\VirtualExecutionWatchdogWorker.cs:line 27
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@nowUtc='?' (DbType = DateTime2)], CommandType='Text', CommandTimeout='30']
+      SELECT [a].[Id], [a].[AffectedSymbolsCsv], [a].[AffectedUsersCsv], [a].[ApprovalId], [a].[ConfidenceScore], [a].[CorrelationId], [a].[CreatedDate], [a].[ExpiresAtUtc], [a].[IsDeleted], [a].[Reason], [a].[ScopeKey], [a].[Status], [a].[SuggestedAction], [a].[UpdatedDate]
+      FROM [AutonomyReviewQueue] AS [a]
+      WHERE [a].[IsDeleted] = CAST(0 AS bit) AND [a].[Status] = N'Pending' AND [a].[ExpiresAtUtc] <= @nowUtc
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@breakerKind='?' (Size = 64)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[BreakerKind], [d].[ConsecutiveFailureCount], [d].[CooldownUntilUtc], [d].[CorrelationId], [d].[CreatedDate], [d].[HalfOpenStartedAtUtc], [d].[IsDeleted], [d].[LastErrorCode], [d].[LastErrorMessage], [d].[LastFailureAtUtc], [d].[LastProbeAtUtc], [d].[LastSuccessAtUtc], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DependencyCircuitBreakerStates] AS [d]
+      WHERE [d].[IsDeleted] = CAST(0 AS bit) AND [d].[BreakerKind] = @breakerKind
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT 1
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [d].[Id], [d].[CreatedDate], [d].[ExecutionFlowBlocked], [d].[IsDeleted], [d].[LastStateChangedAtUtc], [d].[LatestClockDriftMilliseconds], [d].[LatestDataTimestampAtUtc], [d].[LatestHeartbeatReceivedAtUtc], [d].[ReasonCode], [d].[SignalFlowBlocked], [d].[StateCode], [d].[UpdatedDate]
+      FROM [DegradedModeStates] AS [d]
+      WHERE [d].[Id] = '3e17e8ef-3a73-45cc-8c32-a11fa55178d7'
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.LogicalHandler[100]
+      Start processing HTTP request GET https://fapi.binance.com/fapi/v1/time
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.ClientHandler[100]
+      Sending HTTP request GET https://fapi.binance.com/fapi/v1/time
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.ClientHandler[101]
+      Received HTTP response headers after 242.6689ms - 200
+info: System.Net.Http.HttpClient.IBinanceExchangeInfoClient.LogicalHandler[101]
+      End processing HTTP request after 242.7211ms - 200
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@key='?' (Size = 128)], CommandType='Text', CommandTimeout='30']
+      SELECT TOP(2) [h].[Id], [h].[BinancePingMs], [h].[CircuitBreakerState], [h].[ConsecutiveFailureCount], [h].[DbLatencyMs], [h].[Detail], [h].[DisplayName], [h].[FreshnessTier], [h].[HealthState], [h].[LastMessageAgeSeconds], [h].[LastUpdatedAtUtc], [h].[ObservedAtUtc], [h].[RateLimitUsage], [h].[ReconnectCount], [h].[RedisLatencyMs], [h].[SentinelName], [h].[SignalRActiveConnectionCount], [h].[SnapshotAgeSeconds], [h].[SnapshotKey], [h].[StreamGapCount], [h].[WebSocketStaleDurationSeconds], [h].[WorkerLastHeartbeatAtUtc]
+      FROM [HealthSnapshots] AS [h]
+      WHERE [h].[SnapshotKey] = @key
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[@p3='?' (DbType = Guid), @p0='?' (Size = 2048), @p1='?' (DbType = DateTime2), @p2='?' (DbType = Int32), @p6='?' (DbType = Guid), @p4='?' (DbType = DateTime2), @p5='?' (DbType = Int32), @p11='?' (DbType = Guid), @p7='?' (Size = 2048), @p8='?' (DbType = DateTime2), @p9='?' (DbType = DateTime2), @p10='?' (DbType = DateTime2), @p15='?' (DbType = Guid), @p12='?' (Size = 2048), @p13='?' (DbType = DateTime2), @p14='?' (DbType = Int32)], CommandType='Text', CommandTimeout='30']
+      SET NOCOUNT ON;
+      UPDATE [HealthSnapshots] SET [Detail] = @p0, [LastUpdatedAtUtc] = @p1, [SnapshotAgeSeconds] = @p2
+      OUTPUT 1
+      WHERE [Id] = @p3;
+      UPDATE [HealthSnapshots] SET [LastUpdatedAtUtc] = @p4, [SnapshotAgeSeconds] = @p5
+      OUTPUT 1
+      WHERE [Id] = @p6;
+      UPDATE [HealthSnapshots] SET [Detail] = @p7, [LastUpdatedAtUtc] = @p8, [ObservedAtUtc] = @p9, [WorkerLastHeartbeatAtUtc] = @p10
+      OUTPUT 1
+      WHERE [Id] = @p11;
+      UPDATE [HealthSnapshots] SET [Detail] = @p12, [LastUpdatedAtUtc] = @p13, [SnapshotAgeSeconds] = @p14
+      OUTPUT 1
+      WHERE [Id] = @p15;
+warn: CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogWorker[0]
+      Virtual execution watchdog worker cycle failed.
+      System.InvalidOperationException: The LINQ expression 'DbSet<ExecutionOrder>()
+          .Where(e => !(e.IsDeleted) && (int)e.ExecutionEnvironment == 0 && (int)e.ExecutorKind == 1 && ((IReadOnlySet<ExecutionOrderState>)HashSet<ExecutionOrderState> { Submitted, PartiallyFilled }).Contains(e.State))' could not be translated. Additional information: Translation of method 'System.Collections.Generic.IReadOnlySet<CoinBot.Domain.Enums.ExecutionOrderState>.Contains' failed. If this method can be mapped to your custom function, see https://go.microsoft.com/fwlink/?linkid=2132413 for more information. Either rewrite the query in a form that can be translated, or switch to client evaluation explicitly by inserting a call to 'AsEnumerable', 'AsAsyncEnumerable', 'ToList', or 'ToListAsync'. See https://go.microsoft.com/fwlink/?linkid=2101038 for more information.
+         at Microsoft.EntityFrameworkCore.Query.QueryableMethodTranslatingExpressionVisitor.Translate(Expression expression)
+         at Microsoft.EntityFrameworkCore.Query.QueryCompilationContext.CreateQueryExecutorExpression[TResult](Expression query)
+         at Microsoft.EntityFrameworkCore.Query.QueryCompilationContext.CreateQueryExecutor[TResult](Expression query)
+         at Microsoft.EntityFrameworkCore.Storage.Database.CompileQuery[TResult](Expression query, Boolean async)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.CompileQueryCore[TResult](IDatabase database, Expression query, IModel model, Boolean async)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.<>c__DisplayClass11_0`1.<ExecuteCore>b__0()
+         at Microsoft.EntityFrameworkCore.Query.Internal.CompiledQueryCache.GetOrAddQuery[TResult](Object cacheKey, Func`1 compiler)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.ExecuteAsync[TResult](Expression query, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryable`1.GetAsyncEnumerator(CancellationToken cancellationToken)
+         at System.Runtime.CompilerServices.ConfiguredCancelableAsyncEnumerable`1.GetAsyncEnumerator()
+         at Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync[TSource](IQueryable`1 source, CancellationToken cancellationToken)
+         at CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogService.RunOnceAsync(CancellationToken cancellationToken) in D:\CkBot\Code\CoinBot\src\CoinBot.Infrastructure\Execution\VirtualExecutionWatchdogService.cs:line 35
+         at CoinBot.Infrastructure.Execution.VirtualExecutionWatchdogWorker.ExecuteAsync(CancellationToken stoppingToken) in D:\CkBot\Code\CoinBot\src\CoinBot.Infrastructure\Execution\VirtualExecutionWatchdogWorker.cs:line 27

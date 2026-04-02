@@ -2,6 +2,7 @@ using CoinBot.Application.Abstractions.Alerts;
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Autonomy;
 using CoinBot.Application.Abstractions.Auditing;
+using CoinBot.Application.Abstractions.Bots;
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Dashboard;
 using CoinBot.Application.Abstractions.DemoPortfolio;
@@ -26,6 +27,7 @@ using CoinBot.Infrastructure.DemoPortfolio;
 using CoinBot.Infrastructure.Exchange;
 using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Identity;
+using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Mfa;
 using CoinBot.Infrastructure.Monitoring;
@@ -158,6 +160,9 @@ public static class DependencyInjection
             .Validate(
                 options => options.ListenKeyRenewalIntervalMinutes < 60,
                 "ListenKeyRenewalIntervalMinutes must be less than 60.");
+        services.AddOptions<BotExecutionPilotOptions>()
+            .Bind(configuration.GetSection("BotExecutionPilot"))
+            .ValidateDataAnnotations();
         services.AddOptions<LogCenterRetentionOptions>()
             .Bind(configuration.GetSection("LogCenter:Retention"))
             .ValidateDataAnnotations();
@@ -191,8 +196,12 @@ public static class DependencyInjection
         services.AddScoped<IAuditLogService, AuditLogService>();
         services.AddScoped<IExchangeCredentialService, ExchangeCredentialService>();
         services.AddScoped<IUserExchangeCommandCenterService, UserExchangeCommandCenterService>();
+        services.AddScoped<IBotManagementService, BotManagementService>();
+        services.AddScoped<IBotPilotControlService, BotPilotControlService>();
         services.AddScoped<IUserDashboardPortfolioReadModelService, UserDashboardPortfolioReadModelService>();
+        services.AddScoped<IUserDashboardOperationsReadModelService, UserDashboardOperationsReadModelService>();
         services.AddScoped<IAlertService, AlertingService>();
+        services.AddSingleton<IAlertDispatchCoordinator, AlertDispatchCoordinator>();
         services.AddScoped<ILogCenterReadModelService, LogCenterReadModelService>();
         services.AddScoped<ILogCenterRetentionService, LogCenterRetentionService>();
         services.AddScoped<IGlobalExecutionSwitchService, GlobalExecutionSwitchService>();
@@ -230,6 +239,7 @@ public static class DependencyInjection
         services.AddSingleton<MarketDataCachePolicyProvider>();
         services.AddSingleton<SharedSymbolRegistry>();
         services.AddSingleton<ISharedSymbolRegistry>(serviceProvider => serviceProvider.GetRequiredService<SharedSymbolRegistry>());
+        services.AddSingleton<UserOperationsStreamHub>();
         services.AddSingleton<IWebSocketReconnectCoordinator, WebSocketReconnectCoordinator>();
         services.AddSingleton<ISignalRReconnectCoordinator, SignalRReconnectCoordinator>();
         services.AddSingleton<MarketPriceStreamHub>();
@@ -256,8 +266,13 @@ public static class DependencyInjection
         services.AddHttpClient<TelegramAlertProvider>();
         services.AddHttpClient("BinanceCredentialProbeSpot", (serviceProvider, client) =>
         {
-            var marketDataOptions = serviceProvider.GetRequiredService<IOptions<BinanceMarketDataOptions>>().Value;
-            client.BaseAddress = new Uri(marketDataOptions.RestBaseUrl, UriKind.Absolute);
+            var configuration = serviceProvider.GetRequiredService<IConfiguration>();
+            var configuredSpotProbeBaseUrl = configuration["CredentialValidation:Binance:SpotProbeBaseUrl"];
+            client.BaseAddress = new Uri(
+                string.IsNullOrWhiteSpace(configuredSpotProbeBaseUrl)
+                    ? "https://api.binance.com"
+                    : configuredSpotProbeBaseUrl,
+                UriKind.Absolute);
             client.Timeout = TimeSpan.FromSeconds(30);
         });
         services.AddHttpClient("BinanceCredentialProbeFutures", (serviceProvider, client) =>

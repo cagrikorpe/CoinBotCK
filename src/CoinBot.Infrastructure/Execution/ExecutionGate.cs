@@ -5,6 +5,7 @@ using CoinBot.Application.Abstractions.DemoPortfolio;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Observability;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace CoinBot.Infrastructure.Execution;
@@ -16,7 +17,8 @@ public sealed class ExecutionGate(
     IDataLatencyCircuitBreaker dataLatencyCircuitBreaker,
     ITradingModeResolver tradingModeResolver,
     IAuditLogService auditLogService,
-    ILogger<ExecutionGate> logger) : IExecutionGate
+    ILogger<ExecutionGate> logger,
+    IHostEnvironment? hostEnvironment = null) : IExecutionGate
 {
     public async Task<GlobalExecutionSwitchSnapshot> EnsureExecutionAllowedAsync(
         ExecutionGateRequest request,
@@ -209,7 +211,11 @@ public sealed class ExecutionGate(
         using var finalExecutionActivity = CoinBotActivity.StartActivity("CoinBot.Execution.Gate");
         ApplyTags(finalExecutionActivity, request);
         ApplyLatencyTags(finalExecutionActivity, latencySnapshot);
-        var blockedReason = Evaluate(snapshot, request.Environment, modeResolution);
+        var blockedReason = Evaluate(
+            snapshot,
+            request.Environment,
+            modeResolution,
+            IsDevelopmentFuturesPilotOverrideAllowed(request));
         finalExecutionActivity.SetTag("coinbot.execution.result", blockedReason?.ToString() ?? "Allowed");
 
         await auditLogService.WriteAsync(
@@ -337,7 +343,8 @@ public sealed class ExecutionGate(
     private static ExecutionGateBlockedReason? Evaluate(
         GlobalExecutionSwitchSnapshot snapshot,
         ExecutionEnvironment requestedEnvironment,
-        TradingModeResolution modeResolution)
+        TradingModeResolution modeResolution,
+        bool allowDevelopmentFuturesPilotOverride)
     {
         if (!snapshot.IsPersisted)
         {
@@ -350,12 +357,14 @@ public sealed class ExecutionGate(
         }
 
         if (requestedEnvironment == ExecutionEnvironment.Live &&
-            snapshot.DemoModeEnabled)
+            snapshot.DemoModeEnabled &&
+            !allowDevelopmentFuturesPilotOverride)
         {
             return ExecutionGateBlockedReason.LiveExecutionBlockedByDemoMode;
         }
 
-        if (requestedEnvironment != modeResolution.EffectiveMode)
+        if (requestedEnvironment != modeResolution.EffectiveMode &&
+            !allowDevelopmentFuturesPilotOverride)
         {
             return ExecutionGateBlockedReason.RequestedEnvironmentDoesNotMatchResolvedMode;
         }
@@ -506,6 +515,36 @@ public sealed class ExecutionGate(
 
             reason = segment[prefix.Length..].Trim();
             return !string.IsNullOrWhiteSpace(reason);
+        }
+
+        return false;
+    }
+
+    private bool IsDevelopmentFuturesPilotOverrideAllowed(ExecutionGateRequest request)
+    {
+        return hostEnvironment?.IsDevelopment() == true &&
+               request.Actor.StartsWith("system:", StringComparison.OrdinalIgnoreCase) &&
+               TryReadBooleanFlag(request.Context, "DevelopmentFuturesTestnetPilot");
+    }
+
+    private static bool TryReadBooleanFlag(string? context, string key)
+    {
+        if (string.IsNullOrWhiteSpace(context))
+        {
+            return false;
+        }
+
+        var prefix = $"{key}=";
+        var segments = context.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        foreach (var segment in segments)
+        {
+            if (!segment.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return bool.TryParse(segment[prefix.Length..].Trim(), out var value) && value;
         }
 
         return false;

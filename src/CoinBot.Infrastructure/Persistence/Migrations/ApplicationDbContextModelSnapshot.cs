@@ -2905,8 +2905,19 @@ namespace CoinBot.Infrastructure.Persistence.Migrations
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("bit");
 
+                    b.Property<Guid?>("ExchangeAccountId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<bool>("IsEnabled")
                         .HasColumnType("bit");
+
+                    b.Property<decimal?>("Leverage")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("decimal(18,8)");
+
+                    b.Property<string>("MarginType")
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -2923,6 +2934,14 @@ namespace CoinBot.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(450)
                         .HasColumnType("nvarchar(450)");
+
+                    b.Property<decimal?>("Quantity")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
+                    b.Property<string>("Symbol")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
 
                     b.Property<string>("StrategyKey")
                         .IsRequired()
@@ -2944,6 +2963,8 @@ namespace CoinBot.Infrastructure.Persistence.Migrations
                         .HasColumnType("datetime2");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ExchangeAccountId");
 
                     b.HasIndex("OwnerUserId");
 

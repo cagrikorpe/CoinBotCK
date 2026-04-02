@@ -13,6 +13,9 @@ public sealed class AdminShellReadModelService(
     IMemoryCache memoryCache) : IAdminShellReadModelService
 {
     private static readonly object CacheKey = new();
+    private static readonly MemoryCacheEntryOptions SnapshotCacheOptions = new MemoryCacheEntryOptions()
+        .SetSize(1)
+        .SetAbsoluteExpiration(TimeSpan.FromSeconds(3));
 
     public Task<AdminShellHealthSnapshot> GetHealthSnapshotAsync(CancellationToken cancellationToken = default)
     {
@@ -20,7 +23,7 @@ public sealed class AdminShellReadModelService(
                 CacheKey,
                 async entry =>
                 {
-                    entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(3);
+                    entry.SetOptions(SnapshotCacheOptions);
 
                     var systemState = await dbContext.GlobalSystemStates
                         .AsNoTracking()
@@ -33,7 +36,8 @@ public sealed class AdminShellReadModelService(
                             cancellationToken);
 
                     return BuildSnapshot(systemState, executionSwitch);
-                })!;
+                },
+                SnapshotCacheOptions)!;
     }
 
     private static AdminShellHealthSnapshot BuildSnapshot(

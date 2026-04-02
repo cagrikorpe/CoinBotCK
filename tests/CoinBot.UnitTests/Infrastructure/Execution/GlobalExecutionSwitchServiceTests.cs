@@ -1,11 +1,14 @@
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Alerts;
 using CoinBot.Infrastructure.Auditing;
 using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
 
 namespace CoinBot.UnitTests.Infrastructure.Execution;
 
@@ -86,6 +89,28 @@ public sealed class GlobalExecutionSwitchServiceTests
         Assert.Equal(nameof(ExecutionEnvironment.Live), auditLog.Environment);
     }
 
+    [Fact]
+    public async Task SetTradeMasterStateAsync_SendsAlertOnlyWhenStateChanges()
+    {
+        await using var harness = CreateHarness();
+
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-04",
+            context: "Enable trading",
+            correlationId: "corr-004");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-04",
+            context: "Enable trading",
+            correlationId: "corr-005");
+
+        var alert = Assert.Single(harness.AlertCoordinator.Notifications);
+        Assert.Equal("KILL_SWITCH_ARMED", alert.Code);
+        Assert.Contains("EventType=KillSwitchChanged", alert.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("api-secret", alert.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static TestHarness CreateHarness()
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -94,9 +119,14 @@ public sealed class GlobalExecutionSwitchServiceTests
 
         var dbContext = new ApplicationDbContext(options, new TestDataScopeContext());
         var auditLogService = new AuditLogService(dbContext, new CorrelationContextAccessor());
-        var switchService = new GlobalExecutionSwitchService(dbContext, auditLogService);
+        var alertCoordinator = new RecordingAlertDispatchCoordinator();
+        var switchService = new GlobalExecutionSwitchService(
+            dbContext,
+            auditLogService,
+            alertCoordinator,
+            new TestHostEnvironment(Environments.Development));
 
-        return new TestHarness(dbContext, switchService);
+        return new TestHarness(dbContext, switchService, alertCoordinator);
     }
 
     private sealed class TestDataScopeContext : IDataScopeContext
@@ -108,15 +138,44 @@ public sealed class GlobalExecutionSwitchServiceTests
 
     private sealed class TestHarness(
         ApplicationDbContext dbContext,
-        IGlobalExecutionSwitchService switchService) : IAsyncDisposable
+        IGlobalExecutionSwitchService switchService,
+        RecordingAlertDispatchCoordinator alertCoordinator) : IAsyncDisposable
     {
         public ApplicationDbContext DbContext { get; } = dbContext;
 
         public IGlobalExecutionSwitchService SwitchService { get; } = switchService;
 
+        public RecordingAlertDispatchCoordinator AlertCoordinator { get; } = alertCoordinator;
+
         public async ValueTask DisposeAsync()
         {
             await DbContext.DisposeAsync();
         }
+    }
+
+    private sealed class RecordingAlertDispatchCoordinator : IAlertDispatchCoordinator
+    {
+        public List<CoinBot.Application.Abstractions.Alerts.AlertNotification> Notifications { get; } = [];
+
+        public Task SendAsync(
+            CoinBot.Application.Abstractions.Alerts.AlertNotification notification,
+            string dedupeKey,
+            TimeSpan cooldown,
+            CancellationToken cancellationToken = default)
+        {
+            Notifications.Add(notification);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class TestHostEnvironment(string environmentName) : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = environmentName;
+
+        public string ApplicationName { get; set; } = "CoinBot.UnitTests";
+
+        public string ContentRootPath { get; set; } = AppContext.BaseDirectory;
+
+        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 }

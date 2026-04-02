@@ -6,9 +6,12 @@ using CoinBot.Application.Abstractions.DemoPortfolio;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Alerts;
+using CoinBot.Infrastructure.Dashboard;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace CoinBot.Infrastructure.Execution;
@@ -25,16 +28,19 @@ public sealed class ExecutionEngine(
     VirtualExecutor virtualExecutor,
     BinanceExecutor binanceExecutor,
     TimeProvider timeProvider,
-    ILogger<ExecutionEngine> logger) : IExecutionEngine
+    ILogger<ExecutionEngine> logger,
+    IAlertDispatchCoordinator? alertDispatchCoordinator = null,
+    IHostEnvironment? hostEnvironment = null,
+    UserOperationsStreamHub? userOperationsStreamHub = null) : IExecutionEngine
 {
-    private static readonly IReadOnlySet<ExecutionOrderState> OpenStates = new HashSet<ExecutionOrderState>
-    {
+    private static readonly ExecutionOrderState[] OpenStates =
+    [
         ExecutionOrderState.Received,
         ExecutionOrderState.GatePassed,
         ExecutionOrderState.Dispatching,
         ExecutionOrderState.Submitted,
         ExecutionOrderState.PartiallyFilled
-    };
+    ];
 
     public async Task<ExecutionDispatchResult> DispatchAsync(
         ExecutionCommand command,
@@ -173,7 +179,13 @@ public sealed class ExecutionEngine(
                         normalizedCommand.Quantity,
                         normalizedCommand.Price,
                         normalizedCommand.BotId,
-                        normalizedCommand.StrategyKey),
+                        normalizedCommand.StrategyKey,
+                        normalizedCommand.Context,
+                        normalizedCommand.TradingStrategyId,
+                        normalizedCommand.TradingStrategyVersionId,
+                        normalizedCommand.Timeframe,
+                        order.Id,
+                        normalizedCommand.ReplacesExecutionOrderId),
                     cancellationToken);
 
                 if (overrideEvaluation.IsBlocked)
@@ -181,7 +193,7 @@ public sealed class ExecutionEngine(
                     order.FailureCode = overrideEvaluation.BlockCode;
                     order.FailureDetail = Truncate(overrideEvaluation.Message, 512);
 
-                    await PersistTransitionAsync(
+                    lastTransition = await PersistTransitionAsync(
                         order,
                         transitions,
                         ExecutionOrderState.Rejected,
@@ -189,6 +201,9 @@ public sealed class ExecutionEngine(
                         Truncate(overrideEvaluation.Message, 512),
                         lastTransition.CorrelationId,
                         cancellationToken);
+
+                    await TrySendExecutionAlertAsync(order, lastTransition, cancellationToken);
+                    userOperationsStreamHub?.Publish(BuildOperationsUpdate(order, lastTransition));
 
                     logger.LogWarning(
                         "Execution engine rejected order {ExecutionOrderId} because of user execution override {BlockCode}.",
@@ -217,6 +232,9 @@ public sealed class ExecutionEngine(
                 lastTransition.CorrelationId,
                 cancellationToken);
 
+            await TrySendExecutionAlertAsync(order, lastTransition, cancellationToken);
+            userOperationsStreamHub?.Publish(BuildOperationsUpdate(order, lastTransition));
+
             if (requestedEnvironment == ExecutionEnvironment.Demo)
             {
                 lastTransition = await HandleDemoSubmissionAsync(
@@ -231,7 +249,7 @@ public sealed class ExecutionEngine(
             order.FailureCode = exception.Reason.ToString();
             order.FailureDetail = Truncate(exception.Message, 512);
 
-            await PersistTransitionAsync(
+            lastTransition = await PersistTransitionAsync(
                 order,
                 transitions,
                 ExecutionOrderState.Rejected,
@@ -239,6 +257,9 @@ public sealed class ExecutionEngine(
                 Truncate(exception.Message, 512),
                 lastTransition.CorrelationId,
                 cancellationToken);
+
+            await TrySendExecutionAlertAsync(order, lastTransition, cancellationToken);
+            userOperationsStreamHub?.Publish(BuildOperationsUpdate(order, lastTransition));
 
             logger.LogWarning(
                 "Execution engine rejected order {ExecutionOrderId} with reason {Reason}.",
@@ -250,7 +271,7 @@ public sealed class ExecutionEngine(
             order.FailureCode = exception.GetType().Name;
             order.FailureDetail = Truncate(exception.Message, 512);
 
-            await PersistTransitionAsync(
+            lastTransition = await PersistTransitionAsync(
                 order,
                 transitions,
                 ExecutionOrderState.Failed,
@@ -258,6 +279,9 @@ public sealed class ExecutionEngine(
                 Truncate(exception.Message, 512),
                 lastTransition.CorrelationId,
                 cancellationToken);
+
+            await TrySendExecutionAlertAsync(order, lastTransition, cancellationToken);
+            userOperationsStreamHub?.Publish(BuildOperationsUpdate(order, lastTransition));
 
             logger.LogWarning(
                 exception,
@@ -335,7 +359,7 @@ public sealed class ExecutionEngine(
             order.FilledQuantity = totalFilledQuantity;
             order.LastFilledAtUtc = fill.ObservedAtUtc;
 
-            return await PersistTransitionAsync(
+            var transition = await PersistTransitionAsync(
                 order,
                 transitions,
                 fill.IsFinalFill
@@ -345,6 +369,10 @@ public sealed class ExecutionEngine(
                 fillDetail,
                 lastTransition.CorrelationId,
                 cancellationToken);
+
+            await TrySendExecutionAlertAsync(order, transition, cancellationToken);
+            userOperationsStreamHub?.Publish(BuildOperationsUpdate(order, transition));
+            return transition;
         }
         catch (Exception exception)
         {
@@ -361,7 +389,7 @@ public sealed class ExecutionEngine(
                 "Demo fill simulation failed closed for order {ExecutionOrderId}.",
                 order.Id);
 
-            return await PersistTransitionAsync(
+            var transition = await PersistTransitionAsync(
                 order,
                 transitions,
                 ExecutionOrderState.Failed,
@@ -369,6 +397,10 @@ public sealed class ExecutionEngine(
                 Truncate(exception.Message, 512),
                 lastTransition.CorrelationId,
                 cancellationToken);
+
+            await TrySendExecutionAlertAsync(order, transition, cancellationToken);
+            userOperationsStreamHub?.Publish(BuildOperationsUpdate(order, transition));
+            return transition;
         }
     }
 
@@ -908,5 +940,98 @@ public sealed class ExecutionEngine(
     {
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(value));
         return Convert.ToHexStringLower(hash)[..12];
+    }
+
+    private async Task TrySendExecutionAlertAsync(
+        ExecutionOrder order,
+        ExecutionOrderTransition transition,
+        CancellationToken cancellationToken)
+    {
+        if (alertDispatchCoordinator is null)
+        {
+            return;
+        }
+
+        var eventType = transition.State switch
+        {
+            ExecutionOrderState.Submitted => "OrderSubmitted",
+            ExecutionOrderState.Filled => "OrderFilled",
+            ExecutionOrderState.Rejected => "OrderRejected",
+            ExecutionOrderState.Failed => "OrderFailed",
+            _ => null
+        };
+
+        if (eventType is null)
+        {
+            return;
+        }
+
+        var botLabel = order.BotId.HasValue
+            ? order.BotId.Value.ToString("N")[..12]
+            : "none";
+        var clientOrderId = ExtractClientOrderId(transition.Detail);
+        var severity = transition.State switch
+        {
+            ExecutionOrderState.Submitted => CoinBot.Application.Abstractions.Alerts.AlertSeverity.Information,
+            ExecutionOrderState.Filled => CoinBot.Application.Abstractions.Alerts.AlertSeverity.Information,
+            ExecutionOrderState.Rejected => CoinBot.Application.Abstractions.Alerts.AlertSeverity.Warning,
+            _ => CoinBot.Application.Abstractions.Alerts.AlertSeverity.Critical
+        };
+
+        await alertDispatchCoordinator.SendAsync(
+            new CoinBot.Application.Abstractions.Alerts.AlertNotification(
+                Code: $"ORDER_{transition.State.ToString().ToUpperInvariant()}",
+                Severity: severity,
+                Title: eventType,
+                Message:
+                    $"EventType={eventType}; BotId={botLabel}; Symbol={order.Symbol}; Result={transition.State}; FailureCode={order.FailureCode ?? "none"}; ClientOrderId={clientOrderId ?? "none"}; TimestampUtc={transition.OccurredAtUtc:O}; Environment={ResolveExecutionEnvironmentLabel(order.ExecutionEnvironment)}",
+                CorrelationId: transition.CorrelationId),
+            $"order-transition:{transition.Id:N}",
+            TimeSpan.FromDays(7),
+            cancellationToken);
+    }
+
+    private string ResolveExecutionEnvironmentLabel(ExecutionEnvironment executionEnvironment)
+    {
+        var runtimeLabel = hostEnvironment?.EnvironmentName ?? "Unknown";
+        var executionLabel = hostEnvironment?.IsDevelopment() == true && executionEnvironment == ExecutionEnvironment.Live
+            ? "Testnet"
+            : executionEnvironment.ToString();
+
+        return $"{runtimeLabel}/{executionLabel}";
+    }
+
+    private static string? ExtractClientOrderId(string? detail)
+    {
+        const string prefix = "ClientOrderId=";
+
+        if (string.IsNullOrWhiteSpace(detail))
+        {
+            return null;
+        }
+
+        foreach (var segment in detail.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (segment.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return segment[prefix.Length..].Trim();
+            }
+        }
+
+        return null;
+    }
+
+    private static UserOperationsUpdate BuildOperationsUpdate(
+        ExecutionOrder order,
+        ExecutionOrderTransition transition)
+    {
+        return new UserOperationsUpdate(
+            order.OwnerUserId,
+            "ExecutionChanged",
+            order.BotId,
+            order.Id,
+            transition.State.ToString(),
+            order.FailureCode,
+            transition.OccurredAtUtc);
     }
 }
