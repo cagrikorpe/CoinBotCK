@@ -1,81 +1,84 @@
 {
-  "SmokeDatabaseName": "CoinBotClockDriftSmoke_37bf85dd7d284a36a8b220861f8a6bd2",
-  "BaseUrl": "http://127.0.0.1:53439",
+  "SmokeDatabaseName": "CoinBotClockDriftSmoke_07fbdcbf8e194d8597e705bace11ca10",
+  "BaseUrl": "http://127.0.0.1:49555",
   "HistoricalBaselineReason": "ClockDriftExceeded",
   "ClockDriftThresholdMs": 2000,
   "TimezoneTechnicalExplanation": "PreferredTimeZoneId only affects UI rendering. Runtime drift compares the machine UTC clock to Binance server UTC from fapi/v1/time.",
   "DriftSnapshotBeforeWorker": {
     "HealthState": "Healthy",
     "CircuitBreakerState": "Cooldown",
-    "LastUpdatedAtUtc": "2026-04-02T14:27:51.1574013",
-    "Detail": "ClockDriftMs=68; LocalClockUtc=2026-04-02T14:27:51.1574013Z; ExchangeServerTimeUtc=2026-04-02T14:27:51.2250000Z; Probe=Succeeded",
+    "LastUpdatedAtUtc": "2026-04-02T16:46:06.2803928",
+    "Detail": "ClockDriftMs=196; LocalClockUtc=2026-04-02T16:46:06.2803928Z; ExchangeServerTimeUtc=2026-04-02T16:46:06.4760000Z; Probe=Succeeded",
     "StateCode": "Stopped",
     "ReasonCode": "MarketDataUnavailable",
     "LatestClockDriftMilliseconds": null,
-    "LastStateChangedAtUtc": "2026-04-02T14:27:50.8089372"
+    "LastStateChangedAtUtc": "2026-04-02T16:46:05.9013598"
   },
   "DriftSnapshotAtExecutionStart": {
     "HealthState": "Healthy",
     "CircuitBreakerState": "Cooldown",
-    "LastUpdatedAtUtc": "2026-04-02T14:27:51.1574013",
-    "Detail": "ClockDriftMs=68; LocalClockUtc=2026-04-02T14:27:51.1574013Z; ExchangeServerTimeUtc=2026-04-02T14:27:51.2250000Z; Probe=Succeeded",
+    "LastUpdatedAtUtc": "2026-04-02T16:46:56.1563876",
+    "Detail": "ClockDriftMs=225; LocalClockUtc=2026-04-02T16:46:56.1563876Z; ExchangeServerTimeUtc=2026-04-02T16:46:56.3810000Z; Probe=Succeeded",
     "StateCode": "Normal",
     "ReasonCode": "None",
-    "LatestClockDriftMilliseconds": 103,
-    "LastStateChangedAtUtc": "2026-04-02T14:28:00.1020926"
+    "LatestClockDriftMilliseconds": 108,
+    "LastStateChangedAtUtc": "2026-04-02T16:46:59.8905986"
   },
   "Orders": [
     {
-      "Id": "1fc35338-c7d8-4959-f1a9-08de90c40ce1",
-      "State": "Rejected",
-      "FailureCode": "ClockDriftExceeded",
-      "FailureDetail": "Execution blocked because clock drift exceeded the safety threshold.",
+      "Id": "1bdbe574-b1ba-4810-066b-08de90d7779c",
+      "State": "Failed",
+      "FailureCode": "InvalidOperationException",
+      "FailureDetail": "Binance margin type configuration failed with status 401.",
       "SubmittedAtUtc": null,
-      "LastStateChangedAtUtc": "2026-04-02T14:28:03.8679937",
-      "CreatedDate": "2026-04-02T14:28:03.8281888",
+      "LastStateChangedAtUtc": "2026-04-02T16:47:03.7696976",
+      "CreatedDate": "2026-04-02T16:47:03.3171476",
       "ExternalOrderId": null
     },
     {
-      "Id": "4c81b662-dee0-48d1-f1aa-08de90c40ce1",
-      "State": "Rejected",
-      "FailureCode": "ClockDriftExceeded",
-      "FailureDetail": "Execution blocked because clock drift exceeded the safety threshold.",
+      "Id": "05773db2-d6fd-44d2-066c-08de90d7779c",
+      "State": "Failed",
+      "FailureCode": "InvalidOperationException",
+      "FailureDetail": "Binance margin type configuration failed with status 401.",
       "SubmittedAtUtc": null,
-      "LastStateChangedAtUtc": "2026-04-02T14:28:10.6683863",
-      "CreatedDate": "2026-04-02T14:28:10.6654874",
+      "LastStateChangedAtUtc": "2026-04-02T16:47:54.6602592",
+      "CreatedDate": "2026-04-02T16:47:54.3974141",
       "ExternalOrderId": null
     }
   ],
   "AttemptCount": 2,
   "Attempt1": {
-    "Id": "1fc35338-c7d8-4959-f1a9-08de90c40ce1",
-    "State": "Rejected",
-    "FailureCode": "ClockDriftExceeded",
-    "FailureDetail": "Execution blocked because clock drift exceeded the safety threshold.",
+    "Id": "1bdbe574-b1ba-4810-066b-08de90d7779c",
+    "State": "Failed",
+    "FailureCode": "InvalidOperationException",
+    "FailureDetail": "Binance margin type configuration failed with status 401.",
     "SubmittedAtUtc": null,
-    "LastStateChangedAtUtc": "2026-04-02T14:28:03.8679937",
-    "CreatedDate": "2026-04-02T14:28:03.8281888",
+    "LastStateChangedAtUtc": "2026-04-02T16:47:03.7696976",
+    "CreatedDate": "2026-04-02T16:47:03.3171476",
     "ExternalOrderId": null
   },
   "Attempt2": {
-    "Id": "4c81b662-dee0-48d1-f1aa-08de90c40ce1",
-    "State": "Rejected",
-    "FailureCode": "ClockDriftExceeded",
-    "FailureDetail": "Execution blocked because clock drift exceeded the safety threshold.",
+    "Id": "05773db2-d6fd-44d2-066c-08de90d7779c",
+    "State": "Failed",
+    "FailureCode": "InvalidOperationException",
+    "FailureDetail": "Binance margin type configuration failed with status 401.",
     "SubmittedAtUtc": null,
-    "LastStateChangedAtUtc": "2026-04-02T14:28:10.6683863",
-    "CreatedDate": "2026-04-02T14:28:10.6654874",
+    "LastStateChangedAtUtc": "2026-04-02T16:47:54.6602592",
+    "CreatedDate": "2026-04-02T16:47:54.3974141",
     "ExternalOrderId": null
   },
   "WorkerReadinessLines": [
-    "Bot execution pilot readiness. EnabledBotCount=1 CycleCandidateCount=1 TradeMasterArmed=True DemoModeEnabled=False LatencyState=Stopped LatencyReason=ClockDriftExceeded PrivateStreamState=Reconnecting LastPrivateEventAtUtc=(null) LastBalanceSyncAtUtc=(null) LastPositionSyncAtUtc=(null) LastReconciledAtUtc=04/02/2026 14:28:03 PrivateStreamErrorCode=StreamCycleFailed UtcNow=04/02/2026 14:28:06.",
-    "Bot execution pilot readiness. EnabledBotCount=1 CycleCandidateCount=1 TradeMasterArmed=True DemoModeEnabled=False LatencyState=Stopped LatencyReason=ClockDriftExceeded PrivateStreamState=Reconnecting LastPrivateEventAtUtc=(null) LastBalanceSyncAtUtc=(null) LastPositionSyncAtUtc=(null) LastReconciledAtUtc=04/02/2026 14:28:03 PrivateStreamErrorCode=StreamCycleFailed UtcNow=04/02/2026 14:28:07.",
-    "Bot execution pilot readiness. EnabledBotCount=1 CycleCandidateCount=1 TradeMasterArmed=True DemoModeEnabled=False LatencyState=Stopped LatencyReason=ClockDriftExceeded PrivateStreamState=Connecting LastPrivateEventAtUtc=(null) LastBalanceSyncAtUtc=(null) LastPositionSyncAtUtc=(null) LastReconciledAtUtc=04/02/2026 14:28:03 PrivateStreamErrorCode=none UtcNow=04/02/2026 14:28:08.",
-    "Bot execution pilot readiness. EnabledBotCount=1 CycleCandidateCount=1 TradeMasterArmed=True DemoModeEnabled=False LatencyState=Stopped LatencyReason=ClockDriftExceeded PrivateStreamState=Reconnecting LastPrivateEventAtUtc=(null) LastBalanceSyncAtUtc=(null) LastPositionSyncAtUtc=(null) LastReconciledAtUtc=04/02/2026 14:28:08 PrivateStreamErrorCode=CredentialAccessBlocked UtcNow=04/02/2026 14:28:09.",
-    "Bot execution pilot readiness. EnabledBotCount=1 CycleCandidateCount=1 TradeMasterArmed=True DemoModeEnabled=False LatencyState=Stopped LatencyReason=ClockDriftExceeded PrivateStreamState=Reconnecting LastPrivateEventAtUtc=(null) LastBalanceSyncAtUtc=(null) LastPositionSyncAtUtc=(null) LastReconciledAtUtc=04/02/2026 14:28:08 PrivateStreamErrorCode=CredentialAccessBlocked UtcNow=04/02/2026 14:28:10."
+    "Bot execution pilot readiness. EnabledBotCount=1 CycleCandidateCount=1 TradeMasterArmed=True DemoModeEnabled=False LatencyState=Normal LatencyReason=None PrivateStreamState=Connecting LastPrivateEventAtUtc=(null) LastBalanceSyncAtUtc=(null) LastPositionSyncAtUtc=(null) LastReconciledAtUtc=04/02/2026 16:47:45 PrivateStreamErrorCode=none UtcNow=04/02/2026 16:47:50.",
+    "Bot execution pilot readiness. EnabledBotCount=1 CycleCandidateCount=1 TradeMasterArmed=True DemoModeEnabled=False LatencyState=Normal LatencyReason=None PrivateStreamState=Reconnecting LastPrivateEventAtUtc=(null) LastBalanceSyncAtUtc=(null) LastPositionSyncAtUtc=(null) LastReconciledAtUtc=04/02/2026 16:47:50 PrivateStreamErrorCode=StreamCycleFailed UtcNow=04/02/2026 16:47:51.",
+    "Bot execution pilot readiness. EnabledBotCount=1 CycleCandidateCount=1 TradeMasterArmed=True DemoModeEnabled=False LatencyState=Normal LatencyReason=None PrivateStreamState=Reconnecting LastPrivateEventAtUtc=(null) LastBalanceSyncAtUtc=(null) LastPositionSyncAtUtc=(null) LastReconciledAtUtc=04/02/2026 16:47:50 PrivateStreamErrorCode=StreamCycleFailed UtcNow=04/02/2026 16:47:52.",
+    "Bot execution pilot readiness. EnabledBotCount=1 CycleCandidateCount=1 TradeMasterArmed=True DemoModeEnabled=False LatencyState=Normal LatencyReason=None PrivateStreamState=Reconnecting LastPrivateEventAtUtc=(null) LastBalanceSyncAtUtc=(null) LastPositionSyncAtUtc=(null) LastReconciledAtUtc=04/02/2026 16:47:50 PrivateStreamErrorCode=StreamCycleFailed UtcNow=04/02/2026 16:47:53.",
+    "Bot execution pilot readiness. EnabledBotCount=1 CycleCandidateCount=1 TradeMasterArmed=True DemoModeEnabled=False LatencyState=Normal LatencyReason=None PrivateStreamState=Reconnecting LastPrivateEventAtUtc=(null) LastBalanceSyncAtUtc=(null) LastPositionSyncAtUtc=(null) LastReconciledAtUtc=04/02/2026 16:47:50 PrivateStreamErrorCode=StreamCycleFailed UtcNow=04/02/2026 16:47:54."
   ],
   "WorkerTriggeredLines": [
-    "Job scheduler cycle completed. TriggeredJobs=1.",
+    "Job scheduler cycle completed. TriggeredJobs=0.",
+    "Job scheduler cycle completed. TriggeredJobs=0.",
+    "Job scheduler cycle completed. TriggeredJobs=0.",
+    "Job scheduler cycle completed. TriggeredJobs=0.",
     "Job scheduler cycle completed. TriggeredJobs=1.",
     "Job scheduler cycle completed. TriggeredJobs=0.",
     "Job scheduler cycle completed. TriggeredJobs=0.",
@@ -83,25 +86,24 @@
     "Job scheduler cycle completed. TriggeredJobs=0.",
     "Job scheduler cycle completed. TriggeredJobs=1."
   ],
-  "CurrentClockDriftExceededLogLines": [
-    "Bot execution pilot readiness. EnabledBotCount=1 CycleCandidateCount=1 TradeMasterArmed=True DemoModeEnabled=False LatencyState=Stopped LatencyReason=ClockDriftExceeded PrivateStreamState=Connecting LastPrivateEventAtUtc=(null) LastBalanceSyncAtUtc=(null) LastPositionSyncAtUtc=(null) LastReconciledAtUtc=04/02/2026 14:28:03 PrivateStreamErrorCode=none UtcNow=04/02/2026 14:28:08.",
-    "Bot execution pilot readiness. EnabledBotCount=1 CycleCandidateCount=1 TradeMasterArmed=True DemoModeEnabled=False LatencyState=Stopped LatencyReason=ClockDriftExceeded PrivateStreamState=Reconnecting LastPrivateEventAtUtc=(null) LastBalanceSyncAtUtc=(null) LastPositionSyncAtUtc=(null) LastReconciledAtUtc=04/02/2026 14:28:08 PrivateStreamErrorCode=CredentialAccessBlocked UtcNow=04/02/2026 14:28:09.",
-    "Bot execution pilot readiness. EnabledBotCount=1 CycleCandidateCount=1 TradeMasterArmed=True DemoModeEnabled=False LatencyState=Stopped LatencyReason=ClockDriftExceeded PrivateStreamState=Reconnecting LastPrivateEventAtUtc=(null) LastBalanceSyncAtUtc=(null) LastPositionSyncAtUtc=(null) LastReconciledAtUtc=04/02/2026 14:28:08 PrivateStreamErrorCode=CredentialAccessBlocked UtcNow=04/02/2026 14:28:10.",
-    "Market data latency state Stopped resolved with reason ClockDriftExceeded.",
-    "Signal stage blocked the request with reason ClockDriftExceeded."
+  "CurrentClockDriftExceededLogLines": null,
+  "PrivateRestAdvanceLogLines": [
+    "Start processing HTTP request POST https://testnet.binancefuture.com/fapi/v1/marginType?*",
+    "Sending HTTP request POST https://testnet.binancefuture.com/fapi/v1/marginType?*",
+    "Start processing HTTP request POST https://testnet.binancefuture.com/fapi/v1/marginType?*",
+    "Sending HTTP request POST https://testnet.binancefuture.com/fapi/v1/marginType?*"
   ],
-  "PrivateRestAdvanceLogLines": null,
-  "AdvancedBeyondClockDrift": false,
-  "ClockDriftStillBlocking": true,
-  "Comparison": "Current runtime still blocked on ClockDriftExceeded, but drift snapshot now records measured milliseconds, local UTC, exchange UTC and degraded-mode state explicitly.",
+  "AdvancedBeyondClockDrift": true,
+  "ClockDriftStillBlocking": false,
+  "Comparison": "Historical blocker was ClockDriftExceeded before order attempt. Current runtime measured healthy drift and advanced the same bot to later execution/private-rest failure states.",
   "DriftSnapshotAfterAttempts": {
     "HealthState": "Healthy",
-    "CircuitBreakerState": "Cooldown",
-    "LastUpdatedAtUtc": "2026-04-02T14:28:03.1196593",
-    "Detail": "ClockDriftMs=80; LocalClockUtc=2026-04-02T14:28:03.1196593Z; ExchangeServerTimeUtc=2026-04-02T14:28:03.2000000Z; Probe=Succeeded",
-    "StateCode": "Stopped",
-    "ReasonCode": "ClockDriftExceeded",
-    "LatestClockDriftMilliseconds": 2234,
-    "LastStateChangedAtUtc": "2026-04-02T14:28:02.2326707"
+    "CircuitBreakerState": "Closed",
+    "LastUpdatedAtUtc": "2026-04-02T16:47:52.4951436",
+    "Detail": "ClockDriftMs=226; LocalClockUtc=2026-04-02T16:47:52.4951436Z; ExchangeServerTimeUtc=2026-04-02T16:47:52.7210000Z; Probe=Succeeded",
+    "StateCode": "Normal",
+    "ReasonCode": "None",
+    "LatestClockDriftMilliseconds": 1124,
+    "LastStateChangedAtUtc": "2026-04-02T16:47:47.8110018"
   }
 }

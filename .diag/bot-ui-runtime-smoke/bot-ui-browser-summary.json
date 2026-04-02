@@ -1,0 +1,54 @@
+{
+  "login": {
+    "success": true,
+    "landingLocation": "http://127.0.0.1:65002/Bots"
+  },
+  "bots": {
+    "botNameText": "Bot UI Smoke Bot",
+    "initialWorkerStateText": "Failed",
+    "initialWorkerErrorText": "ExecutionDispatchFailed",
+    "initialExecutionStateText": "Failed",
+    "initialExecutionFailureText": "InvalidOperationException",
+    "initialLastExecutionText": "Last execution: 2026-04-02 18:06:00 Coordinated Universal Time",
+    "enabledBadgeText": "Enabled",
+    "disableThenEnableCycle": "Enabled -> Disabled -> Enabled",
+    "postToggleSuccessMessageText": "Pilot bot etkinlestirildi.",
+    "postToggleWorkerStateText": "Pending",
+    "postToggleWorkerErrorText": "Hata yok",
+    "postToggleExecutionStateText": "Failed",
+    "postToggleExecutionFailureText": "InvalidOperationException"
+  },
+  "dashboard": {
+    "enabledBotsText": "1",
+    "jobStateText": "Running",
+    "jobErrorText": "Worker hata kodu yok",
+    "executionStateText": "Dispatching",
+    "executionErrorText": "Execution hata kodu yok",
+    "workerHealthText": "Healthy",
+    "streamHealthText": "Unknown",
+    "breakerText": "1 active",
+    "driftSummaryText": "Server probe 300 / 2000 ms • Guard Normal • Last probe 16:06:02 UTC",
+    "driftReasonText": "Signed REST server-time probe 300 ms. Market-data guard state Normal / None.",
+    "exchangeStatusText": "Son Binance durumu: Aktif",
+    "exchangeBannerText": "Son Binance durumu: Aktif\nTrade=Y; Withdraw=?; Spot=?; Futures=?; Env=Unknown · Live"
+  },
+  "exchanges": {
+    "bannerTitleText": "Son Binance durumu: Aktif",
+    "bannerDetailText": "Son Binance durumu: Aktif\nAktif · Trade=Y; Withdraw=?; Spot=?; Futures=?; Env=Unknown · 1 dk önce",
+    "accountRows": [
+      "Bot UI Smoke Binance\n6C27FC***F812\n1 dk önce\n\tAktif\nHenüz doğrulama yok\n\t\nTrade=Y; Withdraw=?; Spot=?; Futures=?; Env=Unknown\n\tLive\tYeniden bağlanıyor"
+    ]
+  },
+  "screenshots": {
+    "register": "D:\\CkBot\\Code\\CoinBot\\.diag\\bot-ui-runtime-smoke\\bot-ui-register.png",
+    "dashboard": "D:\\CkBot\\Code\\CoinBot\\.diag\\bot-ui-runtime-smoke\\bot-ui-dashboard.png",
+    "bots": "D:\\CkBot\\Code\\CoinBot\\.diag\\bot-ui-runtime-smoke\\bot-ui-bots.png",
+    "botsDisabled": "D:\\CkBot\\Code\\CoinBot\\.diag\\bot-ui-runtime-smoke\\bot-ui-bots-disabled.png",
+    "botsEnabled": "D:\\CkBot\\Code\\CoinBot\\.diag\\bot-ui-runtime-smoke\\bot-ui-bots-enabled.png",
+    "exchanges": "D:\\CkBot\\Code\\CoinBot\\.diag\\bot-ui-runtime-smoke\\bot-ui-exchanges.png"
+  },
+  "logs": {
+    "browserStdOut": "D:\\CkBot\\Code\\CoinBot\\.diag\\bot-ui-runtime-smoke\\edge.inspect.stdout.log",
+    "browserStdErr": "D:\\CkBot\\Code\\CoinBot\\.diag\\bot-ui-runtime-smoke\\edge.inspect.stderr.log"
+  }
+}
