@@ -16,6 +16,7 @@ using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Application.Abstractions.Policy;
 using CoinBot.Application.Abstractions.Risk;
 using CoinBot.Application.Abstractions.Strategies;
+using CoinBot.Application.Abstractions.Settings;
 using CoinBot.Contracts.Common;
 using CoinBot.Infrastructure.Alerts;
 using CoinBot.Infrastructure.Administration;
@@ -36,6 +37,7 @@ using CoinBot.Infrastructure.Policy;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.Infrastructure.Risk;
 using CoinBot.Infrastructure.Strategies;
+using CoinBot.Infrastructure.Settings;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
@@ -196,6 +198,7 @@ public static class DependencyInjection
         services.AddScoped<IAuditLogService, AuditLogService>();
         services.AddScoped<IExchangeCredentialService, ExchangeCredentialService>();
         services.AddScoped<IUserExchangeCommandCenterService, UserExchangeCommandCenterService>();
+        services.AddScoped<IUserSettingsService, UserSettingsService>();
         services.AddScoped<IBotManagementService, BotManagementService>();
         services.AddScoped<IBotPilotControlService, BotPilotControlService>();
         services.AddScoped<IUserDashboardPortfolioReadModelService, UserDashboardPortfolioReadModelService>();
@@ -280,6 +283,12 @@ public static class DependencyInjection
             var privateDataOptions = serviceProvider.GetRequiredService<IOptions<BinancePrivateDataOptions>>().Value;
             client.BaseAddress = new Uri(privateDataOptions.RestBaseUrl, UriKind.Absolute);
             client.Timeout = TimeSpan.FromSeconds(30);
+        });
+        services.AddHttpClient<IBinanceTimeSyncService, BinanceTimeSyncService>((serviceProvider, client) =>
+        {
+            var privateDataOptions = serviceProvider.GetRequiredService<IOptions<BinancePrivateDataOptions>>().Value;
+            client.BaseAddress = new Uri(privateDataOptions.RestBaseUrl, UriKind.Absolute);
+            client.Timeout = TimeSpan.FromSeconds(10);
         });
         services.AddHttpClient<IBinanceExchangeInfoClient, BinanceExchangeInfoClient>((serviceProvider, client) =>
         {

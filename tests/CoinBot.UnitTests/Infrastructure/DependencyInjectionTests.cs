@@ -14,6 +14,7 @@ using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Application.Abstractions.Policy;
 using CoinBot.Application.Abstractions.Risk;
 using CoinBot.Application.Abstractions.Strategies;
+using CoinBot.Application.Abstractions.Settings;
 using CoinBot.Contracts.Common;
 using CoinBot.Infrastructure;
 using CoinBot.Infrastructure.Alerts;
@@ -122,6 +123,7 @@ public sealed class DependencyInjectionTests
         var historicalKlineClient = provider.GetRequiredService<IBinanceHistoricalKlineClient>();
         var historicalGapFillerService = provider.GetRequiredService<HistoricalGapFillerService>();
         var exchangeAccountSnapshotHub = provider.GetRequiredService<ExchangeAccountSnapshotHub>();
+        var timeSyncService = provider.GetRequiredService<IBinanceTimeSyncService>();
         var privateRestClient = provider.GetRequiredService<IBinancePrivateRestClient>();
         var privateStreamClient = provider.GetRequiredService<IBinancePrivateStreamClient>();
         var monitoringTelemetryCollector = provider.GetRequiredService<IMonitoringTelemetryCollector>();
@@ -129,6 +131,7 @@ public sealed class DependencyInjectionTests
         var exchangeBalanceSyncService = provider.GetRequiredService<ExchangeBalanceSyncService>();
         var exchangePositionSyncService = provider.GetRequiredService<ExchangePositionSyncService>();
         var exchangeAppStateSyncService = provider.GetRequiredService<ExchangeAppStateSyncService>();
+        var userSettingsService = provider.GetRequiredService<IUserSettingsService>();
         var totpService = provider.GetRequiredService<ITotpService>();
         var emailOtpService = provider.GetRequiredService<IEmailOtpService>();
         var mfaCodeValidator = provider.GetRequiredService<IMfaCodeValidator>();
@@ -168,6 +171,7 @@ public sealed class DependencyInjectionTests
         Assert.Equal("wss://fstream.binance.com", privateDataOptions.WebSocketBaseUrl);
         Assert.Equal(30, privateDataOptions.ListenKeyRenewalIntervalMinutes);
         Assert.Equal(5, privateDataOptions.ReconciliationIntervalMinutes);
+        Assert.Equal(30, privateDataOptions.ServerTimeSyncRefreshSeconds);
         Assert.Equal(14, indicatorOptions.RsiPeriod);
         Assert.Equal(12, indicatorOptions.MacdFastPeriod);
         Assert.Equal(26, indicatorOptions.MacdSlowPeriod);
@@ -250,6 +254,7 @@ public sealed class DependencyInjectionTests
         Assert.NotNull(historicalKlineClient);
         Assert.NotNull(historicalGapFillerService);
         Assert.NotNull(exchangeAccountSnapshotHub);
+        Assert.NotNull(timeSyncService);
         Assert.NotNull(privateRestClient);
         Assert.NotNull(privateStreamClient);
         Assert.NotNull(monitoringTelemetryCollector);
@@ -257,6 +262,7 @@ public sealed class DependencyInjectionTests
         Assert.NotNull(exchangeBalanceSyncService);
         Assert.NotNull(exchangePositionSyncService);
         Assert.NotNull(exchangeAppStateSyncService);
+        Assert.NotNull(userSettingsService);
         Assert.NotNull(totpService);
         Assert.NotNull(emailOtpService);
         Assert.NotNull(mfaCodeValidator);

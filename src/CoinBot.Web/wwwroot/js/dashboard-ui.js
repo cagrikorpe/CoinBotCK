@@ -1,4 +1,18 @@
 (function () {
+    function resolveDashboardTimeZone(page) {
+        const timeZoneId = page && page.getAttribute('data-cb-display-timezone-id')
+            ? page.getAttribute('data-cb-display-timezone-id')
+            : 'UTC';
+        const timeZoneLabel = page && page.getAttribute('data-cb-display-timezone-label')
+            ? page.getAttribute('data-cb-display-timezone-label')
+            : timeZoneId;
+
+        return {
+            id: timeZoneId,
+            label: timeZoneLabel
+        };
+    }
+
     function formatDecimal(value) {
         if (value === null || value === undefined || Number.isNaN(value)) {
             return 'Veri bekleniyor';
@@ -10,7 +24,7 @@
         });
     }
 
-    function formatTimestamp(value) {
+    function formatTimestamp(value, dashboardTimeZone) {
         if (!value) {
             return 'Henüz veri yok';
         }
@@ -20,12 +34,21 @@
             return 'Henüz veri yok';
         }
 
-        return date.toLocaleTimeString('tr-TR', {
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-            timeZone: 'UTC'
-        }) + ' UTC';
+        try {
+            return date.toLocaleTimeString('tr-TR', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                timeZone: dashboardTimeZone.id
+            }) + ' ' + dashboardTimeZone.label;
+        } catch (error) {
+            return date.toLocaleTimeString('tr-TR', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                timeZone: 'UTC'
+            }) + ' UTC';
+        }
     }
 
     function buildMetaText(snapshot) {
@@ -77,7 +100,7 @@
             : null;
     }
 
-    function applySnapshot(snapshot) {
+    function applySnapshot(snapshot, dashboardTimeZone) {
         const symbolValue = readValue(snapshot, 'symbol', 'Symbol');
         if (!symbolValue) {
             return;
@@ -93,7 +116,8 @@
             : symbol;
         const timestampText = formatTimestamp(
             readValue(snapshot, 'receivedAtUtc', 'ReceivedAtUtc') ||
-            readValue(snapshot, 'observedAtUtc', 'ObservedAtUtc'));
+            readValue(snapshot, 'observedAtUtc', 'ObservedAtUtc'),
+            dashboardTimeZone);
         const statusClass = isTradingEnabled ? 'cb-badge-success' : 'cb-badge-warning';
 
         updateElements('[data-cb-market-price]', symbol, formatDecimal(readValue(snapshot, 'price', 'Price')));
@@ -134,6 +158,7 @@
         }
 
         const hubUrl = page.getAttribute('data-cb-market-hub-url');
+        const dashboardTimeZone = resolveDashboardTimeZone(page);
         if (!hubUrl) {
             return;
         }
@@ -144,7 +169,7 @@
             .build();
 
         connection.on('marketPriceUpdated', function (snapshot) {
-            applySnapshot(snapshot);
+            applySnapshot(snapshot, dashboardTimeZone);
         });
 
         connection.onreconnecting(function () {
@@ -163,7 +188,7 @@
                     }
 
                     snapshots.forEach(function (snapshot) {
-                        applySnapshot(snapshot);
+                        applySnapshot(snapshot, dashboardTimeZone);
                     });
                 });
         }
@@ -207,6 +232,8 @@
         writeText('[data-cb-ops-daily-loss]', snapshot.dailyLossSummary ?? snapshot.DailyLossSummary ?? 'Risk profili yok');
         writeText('[data-cb-ops-position-limit]', snapshot.positionLimitSummary ?? snapshot.PositionLimitSummary ?? 'Pozisyon limiti yok');
         writeText('[data-cb-ops-cooldown]', snapshot.cooldownSummary ?? snapshot.CooldownSummary ?? 'Cooldown bilgisi yok');
+        writeText('[data-cb-ops-drift-summary]', snapshot.driftSummary ?? snapshot.DriftSummary ?? 'Henüz drift snapshot yok');
+        writeText('[data-cb-ops-drift-reason]', snapshot.driftReason ?? snapshot.DriftReason ?? 'Clock drift summary monitoring snapshot geldikten sonra görünür.');
     }
 
     function connectOperationsHub() {

@@ -1,6 +1,7 @@
 using CoinBot.Application.Abstractions.Dashboard;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -10,11 +11,13 @@ namespace CoinBot.Infrastructure.Dashboard;
 
 public sealed class UserDashboardOperationsReadModelService(
     ApplicationDbContext dbContext,
-    IOptions<BotExecutionPilotOptions> options) : IUserDashboardOperationsReadModelService
+    IOptions<BotExecutionPilotOptions> options,
+    IOptions<DataLatencyGuardOptions> dataLatencyGuardOptions) : IUserDashboardOperationsReadModelService
 {
     private sealed record EnabledBotSnapshot(Guid Id, string? Symbol);
 
     private readonly BotExecutionPilotOptions optionsValue = options.Value;
+    private readonly DataLatencyGuardOptions dataLatencyGuardOptionsValue = dataLatencyGuardOptions.Value;
 
     public async Task<UserDashboardOperationsSummarySnapshot> GetSnapshotAsync(
         string userId,
@@ -61,6 +64,19 @@ public sealed class UserDashboardOperationsReadModelService(
             .AsNoTracking()
             .IgnoreQueryFilters()
             .SingleOrDefaultAsync(entity => entity.WorkerKey == "exchange-private-stream", cancellationToken);
+        var degradedModeState = await dbContext.DegradedModeStates
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .OrderByDescending(entity => entity.UpdatedDate)
+            .ThenByDescending(entity => entity.CreatedDate)
+            .FirstOrDefaultAsync(cancellationToken);
+        var clockDriftProbeSnapshot = await dbContext.HealthSnapshots
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity => entity.SnapshotKey == "clock-drift-monitor")
+            .OrderByDescending(entity => entity.LastUpdatedAtUtc)
+            .ThenByDescending(entity => entity.ObservedAtUtc)
+            .FirstOrDefaultAsync(cancellationToken);
         var breakerStates = await dbContext.DependencyCircuitBreakerStates
             .AsNoTracking()
             .IgnoreQueryFilters()
@@ -102,6 +118,9 @@ public sealed class UserDashboardOperationsReadModelService(
         var conflictedSymbolCount = normalizedSymbols
             .GroupBy(symbol => symbol, StringComparer.Ordinal)
             .Count(group => group.Count() > 1);
+        var driftThresholdMilliseconds = checked(dataLatencyGuardOptionsValue.ClockDriftThresholdSeconds * 1000);
+        var driftSummary = BuildDriftSummary(degradedModeState, clockDriftProbeSnapshot, driftThresholdMilliseconds);
+        var driftReason = BuildDriftReason(degradedModeState, clockDriftProbeSnapshot, driftThresholdMilliseconds);
 
         return new UserDashboardOperationsSummarySnapshot(
             EnabledBotCount: enabledBots.Count,
@@ -124,7 +143,9 @@ public sealed class UserDashboardOperationsReadModelService(
             MaxOpenPositions: optionsValue.MaxOpenPositionsPerUser,
             ActiveBotCooldownCount: activeBotCooldownCount,
             ActiveSymbolCooldownCount: activeSymbolCooldownCount,
-            LastExecutionAtUtc: latestExecution?.CreatedDate);
+            LastExecutionAtUtc: latestExecution?.CreatedDate,
+            DriftSummary: driftSummary,
+            DriftReason: driftReason);
     }
 
     private async Task<int> ResolveActiveBotCooldownCountAsync(
@@ -207,5 +228,83 @@ public sealed class UserDashboardOperationsReadModelService(
         }
 
         return normalizedValue;
+    }
+
+    private static string BuildDriftSummary(
+        DegradedModeState? degradedModeState,
+        HealthSnapshot? clockDriftProbeSnapshot,
+        int driftThresholdMilliseconds)
+    {
+        var probeDriftMilliseconds = TryReadDetailInt(clockDriftProbeSnapshot?.Detail, "ClockDriftMs");
+        var probeUpdatedAtUtc = clockDriftProbeSnapshot?.LastUpdatedAtUtc;
+        var guardDriftMilliseconds = degradedModeState?.LatestClockDriftMilliseconds;
+        var stateCode = degradedModeState?.StateCode.ToString() ?? "Unknown";
+
+        if (degradedModeState?.ReasonCode == DegradedModeReasonCode.ClockDriftExceeded)
+        {
+            return
+                $"Heartbeat drift {(guardDriftMilliseconds?.ToString() ?? "n/a")} / {driftThresholdMilliseconds} ms • Server probe {(probeDriftMilliseconds?.ToString() ?? "n/a")} ms • Last probe {FormatUtc(probeUpdatedAtUtc)}";
+        }
+
+        return
+            $"Server probe {(probeDriftMilliseconds?.ToString() ?? "n/a")} / {driftThresholdMilliseconds} ms • Guard {stateCode} • Last probe {FormatUtc(probeUpdatedAtUtc)}";
+    }
+
+    private static string BuildDriftReason(
+        DegradedModeState? degradedModeState,
+        HealthSnapshot? clockDriftProbeSnapshot,
+        int driftThresholdMilliseconds)
+    {
+        var probeDriftMilliseconds = TryReadDetailInt(clockDriftProbeSnapshot?.Detail, "ClockDriftMs");
+
+        return degradedModeState?.ReasonCode switch
+        {
+            DegradedModeReasonCode.ClockDriftExceeded =>
+                $"Execution block kaynağı market-data heartbeat. Latest heartbeat drift {(degradedModeState.LatestClockDriftMilliseconds?.ToString() ?? "n/a")} ms, threshold {driftThresholdMilliseconds} ms. Server-time refresh signed REST offset'ini yeniler; fresh kline heartbeat gelmeden blok sürebilir.",
+            DegradedModeReasonCode.MarketDataLatencyBreached or DegradedModeReasonCode.MarketDataLatencyCritical =>
+                $"Market-data freshness guard aktif. Latest data age {(degradedModeState.LatestHeartbeatReceivedAtUtc.HasValue && degradedModeState.LatestDataTimestampAtUtc.HasValue ? Math.Max(0, (int)Math.Round((degradedModeState.LatestHeartbeatReceivedAtUtc.Value - degradedModeState.LatestDataTimestampAtUtc.Value).TotalMilliseconds, MidpointRounding.AwayFromZero)).ToString() : "n/a")} ms, latest heartbeat drift {(degradedModeState.LatestClockDriftMilliseconds?.ToString() ?? "n/a")} ms.",
+            DegradedModeReasonCode.MarketDataUnavailable =>
+                "Market-data heartbeat henüz güvenli kabul edilecek kadar güncel değil. Server-time probe sağlıklı olsa bile execution açılmaz.",
+            _ =>
+                $"Signed REST server-time probe {(probeDriftMilliseconds?.ToString() ?? "n/a")} ms. Market-data guard state {(degradedModeState?.StateCode.ToString() ?? "Unknown")} / {(degradedModeState?.ReasonCode.ToString() ?? "Unknown")}."
+        };
+    }
+
+    private static int? TryReadDetailInt(string? detail, string key)
+    {
+        if (string.IsNullOrWhiteSpace(detail))
+        {
+            return null;
+        }
+
+        var segments = detail.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        foreach (var segment in segments)
+        {
+            var separatorIndex = segment.IndexOf('=');
+
+            if (separatorIndex <= 0)
+            {
+                continue;
+            }
+
+            if (!string.Equals(segment[..separatorIndex].Trim(), key, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return int.TryParse(segment[(separatorIndex + 1)..].Trim(), out var value)
+                ? value
+                : null;
+        }
+
+        return null;
+    }
+
+    private static string FormatUtc(DateTime? utcTimestamp)
+    {
+        return utcTimestamp.HasValue
+            ? utcTimestamp.Value.ToUniversalTime().ToString("HH:mm:ss") + " UTC"
+            : "Henüz yok";
     }
 }

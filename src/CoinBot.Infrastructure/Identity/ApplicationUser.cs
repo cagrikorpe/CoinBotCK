@@ -7,6 +7,8 @@ public sealed class ApplicationUser : IdentityUser
 {
     public string FullName { get; set; } = string.Empty;
 
+    public string? PreferredTimeZoneId { get; set; }
+
     public bool MfaEnabled { get; set; }
 
     public bool TotpEnabled { get; set; }

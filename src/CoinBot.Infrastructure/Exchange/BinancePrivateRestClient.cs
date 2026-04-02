@@ -19,6 +19,7 @@ public sealed class BinancePrivateRestClient(
     HttpClient httpClient,
     IOptions<BinancePrivateDataOptions> options,
     TimeProvider timeProvider,
+    IBinanceTimeSyncService timeSyncService,
     ILogger<BinancePrivateRestClient> logger,
     IMonitoringTelemetryCollector? monitoringTelemetryCollector = null,
     IServiceScopeFactory? serviceScopeFactory = null) : IBinancePrivateRestClient
@@ -37,7 +38,7 @@ public sealed class BinancePrivateRestClient(
             ?? throw new ArgumentException("The symbol is required.", nameof(symbol));
         var normalizedMarginType = NormalizeCode(marginType)
             ?? throw new ArgumentException("The margin type is required.", nameof(marginType));
-        var timestamp = timeProvider.GetUtcNow().ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
+        var timestamp = await GetTimestampAsync(cancellationToken);
         var unsignedQuery =
             $"symbol={Uri.EscapeDataString(normalizedSymbol)}&marginType={Uri.EscapeDataString(normalizedMarginType)}&timestamp={timestamp}&recvWindow={optionsValue.RecvWindowMilliseconds.ToString(CultureInfo.InvariantCulture)}";
         var signature = ComputeSignature(unsignedQuery, apiSecret);
@@ -58,8 +59,11 @@ public sealed class BinancePrivateRestClient(
             return;
         }
 
-        throw new InvalidOperationException(
-            $"Binance margin type configuration failed with status {(int)response.StatusCode}.");
+        await ThrowClockDriftAwareFailureAsync(
+            $"Binance margin type configuration failed with status {(int)response.StatusCode}.",
+            TryReadExchangeCode(responseBody),
+            responseBody,
+            cancellationToken);
     }
 
     public async Task EnsureLeverageAsync(
@@ -79,7 +83,7 @@ public sealed class BinancePrivateRestClient(
             throw new ArgumentOutOfRangeException(nameof(leverage), "Leverage must be at least 1.");
         }
 
-        var timestamp = timeProvider.GetUtcNow().ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
+        var timestamp = await GetTimestampAsync(cancellationToken);
         var unsignedQuery =
             $"symbol={Uri.EscapeDataString(normalizedSymbol)}&leverage={normalizedLeverage.ToString(CultureInfo.InvariantCulture)}&timestamp={timestamp}&recvWindow={optionsValue.RecvWindowMilliseconds.ToString(CultureInfo.InvariantCulture)}";
         var signature = ComputeSignature(unsignedQuery, apiSecret);
@@ -90,8 +94,12 @@ public sealed class BinancePrivateRestClient(
 
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException(
-                $"Binance leverage configuration failed with status {(int)response.StatusCode}.");
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            await ThrowClockDriftAwareFailureAsync(
+                $"Binance leverage configuration failed with status {(int)response.StatusCode}.",
+                TryReadExchangeCode(responseBody),
+                responseBody,
+                cancellationToken);
         }
     }
 
@@ -103,7 +111,7 @@ public sealed class BinancePrivateRestClient(
 
         var stopwatch = Stopwatch.StartNew();
         var submittedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
-        var timestamp = timeProvider.GetUtcNow().ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
+        var timestamp = await GetTimestampAsync(cancellationToken);
         var parameters = new List<KeyValuePair<string, string>>
         {
             new("symbol", NormalizeCode(request.Symbol) ?? string.Empty),
@@ -164,7 +172,11 @@ public sealed class BinancePrivateRestClient(
                     cancellationToken);
                 traceWritten = true;
 
-                throw new InvalidOperationException($"Binance order placement request failed with status {(int)response.StatusCode}.");
+                await ThrowClockDriftAwareFailureAsync(
+                    $"Binance order placement request failed with status {(int)response.StatusCode}.",
+                    exchangeCode,
+                    responseBody,
+                    cancellationToken);
             }
 
             using var document = JsonDocument.Parse(responseBody);
@@ -225,7 +237,7 @@ public sealed class BinancePrivateRestClient(
 
         var stopwatch = Stopwatch.StartNew();
         var observedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
-        var timestamp = timeProvider.GetUtcNow().ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
+        var timestamp = await GetTimestampAsync(cancellationToken);
         var parameters = new List<KeyValuePair<string, string>>
         {
             new("symbol", NormalizeCode(request.Symbol) ?? string.Empty),
@@ -285,7 +297,11 @@ public sealed class BinancePrivateRestClient(
                     cancellationToken);
                 traceWritten = true;
 
-                throw new InvalidOperationException($"Binance order cancel request failed with status {(int)response.StatusCode}.");
+                await ThrowClockDriftAwareFailureAsync(
+                    $"Binance order cancel request failed with status {(int)response.StatusCode}.",
+                    exchangeCode,
+                    responseBody,
+                    cancellationToken);
             }
 
             await WriteExecutionTraceAsync(
@@ -333,7 +349,7 @@ public sealed class BinancePrivateRestClient(
         }
 
         var observedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
-        var timestamp = timeProvider.GetUtcNow().ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
+        var timestamp = await GetTimestampAsync(cancellationToken);
         var parameters = new List<KeyValuePair<string, string>>
         {
             new("symbol", NormalizeCode(request.Symbol) ?? string.Empty),
@@ -362,7 +378,12 @@ public sealed class BinancePrivateRestClient(
 
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException($"Binance order status request failed with status {(int)response.StatusCode}.");
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            await ThrowClockDriftAwareFailureAsync(
+                $"Binance order status request failed with status {(int)response.StatusCode}.",
+                TryReadExchangeCode(responseBody),
+                responseBody,
+                cancellationToken);
         }
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -443,7 +464,7 @@ public sealed class BinancePrivateRestClient(
         CancellationToken cancellationToken = default)
     {
         var observedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
-        var timestamp = timeProvider.GetUtcNow().ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
+        var timestamp = await GetTimestampAsync(cancellationToken);
         var unsignedQuery = $"timestamp={timestamp}&recvWindow={optionsValue.RecvWindowMilliseconds.ToString(CultureInfo.InvariantCulture)}";
         var signature = ComputeSignature(unsignedQuery, apiSecret);
         var path = $"/fapi/v3/account?{unsignedQuery}&signature={signature}";
@@ -453,7 +474,12 @@ public sealed class BinancePrivateRestClient(
 
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException($"Binance account snapshot request failed with status {(int)response.StatusCode}.");
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            await ThrowClockDriftAwareFailureAsync(
+                $"Binance account snapshot request failed with status {(int)response.StatusCode}.",
+                TryReadExchangeCode(responseBody),
+                responseBody,
+                cancellationToken);
         }
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -508,6 +534,30 @@ public sealed class BinancePrivateRestClient(
                 TryReadRateLimitUsage(response),
                 observedAtUtc);
         }
+    }
+
+    private async Task<string> GetTimestampAsync(CancellationToken cancellationToken)
+    {
+        var timestamp = await timeSyncService.GetCurrentTimestampMillisecondsAsync(cancellationToken);
+        return timestamp.ToString(CultureInfo.InvariantCulture);
+    }
+
+    private async Task ThrowClockDriftAwareFailureAsync(
+        string defaultMessage,
+        string? exchangeCode,
+        string? responseBody,
+        CancellationToken cancellationToken)
+    {
+        if (IsClockDriftResponse(exchangeCode, responseBody))
+        {
+            var snapshot = await timeSyncService.GetSnapshotAsync(forceRefresh: true, cancellationToken);
+            var driftText = snapshot.ClockDriftMilliseconds?.ToString(CultureInfo.InvariantCulture) ?? "missing";
+            var lastSyncText = snapshot.LastSynchronizedAtUtc?.ToString("O", CultureInfo.InvariantCulture) ?? "missing";
+            throw new BinanceClockDriftException(
+                $"Binance request timestamp was rejected. Status={snapshot.StatusCode}; DriftMs={driftText}; OffsetMs={snapshot.OffsetMilliseconds.ToString(CultureInfo.InvariantCulture)}; LastSyncUtc={lastSyncText}.");
+        }
+
+        throw new InvalidOperationException(defaultMessage);
     }
 
     private static string ComputeSignature(string payload, string secret)
@@ -880,5 +930,38 @@ public sealed class BinancePrivateRestClient(
         {
             return null;
         }
+    }
+
+    private static string? TryReadExchangeMessage(string? responseBody)
+    {
+        if (string.IsNullOrWhiteSpace(responseBody))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(responseBody);
+
+            if (document.RootElement.TryGetProperty("msg", out var messageElement))
+            {
+                return messageElement.GetString()?.Trim();
+            }
+
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static bool IsClockDriftResponse(string? exchangeCode, string? responseBody)
+    {
+        var exchangeMessage = TryReadExchangeMessage(responseBody);
+
+        return string.Equals(exchangeCode, "-1021", StringComparison.Ordinal) ||
+               exchangeMessage?.Contains("timestamp", StringComparison.OrdinalIgnoreCase) == true ||
+               exchangeMessage?.Contains("recvWindow", StringComparison.OrdinalIgnoreCase) == true;
     }
 }

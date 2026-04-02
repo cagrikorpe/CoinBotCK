@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Infrastructure.MarketData;
 using Microsoft.Extensions.Options;
 
@@ -12,7 +13,8 @@ public sealed class BinanceCredentialProbeClient(
     IHttpClientFactory httpClientFactory,
     IOptions<BinanceMarketDataOptions> marketDataOptions,
     IOptions<BinancePrivateDataOptions> privateDataOptions,
-    TimeProvider timeProvider) : IBinanceCredentialProbeClient
+    TimeProvider timeProvider,
+    IBinanceTimeSyncService timeSyncService) : IBinanceCredentialProbeClient
 {
     private const string SpotClientName = "BinanceCredentialProbeSpot";
     private const string FuturesClientName = "BinanceCredentialProbeFutures";
@@ -52,7 +54,7 @@ public sealed class BinanceCredentialProbeClient(
         CancellationToken cancellationToken)
     {
         var client = httpClientFactory.CreateClient(SpotClientName);
-        var path = CreateSignedPath("/api/v3/account", apiSecret);
+        var path = await CreateSignedPathAsync("/api/v3/account", apiSecret, cancellationToken);
 
         using var request = CreateApiKeyRequest(path, apiKey);
         using var response = await client.SendAsync(request, cancellationToken);
@@ -60,7 +62,14 @@ public sealed class BinanceCredentialProbeClient(
 
         if (!response.IsSuccessStatusCode)
         {
-            return ParseFailure(responseBody, response.StatusCode);
+            var failure = ParseFailure(responseBody, response.StatusCode);
+
+            if (failure.HasTimestampSkew)
+            {
+                await timeSyncService.GetSnapshotAsync(forceRefresh: true, cancellationToken);
+            }
+
+            return failure;
         }
 
         using var document = JsonDocument.Parse(responseBody);
@@ -91,7 +100,7 @@ public sealed class BinanceCredentialProbeClient(
         CancellationToken cancellationToken)
     {
         var client = httpClientFactory.CreateClient(FuturesClientName);
-        var path = CreateSignedPath("/fapi/v3/account", apiSecret);
+        var path = await CreateSignedPathAsync("/fapi/v3/account", apiSecret, cancellationToken);
 
         using var request = CreateApiKeyRequest(path, apiKey);
         using var response = await client.SendAsync(request, cancellationToken);
@@ -99,7 +108,14 @@ public sealed class BinanceCredentialProbeClient(
 
         if (!response.IsSuccessStatusCode)
         {
-            return ParseFailure(responseBody, response.StatusCode);
+            var failure = ParseFailure(responseBody, response.StatusCode);
+
+            if (failure.HasTimestampSkew)
+            {
+                await timeSyncService.GetSnapshotAsync(forceRefresh: true, cancellationToken);
+            }
+
+            return failure;
         }
 
         return EndpointProbeResult.Success(
@@ -109,9 +125,13 @@ public sealed class BinanceCredentialProbeClient(
             supportsFutures: true);
     }
 
-    private string CreateSignedPath(string resourcePath, string apiSecret)
+    private async Task<string> CreateSignedPathAsync(
+        string resourcePath,
+        string apiSecret,
+        CancellationToken cancellationToken)
     {
-        var timestamp = timeProvider.GetUtcNow().ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
+        var timestamp = (await timeSyncService.GetCurrentTimestampMillisecondsAsync(cancellationToken))
+            .ToString(CultureInfo.InvariantCulture);
         var unsignedQuery = $"timestamp={timestamp}&recvWindow={privateDataOptionsValue.RecvWindowMilliseconds.ToString(CultureInfo.InvariantCulture)}";
         var signature = ComputeSignature(unsignedQuery, apiSecret);
         return $"{resourcePath}?{unsignedQuery}&signature={signature}";

@@ -1,68 +1,181 @@
+@model CoinBot.Web.ViewModels.Settings.SettingsIndexViewModel
 @{
     ViewData["Title"] = "Ayarlar";
     ViewData["ActiveNav"] = "Settings";
-    ViewData["PageDescription"] = "Profil, uygulama, trading, bildirimler ve güvenlik tercihlerini tek merkezde yöneten; section tabanlı ve genişlemeye açık settings foundation ekranı.";
+    ViewData["PageDescription"] = "Kullanıcı saat dilimi tercihini ve Binance clock drift görünürlüğünü bu ekrandan yönetin.";
     ViewData["BreadcrumbItems"] = new[] { "System", "Ayarlar" };
 }
 
-@section Scripts {
-    <script src="~/js/settings-foundation.js" asp-append-version="true"></script>
-}
-
-<div class="row" data-cb-settings-page data-cb-settings-scenario="default">
-    <div class="col-12">
+<div class="row">
+    <div class="col-xl-5">
         <div class="card card-custom gutter-b cb-card">
             <div class="card-body">
                 <div class="cb-page-header">
                     <div>
-                        <div class="cb-page-eyebrow">Settings Center</div>
-                        <h2 class="cb-page-title">Ayarlar foundation merkezi</h2>
-                        <p class="cb-page-description">Profil, uygulama tercihleri, default trading davranışı, bildirim seçimleri ve güvenlik alanlarını aynı tasarım dili içinde toplayan son temel UI yüzeyi.</p>
+                        <div class="cb-page-eyebrow">User Settings</div>
+                        <h2 class="cb-page-title">Saat dilimi</h2>
+                        <p class="cb-page-description">Dashboard ve bot yüzeylerindeki zaman gösterimleri bu tercihe göre render edilir.</p>
                     </div>
                     <div class="cb-toolbar">
-                        <span class="cb-badge cb-badge-info">UI-only foundation</span>
-                        <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-settings-cancel>İptal</button>
-                        <button type="button" class="btn btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Varsayılana dön" data-cb-modal-message="Gerçek settings persist bu fazda yok; bu aksiyon yalnızca varsayılan profile dönüş akışı için foundation olarak hazırlanmıştır." data-cb-modal-confirm="Varsayılana dön">Varsayılana dön</button>
-                        <button type="button" class="btn btn-primary font-weight-bolder" data-cb-settings-save>Kaydet</button>
+                        <form asp-controller="Settings" asp-action="RefreshClockDrift" method="post" class="d-inline">
+                            @Html.AntiForgeryToken()
+                            <button type="submit" class="btn btn-light-warning font-weight-bold">Server time sync yenile</button>
+                        </form>
+                        <a asp-controller="Settings" asp-action="Mfa" class="btn btn-light-primary font-weight-bold">2FA yönetimi</a>
                     </div>
                 </div>
 
-                <div class="cb-section mt-6">
-                    <div class="cb-section-title">Durum Senaryoları</div>
-                    <p class="cb-page-description mt-2 mb-0">İlk ayarlar, özelleştirilmiş kullanıcı, güvenlik dikkati, kaydedilmemiş değişiklikler, loading ve error yüzeylerini aynı foundation içinde kontrol edin. Gerçek settings persist bu fazda bağlı değildir.</p>
-                    <div class="cb-chip-group mt-4" data-cb-toggle-group>
-                        <button type="button" class="cb-chip is-active" data-cb-toggle-active data-cb-settings-scenario-trigger="default">İlk ayarlar</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-settings-scenario-trigger="customized">Özelleştirilmiş kullanıcı</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-settings-scenario-trigger="security">Security dikkat</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-settings-scenario-trigger="dirty">Kaydedilmemiş değişiklik</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-settings-scenario-trigger="loading">Loading</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-settings-scenario-trigger="error">Error</button>
+                @if (TempData["SettingsSuccess"] is string successMessage)
+                {
+                    <div class="cb-validation-summary cb-validation-summary-success mt-6">@successMessage</div>
+                }
+
+                @if (TempData["SettingsError"] is string errorMessage)
+                {
+                    <div class="cb-validation-summary cb-validation-summary-danger mt-6">@errorMessage</div>
+                }
+
+                <form asp-controller="Settings" asp-action="Index" method="post" class="mt-6" novalidate>
+                    @Html.AntiForgeryToken()
+                    <div asp-validation-summary="ModelOnly" class="cb-validation-summary cb-validation-summary-danger"></div>
+
+                    <div class="form-group mb-0">
+                        <label asp-for="Form.PreferredTimeZoneId" class="cb-form-label"></label>
+                        <select asp-for="Form.PreferredTimeZoneId" class="form-control cb-form-control">
+                            @foreach (var option in Model.TimeZoneOptions)
+                            {
+                                <option value="@option.TimeZoneId">@option.DisplayName</option>
+                            }
+                        </select>
+                        <span asp-validation-for="Form.PreferredTimeZoneId" class="text-danger small"></span>
+                        <div class="cb-helper-text mt-2">Bu seçim yalnız display timezone içindir; Binance request timestamp düzeltmesi ayrı drift sync katmanından gelir.</div>
                     </div>
-                </div>
+
+                    <div class="cb-auth-action-row mt-8">
+                        <button type="submit" class="btn btn-primary font-weight-bolder">Kaydet</button>
+                        <a asp-controller="Home" asp-action="Index" class="btn btn-light-primary font-weight-bold">Dashboard</a>
+                    </div>
+                </form>
             </div>
         </div>
     </div>
 
-    <div class="col-12" data-cb-settings-page-panel="content">
-        <div class="row">
-            <div class="col-xl-3 col-lg-4">
-                @await Html.PartialAsync("Settings/_CategoryNav")
+    <div class="col-xl-7">
+        <div class="card card-custom gutter-b cb-card">
+            <div class="card-body">
+                <div class="cb-section-title">Server-time sync</div>
+                <p class="cb-page-description mt-3">Bu panel signed REST timestamp düzeltmesinin durumunu gösterir. Local saat ile Binance server time farkı burada ölçülür.</p>
+
+                <div class="table-responsive mt-6">
+                    <table class="table table-borderless mb-0">
+                        <tbody>
+                            <tr>
+                                <td class="font-weight-bolder">Seçili saat dilimi</td>
+                                <td>@Model.ClockDrift.SelectedTimeZoneDisplayName</td>
+                            </tr>
+                            <tr>
+                                <td class="font-weight-bolder">Local app time</td>
+                                <td>@Model.ClockDrift.LocalAppTimeLabel</td>
+                            </tr>
+                            <tr>
+                                <td class="font-weight-bolder">Exchange server time</td>
+                                <td>@Model.ClockDrift.ExchangeServerTimeLabel</td>
+                            </tr>
+                            <tr>
+                                <td class="font-weight-bolder">Measured offset</td>
+                                <td>@Model.ClockDrift.OffsetLabel</td>
+                            </tr>
+                            <tr>
+                                <td class="font-weight-bolder">Measured drift</td>
+                                <td>@Model.ClockDrift.DriftLabel</td>
+                            </tr>
+                            <tr>
+                                <td class="font-weight-bolder">Last sync</td>
+                                <td>@Model.ClockDrift.LastSyncLabel</td>
+                            </tr>
+                            <tr>
+                                <td class="font-weight-bolder">Round trip</td>
+                                <td>@Model.ClockDrift.RoundTripLabel</td>
+                            </tr>
+                            <tr>
+                                <td class="font-weight-bolder">Refresh cadence</td>
+                                <td>@Model.ClockDrift.RefreshCadenceLabel</td>
+                            </tr>
+                            <tr>
+                                <td class="font-weight-bolder">Sync status</td>
+                                <td>@Model.ClockDrift.StatusLabel</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(Model.ClockDrift.FailureReason))
+                {
+                    <div class="cb-validation-summary cb-validation-summary-warning mt-6">
+                        @Model.ClockDrift.FailureReason
+                    </div>
+                }
+
+                <div class="cb-helper-text mt-4">Bu yenileme yalnız signed REST offset'ini günceller. Market-data heartbeat drift blokları aşağıdaki guard panelinde ayrıca görünür.</div>
             </div>
-            <div class="col-xl-9 col-lg-8">
-                <div class="cb-inline-stack cb-inline-stack-vertical">
-                    @await Html.PartialAsync("Settings/_ProfileSection")
-                    @await Html.PartialAsync("Settings/_ApplicationSection")
-                    @await Html.PartialAsync("Settings/_TradingPreferencesSection")
-                    @await Html.PartialAsync("Settings/_NotificationPreferencesSection")
-                    @await Html.PartialAsync("Settings/_SecuritySection")
-                    @await Html.PartialAsync("Settings/_SessionsSection")
-                    @await Html.PartialAsync("Settings/_HelpCard")
+        </div>
+
+        <div class="card card-custom gutter-b cb-card mt-6">
+            <div class="card-body">
+                <div class="cb-section-title">Market-data drift guard</div>
+                <p class="cb-page-description mt-3">Execution gate'i bloklayan drift/freshness kararı market-data heartbeat kaynaklıdır. Bu bölüm threshold, reason ve retry beklentisini gösterir.</p>
+
+                <div class="table-responsive mt-6">
+                    <table class="table table-borderless mb-0">
+                        <tbody>
+                            <tr>
+                                <td class="font-weight-bolder">Source</td>
+                                <td>@Model.DriftGuard.SourceLabel</td>
+                            </tr>
+                            <tr>
+                                <td class="font-weight-bolder">Threshold</td>
+                                <td>@Model.DriftGuard.ThresholdLabel</td>
+                            </tr>
+                            <tr>
+                                <td class="font-weight-bolder">Guard state</td>
+                                <td>@Model.DriftGuard.StateLabel</td>
+                            </tr>
+                            <tr>
+                                <td class="font-weight-bolder">Readable reason</td>
+                                <td>@Model.DriftGuard.ReasonLabel</td>
+                            </tr>
+                            <tr>
+                                <td class="font-weight-bolder">Latest heartbeat</td>
+                                <td>@Model.DriftGuard.LatestHeartbeatLabel</td>
+                            </tr>
+                            <tr>
+                                <td class="font-weight-bolder">Latest data timestamp</td>
+                                <td>@Model.DriftGuard.LatestDataTimestampLabel</td>
+                            </tr>
+                            <tr>
+                                <td class="font-weight-bolder">Latest data age</td>
+                                <td>@Model.DriftGuard.LatestDataAgeLabel</td>
+                            </tr>
+                            <tr>
+                                <td class="font-weight-bolder">Latest measured drift</td>
+                                <td>@Model.DriftGuard.LatestDriftLabel</td>
+                            </tr>
+                            <tr>
+                                <td class="font-weight-bolder">Last state change</td>
+                                <td>@Model.DriftGuard.LastStateChangedLabel</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="cb-validation-summary cb-validation-summary-warning mt-6">
+                    @Model.DriftGuard.RetryExpectation
                 </div>
             </div>
         </div>
-    </div>
-
-    <div class="col-12">
-        @await Html.PartialAsync("Settings/_StatePanels")
     </div>
 </div>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}

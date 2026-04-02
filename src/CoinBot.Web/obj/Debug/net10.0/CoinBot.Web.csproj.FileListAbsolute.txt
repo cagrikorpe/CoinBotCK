@@ -975,4 +975,4 @@ D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\9bfqu1gly8-{0
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\tez6at2ddz-{0}-bgc3s325qe-bgc3s325qe.gz
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\77173qlr2i-{0}-i1pflb4ei5-i1pflb4ei5.gz
 D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\ddrle72nrf-{0}-fa4qinxjyl-fa4qinxjyl.gz
-D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\nkwvqq9wmf-{0}-zjw9m8ycsx-zjw9m8ycsx.gz
+D:\CkBot\Code\CoinBot\src\CoinBot.Web\obj\Debug\net10.0\compressed\nkwvqq9wmf-{0}-zc6rioezc4-zc6rioezc4.gz

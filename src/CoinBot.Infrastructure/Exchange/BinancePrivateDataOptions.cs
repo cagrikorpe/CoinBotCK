@@ -26,4 +26,7 @@ public sealed class BinancePrivateDataOptions
 
     [Range(1000, 60000)]
     public int RecvWindowMilliseconds { get; set; } = 5000;
+
+    [Range(5, 300)]
+    public int ServerTimeSyncRefreshSeconds { get; set; } = 30;
 }

@@ -1,5 +1,7 @@
 using System.Security.Claims;
 using CoinBot.Application.Abstractions.Bots;
+using CoinBot.Application.Abstractions.Exchange;
+using CoinBot.Application.Abstractions.Settings;
 using CoinBot.Contracts.Common;
 using CoinBot.Web.Controllers;
 using CoinBot.Web.ViewModels.Bots;
@@ -40,10 +42,11 @@ public sealed class BotsControllerTests
                         null,
                         "N/A",
                         null,
+                        DateTime.UtcNow,
                         DateTime.UtcNow)
                 ])
         };
-        var controller = CreateController(managementService, new FakeBotPilotControlService(), "user-bot-01", "trace-bot-001");
+        var controller = CreateController(managementService, new FakeBotPilotControlService(), new FakeUserSettingsService(), "user-bot-01", "trace-bot-001");
 
         var result = await controller.Index(CancellationToken.None);
 
@@ -56,7 +59,7 @@ public sealed class BotsControllerTests
     [Fact]
     public async Task Create_Get_ReturnsEditorView()
     {
-        var controller = CreateController(CreateManagementService(), new FakeBotPilotControlService(), "user-bot-02", "trace-bot-002");
+        var controller = CreateController(CreateManagementService(), new FakeBotPilotControlService(), new FakeUserSettingsService(), "user-bot-02", "trace-bot-002");
 
         var result = await controller.Create(CancellationToken.None);
 
@@ -72,7 +75,7 @@ public sealed class BotsControllerTests
     {
         var managementService = CreateManagementService();
         var botId = managementService.EditBotId;
-        var controller = CreateController(managementService, new FakeBotPilotControlService(), "user-bot-03", "trace-bot-003");
+        var controller = CreateController(managementService, new FakeBotPilotControlService(), new FakeUserSettingsService(), "user-bot-03", "trace-bot-003");
 
         var result = await controller.Edit(botId, CancellationToken.None);
 
@@ -89,7 +92,7 @@ public sealed class BotsControllerTests
     {
         var managementService = CreateManagementService();
         managementService.CreateResult = new BotManagementSaveResult(Guid.NewGuid(), true, true, false, null, null);
-        var controller = CreateController(managementService, new FakeBotPilotControlService(), "user-bot-04", "trace-bot-004");
+        var controller = CreateController(managementService, new FakeBotPilotControlService(), new FakeUserSettingsService(), "user-bot-04", "trace-bot-004");
         var form = CreateInput();
 
         var result = await controller.Create(form, CancellationToken.None);
@@ -108,7 +111,7 @@ public sealed class BotsControllerTests
     public async Task Create_Post_ReturnsView_WhenModelStateIsInvalid()
     {
         var managementService = CreateManagementService();
-        var controller = CreateController(managementService, new FakeBotPilotControlService(), "user-bot-05", "trace-bot-005");
+        var controller = CreateController(managementService, new FakeBotPilotControlService(), new FakeUserSettingsService(), "user-bot-05", "trace-bot-005");
         controller.ModelState.AddModelError("Form.Name", "required");
 
         var result = await controller.Create(CreateInput(), CancellationToken.None);
@@ -126,7 +129,7 @@ public sealed class BotsControllerTests
     {
         var managementService = CreateManagementService();
         managementService.UpdateResult = new BotManagementSaveResult(managementService.EditBotId, true, true, true, null, null);
-        var controller = CreateController(managementService, new FakeBotPilotControlService(), "user-bot-06", "trace-bot-006");
+        var controller = CreateController(managementService, new FakeBotPilotControlService(), new FakeUserSettingsService(), "user-bot-06", "trace-bot-006");
         var form = CreateInput();
 
         var result = await controller.Edit(managementService.EditBotId, form, CancellationToken.None);
@@ -143,7 +146,7 @@ public sealed class BotsControllerTests
     public async Task Edit_Post_ReturnsNotFound_WhenBotIsMissing()
     {
         var managementService = new FakeBotManagementService();
-        var controller = CreateController(managementService, new FakeBotPilotControlService(), "user-bot-07", "trace-bot-007");
+        var controller = CreateController(managementService, new FakeBotPilotControlService(), new FakeUserSettingsService(), "user-bot-07", "trace-bot-007");
 
         var result = await controller.Edit(Guid.NewGuid(), CreateInput(), CancellationToken.None);
 
@@ -157,7 +160,7 @@ public sealed class BotsControllerTests
         {
             Result = new BotPilotToggleResult(Guid.NewGuid(), true, true, null, null)
         };
-        var controller = CreateController(CreateManagementService(), service, "user-bot-08", "trace-bot-008");
+        var controller = CreateController(CreateManagementService(), service, new FakeUserSettingsService(), "user-bot-08", "trace-bot-008");
         var botId = Guid.NewGuid();
 
         var result = await controller.SetEnabled(botId, true, CancellationToken.None);
@@ -243,10 +246,11 @@ public sealed class BotsControllerTests
     private static BotsController CreateController(
         FakeBotManagementService managementService,
         FakeBotPilotControlService pilotControlService,
+        FakeUserSettingsService userSettingsService,
         string userId,
         string traceIdentifier)
     {
-        var controller = new BotsController(managementService, pilotControlService);
+        var controller = new BotsController(managementService, pilotControlService, userSettingsService);
         var httpContext = new DefaultHttpContext();
         httpContext.TraceIdentifier = traceIdentifier;
         httpContext.User = new ClaimsPrincipal(
@@ -328,6 +332,33 @@ public sealed class BotsControllerTests
         {
             Requests.Add(new Request(ownerUserId, botId, isEnabled, actor, correlationId));
             return Task.FromResult(Result);
+        }
+    }
+
+    private sealed class FakeUserSettingsService : IUserSettingsService
+    {
+        public UserSettingsSnapshot Snapshot { get; set; } = new(
+            "UTC",
+            "UTC",
+            "UTC",
+            [new UserTimeZoneOptionSnapshot("UTC", "UTC")],
+            new BinanceTimeSyncSnapshot(
+                DateTime.UtcNow,
+                DateTime.UtcNow,
+                0,
+                10,
+                DateTime.UtcNow,
+                "Synchronized",
+                null));
+
+        public Task<UserSettingsSnapshot?> GetAsync(string userId, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<UserSettingsSnapshot?>(Snapshot);
+        }
+
+        public Task<UserSettingsSaveResult> SaveAsync(string userId, UserSettingsSaveCommand command, string actor, string? correlationId = null, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
         }
     }
 

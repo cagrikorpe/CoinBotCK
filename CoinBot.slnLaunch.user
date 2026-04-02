@@ -1,0 +1,19 @@
+[
+  {
+    "Name": "New Profile",
+    "Projects": [
+      {
+        "Path": "src\\CoinBot.Web\\CoinBot.Web.csproj",
+        "Action": "Start"
+      },
+      {
+        "Path": "src\\CoinBot.Worker\\CoinBot.Worker.csproj",
+        "Action": "Start"
+      },
+      {
+        "Path": "src\\CoinBot.Api\\CoinBot.Api.csproj",
+        "Action": "Start"
+      }
+    ]
+  }
+]

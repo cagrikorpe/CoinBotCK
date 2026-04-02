@@ -13,6 +13,9 @@ public sealed record DashboardViewModel(
     IReadOnlyCollection<DashboardMarketTickerViewModel> MarketTickers,
     string MarketDataHubPath,
     string OperationsHubPath,
+    string DisplayTimeZoneId,
+    string DisplayTimeZoneJavaScriptId,
+    string DisplayTimeZoneLabel,
     List<KpiItemViewModel> Kpis,
     OperationsSummaryViewModel OperationsSummary,
     List<AiFeedItemViewModel> AiFeed,
@@ -40,7 +43,9 @@ public record OperationsSummaryViewModel(
     int OpenCircuitBreakerCount,
     string DailyLossSummary,
     string PositionLimitSummary,
-    string CooldownSummary);
+    string CooldownSummary,
+    string DriftSummary,
+    string DriftReason);
 
 // 11 parametreli tam uyumlu model
 public record OpenPositionViewModel(

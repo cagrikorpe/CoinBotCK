@@ -59,6 +59,7 @@
                                         <td>
                                             <div class="font-weight-bolder">@bot.Name</div>
                                             <div class="text-muted small">Open orders: @bot.OpenOrderCount | Open positions: @bot.OpenPositionCount</div>
+                                            <div class="text-muted small">Updated: @bot.UpdatedAtLabel</div>
                                         </td>
                                         <td>
                                             <div class="font-weight-bolder">@bot.StrategyDisplayName</div>
@@ -86,6 +87,7 @@
                                         <td>
                                             <div class="font-weight-bolder">@bot.LastExecutionState</div>
                                             <div class="text-muted small">@(string.IsNullOrWhiteSpace(bot.LastExecutionFailureCode) ? "Failure yok" : bot.LastExecutionFailureCode)</div>
+                                            <div class="text-muted small">Last execution: @bot.LastExecutionAtLabel</div>
                                         </td>
                                         <td class="text-right">
                                             <div class="d-inline-flex align-items-center">

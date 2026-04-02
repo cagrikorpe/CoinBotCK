@@ -9,6 +9,7 @@ using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.Infrastructure.Policy;
+using CoinBot.IntegrationTests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -110,14 +111,7 @@ public sealed class MarketAnomalyIntegrationTests
 
     private static string ResolveConnectionString(string databaseName)
     {
-        var configuredConnectionString = Environment.GetEnvironmentVariable("COINBOT_INTEGRATION_SQLSERVER_CONNECTION_STRING");
-
-        if (!string.IsNullOrWhiteSpace(configuredConnectionString))
-        {
-            return configuredConnectionString.Replace("{Database}", databaseName, StringComparison.OrdinalIgnoreCase);
-        }
-
-        return $"Server=(localdb)\\MSSQLLocalDB;Database={databaseName};Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=True";
+        return SqlServerIntegrationDatabase.ResolveConnectionString(databaseName);
     }
 
     private static void SeedCandles(

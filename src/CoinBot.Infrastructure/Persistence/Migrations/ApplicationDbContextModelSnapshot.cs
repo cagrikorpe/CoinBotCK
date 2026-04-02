@@ -2902,11 +2902,11 @@ namespace CoinBot.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("CreatedDate")
                         .HasColumnType("datetime2");
 
-                    b.Property<bool>("IsDeleted")
-                        .HasColumnType("bit");
-
                     b.Property<Guid?>("ExchangeAccountId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
 
                     b.Property<bool>("IsEnabled")
                         .HasColumnType("bit");
@@ -2939,14 +2939,14 @@ namespace CoinBot.Infrastructure.Persistence.Migrations
                         .HasPrecision(38, 18)
                         .HasColumnType("decimal(38,18)");
 
-                    b.Property<string>("Symbol")
-                        .HasMaxLength(32)
-                        .HasColumnType("nvarchar(32)");
-
                     b.Property<string>("StrategyKey")
                         .IsRequired()
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("Symbol")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
 
                     b.Property<string>("TradingModeApprovalReference")
                         .HasMaxLength(128)
@@ -3452,6 +3452,10 @@ namespace CoinBot.Infrastructure.Persistence.Migrations
                     b.Property<string>("PreferredMfaProvider")
                         .HasMaxLength(32)
                         .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("PreferredTimeZoneId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
 
                     b.Property<string>("SecurityStamp")
                         .HasColumnType("nvarchar(max)");

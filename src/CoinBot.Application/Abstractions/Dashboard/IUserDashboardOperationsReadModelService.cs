@@ -28,4 +28,6 @@ public sealed record UserDashboardOperationsSummarySnapshot(
     int MaxOpenPositions,
     int ActiveBotCooldownCount,
     int ActiveSymbolCooldownCount,
-    DateTime? LastExecutionAtUtc);
+    DateTime? LastExecutionAtUtc,
+    string DriftSummary,
+    string DriftReason);

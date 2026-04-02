@@ -3,6 +3,7 @@ using System.Security.Claims;
 using CoinBot.Application.Abstractions.Dashboard;
 using CoinBot.Application.Abstractions.ExchangeCredentials;
 using CoinBot.Application.Abstractions.MarketData;
+using CoinBot.Application.Abstractions.Settings;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Web.Hubs;
 using Microsoft.AspNetCore.Mvc;
@@ -21,6 +22,7 @@ public class HomeController(
     IUserExchangeCommandCenterService userExchangeCommandCenterService,
     IUserDashboardPortfolioReadModelService userDashboardPortfolioReadModelService,
     IUserDashboardOperationsReadModelService userDashboardOperationsReadModelService,
+    IUserSettingsService userSettingsService,
     IMarketDataService marketDataService,
     ISharedSymbolRegistry symbolRegistry,
     IOptions<BinanceMarketDataOptions> marketDataOptions,
@@ -33,12 +35,18 @@ public class HomeController(
         var userId = HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
         UserDashboardPortfolioSnapshot? portfolioSnapshot = null;
         OperationsSummaryViewModel operationsSummary = BuildAnonymousOperationsSummary();
+        var displayTimeZoneInfo = TimeZoneInfo.Utc;
+        var displayTimeZoneJavaScriptId = "UTC";
+
         if (!string.IsNullOrWhiteSpace(userId))
         {
             ViewData["DashboardExchangeSnapshot"] = await userExchangeCommandCenterService.GetSnapshotAsync(userId, cancellationToken);
             portfolioSnapshot = await userDashboardPortfolioReadModelService.GetSnapshotAsync(userId, cancellationToken);
             operationsSummary = MapOperationsSummary(
                 await userDashboardOperationsReadModelService.GetSnapshotAsync(userId, cancellationToken));
+            var settingsSnapshot = await userSettingsService.GetAsync(userId, cancellationToken);
+            displayTimeZoneInfo = ResolveTimeZone(settingsSnapshot?.PreferredTimeZoneId);
+            displayTimeZoneJavaScriptId = settingsSnapshot?.PreferredTimeZoneJavaScriptId ?? "UTC";
             logger.LogInformation(
                 "Dashboard portfolio snapshot loaded. UserKey={UserKey} ActiveAccounts={ActiveAccounts} Balances={Balances} Positions={Positions} SyncStatus={SyncStatus}.",
                 CreateUserKey(userId),
@@ -47,6 +55,8 @@ public class HomeController(
                 portfolioSnapshot.Positions.Count,
                 portfolioSnapshot.SyncStatusLabel);
         }
+
+        ViewData["DashboardDisplayTimeZone"] = displayTimeZoneInfo;
 
         // 1. Market Tickers (Canlı Fiyatlar)
         var symbols = ResolveDashboardSymbols(
@@ -74,9 +84,19 @@ public class HomeController(
         };
 
         // 4. Açık Pozisyonlar (İşlem Takip)
-        var positions = await BuildOpenPositionsAsync(portfolioSnapshot, marketDataService, cancellationToken);
+        var positions = await BuildOpenPositionsAsync(portfolioSnapshot, marketDataService, displayTimeZoneInfo, cancellationToken);
         
-        return View(new DashboardViewModel(tickers, "/hubs/market-data", "/hubs/operations", kpis, operationsSummary, aiFeed, positions));
+        return View(new DashboardViewModel(
+            tickers,
+            "/hubs/market-data",
+            "/hubs/operations",
+            displayTimeZoneInfo.Id,
+            displayTimeZoneJavaScriptId,
+            displayTimeZoneInfo.DisplayName,
+            kpis,
+            operationsSummary,
+            aiFeed,
+            positions));
     }
 
     [HttpGet]
@@ -210,6 +230,7 @@ public class HomeController(
     private async Task<List<OpenPositionViewModel>> BuildOpenPositionsAsync(
         UserDashboardPortfolioSnapshot? snapshot,
         IMarketDataService marketDataService,
+        TimeZoneInfo displayTimeZoneInfo,
         CancellationToken cancellationToken)
     {
         if (snapshot is null || snapshot.Positions.Count == 0)
@@ -234,7 +255,7 @@ public class HomeController(
                 position.UnrealizedProfit >= 0 ? "positive" : "negative",
                 NormalizeMarginLabel(position.MarginType),
                 position.MarginType.Equals("isolated", StringComparison.OrdinalIgnoreCase) ? "warning" : "success",
-                BuildRelativeLabel(position.SyncedAtUtc)));
+                FormatTimestamp(position.SyncedAtUtc, displayTimeZoneInfo)));
         }
 
         return rows;
@@ -262,21 +283,32 @@ public class HomeController(
             : "Cross";
     }
 
-    private static string BuildRelativeLabel(DateTime timestampUtc)
+    private static string FormatTimestamp(DateTime timestampUtc, TimeZoneInfo timeZoneInfo)
     {
-        var age = DateTime.UtcNow - timestampUtc;
+        var normalizedTimestamp = timestampUtc.Kind == DateTimeKind.Utc
+            ? timestampUtc
+            : DateTime.SpecifyKind(timestampUtc, DateTimeKind.Utc);
+        var localTimestamp = TimeZoneInfo.ConvertTimeFromUtc(normalizedTimestamp, timeZoneInfo);
+        return $"{localTimestamp:yyyy-MM-dd HH:mm:ss} {timeZoneInfo.StandardName}";
+    }
 
-        if (age.TotalMinutes < 1)
+    private static TimeZoneInfo ResolveTimeZone(string? timeZoneId)
+    {
+        if (!string.IsNullOrWhiteSpace(timeZoneId))
         {
-            return "az once";
+            try
+            {
+                return TimeZoneInfo.FindSystemTimeZoneById(timeZoneId.Trim());
+            }
+            catch (TimeZoneNotFoundException)
+            {
+            }
+            catch (InvalidTimeZoneException)
+            {
+            }
         }
 
-        if (age.TotalHours < 1)
-        {
-            return $"{Math.Max(1, (int)Math.Floor(age.TotalMinutes))} dk once";
-        }
-
-        return $"{Math.Max(1, (int)Math.Floor(age.TotalHours))} sa once";
+        return TimeZoneInfo.Utc;
     }
 
     private static string CreateUserKey(string userId)
@@ -305,7 +337,9 @@ public class HomeController(
             0,
             "Risk profili okunamadi",
             "Pozisyon limiti bekleniyor",
-            "Cooldown bilgisi yok");
+            "Cooldown bilgisi yok",
+            "Henüz drift snapshot yok",
+            "Clock drift summary monitoring snapshot geldikten sonra görünür.");
     }
 
     private static OperationsSummaryViewModel MapOperationsSummary(UserDashboardOperationsSummarySnapshot snapshot)
@@ -337,6 +371,8 @@ public class HomeController(
             snapshot.OpenCircuitBreakerCount,
             dailyLossSummary,
             positionLimitSummary,
-            cooldownSummary);
+            cooldownSummary,
+            snapshot.DriftSummary,
+            snapshot.DriftReason);
     }
 }

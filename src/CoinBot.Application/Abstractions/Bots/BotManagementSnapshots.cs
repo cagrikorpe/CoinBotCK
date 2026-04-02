@@ -24,6 +24,7 @@ public sealed record BotManagementBotSnapshot(
     string? LastJobErrorCode,
     string? LastExecutionState,
     string? LastExecutionFailureCode,
+    DateTime? LastExecutionUpdatedAtUtc,
     DateTime UpdatedAtUtc);
 
 public sealed record BotManagementEditorSnapshot(

@@ -1,8 +1,10 @@
 using System.Runtime.CompilerServices;
 using System.Security.Claims;
 using CoinBot.Application.Abstractions.Dashboard;
+using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Application.Abstractions.ExchangeCredentials;
 using CoinBot.Application.Abstractions.MarketData;
+using CoinBot.Application.Abstractions.Settings;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Web.Controllers;
@@ -24,10 +26,12 @@ public sealed class HomeControllerTests
         var exchangeService = new FakeUserExchangeCommandCenterService();
         var dashboardService = new FakeUserDashboardPortfolioReadModelService();
         var operationsService = new FakeUserDashboardOperationsReadModelService();
+        var settingsService = new FakeUserSettingsService();
         var controller = new HomeController(
             exchangeService,
             dashboardService,
             operationsService,
+            settingsService,
             marketDataService,
             symbolRegistry,
             Options.Create(new BinanceMarketDataOptions
@@ -55,6 +59,7 @@ public sealed class HomeControllerTests
         Assert.Same(exchangeService.Snapshot, controller.ViewData["DashboardExchangeSnapshot"]);
         Assert.Equal("Cuzdan bakiyesi", model.Kpis[0].Label);
         Assert.Equal(2, model.OperationsSummary.EnabledBotCount);
+        Assert.Contains("Heartbeat drift", model.OperationsSummary.DriftSummary, StringComparison.Ordinal);
         Assert.Single(model.OpenPositions);
         Assert.Equal("XRPUSDT", model.OpenPositions[0].Symbol);
         Assert.Equal(64000.50m, btcTicker.Price);
@@ -71,6 +76,7 @@ public sealed class HomeControllerTests
             new FakeUserExchangeCommandCenterService(),
             new FakeUserDashboardPortfolioReadModelService(),
             new FakeUserDashboardOperationsReadModelService(),
+            new FakeUserSettingsService(),
             new FakeMarketDataService(),
             new FakeSharedSymbolRegistry(),
             Options.Create(new BinanceMarketDataOptions()),
@@ -254,11 +260,40 @@ public sealed class HomeControllerTests
             3,
             1,
             1,
-            At(0));
+            At(0),
+            "Heartbeat drift 2234 / 2000 ms • Server probe 80 ms • Last probe 09:00:00 UTC",
+            "Execution block kaynağı market-data heartbeat. Server-time refresh signed REST offset'ini yeniler.");
 
         public Task<UserDashboardOperationsSummarySnapshot> GetSnapshotAsync(string userId, CancellationToken cancellationToken = default)
         {
             return Task.FromResult(Snapshot);
+        }
+    }
+
+    private sealed class FakeUserSettingsService : IUserSettingsService
+    {
+        public UserSettingsSnapshot Snapshot { get; } = new(
+            "UTC",
+            "UTC",
+            "UTC",
+            [new UserTimeZoneOptionSnapshot("UTC", "UTC")],
+            new BinanceTimeSyncSnapshot(
+                At(0),
+                At(0),
+                0,
+                10,
+                At(0),
+                "Synchronized",
+                null));
+
+        public Task<UserSettingsSnapshot?> GetAsync(string userId, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<UserSettingsSnapshot?>(Snapshot);
+        }
+
+        public Task<UserSettingsSaveResult> SaveAsync(string userId, UserSettingsSaveCommand command, string actor, string? correlationId = null, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
         }
     }
 }

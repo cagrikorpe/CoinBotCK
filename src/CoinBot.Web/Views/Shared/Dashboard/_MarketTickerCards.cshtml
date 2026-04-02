@@ -1,5 +1,8 @@
 @model IReadOnlyCollection<CoinBot.Web.ViewModels.Home.DashboardMarketTickerViewModel>
 @using System.Globalization
+@{
+    var displayTimeZone = ViewData["DashboardDisplayTimeZone"] as TimeZoneInfo ?? TimeZoneInfo.Utc;
+}
 
 <div class="row row-cols-1 row-cols-md-2 row-cols-xl-3">
     @foreach (var item in Model)
@@ -14,7 +17,7 @@
             ? "cb-badge-success"
             : "cb-badge-warning";
         var freshnessText = item.ReceivedAtUtc.HasValue
-            ? item.ReceivedAtUtc.Value.ToString("HH:mm:ss 'UTC'", CultureInfo.InvariantCulture)
+            ? $"{TimeZoneInfo.ConvertTimeFromUtc(item.ReceivedAtUtc.Value, displayTimeZone):HH:mm:ss} {displayTimeZone.StandardName}"
             : "Henüz veri yok";
     <div class="col d-flex">
         <div class="card card-custom gutter-b cb-card cb-stat-card cb-dashboard-kpi-card w-100" data-cb-market-card data-cb-symbol="@item.Symbol">

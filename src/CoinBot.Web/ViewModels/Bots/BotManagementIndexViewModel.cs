@@ -29,4 +29,6 @@ public sealed record BotManagementRowViewModel(
     string LastJobStatus,
     string? LastJobErrorCode,
     string LastExecutionState,
-    string? LastExecutionFailureCode);
+    string? LastExecutionFailureCode,
+    string UpdatedAtLabel,
+    string LastExecutionAtLabel);

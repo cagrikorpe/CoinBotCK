@@ -46,6 +46,11 @@
                 <div class="font-size-sm text-muted text-uppercase">Cooldown</div>
                 <div class="font-weight-bolder" data-cb-ops-cooldown>@Model.OperationsSummary.CooldownSummary</div>
             </div>
+            <div class="col-md-12 mt-4">
+                <div class="font-size-sm text-muted text-uppercase">Drift / sync</div>
+                <div class="font-weight-bolder" data-cb-ops-drift-summary>@Model.OperationsSummary.DriftSummary</div>
+                <div class="text-muted" data-cb-ops-drift-reason>@Model.OperationsSummary.DriftReason</div>
+            </div>
         </div>
     </div>
 </div>

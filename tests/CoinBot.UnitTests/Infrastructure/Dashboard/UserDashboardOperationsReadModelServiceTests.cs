@@ -1,6 +1,7 @@
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Dashboard;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -145,6 +146,33 @@ public sealed class UserDashboardOperationsReadModelServiceTests
                 LastErrorCode = "ListenKeyExpired"
             });
 
+        dbContext.HealthSnapshots.Add(new HealthSnapshot
+        {
+            Id = Guid.NewGuid(),
+            SnapshotKey = "clock-drift-monitor",
+            SentinelName = "ClockDriftMonitor",
+            DisplayName = "Clock Drift Monitor",
+            HealthState = MonitoringHealthState.Healthy,
+            FreshnessTier = MonitoringFreshnessTier.Hot,
+            CircuitBreakerState = CircuitBreakerStateCode.Closed,
+            LastUpdatedAtUtc = now,
+            ObservedAtUtc = now,
+            Detail = "ClockDriftMs=80; LocalClockUtc=2026-04-02T14:28:03.1196593Z; ExchangeServerTimeUtc=2026-04-02T14:28:03.2000000Z; Probe=Succeeded"
+        });
+
+        dbContext.DegradedModeStates.Add(new DegradedModeState
+        {
+            Id = Guid.NewGuid(),
+            StateCode = DegradedModeStateCode.Stopped,
+            ReasonCode = DegradedModeReasonCode.ClockDriftExceeded,
+            SignalFlowBlocked = true,
+            ExecutionFlowBlocked = true,
+            LatestDataTimestampAtUtc = now.AddSeconds(-3),
+            LatestHeartbeatReceivedAtUtc = now,
+            LatestClockDriftMilliseconds = 2234,
+            LastStateChangedAtUtc = now
+        });
+
         dbContext.DependencyCircuitBreakerStates.Add(new DependencyCircuitBreakerState
         {
             Id = Guid.NewGuid(),
@@ -233,6 +261,12 @@ public sealed class UserDashboardOperationsReadModelServiceTests
                 PerBotCooldownSeconds = 120,
                 PerSymbolCooldownSeconds = 60,
                 MaxOpenPositionsPerUser = 3
+            }),
+            Options.Create(new DataLatencyGuardOptions
+            {
+                ClockDriftThresholdSeconds = 2,
+                StaleDataThresholdSeconds = 3,
+                StopDataThresholdSeconds = 6
             }));
 
         var snapshot = await service.GetSnapshotAsync(ownerUserId, CancellationToken.None);
@@ -258,6 +292,8 @@ public sealed class UserDashboardOperationsReadModelServiceTests
         Assert.Equal(2, snapshot.ActiveBotCooldownCount);
         Assert.Equal(2, snapshot.ActiveSymbolCooldownCount);
         Assert.NotNull(snapshot.LastExecutionAtUtc);
+        Assert.Contains("2234 / 2000 ms", snapshot.DriftSummary, StringComparison.Ordinal);
+        Assert.Contains("market-data heartbeat", snapshot.DriftReason, StringComparison.OrdinalIgnoreCase);
     }
 
     private static ApplicationDbContext CreateDbContext()

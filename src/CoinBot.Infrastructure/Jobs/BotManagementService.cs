@@ -143,6 +143,7 @@ public sealed class BotManagementService(
                     state?.LastErrorCode,
                     order?.State.ToString(),
                     order?.FailureCode,
+                    order?.UpdatedDate,
                     bot.UpdatedDate);
             })
             .ToArray();

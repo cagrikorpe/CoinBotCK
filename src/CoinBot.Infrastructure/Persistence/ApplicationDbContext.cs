@@ -184,6 +184,9 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
     private static void ConfigureApplicationUsers(EntityTypeBuilder<ApplicationUser> builder)
     {
+        builder.Property(user => user.PreferredTimeZoneId)
+            .HasMaxLength(128);
+
         builder.Property(user => user.PreferredMfaProvider)
             .HasMaxLength(32);
 

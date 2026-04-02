@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Infrastructure.Exchange;
 using CoinBot.Infrastructure.MarketData;
 using Microsoft.Extensions.Options;
@@ -13,7 +14,7 @@ public sealed class BinanceCredentialProbeClientTests
     {
         using var spotHandler = new StubHttpMessageHandler(HttpStatusCode.BadRequest, """{"code":-2015,"msg":"Invalid API-key, IP, or permissions for action."}""");
         using var futuresHandler = new StubHttpMessageHandler(HttpStatusCode.BadRequest, """{"code":-2015,"msg":"Invalid API-key, IP, or permissions for action."}""");
-        var client = CreateClient(spotHandler, futuresHandler);
+        var client = CreateClient(spotHandler, futuresHandler, new FakeTimeSyncService());
 
         var snapshot = await client.ProbeAsync("api-key", "api-secret");
 
@@ -26,7 +27,7 @@ public sealed class BinanceCredentialProbeClientTests
     {
         using var spotHandler = new StubHttpMessageHandler(HttpStatusCode.BadRequest, """{"code":-2015,"msg":"This request is not in the IP whitelist."}""");
         using var futuresHandler = new StubHttpMessageHandler(HttpStatusCode.BadRequest, """{"code":-2015,"msg":"This request is not in the IP whitelist."}""");
-        var client = CreateClient(spotHandler, futuresHandler);
+        var client = CreateClient(spotHandler, futuresHandler, new FakeTimeSyncService());
 
         var snapshot = await client.ProbeAsync("api-key", "api-secret");
 
@@ -34,7 +35,25 @@ public sealed class BinanceCredentialProbeClientTests
         Assert.Equal("Binance IP kısıtı nedeniyle doğrulamayı reddetti.", snapshot.SafeFailureReason);
     }
 
-    private static BinanceCredentialProbeClient CreateClient(HttpMessageHandler spotHandler, HttpMessageHandler futuresHandler)
+    [Fact]
+    public async Task ProbeAsync_RefreshesTimeSync_WhenTimestampSkewIsDetected()
+    {
+        using var spotHandler = new StubHttpMessageHandler(HttpStatusCode.BadRequest, """{"code":-2015,"msg":"Invalid API-key, IP, or permissions for action."}""");
+        using var futuresHandler = new StubHttpMessageHandler(HttpStatusCode.BadRequest, """{"code":-1021,"msg":"Timestamp for this request is outside of the recvWindow."}""");
+        var timeSyncService = new FakeTimeSyncService();
+        var client = CreateClient(spotHandler, futuresHandler, timeSyncService);
+
+        var snapshot = await client.ProbeAsync("api-key", "api-secret");
+
+        Assert.True(snapshot.HasTimestampSkew);
+        Assert.Equal(1, timeSyncService.ForcedRefreshCalls);
+        Assert.False(string.IsNullOrWhiteSpace(snapshot.SafeFailureReason));
+    }
+
+    private static BinanceCredentialProbeClient CreateClient(
+        HttpMessageHandler spotHandler,
+        HttpMessageHandler futuresHandler,
+        IBinanceTimeSyncService timeSyncService)
     {
         return new BinanceCredentialProbeClient(
             new StubHttpClientFactory(
@@ -50,7 +69,8 @@ public sealed class BinanceCredentialProbeClientTests
                 RestBaseUrl = "https://testnet.binancefuture.com",
                 WebSocketBaseUrl = "wss://fstream.binancefuture.com"
             }),
-            TimeProvider.System);
+            TimeProvider.System,
+            timeSyncService);
     }
 
     private sealed class StubHttpClientFactory(HttpClient spotClient, HttpClient futuresClient) : IHttpClientFactory
@@ -71,6 +91,33 @@ public sealed class BinanceCredentialProbeClientTests
             {
                 Content = new StringContent(responseBody, Encoding.UTF8, "application/json")
             });
+        }
+    }
+
+    private sealed class FakeTimeSyncService : IBinanceTimeSyncService
+    {
+        public int ForcedRefreshCalls { get; private set; }
+
+        public Task<BinanceTimeSyncSnapshot> GetSnapshotAsync(bool forceRefresh = false, CancellationToken cancellationToken = default)
+        {
+            if (forceRefresh)
+            {
+                ForcedRefreshCalls++;
+            }
+
+            return Task.FromResult(new BinanceTimeSyncSnapshot(
+                DateTime.UtcNow,
+                DateTime.UtcNow,
+                0,
+                12,
+                DateTime.UtcNow,
+                "Synchronized",
+                null));
+        }
+
+        public Task<long> GetCurrentTimestampMillisecondsAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(1_710_000_000_000L);
         }
     }
 }

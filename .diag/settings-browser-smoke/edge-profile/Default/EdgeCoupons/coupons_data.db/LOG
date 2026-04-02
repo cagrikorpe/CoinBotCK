@@ -1,0 +1,5 @@
+2026/04/02-18:14:29.894 768c Creating DB D:\CkBot\Code\CoinBot\.diag\settings-browser-smoke\edge-profile\Default\EdgeCoupons/coupons_data.db since it was missing.
+2026/04/02-18:14:29.899 768c Reusing MANIFEST D:\CkBot\Code\CoinBot\.diag\settings-browser-smoke\edge-profile\Default\EdgeCoupons/coupons_data.db/MANIFEST-000001
+2026/04/02-18:14:30.094 9494 Level-0 table #5: started
+2026/04/02-18:14:30.098 9494 Level-0 table #5: 681977 bytes OK
+2026/04/02-18:14:30.100 9494 Delete type=0 #3

@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using CoinBot.Application.Abstractions.Bots;
+using CoinBot.Application.Abstractions.Settings;
 using CoinBot.Contracts.Common;
 using CoinBot.Web.ViewModels.Bots;
 using Microsoft.AspNetCore.Authorization;
@@ -10,7 +11,8 @@ namespace CoinBot.Web.Controllers;
 [Authorize(Policy = ApplicationPolicies.TradeOperations)]
 public class BotsController(
     IBotManagementService botManagementService,
-    IBotPilotControlService botPilotControlService) : Controller
+    IBotPilotControlService botPilotControlService,
+    IUserSettingsService userSettingsService) : Controller
 {
     public async Task<IActionResult> Index(CancellationToken cancellationToken)
     {
@@ -22,7 +24,8 @@ public class BotsController(
         }
 
         var snapshot = await botManagementService.GetPageAsync(userId, cancellationToken);
-        return View(MapPage(snapshot));
+        var settingsSnapshot = await userSettingsService.GetAsync(userId, cancellationToken);
+        return View(MapPage(snapshot, ResolveTimeZone(settingsSnapshot?.PreferredTimeZoneId)));
     }
 
     [HttpGet("Bots/Create")]
@@ -197,7 +200,7 @@ public class BotsController(
             form.IsEnabled);
     }
 
-    private static BotManagementIndexViewModel MapPage(BotManagementPageSnapshot snapshot)
+    private static BotManagementIndexViewModel MapPage(BotManagementPageSnapshot snapshot, TimeZoneInfo timeZoneInfo)
     {
         var rows = snapshot.Bots
             .Select(item => new BotManagementRowViewModel(
@@ -219,7 +222,9 @@ public class BotsController(
                 item.LastJobStatus ?? "Pending",
                 item.LastJobErrorCode,
                 item.LastExecutionState ?? "N/A",
-                item.LastExecutionFailureCode))
+                item.LastExecutionFailureCode,
+                FormatTimestamp(item.UpdatedAtUtc, timeZoneInfo),
+                FormatTimestamp(item.LastExecutionUpdatedAtUtc, timeZoneInfo)))
             .ToArray();
 
         return new BotManagementIndexViewModel(rows);
@@ -261,5 +266,38 @@ public class BotsController(
                     option.ExchangeAccountId.ToString(),
                     $"{option.DisplayName} - {(option.IsActive ? "Active" : "Inactive")} / {(option.IsWritable ? "Writable" : "ReadOnly")}"))
                 .ToArray());
+    }
+
+    private static TimeZoneInfo ResolveTimeZone(string? timeZoneId)
+    {
+        if (!string.IsNullOrWhiteSpace(timeZoneId))
+        {
+            try
+            {
+                return TimeZoneInfo.FindSystemTimeZoneById(timeZoneId.Trim());
+            }
+            catch (TimeZoneNotFoundException)
+            {
+            }
+            catch (InvalidTimeZoneException)
+            {
+            }
+        }
+
+        return TimeZoneInfo.Utc;
+    }
+
+    private static string FormatTimestamp(DateTime? utcTimestamp, TimeZoneInfo timeZoneInfo)
+    {
+        if (!utcTimestamp.HasValue)
+        {
+            return "Henüz yok";
+        }
+
+        var normalizedUtcTimestamp = utcTimestamp.Value.Kind == DateTimeKind.Utc
+            ? utcTimestamp.Value
+            : DateTime.SpecifyKind(utcTimestamp.Value, DateTimeKind.Utc);
+        var localTimestamp = TimeZoneInfo.ConvertTimeFromUtc(normalizedUtcTimestamp, timeZoneInfo);
+        return $"{localTimestamp:yyyy-MM-dd HH:mm:ss} {timeZoneInfo.StandardName}";
     }
 }

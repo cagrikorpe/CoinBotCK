@@ -1,0 +1,36 @@
+{
+  "baseUrl": "http://127.0.0.1:51449",
+  "anonymousLocation": "http://127.0.0.1:51449/Auth/Login?ReturnUrl=%2FSettings",
+  "timeZoneOptionCount": 141,
+  "initialPreferredTimeZoneId": "UTC",
+  "refreshButtonVisible": true,
+  "guardThresholdText": "2000 ms",
+  "guardReasonText": "Market-data heartbeat henüz güvenli kabul edilecek kadar gelmedi.",
+  "refreshMessageVisible": true,
+  "refreshMessageText": "Binance server time sync yenilendi. Son probe drift 310 ms. Market heartbeat drift guard ayrı değerlendirilir.",
+  "refreshLastSyncText": "2026-04-02 16:14:30 Coordinated Universal Time",
+  "refreshStatusText": "Cached",
+  "savedPreferredTimeZoneId": "Dateline Standard Time",
+  "reloadedPreferredTimeZoneId": "Dateline Standard Time",
+  "saveSuccessVisible": true,
+  "saveSuccessText": "Saat dilimi ayarı kaydedildi.",
+  "antiforgeryStatus": 400,
+  "invalidErrorVisible": true,
+  "invalidErrorText": "Seçilen saat dilimi sistem tarafından tanınmadı.",
+  "dashboardDriftSummaryText": "Server probe 157 / 2000 ms • Guard Stopped • Last probe 14:14:26 UTC",
+  "dashboardDriftReasonText": "Market-data heartbeat henüz güvenli kabul edilecek kadar güncel değil. Server-time probe sağlıklı olsa bile execution açılmaz.",
+  "screenshots": {
+    "anonymous": "D:\\CkBot\\Code\\CoinBot\\.diag\\settings-browser-smoke\\settings-anonymous.png",
+    "settings": "D:\\CkBot\\Code\\CoinBot\\.diag\\settings-browser-smoke\\settings-page.png",
+    "refresh": "D:\\CkBot\\Code\\CoinBot\\.diag\\settings-browser-smoke\\settings-refresh.png",
+    "saved": "D:\\CkBot\\Code\\CoinBot\\.diag\\settings-browser-smoke\\settings-saved.png",
+    "invalid": "D:\\CkBot\\Code\\CoinBot\\.diag\\settings-browser-smoke\\settings-invalid.png",
+    "dashboard": "D:\\CkBot\\Code\\CoinBot\\.diag\\settings-browser-smoke\\dashboard-drift-summary.png"
+  },
+  "logs": {
+    "webStdOut": "D:\\CkBot\\Code\\CoinBot\\.diag\\settings-browser-smoke\\web.stdout.log",
+    "webStdErr": "D:\\CkBot\\Code\\CoinBot\\.diag\\settings-browser-smoke\\web.stderr.log",
+    "browserStdOut": "D:\\CkBot\\Code\\CoinBot\\.diag\\settings-browser-smoke\\edge.stdout.log",
+    "browserStdErr": "D:\\CkBot\\Code\\CoinBot\\.diag\\settings-browser-smoke\\edge.stderr.log"
+  }
+}

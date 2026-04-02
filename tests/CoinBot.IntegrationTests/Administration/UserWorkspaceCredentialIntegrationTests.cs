@@ -12,6 +12,7 @@ using CoinBot.Infrastructure.Identity;
 using CoinBot.Infrastructure.Monitoring;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
+using CoinBot.IntegrationTests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
@@ -626,14 +627,7 @@ public sealed class UserWorkspaceCredentialIntegrationTests
 
     private static string ResolveConnectionString(string databaseName)
     {
-        var configuredConnectionString = Environment.GetEnvironmentVariable("COINBOT_INTEGRATION_SQLSERVER_CONNECTION_STRING");
-
-        if (!string.IsNullOrWhiteSpace(configuredConnectionString))
-        {
-            return configuredConnectionString.Replace("{Database}", databaseName, StringComparison.OrdinalIgnoreCase);
-        }
-
-        return $"Server=(localdb)\\MSSQLLocalDB;Database={databaseName};Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=True";
+        return SqlServerIntegrationDatabase.ResolveConnectionString(databaseName);
     }
 
     private const string PrimaryKeyBase64 = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=";
