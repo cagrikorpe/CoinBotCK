@@ -24,6 +24,7 @@ public sealed class BotWorkerJobProcessor(
     IBinanceHistoricalKlineClient historicalKlineClient,
     IStrategySignalService strategySignalService,
     IExecutionEngine executionEngine,
+    IDataLatencyCircuitBreaker dataLatencyCircuitBreaker,
     ICorrelationContextAccessor correlationContextAccessor,
     IOptions<BotExecutionPilotOptions> options,
     IHostEnvironment hostEnvironment,
@@ -447,6 +448,12 @@ public sealed class BotWorkerJobProcessor(
             historicalCandles,
             cancellationToken);
 
+        await RecordHistoricalMarketDataHeartbeatAsync(
+            symbol,
+            timeframe,
+            historicalCandles,
+            cancellationToken);
+
         var historicalReferencePrice = historicalCandles
             .OrderByDescending(snapshot => snapshot.CloseTimeUtc)
             .Select(snapshot => (decimal?)snapshot.ClosePrice)
@@ -457,6 +464,88 @@ public sealed class BotWorkerJobProcessor(
                 ? indicatorSnapshot
                 : null,
             latestPrice?.Price ?? historicalReferencePrice);
+    }
+
+    private async Task RecordHistoricalMarketDataHeartbeatAsync(
+        string symbol,
+        string timeframe,
+        IReadOnlyCollection<MarketCandleSnapshot> historicalCandles,
+        CancellationToken cancellationToken)
+    {
+        if (historicalCandles.Count == 0)
+        {
+            return;
+        }
+
+        var interval = ResolveIntervalDuration(timeframe);
+        var orderedCandles = historicalCandles
+            .Where(snapshot => snapshot.IsClosed)
+            .OrderBy(snapshot => snapshot.OpenTimeUtc)
+            .ToArray();
+
+        if (orderedCandles.Length == 0)
+        {
+            return;
+        }
+
+        var latestSnapshot = orderedCandles[^1];
+        var continuityGapCount = CountContinuityGaps(orderedCandles, interval);
+        var guardStateCode = continuityGapCount == 0
+            ? DegradedModeStateCode.Normal
+            : DegradedModeStateCode.Stopped;
+        var guardReasonCode = continuityGapCount == 0
+            ? DegradedModeReasonCode.None
+            : DegradedModeReasonCode.CandleDataGapDetected;
+
+        await dataLatencyCircuitBreaker.RecordHeartbeatAsync(
+            new DataLatencyHeartbeat(
+                Source: "binance:rest-backfill",
+                DataTimestampUtc: latestSnapshot.CloseTimeUtc,
+                GuardStateCode: guardStateCode,
+                GuardReasonCode: guardReasonCode,
+                Symbol: symbol,
+                Timeframe: timeframe,
+                ExpectedOpenTimeUtc: latestSnapshot.OpenTimeUtc + interval,
+                ContinuityGapCount: continuityGapCount),
+            cancellationToken: cancellationToken);
+    }
+
+    private static int CountContinuityGaps(
+        IReadOnlyList<MarketCandleSnapshot> orderedCandles,
+        TimeSpan interval)
+    {
+        if (orderedCandles.Count < 2)
+        {
+            return 0;
+        }
+
+        var continuityGapCount = 0;
+        var previousOpenTimeUtc = NormalizeTimestamp(orderedCandles[0].OpenTimeUtc);
+
+        for (var index = 1; index < orderedCandles.Count; index++)
+        {
+            var currentOpenTimeUtc = NormalizeTimestamp(orderedCandles[index].OpenTimeUtc);
+
+            if (currentOpenTimeUtc <= previousOpenTimeUtc)
+            {
+                continue;
+            }
+
+            var expectedOpenTimeUtc = previousOpenTimeUtc + interval;
+
+            if (currentOpenTimeUtc > expectedOpenTimeUtc)
+            {
+                continuityGapCount += Math.Max(
+                    1,
+                    (int)Math.Round(
+                        (currentOpenTimeUtc - expectedOpenTimeUtc).TotalMilliseconds / interval.TotalMilliseconds,
+                        MidpointRounding.AwayFromZero));
+            }
+
+            previousOpenTimeUtc = currentOpenTimeUtc;
+        }
+
+        return continuityGapCount;
     }
 
     private async Task<StrategySignalSnapshot?> ResolveActionableSignalAsync(
@@ -610,6 +699,16 @@ public sealed class BotWorkerJobProcessor(
         return normalizedValue;
     }
 
+    private static DateTime NormalizeTimestamp(DateTime value)
+    {
+        return value.Kind switch
+        {
+            DateTimeKind.Utc => value,
+            DateTimeKind.Local => value.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+        };
+    }
+
     private static DateTime AlignToIntervalBoundary(DateTime utcNow, string timeframe)
     {
         var normalizedUtcNow = utcNow.Kind == DateTimeKind.Utc
@@ -671,3 +770,5 @@ public sealed class BotWorkerJobProcessor(
         return allowedSymbols.Contains(symbol);
     }
 }
+
+

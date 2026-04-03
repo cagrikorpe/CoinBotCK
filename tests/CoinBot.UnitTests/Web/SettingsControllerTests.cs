@@ -239,7 +239,7 @@ public sealed class SettingsControllerTests
 
     private sealed class FakeDataLatencyCircuitBreaker : IDataLatencyCircuitBreaker
     {
-        public Task<DegradedModeSnapshot> GetSnapshotAsync(string? correlationId = null, CancellationToken cancellationToken = default)
+        public Task<DegradedModeSnapshot> GetSnapshotAsync(string? correlationId = null, string? symbol = null, string? timeframe = null, CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new DegradedModeSnapshot(
                 DegradedModeStateCode.Stopped,

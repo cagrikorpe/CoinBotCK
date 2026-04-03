@@ -127,6 +127,108 @@ public sealed class DataLatencyCircuitBreakerTests
         Assert.False(recoveredSnapshot.ExecutionFlowBlocked);
     }
 
+    [Fact]
+    public async Task GetSnapshotAsync_ReturnsSymbolScopedState_WithoutCrossSymbolContamination()
+    {
+        await using var harness = CreateHarness();
+        var nowUtc = harness.TimeProvider.GetUtcNow().UtcDateTime;
+
+        await harness.CircuitBreaker.RecordHeartbeatAsync(
+            new DataLatencyHeartbeat(
+                "binance:kline",
+                nowUtc,
+                Symbol: "BTCUSDT",
+                Timeframe: "1m",
+                ExpectedOpenTimeUtc: nowUtc.AddMinutes(1),
+                ContinuityGapCount: 0),
+            correlationId: "corr-latency-btc");
+
+        await harness.CircuitBreaker.RecordHeartbeatAsync(
+            new DataLatencyHeartbeat(
+                "binance:kline",
+                nowUtc.AddSeconds(-10),
+                DegradedModeStateCode.Stopped,
+                DegradedModeReasonCode.MarketDataLatencyCritical,
+                Symbol: "ETHUSDT",
+                Timeframe: "1m",
+                ExpectedOpenTimeUtc: nowUtc,
+                ContinuityGapCount: 0),
+            correlationId: "corr-latency-eth");
+
+        var btcSnapshot = await harness.CircuitBreaker.GetSnapshotAsync(
+            correlationId: "corr-latency-btc-read",
+            symbol: "BTCUSDT",
+            timeframe: "1m");
+        var ethSnapshot = await harness.CircuitBreaker.GetSnapshotAsync(
+            correlationId: "corr-latency-eth-read",
+            symbol: "ETHUSDT",
+            timeframe: "1m");
+        var globalSnapshot = await harness.CircuitBreaker.GetSnapshotAsync(
+            correlationId: "corr-latency-global-read");
+        var btcStateId = DegradedModeDefaults.ResolveStateId("BTCUSDT", "1m");
+        var ethStateId = DegradedModeDefaults.ResolveStateId("ETHUSDT", "1m");
+
+        Assert.Equal(DegradedModeStateCode.Normal, btcSnapshot.StateCode);
+        Assert.Equal(DegradedModeReasonCode.None, btcSnapshot.ReasonCode);
+        Assert.Equal("BTCUSDT", btcSnapshot.LatestSymbol);
+        Assert.Equal("1m", btcSnapshot.LatestTimeframe);
+        Assert.False(btcSnapshot.SignalFlowBlocked);
+        Assert.False(btcSnapshot.ExecutionFlowBlocked);
+
+        Assert.Equal(DegradedModeStateCode.Stopped, ethSnapshot.StateCode);
+        Assert.Equal(DegradedModeReasonCode.ClockDriftExceeded, ethSnapshot.ReasonCode);
+        Assert.Equal("ETHUSDT", ethSnapshot.LatestSymbol);
+        Assert.Equal("1m", ethSnapshot.LatestTimeframe);
+        Assert.True(ethSnapshot.SignalFlowBlocked);
+        Assert.True(ethSnapshot.ExecutionFlowBlocked);
+
+        Assert.Equal(DegradedModeStateCode.Stopped, globalSnapshot.StateCode);
+        Assert.Equal(DegradedModeReasonCode.ClockDriftExceeded, globalSnapshot.ReasonCode);
+        Assert.Equal("ETHUSDT", globalSnapshot.LatestSymbol);
+        Assert.Equal("1m", globalSnapshot.LatestTimeframe);
+
+        Assert.True(await harness.DbContext.DegradedModeStates.AnyAsync(entity => entity.Id == DegradedModeDefaults.SingletonId));
+        Assert.True(await harness.DbContext.DegradedModeStates.AnyAsync(entity => entity.Id == btcStateId));
+        Assert.True(await harness.DbContext.DegradedModeStates.AnyAsync(entity => entity.Id == ethStateId));
+    }
+    [Fact]
+    public async Task RecordHeartbeatAsync_PersistsLatestMarketDataIdentityAndContinuityMetadata()
+    {
+        await using var harness = CreateHarness();
+        var nowUtc = harness.TimeProvider.GetUtcNow().UtcDateTime;
+        var expectedOpenTimeUtc = new DateTime(2026, 3, 22, 11, 59, 0, DateTimeKind.Utc);
+
+        var snapshot = await harness.CircuitBreaker.RecordHeartbeatAsync(
+            new DataLatencyHeartbeat(
+                "binance:kline",
+                new DateTime(2026, 3, 22, 11, 59, 0, DateTimeKind.Utc),
+                DegradedModeStateCode.Stopped,
+                DegradedModeReasonCode.CandleDataGapDetected,
+                Symbol: "BTCUSDT",
+                Timeframe: "1m",
+                ExpectedOpenTimeUtc: expectedOpenTimeUtc,
+                ContinuityGapCount: 2),
+            correlationId: "corr-latency-010");
+
+        var stateId = DegradedModeDefaults.ResolveStateId("BTCUSDT", "1m");
+        var state = await harness.DbContext.DegradedModeStates.SingleAsync(entity => entity.Id == stateId);
+
+        Assert.Equal(DegradedModeStateCode.Stopped, snapshot.StateCode);
+        Assert.Equal(DegradedModeReasonCode.CandleDataGapDetected, snapshot.ReasonCode);
+        Assert.Equal("binance:kline", snapshot.LatestHeartbeatSource);
+        Assert.Equal("BTCUSDT", snapshot.LatestSymbol);
+        Assert.Equal("1m", snapshot.LatestTimeframe);
+        Assert.Equal(expectedOpenTimeUtc, snapshot.LatestExpectedOpenTimeUtc);
+        Assert.Equal(2, snapshot.LatestContinuityGapCount);
+        Assert.Equal(60000, snapshot.LatestDataAgeMilliseconds);
+        Assert.Equal(nowUtc, snapshot.LatestHeartbeatReceivedAtUtc);
+        Assert.Equal("binance:kline", state.LatestHeartbeatSource);
+        Assert.Equal("BTCUSDT", state.LatestSymbol);
+        Assert.Equal("1m", state.LatestTimeframe);
+        Assert.Equal(expectedOpenTimeUtc, state.LatestExpectedOpenTimeUtc);
+        Assert.Equal(2, state.LatestContinuityGapCount);
+    }
+
     private static TestHarness CreateHarness()
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
@@ -183,3 +285,5 @@ public sealed class DataLatencyCircuitBreakerTests
         }
     }
 }
+
+

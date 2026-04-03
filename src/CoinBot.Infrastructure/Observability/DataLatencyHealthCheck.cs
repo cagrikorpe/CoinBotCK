@@ -14,7 +14,7 @@ public sealed class DataLatencyHealthCheck(
     {
         var snapshot = await dataLatencyCircuitBreaker.GetSnapshotAsync(
             correlationContextAccessor.Current?.CorrelationId,
-            cancellationToken);
+            cancellationToken: cancellationToken);
         var data = new Dictionary<string, object>
         {
             ["stateCode"] = snapshot.StateCode.ToString(),

@@ -40,10 +40,20 @@ public sealed class BotsControllerTests
                         0,
                         "Pending",
                         null,
-                        "N/A",
-                        null,
+                        "Rejected",
+                        "InvalidOperationException",
+                        "Execution blocked because the bot cooldown is still active.",
+                        new DateTime(2026, 4, 2, 12, 2, 0, DateTimeKind.Utc),
+                        90,
                         DateTime.UtcNow,
-                        DateTime.UtcNow)
+                        DateTime.UtcNow,
+                        LastExecutionLastCandleAtUtc: new DateTime(2026, 4, 2, 12, 0, 59, 999, DateTimeKind.Utc),
+                        LastExecutionDataAgeMilliseconds: 20265,
+                        LastExecutionContinuityState: "Continuity OK",
+                        LastExecutionContinuityGapCount: 0,
+                        LastExecutionStaleReason: "Clock drift exceeded",
+                        LastExecutionAffectedSymbol: "BTCUSDT",
+                        LastExecutionAffectedTimeframe: "1m")
                 ])
         };
         var controller = CreateController(managementService, new FakeBotPilotControlService(), new FakeUserSettingsService(), "user-bot-01", "trace-bot-001");
@@ -53,7 +63,17 @@ public sealed class BotsControllerTests
         var viewResult = Assert.IsType<ViewResult>(result);
         var model = Assert.IsType<BotManagementIndexViewModel>(viewResult.Model);
 
-        Assert.Single(model.Bots);
+        var row = Assert.Single(model.Bots);
+        Assert.Equal("Execution blocked because the bot cooldown is still active.", row.LastExecutionBlockDetail);
+        Assert.True(row.IsCooldownActive);
+        Assert.Equal("90 sn", row.CooldownRemainingText);
+        Assert.Equal("Data latency high", row.MarketDataBadgeText);
+        Assert.Equal("2026-04-02 12:00:59 Coordinated Universal Time", row.LastCandleAtLabel);
+        Assert.Equal("20265 ms", row.DataAgeText);
+        Assert.Equal("Continuity OK", row.ContinuityStateText);
+        Assert.Equal("0", row.ContinuityGapText);
+        Assert.Equal("BTCUSDT / 1m", row.AffectedMarketText);
+        Assert.Equal("Clock drift exceeded", row.StaleReasonText);
     }
 
     [Fact]
@@ -389,3 +409,4 @@ public sealed class BotsControllerTests
         }
     }
 }
+

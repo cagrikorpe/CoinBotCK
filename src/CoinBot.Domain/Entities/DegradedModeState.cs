@@ -19,4 +19,14 @@ public sealed class DegradedModeState : BaseEntity
     public int? LatestClockDriftMilliseconds { get; set; }
 
     public DateTime? LastStateChangedAtUtc { get; set; }
+
+    public string? LatestHeartbeatSource { get; set; }
+
+    public string? LatestSymbol { get; set; }
+
+    public string? LatestTimeframe { get; set; }
+
+    public DateTime? LatestExpectedOpenTimeUtc { get; set; }
+
+    public int? LatestContinuityGapCount { get; set; }
 }

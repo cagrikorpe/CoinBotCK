@@ -27,7 +27,10 @@ public sealed class CandleContinuityValidator(ILogger<CandleContinuityValidator>
                 GuardStateCode: DegradedModeStateCode.Normal,
                 GuardReasonCode: DegradedModeReasonCode.None,
                 EffectiveDataTimestampUtc: normalizedSnapshot.CloseTimeUtc,
-                ExpectedOpenTimeUtc: null);
+                ExpectedOpenTimeUtc: null,
+                Symbol: normalizedSnapshot.Symbol,
+                Timeframe: normalizedSnapshot.Interval,
+                ContinuityGapCount: 0);
         }
 
         if (normalizedSnapshot.OpenTimeUtc == previousCursor.OpenTimeUtc)
@@ -39,8 +42,10 @@ public sealed class CandleContinuityValidator(ILogger<CandleContinuityValidator>
 
             return CreateRejectedResult(
                 previousCursor,
+                normalizedSnapshot.Interval,
                 DegradedModeReasonCode.CandleDataDuplicateDetected,
-                expectedOpenTimeUtc: CalculateExpectedNextOpenTimeUtc(previousCursor.OpenTimeUtc, normalizedSnapshot.Interval));
+                expectedOpenTimeUtc: CalculateExpectedNextOpenTimeUtc(previousCursor.OpenTimeUtc, normalizedSnapshot.Interval),
+                continuityGapCount: 0);
         }
 
         if (normalizedSnapshot.OpenTimeUtc < previousCursor.OpenTimeUtc)
@@ -54,8 +59,10 @@ public sealed class CandleContinuityValidator(ILogger<CandleContinuityValidator>
 
             return CreateRejectedResult(
                 previousCursor,
+                normalizedSnapshot.Interval,
                 DegradedModeReasonCode.CandleDataOutOfOrderDetected,
-                expectedOpenTimeUtc: CalculateExpectedNextOpenTimeUtc(previousCursor.OpenTimeUtc, normalizedSnapshot.Interval));
+                expectedOpenTimeUtc: CalculateExpectedNextOpenTimeUtc(previousCursor.OpenTimeUtc, normalizedSnapshot.Interval),
+                continuityGapCount: 0);
         }
 
         var expectedNextOpenTimeUtc = CalculateExpectedNextOpenTimeUtc(previousCursor.OpenTimeUtc, normalizedSnapshot.Interval);
@@ -71,8 +78,10 @@ public sealed class CandleContinuityValidator(ILogger<CandleContinuityValidator>
 
             return CreateRejectedResult(
                 previousCursor,
+                normalizedSnapshot.Interval,
                 DegradedModeReasonCode.CandleDataGapDetected,
-                expectedOpenTimeUtc: expectedNextOpenTimeUtc);
+                expectedOpenTimeUtc: expectedNextOpenTimeUtc,
+                continuityGapCount: CalculateContinuityGapCount(expectedNextOpenTimeUtc, normalizedSnapshot.OpenTimeUtc, normalizedSnapshot.Interval));
         }
 
         if (normalizedSnapshot.OpenTimeUtc < expectedNextOpenTimeUtc)
@@ -86,8 +95,10 @@ public sealed class CandleContinuityValidator(ILogger<CandleContinuityValidator>
 
             return CreateRejectedResult(
                 previousCursor,
+                normalizedSnapshot.Interval,
                 DegradedModeReasonCode.CandleDataOutOfOrderDetected,
-                expectedOpenTimeUtc: expectedNextOpenTimeUtc);
+                expectedOpenTimeUtc: expectedNextOpenTimeUtc,
+                continuityGapCount: 0);
         }
 
         cursors[cursorKey] = ClosedCandleCursor.FromSnapshot(normalizedSnapshot);
@@ -97,20 +108,28 @@ public sealed class CandleContinuityValidator(ILogger<CandleContinuityValidator>
             GuardStateCode: DegradedModeStateCode.Normal,
             GuardReasonCode: DegradedModeReasonCode.None,
             EffectiveDataTimestampUtc: normalizedSnapshot.CloseTimeUtc,
-            ExpectedOpenTimeUtc: expectedNextOpenTimeUtc);
+            ExpectedOpenTimeUtc: expectedNextOpenTimeUtc,
+            Symbol: normalizedSnapshot.Symbol,
+            Timeframe: normalizedSnapshot.Interval,
+            ContinuityGapCount: 0);
     }
 
     private static CandleContinuityValidationResult CreateRejectedResult(
         ClosedCandleCursor previousCursor,
+        string timeframe,
         DegradedModeReasonCode guardReasonCode,
-        DateTime? expectedOpenTimeUtc)
+        DateTime? expectedOpenTimeUtc,
+        int continuityGapCount)
     {
         return new CandleContinuityValidationResult(
             IsAccepted: false,
             GuardStateCode: DegradedModeStateCode.Stopped,
             GuardReasonCode: guardReasonCode,
             EffectiveDataTimestampUtc: previousCursor.CloseTimeUtc,
-            ExpectedOpenTimeUtc: expectedOpenTimeUtc);
+            ExpectedOpenTimeUtc: expectedOpenTimeUtc,
+            Symbol: previousCursor.Symbol,
+            Timeframe: timeframe,
+            ContinuityGapCount: Math.Max(0, continuityGapCount));
     }
 
     private static MarketCandleSnapshot Normalize(MarketCandleSnapshot snapshot)
@@ -129,6 +148,20 @@ public sealed class CandleContinuityValidator(ILogger<CandleContinuityValidator>
     private static string CreateCursorKey(string symbol, string interval)
     {
         return $"{symbol}:{interval}";
+    }
+
+    private static int CalculateContinuityGapCount(DateTime expectedOpenTimeUtc, DateTime currentOpenTimeUtc, string interval)
+    {
+        var missingCount = 0;
+        var cursorOpenTimeUtc = expectedOpenTimeUtc;
+
+        while (cursorOpenTimeUtc < currentOpenTimeUtc)
+        {
+            missingCount++;
+            cursorOpenTimeUtc = CalculateExpectedNextOpenTimeUtc(cursorOpenTimeUtc, interval);
+        }
+
+        return missingCount;
     }
 
     private static DateTime CalculateExpectedNextOpenTimeUtc(DateTime previousOpenTimeUtc, string interval)

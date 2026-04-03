@@ -7,4 +7,7 @@ public sealed record CandleContinuityValidationResult(
     DegradedModeStateCode GuardStateCode,
     DegradedModeReasonCode GuardReasonCode,
     DateTime EffectiveDataTimestampUtc,
-    DateTime? ExpectedOpenTimeUtc);
+    DateTime? ExpectedOpenTimeUtc,
+    string? Symbol = null,
+    string? Timeframe = null,
+    int? ContinuityGapCount = null);

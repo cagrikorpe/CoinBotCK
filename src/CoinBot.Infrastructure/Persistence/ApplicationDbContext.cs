@@ -675,6 +675,15 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             .HasConversion<string>()
             .HasMaxLength(64)
             .IsRequired();
+
+        builder.Property(entity => entity.LatestHeartbeatSource)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.LatestSymbol)
+            .HasMaxLength(32);
+
+        builder.Property(entity => entity.LatestTimeframe)
+            .HasMaxLength(16);
     }
 
     private static void ConfigureDependencyCircuitBreakerStates(EntityTypeBuilder<DependencyCircuitBreakerState> builder)

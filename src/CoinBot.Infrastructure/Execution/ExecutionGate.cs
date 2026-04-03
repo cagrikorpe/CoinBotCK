@@ -97,7 +97,7 @@ public sealed class ExecutionGate(
             throw new ExecutionGateRejectedException(
                 latencyBlockedReason.Value,
                 request.Environment,
-                CreateMessage(latencyBlockedReason.Value, request.Environment));
+                CreateMessage(latencyBlockedReason.Value, request.Environment, latencySnapshot));
         }
 
         GlobalSystemStateSnapshot globalSystemStateSnapshot;
@@ -182,7 +182,7 @@ public sealed class ExecutionGate(
                 throw new ExecutionGateRejectedException(
                     ExecutionGateBlockedReason.DemoSessionDriftDetected,
                     request.Environment,
-                    CreateMessage(ExecutionGateBlockedReason.DemoSessionDriftDetected, request.Environment));
+                    CreateMessage(ExecutionGateBlockedReason.DemoSessionDriftDetected, request.Environment, latencySnapshot));
             }
         }
 
@@ -238,7 +238,7 @@ public sealed class ExecutionGate(
             throw new ExecutionGateRejectedException(
                 blockedReason.Value,
                 request.Environment,
-                CreateMessage(blockedReason.Value, request.Environment));
+                CreateMessage(blockedReason.Value, request.Environment, latencySnapshot));
         }
 
         logger.LogInformation("Execution stage allowed the request.");
@@ -256,7 +256,11 @@ public sealed class ExecutionGate(
 
         try
         {
-            var snapshot = await dataLatencyCircuitBreaker.GetSnapshotAsync(request.CorrelationId, cancellationToken);
+            var snapshot = await dataLatencyCircuitBreaker.GetSnapshotAsync(
+                request.CorrelationId,
+                request.Symbol,
+                request.Timeframe,
+                cancellationToken);
             ApplyLatencyTags(signalActivity, snapshot);
             ApplyLatencyTags(marketDataActivity, snapshot);
 
@@ -318,6 +322,34 @@ public sealed class ExecutionGate(
         {
             activity.SetTag("coinbot.market_data.clock_drift_ms", latestClockDriftMilliseconds);
         }
+
+        if (!string.IsNullOrWhiteSpace(snapshot.LatestHeartbeatSource))
+        {
+            activity.SetTag("coinbot.market_data.heartbeat_source", snapshot.LatestHeartbeatSource);
+        }
+
+        if (!string.IsNullOrWhiteSpace(snapshot.LatestSymbol))
+        {
+            activity.SetTag("coinbot.market_data.symbol", snapshot.LatestSymbol);
+        }
+
+        if (!string.IsNullOrWhiteSpace(snapshot.LatestTimeframe))
+        {
+            activity.SetTag("coinbot.market_data.timeframe", snapshot.LatestTimeframe);
+        }
+
+        if (snapshot.LatestExpectedOpenTimeUtc is DateTime latestExpectedOpenTimeUtc)
+        {
+            activity.SetTag("coinbot.market_data.expected_open_time_utc", latestExpectedOpenTimeUtc.ToString("O"));
+        }
+
+        if (snapshot.LatestContinuityGapCount is int latestContinuityGapCount)
+        {
+            activity.SetTag("coinbot.market_data.continuity_gap_count", latestContinuityGapCount);
+        }
+
+        activity.SetTag("coinbot.market_data.decision_source_layer", ResolveDecisionSourceLayer(snapshot));
+        activity.SetTag("coinbot.market_data.decision_method", "ExecutionGate.EvaluateDataLatencyAsync");
     }
 
     private static ExecutionGateBlockedReason? ResolveLatencyBlockedReason(DegradedModeSnapshot snapshot)
@@ -389,7 +421,10 @@ public sealed class ExecutionGate(
         };
     }
 
-    private static string CreateMessage(ExecutionGateBlockedReason blockedReason, ExecutionEnvironment requestedEnvironment)
+    private static string CreateMessage(
+        ExecutionGateBlockedReason blockedReason,
+        ExecutionEnvironment requestedEnvironment,
+        DegradedModeSnapshot? latencySnapshot = null)
     {
         return blockedReason switch
         {
@@ -402,11 +437,19 @@ public sealed class ExecutionGate(
             ExecutionGateBlockedReason.RequestedEnvironmentDoesNotMatchResolvedMode =>
                 $"Execution blocked because the requested {requestedEnvironment} path does not match the resolved trading mode.",
             ExecutionGateBlockedReason.MarketDataUnavailable =>
-                "Execution blocked because market data heartbeat is unavailable.",
+                CreateLatencyDecisionMessage(
+                    "Execution blocked because market data heartbeat is unavailable.",
+                    latencySnapshot),
             ExecutionGateBlockedReason.StaleMarketData =>
-                "Execution blocked because market data is stale or the candle continuity guard is active.",
+                CreateLatencyDecisionMessage(
+                    IsContinuityGuardReason(latencySnapshot?.ReasonCode ?? DegradedModeReasonCode.None)
+                        ? "Execution blocked because the candle continuity guard is active."
+                        : "Execution blocked because market data is stale.",
+                    latencySnapshot),
             ExecutionGateBlockedReason.ClockDriftExceeded =>
-                "Execution blocked because clock drift exceeded the safety threshold.",
+                CreateLatencyDecisionMessage(
+                    "Execution blocked because clock drift exceeded the safety threshold.",
+                    latencySnapshot),
             ExecutionGateBlockedReason.DataLatencyGuardUnavailable =>
                 "Execution blocked because the data latency guard could not be evaluated.",
             ExecutionGateBlockedReason.DemoSessionDriftDetected =>
@@ -434,6 +477,30 @@ public sealed class ExecutionGate(
             : $"Execution blocked because global system state is {snapshot.State}: {snapshot.Message}";
     }
 
+    private static string CreateLatencyDecisionMessage(string baseMessage, DegradedModeSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return baseMessage;
+        }
+
+        return $"{baseMessage} LatencyReason={snapshot.ReasonCode}; HeartbeatSource={snapshot.LatestHeartbeatSource ?? "missing"}; Symbol={snapshot.LatestSymbol ?? "missing"}; Timeframe={snapshot.LatestTimeframe ?? "missing"}; LastCandleAtUtc={snapshot.LatestDataTimestampAtUtc?.ToString("O") ?? "missing"}; ExpectedOpenTimeUtc={snapshot.LatestExpectedOpenTimeUtc?.ToString("O") ?? "missing"}; DataAgeMs={snapshot.LatestDataAgeMilliseconds?.ToString() ?? "missing"}; ClockDriftMs={snapshot.LatestClockDriftMilliseconds?.ToString() ?? "missing"}; ContinuityGapCount={snapshot.LatestContinuityGapCount?.ToString() ?? "missing"}; DecisionSourceLayer={ResolveDecisionSourceLayer(snapshot)}; DecisionMethodName={"ExecutionGate.EvaluateDataLatencyAsync"}.";
+    }
+
+    private static string ResolveDecisionSourceLayer(DegradedModeSnapshot snapshot)
+    {
+        return IsContinuityGuardReason(snapshot.ReasonCode)
+            ? "continuity-validator"
+            : "heartbeat-watchdog";
+    }
+
+    private static bool IsContinuityGuardReason(DegradedModeReasonCode reasonCode)
+    {
+        return reasonCode is DegradedModeReasonCode.CandleDataGapDetected or
+            DegradedModeReasonCode.CandleDataDuplicateDetected or
+            DegradedModeReasonCode.CandleDataOutOfOrderDetected;
+    }
+
     private static string? BuildAuditContext(
         string? requestContext,
         DegradedModeSnapshot latencySnapshot,
@@ -450,7 +517,7 @@ public sealed class ExecutionGate(
         }
 
         contextParts.Add(
-            $"LatencyState={latencySnapshot.StateCode}; LatencyReason={latencySnapshot.ReasonCode}; DataAgeMs={latencySnapshot.LatestDataAgeMilliseconds?.ToString() ?? "missing"}; ClockDriftMs={latencySnapshot.LatestClockDriftMilliseconds?.ToString() ?? "missing"}");
+            $"LatencyState={latencySnapshot.StateCode}; LatencyReason={latencySnapshot.ReasonCode}; HeartbeatSource={latencySnapshot.LatestHeartbeatSource ?? "missing"}; Symbol={latencySnapshot.LatestSymbol ?? "missing"}; Timeframe={latencySnapshot.LatestTimeframe ?? "missing"}; LastCandleAtUtc={latencySnapshot.LatestDataTimestampAtUtc?.ToString("O") ?? "missing"}; ExpectedOpenTimeUtc={latencySnapshot.LatestExpectedOpenTimeUtc?.ToString("O") ?? "missing"}; DataAgeMs={latencySnapshot.LatestDataAgeMilliseconds?.ToString() ?? "missing"}; ClockDriftMs={latencySnapshot.LatestClockDriftMilliseconds?.ToString() ?? "missing"}; ContinuityGapCount={latencySnapshot.LatestContinuityGapCount?.ToString() ?? "missing"}; DecisionSourceLayer={ResolveDecisionSourceLayer(latencySnapshot)}; DecisionMethodName={"ExecutionGate.EvaluateDataLatencyAsync"}");
 
         if (modeResolution is not null)
         {

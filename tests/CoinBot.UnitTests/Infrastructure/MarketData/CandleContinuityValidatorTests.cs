@@ -22,6 +22,9 @@ public sealed class CandleContinuityValidatorTests
         Assert.False(duplicateResult.IsAccepted);
         Assert.Equal(DegradedModeReasonCode.CandleDataDuplicateDetected, duplicateResult.GuardReasonCode);
         Assert.Equal(first.CloseTimeUtc, duplicateResult.EffectiveDataTimestampUtc);
+        Assert.Equal("BTCUSDT", duplicateResult.Symbol);
+        Assert.Equal("1m", duplicateResult.Timeframe);
+        Assert.Equal(0, duplicateResult.ContinuityGapCount);
     }
 
     [Fact]
@@ -36,6 +39,9 @@ public sealed class CandleContinuityValidatorTests
         Assert.False(result.IsAccepted);
         Assert.Equal(DegradedModeReasonCode.CandleDataOutOfOrderDetected, result.GuardReasonCode);
         Assert.Equal(first.CloseTimeUtc, result.EffectiveDataTimestampUtc);
+        Assert.Equal("BTCUSDT", result.Symbol);
+        Assert.Equal("1m", result.Timeframe);
+        Assert.Equal(0, result.ContinuityGapCount);
     }
 
     [Fact]
@@ -51,6 +57,9 @@ public sealed class CandleContinuityValidatorTests
         Assert.Equal(DegradedModeReasonCode.CandleDataGapDetected, result.GuardReasonCode);
         Assert.Equal(new DateTime(2026, 3, 22, 12, 1, 0, DateTimeKind.Utc), result.ExpectedOpenTimeUtc);
         Assert.Equal(first.CloseTimeUtc, result.EffectiveDataTimestampUtc);
+        Assert.Equal("BTCUSDT", result.Symbol);
+        Assert.Equal("1m", result.Timeframe);
+        Assert.Equal(1, result.ContinuityGapCount);
     }
 
     private static MarketCandleSnapshot CreateClosedCandleSnapshot(string symbol, DateTime openTimeUtc)

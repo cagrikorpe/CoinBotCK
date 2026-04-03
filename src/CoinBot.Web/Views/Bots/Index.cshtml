@@ -87,6 +87,65 @@
                                         <td>
                                             <div class="font-weight-bolder">@bot.LastExecutionState</div>
                                             <div class="text-muted small">@(string.IsNullOrWhiteSpace(bot.LastExecutionFailureCode) ? "Failure yok" : bot.LastExecutionFailureCode)</div>
+                                            @if (!string.IsNullOrWhiteSpace(bot.LastExecutionBlockDetail))
+                                            {
+                                                <div class="small text-dark">@bot.LastExecutionBlockDetail</div>
+                                            }
+                                            @if (!string.IsNullOrWhiteSpace(bot.MarketDataBadgeText) ||
+                                                 !string.IsNullOrWhiteSpace(bot.LastCandleAtLabel) ||
+                                                 !string.IsNullOrWhiteSpace(bot.DataAgeText) ||
+                                                 !string.IsNullOrWhiteSpace(bot.ContinuityStateText) ||
+                                                 !string.IsNullOrWhiteSpace(bot.ContinuityGapText) ||
+                                                 !string.IsNullOrWhiteSpace(bot.AffectedMarketText) ||
+                                                 !string.IsNullOrWhiteSpace(bot.StaleReasonText))
+                                            {
+                                                <div class="mt-2 p-2 rounded bg-light" data-cb-bot-market-diagnostics>
+                                                    @if (!string.IsNullOrWhiteSpace(bot.MarketDataBadgeText))
+                                                    {
+                                                        <div class="mb-1">
+                                                            <span class="badge badge-warning" data-cb-bot-market-badge>@bot.MarketDataBadgeText</span>
+                                                        </div>
+                                                    }
+                                                    @if (!string.IsNullOrWhiteSpace(bot.StaleReasonText))
+                                                    {
+                                                        <div class="small text-dark" data-cb-bot-market-reason>Reason: @bot.StaleReasonText</div>
+                                                    }
+                                                    @if (!string.IsNullOrWhiteSpace(bot.AffectedMarketText))
+                                                    {
+                                                        <div class="text-muted small" data-cb-bot-market-affected>Affected: @bot.AffectedMarketText</div>
+                                                    }
+                                                    @if (!string.IsNullOrWhiteSpace(bot.LastCandleAtLabel))
+                                                    {
+                                                        <div class="text-muted small" data-cb-bot-market-candle>Last candle: @bot.LastCandleAtLabel</div>
+                                                    }
+                                                    @if (!string.IsNullOrWhiteSpace(bot.DataAgeText))
+                                                    {
+                                                        <div class="text-muted small" data-cb-bot-market-age>Data age: @bot.DataAgeText</div>
+                                                    }
+                                                    @if (!string.IsNullOrWhiteSpace(bot.ContinuityStateText) || !string.IsNullOrWhiteSpace(bot.ContinuityGapText))
+                                                    {
+                                                        <div class="text-muted small" data-cb-bot-market-continuity>
+                                                            Continuity: @(string.IsNullOrWhiteSpace(bot.ContinuityStateText) ? "N/A" : bot.ContinuityStateText)
+                                                            @if (!string.IsNullOrWhiteSpace(bot.ContinuityGapText))
+                                                            {
+                                                                <text> | Gap: @bot.ContinuityGapText</text>
+                                                            }
+                                                        </div>
+                                                    }
+                                                </div>
+                                            }
+                                            @if (bot.IsCooldownActive)
+                                            {
+                                                <div class="mt-2">
+                                                    <span class="badge badge-warning" data-cb-bot-cooldown-badge>Cooldown aktif</span>
+                                                </div>
+                                                <div class="text-muted small">
+                                                    Blok bitişi: @bot.CooldownBlockedUntilLabel
+                                                </div>
+                                                <div class="text-muted small">
+                                                    Kalan: @bot.CooldownRemainingText
+                                                </div>
+                                            }
                                             <div class="text-muted small">Last execution: @bot.LastExecutionAtLabel</div>
                                         </td>
                                         <td class="text-right">
@@ -114,3 +173,5 @@
         </div>
     </div>
 </div>
+
+

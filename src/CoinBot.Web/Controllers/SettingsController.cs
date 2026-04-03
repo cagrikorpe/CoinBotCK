@@ -283,7 +283,7 @@ public sealed class SettingsController : Controller
     {
         var timeZoneInfo = ResolveTimeZone(snapshot.PreferredTimeZoneId);
         var clockDrift = snapshot.BinanceTimeSync;
-        var latencySnapshot = await dataLatencyCircuitBreaker.GetSnapshotAsync(HttpContext.TraceIdentifier, cancellationToken);
+        var latencySnapshot = await dataLatencyCircuitBreaker.GetSnapshotAsync(HttpContext.TraceIdentifier, cancellationToken: cancellationToken);
         var clockDriftThresholdMilliseconds = checked(dataLatencyGuardOptions.ClockDriftThresholdSeconds * 1000);
 
         return new SettingsIndexViewModel

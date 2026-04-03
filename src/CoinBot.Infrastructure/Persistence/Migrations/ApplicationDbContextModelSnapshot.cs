@@ -913,11 +913,29 @@ namespace CoinBot.Infrastructure.Persistence.Migrations
                     b.Property<int?>("LatestClockDriftMilliseconds")
                         .HasColumnType("int");
 
+                    b.Property<int?>("LatestContinuityGapCount")
+                        .HasColumnType("int");
+
                     b.Property<DateTime?>("LatestDataTimestampAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("LatestExpectedOpenTimeUtc")
                         .HasColumnType("datetime2");
 
                     b.Property<DateTime?>("LatestHeartbeatReceivedAtUtc")
                         .HasColumnType("datetime2");
+
+                    b.Property<string>("LatestHeartbeatSource")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("LatestSymbol")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("LatestTimeframe")
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
 
                     b.Property<string>("ReasonCode")
                         .IsRequired()

@@ -125,6 +125,7 @@ public sealed class BotManagementServiceTests
         await using var context = CreateContext();
         var exchangeAccountId = await SeedStrategyAndExchangeAccountAsync(context, "user-page", "pilot-page");
         var bot = await SeedBotAsync(context, "user-page", exchangeAccountId, isEnabled: true);
+        var executionOrderId = Guid.NewGuid();
         context.BackgroundJobStates.Add(new BackgroundJobState
         {
             JobKey = $"bot-execution:{bot.Id:N}",
@@ -136,7 +137,7 @@ public sealed class BotManagementServiceTests
         });
         context.ExecutionOrders.Add(new ExecutionOrder
         {
-            Id = Guid.NewGuid(),
+            Id = executionOrderId,
             OwnerUserId = bot.OwnerUserId,
             BotId = bot.Id,
             StrategyKey = bot.StrategyKey,
@@ -149,14 +150,34 @@ public sealed class BotManagementServiceTests
             Quantity = 0.001m,
             Price = 60000m,
             State = ExecutionOrderState.Rejected,
-            FailureCode = "TradeMasterDisarmed",
-            FailureDetail = "Execution blocked because TradeMaster is disarmed.",
+            FailureCode = "InvalidOperationException",
+            FailureDetail = "Cache entry must specify a value for Size when SizeLimit is set.",
             ExecutorKind = ExecutionOrderExecutorKind.Binance,
             ExecutionEnvironment = ExecutionEnvironment.Live,
-            CreatedDate = DateTime.UtcNow
+            CreatedDate = DateTime.UtcNow.AddSeconds(-30),
+            UpdatedDate = DateTime.UtcNow.AddSeconds(-29),
+            LastStateChangedAtUtc = DateTime.UtcNow.AddSeconds(-29)
+        });
+        context.ExecutionOrderTransitions.Add(new ExecutionOrderTransition
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = bot.OwnerUserId,
+            ExecutionOrderId = executionOrderId,
+            SequenceNumber = 4,
+            State = ExecutionOrderState.Rejected,
+            EventCode = "UserExecutionOverrideBlocked",
+            Detail = "Execution blocked because the bot cooldown is still active.\r\n",
+            CorrelationId = "corr-user-page",
+            OccurredAtUtc = DateTime.UtcNow.AddSeconds(-29)
         });
         await context.SaveChangesAsync();
-        var service = CreateService(context);
+        var persistedOrder = await context.ExecutionOrders
+            .AsNoTracking()
+            .SingleAsync(entity => entity.Id == executionOrderId);
+        var utcNow = DateTime.SpecifyKind(
+            persistedOrder.CreatedDate.AddSeconds(30),
+            DateTimeKind.Utc);
+        var service = CreateService(context, new FakeTimeProvider(new DateTimeOffset(utcNow)));
 
         var snapshot = await service.GetPageAsync("user-page");
         var row = Assert.Single(snapshot.Bots);
@@ -165,9 +186,72 @@ public sealed class BotManagementServiceTests
         Assert.Equal("RetryPending", row.LastJobStatus);
         Assert.Equal("ReferencePriceUnavailable", row.LastJobErrorCode);
         Assert.Equal("Rejected", row.LastExecutionState);
-        Assert.Equal("TradeMasterDisarmed", row.LastExecutionFailureCode);
+        Assert.Equal("InvalidOperationException", row.LastExecutionFailureCode);
+        Assert.Equal("Execution blocked because the bot cooldown is still active.", row.LastExecutionBlockDetail);
+        Assert.Equal(DateTime.SpecifyKind(persistedOrder.CreatedDate.AddSeconds(120), DateTimeKind.Utc), row.CooldownBlockedUntilUtc);
+        Assert.Equal(90, row.CooldownRemainingSeconds);
     }
 
+    [Fact]
+    public async Task GetPageAsync_ProjectsSanitizedMarketDataDiagnostics_FromLatestTransitionDetail()
+    {
+        await using var context = CreateContext();
+        var exchangeAccountId = await SeedStrategyAndExchangeAccountAsync(context, "user-market-diag", "pilot-market-diag");
+        var bot = await SeedBotAsync(context, "user-market-diag", exchangeAccountId, isEnabled: true);
+        var executionOrderId = Guid.NewGuid();
+        var orderCreatedAtUtc = new DateTime(2026, 4, 2, 23, 52, 20, DateTimeKind.Utc);
+
+        context.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = executionOrderId,
+            OwnerUserId = bot.OwnerUserId,
+            BotId = bot.Id,
+            StrategyKey = bot.StrategyKey,
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.001m,
+            Price = 60000m,
+            State = ExecutionOrderState.Rejected,
+            FailureCode = "ClockDriftExceeded",
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            CreatedDate = orderCreatedAtUtc,
+            UpdatedDate = orderCreatedAtUtc.AddSeconds(1),
+            LastStateChangedAtUtc = orderCreatedAtUtc.AddSeconds(1)
+        });
+        context.ExecutionOrderTransitions.Add(new ExecutionOrderTransition
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = bot.OwnerUserId,
+            ExecutionOrderId = executionOrderId,
+            SequenceNumber = 2,
+            State = ExecutionOrderState.Rejected,
+            EventCode = "GateRejected",
+            Detail = "Execution blocked because clock drift exceeded the safety threshold. LatencyReason=ClockDriftExceeded; HeartbeatSource=binance:rest-backfill; Symbol=BTCUSDT; Timeframe=1m; LastCandleAtUtc=2026-04-02T23:51:59.9990000Z; ExpectedOpenTimeUtc=2026-04-02T23:52:00.0000000Z; DataAgeMs=20265; ClockDriftMs=19724; ContinuityGapCount=0; DecisionSourceLayer=heartbeat-watchdog; DecisionMethodName=ExecutionGate.EvaluateDataLatencyAsync.",
+            CorrelationId = "corr-market-diag",
+            OccurredAtUtc = orderCreatedAtUtc.AddSeconds(1),
+            CreatedDate = orderCreatedAtUtc.AddSeconds(1),
+            UpdatedDate = orderCreatedAtUtc.AddSeconds(1)
+        });
+        await context.SaveChangesAsync();
+        var service = CreateService(context, new FakeTimeProvider(new DateTimeOffset(orderCreatedAtUtc.AddMinutes(5))));
+
+        var snapshot = await service.GetPageAsync("user-market-diag");
+        var row = Assert.Single(snapshot.Bots);
+
+        Assert.Equal("Execution blocked because clock drift exceeded the safety threshold.", row.LastExecutionBlockDetail);
+        Assert.Equal(new DateTime(2026, 4, 2, 23, 51, 59, 999, DateTimeKind.Utc), row.LastExecutionLastCandleAtUtc);
+        Assert.Equal(20265, row.LastExecutionDataAgeMilliseconds);
+        Assert.Equal("Continuity OK", row.LastExecutionContinuityState);
+        Assert.Equal(0, row.LastExecutionContinuityGapCount);
+        Assert.Equal("Clock drift exceeded", row.LastExecutionStaleReason);
+        Assert.Equal("BTCUSDT", row.LastExecutionAffectedSymbol);
+        Assert.Equal("1m", row.LastExecutionAffectedTimeframe);
+    }
     private static BotManagementService CreateService(ApplicationDbContext context, TimeProvider? timeProvider = null)
     {
         return new BotManagementService(
@@ -270,7 +354,10 @@ public sealed class BotManagementServiceTests
             DefaultSymbol = "BTCUSDT",
             AllowedSymbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
             DefaultLeverage = 1m,
-            DefaultMarginType = "ISOLATED"
+            DefaultMarginType = "ISOLATED",
+            PerBotCooldownSeconds = 120,
+            PerSymbolCooldownSeconds = 60
         };
     }
 }
+

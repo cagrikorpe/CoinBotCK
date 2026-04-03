@@ -333,16 +333,27 @@ async function inspectRuntimeUi() {
       const row = Array.from(document.querySelectorAll('tbody tr')).find(item => item.innerText.includes('Bot UI Smoke Bot'));
       if (!row) return { exists: false };
       const cells = Array.from(row.querySelectorAll('td'));
+      const executionLines = Array.from(cells[5]?.querySelectorAll('.text-muted, .small.text-dark') || []).map(item => item.innerText.trim()).filter(Boolean);
       return {
         exists: true,
         botNameText: cells[0]?.querySelector('.font-weight-bolder')?.innerText?.trim() || '',
         workerStateText: cells[4]?.querySelector('.font-weight-bolder')?.innerText?.trim() || '',
         workerErrorText: cells[4]?.querySelector('.text-muted')?.innerText?.trim() || '',
         executionStateText: cells[5]?.querySelector('.font-weight-bolder')?.innerText?.trim() || '',
-        executionFailureText: cells[5]?.querySelector('.text-muted')?.innerText?.trim() || '',
-        lastExecutionText: Array.from(cells[5]?.querySelectorAll('.text-muted') || []).map(item => item.innerText.trim()).find(text => text.startsWith('Last execution:')) || '',
-        enabledBadgeText: row.querySelector('.badge')?.innerText?.trim() || '',
-        actionButtonText: row.querySelector('form[action*="/enabled"] button[type="submit"]')?.innerText?.trim() || ''
+        executionFailureText: executionLines.find(text => !text.startsWith('Last execution:') && !text.startsWith('Blok bitişi:') && !text.startsWith('Kalan:') && text !== 'Cooldown aktif' && text !== 'Failure yok') || '',
+        executionBlockDetailText: executionLines.find(text => text.startsWith('Execution blocked because')) || '',
+        marketDataBadgeText: cells[5]?.querySelector('[data-cb-bot-market-badge]')?.innerText?.trim() || '',
+        marketDataReasonText: cells[5]?.querySelector('[data-cb-bot-market-reason]')?.innerText?.trim() || '',
+        marketDataAffectedText: cells[5]?.querySelector('[data-cb-bot-market-affected]')?.innerText?.trim() || '',
+        marketDataLastCandleText: cells[5]?.querySelector('[data-cb-bot-market-candle]')?.innerText?.trim() || '',
+        marketDataAgeText: cells[5]?.querySelector('[data-cb-bot-market-age]')?.innerText?.trim() || '',
+        marketDataContinuityText: cells[5]?.querySelector('[data-cb-bot-market-continuity]')?.innerText?.replace(/\s+/g, ' ')?.trim() || '',
+        cooldownBadgeText: cells[5]?.querySelector('[data-cb-bot-cooldown-badge]')?.innerText?.trim() || '',
+        cooldownBlockedUntilText: executionLines.find(text => text.startsWith('Blok bitişi:')) || '',
+        cooldownRemainingText: executionLines.find(text => text.startsWith('Kalan:')) || '',
+        lastExecutionText: executionLines.find(text => text.startsWith('Last execution:')) || '',
+        enabledBadgeText: cells[6]?.querySelector('.badge')?.innerText?.trim() || '',
+        actionButtonText: cells[6]?.querySelector('form[action*="/enabled"] button[type="submit"]')?.innerText?.trim() || ''
       };
     })()`);
 
@@ -366,7 +377,8 @@ async function inspectRuntimeUi() {
     await waitUntil('bot disabled badge', async () => {
       const badgeText = await client.evaluate(`(() => {
         const row = Array.from(document.querySelectorAll('tbody tr')).find(item => item.innerText.includes('Bot UI Smoke Bot'));
-        return row?.querySelector('.badge')?.innerText?.trim() || '';
+        const cells = Array.from(row?.querySelectorAll('td') || []);
+        return cells[6]?.querySelector('.badge')?.innerText?.trim() || '';
       })()`);
       return badgeText === 'Disabled';
     }, 30000);
@@ -388,7 +400,8 @@ async function inspectRuntimeUi() {
     await waitUntil('bot enabled badge', async () => {
       const badgeText = await client.evaluate(`(() => {
         const row = Array.from(document.querySelectorAll('tbody tr')).find(item => item.innerText.includes('Bot UI Smoke Bot'));
-        return row?.querySelector('.badge')?.innerText?.trim() || '';
+        const cells = Array.from(row?.querySelectorAll('td') || []);
+        return cells[6]?.querySelector('.badge')?.innerText?.trim() || '';
       })()`);
       return badgeText === 'Enabled';
     }, 30000);
@@ -397,13 +410,24 @@ async function inspectRuntimeUi() {
     const toggledBotState = await client.evaluate(`(() => {
       const row = Array.from(document.querySelectorAll('tbody tr')).find(item => item.innerText.includes('Bot UI Smoke Bot'));
       const cells = Array.from(row?.querySelectorAll('td') || []);
+      const executionLines = Array.from(cells[5]?.querySelectorAll('.text-muted, .small.text-dark') || []).map(item => item.innerText.trim()).filter(Boolean);
       return {
-        enabledBadgeText: row?.querySelector('.badge')?.innerText?.trim() || '',
+        enabledBadgeText: cells[6]?.querySelector('.badge')?.innerText?.trim() || '',
         successMessageText: document.querySelector('.alert-success')?.innerText?.trim() || '',
         workerStateText: cells[4]?.querySelector('.font-weight-bolder')?.innerText?.trim() || '',
         workerErrorText: cells[4]?.querySelector('.text-muted')?.innerText?.trim() || '',
         executionStateText: cells[5]?.querySelector('.font-weight-bolder')?.innerText?.trim() || '',
-        executionFailureText: cells[5]?.querySelector('.text-muted')?.innerText?.trim() || ''
+        executionFailureText: executionLines.find(text => !text.startsWith('Last execution:') && !text.startsWith('Blok bitişi:') && !text.startsWith('Kalan:') && text !== 'Cooldown aktif' && text !== 'Failure yok') || '',
+        executionBlockDetailText: executionLines.find(text => text.startsWith('Execution blocked because')) || '',
+        marketDataBadgeText: cells[5]?.querySelector('[data-cb-bot-market-badge]')?.innerText?.trim() || '',
+        marketDataReasonText: cells[5]?.querySelector('[data-cb-bot-market-reason]')?.innerText?.trim() || '',
+        marketDataAffectedText: cells[5]?.querySelector('[data-cb-bot-market-affected]')?.innerText?.trim() || '',
+        marketDataLastCandleText: cells[5]?.querySelector('[data-cb-bot-market-candle]')?.innerText?.trim() || '',
+        marketDataAgeText: cells[5]?.querySelector('[data-cb-bot-market-age]')?.innerText?.trim() || '',
+        marketDataContinuityText: cells[5]?.querySelector('[data-cb-bot-market-continuity]')?.innerText?.replace(/\s+/g, ' ')?.trim() || '',
+        cooldownBadgeText: cells[5]?.querySelector('[data-cb-bot-cooldown-badge]')?.innerText?.trim() || '',
+        cooldownBlockedUntilText: executionLines.find(text => text.startsWith('Blok bitişi:')) || '',
+        cooldownRemainingText: executionLines.find(text => text.startsWith('Kalan:')) || ''
       };
     })()`);
 
@@ -460,6 +484,16 @@ async function inspectRuntimeUi() {
         initialWorkerErrorText: String(initialBotState.workerErrorText || ''),
         initialExecutionStateText: String(initialBotState.executionStateText || ''),
         initialExecutionFailureText: String(initialBotState.executionFailureText || ''),
+        initialExecutionBlockDetailText: String(initialBotState.executionBlockDetailText || ''),
+        initialMarketDataBadgeText: String(initialBotState.marketDataBadgeText || ''),
+        initialMarketDataReasonText: String(initialBotState.marketDataReasonText || ''),
+        initialMarketDataAffectedText: String(initialBotState.marketDataAffectedText || ''),
+        initialMarketDataLastCandleText: String(initialBotState.marketDataLastCandleText || ''),
+        initialMarketDataAgeText: String(initialBotState.marketDataAgeText || ''),
+        initialMarketDataContinuityText: String(initialBotState.marketDataContinuityText || ''),
+        initialCooldownBadgeText: String(initialBotState.cooldownBadgeText || ''),
+        initialCooldownBlockedUntilText: String(initialBotState.cooldownBlockedUntilText || ''),
+        initialCooldownRemainingText: String(initialBotState.cooldownRemainingText || ''),
         initialLastExecutionText: String(initialBotState.lastExecutionText || ''),
         enabledBadgeText: String(toggledBotState.enabledBadgeText || ''),
         disableThenEnableCycle: `${initialBotState.enabledBadgeText || ''} -> Disabled -> ${toggledBotState.enabledBadgeText || ''}`,
@@ -467,7 +501,17 @@ async function inspectRuntimeUi() {
         postToggleWorkerStateText: String(toggledBotState.workerStateText || ''),
         postToggleWorkerErrorText: String(toggledBotState.workerErrorText || ''),
         postToggleExecutionStateText: String(toggledBotState.executionStateText || ''),
-        postToggleExecutionFailureText: String(toggledBotState.executionFailureText || '')
+        postToggleExecutionFailureText: String(toggledBotState.executionFailureText || ''),
+        postToggleExecutionBlockDetailText: String(toggledBotState.executionBlockDetailText || ''),
+        postToggleMarketDataBadgeText: String(toggledBotState.marketDataBadgeText || ''),
+        postToggleMarketDataReasonText: String(toggledBotState.marketDataReasonText || ''),
+        postToggleMarketDataAffectedText: String(toggledBotState.marketDataAffectedText || ''),
+        postToggleMarketDataLastCandleText: String(toggledBotState.marketDataLastCandleText || ''),
+        postToggleMarketDataAgeText: String(toggledBotState.marketDataAgeText || ''),
+        postToggleMarketDataContinuityText: String(toggledBotState.marketDataContinuityText || ''),
+        postToggleCooldownBadgeText: String(toggledBotState.cooldownBadgeText || ''),
+        postToggleCooldownBlockedUntilText: String(toggledBotState.cooldownBlockedUntilText || ''),
+        postToggleCooldownRemainingText: String(toggledBotState.cooldownRemainingText || '')
       },
       dashboard: {
         enabledBotsText: String(dashboardState.enabledBotsText || ''),
@@ -511,6 +555,15 @@ async function inspectRuntimeUi() {
   console.log(`BotToggleCycle=${summary.bots.disableThenEnableCycle}`);
   console.log(`BotExecutionState=${summary.bots.postToggleExecutionStateText}`);
   console.log(`BotExecutionError=${summary.bots.postToggleExecutionFailureText}`);
+  console.log(`BotExecutionBlockDetail=${summary.bots.postToggleExecutionBlockDetailText}`);
+  console.log(`BotMarketDataBadge=${summary.bots.postToggleMarketDataBadgeText}`);
+  console.log(`BotMarketDataReason=${summary.bots.postToggleMarketDataReasonText}`);
+  console.log(`BotMarketDataAffected=${summary.bots.postToggleMarketDataAffectedText}`);
+  console.log(`BotMarketDataLastCandle=${summary.bots.postToggleMarketDataLastCandleText}`);
+  console.log(`BotMarketDataAge=${summary.bots.postToggleMarketDataAgeText}`);
+  console.log(`BotMarketDataContinuity=${summary.bots.postToggleMarketDataContinuityText}`);
+  console.log(`BotCooldownBadge=${summary.bots.postToggleCooldownBadgeText}`);
+  console.log(`BotCooldownRemaining=${summary.bots.postToggleCooldownRemainingText}`);
   console.log(`DashboardDriftSummary=${summary.dashboard.driftSummaryText}`);
   console.log(`ExchangeBannerDetail=${summary.exchanges.bannerDetailText}`);
   console.log(`BrowserSummaryPath=${browserSummaryPath}`);
@@ -523,5 +576,7 @@ if (mode === 'register') {
 } else {
   throw new Error(`Unsupported bot UI smoke mode: ${mode}`);
 }
+
+
 
 

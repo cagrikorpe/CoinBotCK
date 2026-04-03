@@ -271,7 +271,7 @@ public sealed class MarketAnomalyServiceTests
     {
         public int GetSnapshotCalls { get; private set; }
 
-        public Task<DegradedModeSnapshot> GetSnapshotAsync(string? correlationId = null, CancellationToken cancellationToken = default)
+        public Task<DegradedModeSnapshot> GetSnapshotAsync(string? correlationId = null, string? symbol = null, string? timeframe = null, CancellationToken cancellationToken = default)
         {
             _ = correlationId;
             GetSnapshotCalls++;

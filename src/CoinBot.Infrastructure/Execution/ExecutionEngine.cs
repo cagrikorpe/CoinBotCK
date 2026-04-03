@@ -148,7 +148,9 @@ public sealed class ExecutionEngine(
                     CorrelationId: rootCorrelationId,
                     UserId: normalizedCommand.OwnerUserId,
                     BotId: normalizedCommand.BotId,
-                    StrategyKey: normalizedCommand.StrategyKey),
+                    StrategyKey: normalizedCommand.StrategyKey,
+                    Symbol: normalizedCommand.Symbol,
+                    Timeframe: normalizedCommand.Timeframe),
                 cancellationToken);
 
             lastTransition = await PersistTransitionAsync(

@@ -58,6 +58,32 @@ public sealed class AlertDispatchCoordinatorTests
     }
 
     [Fact]
+    public async Task SendAsync_DoesNotFail_WhenMemoryCacheHasSizeLimit()
+    {
+        var alertService = new RecordingAlertService();
+        await using var provider = new ServiceCollection()
+            .AddScoped<IAlertService>(_ => alertService)
+            .BuildServiceProvider();
+        var coordinator = new AlertDispatchCoordinator(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            new MemoryCache(new MemoryCacheOptions { SizeLimit = 1024 }),
+            NullLogger<AlertDispatchCoordinator>.Instance);
+
+        var exception = await Record.ExceptionAsync(() =>
+            coordinator.SendAsync(
+                new AlertNotification(
+                    "ORDER_REJECTED",
+                    AlertSeverity.Warning,
+                    "OrderRejected",
+                    "EventType=OrderRejected; Symbol=BTCUSDT; Result=Rejected; FailureCode=UserExecutionBotCooldownActive; TimestampUtc=2026-04-02T10:00:00.0000000Z; Environment=Development/Testnet"),
+                "order-transition:size-limited-cache",
+                TimeSpan.FromMinutes(5)));
+
+        Assert.Null(exception);
+        Assert.Single(alertService.Notifications);
+    }
+
+    [Fact]
     public async Task SendAsync_SwallowsAlertServiceFailures()
     {
         await using var provider = new ServiceCollection()

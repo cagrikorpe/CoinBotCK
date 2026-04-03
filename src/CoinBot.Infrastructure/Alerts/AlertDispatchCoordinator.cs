@@ -35,13 +35,18 @@ public sealed class AlertDispatchCoordinator(
             return;
         }
 
-        if (cooldown > TimeSpan.Zero)
-        {
-            memoryCache.Set(normalizedDedupeKey, true, cooldown);
-        }
-
         try
         {
+            if (cooldown > TimeSpan.Zero)
+            {
+                memoryCache.Set(
+                    normalizedDedupeKey,
+                    true,
+                    new MemoryCacheEntryOptions()
+                        .SetAbsoluteExpiration(cooldown)
+                        .SetSize(1));
+            }
+
             using var scope = serviceScopeFactory.CreateScope();
             var alertService = scope.ServiceProvider.GetRequiredService<IAlertService>();
             await alertService.SendAsync(notification, cancellationToken);

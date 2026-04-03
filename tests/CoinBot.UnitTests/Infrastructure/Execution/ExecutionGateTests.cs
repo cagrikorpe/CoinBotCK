@@ -355,6 +355,21 @@ public sealed class ExecutionGateTests
         Assert.Equal(ExecutionGateBlockedReason.StaleMarketData, exception.Reason);
         Assert.Equal("Blocked:StaleMarketData", auditLog.Outcome);
         Assert.Equal(nameof(ExecutionEnvironment.Demo), auditLog.Environment);
+        Assert.Contains("Execution blocked because market data is stale.", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("LatencyReason=MarketDataLatencyBreached", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("HeartbeatSource=binance:kline", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Symbol=BTCUSDT", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Timeframe=1m", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("LastCandleAtUtc=2026-03-22T12:00:00.0000000Z", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("DataAgeMs=3000", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("ContinuityGapCount=0", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("DecisionSourceLayer=heartbeat-watchdog", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("DecisionMethodName=ExecutionGate.EvaluateDataLatencyAsync", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Symbol=BTCUSDT", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("Timeframe=1m", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("ContinuityGapCount=0", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("DecisionSourceLayer=heartbeat-watchdog", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("DecisionMethodName=ExecutionGate.EvaluateDataLatencyAsync", auditLog.Context, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -372,7 +387,11 @@ public sealed class ExecutionGateTests
                 "binance:kline",
                 harness.TimeProvider.GetUtcNow().UtcDateTime,
                 DegradedModeStateCode.Stopped,
-                DegradedModeReasonCode.CandleDataGapDetected),
+                DegradedModeReasonCode.CandleDataGapDetected,
+                Symbol: "BTCUSDT",
+                Timeframe: "1m",
+                ExpectedOpenTimeUtc: new DateTime(2026, 3, 22, 12, 1, 0, DateTimeKind.Utc),
+                ContinuityGapCount: 3),
             correlationId: "corr-702");
 
         var exception = await Assert.ThrowsAsync<ExecutionGateRejectedException>(() =>
@@ -390,9 +409,87 @@ public sealed class ExecutionGateTests
 
         Assert.Equal(ExecutionGateBlockedReason.StaleMarketData, exception.Reason);
         Assert.Equal("Blocked:StaleMarketData", auditLog.Outcome);
+        Assert.Contains("Execution blocked because the candle continuity guard is active.", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("LatencyReason=CandleDataGapDetected", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Symbol=BTCUSDT", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Timeframe=1m", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("ExpectedOpenTimeUtc=2026-03-22T12:01:00.0000000Z", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("ContinuityGapCount=3", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("DecisionSourceLayer=continuity-validator", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("DecisionMethodName=ExecutionGate.EvaluateDataLatencyAsync", exception.Message, StringComparison.Ordinal);
         Assert.Contains("LatencyReason=CandleDataGapDetected", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("Symbol=BTCUSDT", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("Timeframe=1m", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("ExpectedOpenTimeUtc=2026-03-22T12:01:00.0000000Z", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("ContinuityGapCount=3", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("DecisionSourceLayer=continuity-validator", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("DecisionMethodName=ExecutionGate.EvaluateDataLatencyAsync", auditLog.Context, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task EnsureExecutionAllowedAsync_UsesSymbolScopedLatencySnapshot_WhenGlobalSingletonWasUpdatedByAnotherSymbol()
+    {
+        await using var harness = CreateHarness();
+        var nowUtc = harness.TimeProvider.GetUtcNow().UtcDateTime;
+
+        await harness.CircuitBreaker.RecordHeartbeatAsync(
+            new DataLatencyHeartbeat(
+                "binance:kline",
+                nowUtc,
+                Symbol: "BTCUSDT",
+                Timeframe: "1m",
+                ExpectedOpenTimeUtc: nowUtc.AddMinutes(1),
+                ContinuityGapCount: 0),
+            correlationId: "corr-cross-btc");
+
+        await harness.CircuitBreaker.RecordHeartbeatAsync(
+            new DataLatencyHeartbeat(
+                "binance:kline",
+                nowUtc.AddSeconds(-10),
+                DegradedModeStateCode.Stopped,
+                DegradedModeReasonCode.MarketDataLatencyCritical,
+                Symbol: "ETHUSDT",
+                Timeframe: "1m",
+                ExpectedOpenTimeUtc: nowUtc,
+                ContinuityGapCount: 0),
+            correlationId: "corr-cross-eth");
+
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-cross",
+            context: "Execution open",
+            correlationId: "corr-cross-switch");
+
+        var snapshot = await harness.ExecutionGate.EnsureExecutionAllowedAsync(
+            new ExecutionGateRequest(
+                Actor: "worker-cross",
+                Action: "TradeExecution.Dispatch",
+                Target: "bot-cross-btc",
+                Environment: ExecutionEnvironment.Demo,
+                Context: "BTC dispatch against fresh scoped state",
+                CorrelationId: "corr-cross-order",
+                Symbol: "BTCUSDT",
+                Timeframe: "1m"));
+
+        var auditLog = await harness.DbContext.AuditLogs
+            .SingleAsync(entity => entity.Action == "TradeExecution.Dispatch");
+        var btcStateId = DegradedModeDefaults.ResolveStateId("BTCUSDT", "1m");
+        var btcState = await harness.DbContext.DegradedModeStates.SingleAsync(entity => entity.Id == btcStateId);
+        var singletonState = await harness.DbContext.DegradedModeStates.SingleAsync(entity => entity.Id == DegradedModeDefaults.SingletonId);
+
+        Assert.True(snapshot.IsPersisted);
+        Assert.True(snapshot.IsTradeMasterArmed);
+        Assert.Equal("Allowed", auditLog.Outcome);
+        Assert.Contains("LatencyReason=None", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("Symbol=BTCUSDT", auditLog.Context, StringComparison.Ordinal);
+        Assert.DoesNotContain("Symbol=ETHUSDT", auditLog.Context, StringComparison.Ordinal);
+        Assert.Equal(DegradedModeStateCode.Normal, btcState.StateCode);
+        Assert.Equal(DegradedModeReasonCode.None, btcState.ReasonCode);
+        Assert.Equal("BTCUSDT", btcState.LatestSymbol);
+        Assert.Equal(DegradedModeStateCode.Stopped, singletonState.StateCode);
+        Assert.Equal(DegradedModeReasonCode.MarketDataLatencyCritical, singletonState.ReasonCode);
+        Assert.Equal("ETHUSDT", singletonState.LatestSymbol);
+    }
     private static TestHarness CreateHarness(string environmentName = "Production")
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
@@ -444,7 +541,13 @@ public sealed class ExecutionGateTests
     private static async Task PrimeFreshMarketDataAsync(TestHarness harness, string correlationId)
     {
         await harness.CircuitBreaker.RecordHeartbeatAsync(
-            new DataLatencyHeartbeat("binance-btcusdt", harness.TimeProvider.GetUtcNow().UtcDateTime),
+            new DataLatencyHeartbeat(
+                "binance:kline",
+                harness.TimeProvider.GetUtcNow().UtcDateTime,
+                Symbol: "BTCUSDT",
+                Timeframe: "1m",
+                ExpectedOpenTimeUtc: harness.TimeProvider.GetUtcNow().UtcDateTime.AddMinutes(1),
+                ContinuityGapCount: 0),
             correlationId);
     }
 
@@ -558,3 +661,4 @@ public sealed class ExecutionGateTests
         }
     }
 }
+

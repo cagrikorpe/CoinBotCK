@@ -36,7 +36,11 @@ public sealed class MarketDataHeartbeatRecorder(
                     Source: "binance:kline",
                     DataTimestampUtc: NormalizeTimestamp(guardResult.EffectiveDataTimestampUtc),
                     GuardStateCode: guardResult.GuardStateCode,
-                    GuardReasonCode: guardResult.GuardReasonCode),
+                    GuardReasonCode: guardResult.GuardReasonCode,
+                    Symbol: guardResult.Symbol,
+                    Timeframe: guardResult.Timeframe,
+                    ExpectedOpenTimeUtc: guardResult.ExpectedOpenTimeUtc,
+                    ContinuityGapCount: guardResult.ContinuityGapCount),
                 cancellationToken: cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

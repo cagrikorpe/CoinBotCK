@@ -67,9 +67,9 @@ public sealed class UserDashboardOperationsReadModelService(
         var degradedModeState = await dbContext.DegradedModeStates
             .AsNoTracking()
             .IgnoreQueryFilters()
-            .OrderByDescending(entity => entity.UpdatedDate)
-            .ThenByDescending(entity => entity.CreatedDate)
-            .FirstOrDefaultAsync(cancellationToken);
+            .SingleOrDefaultAsync(
+                entity => entity.Id == DegradedModeDefaults.SingletonId,
+                cancellationToken);
         var clockDriftProbeSnapshot = await dbContext.HealthSnapshots
             .AsNoTracking()
             .IgnoreQueryFilters()

@@ -11,4 +11,6 @@ public sealed record ExecutionGateRequest(
     string? CorrelationId = null,
     string? UserId = null,
     Guid? BotId = null,
-    string? StrategyKey = null);
+    string? StrategyKey = null,
+    string? Symbol = null,
+    string? Timeframe = null);

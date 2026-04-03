@@ -62,11 +62,42 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_RefreshesSymbolScopedLatencyFromHistoricalBackfill_WhenHeartbeatWasNotPrimed()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-rest-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-rest-1",
+            CancellationToken.None);
+
+        var stateId = DegradedModeDefaults.ResolveStateId("BTCUSDT", "1m");
+        var scopedState = await harness.DbContext.DegradedModeStates.SingleAsync(entity => entity.Id == stateId);
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.Equal(DegradedModeStateCode.Normal, scopedState.StateCode);
+        Assert.Equal(DegradedModeReasonCode.None, scopedState.ReasonCode);
+        Assert.Equal("BTCUSDT", scopedState.LatestSymbol);
+        Assert.Equal("1m", scopedState.LatestTimeframe);
+        Assert.Equal("binance:rest-backfill", scopedState.LatestHeartbeatSource);
+        Assert.Equal(0, scopedState.LatestContinuityGapCount);
+        Assert.NotNull(scopedState.LatestDataTimestampAtUtc);
+    }
+
+    [Fact]
     public async Task ProcessAsync_FailsClosed_WhenPilotSymbolIsNotAllowed()
     {
         await using var harness = CreateHarness();
         var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "XRPUSDT");
-        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-eth-1");
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-eth-1", symbol: "ETHUSDT");
         await harness.SwitchService.SetTradeMasterStateAsync(
             TradeMasterSwitchState.Armed,
             actor: "admin-bot",
@@ -148,7 +179,7 @@ public sealed class BotWorkerJobProcessorTests
         await using var harness = CreateHarness();
         var firstBot = await SeedBotGraphAsync(harness.DbContext, symbol: "BTCUSDT");
         _ = await SeedBotGraphAsync(harness.DbContext, ownerUserId: firstBot.OwnerUserId, symbol: "ETHUSDT");
-        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-eth-ok-1");
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-eth-ok-1", symbol: "BTCUSDT");
         await harness.SwitchService.SetTradeMasterStateAsync(
             TradeMasterSwitchState.Armed,
             actor: "admin-bot",
@@ -271,6 +302,7 @@ public sealed class BotWorkerJobProcessorTests
             new FakeHistoricalKlineClient(timeProvider),
             strategySignalService,
             executionEngine,
+            circuitBreaker,
             correlationContextAccessor,
             Options.Create(new BotExecutionPilotOptions
             {
@@ -395,10 +427,18 @@ public sealed class BotWorkerJobProcessorTests
     private static async Task PrimeFreshMarketDataAsync(
         IDataLatencyCircuitBreaker circuitBreaker,
         AdjustableTimeProvider timeProvider,
-        string correlationId)
+        string correlationId,
+        string symbol = "BTCUSDT",
+        string timeframe = "1m")
     {
         await circuitBreaker.RecordHeartbeatAsync(
-            new DataLatencyHeartbeat("binance-btcusdt", timeProvider.GetUtcNow().UtcDateTime),
+            new DataLatencyHeartbeat(
+                "binance:kline",
+                timeProvider.GetUtcNow().UtcDateTime,
+                Symbol: symbol,
+                Timeframe: timeframe,
+                ExpectedOpenTimeUtc: timeProvider.GetUtcNow().UtcDateTime.AddMinutes(1),
+                ContinuityGapCount: 0),
             correlationId);
     }
 
@@ -714,3 +754,6 @@ public sealed class BotWorkerJobProcessorTests
         }
     }
 }
+
+
+

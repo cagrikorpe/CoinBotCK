@@ -30,5 +30,17 @@ public sealed record BotManagementRowViewModel(
     string? LastJobErrorCode,
     string LastExecutionState,
     string? LastExecutionFailureCode,
+    string? LastExecutionBlockDetail,
+    bool IsCooldownActive,
+    string? CooldownBlockedUntilLabel,
+    string? CooldownRemainingText,
     string UpdatedAtLabel,
-    string LastExecutionAtLabel);
+    string LastExecutionAtLabel,
+    string? MarketDataBadgeText = null,
+    string? LastCandleAtLabel = null,
+    string? DataAgeText = null,
+    string? ContinuityStateText = null,
+    string? ContinuityGapText = null,
+    string? AffectedMarketText = null,
+    string? StaleReasonText = null);
+

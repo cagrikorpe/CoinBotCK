@@ -20,10 +20,16 @@ public sealed class DataLatencyCircuitBreaker(
 
     public async Task<DegradedModeSnapshot> GetSnapshotAsync(
         string? correlationId = null,
+        string? symbol = null,
+        string? timeframe = null,
         CancellationToken cancellationToken = default)
     {
         var evaluationTimeUtc = timeProvider.GetUtcNow().UtcDateTime;
-        var state = await GetOrCreateTrackedStateAsync(evaluationTimeUtc, cancellationToken);
+        var state = await GetOrCreateTrackedStateAsync(
+            evaluationTimeUtc,
+            symbol,
+            timeframe,
+            cancellationToken);
         var previousSnapshot = MapSnapshot(state, evaluationTimeUtc, isPersisted: true);
         var desiredState = EvaluateState(state, evaluationTimeUtc);
         var hasStateChanged = ApplyState(state, desiredState, evaluationTimeUtc);
@@ -51,21 +57,93 @@ public sealed class DataLatencyCircuitBreaker(
         ArgumentNullException.ThrowIfNull(heartbeat);
 
         var heartbeatSource = NormalizeRequired(heartbeat.Source, nameof(heartbeat.Source), 64);
+        var symbol = NormalizeOptional(heartbeat.Symbol, maxLength: 32);
+        var timeframe = NormalizeOptional(heartbeat.Timeframe, maxLength: 16);
+        var hasScopedState = !string.IsNullOrWhiteSpace(symbol) &&
+            !string.IsNullOrWhiteSpace(timeframe);
         var evaluationTimeUtc = timeProvider.GetUtcNow().UtcDateTime;
         var dataTimestampUtc = NormalizeTimestamp(heartbeat.DataTimestampUtc);
         var clockDriftMilliseconds = ToMilliseconds(Math.Abs((evaluationTimeUtc - dataTimestampUtc).TotalMilliseconds));
-        var state = await GetOrCreateTrackedStateAsync(evaluationTimeUtc, cancellationToken);
+        var scopedSnapshot = await RecordHeartbeatForScopeAsync(
+            evaluationTimeUtc,
+            dataTimestampUtc,
+            clockDriftMilliseconds,
+            heartbeatSource,
+            symbol,
+            timeframe,
+            heartbeat.GuardStateCode,
+            heartbeat.GuardReasonCode,
+            heartbeat.ExpectedOpenTimeUtc,
+            heartbeat.ContinuityGapCount,
+            correlationId,
+            sendAlertOnStateChange: !hasScopedState,
+            cancellationToken);
+
+        if (hasScopedState)
+        {
+            await RecordHeartbeatForScopeAsync(
+                evaluationTimeUtc,
+                dataTimestampUtc,
+                clockDriftMilliseconds,
+                heartbeatSource,
+                symbol: null,
+                timeframe: null,
+                heartbeat.GuardStateCode,
+                heartbeat.GuardReasonCode,
+                heartbeat.ExpectedOpenTimeUtc,
+                heartbeat.ContinuityGapCount,
+                correlationId,
+                sendAlertOnStateChange: true,
+                cancellationToken,
+                latestSymbolOverride: symbol,
+                latestTimeframeOverride: timeframe);
+        }
+
+        return scopedSnapshot;
+    }
+
+    private async Task<DegradedModeSnapshot> RecordHeartbeatForScopeAsync(
+        DateTime evaluationTimeUtc,
+        DateTime dataTimestampUtc,
+        int clockDriftMilliseconds,
+        string heartbeatSource,
+        string? symbol,
+        string? timeframe,
+        DegradedModeStateCode? guardStateCode,
+        DegradedModeReasonCode? guardReasonCode,
+        DateTime? expectedOpenTimeUtc,
+        int? continuityGapCount,
+        string? correlationId,
+        bool sendAlertOnStateChange,
+        CancellationToken cancellationToken,
+        string? latestSymbolOverride = null,
+        string? latestTimeframeOverride = null)
+    {
+        var state = await GetOrCreateTrackedStateAsync(
+            evaluationTimeUtc,
+            symbol,
+            timeframe,
+            cancellationToken);
         var previousSnapshot = MapSnapshot(state, evaluationTimeUtc, isPersisted: true);
 
         state.LatestDataTimestampAtUtc = dataTimestampUtc;
         state.LatestHeartbeatReceivedAtUtc = evaluationTimeUtc;
         state.LatestClockDriftMilliseconds = clockDriftMilliseconds;
+        state.LatestHeartbeatSource = heartbeatSource;
+        state.LatestSymbol = latestSymbolOverride ?? symbol;
+        state.LatestTimeframe = latestTimeframeOverride ?? timeframe;
+        state.LatestExpectedOpenTimeUtc = expectedOpenTimeUtc is null
+            ? null
+            : NormalizeTimestamp(expectedOpenTimeUtc.Value);
+        state.LatestContinuityGapCount = continuityGapCount is null
+            ? null
+            : Math.Max(0, continuityGapCount.Value);
 
         var desiredState = EvaluateState(
             state,
             evaluationTimeUtc,
-            heartbeat.GuardStateCode,
-            heartbeat.GuardReasonCode);
+            guardStateCode,
+            guardReasonCode);
         var hasStateChanged = ApplyState(state, desiredState, evaluationTimeUtc);
 
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -73,32 +151,45 @@ public sealed class DataLatencyCircuitBreaker(
         if (hasStateChanged)
         {
             logger.LogWarning(
-                "Data latency circuit breaker moved to {StateCode} with reason {ReasonCode} after heartbeat source {HeartbeatSource}.",
+                "Data latency circuit breaker moved to {StateCode} with reason {ReasonCode} after heartbeat source {HeartbeatSource} for {Symbol} {Timeframe}.",
                 desiredState.StateCode,
                 desiredState.ReasonCode,
-                heartbeatSource);
+                heartbeatSource,
+                state.LatestSymbol ?? "missing",
+                state.LatestTimeframe ?? "missing");
 
-            await SendAlertIfStateChangedAsync(previousSnapshot, desiredState, state, correlationId, cancellationToken);
+            if (sendAlertOnStateChange)
+            {
+                await SendAlertIfStateChangedAsync(previousSnapshot, desiredState, state, correlationId, cancellationToken);
+            }
         }
         else
         {
             logger.LogDebug(
-                "Data latency heartbeat from {HeartbeatSource} kept the circuit breaker at {StateCode}.",
+                "Data latency heartbeat from {HeartbeatSource} for {Symbol} {Timeframe} kept the circuit breaker at {StateCode} with continuity gap count {ContinuityGapCount}.",
                 heartbeatSource,
-                desiredState.StateCode);
+                state.LatestSymbol ?? "missing",
+                state.LatestTimeframe ?? "missing",
+                desiredState.StateCode,
+                state.LatestContinuityGapCount ?? 0);
         }
 
         return MapSnapshot(state, evaluationTimeUtc, isPersisted: true);
     }
 
-    private async Task<DegradedModeState> GetOrCreateTrackedStateAsync(DateTime evaluationTimeUtc, CancellationToken cancellationToken)
+    private async Task<DegradedModeState> GetOrCreateTrackedStateAsync(
+        DateTime evaluationTimeUtc,
+        string? symbol,
+        string? timeframe,
+        CancellationToken cancellationToken)
     {
+        var stateId = DegradedModeDefaults.ResolveStateId(symbol, timeframe);
         var state = await dbContext.DegradedModeStates
-            .SingleOrDefaultAsync(entity => entity.Id == DegradedModeDefaults.SingletonId, cancellationToken);
+            .SingleOrDefaultAsync(entity => entity.Id == stateId, cancellationToken);
 
         if (state is null)
         {
-            state = DegradedModeDefaults.CreateEntity(evaluationTimeUtc);
+            state = DegradedModeDefaults.CreateEntity(evaluationTimeUtc, symbol, timeframe);
             dbContext.DegradedModeStates.Add(state);
             return state;
         }
@@ -108,9 +199,18 @@ public sealed class DataLatencyCircuitBreaker(
             state.IsDeleted = false;
         }
 
+        if (!string.IsNullOrWhiteSpace(symbol))
+        {
+            state.LatestSymbol = symbol;
+        }
+
+        if (!string.IsNullOrWhiteSpace(timeframe))
+        {
+            state.LatestTimeframe = timeframe;
+        }
+
         return state;
     }
-
     private DesiredState EvaluateState(
         DegradedModeState state,
         DateTime evaluationTimeUtc,
@@ -247,7 +347,7 @@ public sealed class DataLatencyCircuitBreaker(
             _ => "Data latency guard stopped signal and execution"
         };
 
-        var message = $"State={desiredState.StateCode}; Reason={desiredState.ReasonCode}; DataAgeMs={FormatNullableInt(desiredState.LatestDataAgeMilliseconds)}; ClockDriftMs={FormatNullableInt(state.LatestClockDriftMilliseconds)}; LatestDataTimestampUtc={state.LatestDataTimestampAtUtc?.ToString("O") ?? "missing"}; SignalBlocked={desiredState.SignalFlowBlocked}; ExecutionBlocked={desiredState.ExecutionFlowBlocked}.";
+        var message = $"State={desiredState.StateCode}; Reason={desiredState.ReasonCode}; DataAgeMs={FormatNullableInt(desiredState.LatestDataAgeMilliseconds)}; ClockDriftMs={FormatNullableInt(state.LatestClockDriftMilliseconds)}; LatestDataTimestampUtc={state.LatestDataTimestampAtUtc?.ToString("O") ?? "missing"}; HeartbeatSource={state.LatestHeartbeatSource ?? "missing"}; Symbol={state.LatestSymbol ?? "missing"}; Timeframe={state.LatestTimeframe ?? "missing"}; ExpectedOpenTimeUtc={state.LatestExpectedOpenTimeUtc?.ToString("O") ?? "missing"}; ContinuityGapCount={FormatNullableInt(state.LatestContinuityGapCount)}; SignalBlocked={desiredState.SignalFlowBlocked}; ExecutionBlocked={desiredState.ExecutionFlowBlocked}.";
 
         return new AlertNotification(
             Code: $"DEGRADED_MODE_{desiredState.StateCode.ToString().ToUpperInvariant()}_{desiredState.ReasonCode.ToString().ToUpperInvariant()}",
@@ -289,7 +389,12 @@ public sealed class DataLatencyCircuitBreaker(
                 : ToMilliseconds(Math.Max(0, (evaluationTimeUtc - state.LatestDataTimestampAtUtc.Value).TotalMilliseconds)),
             state.LatestClockDriftMilliseconds,
             state.LastStateChangedAtUtc,
-            isPersisted);
+            isPersisted,
+            state.LatestHeartbeatSource,
+            state.LatestSymbol,
+            state.LatestTimeframe,
+            state.LatestExpectedOpenTimeUtc,
+            state.LatestContinuityGapCount);
     }
 
     private int StaleDataThresholdMilliseconds => checked(optionsValue.StaleDataThresholdSeconds * 1000);
@@ -313,6 +418,20 @@ public sealed class DataLatencyCircuitBreaker(
         return reasonCode is DegradedModeReasonCode.CandleDataGapDetected or
             DegradedModeReasonCode.CandleDataDuplicateDetected or
             DegradedModeReasonCode.CandleDataOutOfOrderDetected;
+    }
+
+    private static string? NormalizeOptional(string? value, int maxLength)
+    {
+        var normalizedValue = value?.Trim();
+
+        if (string.IsNullOrWhiteSpace(normalizedValue))
+        {
+            return null;
+        }
+
+        return normalizedValue.Length <= maxLength
+            ? normalizedValue
+            : normalizedValue[..maxLength];
     }
 
     private static string NormalizeRequired(string? value, string parameterName, int maxLength)

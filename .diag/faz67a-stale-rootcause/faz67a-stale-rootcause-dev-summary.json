@@ -1,0 +1,166 @@
+{
+  "BotId": "f0b4c1a2-d46a-441a-b062-d790ade02f8e",
+  "RuntimeDbServer": "localhost",
+  "RuntimeDbName": "CoinBotDb",
+  "StartedAtUtc": "2026-04-02T21:13:49.0520721Z",
+  "AttemptCount": 2,
+  "Attempts": [
+    {
+      "ExecutionOrder": {
+        "Id": "8b71de4c-ed0b-4689-ac8d-08de90fcbddf",
+        "BotId": "f0b4c1a2-d46a-441a-b062-d790ade02f8e",
+        "Symbol": "BTCUSDT",
+        "Timeframe": "1m",
+        "State": "Rejected",
+        "FailureCode": "StaleMarketData",
+        "FailureDetail": "Execution blocked because market data is stale. LatencyReason=MarketDataLatencyBreached; HeartbeatSource=binance:kline; Symbol=ETHUSDT; Timeframe=1m; LastCandleAtUtc=2026-04-02T21:11:59.9990000; ExpectedOpenTimeUtc=2026-04-02T21:11:00.0000000; DataAgeMs=112657; ClockDriftMs=16; ContinuityGapCount=0; DecisionSourceLayer=heartbeat-watchdog; DecisionMethodName=ExecutionGate.EvaluateDataLatencyAsync.",
+        "RootCorrelationId": "57446cc6eebb4b1f93c253e384aea964",
+        "CreatedDate": "2026-04-02T19:13:52.6162186Z",
+        "LastStateChangedAtUtc": "2026-04-02T19:13:52.6653865Z"
+      },
+      "Transitions": [
+        {
+          "SequenceNumber": 1,
+          "State": "Received",
+          "EventCode": "Received",
+          "Detail": "Execution command accepted.",
+          "CorrelationId": "1d14274c200b40f19ae4f5779891d271",
+          "OccurredAtUtc": "2026-04-02T19:13:52.4861832Z"
+        },
+        {
+          "SequenceNumber": 2,
+          "State": "Rejected",
+          "EventCode": "GateRejected",
+          "Detail": "Execution blocked because market data is stale. LatencyReason=MarketDataLatencyBreached; HeartbeatSource=binance:kline; Symbol=ETHUSDT; Timeframe=1m; LastCandleAtUtc=2026-04-02T21:11:59.9990000; ExpectedOpenTimeUtc=2026-04-02T21:11:00.0000000; DataAgeMs=112657; ClockDriftMs=16; ContinuityGapCount=0; DecisionSourceLayer=heartbeat-watchdog; DecisionMethodName=ExecutionGate.EvaluateDataLatencyAsync.",
+          "CorrelationId": "4201bc7abbd14c2b9effab2e999ccb03",
+          "OccurredAtUtc": "2026-04-02T19:13:52.6653865Z"
+        }
+      ],
+      "AuditLogs": {
+        "Action": "TradeExecution.Dispatch",
+        "Target": "ExecutionOrder/8b71de4c-ed0b-4689-ac8d-08de90fcbddf",
+        "Outcome": "Blocked:StaleMarketData",
+        "Context": "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1 | ExecutionOrderId=8b71de4c-ed0b-4689-ac8d-08de90fcbddf | IdempotencyKey=c5f3159e6ac2 | LatencyState=Degraded; LatencyReason=MarketDataLatencyBreached; HeartbeatSource=binance:kline; Symbol=ETHUSDT; Timeframe=1m; LastCandleAtUtc=2026-04-02T21:11:59.9990000; ExpectedOpenTimeUtc=2026-04-02T21:11:00.0000000; DataAgeMs=112657; ClockDriftMs=16; ContinuityGapCount=0; DecisionSourceLayer=heartbeat-watchdog; DecisionMethodName=ExecutionGate.EvaluateDataLatencyAsync",
+        "CorrelationId": "57446cc6eebb4b1f93c253e384aea964",
+        "CreatedDate": "2026-04-02T19:13:52.6609520Z"
+      },
+      "ExecutionTraceCount": 0
+    },
+    {
+      "ExecutionOrder": {
+        "Id": "bd7bcc04-25b5-4647-ac8e-08de90fcbddf",
+        "BotId": "f0b4c1a2-d46a-441a-b062-d790ade02f8e",
+        "Symbol": "BTCUSDT",
+        "Timeframe": "1m",
+        "State": "Rejected",
+        "FailureCode": "UserExecutionBotCooldownActive",
+        "FailureDetail": "Execution blocked because the bot cooldown is still active.",
+        "RootCorrelationId": "2a7c1b88356048cfa99a53f4fd896eeb",
+        "CreatedDate": "2026-04-02T19:14:23.1835275Z",
+        "LastStateChangedAtUtc": "2026-04-02T19:14:23.2665938Z"
+      },
+      "Transitions": [
+        {
+          "SequenceNumber": 1,
+          "State": "Received",
+          "EventCode": "Received",
+          "Detail": "Execution command accepted.",
+          "CorrelationId": "6447dfc7e1f14ca691e9a46b8da22c3e",
+          "OccurredAtUtc": "2026-04-02T19:14:23.1831343Z"
+        },
+        {
+          "SequenceNumber": 2,
+          "State": "GatePassed",
+          "EventCode": "GatePassed",
+          "Detail": "Execution gate approved the order.",
+          "CorrelationId": "8517e564dffd4ea2aafa1334a8d32941",
+          "OccurredAtUtc": "2026-04-02T19:14:23.2277868Z"
+        },
+        {
+          "SequenceNumber": 3,
+          "State": "Dispatching",
+          "EventCode": "Dispatching",
+          "Detail": "Dispatch started via Binance.",
+          "CorrelationId": "c8bb1003873345138da043a0b4af772f",
+          "OccurredAtUtc": "2026-04-02T19:14:23.2332970Z"
+        },
+        {
+          "SequenceNumber": 4,
+          "State": "Rejected",
+          "EventCode": "UserExecutionOverrideBlocked",
+          "Detail": "Execution blocked because the bot cooldown is still active.",
+          "CorrelationId": "37d1a1f66977401dadb73b76020ebaca",
+          "OccurredAtUtc": "2026-04-02T19:14:23.2665938Z"
+        }
+      ],
+      "AuditLogs": {
+        "Action": "TradeExecution.Dispatch",
+        "Target": "ExecutionOrder/bd7bcc04-25b5-4647-ac8e-08de90fcbddf",
+        "Outcome": "Allowed",
+        "Context": "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1 | ExecutionOrderId=bd7bcc04-25b5-4647-ac8e-08de90fcbddf | IdempotencyKey=c62e152f9924 | LatencyState=Normal; LatencyReason=None; HeartbeatSource=binance:kline; Symbol=BTCUSDT; Timeframe=1m; LastCandleAtUtc=2026-04-02T21:13:59.9990000; ExpectedOpenTimeUtc=missing; DataAgeMs=23189; ClockDriftMs=1143; ContinuityGapCount=0; DecisionSourceLayer=heartbeat-watchdog; DecisionMethodName=ExecutionGate.EvaluateDataLatencyAsync | ResolvedMode=Demo; Source=GlobalDefault; Reason=Global default mode resolves to Demo. | GlobalSystemState=Active; GlobalSystemReason=AUTONOMY_BREAKER_RECOVERED; GlobalSystemVersion=229; GlobalSystemManual=False",
+        "CorrelationId": "2a7c1b88356048cfa99a53f4fd896eeb",
+        "CreatedDate": "2026-04-02T19:14:23.2266540Z"
+      },
+      "ExecutionTraceCount": 0
+    }
+  ],
+  "BackgroundJobState": {
+    "JobKey": "bot-execution:f0b4c1a2d46a441ab062d790ade02f8e",
+    "JobType": "BotExecution",
+    "Status": "Failed",
+    "LastErrorCode": "UserExecutionBotCooldownActive",
+    "LastStartedAtUtc": "2026-04-02T19:14:22.8885009Z",
+    "LastCompletedAtUtc": null,
+    "LastFailedAtUtc": "2026-04-02T19:14:23.2772603Z",
+    "LastHeartbeatAtUtc": "2026-04-02T19:14:23.2772603Z",
+    "ConsecutiveFailureCount": 89,
+    "NextRunAtUtc": "2026-04-02T19:14:53.2772603Z"
+  },
+  "DegradedModeState": {
+    "StateCode": "Normal",
+    "ReasonCode": "None",
+    "LatestDataTimestampAtUtc": "2026-04-02T19:13:59.9990000Z",
+    "LatestHeartbeatReceivedAtUtc": "2026-04-02T19:14:01.1421240Z",
+    "LatestClockDriftMilliseconds": 1143,
+    "LatestHeartbeatSource": "binance:kline",
+    "LatestSymbol": "BTCUSDT",
+    "LatestTimeframe": "1m",
+    "LatestExpectedOpenTimeUtc": null,
+    "LatestContinuityGapCount": 0,
+    "LastStateChangedAtUtc": "2026-04-02T19:14:22.8902307Z"
+  },
+  "HealthSnapshots": [
+    {
+      "SnapshotKey": "market-data-drift-monitor",
+      "HealthState": "Critical",
+      "CircuitBreakerState": "Cooldown",
+      "ObservedAtUtc": "2026-04-02T19:13:59.9990000Z",
+      "WorkerLastHeartbeatAtUtc": "2026-04-02T19:13:59.9990000Z",
+      "StreamGapCount": 0,
+      "Detail": "DataAgeMs=22149; Reason=MarketDataLatencyCritical",
+      "LastUpdatedAtUtc": "2026-04-02T19:14:22.4037745Z"
+    },
+    {
+      "SnapshotKey": "market-watchdog",
+      "HealthState": "Critical",
+      "CircuitBreakerState": "Cooldown",
+      "ObservedAtUtc": "2026-04-02T19:13:59.9990000Z",
+      "WorkerLastHeartbeatAtUtc": "2026-04-02T19:14:01.1421240Z",
+      "StreamGapCount": 0,
+      "Detail": "State=Stopped; Reason=MarketDataLatencyCritical; DataAgeMs=22149; ClockDriftMs=1143",
+      "LastUpdatedAtUtc": "2026-04-02T19:14:22.4037745Z"
+    },
+    {
+      "SnapshotKey": "stale-data-guard",
+      "HealthState": "Critical",
+      "CircuitBreakerState": "Cooldown",
+      "ObservedAtUtc": "2026-04-02T19:13:59.9990000Z",
+      "WorkerLastHeartbeatAtUtc": "2026-04-02T19:14:01.1421240Z",
+      "StreamGapCount": 0,
+      "Detail": "SignalBlocked=True; ExecutionBlocked=True; Reason=MarketDataLatencyCritical",
+      "LastUpdatedAtUtc": "2026-04-02T19:14:22.4037745Z"
+    }
+  ],
+  "WebStdoutPath": "D:\\CkBot\\Code\\CoinBot\\.diag\\faz67a-stale-rootcause\\web.dev.stdout.log",
+  "WorkerStdoutPath": "D:\\CkBot\\Code\\CoinBot\\.diag\\faz67a-stale-rootcause\\worker.dev.stdout.log"
+}

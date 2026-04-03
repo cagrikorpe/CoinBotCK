@@ -51,7 +51,7 @@ public sealed class ClockExecutionIntegrationTests
             });
             setupContext.DegradedModeStates.Add(new DegradedModeState
             {
-                Id = Guid.NewGuid(),
+                Id = DegradedModeDefaults.SingletonId,
                 StateCode = DegradedModeStateCode.Stopped,
                 ReasonCode = DegradedModeReasonCode.ClockDriftExceeded,
                 SignalFlowBlocked = true,

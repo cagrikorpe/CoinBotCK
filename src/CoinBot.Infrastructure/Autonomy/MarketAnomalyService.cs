@@ -43,7 +43,7 @@ public sealed class MarketAnomalyService(
         var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
         var latencySnapshot = await dataLatencyCircuitBreaker.GetSnapshotAsync(
             correlationId: $"market-anomaly-sweep:{nowUtc:yyyyMMddHHmmss}",
-            cancellationToken);
+            cancellationToken: cancellationToken);
         var candidateSymbols = await ResolveCandidateSymbolsAsync(nowUtc, cancellationToken);
         var evaluations = new List<MarketAnomalyEvaluationSnapshot>(candidateSymbols.Count);
 

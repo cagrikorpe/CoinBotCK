@@ -12,7 +12,12 @@ public sealed record DegradedModeSnapshot(
     int? LatestDataAgeMilliseconds,
     int? LatestClockDriftMilliseconds,
     DateTime? LastStateChangedAtUtc,
-    bool IsPersisted)
+    bool IsPersisted,
+    string? LatestHeartbeatSource = null,
+    string? LatestSymbol = null,
+    string? LatestTimeframe = null,
+    DateTime? LatestExpectedOpenTimeUtc = null,
+    int? LatestContinuityGapCount = null)
 {
     public bool IsNormal => StateCode == DegradedModeStateCode.Normal &&
                             !SignalFlowBlocked &&

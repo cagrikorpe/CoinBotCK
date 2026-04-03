@@ -331,7 +331,7 @@ $environmentVariables = @{
     ASPNETCORE_URLS = $baseUrl
     ConnectionStrings__DefaultConnection = $connectionString
     COINBOT_CREDENTIAL_ENCRYPTION_KEY_BASE64 = $credentialKeyBase64
-    BotExecutionPilot__PerBotCooldownSeconds = '0'
+    BotExecutionPilot__PerBotCooldownSeconds = '120'
     BotExecutionPilot__PerSymbolCooldownSeconds = '0'
     BotExecutionPilot__PrimeHistoricalCandleCount = '50'
     JobOrchestration__Enabled = 'true'
@@ -351,6 +351,7 @@ $summary = [ordered]@{
     BotId = $botId
     BrowserSummaryPath = $browserSummaryPath
     HistoricalBaselineReason = 'ClockDriftExceeded'
+    Ui = $null
 }
 
 $webHandle = $null
@@ -450,6 +451,9 @@ try {
         Write-Host ('UiBotEnabled=' + $summary.Ui.bots.enabledBadgeText)
         Write-Host ('UiBotExecutionState=' + $summary.Ui.bots.postToggleExecutionStateText)
         Write-Host ('UiBotExecutionError=' + $summary.Ui.bots.postToggleExecutionFailureText)
+        Write-Host ('UiBotExecutionBlockDetail=' + $summary.Ui.bots.postToggleExecutionBlockDetailText)
+        Write-Host ('UiBotCooldownBadge=' + $summary.Ui.bots.postToggleCooldownBadgeText)
+        Write-Host ('UiBotCooldownRemaining=' + $summary.Ui.bots.postToggleCooldownRemainingText)
         Write-Host ('UiDashboardDriftSummary=' + $summary.Ui.dashboard.driftSummaryText)
         Write-Host ('UiExchangeBannerDetail=' + $summary.Ui.exchanges.bannerDetailText)
         Write-Host ('UiToggleCycle=' + $summary.Ui.bots.disableThenEnableCycle)

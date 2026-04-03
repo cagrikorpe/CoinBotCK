@@ -1,3 +1,4 @@
+using System.Globalization;
 using CoinBot.Application.Abstractions.Bots;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
@@ -16,6 +17,7 @@ public sealed class BotManagementService(
     UserOperationsStreamHub? userOperationsStreamHub = null) : IBotManagementService
 {
     private const string FrozenPilotMarginType = "ISOLATED";
+    private const int LastExecutionBlockDetailMaxLength = 240;
     private readonly BotExecutionPilotOptions optionsValue = options.Value;
 
     public async Task<BotManagementPageSnapshot> GetPageAsync(string ownerUserId, CancellationToken cancellationToken = default)
@@ -108,6 +110,25 @@ public sealed class BotManagementService(
                 group => group.Key,
                 group => group.First());
 
+        var latestOrderIds = ordersByBotId.Values
+            .Select(entity => entity.Id)
+            .ToArray();
+        var latestTransitionDiagnosticsByOrderId = latestOrderIds.Length == 0
+            ? new Dictionary<Guid, LastExecutionDiagnosticSnapshot>()
+            : (await dbContext.ExecutionOrderTransitions
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    !entity.IsDeleted &&
+                    latestOrderIds.Contains(entity.ExecutionOrderId))
+                .OrderByDescending(entity => entity.SequenceNumber)
+                .ToListAsync(cancellationToken))
+            .GroupBy(entity => entity.ExecutionOrderId)
+            .ToDictionary(
+                group => group.Key,
+                group => CreateLastExecutionDiagnosticSnapshot(group.First().Detail));
+        var utcNow = timeProvider.GetUtcNow().UtcDateTime;
+
         var snapshots = bots
             .Select(bot =>
             {
@@ -121,6 +142,14 @@ public sealed class BotManagementService(
 
                 statesByBotId.TryGetValue(bot.Id, out var state);
                 ordersByBotId.TryGetValue(bot.Id, out var order);
+                var cooldownBlockedUntilUtc = ResolveCooldownBlockedUntilUtc(bot, order, utcNow);
+                var cooldownRemainingSeconds = ResolveCooldownRemainingSeconds(cooldownBlockedUntilUtc, utcNow);
+                LastExecutionDiagnosticSnapshot? lastExecutionDiagnostics = null;
+
+                if (order?.State is ExecutionOrderState.Rejected or ExecutionOrderState.Failed)
+                {
+                    latestTransitionDiagnosticsByOrderId.TryGetValue(order.Id, out lastExecutionDiagnostics);
+                }
 
                 return new BotManagementBotSnapshot(
                     bot.Id,
@@ -143,8 +172,18 @@ public sealed class BotManagementService(
                     state?.LastErrorCode,
                     order?.State.ToString(),
                     order?.FailureCode,
+                    lastExecutionDiagnostics?.BlockDetail,
+                    cooldownBlockedUntilUtc,
+                    cooldownRemainingSeconds,
                     order?.UpdatedDate,
-                    bot.UpdatedDate);
+                    bot.UpdatedDate,
+                    lastExecutionDiagnostics?.LastCandleAtUtc,
+                    lastExecutionDiagnostics?.DataAgeMilliseconds,
+                    lastExecutionDiagnostics?.ContinuityState,
+                    lastExecutionDiagnostics?.ContinuityGapCount,
+                    lastExecutionDiagnostics?.StaleReason,
+                    lastExecutionDiagnostics?.AffectedSymbol,
+                    lastExecutionDiagnostics?.AffectedTimeframe);
             })
             .ToArray();
 
@@ -586,6 +625,170 @@ public sealed class BotManagementService(
         return ResolveSymbolOptions(symbol).Contains(symbol, StringComparer.Ordinal);
     }
 
+    private DateTime? ResolveCooldownBlockedUntilUtc(TradingBot bot, ExecutionOrder? latestOrder, DateTime utcNow)
+    {
+        if (!bot.IsEnabled ||
+            latestOrder is null ||
+            optionsValue.PerBotCooldownSeconds <= 0)
+        {
+            return null;
+        }
+
+        var blockedUntilUtc = latestOrder.CreatedDate.AddSeconds(optionsValue.PerBotCooldownSeconds);
+        return blockedUntilUtc > utcNow
+            ? blockedUntilUtc
+            : null;
+    }
+
+    private static int? ResolveCooldownRemainingSeconds(DateTime? cooldownBlockedUntilUtc, DateTime utcNow)
+    {
+        if (!cooldownBlockedUntilUtc.HasValue)
+        {
+            return null;
+        }
+
+        return Math.Max(
+            0,
+            (int)Math.Ceiling((cooldownBlockedUntilUtc.Value - utcNow).TotalSeconds));
+    }
+
+    private static LastExecutionDiagnosticSnapshot CreateLastExecutionDiagnosticSnapshot(string? detail)
+    {
+        var sanitizedDetail = SanitizeExecutionBlockDetail(detail);
+        var latencyReasonCode = TryExtractExecutionDiagnosticToken(detail, "LatencyReason", out var latencyReasonValue)
+            ? latencyReasonValue
+            : null;
+        var continuityGapCount = TryExtractExecutionDiagnosticToken(detail, "ContinuityGapCount", out var continuityGapCountValue) &&
+            int.TryParse(continuityGapCountValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedContinuityGapCount)
+            ? Math.Max(0, parsedContinuityGapCount)
+            : (int?)null;
+        var lastCandleAtUtc = TryExtractExecutionDiagnosticToken(detail, "LastCandleAtUtc", out var lastCandleAtUtcValue) &&
+            DateTime.TryParse(
+                lastCandleAtUtcValue,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal,
+                out var parsedLastCandleAtUtc)
+            ? DateTime.SpecifyKind(parsedLastCandleAtUtc.ToUniversalTime(), DateTimeKind.Utc)
+            : (DateTime?)null;
+        var dataAgeMilliseconds = TryExtractExecutionDiagnosticToken(detail, "DataAgeMs", out var dataAgeValue) &&
+            int.TryParse(dataAgeValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedDataAgeMilliseconds)
+            ? Math.Max(0, parsedDataAgeMilliseconds)
+            : (int?)null;
+        var affectedSymbol = TryExtractExecutionDiagnosticToken(detail, "Symbol", out var symbolValue)
+            ? NormalizeOptionalExecutionDiagnosticValue(symbolValue, toUpperInvariant: true)
+            : null;
+        var affectedTimeframe = TryExtractExecutionDiagnosticToken(detail, "Timeframe", out var timeframeValue)
+            ? NormalizeOptionalExecutionDiagnosticValue(timeframeValue, toUpperInvariant: false)
+            : null;
+
+        return new LastExecutionDiagnosticSnapshot(
+            sanitizedDetail,
+            lastCandleAtUtc,
+            dataAgeMilliseconds,
+            ResolveContinuityState(latencyReasonCode, continuityGapCount),
+            continuityGapCount,
+            ResolveStaleReason(latencyReasonCode),
+            affectedSymbol,
+            affectedTimeframe);
+    }
+
+    private static string? ResolveContinuityState(string? latencyReasonCode, int? continuityGapCount)
+    {
+        return latencyReasonCode switch
+        {
+            "CandleDataGapDetected" => "Continuity guard active",
+            "CandleDataDuplicateDetected" => "Continuity guard active",
+            "CandleDataOutOfOrderDetected" => "Continuity guard active",
+            "MarketDataLatencyBreached" or "MarketDataLatencyCritical" or "ClockDriftExceeded" or "MarketDataUnavailable" => continuityGapCount.GetValueOrDefault() > 0 ? "Continuity gap detected" : "Continuity OK",
+            _ => null
+        };
+    }
+
+    private static string? ResolveStaleReason(string? latencyReasonCode)
+    {
+        return latencyReasonCode switch
+        {
+            "MarketDataLatencyBreached" or "MarketDataLatencyCritical" => "Market data stale",
+            "ClockDriftExceeded" => "Clock drift exceeded",
+            "MarketDataUnavailable" => "Market data unavailable",
+            "CandleDataGapDetected" => "Continuity gap detected",
+            "CandleDataDuplicateDetected" => "Duplicate candle detected",
+            "CandleDataOutOfOrderDetected" => "Out-of-order candle detected",
+            _ => null
+        };
+    }
+
+    private static bool TryExtractExecutionDiagnosticToken(string? detail, string key, out string? value)
+    {
+        value = null;
+        if (string.IsNullOrWhiteSpace(detail))
+        {
+            return false;
+        }
+
+        var token = key + "=";
+        var tokenIndex = detail.IndexOf(token, StringComparison.Ordinal);
+        if (tokenIndex < 0)
+        {
+            return false;
+        }
+
+        var valueStartIndex = tokenIndex + token.Length;
+        var valueEndIndex = detail.IndexOf(';', valueStartIndex);
+        value = (valueEndIndex < 0
+                ? detail[valueStartIndex..]
+                : detail[valueStartIndex..valueEndIndex])
+            .Trim();
+
+        return !string.IsNullOrWhiteSpace(value) &&
+            !string.Equals(value, "missing", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? NormalizeOptionalExecutionDiagnosticValue(string? value, bool toUpperInvariant)
+    {
+        var normalizedValue = value?.Trim();
+        if (string.IsNullOrWhiteSpace(normalizedValue) ||
+            string.Equals(normalizedValue, "missing", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return toUpperInvariant
+            ? normalizedValue.ToUpperInvariant()
+            : normalizedValue;
+    }
+    private static string? SanitizeExecutionBlockDetail(string? detail)
+    {
+        var normalizedDetail = detail?.ReplaceLineEndings(" ").Trim();
+
+        if (!string.IsNullOrWhiteSpace(normalizedDetail))
+        {
+            var metadataStartIndex = normalizedDetail.IndexOf(" LatencyReason=", StringComparison.Ordinal);
+            if (metadataStartIndex > 0)
+            {
+                normalizedDetail = normalizedDetail[..metadataStartIndex].TrimEnd();
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(normalizedDetail))
+        {
+            return null;
+        }
+
+        return normalizedDetail.Length <= LastExecutionBlockDetailMaxLength
+            ? normalizedDetail
+            : normalizedDetail[..LastExecutionBlockDetailMaxLength];
+    }
+
+    private sealed record LastExecutionDiagnosticSnapshot(
+        string? BlockDetail,
+        DateTime? LastCandleAtUtc,
+        int? DataAgeMilliseconds,
+        string? ContinuityState,
+        int? ContinuityGapCount,
+        string? StaleReason,
+        string? AffectedSymbol,
+        string? AffectedTimeframe);
     private string[] ResolveSymbolOptions(string? currentSymbol = null)
     {
         var symbols = optionsValue.AllowedSymbols
@@ -614,3 +817,4 @@ public sealed class BotManagementService(
             .ToArray();
     }
 }
+

@@ -24,8 +24,18 @@ public sealed record BotManagementBotSnapshot(
     string? LastJobErrorCode,
     string? LastExecutionState,
     string? LastExecutionFailureCode,
+    string? LastExecutionBlockDetail,
+    DateTime? CooldownBlockedUntilUtc,
+    int? CooldownRemainingSeconds,
     DateTime? LastExecutionUpdatedAtUtc,
-    DateTime UpdatedAtUtc);
+    DateTime UpdatedAtUtc,
+    DateTime? LastExecutionLastCandleAtUtc = null,
+    int? LastExecutionDataAgeMilliseconds = null,
+    string? LastExecutionContinuityState = null,
+    int? LastExecutionContinuityGapCount = null,
+    string? LastExecutionStaleReason = null,
+    string? LastExecutionAffectedSymbol = null,
+    string? LastExecutionAffectedTimeframe = null);
 
 public sealed record BotManagementEditorSnapshot(
     Guid? BotId,
@@ -72,3 +82,4 @@ public sealed record BotManagementSaveResult(
     bool IsEnabled,
     string? FailureCode,
     string? FailureReason);
+

@@ -1,42 +1,62 @@
 {
   "login": {
     "success": true,
-    "landingLocation": "http://127.0.0.1:65002/Bots"
+    "landingLocation": "http://127.0.0.1:55423/Bots"
   },
   "bots": {
     "botNameText": "Bot UI Smoke Bot",
     "initialWorkerStateText": "Failed",
-    "initialWorkerErrorText": "ExecutionDispatchFailed",
-    "initialExecutionStateText": "Failed",
-    "initialExecutionFailureText": "InvalidOperationException",
-    "initialLastExecutionText": "Last execution: 2026-04-02 18:06:00 Coordinated Universal Time",
+    "initialWorkerErrorText": "ClockDriftExceeded",
+    "initialExecutionStateText": "Rejected",
+    "initialExecutionFailureText": "ClockDriftExceeded",
+    "initialExecutionBlockDetailText": "Execution blocked because clock drift exceeded the safety threshold.",
+    "initialMarketDataBadgeText": "Data latency high",
+    "initialMarketDataReasonText": "Reason: Clock drift exceeded",
+    "initialMarketDataAffectedText": "Affected: BTCUSDT / 1m",
+    "initialMarketDataLastCandleText": "Last candle: 2026-04-03 00:16:59 Coordinated Universal Time",
+    "initialMarketDataAgeText": "Data age: 46766 ms",
+    "initialMarketDataContinuityText": "Continuity: Continuity OK | Gap: 0",
+    "initialCooldownBadgeText": "Cooldown aktif",
+    "initialCooldownBlockedUntilText": "Blok bitişi: 2026-04-03 00:19:46 Coordinated Universal Time",
+    "initialCooldownRemainingText": "Kalan: 119 sn",
+    "initialLastExecutionText": "Last execution: 2026-04-03 00:17:46 Coordinated Universal Time",
     "enabledBadgeText": "Enabled",
     "disableThenEnableCycle": "Enabled -> Disabled -> Enabled",
     "postToggleSuccessMessageText": "Pilot bot etkinlestirildi.",
     "postToggleWorkerStateText": "Pending",
     "postToggleWorkerErrorText": "Hata yok",
-    "postToggleExecutionStateText": "Failed",
-    "postToggleExecutionFailureText": "InvalidOperationException"
+    "postToggleExecutionStateText": "Rejected",
+    "postToggleExecutionFailureText": "ClockDriftExceeded",
+    "postToggleExecutionBlockDetailText": "Execution blocked because clock drift exceeded the safety threshold.",
+    "postToggleMarketDataBadgeText": "Data latency high",
+    "postToggleMarketDataReasonText": "Reason: Clock drift exceeded",
+    "postToggleMarketDataAffectedText": "Affected: BTCUSDT / 1m",
+    "postToggleMarketDataLastCandleText": "Last candle: 2026-04-03 00:16:59 Coordinated Universal Time",
+    "postToggleMarketDataAgeText": "Data age: 46766 ms",
+    "postToggleMarketDataContinuityText": "Continuity: Continuity OK | Gap: 0",
+    "postToggleCooldownBadgeText": "Cooldown aktif",
+    "postToggleCooldownBlockedUntilText": "Blok bitişi: 2026-04-03 00:19:46 Coordinated Universal Time",
+    "postToggleCooldownRemainingText": "Kalan: 118 sn"
   },
   "dashboard": {
     "enabledBotsText": "1",
-    "jobStateText": "Running",
-    "jobErrorText": "Worker hata kodu yok",
-    "executionStateText": "Dispatching",
-    "executionErrorText": "Execution hata kodu yok",
+    "jobStateText": "Failed",
+    "jobErrorText": "ClockDriftExceeded",
+    "executionStateText": "Rejected",
+    "executionErrorText": "ClockDriftExceeded",
     "workerHealthText": "Healthy",
     "streamHealthText": "Unknown",
-    "breakerText": "1 active",
-    "driftSummaryText": "Server probe 300 / 2000 ms • Guard Normal • Last probe 16:06:02 UTC",
-    "driftReasonText": "Signed REST server-time probe 300 ms. Market-data guard state Normal / None.",
+    "breakerText": "Closed",
+    "driftSummaryText": "Heartbeat drift 50051 / 2000 ms • Server probe 13 ms • Last probe 22:17:47 UTC",
+    "driftReasonText": "Execution block kaynağı market-data heartbeat. Latest heartbeat drift 50051 ms, threshold 2000 ms. Server-time refresh signed REST offset'ini yeniler; fresh kline heartbeat gelmeden blok sürebilir.",
     "exchangeStatusText": "Son Binance durumu: Aktif",
     "exchangeBannerText": "Son Binance durumu: Aktif\nTrade=Y; Withdraw=?; Spot=?; Futures=?; Env=Unknown · Live"
   },
   "exchanges": {
     "bannerTitleText": "Son Binance durumu: Aktif",
-    "bannerDetailText": "Son Binance durumu: Aktif\nAktif · Trade=Y; Withdraw=?; Spot=?; Futures=?; Env=Unknown · 1 dk önce",
+    "bannerDetailText": "Son Binance durumu: Aktif\nAktif · Trade=Y; Withdraw=?; Spot=?; Futures=?; Env=Unknown · az önce",
     "accountRows": [
-      "Bot UI Smoke Binance\n6C27FC***F812\n1 dk önce\n\tAktif\nHenüz doğrulama yok\n\t\nTrade=Y; Withdraw=?; Spot=?; Futures=?; Env=Unknown\n\tLive\tYeniden bağlanıyor"
+      "Bot UI Smoke Binance\n6C27FC***F812\naz önce\n\tAktif\nHenüz doğrulama yok\n\t\nTrade=Y; Withdraw=?; Spot=?; Futures=?; Env=Unknown\n\tLive\tYeniden bağlanıyor"
     ]
   },
   "screenshots": {

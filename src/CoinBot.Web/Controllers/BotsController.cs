@@ -223,8 +223,29 @@ public class BotsController(
                 item.LastJobErrorCode,
                 item.LastExecutionState ?? "N/A",
                 item.LastExecutionFailureCode,
+                item.LastExecutionBlockDetail,
+                item.CooldownBlockedUntilUtc.HasValue,
+                item.CooldownBlockedUntilUtc.HasValue
+                    ? FormatTimestamp(item.CooldownBlockedUntilUtc, timeZoneInfo)
+                    : null,
+                item.CooldownRemainingSeconds.HasValue
+                    ? $"{item.CooldownRemainingSeconds.Value} sn"
+                    : null,
                 FormatTimestamp(item.UpdatedAtUtc, timeZoneInfo),
-                FormatTimestamp(item.LastExecutionUpdatedAtUtc, timeZoneInfo)))
+                FormatTimestamp(item.LastExecutionUpdatedAtUtc, timeZoneInfo),
+                ResolveMarketDataBadgeText(item),
+                item.LastExecutionLastCandleAtUtc.HasValue
+                    ? FormatTimestamp(item.LastExecutionLastCandleAtUtc, timeZoneInfo)
+                    : null,
+                item.LastExecutionDataAgeMilliseconds.HasValue
+                    ? $"{item.LastExecutionDataAgeMilliseconds.Value} ms"
+                    : null,
+                item.LastExecutionContinuityState,
+                item.LastExecutionContinuityGapCount.HasValue
+                    ? item.LastExecutionContinuityGapCount.Value.ToString()
+                    : null,
+                ResolveAffectedMarketText(item.LastExecutionAffectedSymbol, item.LastExecutionAffectedTimeframe),
+                item.LastExecutionStaleReason))
             .ToArray();
 
         return new BotManagementIndexViewModel(rows);
@@ -268,6 +289,31 @@ public class BotsController(
                 .ToArray());
     }
 
+    private static string? ResolveMarketDataBadgeText(BotManagementBotSnapshot snapshot)
+    {
+        return snapshot.LastExecutionStaleReason switch
+        {
+            "Clock drift exceeded" => "Data latency high",
+            "Market data stale" => "Market data stale",
+            "Market data unavailable" => "Market data unavailable",
+            "Continuity gap detected" or "Duplicate candle detected" or "Out-of-order candle detected" => "Continuity guard active",
+            _ => null
+        };
+    }
+
+    private static string? ResolveAffectedMarketText(string? symbol, string? timeframe)
+    {
+        if (string.IsNullOrWhiteSpace(symbol) && string.IsNullOrWhiteSpace(timeframe))
+        {
+            return null;
+        }
+
+        return string.IsNullOrWhiteSpace(symbol)
+            ? timeframe
+            : string.IsNullOrWhiteSpace(timeframe)
+                ? symbol
+                : $"{symbol} / {timeframe}";
+    }
     private static TimeZoneInfo ResolveTimeZone(string? timeZoneId)
     {
         if (!string.IsNullOrWhiteSpace(timeZoneId))
@@ -301,3 +347,5 @@ public class BotsController(
         return $"{localTimestamp:yyyy-MM-dd HH:mm:ss} {timeZoneInfo.StandardName}";
     }
 }
+
+
