@@ -1,3 +1,5 @@
+using CoinBot.Domain.Enums;
+
 namespace CoinBot.Application.Abstractions.Risk;
 
 public sealed record PreTradeRiskSnapshot(
@@ -15,4 +17,31 @@ public sealed record PreTradeRiskSnapshot(
     decimal? MaxExposurePercentage,
     decimal? MaxLeverage,
     int OpenPositionCount,
-    DateTime EvaluatedAtUtc);
+    DateTime EvaluatedAtUtc,
+    string? OwnerUserId = null,
+    Guid? BotId = null,
+    string? Symbol = null,
+    string? BaseAsset = null,
+    string? Timeframe = null,
+    ExecutionOrderSide? Side = null,
+    decimal? RequestedQuantity = null,
+    decimal? RequestedPrice = null,
+    decimal RequestedNotional = 0m,
+    decimal CurrentWeeklyLossAmount = 0m,
+    decimal CurrentWeeklyLossPercentage = 0m,
+    decimal? MaxWeeklyLossPercentage = null,
+    decimal ProjectedGrossExposure = 0m,
+    decimal ProjectedLeverage = 0m,
+    decimal ProjectedExposurePercentage = 0m,
+    decimal CurrentSymbolExposureAmount = 0m,
+    decimal ProjectedSymbolExposureAmount = 0m,
+    decimal CurrentSymbolExposurePercentage = 0m,
+    decimal ProjectedSymbolExposurePercentage = 0m,
+    decimal? MaxSymbolExposurePercentage = null,
+    int ProjectedOpenPositionCount = 0,
+    int? MaxConcurrentPositions = null,
+    decimal CurrentCoinExposureAmount = 0m,
+    decimal ProjectedCoinExposureAmount = 0m,
+    decimal CurrentCoinExposurePercentage = 0m,
+    decimal ProjectedCoinExposurePercentage = 0m,
+    decimal? MaxCoinExposurePercentage = null);

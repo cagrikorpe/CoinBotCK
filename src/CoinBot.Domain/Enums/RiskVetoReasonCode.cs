@@ -8,5 +8,10 @@ public enum RiskVetoReasonCode
     AccountEquityUnavailable = 3,
     DailyLossLimitBreached = 4,
     ExposureLimitBreached = 5,
-    LeverageLimitBreached = 6
+    LeverageLimitBreached = 6,
+    WeeklyLossLimitBreached = 7,
+    SymbolExposureLimitBreached = 8,
+    MaxConcurrentPositionsBreached = 9,
+    CoinSpecificLimitBreached = 10,
+    RiskProfileConfigurationInvalid = 11
 }

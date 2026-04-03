@@ -2,6 +2,7 @@ using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
+using CoinBot.Application.Abstractions.Risk;
 using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
@@ -154,6 +155,213 @@ public sealed class MarketScannerHandoffIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task MarketScannerHandoffService_PersistsRiskVetoSnapshotAndAdminReadModel_OnSqlServer()
+    {
+        var databaseName = $"CoinBotMarketScannerRiskHandoffInt_{Guid.NewGuid():N}";
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString(databaseName);
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlServer(connectionString).Options;
+        await using var dbContext = new ApplicationDbContext(options, new TestDataScopeContextAccessor());
+        await dbContext.Database.EnsureDeletedAsync();
+        await dbContext.Database.EnsureCreatedAsync();
+
+        try
+        {
+            var scanCycleId = Guid.NewGuid();
+            var strategyId = Guid.NewGuid();
+            var strategyVersionId = Guid.NewGuid();
+            var botId = Guid.NewGuid();
+            dbContext.Users.Add(new ApplicationUser
+            {
+                Id = "user-risk",
+                UserName = "user-risk",
+                NormalizedUserName = "USER-RISK",
+                Email = "user-risk@coinbot.test",
+                NormalizedEmail = "USER-RISK@COINBOT.TEST",
+                FullName = "Scanner Handoff Risk User"
+            });
+            dbContext.MarketScannerCycles.Add(new MarketScannerCycle
+            {
+                Id = scanCycleId,
+                StartedAtUtc = nowUtc.UtcDateTime.AddSeconds(-2),
+                CompletedAtUtc = nowUtc.UtcDateTime,
+                UniverseSource = "integration-test",
+                ScannedSymbolCount = 1,
+                EligibleCandidateCount = 1,
+                TopCandidateCount = 1,
+                BestCandidateSymbol = "BTCUSDT",
+                BestCandidateScore = 250_000m,
+                Summary = "integration-test"
+            });
+            dbContext.MarketScannerCandidates.Add(new MarketScannerCandidate
+            {
+                Id = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                ScanCycleId = scanCycleId,
+                Symbol = "BTCUSDT",
+                UniverseSource = "integration-test",
+                ObservedAtUtc = nowUtc.UtcDateTime,
+                LastCandleAtUtc = nowUtc.UtcDateTime,
+                LastPrice = 100m,
+                QuoteVolume24h = 250_000m,
+                MarketScore = 250_000m,
+                StrategyScore = 90,
+                ScoringSummary = "MarketScore=250000; StrategyScore=90; CompositeScore=340000.",
+                IsEligible = true,
+                Score = 340_000m,
+                Rank = 1,
+                IsTopCandidate = true
+            });
+            dbContext.TradingStrategies.Add(new TradingStrategy
+            {
+                Id = strategyId,
+                OwnerUserId = "user-risk",
+                StrategyKey = "scanner-handoff-risk",
+                DisplayName = "Scanner Handoff Risk",
+                PromotionState = StrategyPromotionState.LivePublished,
+                PublishedMode = ExecutionEnvironment.Live,
+                PublishedAtUtc = nowUtc.UtcDateTime.AddMinutes(-1)
+            });
+            dbContext.TradingStrategyVersions.Add(new TradingStrategyVersion
+            {
+                Id = strategyVersionId,
+                OwnerUserId = "user-risk",
+                TradingStrategyId = strategyId,
+                SchemaVersion = 1,
+                VersionNumber = 1,
+                Status = StrategyVersionStatus.Published,
+                DefinitionJson = "{}",
+                PublishedAtUtc = nowUtc.UtcDateTime.AddMinutes(-1)
+            });
+            dbContext.TradingBots.Add(new TradingBot
+            {
+                Id = botId,
+                OwnerUserId = "user-risk",
+                Name = "Scanner Handoff Risk Bot",
+                StrategyKey = "scanner-handoff-risk",
+                Symbol = "BTCUSDT",
+                IsEnabled = true
+            });
+            await dbContext.SaveChangesAsync();
+
+            var strategySignalService = new FakeStrategySignalService(CreateSignal(strategyId, strategyVersionId, "BTCUSDT", "1m", nowUtc.UtcDateTime));
+            var riskSnapshot = new PreTradeRiskSnapshot(
+                IsVirtualCheck: false,
+                RiskProfileId: Guid.NewGuid(),
+                RiskProfileName: "Scanner Handoff Risk",
+                KillSwitchEnabled: false,
+                CurrentEquity: 1000m,
+                CurrentGrossExposure: 100m,
+                CurrentLeverage: 0.1m,
+                CurrentExposurePercentage: 10m,
+                CurrentDailyLossAmount: 60m,
+                CurrentDailyLossPercentage: 6m,
+                MaxDailyLossPercentage: 5m,
+                MaxExposurePercentage: 100m,
+                MaxLeverage: 2m,
+                OpenPositionCount: 1,
+                EvaluatedAtUtc: nowUtc.UtcDateTime,
+                OwnerUserId: "user-risk",
+                BotId: botId,
+                Symbol: "BTCUSDT",
+                BaseAsset: "BTC",
+                Timeframe: "1m",
+                Side: ExecutionOrderSide.Buy,
+                RequestedQuantity: 1m,
+                RequestedPrice: 100m,
+                RequestedNotional: 100m,
+                CurrentWeeklyLossAmount: 60m,
+                CurrentWeeklyLossPercentage: 6m,
+                MaxWeeklyLossPercentage: 20m,
+                ProjectedGrossExposure: 200m,
+                ProjectedLeverage: 0.2m,
+                ProjectedExposurePercentage: 20m,
+                CurrentSymbolExposureAmount: 100m,
+                ProjectedSymbolExposureAmount: 200m,
+                CurrentSymbolExposurePercentage: 10m,
+                ProjectedSymbolExposurePercentage: 20m,
+                MaxSymbolExposurePercentage: 15m,
+                ProjectedOpenPositionCount: 1,
+                MaxConcurrentPositions: 2,
+                CurrentCoinExposureAmount: 100m,
+                ProjectedCoinExposureAmount: 200m,
+                CurrentCoinExposurePercentage: 10m,
+                ProjectedCoinExposurePercentage: 20m,
+                MaxCoinExposurePercentage: 25m);
+            var services = new ServiceCollection();
+            services.AddScoped<IDataScopeContextAccessor, TestDataScopeContextAccessor>();
+            services.AddScoped(provider => new ApplicationDbContext(options, provider.GetRequiredService<IDataScopeContextAccessor>()));
+            services.AddSingleton<IStrategySignalService>(strategySignalService);
+            services.AddSingleton<IExecutionGate>(new FakeExecutionGate(nowUtc.UtcDateTime));
+            services.AddSingleton<IUserExecutionOverrideGuard>(new FakeUserExecutionOverrideGuard(
+                new UserExecutionOverrideEvaluationResult(
+                    true,
+                    "UserExecutionRiskSymbolExposureLimitBreached",
+                    "Execution blocked because risk policy vetoed the order: SymbolExposureLimitBreached. Reason=SymbolExposureLimitBreached; Scope=User:user-risk/Bot:" + botId + "/Symbol:BTCUSDT/Coin:BTC/Timeframe:1m.",
+                    new RiskVetoResult(
+                        true,
+                        RiskVetoReasonCode.SymbolExposureLimitBreached,
+                        riskSnapshot,
+                        "Reason=SymbolExposureLimitBreached; Scope=User:user-risk/Bot:" + botId + "/Symbol:BTCUSDT/Coin:BTC/Timeframe:1m; SymbolExposure=10->20/15%; OpenPositions=1->1/2."))));
+            await using var serviceProvider = services.BuildServiceProvider();
+            var handoffService = new MarketScannerHandoffService(
+                dbContext,
+                serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+                new FakeMarketDataService(nowUtc.UtcDateTime),
+                new FakeIndicatorDataService(CreateIndicatorSnapshot("BTCUSDT", "1m", nowUtc.UtcDateTime)),
+                new FakeSharedSymbolRegistry(),
+                new FakeDataLatencyCircuitBreaker(nowUtc.UtcDateTime),
+                Options.Create(new MarketScannerOptions { HandoffEnabled = true, AllowedQuoteAssets = ["USDT"] }),
+                Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m" }),
+                Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live, PrimeHistoricalCandleCount = 34 }),
+                new FixedTimeProvider(nowUtc),
+                NullLogger<MarketScannerHandoffService>.Instance);
+
+            var attempt = await handoffService.RunOnceAsync(scanCycleId);
+
+            var persistedAttempt = await dbContext.MarketScannerHandoffAttempts.AsNoTracking().SingleAsync(entity => entity.Id == attempt.Id);
+            var readModelService = new AdminMonitoringReadModelService(dbContext, new MemoryCache(new MemoryCacheOptions()), new FixedTimeProvider(nowUtc));
+            var dashboardSnapshot = await readModelService.GetSnapshotAsync();
+
+            Assert.Equal("Blocked", persistedAttempt.ExecutionRequestStatus);
+            Assert.Equal("UserExecutionRiskSymbolExposureLimitBreached", persistedAttempt.BlockerCode);
+            Assert.Equal("Vetoed", persistedAttempt.RiskOutcome);
+            Assert.Equal("SymbolExposureLimitBreached", persistedAttempt.RiskVetoReasonCode);
+            Assert.Equal(6m, persistedAttempt.RiskCurrentDailyLossPercentage);
+            Assert.Equal(5m, persistedAttempt.RiskMaxDailyLossPercentage);
+            Assert.Equal(6m, persistedAttempt.RiskCurrentWeeklyLossPercentage);
+            Assert.Equal(20m, persistedAttempt.RiskMaxWeeklyLossPercentage);
+            Assert.Equal(0.1m, persistedAttempt.RiskCurrentLeverage);
+            Assert.Equal(0.2m, persistedAttempt.RiskProjectedLeverage);
+            Assert.Equal(2m, persistedAttempt.RiskMaxLeverage);
+            Assert.Equal(10m, persistedAttempt.RiskCurrentSymbolExposurePercentage);
+            Assert.Equal(20m, persistedAttempt.RiskProjectedSymbolExposurePercentage);
+            Assert.Equal(15m, persistedAttempt.RiskMaxSymbolExposurePercentage);
+            Assert.Equal(1, persistedAttempt.RiskCurrentOpenPositions);
+            Assert.Equal(1, persistedAttempt.RiskProjectedOpenPositions);
+            Assert.Equal(2, persistedAttempt.RiskMaxConcurrentPositions);
+            Assert.Equal("BTC", persistedAttempt.RiskBaseAsset);
+            Assert.Equal(10m, persistedAttempt.RiskCurrentCoinExposurePercentage);
+            Assert.Equal(20m, persistedAttempt.RiskProjectedCoinExposurePercentage);
+            Assert.Equal(25m, persistedAttempt.RiskMaxCoinExposurePercentage);
+            Assert.Contains("Reason=SymbolExposureLimitBreached", persistedAttempt.RiskSummary, StringComparison.Ordinal);
+
+            Assert.Equal("Blocked", dashboardSnapshot.MarketScanner.LatestHandoff.ExecutionRequestStatus);
+            Assert.Equal("UserExecutionRiskSymbolExposureLimitBreached", dashboardSnapshot.MarketScanner.LatestHandoff.BlockerCode);
+            Assert.Equal("Vetoed", dashboardSnapshot.MarketScanner.LatestHandoff.RiskOutcome);
+            Assert.Equal("SymbolExposureLimitBreached", dashboardSnapshot.MarketScanner.LatestHandoff.RiskVetoReasonCode);
+            Assert.Equal(6m, dashboardSnapshot.MarketScanner.LatestHandoff.RiskCurrentDailyLossPercentage);
+            Assert.Equal(20m, dashboardSnapshot.MarketScanner.LatestHandoff.RiskProjectedSymbolExposurePercentage);
+            Assert.Equal("BTC", dashboardSnapshot.MarketScanner.LatestHandoff.RiskBaseAsset);
+            Assert.Contains("UserExecutionOverrideGuard=UserExecutionRiskSymbolExposureLimitBreached", dashboardSnapshot.MarketScanner.LatestHandoff.GuardSummary, StringComparison.Ordinal);
+            Assert.Contains("RiskSummary=Reason=SymbolExposureLimitBreached", dashboardSnapshot.MarketScanner.LatestHandoff.GuardSummary, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await dbContext.Database.EnsureDeletedAsync();
+        }
+    }
+
     private static StrategyIndicatorSnapshot CreateIndicatorSnapshot(string symbol, string timeframe, DateTime closeTimeUtc)
     {
         return new StrategyIndicatorSnapshot(
@@ -230,11 +438,11 @@ public sealed class MarketScannerHandoffIntegrationTests
         }
     }
 
-    private sealed class FakeUserExecutionOverrideGuard : IUserExecutionOverrideGuard
+    private sealed class FakeUserExecutionOverrideGuard(UserExecutionOverrideEvaluationResult? evaluationResult = null) : IUserExecutionOverrideGuard
     {
         public Task<UserExecutionOverrideEvaluationResult> EvaluateAsync(UserExecutionOverrideEvaluationRequest request, CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(new UserExecutionOverrideEvaluationResult(false, null, null));
+            return Task.FromResult(evaluationResult ?? new UserExecutionOverrideEvaluationResult(false, null, null));
         }
     }
 

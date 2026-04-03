@@ -6,9 +6,17 @@ public sealed class RiskProfile : UserOwnedEntity
 
     public decimal MaxDailyLossPercentage { get; set; }
 
+    public decimal? MaxWeeklyLossPercentage { get; set; }
+
     public decimal MaxPositionSizePercentage { get; set; }
 
+    public decimal? MaxSymbolExposurePercentage { get; set; }
+
     public decimal MaxLeverage { get; set; } = 1m;
+
+    public int? MaxConcurrentPositions { get; set; }
+
+    public string? CoinSpecificExposureLimitsJson { get; set; }
 
     public bool KillSwitchEnabled { get; set; }
 }

@@ -529,9 +529,12 @@ public sealed class StrategySignalService(
             ? Math.Min(rawScore, 39)
             : rawScore;
         var band = ResolveConfidenceBand(score);
+        var riskSummary = string.IsNullOrWhiteSpace(riskEvaluation.ReasonSummary)
+            ? FormatRiskReason(riskEvaluation.ReasonCode)
+            : riskEvaluation.ReasonSummary.Trim();
         var summary = riskEvaluation.IsVetoed
-            ? $"Risk approval failed: {FormatRiskReason(riskEvaluation.ReasonCode)}."
-            : $"Signal approved with {matchedRuleCount}/{totalRuleCount} matching strategy rules.";
+            ? $"Risk approval failed: {riskSummary}"
+            : $"Risk approval passed: {riskSummary}";
 
         return new StrategySignalConfidenceSnapshot(
             score,
@@ -543,7 +546,25 @@ public sealed class StrategySignalService(
             IsVetoed: riskEvaluation.IsVetoed,
             RiskReasonCode: riskEvaluation.ReasonCode,
             IsVirtualRiskCheck: riskEvaluation.Snapshot.IsVirtualCheck,
-            Summary: summary);
+            Summary: summary,
+            CurrentDailyLossPercentage: riskEvaluation.Snapshot.CurrentDailyLossPercentage,
+            MaxDailyLossPercentage: riskEvaluation.Snapshot.MaxDailyLossPercentage,
+            CurrentWeeklyLossPercentage: riskEvaluation.Snapshot.CurrentWeeklyLossPercentage,
+            MaxWeeklyLossPercentage: riskEvaluation.Snapshot.MaxWeeklyLossPercentage,
+            CurrentLeverage: riskEvaluation.Snapshot.CurrentLeverage,
+            ProjectedLeverage: riskEvaluation.Snapshot.ProjectedLeverage,
+            MaxLeverage: riskEvaluation.Snapshot.MaxLeverage,
+            CurrentSymbolExposurePercentage: riskEvaluation.Snapshot.CurrentSymbolExposurePercentage,
+            ProjectedSymbolExposurePercentage: riskEvaluation.Snapshot.ProjectedSymbolExposurePercentage,
+            MaxSymbolExposurePercentage: riskEvaluation.Snapshot.MaxSymbolExposurePercentage,
+            CurrentOpenPositionCount: riskEvaluation.Snapshot.OpenPositionCount,
+            ProjectedOpenPositionCount: riskEvaluation.Snapshot.ProjectedOpenPositionCount,
+            MaxConcurrentPositions: riskEvaluation.Snapshot.MaxConcurrentPositions,
+            RiskBaseAsset: riskEvaluation.Snapshot.BaseAsset,
+            CurrentCoinExposurePercentage: riskEvaluation.Snapshot.CurrentCoinExposurePercentage,
+            ProjectedCoinExposurePercentage: riskEvaluation.Snapshot.ProjectedCoinExposurePercentage,
+            MaxCoinExposurePercentage: riskEvaluation.Snapshot.MaxCoinExposurePercentage,
+            RiskScopeSummary: riskSummary);
     }
 
     private static StrategySignalConfidenceSnapshot CreateLegacyConfidenceSnapshot(RiskVetoResult riskEvaluation)
@@ -551,6 +572,10 @@ public sealed class StrategySignalService(
         var score = riskEvaluation.IsVetoed
             ? 39
             : 100;
+
+        var riskSummary = string.IsNullOrWhiteSpace(riskEvaluation.ReasonSummary)
+            ? FormatRiskReason(riskEvaluation.ReasonCode)
+            : riskEvaluation.ReasonSummary.Trim();
 
         return new StrategySignalConfidenceSnapshot(
             score,
@@ -563,8 +588,26 @@ public sealed class StrategySignalService(
             RiskReasonCode: riskEvaluation.ReasonCode,
             IsVirtualRiskCheck: riskEvaluation.Snapshot.IsVirtualCheck,
             Summary: riskEvaluation.IsVetoed
-                ? $"Legacy risk evaluation vetoed the signal: {FormatRiskReason(riskEvaluation.ReasonCode)}."
-                : "Legacy risk evaluation approved the signal.");
+                ? $"Legacy risk evaluation vetoed the signal: {riskSummary}"
+                : $"Legacy risk evaluation approved the signal: {riskSummary}",
+            CurrentDailyLossPercentage: riskEvaluation.Snapshot.CurrentDailyLossPercentage,
+            MaxDailyLossPercentage: riskEvaluation.Snapshot.MaxDailyLossPercentage,
+            CurrentWeeklyLossPercentage: riskEvaluation.Snapshot.CurrentWeeklyLossPercentage,
+            MaxWeeklyLossPercentage: riskEvaluation.Snapshot.MaxWeeklyLossPercentage,
+            CurrentLeverage: riskEvaluation.Snapshot.CurrentLeverage,
+            ProjectedLeverage: riskEvaluation.Snapshot.ProjectedLeverage,
+            MaxLeverage: riskEvaluation.Snapshot.MaxLeverage,
+            CurrentSymbolExposurePercentage: riskEvaluation.Snapshot.CurrentSymbolExposurePercentage,
+            ProjectedSymbolExposurePercentage: riskEvaluation.Snapshot.ProjectedSymbolExposurePercentage,
+            MaxSymbolExposurePercentage: riskEvaluation.Snapshot.MaxSymbolExposurePercentage,
+            CurrentOpenPositionCount: riskEvaluation.Snapshot.OpenPositionCount,
+            ProjectedOpenPositionCount: riskEvaluation.Snapshot.ProjectedOpenPositionCount,
+            MaxConcurrentPositions: riskEvaluation.Snapshot.MaxConcurrentPositions,
+            RiskBaseAsset: riskEvaluation.Snapshot.BaseAsset,
+            CurrentCoinExposurePercentage: riskEvaluation.Snapshot.CurrentCoinExposurePercentage,
+            ProjectedCoinExposurePercentage: riskEvaluation.Snapshot.ProjectedCoinExposurePercentage,
+            MaxCoinExposurePercentage: riskEvaluation.Snapshot.MaxCoinExposurePercentage,
+            RiskScopeSummary: riskSummary);
     }
 
     private static StrategySignalConfidenceSnapshot CreateUnavailableConfidenceSnapshot()
@@ -785,6 +828,11 @@ public sealed class StrategySignalService(
             RiskVetoReasonCode.DailyLossLimitBreached => "daily loss limit breached",
             RiskVetoReasonCode.ExposureLimitBreached => "exposure limit breached",
             RiskVetoReasonCode.LeverageLimitBreached => "leverage limit breached",
+            RiskVetoReasonCode.WeeklyLossLimitBreached => "weekly loss limit breached",
+            RiskVetoReasonCode.SymbolExposureLimitBreached => "symbol exposure limit breached",
+            RiskVetoReasonCode.MaxConcurrentPositionsBreached => "max concurrent positions limit breached",
+            RiskVetoReasonCode.CoinSpecificLimitBreached => "coin-specific limit breached",
+            RiskVetoReasonCode.RiskProfileConfigurationInvalid => "risk profile configuration invalid",
             _ => reasonCode.ToString()
         };
     }

@@ -5,4 +5,5 @@ namespace CoinBot.Application.Abstractions.Risk;
 public sealed record RiskVetoResult(
     bool IsVetoed,
     RiskVetoReasonCode ReasonCode,
-    PreTradeRiskSnapshot Snapshot);
+    PreTradeRiskSnapshot Snapshot,
+    string ReasonSummary = "");

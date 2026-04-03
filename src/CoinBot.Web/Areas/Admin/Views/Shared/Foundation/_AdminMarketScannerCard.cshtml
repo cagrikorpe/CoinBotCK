@@ -75,6 +75,33 @@
             <span class="cb-admin-info-strip-meta cb-mono" data-cb-scanner-handoff-at>@(latestHandoff.CompletedAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "No handoff")</span>
         </div>
 
+        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4" data-cb-scanner-risk-strip>
+            <div>
+                <div class="cb-admin-info-strip-title">
+                    Risk:
+                    <span data-cb-scanner-risk-outcome>@(latestHandoff.RiskOutcome ?? "n/a")</span>
+                    <span> / </span>
+                    <span data-cb-scanner-risk-reason>@(latestHandoff.RiskVetoReasonCode ?? "None")</span>
+                </div>
+                <div class="cb-admin-info-strip-text" data-cb-scanner-risk-summary>@(latestHandoff.RiskSummary ?? "Risk snapshot unavailable.")</div>
+                <div class="cb-admin-info-strip-text mt-2">
+                    <span>Daily </span>
+                    <span data-cb-scanner-risk-daily>@((latestHandoff.RiskCurrentDailyLossPercentage?.ToString("0.####") ?? "n/a") + "/" + (latestHandoff.RiskMaxDailyLossPercentage?.ToString("0.####") ?? "n/a") + "%")</span>
+                    <span> · Weekly </span>
+                    <span data-cb-scanner-risk-weekly>@((latestHandoff.RiskCurrentWeeklyLossPercentage?.ToString("0.####") ?? "n/a") + "/" + (latestHandoff.RiskMaxWeeklyLossPercentage?.ToString("0.####") ?? "n/a") + "%")</span>
+                    <span> · Leverage </span>
+                    <span data-cb-scanner-risk-leverage>@((latestHandoff.RiskCurrentLeverage?.ToString("0.####") ?? "n/a") + "→" + (latestHandoff.RiskProjectedLeverage?.ToString("0.####") ?? "n/a") + "/" + (latestHandoff.RiskMaxLeverage?.ToString("0.####") ?? "n/a") + "x")</span>
+                    <span> · Symbol exposure </span>
+                    <span data-cb-scanner-risk-symbol-exposure>@((latestHandoff.RiskCurrentSymbolExposurePercentage?.ToString("0.####") ?? "n/a") + "→" + (latestHandoff.RiskProjectedSymbolExposurePercentage?.ToString("0.####") ?? "n/a") + "/" + (latestHandoff.RiskMaxSymbolExposurePercentage?.ToString("0.####") ?? "n/a") + "%")</span>
+                    <span> · Positions </span>
+                    <span data-cb-scanner-risk-concurrent>@((latestHandoff.RiskCurrentOpenPositions?.ToString() ?? "n/a") + "→" + (latestHandoff.RiskProjectedOpenPositions?.ToString() ?? "n/a") + "/" + (latestHandoff.RiskMaxConcurrentPositions?.ToString() ?? "n/a"))</span>
+                    <span> · Coin </span>
+                    <span data-cb-scanner-risk-coin>@((latestHandoff.RiskBaseAsset ?? "n/a") + "=" + (latestHandoff.RiskCurrentCoinExposurePercentage?.ToString("0.####") ?? "n/a") + "→" + (latestHandoff.RiskProjectedCoinExposurePercentage?.ToString("0.####") ?? "n/a") + "/" + (latestHandoff.RiskMaxCoinExposurePercentage?.ToString("0.####") ?? "n/a") + "%")</span>
+                </div>
+            </div>
+            <span class="cb-admin-info-strip-meta">Fail-closed</span>
+        </div>
+
         @if (topCandidates.Length == 0)
         {
             <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-6">

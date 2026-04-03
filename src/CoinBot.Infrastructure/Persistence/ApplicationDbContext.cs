@@ -1788,12 +1788,21 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         builder.Property(entity => entity.MaxDailyLossPercentage)
             .HasPrecision(18, 4);
 
+        builder.Property(entity => entity.MaxWeeklyLossPercentage)
+            .HasPrecision(18, 4);
+
         builder.Property(entity => entity.MaxPositionSizePercentage)
+            .HasPrecision(18, 4);
+
+        builder.Property(entity => entity.MaxSymbolExposurePercentage)
             .HasPrecision(18, 4);
 
         builder.Property(entity => entity.MaxLeverage)
             .HasPrecision(18, 4)
             .HasDefaultValue(1m);
+
+        builder.Property(entity => entity.CoinSpecificExposureLimitsJson)
+            .HasMaxLength(1024);
     }
 
     private void ConfigureTradingBots(EntityTypeBuilder<TradingBot> builder)
@@ -2124,6 +2133,57 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
         builder.Property(entity => entity.StrategyVetoReasonCode)
             .HasMaxLength(64);
+
+        builder.Property(entity => entity.RiskOutcome)
+            .HasMaxLength(32);
+
+        builder.Property(entity => entity.RiskVetoReasonCode)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.RiskSummary)
+            .HasMaxLength(1024);
+
+        builder.Property(entity => entity.RiskCurrentDailyLossPercentage)
+            .HasPrecision(18, 4);
+
+        builder.Property(entity => entity.RiskMaxDailyLossPercentage)
+            .HasPrecision(18, 4);
+
+        builder.Property(entity => entity.RiskCurrentWeeklyLossPercentage)
+            .HasPrecision(18, 4);
+
+        builder.Property(entity => entity.RiskMaxWeeklyLossPercentage)
+            .HasPrecision(18, 4);
+
+        builder.Property(entity => entity.RiskCurrentLeverage)
+            .HasPrecision(18, 4);
+
+        builder.Property(entity => entity.RiskProjectedLeverage)
+            .HasPrecision(18, 4);
+
+        builder.Property(entity => entity.RiskMaxLeverage)
+            .HasPrecision(18, 4);
+
+        builder.Property(entity => entity.RiskCurrentSymbolExposurePercentage)
+            .HasPrecision(18, 4);
+
+        builder.Property(entity => entity.RiskProjectedSymbolExposurePercentage)
+            .HasPrecision(18, 4);
+
+        builder.Property(entity => entity.RiskMaxSymbolExposurePercentage)
+            .HasPrecision(18, 4);
+
+        builder.Property(entity => entity.RiskBaseAsset)
+            .HasMaxLength(16);
+
+        builder.Property(entity => entity.RiskCurrentCoinExposurePercentage)
+            .HasPrecision(18, 4);
+
+        builder.Property(entity => entity.RiskProjectedCoinExposurePercentage)
+            .HasPrecision(18, 4);
+
+        builder.Property(entity => entity.RiskMaxCoinExposurePercentage)
+            .HasPrecision(18, 4);
 
         builder.Property(entity => entity.ExecutionRequestStatus)
             .HasMaxLength(32)

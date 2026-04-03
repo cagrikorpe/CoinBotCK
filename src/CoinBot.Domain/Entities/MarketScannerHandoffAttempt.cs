@@ -42,6 +42,46 @@ public sealed class MarketScannerHandoffAttempt : BaseEntity
 
     public int? StrategyScore { get; set; }
 
+    public string? RiskOutcome { get; set; }
+
+    public string? RiskVetoReasonCode { get; set; }
+
+    public string? RiskSummary { get; set; }
+
+    public decimal? RiskCurrentDailyLossPercentage { get; set; }
+
+    public decimal? RiskMaxDailyLossPercentage { get; set; }
+
+    public decimal? RiskCurrentWeeklyLossPercentage { get; set; }
+
+    public decimal? RiskMaxWeeklyLossPercentage { get; set; }
+
+    public decimal? RiskCurrentLeverage { get; set; }
+
+    public decimal? RiskProjectedLeverage { get; set; }
+
+    public decimal? RiskMaxLeverage { get; set; }
+
+    public decimal? RiskCurrentSymbolExposurePercentage { get; set; }
+
+    public decimal? RiskProjectedSymbolExposurePercentage { get; set; }
+
+    public decimal? RiskMaxSymbolExposurePercentage { get; set; }
+
+    public int? RiskCurrentOpenPositions { get; set; }
+
+    public int? RiskProjectedOpenPositions { get; set; }
+
+    public int? RiskMaxConcurrentPositions { get; set; }
+
+    public string? RiskBaseAsset { get; set; }
+
+    public decimal? RiskCurrentCoinExposurePercentage { get; set; }
+
+    public decimal? RiskProjectedCoinExposurePercentage { get; set; }
+
+    public decimal? RiskMaxCoinExposurePercentage { get; set; }
+
     public string ExecutionRequestStatus { get; set; } = "Blocked";
 
     public ExecutionOrderSide? ExecutionSide { get; set; }

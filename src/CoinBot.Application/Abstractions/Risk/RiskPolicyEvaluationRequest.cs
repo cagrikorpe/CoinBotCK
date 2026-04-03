@@ -9,4 +9,8 @@ public sealed record RiskPolicyEvaluationRequest(
     StrategySignalType SignalType,
     ExecutionEnvironment Environment,
     string Symbol,
-    string Timeframe);
+    string Timeframe,
+    Guid? BotId = null,
+    ExecutionOrderSide? Side = null,
+    decimal? Quantity = null,
+    decimal? Price = null);

@@ -152,14 +152,19 @@ public sealed class UserExecutionOverrideGuard(
                     StrategySignalType.Entry,
                     request.Environment,
                     normalizedSymbol,
-                    request.Timeframe.Trim()),
+                    request.Timeframe.Trim(),
+                    request.BotId,
+                    request.Side,
+                    request.Quantity,
+                    request.Price),
                 cancellationToken);
 
             if (riskEvaluation.IsVetoed)
             {
                 return Block(
                     $"UserExecutionRisk{riskEvaluation.ReasonCode}",
-                    $"Execution blocked because risk policy vetoed the order: {riskEvaluation.ReasonCode}.");
+                    $"Execution blocked because risk policy vetoed the order: {riskEvaluation.ReasonSummary}.",
+                    riskEvaluation);
             }
         }
 
@@ -377,9 +382,12 @@ public sealed class UserExecutionOverrideGuard(
         return new UserExecutionOverrideEvaluationResult(false, null, null);
     }
 
-    private static UserExecutionOverrideEvaluationResult Block(string reason, string message)
+    private static UserExecutionOverrideEvaluationResult Block(
+        string reason,
+        string message,
+        RiskVetoResult? riskEvaluation = null)
     {
-        return new UserExecutionOverrideEvaluationResult(true, reason, message);
+        return new UserExecutionOverrideEvaluationResult(true, reason, message, riskEvaluation);
     }
 
     private static string NormalizeRequired(string? value, string parameterName)

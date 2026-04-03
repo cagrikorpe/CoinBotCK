@@ -195,8 +195,35 @@ END;
 
 IF NOT EXISTS (SELECT 1 FROM RiskProfiles WHERE OwnerUserId = @OwnerUserId AND IsDeleted = 0)
 BEGIN
-    INSERT INTO RiskProfiles (Id, OwnerUserId, ProfileName, MaxDailyLossPercentage, MaxPositionSizePercentage, MaxLeverage, KillSwitchEnabled, CreatedDate, UpdatedDate, IsDeleted)
-    VALUES (NEWID(), @OwnerUserId, 'Scanner Smoke Risk', 10.0, 100.0, 2.0, 0, @UtcNow, @UtcNow, 0);
+    INSERT INTO RiskProfiles (Id, OwnerUserId, ProfileName, MaxDailyLossPercentage, MaxWeeklyLossPercentage, MaxPositionSizePercentage, MaxSymbolExposurePercentage, MaxLeverage, MaxConcurrentPositions, CoinSpecificExposureLimitsJson, KillSwitchEnabled, CreatedDate, UpdatedDate, IsDeleted)
+    VALUES (NEWID(), @OwnerUserId, 'Scanner Smoke Risk', 5.0, 25.0, 100.0, 50.0, 5.0, 3, N'{"BTC": 80.0}', 0, @UtcNow, @UtcNow, 0);
+END;
+
+IF NOT EXISTS (SELECT 1 FROM ExchangeAccounts WHERE OwnerUserId = @OwnerUserId AND DisplayName = 'Scanner Smoke ReadOnly' AND IsDeleted = 0)
+BEGIN
+    INSERT INTO ExchangeAccounts (Id, OwnerUserId, ExchangeName, DisplayName, IsReadOnly, LastValidatedAt, ApiKeyCiphertext, ApiSecretCiphertext, CredentialFingerprint, CredentialKeyVersion, CredentialStatus, CredentialStoredAtUtc, CredentialLastAccessedAtUtc, CredentialLastRotatedAtUtc, CredentialRevalidateAfterUtc, CredentialRotateAfterUtc, CreatedDate, UpdatedDate, IsDeleted)
+    VALUES (NEWID(), @OwnerUserId, 'Binance', 'Scanner Smoke ReadOnly', 1, @UtcNow, NULL, NULL, NULL, NULL, 'Missing', NULL, NULL, NULL, NULL, NULL, @UtcNow, @UtcNow, 0);
+END;
+
+DECLARE @ExchangeAccountId uniqueidentifier = (
+    SELECT TOP (1) Id
+    FROM ExchangeAccounts
+    WHERE OwnerUserId = @OwnerUserId
+      AND DisplayName = 'Scanner Smoke ReadOnly'
+      AND IsDeleted = 0
+    ORDER BY CreatedDate DESC
+);
+
+IF @ExchangeAccountId IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ExchangeBalances WHERE OwnerUserId = @OwnerUserId AND ExchangeAccountId = @ExchangeAccountId AND Asset = 'USDT' AND IsDeleted = 0)
+BEGIN
+    INSERT INTO ExchangeBalances (Id, OwnerUserId, ExchangeAccountId, Asset, WalletBalance, CrossWalletBalance, AvailableBalance, MaxWithdrawAmount, ExchangeUpdatedAtUtc, SyncedAtUtc, CreatedDate, UpdatedDate, IsDeleted)
+    VALUES (NEWID(), @OwnerUserId, @ExchangeAccountId, 'USDT', 1000.0, 1000.0, 1000.0, 1000.0, @UtcNow, @UtcNow, @UtcNow, @UtcNow, 0);
+END;
+
+IF @ExchangeAccountId IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ExchangePositions WHERE OwnerUserId = @OwnerUserId AND ExchangeAccountId = @ExchangeAccountId AND Symbol = 'BTCUSDT' AND PositionSide = 'BOTH' AND IsDeleted = 0)
+BEGIN
+    INSERT INTO ExchangePositions (Id, OwnerUserId, ExchangeAccountId, Symbol, PositionSide, Quantity, EntryPrice, BreakEvenPrice, UnrealizedProfit, MarginType, IsolatedWallet, ExchangeUpdatedAtUtc, SyncedAtUtc, CreatedDate, UpdatedDate, IsDeleted)
+    VALUES (NEWID(), @OwnerUserId, @ExchangeAccountId, 'BTCUSDT', 'BOTH', 0.01, 100.0, 100.0, -60.0, 'cross', 0.0, @UtcNow, @UtcNow, @UtcNow, @UtcNow, 0);
 END;
 
 IF NOT EXISTS (SELECT 1 FROM TradingStrategies WHERE OwnerUserId = @OwnerUserId AND StrategyKey = 'scanner-handoff-smoke' AND IsDeleted = 0)
@@ -266,6 +293,26 @@ SELECT TOP (1)
     StrategyDecisionOutcome,
     StrategyVetoReasonCode,
     StrategyScore,
+    RiskOutcome,
+    RiskVetoReasonCode,
+    RiskSummary,
+    RiskCurrentDailyLossPercentage,
+    RiskMaxDailyLossPercentage,
+    RiskCurrentWeeklyLossPercentage,
+    RiskMaxWeeklyLossPercentage,
+    RiskCurrentLeverage,
+    RiskProjectedLeverage,
+    RiskMaxLeverage,
+    RiskCurrentSymbolExposurePercentage,
+    RiskProjectedSymbolExposurePercentage,
+    RiskMaxSymbolExposurePercentage,
+    RiskCurrentOpenPositions,
+    RiskProjectedOpenPositions,
+    RiskMaxConcurrentPositions,
+    RiskBaseAsset,
+    RiskCurrentCoinExposurePercentage,
+    RiskProjectedCoinExposurePercentage,
+    RiskMaxCoinExposurePercentage,
     ExecutionRequestStatus,
     BlockerCode,
     BlockerDetail,
@@ -504,6 +551,15 @@ try {
         UiHandoffMarketScore = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-handoff-market-score'
         UiHandoffScore = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-handoff-score'
         UiHandoffCompositeScore = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-handoff-composite-score'
+        UiRiskOutcome = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-risk-outcome'
+        UiRiskReason = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-risk-reason'
+        UiRiskSummary = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-risk-summary'
+        UiRiskDaily = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-risk-daily'
+        UiRiskWeekly = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-risk-weekly'
+        UiRiskLeverage = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-risk-leverage'
+        UiRiskSymbolExposure = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-risk-symbol-exposure'
+        UiRiskConcurrent = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-risk-concurrent'
+        UiRiskCoin = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-risk-coin'
         UiTopMarketScore = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-top-market-score'
         UiTopStrategyScore = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-top-strategy-score'
         UiTopCompositeScore = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-top-composite-score'
@@ -545,6 +601,14 @@ try {
     Write-Host ('UiHandoffStatus=' + $summary.UiHandoffStatus)
     Write-Host ('UiHandoffSymbol=' + $summary.UiHandoffSymbol)
     Write-Host ('UiHandoffBlocker=' + $summary.UiHandoffBlocker)
+    Write-Host ('UiRiskOutcome=' + $summary.UiRiskOutcome)
+    Write-Host ('UiRiskReason=' + $summary.UiRiskReason)
+    Write-Host ('UiRiskDaily=' + $summary.UiRiskDaily)
+    Write-Host ('UiRiskWeekly=' + $summary.UiRiskWeekly)
+    Write-Host ('UiRiskLeverage=' + $summary.UiRiskLeverage)
+    Write-Host ('UiRiskSymbolExposure=' + $summary.UiRiskSymbolExposure)
+    Write-Host ('UiRiskConcurrent=' + $summary.UiRiskConcurrent)
+    Write-Host ('UiRiskCoin=' + $summary.UiRiskCoin)
     Write-Host ('UiStrategyUsageValidation=' + $summary.UiStrategyUsageValidation)
     Write-Host ('UiStrategyExplainabilitySummary=' + $summary.UiStrategyExplainabilitySummary)
     Write-Host ('UiTopCompositeScore=' + $summary.UiTopCompositeScore)
@@ -556,6 +620,8 @@ try {
 finally {
     Stop-ManagedProcess -Process $webProcess
 }
+
+
 
 
 

@@ -66,8 +66,48 @@ public sealed class RiskPolicyEvaluatorTests
 
         Assert.True(result.IsVetoed);
         Assert.Equal(RiskVetoReasonCode.DailyLossLimitBreached, result.ReasonCode);
+        Assert.Contains("Reason=DailyLossLimitBreached", result.ReasonSummary, StringComparison.Ordinal);
+        Assert.Contains("DailyLoss=7.5/5%", result.ReasonSummary, StringComparison.Ordinal);
         Assert.True(result.Snapshot.IsVirtualCheck);
         Assert.Equal(750m, result.Snapshot.CurrentDailyLossAmount);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_VetoesWeeklyLossSeparatelyFromDailyLoss_WhenLossIsOutsideCurrentDayButInsideCurrentIsoWeek()
+    {
+        await using var dbContext = CreateDbContext();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 25, 12, 0, 0, TimeSpan.Zero));
+        dbContext.RiskProfiles.Add(CreateRiskProfile(
+            "user-weekly-loss",
+            5m,
+            100m,
+            3m,
+            maxWeeklyLossPercentage: 3m));
+        dbContext.DemoWallets.Add(CreateDemoWallet("user-weekly-loss", "USDT", 10000m));
+        dbContext.DemoLedgerTransactions.Add(CreateLossTransaction(
+            "user-weekly-loss",
+            -400m,
+            new DateTime(2026, 3, 24, 10, 0, 0, DateTimeKind.Utc)));
+        await dbContext.SaveChangesAsync();
+
+        var evaluator = CreateEvaluator(dbContext, timeProvider);
+
+        var result = await evaluator.EvaluateAsync(
+            new RiskPolicyEvaluationRequest(
+                "user-weekly-loss",
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                StrategySignalType.Entry,
+                ExecutionEnvironment.Demo,
+                "ETHUSDT",
+                "1m"));
+
+        Assert.True(result.IsVetoed);
+        Assert.Equal(RiskVetoReasonCode.WeeklyLossLimitBreached, result.ReasonCode);
+        Assert.Equal(0m, result.Snapshot.CurrentDailyLossPercentage);
+        Assert.Equal(4m, result.Snapshot.CurrentWeeklyLossPercentage);
+        Assert.Equal(3m, result.Snapshot.MaxWeeklyLossPercentage);
+        Assert.Contains("WeeklyLoss=4/3%", result.ReasonSummary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -123,6 +163,248 @@ public sealed class RiskPolicyEvaluatorTests
         Assert.Equal(RiskVetoReasonCode.LeverageLimitBreached, result.ReasonCode);
         Assert.False(result.Snapshot.IsVirtualCheck);
         Assert.Equal(1.5m, result.Snapshot.CurrentLeverage);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_VetoesProjectedLeverage_UsingRequestNotional()
+    {
+        await using var dbContext = CreateDbContext();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        dbContext.RiskProfiles.Add(CreateRiskProfile("user-projected-lev", 10m, 500m, 1.5m));
+        dbContext.DemoWallets.Add(CreateDemoWallet("user-projected-lev", "USDT", 0m));
+        dbContext.DemoPositions.Add(CreateDemoPosition("user-projected-lev", "ETHUSDT", 1m, 1000m, 1000m, 0m, 1000m));
+        await dbContext.SaveChangesAsync();
+
+        var evaluator = CreateEvaluator(dbContext, timeProvider);
+
+        var result = await evaluator.EvaluateAsync(
+            new RiskPolicyEvaluationRequest(
+                "user-projected-lev",
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                StrategySignalType.Entry,
+                ExecutionEnvironment.Demo,
+                "BTCUSDT",
+                "1m",
+                BotId: Guid.NewGuid(),
+                Side: ExecutionOrderSide.Buy,
+                Quantity: 1m,
+                Price: 1000m));
+
+        Assert.True(result.IsVetoed);
+        Assert.Equal(RiskVetoReasonCode.LeverageLimitBreached, result.ReasonCode);
+        Assert.Equal(1m, result.Snapshot.CurrentLeverage);
+        Assert.Equal(2m, result.Snapshot.ProjectedLeverage);
+        Assert.Equal(1.5m, result.Snapshot.MaxLeverage);
+        Assert.Equal(1000m, result.Snapshot.RequestedNotional);
+        Assert.Contains("Leverage=1->2/1.5x", result.ReasonSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_VetoesProjectedSymbolExposure_ForRequestedSymbolOnly()
+    {
+        await using var dbContext = CreateDbContext();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        dbContext.RiskProfiles.Add(CreateRiskProfile(
+            "user-symbol-exposure",
+            10m,
+            200m,
+            10m,
+            maxSymbolExposurePercentage: 15m));
+        dbContext.DemoWallets.Add(CreateDemoWallet("user-symbol-exposure", "USDT", 900m));
+        dbContext.DemoPositions.Add(CreateDemoPosition("user-symbol-exposure", "BTCUSDT", 1m, 100m, 100m, 0m, 100m));
+        await dbContext.SaveChangesAsync();
+
+        var evaluator = CreateEvaluator(dbContext, timeProvider);
+
+        var ethResult = await evaluator.EvaluateAsync(
+            new RiskPolicyEvaluationRequest(
+                "user-symbol-exposure",
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                StrategySignalType.Entry,
+                ExecutionEnvironment.Demo,
+                "ETHUSDT",
+                "1m",
+                Quantity: 1m,
+                Price: 100m));
+        var btcResult = await evaluator.EvaluateAsync(
+            new RiskPolicyEvaluationRequest(
+                "user-symbol-exposure",
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                StrategySignalType.Entry,
+                ExecutionEnvironment.Demo,
+                "BTCUSDT",
+                "1m",
+                Quantity: 1m,
+                Price: 100m));
+
+        Assert.False(ethResult.IsVetoed);
+        Assert.Equal("ETHUSDT", ethResult.Snapshot.Symbol);
+        Assert.Equal(0m, ethResult.Snapshot.CurrentSymbolExposurePercentage);
+        Assert.Equal(10m, ethResult.Snapshot.ProjectedSymbolExposurePercentage);
+
+        Assert.True(btcResult.IsVetoed);
+        Assert.Equal(RiskVetoReasonCode.SymbolExposureLimitBreached, btcResult.ReasonCode);
+        Assert.Equal("BTCUSDT", btcResult.Snapshot.Symbol);
+        Assert.Equal(10m, btcResult.Snapshot.CurrentSymbolExposurePercentage);
+        Assert.Equal(20m, btcResult.Snapshot.ProjectedSymbolExposurePercentage);
+        Assert.Equal(15m, btcResult.Snapshot.MaxSymbolExposurePercentage);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_VetoesMaxConcurrentPositions_WhenNewSymbolWouldOpenAnotherPosition()
+    {
+        await using var dbContext = CreateDbContext();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        dbContext.RiskProfiles.Add(CreateRiskProfile(
+            "user-max-positions",
+            10m,
+            200m,
+            10m,
+            maxConcurrentPositions: 1));
+        dbContext.DemoWallets.Add(CreateDemoWallet("user-max-positions", "USDT", 1000m));
+        dbContext.DemoPositions.Add(CreateDemoPosition("user-max-positions", "BTCUSDT", 1m, 100m, 100m, 0m, 100m));
+        await dbContext.SaveChangesAsync();
+
+        var evaluator = CreateEvaluator(dbContext, timeProvider);
+
+        var result = await evaluator.EvaluateAsync(
+            new RiskPolicyEvaluationRequest(
+                "user-max-positions",
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                StrategySignalType.Entry,
+                ExecutionEnvironment.Demo,
+                "ETHUSDT",
+                "1m",
+                Quantity: 1m,
+                Price: 100m));
+
+        Assert.True(result.IsVetoed);
+        Assert.Equal(RiskVetoReasonCode.MaxConcurrentPositionsBreached, result.ReasonCode);
+        Assert.Equal(1, result.Snapshot.OpenPositionCount);
+        Assert.Equal(2, result.Snapshot.ProjectedOpenPositionCount);
+        Assert.Equal(1, result.Snapshot.MaxConcurrentPositions);
+        Assert.Contains("OpenPositions=1->2/1", result.ReasonSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_VetoesCoinSpecificLimit_ForSameBaseAssetVariants_AndDoesNotLeakToOtherCoins()
+    {
+        await using var dbContext = CreateDbContext();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        dbContext.RiskProfiles.Add(CreateRiskProfile(
+            "user-coin-limit",
+            10m,
+            200m,
+            10m,
+            coinSpecificExposureLimitsJson: "{\"BTC\":15}"));
+        dbContext.DemoWallets.Add(CreateDemoWallet("user-coin-limit", "USDT", 900m));
+        dbContext.DemoPositions.Add(CreateDemoPosition("user-coin-limit", "BTCUSDT", 1m, 100m, 100m, 0m, 100m));
+        await dbContext.SaveChangesAsync();
+
+        var evaluator = CreateEvaluator(dbContext, timeProvider);
+
+        var ethResult = await evaluator.EvaluateAsync(
+            new RiskPolicyEvaluationRequest(
+                "user-coin-limit",
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                StrategySignalType.Entry,
+                ExecutionEnvironment.Demo,
+                "ETHUSDT",
+                "1m",
+                Quantity: 1m,
+                Price: 100m));
+        var btcFdusdResult = await evaluator.EvaluateAsync(
+            new RiskPolicyEvaluationRequest(
+                "user-coin-limit",
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                StrategySignalType.Entry,
+                ExecutionEnvironment.Demo,
+                "BTCFDUSD",
+                "1m",
+                Quantity: 1m,
+                Price: 100m));
+
+        Assert.False(ethResult.IsVetoed);
+        Assert.Equal("ETH", ethResult.Snapshot.BaseAsset);
+        Assert.Null(ethResult.Snapshot.MaxCoinExposurePercentage);
+
+        Assert.True(btcFdusdResult.IsVetoed);
+        Assert.Equal(RiskVetoReasonCode.CoinSpecificLimitBreached, btcFdusdResult.ReasonCode);
+        Assert.Equal("BTC", btcFdusdResult.Snapshot.BaseAsset);
+        Assert.Equal(10m, btcFdusdResult.Snapshot.CurrentCoinExposurePercentage);
+        Assert.Equal(20m, btcFdusdResult.Snapshot.ProjectedCoinExposurePercentage);
+        Assert.Equal(15m, btcFdusdResult.Snapshot.MaxCoinExposurePercentage);
+        Assert.Contains("CoinExposure[BTC]=10->20/15%", btcFdusdResult.ReasonSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_DoesNotLeakRiskStateAcrossUsers()
+    {
+        await using var dbContext = CreateDbContext();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        dbContext.RiskProfiles.Add(CreateRiskProfile("user-risky", 5m, 50m, 2m));
+        dbContext.RiskProfiles.Add(CreateRiskProfile("user-clean", 10m, 100m, 5m));
+        dbContext.DemoWallets.Add(CreateDemoWallet("user-risky", "USDT", 1000m));
+        dbContext.DemoWallets.Add(CreateDemoWallet("user-clean", "USDT", 1000m));
+        dbContext.DemoPositions.Add(CreateDemoPosition("user-risky", "BTCUSDT", 10m, 1000m, 100m, 0m, 100m));
+        dbContext.DemoLedgerTransactions.Add(CreateLossTransaction("user-risky", -200m));
+        await dbContext.SaveChangesAsync();
+
+        var evaluator = CreateEvaluator(dbContext, timeProvider);
+
+        var cleanResult = await evaluator.EvaluateAsync(
+            new RiskPolicyEvaluationRequest(
+                "user-clean",
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                StrategySignalType.Entry,
+                ExecutionEnvironment.Demo,
+                "BTCUSDT",
+                "1m"));
+
+        Assert.False(cleanResult.IsVetoed);
+        Assert.Equal("user-clean", cleanResult.Snapshot.OwnerUserId);
+        Assert.Equal(0m, cleanResult.Snapshot.CurrentDailyLossPercentage);
+        Assert.Equal(0m, cleanResult.Snapshot.CurrentExposurePercentage);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_FailsClosed_WithExactReason_WhenCoinSpecificLimitConfigurationIsInvalid()
+    {
+        await using var dbContext = CreateDbContext();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        dbContext.RiskProfiles.Add(CreateRiskProfile(
+            "user-invalid-config",
+            10m,
+            100m,
+            2m,
+            coinSpecificExposureLimitsJson: "{broken-json"));
+        dbContext.DemoWallets.Add(CreateDemoWallet("user-invalid-config", "USDT", 1000m));
+        await dbContext.SaveChangesAsync();
+
+        var evaluator = CreateEvaluator(dbContext, timeProvider);
+
+        var result = await evaluator.EvaluateAsync(
+            new RiskPolicyEvaluationRequest(
+                "user-invalid-config",
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                StrategySignalType.Entry,
+                ExecutionEnvironment.Demo,
+                "BTCUSDT",
+                "1m"));
+
+        Assert.True(result.IsVetoed);
+        Assert.Equal(RiskVetoReasonCode.RiskProfileConfigurationInvalid, result.ReasonCode);
+        Assert.Contains("Reason=RiskProfileConfigurationInvalid", result.ReasonSummary, StringComparison.Ordinal);
+        Assert.Equal("BTCUSDT", result.Snapshot.Symbol);
+        Assert.Equal("BTC", result.Snapshot.BaseAsset);
     }
 
     [Fact]
@@ -193,7 +475,11 @@ public sealed class RiskPolicyEvaluatorTests
         string ownerUserId,
         decimal maxDailyLossPercentage,
         decimal maxPositionSizePercentage,
-        decimal maxLeverage)
+        decimal maxLeverage,
+        decimal? maxWeeklyLossPercentage = null,
+        decimal? maxSymbolExposurePercentage = null,
+        int? maxConcurrentPositions = null,
+        string? coinSpecificExposureLimitsJson = null)
     {
         return new RiskProfile
         {
@@ -201,7 +487,11 @@ public sealed class RiskPolicyEvaluatorTests
             ProfileName = "Risk Profile",
             MaxDailyLossPercentage = maxDailyLossPercentage,
             MaxPositionSizePercentage = maxPositionSizePercentage,
-            MaxLeverage = maxLeverage
+            MaxLeverage = maxLeverage,
+            MaxWeeklyLossPercentage = maxWeeklyLossPercentage,
+            MaxSymbolExposurePercentage = maxSymbolExposurePercentage,
+            MaxConcurrentPositions = maxConcurrentPositions,
+            CoinSpecificExposureLimitsJson = coinSpecificExposureLimitsJson
         };
     }
 
@@ -241,7 +531,10 @@ public sealed class RiskPolicyEvaluatorTests
         };
     }
 
-    private static DemoLedgerTransaction CreateLossTransaction(string ownerUserId, decimal realizedPnlDelta)
+    private static DemoLedgerTransaction CreateLossTransaction(
+        string ownerUserId,
+        decimal realizedPnlDelta,
+        DateTime? occurredAtUtc = null)
     {
         return new DemoLedgerTransaction
         {
@@ -252,7 +545,7 @@ public sealed class RiskPolicyEvaluatorTests
             Symbol = "ETHUSDT",
             QuoteAsset = "USDT",
             RealizedPnlDelta = realizedPnlDelta,
-            OccurredAtUtc = new DateTime(2026, 3, 22, 11, 0, 0, DateTimeKind.Utc)
+            OccurredAtUtc = occurredAtUtc ?? new DateTime(2026, 3, 22, 11, 0, 0, DateTimeKind.Utc)
         };
     }
 

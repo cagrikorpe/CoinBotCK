@@ -391,6 +391,10 @@ public sealed class UserExecutionOverrideGuardTests
 
         Assert.True(result.IsBlocked);
         Assert.Equal("UserExecutionRiskDailyLossLimitBreached", result.BlockCode);
+        Assert.Contains("Reason=DailyLossLimitBreached", result.Message, StringComparison.Ordinal);
+        Assert.NotNull(result.RiskEvaluation);
+        Assert.Equal(RiskVetoReasonCode.DailyLossLimitBreached, result.RiskEvaluation!.ReasonCode);
+        Assert.Equal(7.5m, result.RiskEvaluation.Snapshot.CurrentDailyLossPercentage);
     }
 
     private static ApplicationDbContext CreateDbContext()

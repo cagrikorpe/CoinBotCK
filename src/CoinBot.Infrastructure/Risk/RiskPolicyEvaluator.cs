@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text.Json;
 using CoinBot.Application.Abstractions.Risk;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
@@ -13,18 +15,37 @@ public sealed class RiskPolicyEvaluator(
     TimeProvider timeProvider,
     ILogger<RiskPolicyEvaluator> logger) : IRiskPolicyEvaluator
 {
+    private static readonly string[] QuoteAssetSuffixes =
+    [
+        "USDT",
+        "FDUSD",
+        "USDC",
+        "BUSD",
+        "TRY",
+        "EUR",
+        "BTC",
+        "ETH",
+        "BNB"
+    ];
+
     public async Task<RiskVetoResult> EvaluateAsync(
         RiskPolicyEvaluationRequest request,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+
+        var normalizedUserId = NormalizeRequired(request.OwnerUserId, nameof(request.OwnerUserId));
+        var normalizedSymbol = NormalizeRequired(request.Symbol, nameof(request.Symbol)).ToUpperInvariant();
+        var normalizedTimeframe = NormalizeRequired(request.Timeframe, nameof(request.Timeframe));
+        var normalizedBaseAsset = ResolveBaseAsset(normalizedSymbol);
+
         using var riskActivity = CoinBotActivity.StartActivity("CoinBot.Risk.Policy");
         riskActivity.SetTag("coinbot.risk.strategy_id", request.TradingStrategyId.ToString());
         riskActivity.SetTag("coinbot.risk.strategy_version_id", request.TradingStrategyVersionId.ToString());
         riskActivity.SetTag("coinbot.risk.signal_type", request.SignalType.ToString());
         riskActivity.SetTag("coinbot.risk.environment", request.Environment.ToString());
-        riskActivity.SetTag("coinbot.risk.symbol", request.Symbol);
-        riskActivity.SetTag("coinbot.risk.timeframe", request.Timeframe);
+        riskActivity.SetTag("coinbot.risk.symbol", normalizedSymbol);
+        riskActivity.SetTag("coinbot.risk.timeframe", normalizedTimeframe);
 
         var evaluatedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
         var isVirtualCheck = request.Environment == ExecutionEnvironment.Demo;
@@ -32,38 +53,82 @@ public sealed class RiskPolicyEvaluator(
         try
         {
             var riskProfile = await dbContext.RiskProfiles
-                .Where(entity => entity.OwnerUserId == request.OwnerUserId && !entity.IsDeleted)
+                .Where(entity => entity.OwnerUserId == normalizedUserId && !entity.IsDeleted)
                 .OrderByDescending(entity => entity.UpdatedDate)
                 .ThenByDescending(entity => entity.CreatedDate)
                 .FirstOrDefaultAsync(cancellationToken);
 
             if (riskProfile is null)
             {
+                var missingProfileSnapshot = CreateEmptySnapshot(
+                    request,
+                    normalizedUserId,
+                    normalizedSymbol,
+                    normalizedBaseAsset,
+                    normalizedTimeframe,
+                    isVirtualCheck,
+                    evaluatedAtUtc);
+
                 return new RiskVetoResult(
-                    IsVetoed: true,
-                    ReasonCode: RiskVetoReasonCode.RiskProfileMissing,
-                    Snapshot: CreateSnapshot(
-                        isVirtualCheck,
-                        profile: null,
-                        currentEquity: 0m,
-                        currentGrossExposure: 0m,
-                        currentDailyLossAmount: 0m,
-                        openPositionCount: 0,
-                        evaluatedAtUtc));
+                    true,
+                    RiskVetoReasonCode.RiskProfileMissing,
+                    missingProfileSnapshot,
+                    BuildReasonSummary(RiskVetoReasonCode.RiskProfileMissing, missingProfileSnapshot));
             }
 
+            var coinSpecificLimits = ParseCoinSpecificLimits(riskProfile.CoinSpecificExposureLimitsJson);
             var snapshot = request.Environment == ExecutionEnvironment.Demo
-                ? await BuildDemoSnapshotAsync(request.OwnerUserId, riskProfile, evaluatedAtUtc, cancellationToken)
-                : await BuildLiveSnapshotAsync(request.OwnerUserId, riskProfile, evaluatedAtUtc, cancellationToken);
+                ? await BuildDemoSnapshotAsync(
+                    normalizedUserId,
+                    normalizedSymbol,
+                    normalizedBaseAsset,
+                    normalizedTimeframe,
+                    request,
+                    riskProfile,
+                    coinSpecificLimits,
+                    evaluatedAtUtc,
+                    cancellationToken)
+                : await BuildLiveSnapshotAsync(
+                    normalizedUserId,
+                    normalizedSymbol,
+                    normalizedBaseAsset,
+                    normalizedTimeframe,
+                    request,
+                    riskProfile,
+                    coinSpecificLimits,
+                    evaluatedAtUtc,
+                    cancellationToken);
 
-            var reasonCode = ResolveReasonCode(riskProfile, snapshot);
+            var reasonCode = ResolveReasonCode(snapshot);
             riskActivity.SetTag("coinbot.risk.reason", reasonCode.ToString());
             riskActivity.SetTag("coinbot.risk.is_vetoed", reasonCode != RiskVetoReasonCode.None);
 
             return new RiskVetoResult(
-                IsVetoed: reasonCode != RiskVetoReasonCode.None,
-                ReasonCode: reasonCode,
-                Snapshot: snapshot);
+                reasonCode != RiskVetoReasonCode.None,
+                reasonCode,
+                snapshot,
+                BuildReasonSummary(reasonCode, snapshot));
+        }
+        catch (InvalidOperationException exception) when (
+            string.Equals(exception.Message, "RiskProfileConfigurationInvalid", StringComparison.Ordinal))
+        {
+            var snapshot = CreateEmptySnapshot(
+                request,
+                normalizedUserId,
+                normalizedSymbol,
+                normalizedBaseAsset,
+                normalizedTimeframe,
+                isVirtualCheck,
+                evaluatedAtUtc);
+
+            riskActivity.SetTag("coinbot.risk.reason", RiskVetoReasonCode.RiskProfileConfigurationInvalid.ToString());
+            riskActivity.SetTag("coinbot.risk.is_vetoed", true);
+
+            return new RiskVetoResult(
+                true,
+                RiskVetoReasonCode.RiskProfileConfigurationInvalid,
+                snapshot,
+                BuildReasonSummary(RiskVetoReasonCode.RiskProfileConfigurationInvalid, snapshot));
         }
         catch (Exception exception)
         {
@@ -74,26 +139,34 @@ public sealed class RiskPolicyEvaluator(
                 "Risk policy evaluation failed closed for StrategyVersionId {StrategyVersionId}, SignalType {SignalType}, Symbol {Symbol}, Environment {Environment}.",
                 request.TradingStrategyVersionId,
                 request.SignalType,
-                request.Symbol,
+                normalizedSymbol,
                 request.Environment);
 
+            var fallbackSnapshot = CreateEmptySnapshot(
+                request,
+                normalizedUserId,
+                normalizedSymbol,
+                normalizedBaseAsset,
+                normalizedTimeframe,
+                isVirtualCheck,
+                evaluatedAtUtc);
+
             return new RiskVetoResult(
-                IsVetoed: true,
-                ReasonCode: RiskVetoReasonCode.AccountEquityUnavailable,
-                Snapshot: CreateSnapshot(
-                    isVirtualCheck,
-                    profile: null,
-                    currentEquity: 0m,
-                    currentGrossExposure: 0m,
-                    currentDailyLossAmount: 0m,
-                    openPositionCount: 0,
-                    evaluatedAtUtc));
+                true,
+                RiskVetoReasonCode.AccountEquityUnavailable,
+                fallbackSnapshot,
+                BuildReasonSummary(RiskVetoReasonCode.AccountEquityUnavailable, fallbackSnapshot));
         }
     }
 
     private async Task<PreTradeRiskSnapshot> BuildDemoSnapshotAsync(
         string ownerUserId,
+        string symbol,
+        string baseAsset,
+        string timeframe,
+        RiskPolicyEvaluationRequest request,
         RiskProfile riskProfile,
+        IReadOnlyDictionary<string, decimal> coinSpecificLimits,
         DateTime evaluatedAtUtc,
         CancellationToken cancellationToken)
     {
@@ -118,33 +191,46 @@ public sealed class RiskPolicyEvaluator(
             .ToListAsync(cancellationToken);
 
         var quoteBalance = wallets.Sum(entity => entity.AvailableBalance + entity.ReservedBalance);
-
         var grossExposure = positions.Sum(CalculateDemoPositionExposure);
         var equity = quoteBalance + positions.Sum(CalculateDemoPositionMarketValue);
 
-        var utcDayStart = evaluatedAtUtc.Date;
-        var utcDayEnd = utcDayStart.AddDays(1);
-        var currentDailyLossAmount = transactions
-            .Where(entity =>
-                entity.OccurredAtUtc >= utcDayStart &&
-                entity.OccurredAtUtc < utcDayEnd &&
-                entity.RealizedPnlDelta.HasValue &&
-                entity.RealizedPnlDelta.Value < 0m)
-            .Sum(entity => -entity.RealizedPnlDelta!.Value);
+        var (dailyLossAmount, weeklyLossAmount) = ResolveDemoLossAmounts(transactions, evaluatedAtUtc);
+        var symbolExposure = positions
+            .Where(entity => string.Equals(entity.Symbol, symbol, StringComparison.Ordinal))
+            .Sum(CalculateDemoPositionExposure);
+        var coinExposure = positions
+            .Where(entity => string.Equals(NormalizeAsset(entity.BaseAsset), baseAsset, StringComparison.Ordinal))
+            .Sum(CalculateDemoPositionExposure);
+        var symbolHasOpenPosition = positions.Any(entity => string.Equals(entity.Symbol, symbol, StringComparison.Ordinal));
 
         return CreateSnapshot(
+            request,
+            ownerUserId,
+            symbol,
+            baseAsset,
+            timeframe,
             isVirtualCheck: true,
-            profile: riskProfile,
+            riskProfile,
             currentEquity: equity,
             currentGrossExposure: grossExposure,
-            currentDailyLossAmount: currentDailyLossAmount,
+            currentDailyLossAmount: dailyLossAmount,
+            currentWeeklyLossAmount: weeklyLossAmount,
+            currentSymbolExposureAmount: symbolExposure,
+            currentCoinExposureAmount: coinExposure,
             openPositionCount: positions.Count,
+            symbolHasOpenPosition,
+            coinSpecificLimits,
             evaluatedAtUtc);
     }
 
     private async Task<PreTradeRiskSnapshot> BuildLiveSnapshotAsync(
         string ownerUserId,
+        string symbol,
+        string baseAsset,
+        string timeframe,
+        RiskPolicyEvaluationRequest request,
         RiskProfile riskProfile,
+        IReadOnlyDictionary<string, decimal> coinSpecificLimits,
         DateTime evaluatedAtUtc,
         CancellationToken cancellationToken)
     {
@@ -166,59 +252,188 @@ public sealed class RiskPolicyEvaluator(
 
         var grossExposure = positions.Sum(entity => Math.Abs(entity.EntryPrice * entity.Quantity));
         var currentDailyLossAmount = positions
-            .Where(entity => entity.UnrealizedProfit < 0m)
+            .Where(entity => entity.UnrealizedProfit < 0m && NormalizeUtc(entity.SyncedAtUtc) >= evaluatedAtUtc.Date)
             .Sum(entity => Math.Abs(entity.UnrealizedProfit));
+        var currentWeeklyLossAmount = positions
+            .Where(entity => entity.UnrealizedProfit < 0m && NormalizeUtc(entity.SyncedAtUtc) >= ResolveIsoWeekStart(evaluatedAtUtc))
+            .Sum(entity => Math.Abs(entity.UnrealizedProfit));
+        var symbolExposure = positions
+            .Where(entity => string.Equals(entity.Symbol, symbol, StringComparison.Ordinal))
+            .Sum(entity => Math.Abs(entity.EntryPrice * entity.Quantity));
+        var coinExposure = positions
+            .Where(entity => string.Equals(ResolveBaseAsset(entity.Symbol), baseAsset, StringComparison.Ordinal))
+            .Sum(entity => Math.Abs(entity.EntryPrice * entity.Quantity));
+        var symbolHasOpenPosition = positions.Any(entity => string.Equals(entity.Symbol, symbol, StringComparison.Ordinal));
 
         return CreateSnapshot(
+            request,
+            ownerUserId,
+            symbol,
+            baseAsset,
+            timeframe,
             isVirtualCheck: false,
-            profile: riskProfile,
+            riskProfile,
             currentEquity: equity,
             currentGrossExposure: grossExposure,
-            currentDailyLossAmount: currentDailyLossAmount,
-            openPositionCount: positions.Count,
+            currentDailyLossAmount,
+            currentWeeklyLossAmount,
+            symbolExposure,
+            coinExposure,
+            positions.Count,
+            symbolHasOpenPosition,
+            coinSpecificLimits,
             evaluatedAtUtc);
     }
 
     private static PreTradeRiskSnapshot CreateSnapshot(
+        RiskPolicyEvaluationRequest request,
+        string ownerUserId,
+        string symbol,
+        string baseAsset,
+        string timeframe,
         bool isVirtualCheck,
-        RiskProfile? profile,
+        RiskProfile riskProfile,
         decimal currentEquity,
         decimal currentGrossExposure,
         decimal currentDailyLossAmount,
+        decimal currentWeeklyLossAmount,
+        decimal currentSymbolExposureAmount,
+        decimal currentCoinExposureAmount,
         int openPositionCount,
+        bool symbolHasOpenPosition,
+        IReadOnlyDictionary<string, decimal> coinSpecificLimits,
         DateTime evaluatedAtUtc)
     {
-        var currentLeverage = currentEquity > 0m
-            ? currentGrossExposure / currentEquity
+        var requestedQuantity = request.Quantity is > 0m ? request.Quantity.Value : 0m;
+        var requestedPrice = request.Price is > 0m ? request.Price.Value : 0m;
+        var requestedNotional = requestedQuantity > 0m && requestedPrice > 0m
+            ? Math.Abs(requestedQuantity * requestedPrice)
             : 0m;
-        var currentExposurePercentage = currentEquity > 0m
-            ? (currentGrossExposure / currentEquity) * 100m
-            : 0m;
-        var currentDailyLossPercentage = currentEquity > 0m
-            ? (currentDailyLossAmount / currentEquity) * 100m
-            : 0m;
+        var projectedGrossExposure = currentGrossExposure + requestedNotional;
+        var projectedSymbolExposureAmount = currentSymbolExposureAmount + requestedNotional;
+        var projectedCoinExposureAmount = currentCoinExposureAmount + requestedNotional;
+        var currentLeverage = ResolvePercentageRatio(currentGrossExposure, currentEquity, multiplier: 1m);
+        var projectedLeverage = ResolvePercentageRatio(projectedGrossExposure, currentEquity, multiplier: 1m);
+        var currentExposurePercentage = ResolvePercentageRatio(currentGrossExposure, currentEquity, multiplier: 100m);
+        var projectedExposurePercentage = ResolvePercentageRatio(projectedGrossExposure, currentEquity, multiplier: 100m);
+        var currentDailyLossPercentage = ResolvePercentageRatio(currentDailyLossAmount, currentEquity, multiplier: 100m);
+        var currentWeeklyLossPercentage = ResolvePercentageRatio(currentWeeklyLossAmount, currentEquity, multiplier: 100m);
+        var currentSymbolExposurePercentage = ResolvePercentageRatio(currentSymbolExposureAmount, currentEquity, multiplier: 100m);
+        var projectedSymbolExposurePercentage = ResolvePercentageRatio(projectedSymbolExposureAmount, currentEquity, multiplier: 100m);
+        var currentCoinExposurePercentage = ResolvePercentageRatio(currentCoinExposureAmount, currentEquity, multiplier: 100m);
+        var projectedCoinExposurePercentage = ResolvePercentageRatio(projectedCoinExposureAmount, currentEquity, multiplier: 100m);
+        var maxWeeklyLossPercentage = riskProfile.MaxWeeklyLossPercentage ?? (riskProfile.MaxDailyLossPercentage * 5m);
+        var maxSymbolExposurePercentage = riskProfile.MaxSymbolExposurePercentage;
+        var maxConcurrentPositions = riskProfile.MaxConcurrentPositions;
+        decimal? maxCoinExposurePercentage = coinSpecificLimits.TryGetValue(baseAsset, out var coinLimit)
+            ? coinLimit
+            : null;
+        var projectedOpenPositionCount = requestedNotional > 0m && !symbolHasOpenPosition
+            ? openPositionCount + 1
+            : openPositionCount;
 
         return new PreTradeRiskSnapshot(
             IsVirtualCheck: isVirtualCheck,
-            RiskProfileId: profile?.Id,
-            RiskProfileName: profile?.ProfileName,
-            KillSwitchEnabled: profile?.KillSwitchEnabled ?? false,
+            RiskProfileId: riskProfile.Id,
+            RiskProfileName: riskProfile.ProfileName,
+            KillSwitchEnabled: riskProfile.KillSwitchEnabled,
             CurrentEquity: currentEquity,
             CurrentGrossExposure: currentGrossExposure,
             CurrentLeverage: currentLeverage,
             CurrentExposurePercentage: currentExposurePercentage,
             CurrentDailyLossAmount: currentDailyLossAmount,
             CurrentDailyLossPercentage: currentDailyLossPercentage,
-            MaxDailyLossPercentage: profile?.MaxDailyLossPercentage,
-            MaxExposurePercentage: profile?.MaxPositionSizePercentage,
-            MaxLeverage: profile?.MaxLeverage,
+            MaxDailyLossPercentage: riskProfile.MaxDailyLossPercentage,
+            MaxExposurePercentage: riskProfile.MaxPositionSizePercentage,
+            MaxLeverage: riskProfile.MaxLeverage,
             OpenPositionCount: openPositionCount,
-            EvaluatedAtUtc: evaluatedAtUtc);
+            EvaluatedAtUtc: evaluatedAtUtc,
+            OwnerUserId: ownerUserId,
+            BotId: request.BotId,
+            Symbol: symbol,
+            BaseAsset: baseAsset,
+            Timeframe: timeframe,
+            Side: request.Side,
+            RequestedQuantity: request.Quantity,
+            RequestedPrice: request.Price,
+            RequestedNotional: requestedNotional,
+            CurrentWeeklyLossAmount: currentWeeklyLossAmount,
+            CurrentWeeklyLossPercentage: currentWeeklyLossPercentage,
+            MaxWeeklyLossPercentage: maxWeeklyLossPercentage,
+            ProjectedGrossExposure: projectedGrossExposure,
+            ProjectedLeverage: projectedLeverage,
+            ProjectedExposurePercentage: projectedExposurePercentage,
+            CurrentSymbolExposureAmount: currentSymbolExposureAmount,
+            ProjectedSymbolExposureAmount: projectedSymbolExposureAmount,
+            CurrentSymbolExposurePercentage: currentSymbolExposurePercentage,
+            ProjectedSymbolExposurePercentage: projectedSymbolExposurePercentage,
+            MaxSymbolExposurePercentage: maxSymbolExposurePercentage,
+            ProjectedOpenPositionCount: projectedOpenPositionCount,
+            MaxConcurrentPositions: maxConcurrentPositions,
+            CurrentCoinExposureAmount: currentCoinExposureAmount,
+            ProjectedCoinExposureAmount: projectedCoinExposureAmount,
+            CurrentCoinExposurePercentage: currentCoinExposurePercentage,
+            ProjectedCoinExposurePercentage: projectedCoinExposurePercentage,
+            MaxCoinExposurePercentage: maxCoinExposurePercentage);
     }
 
-    private static RiskVetoReasonCode ResolveReasonCode(RiskProfile riskProfile, PreTradeRiskSnapshot snapshot)
+    private static PreTradeRiskSnapshot CreateEmptySnapshot(
+        RiskPolicyEvaluationRequest request,
+        string ownerUserId,
+        string symbol,
+        string baseAsset,
+        string timeframe,
+        bool isVirtualCheck,
+        DateTime evaluatedAtUtc)
     {
-        if (riskProfile.KillSwitchEnabled)
+        return new PreTradeRiskSnapshot(
+            isVirtualCheck,
+            null,
+            null,
+            false,
+            0m,
+            0m,
+            0m,
+            0m,
+            0m,
+            0m,
+            null,
+            null,
+            null,
+            0,
+            evaluatedAtUtc,
+            ownerUserId,
+            request.BotId,
+            symbol,
+            baseAsset,
+            timeframe,
+            request.Side,
+            request.Quantity,
+            request.Price,
+            0m,
+            0m,
+            0m,
+            null,
+            0m,
+            0m,
+            0m,
+            0m,
+            0m,
+            0m,
+            0m,
+            null,
+            0,
+            null,
+            0m,
+            0m,
+            0m,
+            0m,
+            null);
+    }
+
+    private static RiskVetoReasonCode ResolveReasonCode(PreTradeRiskSnapshot snapshot)
+    {
+        if (snapshot.KillSwitchEnabled)
         {
             return RiskVetoReasonCode.KillSwitchEnabled;
         }
@@ -228,22 +443,124 @@ public sealed class RiskPolicyEvaluator(
             return RiskVetoReasonCode.AccountEquityUnavailable;
         }
 
-        if (snapshot.CurrentDailyLossPercentage > riskProfile.MaxDailyLossPercentage)
+        if (snapshot.MaxDailyLossPercentage.HasValue &&
+            snapshot.CurrentDailyLossPercentage > snapshot.MaxDailyLossPercentage.Value)
         {
             return RiskVetoReasonCode.DailyLossLimitBreached;
         }
 
-        if (snapshot.CurrentExposurePercentage > riskProfile.MaxPositionSizePercentage)
+        if (snapshot.MaxWeeklyLossPercentage.HasValue &&
+            snapshot.CurrentWeeklyLossPercentage > snapshot.MaxWeeklyLossPercentage.Value)
         {
-            return RiskVetoReasonCode.ExposureLimitBreached;
+            return RiskVetoReasonCode.WeeklyLossLimitBreached;
         }
 
-        if (snapshot.CurrentLeverage > riskProfile.MaxLeverage)
+        if (snapshot.MaxConcurrentPositions.HasValue &&
+            snapshot.ProjectedOpenPositionCount > snapshot.MaxConcurrentPositions.Value)
+        {
+            return RiskVetoReasonCode.MaxConcurrentPositionsBreached;
+        }
+
+        if (snapshot.MaxSymbolExposurePercentage.HasValue &&
+            snapshot.ProjectedSymbolExposurePercentage > snapshot.MaxSymbolExposurePercentage.Value)
+        {
+            return RiskVetoReasonCode.SymbolExposureLimitBreached;
+        }
+
+        if (snapshot.MaxCoinExposurePercentage.HasValue &&
+            snapshot.ProjectedCoinExposurePercentage > snapshot.MaxCoinExposurePercentage.Value)
+        {
+            return RiskVetoReasonCode.CoinSpecificLimitBreached;
+        }
+
+        if (snapshot.MaxLeverage.HasValue &&
+            snapshot.ProjectedLeverage > snapshot.MaxLeverage.Value)
         {
             return RiskVetoReasonCode.LeverageLimitBreached;
         }
 
+        if (snapshot.MaxExposurePercentage.HasValue &&
+            snapshot.ProjectedExposurePercentage > snapshot.MaxExposurePercentage.Value)
+        {
+            return RiskVetoReasonCode.ExposureLimitBreached;
+        }
+
         return RiskVetoReasonCode.None;
+    }
+
+    private static string BuildReasonSummary(RiskVetoReasonCode reasonCode, PreTradeRiskSnapshot snapshot)
+    {
+        var scope = $"Scope=User:{snapshot.OwnerUserId ?? "n/a"};Bot:{snapshot.BotId?.ToString("N") ?? "n/a"};Symbol:{snapshot.Symbol ?? "n/a"};Coin:{snapshot.BaseAsset ?? "n/a"};Timeframe:{snapshot.Timeframe ?? "n/a"}";
+        var summary = FormattableString.Invariant(
+            $"Reason={reasonCode}; {scope}; DailyLoss={snapshot.CurrentDailyLossPercentage:0.####}/{FormatLimit(snapshot.MaxDailyLossPercentage)}%; WeeklyLoss={snapshot.CurrentWeeklyLossPercentage:0.####}/{FormatLimit(snapshot.MaxWeeklyLossPercentage)}%; Leverage={snapshot.CurrentLeverage:0.####}->{snapshot.ProjectedLeverage:0.####}/{FormatLimit(snapshot.MaxLeverage)}x; PortfolioExposure={snapshot.CurrentExposurePercentage:0.####}->{snapshot.ProjectedExposurePercentage:0.####}/{FormatLimit(snapshot.MaxExposurePercentage)}%; SymbolExposure={snapshot.CurrentSymbolExposurePercentage:0.####}->{snapshot.ProjectedSymbolExposurePercentage:0.####}/{FormatLimit(snapshot.MaxSymbolExposurePercentage)}%; OpenPositions={snapshot.OpenPositionCount}->{snapshot.ProjectedOpenPositionCount}/{snapshot.MaxConcurrentPositions?.ToString(CultureInfo.InvariantCulture) ?? "n/a"}; CoinExposure[{snapshot.BaseAsset ?? "n/a"}]={snapshot.CurrentCoinExposurePercentage:0.####}->{snapshot.ProjectedCoinExposurePercentage:0.####}/{FormatLimit(snapshot.MaxCoinExposurePercentage)}%.");
+
+        return summary.Length <= 512 ? summary : summary[..512];
+    }
+
+    private static (decimal DailyLossAmount, decimal WeeklyLossAmount) ResolveDemoLossAmounts(
+        IEnumerable<DemoLedgerTransaction> transactions,
+        DateTime evaluatedAtUtc)
+    {
+        var utcDayStart = evaluatedAtUtc.Date;
+        var utcDayEnd = utcDayStart.AddDays(1);
+        var utcWeekStart = ResolveIsoWeekStart(evaluatedAtUtc);
+        var utcWeekEnd = utcWeekStart.AddDays(7);
+
+        var dailyLossAmount = transactions
+            .Where(entity =>
+                NormalizeUtc(entity.OccurredAtUtc) >= utcDayStart &&
+                NormalizeUtc(entity.OccurredAtUtc) < utcDayEnd &&
+                entity.RealizedPnlDelta.HasValue &&
+                entity.RealizedPnlDelta.Value < 0m)
+            .Sum(entity => -entity.RealizedPnlDelta!.Value);
+        var weeklyLossAmount = transactions
+            .Where(entity =>
+                NormalizeUtc(entity.OccurredAtUtc) >= utcWeekStart &&
+                NormalizeUtc(entity.OccurredAtUtc) < utcWeekEnd &&
+                entity.RealizedPnlDelta.HasValue &&
+                entity.RealizedPnlDelta.Value < 0m)
+            .Sum(entity => -entity.RealizedPnlDelta!.Value);
+
+        return (dailyLossAmount, weeklyLossAmount);
+    }
+
+    private static IReadOnlyDictionary<string, decimal> ParseCoinSpecificLimits(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return new Dictionary<string, decimal>(StringComparer.Ordinal);
+        }
+
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<Dictionary<string, decimal>>(json)
+                ?? new Dictionary<string, decimal>();
+
+            return parsed
+                .Where(entry => !string.IsNullOrWhiteSpace(entry.Key) && entry.Value >= 0m)
+                .ToDictionary(
+                    entry => NormalizeAsset(entry.Key),
+                    entry => entry.Value,
+                    StringComparer.Ordinal);
+        }
+        catch (JsonException)
+        {
+            throw new InvalidOperationException("RiskProfileConfigurationInvalid");
+        }
+    }
+
+    private static DateTime ResolveIsoWeekStart(DateTime evaluatedAtUtc)
+    {
+        var utcDayStart = evaluatedAtUtc.Date;
+        var delta = ((7 + (int)utcDayStart.DayOfWeek - (int)DayOfWeek.Monday) % 7);
+        return utcDayStart.AddDays(-delta);
+    }
+
+    private static decimal ResolvePercentageRatio(decimal numerator, decimal denominator, decimal multiplier)
+    {
+        return denominator > 0m
+            ? (numerator / denominator) * multiplier
+            : 0m;
     }
 
     private static decimal CalculateDemoPositionExposure(DemoPosition position)
@@ -287,5 +604,55 @@ public sealed class RiskPolicyEvaluator(
         }
 
         return Math.Abs(position.CostBasis + position.UnrealizedPnl);
+    }
+
+    private static string ResolveBaseAsset(string symbol)
+    {
+        var normalizedSymbol = NormalizeAsset(symbol);
+
+        foreach (var quoteAsset in QuoteAssetSuffixes)
+        {
+            if (normalizedSymbol.EndsWith(quoteAsset, StringComparison.Ordinal) &&
+                normalizedSymbol.Length > quoteAsset.Length)
+            {
+                return normalizedSymbol[..^quoteAsset.Length];
+            }
+        }
+
+        return normalizedSymbol;
+    }
+
+    private static string NormalizeAsset(string value)
+    {
+        return value.Trim().ToUpperInvariant();
+    }
+
+    private static string NormalizeRequired(string? value, string parameterName)
+    {
+        var normalizedValue = value?.Trim();
+
+        if (string.IsNullOrWhiteSpace(normalizedValue))
+        {
+            throw new ArgumentException("The value is required.", parameterName);
+        }
+
+        return normalizedValue;
+    }
+
+    private static string FormatLimit(decimal? limit)
+    {
+        return limit.HasValue
+            ? limit.Value.ToString("0.####", CultureInfo.InvariantCulture)
+            : "n/a";
+    }
+
+    private static DateTime NormalizeUtc(DateTime value)
+    {
+        return value.Kind switch
+        {
+            DateTimeKind.Utc => value,
+            DateTimeKind.Local => value.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+        };
     }
 }

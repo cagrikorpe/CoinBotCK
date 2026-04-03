@@ -4,6 +4,7 @@ using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
+using CoinBot.Application.Abstractions.Risk;
 using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
@@ -255,13 +256,16 @@ public sealed class MarketScannerHandoffService(
                         strategySignal,
                         strategyVeto: null,
                         strategyDecisionOutcome: "Persisted",
-                        executionStatus: "Blocked",
-                        blockerCode: overrideEvaluation.BlockCode ?? "UserExecutionOverrideBlocked",
-                        blockerDetail: overrideEvaluation.Message ?? "Scanner handoff was blocked by user execution override guard.",
-                        guardSummary: $"UserExecutionOverrideGuard={overrideEvaluation.BlockCode ?? "Blocked"}; Symbol={symbol}; Timeframe={klineInterval}",
-                        cancellationToken);
-                    continue;
-                }
+                    executionStatus: "Blocked",
+                    blockerCode: overrideEvaluation.BlockCode ?? "UserExecutionOverrideBlocked",
+                    blockerDetail: overrideEvaluation.Message ?? "Scanner handoff was blocked by user execution override guard.",
+                    guardSummary: Truncate(
+                        $"UserExecutionOverrideGuard={overrideEvaluation.BlockCode ?? "Blocked"}; Symbol={symbol}; Timeframe={klineInterval}; RiskSummary={overrideEvaluation.RiskEvaluation?.ReasonSummary ?? "n/a"}",
+                        512) ?? $"UserExecutionOverrideGuard={overrideEvaluation.BlockCode ?? "Blocked"}; Symbol={symbol}; Timeframe={klineInterval}",
+                    cancellationToken: cancellationToken,
+                    riskEvaluation: overrideEvaluation.RiskEvaluation);
+                continue;
+            }
 
                 latestAttempt = await PersistPreparedAttemptAsync(
                     scanCycleId,
@@ -614,7 +618,8 @@ public sealed class MarketScannerHandoffService(
         string blockerCode,
         string blockerDetail,
         string guardSummary,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RiskVetoResult? riskEvaluation = null)
     {
         var attempt = CreateAttempt(
             scanCycleId,
@@ -629,7 +634,8 @@ public sealed class MarketScannerHandoffService(
             executionStatus,
             blockerCode,
             blockerDetail,
-            guardSummary);
+            guardSummary,
+            riskEvaluation);
 
         dbContext.MarketScannerHandoffAttempts.Add(attempt);
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -658,12 +664,15 @@ public sealed class MarketScannerHandoffService(
         string executionStatus,
         string? blockerCode,
         string? blockerDetail,
-        string? guardSummary)
+        string? guardSummary,
+        RiskVetoResult? riskEvaluation = null)
     {
         var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
         var selectedSymbol = selectedCandidate?.Symbol is null
             ? null
             : MarketDataSymbolNormalizer.Normalize(selectedCandidate.Symbol);
+
+        var confidenceSnapshot = strategySignal?.ExplainabilityPayload.ConfidenceSnapshot ?? strategyVeto?.ConfidenceSnapshot;
 
         return new MarketScannerHandoffAttempt
         {
@@ -689,6 +698,26 @@ public sealed class MarketScannerHandoffService(
             StrategyScore = selectedCandidate?.StrategyScore
                 ?? strategySignal?.ExplainabilityPayload.ConfidenceSnapshot.ScorePercentage
                 ?? strategyVeto?.ConfidenceSnapshot.ScorePercentage,
+            RiskOutcome = ResolveRiskOutcome(confidenceSnapshot, riskEvaluation, executionStatus),
+            RiskVetoReasonCode = ResolveRiskReasonCode(confidenceSnapshot, riskEvaluation),
+            RiskSummary = ResolveRiskSummary(confidenceSnapshot, riskEvaluation),
+            RiskCurrentDailyLossPercentage = riskEvaluation?.Snapshot.CurrentDailyLossPercentage ?? confidenceSnapshot?.CurrentDailyLossPercentage,
+            RiskMaxDailyLossPercentage = riskEvaluation?.Snapshot.MaxDailyLossPercentage ?? confidenceSnapshot?.MaxDailyLossPercentage,
+            RiskCurrentWeeklyLossPercentage = riskEvaluation?.Snapshot.CurrentWeeklyLossPercentage ?? confidenceSnapshot?.CurrentWeeklyLossPercentage,
+            RiskMaxWeeklyLossPercentage = riskEvaluation?.Snapshot.MaxWeeklyLossPercentage ?? confidenceSnapshot?.MaxWeeklyLossPercentage,
+            RiskCurrentLeverage = riskEvaluation?.Snapshot.CurrentLeverage ?? confidenceSnapshot?.CurrentLeverage,
+            RiskProjectedLeverage = riskEvaluation?.Snapshot.ProjectedLeverage ?? confidenceSnapshot?.ProjectedLeverage,
+            RiskMaxLeverage = riskEvaluation?.Snapshot.MaxLeverage ?? confidenceSnapshot?.MaxLeverage,
+            RiskCurrentSymbolExposurePercentage = riskEvaluation?.Snapshot.CurrentSymbolExposurePercentage ?? confidenceSnapshot?.CurrentSymbolExposurePercentage,
+            RiskProjectedSymbolExposurePercentage = riskEvaluation?.Snapshot.ProjectedSymbolExposurePercentage ?? confidenceSnapshot?.ProjectedSymbolExposurePercentage,
+            RiskMaxSymbolExposurePercentage = riskEvaluation?.Snapshot.MaxSymbolExposurePercentage ?? confidenceSnapshot?.MaxSymbolExposurePercentage,
+            RiskCurrentOpenPositions = riskEvaluation?.Snapshot.OpenPositionCount ?? confidenceSnapshot?.CurrentOpenPositionCount,
+            RiskProjectedOpenPositions = riskEvaluation?.Snapshot.ProjectedOpenPositionCount ?? confidenceSnapshot?.ProjectedOpenPositionCount,
+            RiskMaxConcurrentPositions = riskEvaluation?.Snapshot.MaxConcurrentPositions ?? confidenceSnapshot?.MaxConcurrentPositions,
+            RiskBaseAsset = riskEvaluation?.Snapshot.BaseAsset ?? confidenceSnapshot?.RiskBaseAsset,
+            RiskCurrentCoinExposurePercentage = riskEvaluation?.Snapshot.CurrentCoinExposurePercentage ?? confidenceSnapshot?.CurrentCoinExposurePercentage,
+            RiskProjectedCoinExposurePercentage = riskEvaluation?.Snapshot.ProjectedCoinExposurePercentage ?? confidenceSnapshot?.ProjectedCoinExposurePercentage,
+            RiskMaxCoinExposurePercentage = riskEvaluation?.Snapshot.MaxCoinExposurePercentage ?? confidenceSnapshot?.MaxCoinExposurePercentage,
             ExecutionRequestStatus = executionStatus,
             ExecutionSide = executionContext?.Side,
             ExecutionOrderType = executionContext?.OrderType,
@@ -738,6 +767,52 @@ public sealed class MarketScannerHandoffService(
 
         return FormattableString.Invariant(
             $"StrategyTemplate={templateLabel}; StrategyOutcome={report.Outcome}; StrategyScore={report.AggregateScore}; PassedRules={passedRules}; FailedRules={failedRules}; Explanation={report.ExplainabilitySummary}");
+    }
+
+    private static string? ResolveRiskOutcome(
+        StrategySignalConfidenceSnapshot? confidenceSnapshot,
+        RiskVetoResult? riskEvaluation,
+        string executionStatus)
+    {
+        if (riskEvaluation is not null)
+        {
+            return riskEvaluation.IsVetoed ? "Vetoed" : "Allowed";
+        }
+
+        if (confidenceSnapshot is not null)
+        {
+            return confidenceSnapshot.IsVetoed ? "Vetoed" : "Allowed";
+        }
+
+        return string.Equals(executionStatus, "Prepared", StringComparison.Ordinal)
+            ? "Allowed"
+            : null;
+    }
+
+    private static string? ResolveRiskReasonCode(
+        StrategySignalConfidenceSnapshot? confidenceSnapshot,
+        RiskVetoResult? riskEvaluation)
+    {
+        if (riskEvaluation is not null)
+        {
+            return riskEvaluation.ReasonCode.ToString();
+        }
+
+        if (confidenceSnapshot is not null)
+        {
+            return confidenceSnapshot.RiskReasonCode.ToString();
+        }
+
+        return null;
+    }
+
+    private static string? ResolveRiskSummary(
+        StrategySignalConfidenceSnapshot? confidenceSnapshot,
+        RiskVetoResult? riskEvaluation)
+    {
+        return Truncate(
+            riskEvaluation?.ReasonSummary ?? confidenceSnapshot?.RiskScopeSummary ?? confidenceSnapshot?.Summary,
+            1024);
     }
 
     private static string BuildSelectionReason(MarketScannerCandidate? candidate)
