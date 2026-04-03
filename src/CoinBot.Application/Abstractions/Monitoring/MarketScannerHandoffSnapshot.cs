@@ -1,0 +1,71 @@
+using CoinBot.Domain.Enums;
+
+namespace CoinBot.Application.Abstractions.Monitoring;
+
+public sealed record MarketScannerHandoffSnapshot(
+    Guid? HandoffAttemptId,
+    Guid? ScanCycleId,
+    Guid? SelectedCandidateId,
+    string? SelectedSymbol,
+    string? SelectedTimeframe,
+    DateTime? SelectedAtUtc,
+    int? CandidateRank,
+    decimal? CandidateScore,
+    string SelectionReason,
+    string? OwnerUserId,
+    Guid? BotId,
+    string? StrategyKey,
+    Guid? TradingStrategyId,
+    Guid? TradingStrategyVersionId,
+    Guid? StrategySignalId,
+    Guid? StrategySignalVetoId,
+    string StrategyDecisionOutcome,
+    string? StrategyVetoReasonCode,
+    int? StrategyScore,
+    string ExecutionRequestStatus,
+    ExecutionOrderSide? ExecutionSide,
+    ExecutionOrderType? ExecutionOrderType,
+    ExecutionEnvironment? ExecutionEnvironment,
+    decimal? ExecutionQuantity,
+    decimal? ExecutionPrice,
+    string? BlockerCode,
+    string? BlockerDetail,
+    string? GuardSummary,
+    string? CorrelationId,
+    DateTime? CompletedAtUtc)
+{
+    public static MarketScannerHandoffSnapshot Empty()
+    {
+        return new MarketScannerHandoffSnapshot(
+            HandoffAttemptId: null,
+            ScanCycleId: null,
+            SelectedCandidateId: null,
+            SelectedSymbol: null,
+            SelectedTimeframe: null,
+            SelectedAtUtc: null,
+            CandidateRank: null,
+            CandidateScore: null,
+            SelectionReason: "NoHandoffAttempt",
+            OwnerUserId: null,
+            BotId: null,
+            StrategyKey: null,
+            TradingStrategyId: null,
+            TradingStrategyVersionId: null,
+            StrategySignalId: null,
+            StrategySignalVetoId: null,
+            StrategyDecisionOutcome: "NotEvaluated",
+            StrategyVetoReasonCode: null,
+            StrategyScore: null,
+            ExecutionRequestStatus: "NotCreated",
+            ExecutionSide: null,
+            ExecutionOrderType: null,
+            ExecutionEnvironment: null,
+            ExecutionQuantity: null,
+            ExecutionPrice: null,
+            BlockerCode: null,
+            BlockerDetail: null,
+            GuardSummary: null,
+            CorrelationId: null,
+            CompletedAtUtc: null);
+    }
+}

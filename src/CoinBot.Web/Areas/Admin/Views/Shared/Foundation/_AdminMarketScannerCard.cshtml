@@ -1,0 +1,128 @@
+@{
+    var dashboard = ViewData["AdminMonitoringDashboardSnapshot"] as MonitoringDashboardSnapshot
+        ?? MonitoringDashboardSnapshot.Empty(DateTime.UtcNow);
+    var scanner = dashboard.MarketScanner ?? MarketScannerDashboardSnapshot.Empty();
+    var topCandidates = scanner.TopCandidates
+        .OrderBy(candidate => candidate.Rank ?? int.MaxValue)
+        .ThenBy(candidate => candidate.Symbol, StringComparer.Ordinal)
+        .ToArray();
+    var rejectedSamples = scanner.RejectedSamples
+        .OrderBy(candidate => candidate.RejectionReason, StringComparer.Ordinal)
+        .ThenBy(candidate => candidate.Symbol, StringComparer.Ordinal)
+        .ToArray();
+    var latestHandoff = scanner.LatestHandoff ?? MarketScannerHandoffSnapshot.Empty();
+    var scannerTone = latestHandoff.ExecutionRequestStatus == "Prepared"
+        ? "healthy"
+        : scanner.EligibleCandidateCount > 0
+            ? "warning"
+            : scanner.ScannedSymbolCount > 0
+                ? "warning"
+                : "info";
+    var completedAtText = scanner.LastScanCompletedAtUtc.HasValue
+        ? scanner.LastScanCompletedAtUtc.Value.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") + " UTC"
+        : "No scan yet";
+}
+
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-panel-card" data-cb-market-scanner-card>
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Market Scanner</div>
+                <div class="cb-admin-section-title">Top-N candidate snapshot</div>
+                <p class="cb-admin-section-description mb-0">Universe source, eligibility reason, 24h quote volume ve deterministic ranking son scan cycle read-model'inden okunur.</p>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = scanner.EligibleCandidateCount > 0 ? "Candidates Ready" : "No Eligible", Tone = scannerTone, IconText = "SC" })
+        </div>
+
+        <div class="cb-admin-worker-meta-grid mt-6">
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Last scan</span>
+                <strong class="cb-mono" data-cb-scanner-last-scan>@completedAtText</strong>
+                <small data-cb-scanner-cycle>@(scanner.ScanCycleId?.ToString() ?? "n/a")</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Universe</span>
+                <strong data-cb-scanner-universe>@scanner.UniverseSource</strong>
+                <small data-cb-scanner-counts>@scanner.ScannedSymbolCount scanned / @scanner.EligibleCandidateCount eligible</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Best candidate</span>
+                <strong data-cb-scanner-best-symbol>@(scanner.BestCandidateSymbol ?? "n/a")</strong>
+                <small data-cb-scanner-best-score>@(scanner.BestCandidateScore?.ToString("0.####") ?? "n/a") score</small>
+            </div>
+        </div>
+
+        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6" data-cb-scanner-handoff-strip>
+            <div>
+                <div class="cb-admin-info-strip-title" data-cb-scanner-handoff-status>@latestHandoff.ExecutionRequestStatus</div>
+                <div class="cb-admin-info-strip-text">
+                    <span data-cb-scanner-handoff-symbol>@(latestHandoff.SelectedSymbol ?? "n/a")</span>
+                    <span> · </span>
+                    <span data-cb-scanner-handoff-selection>@latestHandoff.SelectionReason</span>
+                    <span> · Strategy: </span>
+                    <span data-cb-scanner-handoff-strategy>@latestHandoff.StrategyDecisionOutcome</span>
+                    <span> · Blocker: </span>
+                    <span data-cb-scanner-handoff-blocker>@(latestHandoff.BlockerCode ?? "none")</span>
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-scanner-handoff-guard>@(latestHandoff.GuardSummary ?? "n/a")</div>
+            </div>
+            <span class="cb-admin-info-strip-meta cb-mono" data-cb-scanner-handoff-at>@(latestHandoff.CompletedAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "No handoff")</span>
+        </div>
+
+        @if (topCandidates.Length == 0)
+        {
+            <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-6">
+                <div>
+                    <div class="cb-admin-info-strip-title">No top candidate yet</div>
+                    <div class="cb-admin-info-strip-text">Scanner cycle tamamlandığında eligible Top-N candidate snapshot listesi burada görünür.</div>
+                </div>
+                <span class="cb-admin-info-strip-meta">Pending</span>
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive mt-6">
+                <table class="table table-borderless cb-admin-table mb-0">
+                    <thead>
+                    <tr>
+                        <th>Rank</th>
+                        <th>Symbol</th>
+                        <th>Score</th>
+                        <th>24h Quote Vol</th>
+                        <th>Source</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var candidate in topCandidates)
+                    {
+                        <tr data-cb-scanner-top-row>
+                            <td class="cb-mono" data-cb-scanner-top-rank>@(candidate.Rank?.ToString() ?? "-")</td>
+                            <td>
+                                <div class="cb-admin-job-title" data-cb-scanner-top-symbol>@candidate.Symbol</div>
+                                <small class="cb-admin-job-meta" data-cb-scanner-top-price>@(candidate.LastPrice?.ToString("0.########") ?? "n/a")</small>
+                            </td>
+                            <td class="cb-mono" data-cb-scanner-top-score>@candidate.Score.ToString("0.####")</td>
+                            <td class="cb-mono" data-cb-scanner-top-volume>@(candidate.QuoteVolume24h?.ToString("0.##") ?? "n/a")</td>
+                            <td data-cb-scanner-top-source>@candidate.UniverseSource</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+        @if (rejectedSamples.Length > 0)
+        {
+            <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6" data-cb-scanner-rejected-strip>
+                <div>
+                    <div class="cb-admin-info-strip-title">Rejected samples</div>
+                    <div class="cb-admin-info-strip-text" data-cb-scanner-rejected-summary>
+                        @string.Join(" · ", rejectedSamples.Select(candidate => $"{candidate.Symbol}:{candidate.RejectionReason ?? "n/a"}"))
+                    </div>
+                </div>
+                <span class="cb-admin-info-strip-meta">Fail-closed</span>
+            </div>
+        }
+    </div>
+</div>
+

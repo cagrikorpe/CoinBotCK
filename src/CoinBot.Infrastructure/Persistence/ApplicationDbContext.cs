@@ -95,6 +95,12 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
     public DbSet<MfaRecoveryCode> MfaRecoveryCodes => Set<MfaRecoveryCode>();
 
+    public DbSet<MarketScannerCycle> MarketScannerCycles => Set<MarketScannerCycle>();
+
+    public DbSet<MarketScannerCandidate> MarketScannerCandidates => Set<MarketScannerCandidate>();
+
+    public DbSet<MarketScannerHandoffAttempt> MarketScannerHandoffAttempts => Set<MarketScannerHandoffAttempt>();
+
     public DbSet<RiskProfile> RiskProfiles => Set<RiskProfile>();
 
     public DbSet<TradingBot> TradingBots => Set<TradingBot>();
@@ -166,6 +172,9 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         ConfigureHistoricalMarketCandles(builder.Entity<HistoricalMarketCandle>());
         ConfigureMfaEmailOtpChallenges(builder.Entity<MfaEmailOtpChallenge>());
         ConfigureMfaRecoveryCodes(builder.Entity<MfaRecoveryCode>());
+        ConfigureMarketScannerCycles(builder.Entity<MarketScannerCycle>());
+        ConfigureMarketScannerCandidates(builder.Entity<MarketScannerCandidate>());
+        ConfigureMarketScannerHandoffAttempts(builder.Entity<MarketScannerHandoffAttempt>());
         ConfigureRiskPolicies(builder.Entity<RiskPolicy>());
         ConfigureRiskPolicyVersions(builder.Entity<RiskPolicyVersion>());
         ConfigureRiskProfiles(builder.Entity<RiskProfile>());
@@ -2022,6 +2031,140 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             .OnDelete(DeleteBehavior.Restrict);
     }
 
+    private static void ConfigureMarketScannerCycles(EntityTypeBuilder<MarketScannerCycle> builder)
+    {
+        builder.ToTable("MarketScannerCycles");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.UniverseSource)
+            .HasMaxLength(256)
+            .IsRequired();
+
+        builder.Property(entity => entity.BestCandidateSymbol)
+            .HasMaxLength(32);
+
+        builder.Property(entity => entity.BestCandidateScore)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.Summary)
+            .HasMaxLength(512);
+
+        builder.HasIndex(entity => entity.CompletedAtUtc);
+    }
+
+    private static void ConfigureMarketScannerCandidates(EntityTypeBuilder<MarketScannerCandidate> builder)
+    {
+        builder.ToTable("MarketScannerCandidates");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.Symbol)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.UniverseSource)
+            .HasMaxLength(256)
+            .IsRequired();
+
+        builder.Property(entity => entity.LastPrice)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.QuoteVolume24h)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.RejectionReason)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.Score)
+            .HasPrecision(38, 18);
+
+        builder.HasIndex(entity => new { entity.ScanCycleId, entity.Rank });
+        builder.HasIndex(entity => new { entity.Symbol, entity.ObservedAtUtc });
+
+        builder.HasOne<MarketScannerCycle>()
+            .WithMany()
+            .HasForeignKey(entity => entity.ScanCycleId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+    private static void ConfigureMarketScannerHandoffAttempts(EntityTypeBuilder<MarketScannerHandoffAttempt> builder)
+    {
+        builder.ToTable("MarketScannerHandoffAttempts");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.SelectedSymbol)
+            .HasMaxLength(32);
+
+        builder.Property(entity => entity.SelectedTimeframe)
+            .HasMaxLength(16);
+
+        builder.Property(entity => entity.CandidateScore)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.SelectionReason)
+            .HasMaxLength(256)
+            .IsRequired();
+
+        builder.Property(entity => entity.OwnerUserId)
+            .HasMaxLength(450);
+
+        builder.Property(entity => entity.StrategyKey)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.StrategyDecisionOutcome)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.StrategyVetoReasonCode)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.ExecutionRequestStatus)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.ExecutionSide)
+            .HasConversion<string>()
+            .HasMaxLength(16);
+
+        builder.Property(entity => entity.ExecutionOrderType)
+            .HasConversion<string>()
+            .HasMaxLength(16);
+
+        builder.Property(entity => entity.ExecutionEnvironment)
+            .HasConversion<string>()
+            .HasMaxLength(32);
+
+        builder.Property(entity => entity.ExecutionQuantity)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.ExecutionPrice)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.BlockerCode)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.BlockerDetail)
+            .HasMaxLength(512);
+
+        builder.Property(entity => entity.GuardSummary)
+            .HasMaxLength(512);
+
+        builder.Property(entity => entity.CorrelationId)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.HasIndex(entity => new { entity.ScanCycleId, entity.CompletedAtUtc });
+        builder.HasIndex(entity => new { entity.SelectedSymbol, entity.SelectedAtUtc });
+        builder.HasIndex(entity => new { entity.ExecutionRequestStatus, entity.CompletedAtUtc });
+
+        builder.HasOne<MarketScannerCycle>()
+            .WithMany()
+            .HasForeignKey(entity => entity.ScanCycleId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasOne<MarketScannerCandidate>()
+            .WithMany()
+            .HasForeignKey(entity => entity.SelectedCandidateId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
     private static void ConfigureHealthSnapshots(EntityTypeBuilder<HealthSnapshot> builder)
     {
         builder.ToTable("HealthSnapshots");
@@ -2311,3 +2454,5 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         }
     }
 }
+
+

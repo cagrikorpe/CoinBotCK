@@ -2644,6 +2644,265 @@ namespace CoinBot.Infrastructure.Persistence.Migrations
                     b.ToTable("IncidentEvents", (string)null);
                 });
 
+            modelBuilder.Entity("CoinBot.Domain.Entities.MarketScannerCandidate", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsEligible")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsTopCandidate")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime?>("LastCandleAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<decimal?>("LastPrice")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
+                    b.Property<DateTime>("ObservedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<decimal?>("QuoteVolume24h")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
+                    b.Property<int?>("Rank")
+                        .HasColumnType("int");
+
+                    b.Property<string>("RejectionReason")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<Guid>("ScanCycleId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal>("Score")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
+                    b.Property<string>("Symbol")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("UniverseSource")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<DateTime>("UpdatedDate")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ScanCycleId", "Rank");
+
+                    b.HasIndex("Symbol", "ObservedAtUtc");
+
+                    b.ToTable("MarketScannerCandidates", (string)null);
+                });
+
+            modelBuilder.Entity("CoinBot.Domain.Entities.MarketScannerCycle", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal?>("BestCandidateScore")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
+                    b.Property<string>("BestCandidateSymbol")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<DateTime>("CompletedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("CreatedDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("EligibleCandidateCount")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<int>("ScannedSymbolCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("StartedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Summary")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<int>("TopCandidateCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("UniverseSource")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<DateTime>("UpdatedDate")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CompletedAtUtc");
+
+                    b.ToTable("MarketScannerCycles", (string)null);
+                });
+
+            modelBuilder.Entity("CoinBot.Domain.Entities.MarketScannerHandoffAttempt", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("BlockerCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("BlockerDetail")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<Guid?>("BotId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int?>("CandidateRank")
+                        .HasColumnType("int");
+
+                    b.Property<decimal?>("CandidateScore")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
+                    b.Property<DateTime>("CompletedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime>("CreatedDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ExecutionEnvironment")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("ExecutionOrderType")
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<decimal?>("ExecutionPrice")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
+                    b.Property<decimal?>("ExecutionQuantity")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
+                    b.Property<string>("ExecutionRequestStatus")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("ExecutionSide")
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<string>("GuardSummary")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("OwnerUserId")
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<Guid>("ScanCycleId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("SelectedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("SelectedCandidateId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("SelectedSymbol")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("SelectedTimeframe")
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<string>("SelectionReason")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("StrategyDecisionOutcome")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("StrategyKey")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<int?>("StrategyScore")
+                        .HasColumnType("int");
+
+                    b.Property<Guid?>("StrategySignalId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("StrategySignalVetoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("StrategyVetoReasonCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<Guid?>("TradingStrategyId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("TradingStrategyVersionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("UpdatedDate")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SelectedCandidateId");
+
+                    b.HasIndex("ExecutionRequestStatus", "CompletedAtUtc");
+
+                    b.HasIndex("ScanCycleId", "CompletedAtUtc");
+
+                    b.HasIndex("SelectedSymbol", "SelectedAtUtc");
+
+                    b.ToTable("MarketScannerHandoffAttempts", (string)null);
+                });
+
             modelBuilder.Entity("CoinBot.Domain.Entities.RiskPolicy", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3887,6 +4146,29 @@ namespace CoinBot.Infrastructure.Persistence.Migrations
                         .HasForeignKey("IncidentId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("CoinBot.Domain.Entities.MarketScannerCandidate", b =>
+                {
+                    b.HasOne("CoinBot.Domain.Entities.MarketScannerCycle", null)
+                        .WithMany()
+                        .HasForeignKey("ScanCycleId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("CoinBot.Domain.Entities.MarketScannerHandoffAttempt", b =>
+                {
+                    b.HasOne("CoinBot.Domain.Entities.MarketScannerCycle", null)
+                        .WithMany()
+                        .HasForeignKey("ScanCycleId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("CoinBot.Domain.Entities.MarketScannerCandidate", null)
+                        .WithMany()
+                        .HasForeignKey("SelectedCandidateId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("CoinBot.Domain.Entities.RiskPolicyVersion", b =>

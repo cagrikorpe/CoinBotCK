@@ -150,6 +150,15 @@ public static class DependencyInjection
         services.AddOptions<HistoricalGapFillerOptions>()
             .Bind(configuration.GetSection("MarketData:HistoricalGapFiller"))
             .ValidateDataAnnotations();
+        services.AddOptions<MarketScannerOptions>()
+            .Bind(configuration.GetSection("MarketData:Scanner"))
+            .ValidateDataAnnotations()
+            .Validate(
+                options => options.MaxPrice >= options.MinPrice,
+                "MaxPrice must be greater than or equal to MinPrice.")
+            .Validate(
+                options => options.TopCandidateCount <= options.MaxUniverseSymbols,
+                "TopCandidateCount must be less than or equal to MaxUniverseSymbols.");
         services.AddOptions<BinancePrivateDataOptions>()
             .Bind(configuration.GetSection("ExchangeSync:Binance"))
             .ValidateDataAnnotations()
@@ -184,6 +193,8 @@ public static class DependencyInjection
         services.AddScoped<ISelfHealingExecutor, SelfHealingExecutor>();
         services.AddScoped<IAutonomyService, AutonomyService>();
         services.AddScoped<MarketAnomalyService>();
+        services.AddScoped<MarketScannerHandoffService>();
+        services.AddScoped<MarketScannerService>();
         services.AddScoped<IWorkerRetryCoordinator, WorkerRetryCoordinator>();
         services.AddScoped<ICacheRebuildCoordinator, MarketDataCacheRebuildCoordinator>();
         services.AddScoped<ICrisisEscalationAuthorizationService, CrisisEscalationAuthorizationService>();
@@ -322,6 +333,7 @@ public static class DependencyInjection
         services.AddHostedService<VirtualExecutionWatchdogWorker>();
         services.AddHostedService<AutonomySelfHealingWorker>();
         services.AddHostedService<MarketAnomalyWorker>();
+        services.AddHostedService<MarketScannerWorker>();
 
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseSqlServer(connectionString, sqlOptions =>
@@ -450,3 +462,5 @@ public static class DependencyInjection
         return services;
     }
 }
+
+

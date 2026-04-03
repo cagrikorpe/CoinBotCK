@@ -1,5 +1,6 @@
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Monitoring;
+using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
 using CoinBot.Infrastructure.Persistence;
@@ -64,6 +65,185 @@ public sealed class AdminMonitoringReadModelServiceTests
         Assert.Equal(5000, clockDriftSnapshot.Metrics.ClockDriftMs);
     }
 
+    [Fact]
+    public async Task GetSnapshotAsync_ProjectsLatestMarketScannerCycleAndCandidates()
+    {
+        var now = new DateTime(2026, 4, 3, 12, 0, 0, DateTimeKind.Unspecified);
+        var cycleId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext();
+
+        dbContext.MarketScannerCycles.Add(new MarketScannerCycle
+        {
+            Id = cycleId,
+            StartedAtUtc = now.AddSeconds(-2),
+            CompletedAtUtc = now,
+            UniverseSource = "config+registry",
+            ScannedSymbolCount = 3,
+            EligibleCandidateCount = 2,
+            TopCandidateCount = 2,
+            BestCandidateSymbol = "BTCUSDT",
+            BestCandidateScore = 123456m,
+            Summary = "scan complete"
+        });
+        dbContext.MarketScannerCandidates.AddRange(
+            new MarketScannerCandidate
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                Symbol = "BTCUSDT",
+                UniverseSource = "config+registry",
+                ObservedAtUtc = now,
+                LastCandleAtUtc = now,
+                LastPrice = 100m,
+                QuoteVolume24h = 123456m,
+                IsEligible = true,
+                RejectionReason = null,
+                Score = 123456m,
+                Rank = 1,
+                IsTopCandidate = true
+            },
+            new MarketScannerCandidate
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                Symbol = "DOGEUSDT",
+                UniverseSource = "config",
+                ObservedAtUtc = now,
+                LastCandleAtUtc = null,
+                LastPrice = null,
+                QuoteVolume24h = null,
+                IsEligible = false,
+                RejectionReason = "MissingMarketData",
+                Score = 0m,
+                Rank = null,
+                IsTopCandidate = false
+            });
+
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            TimeProvider.System);
+
+        var snapshot = await service.GetSnapshotAsync();
+
+        Assert.Equal(cycleId, snapshot.MarketScanner.ScanCycleId);
+        Assert.Equal(DateTime.SpecifyKind(now, DateTimeKind.Utc), snapshot.MarketScanner.LastScanCompletedAtUtc);
+        Assert.Equal(DateTimeKind.Utc, snapshot.MarketScanner.LastScanCompletedAtUtc!.Value.Kind);
+        Assert.Equal(3, snapshot.MarketScanner.ScannedSymbolCount);
+        Assert.Equal(2, snapshot.MarketScanner.EligibleCandidateCount);
+        Assert.Equal("config+registry", snapshot.MarketScanner.UniverseSource);
+        Assert.Equal("BTCUSDT", snapshot.MarketScanner.BestCandidateSymbol);
+        Assert.Equal(123456m, snapshot.MarketScanner.BestCandidateScore);
+
+        var topCandidate = Assert.Single(snapshot.MarketScanner.TopCandidates);
+        Assert.Equal("BTCUSDT", topCandidate.Symbol);
+        Assert.Equal(1, topCandidate.Rank);
+        Assert.True(topCandidate.IsTopCandidate);
+        Assert.Equal(DateTimeKind.Utc, topCandidate.ObservedAtUtc.Kind);
+
+        var rejectedSample = Assert.Single(snapshot.MarketScanner.RejectedSamples);
+        Assert.Equal("DOGEUSDT", rejectedSample.Symbol);
+        Assert.Equal("MissingMarketData", rejectedSample.RejectionReason);
+    }
+
+    [Fact]
+    public async Task GetSnapshotAsync_ProjectsLatestMarketScannerHandoffSnapshots()
+    {
+        var now = new DateTime(2026, 4, 3, 12, 0, 0, DateTimeKind.Utc);
+        var cycleId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext();
+
+        dbContext.MarketScannerCycles.Add(new MarketScannerCycle
+        {
+            Id = cycleId,
+            StartedAtUtc = now.AddSeconds(-2),
+            CompletedAtUtc = now,
+            UniverseSource = "config",
+            ScannedSymbolCount = 1,
+            EligibleCandidateCount = 1,
+            TopCandidateCount = 1,
+            BestCandidateSymbol = "BTCUSDT",
+            BestCandidateScore = 123456m,
+            Summary = "scan complete"
+        });
+        dbContext.MarketScannerHandoffAttempts.AddRange(
+            new MarketScannerHandoffAttempt
+            {
+                Id = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                ScanCycleId = cycleId,
+                SelectedCandidateId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                SelectedSymbol = "BTCUSDT",
+                SelectedTimeframe = "1m",
+                SelectedAtUtc = now.AddSeconds(-1),
+                CandidateRank = 1,
+                CandidateScore = 123456m,
+                SelectionReason = "Top-ranked eligible candidate selected.",
+                OwnerUserId = "user-btc",
+                BotId = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+                StrategyKey = "pilot-btc",
+                TradingStrategyId = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+                TradingStrategyVersionId = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+                StrategySignalId = Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+                StrategyDecisionOutcome = "Persisted",
+                StrategyScore = 91,
+                ExecutionRequestStatus = "Prepared",
+                ExecutionSide = ExecutionOrderSide.Buy,
+                ExecutionOrderType = ExecutionOrderType.Market,
+                ExecutionEnvironment = ExecutionEnvironment.Live,
+                ExecutionQuantity = 0.01m,
+                ExecutionPrice = 100m,
+                GuardSummary = "ExecutionGate=Allowed; UserExecutionOverride=Allowed; Symbol=BTCUSDT; Timeframe=1m",
+                CorrelationId = "corr-prepared",
+                CompletedAtUtc = now.AddSeconds(-1)
+            },
+            new MarketScannerHandoffAttempt
+            {
+                Id = Guid.Parse("11111111-1111-1111-1111-111111111111"),
+                ScanCycleId = cycleId,
+                SelectedCandidateId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                SelectedSymbol = "SOLUSDT",
+                SelectedTimeframe = "1m",
+                SelectedAtUtc = now,
+                CandidateRank = 2,
+                CandidateScore = 99999m,
+                SelectionReason = "Top-ranked eligible candidate selected.",
+                OwnerUserId = "user-sol",
+                BotId = Guid.Parse("33333333-3333-3333-3333-333333333333"),
+                StrategyKey = "pilot-sol",
+                TradingStrategyId = Guid.Parse("44444444-4444-4444-4444-444444444444"),
+                TradingStrategyVersionId = Guid.Parse("55555555-5555-5555-5555-555555555555"),
+                StrategySignalVetoId = Guid.Parse("66666666-6666-6666-6666-666666666666"),
+                StrategyDecisionOutcome = "Vetoed",
+                StrategyVetoReasonCode = "ExposureLimitBreached",
+                StrategyScore = 12,
+                ExecutionRequestStatus = "Blocked",
+                BlockerCode = "StrategyVetoed",
+                BlockerDetail = "Exposure limit breached.",
+                GuardSummary = "StrategySignalVeto=ExposureLimitBreached; Symbol=SOLUSDT; Timeframe=1m",
+                CorrelationId = "corr-blocked",
+                CompletedAtUtc = now
+            });
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            TimeProvider.System);
+
+        var snapshot = await service.GetSnapshotAsync();
+
+        Assert.Equal("SOLUSDT", snapshot.MarketScanner.LatestHandoff.SelectedSymbol);
+        Assert.Equal("Blocked", snapshot.MarketScanner.LatestHandoff.ExecutionRequestStatus);
+        Assert.Equal("StrategyVetoed", snapshot.MarketScanner.LatestHandoff.BlockerCode);
+        Assert.Equal("Vetoed", snapshot.MarketScanner.LatestHandoff.StrategyDecisionOutcome);
+        Assert.Equal("BTCUSDT", snapshot.MarketScanner.LastSuccessfulHandoff.SelectedSymbol);
+        Assert.Equal("Prepared", snapshot.MarketScanner.LastSuccessfulHandoff.ExecutionRequestStatus);
+        Assert.Equal("SOLUSDT", snapshot.MarketScanner.LastBlockedHandoff.SelectedSymbol);
+        Assert.Equal("StrategyVetoed", snapshot.MarketScanner.LastBlockedHandoff.BlockerCode);
+        Assert.Equal(DateTimeKind.Utc, snapshot.MarketScanner.LatestHandoff.CompletedAtUtc!.Value.Kind);
+    }
     private static ApplicationDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -80,3 +260,4 @@ public sealed class AdminMonitoringReadModelServiceTests
         public bool HasIsolationBypass => true;
     }
 }
+

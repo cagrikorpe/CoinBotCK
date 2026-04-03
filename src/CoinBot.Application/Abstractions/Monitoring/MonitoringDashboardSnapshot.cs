@@ -5,8 +5,13 @@ public sealed record MonitoringDashboardSnapshot(
     IReadOnlyCollection<WorkerHeartbeat> WorkerHeartbeats,
     DateTime LastRefreshedAtUtc)
 {
+    public MarketScannerDashboardSnapshot MarketScanner { get; init; } = MarketScannerDashboardSnapshot.Empty();
+
     public static MonitoringDashboardSnapshot Empty(DateTime lastRefreshedAtUtc)
     {
-        return new MonitoringDashboardSnapshot(Array.Empty<HealthSnapshot>(), Array.Empty<WorkerHeartbeat>(), lastRefreshedAtUtc);
+        return new MonitoringDashboardSnapshot(Array.Empty<HealthSnapshot>(), Array.Empty<WorkerHeartbeat>(), lastRefreshedAtUtc)
+        {
+            MarketScanner = MarketScannerDashboardSnapshot.Empty()
+        };
     }
 }

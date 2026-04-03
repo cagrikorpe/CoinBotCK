@@ -3,6 +3,7 @@ using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Persistence;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -37,7 +38,7 @@ public sealed class DataLatencyCircuitBreaker(
 
         if (wasCreated || hasStateChanged)
         {
-            await dbContext.SaveChangesAsync(cancellationToken);
+            state = await SaveStateAsync(state, cancellationToken);
         }
 
         if (hasStateChanged)
@@ -146,7 +147,7 @@ public sealed class DataLatencyCircuitBreaker(
             guardReasonCode);
         var hasStateChanged = ApplyState(state, desiredState, evaluationTimeUtc);
 
-        await dbContext.SaveChangesAsync(cancellationToken);
+        state = await SaveStateAsync(state, cancellationToken);
 
         if (hasStateChanged)
         {
@@ -211,8 +212,50 @@ public sealed class DataLatencyCircuitBreaker(
 
         return state;
     }
-    private DesiredState EvaluateState(
-        DegradedModeState state,
+    private async Task<DegradedModeState> SaveStateAsync(DegradedModeState state, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return state;
+        }
+        catch (DbUpdateException exception) when (IsDuplicateStateInsert(state, exception))
+        {
+            dbContext.Entry(state).State = EntityState.Detached;
+            var persistedState = await dbContext.DegradedModeStates
+                .SingleAsync(entity => entity.Id == state.Id, cancellationToken);
+
+            CopyState(state, persistedState);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return persistedState;
+        }
+    }
+
+    private bool IsDuplicateStateInsert(DegradedModeState state, DbUpdateException exception)
+    {
+        return dbContext.Entry(state).State == EntityState.Added &&
+               exception.InnerException is SqlException { Number: 2601 or 2627 };
+    }
+
+    private static void CopyState(DegradedModeState source, DegradedModeState target)
+    {
+        target.LatestDataTimestampAtUtc = source.LatestDataTimestampAtUtc;
+        target.LatestHeartbeatReceivedAtUtc = source.LatestHeartbeatReceivedAtUtc;
+        target.LatestClockDriftMilliseconds = source.LatestClockDriftMilliseconds;
+        target.LatestHeartbeatSource = source.LatestHeartbeatSource;
+        target.LatestSymbol = source.LatestSymbol;
+        target.LatestTimeframe = source.LatestTimeframe;
+        target.LatestExpectedOpenTimeUtc = source.LatestExpectedOpenTimeUtc;
+        target.LatestContinuityGapCount = source.LatestContinuityGapCount;
+        target.LastStateChangedAtUtc = source.LastStateChangedAtUtc;
+        target.StateCode = source.StateCode;
+        target.ReasonCode = source.ReasonCode;
+        target.SignalFlowBlocked = source.SignalFlowBlocked;
+        target.ExecutionFlowBlocked = source.ExecutionFlowBlocked;
+        target.IsDeleted = false;
+    }
+
+    private DesiredState EvaluateState(        DegradedModeState state,
         DateTime evaluationTimeUtc,
         DegradedModeStateCode? guardStateCode = null,
         DegradedModeReasonCode? guardReasonCode = null)
@@ -488,4 +531,7 @@ public sealed class DataLatencyCircuitBreaker(
         bool ExecutionFlowBlocked,
         int? LatestDataAgeMilliseconds);
 }
+
+
+
 

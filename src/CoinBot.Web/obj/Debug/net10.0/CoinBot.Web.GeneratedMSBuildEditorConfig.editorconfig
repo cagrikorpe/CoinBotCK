@@ -354,6 +354,10 @@ build_metadata.AdditionalFiles.CssScope =
 build_metadata.AdditionalFiles.TargetPath = QXJlYXNcQWRtaW5cVmlld3NcU2hhcmVkXEZvdW5kYXRpb25cX0FkbWluTWFpbnRlbmFuY2VTZXR0aW5nc1NlY3Rpb24uY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
+[D:/CkBot/Code/CoinBot/src/CoinBot.Web/Areas/Admin/Views/Shared/Foundation/_AdminMarketScannerCard.cshtml]
+build_metadata.AdditionalFiles.TargetPath = QXJlYXNcQWRtaW5cVmlld3NcU2hhcmVkXEZvdW5kYXRpb25cX0FkbWluTWFya2V0U2Nhbm5lckNhcmQuY3NodG1s
+build_metadata.AdditionalFiles.CssScope = 
+
 [D:/CkBot/Code/CoinBot/src/CoinBot.Web/Areas/Admin/Views/Shared/Foundation/_AdminNotificationDefaultsSection.cshtml]
 build_metadata.AdditionalFiles.TargetPath = QXJlYXNcQWRtaW5cVmlld3NcU2hhcmVkXEZvdW5kYXRpb25cX0FkbWluTm90aWZpY2F0aW9uRGVmYXVsdHNTZWN0aW9uLmNzaHRtbA==
 build_metadata.AdditionalFiles.CssScope = 

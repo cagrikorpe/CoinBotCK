@@ -6,6 +6,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 
 using HealthSnapshotEntity = CoinBot.Domain.Entities.HealthSnapshot;
+using MarketScannerCandidateEntity = CoinBot.Domain.Entities.MarketScannerCandidate;
+using MarketScannerHandoffAttemptEntity = CoinBot.Domain.Entities.MarketScannerHandoffAttempt;
 using WorkerHeartbeatEntity = CoinBot.Domain.Entities.WorkerHeartbeat;
 
 namespace CoinBot.Infrastructure.Administration;
@@ -36,15 +38,119 @@ public sealed class AdminMonitoringReadModelService(
                         .AsNoTracking()
                         .OrderBy(entity => entity.WorkerName)
                         .ToListAsync(cancellationToken);
+                    var scannerSnapshot = await LoadMarketScannerSnapshotAsync(cancellationToken);
 
                     return new MonitoringDashboardSnapshot(
                         healthSnapshots.Select(MapHealthSnapshot).ToArray(),
                         workerHeartbeats.Select(MapWorkerHeartbeat).ToArray(),
-                        timeProvider.GetUtcNow().UtcDateTime);
+                        timeProvider.GetUtcNow().UtcDateTime)
+                    {
+                        MarketScanner = scannerSnapshot
+                    };
                 },
                 SnapshotCacheOptions)!;
     }
 
+    private async Task<MarketScannerDashboardSnapshot> LoadMarketScannerSnapshotAsync(CancellationToken cancellationToken)
+    {
+        var latestCycle = await dbContext.MarketScannerCycles
+            .AsNoTracking()
+            .OrderByDescending(entity => entity.CompletedAtUtc)
+            .ThenByDescending(entity => entity.CreatedDate)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (latestCycle is null)
+        {
+            return MarketScannerDashboardSnapshot.Empty();
+        }
+
+        var topCandidateEntities = await dbContext.MarketScannerCandidates
+            .AsNoTracking()
+            .Where(entity => entity.ScanCycleId == latestCycle.Id && entity.IsTopCandidate)
+            .OrderBy(entity => entity.Rank ?? int.MaxValue)
+            .ThenByDescending(entity => entity.Score)
+            .ThenBy(entity => entity.Symbol)
+            .ToListAsync(cancellationToken);
+
+        var rejectedSampleEntities = await dbContext.MarketScannerCandidates
+            .AsNoTracking()
+            .Where(entity => entity.ScanCycleId == latestCycle.Id && !entity.IsEligible)
+            .OrderBy(entity => entity.RejectionReason)
+            .ThenBy(entity => entity.Symbol)
+            .Take(5)
+            .ToListAsync(cancellationToken);
+
+        var latestHandoffEntity = await dbContext.MarketScannerHandoffAttempts
+            .AsNoTracking()
+            .OrderByDescending(entity => entity.CompletedAtUtc)
+            .ThenByDescending(entity => entity.CreatedDate)
+            .FirstOrDefaultAsync(cancellationToken);
+        var lastSuccessfulHandoffEntity = await dbContext.MarketScannerHandoffAttempts
+            .AsNoTracking()
+            .Where(entity => entity.ExecutionRequestStatus == "Prepared")
+            .OrderByDescending(entity => entity.CompletedAtUtc)
+            .ThenByDescending(entity => entity.CreatedDate)
+            .FirstOrDefaultAsync(cancellationToken);
+        var lastBlockedHandoffEntity = await dbContext.MarketScannerHandoffAttempts
+            .AsNoTracking()
+            .Where(entity => entity.ExecutionRequestStatus != "Prepared")
+            .OrderByDescending(entity => entity.CompletedAtUtc)
+            .ThenByDescending(entity => entity.CreatedDate)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return new MarketScannerDashboardSnapshot(
+            latestCycle.Id,
+            NormalizeUtc(latestCycle.CompletedAtUtc),
+            latestCycle.ScannedSymbolCount,
+            latestCycle.EligibleCandidateCount,
+            latestCycle.UniverseSource,
+            latestCycle.BestCandidateSymbol,
+            latestCycle.BestCandidateScore,
+            topCandidateEntities.Select(MapMarketScannerCandidate).ToArray(),
+            rejectedSampleEntities.Select(MapMarketScannerCandidate).ToArray(),
+            MapMarketScannerHandoffAttempt(latestHandoffEntity),
+            MapMarketScannerHandoffAttempt(lastSuccessfulHandoffEntity),
+            MapMarketScannerHandoffAttempt(lastBlockedHandoffEntity));
+    }
+    private static MarketScannerHandoffSnapshot MapMarketScannerHandoffAttempt(MarketScannerHandoffAttemptEntity? entity)
+    {
+        if (entity is null)
+        {
+            return MarketScannerHandoffSnapshot.Empty();
+        }
+
+        return new MarketScannerHandoffSnapshot(
+            entity.Id,
+            entity.ScanCycleId,
+            entity.SelectedCandidateId,
+            entity.SelectedSymbol,
+            entity.SelectedTimeframe,
+            NormalizeUtc(entity.SelectedAtUtc),
+            entity.CandidateRank,
+            entity.CandidateScore,
+            entity.SelectionReason,
+            entity.OwnerUserId,
+            entity.BotId,
+            entity.StrategyKey,
+            entity.TradingStrategyId,
+            entity.TradingStrategyVersionId,
+            entity.StrategySignalId,
+            entity.StrategySignalVetoId,
+            entity.StrategyDecisionOutcome,
+            entity.StrategyVetoReasonCode,
+            entity.StrategyScore,
+            entity.ExecutionRequestStatus,
+            entity.ExecutionSide,
+            entity.ExecutionOrderType,
+            entity.ExecutionEnvironment,
+            entity.ExecutionQuantity,
+            entity.ExecutionPrice,
+            entity.BlockerCode,
+            entity.BlockerDetail,
+            entity.GuardSummary,
+            entity.CorrelationId,
+            NormalizeUtc(entity.CompletedAtUtc));
+    }
     private static HealthSnapshot MapHealthSnapshot(HealthSnapshotEntity entity)
     {
         return new HealthSnapshot(
@@ -71,6 +177,22 @@ public sealed class AdminMonitoringReadModelService(
                 entity.SnapshotAgeSeconds),
             entity.Detail,
             entity.ObservedAtUtc);
+    }
+
+    private static MarketScannerCandidateSnapshot MapMarketScannerCandidate(MarketScannerCandidateEntity entity)
+    {
+        return new MarketScannerCandidateSnapshot(
+            entity.Symbol,
+            entity.UniverseSource,
+            NormalizeUtc(entity.ObservedAtUtc),
+            entity.LastCandleAtUtc.HasValue ? NormalizeUtc(entity.LastCandleAtUtc.Value) : null,
+            entity.LastPrice,
+            entity.QuoteVolume24h,
+            entity.IsEligible,
+            entity.RejectionReason,
+            entity.Score,
+            entity.Rank,
+            entity.IsTopCandidate);
     }
 
     private static int? TryReadDetailMetric(string? detail, string metricName)
@@ -106,6 +228,16 @@ public sealed class AdminMonitoringReadModelService(
         return null;
     }
 
+    private static DateTime NormalizeUtc(DateTime value)
+    {
+        return value.Kind switch
+        {
+            DateTimeKind.Utc => value,
+            DateTimeKind.Local => value.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+        };
+    }
+
     private static WorkerHeartbeat MapWorkerHeartbeat(WorkerHeartbeatEntity entity)
     {
         return new WorkerHeartbeat(
@@ -123,3 +255,6 @@ public sealed class AdminMonitoringReadModelService(
             entity.Detail);
     }
 }
+
+
+
