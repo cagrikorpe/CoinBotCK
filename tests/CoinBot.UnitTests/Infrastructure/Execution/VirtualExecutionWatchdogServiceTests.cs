@@ -34,7 +34,7 @@ public sealed class VirtualExecutionWatchdogServiceTests
         await SeedDemoWalletAsync(harness.DbContext, "user-limit-watchdog", "USDT", 1000m);
         harness.MarketDataService.SetLatestPrice("AAVEUSDT", 105m, harness.TimeProvider.GetUtcNow().UtcDateTime, "unit-test");
         harness.MarketDataService.SetSymbolMetadata("AAVEUSDT", "AAVE", "USDT", 0.01m, 0.001m);
-        await PrimeFreshMarketDataAsync(harness, "corr-vw-limit-1");
+        await PrimeFreshMarketDataAsync(harness, "AAVEUSDT", "corr-vw-limit-1");
         await harness.SwitchService.SetTradeMasterStateAsync(
             TradeMasterSwitchState.Armed,
             actor: "admin-vw-limit",
@@ -86,7 +86,7 @@ public sealed class VirtualExecutionWatchdogServiceTests
         await SeedDemoWalletAsync(harness.DbContext, "user-protect-watchdog", "USDT", 1000m);
         harness.MarketDataService.SetLatestPrice("BTCUSDT", 100m, harness.TimeProvider.GetUtcNow().UtcDateTime, "unit-test");
         harness.MarketDataService.SetSymbolMetadata("BTCUSDT", "BTC", "USDT", 0.01m, 0.001m);
-        await PrimeFreshMarketDataAsync(harness, "corr-vw-protect-1");
+        await PrimeFreshMarketDataAsync(harness, "BTCUSDT", "corr-vw-protect-1");
         await harness.SwitchService.SetTradeMasterStateAsync(
             TradeMasterSwitchState.Armed,
             actor: "admin-vw-protect",
@@ -112,7 +112,7 @@ public sealed class VirtualExecutionWatchdogServiceTests
         Assert.Equal(ExecutionOrderState.Filled, entryResult.Order.State);
 
         harness.TimeProvider.Advance(TimeSpan.FromSeconds(1));
-        await PrimeFreshMarketDataAsync(harness, "corr-vw-protect-3");
+        await PrimeFreshMarketDataAsync(harness, "BTCUSDT", "corr-vw-protect-3");
         harness.MarketDataService.SetLatestPrice("BTCUSDT", 112m, harness.TimeProvider.GetUtcNow().UtcDateTime, "unit-test");
 
         var cycleResult = await harness.WatchdogService.RunOnceAsync();
@@ -240,10 +240,14 @@ public sealed class VirtualExecutionWatchdogServiceTests
             privateRestClient);
     }
 
-    private static async Task PrimeFreshMarketDataAsync(TestHarness harness, string correlationId)
+    private static async Task PrimeFreshMarketDataAsync(TestHarness harness, string symbol, string correlationId)
     {
         await harness.CircuitBreaker.RecordHeartbeatAsync(
-            new DataLatencyHeartbeat("binance-btcusdt", harness.TimeProvider.GetUtcNow().UtcDateTime),
+            new DataLatencyHeartbeat(
+                $"binance-{symbol.Trim().ToLowerInvariant()}",
+                harness.TimeProvider.GetUtcNow().UtcDateTime,
+                Symbol: symbol,
+                Timeframe: "1m"),
             correlationId);
     }
 

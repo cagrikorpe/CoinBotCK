@@ -162,7 +162,7 @@ public sealed class UserDashboardOperationsReadModelServiceTests
 
         dbContext.DegradedModeStates.Add(new DegradedModeState
         {
-            Id = Guid.NewGuid(),
+            Id = DegradedModeDefaults.SingletonId,
             StateCode = DegradedModeStateCode.Stopped,
             ReasonCode = DegradedModeReasonCode.ClockDriftExceeded,
             SignalFlowBlocked = true,
