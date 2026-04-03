@@ -53,6 +53,59 @@ public sealed class StrategyRuleParserTests
     }
 
     [Fact]
+    public void Parse_ParsesSchemaV2Metadata_AndNormalizesRuleMetadata()
+    {
+        var parser = new StrategyRuleParser();
+
+        var document = parser.Parse(
+            """
+            {
+              "schemaVersion": 2,
+              "metadata": {
+                "templateKey": "rsi-reversal",
+                "templateName": "RSI Reversal"
+              },
+              "entry": {
+                "operator": "all",
+                "ruleId": "entry-root",
+                "ruleType": "group",
+                "timeframe": "1m",
+                "weight": 1,
+                "enabled": true,
+                "group": "entry",
+                "rules": [
+                  {
+                    "ruleId": "entry-rsi",
+                    "ruleType": "rsi",
+                    "path": "indicator.rsi.value",
+                    "comparison": "lessThanOrEqual",
+                    "value": 30,
+                    "timeframe": "1m",
+                    "weight": 25,
+                    "enabled": true,
+                    "group": "entry"
+                  }
+                ]
+              }
+            }
+            """);
+
+        var entryGroup = Assert.IsType<StrategyRuleGroup>(document.Entry);
+        var condition = Assert.IsType<StrategyRuleCondition>(Assert.Single(entryGroup.Rules));
+
+        Assert.Equal(2, document.SchemaVersion);
+        Assert.Equal("rsi-reversal", document.Metadata?.TemplateKey);
+        Assert.Equal("RSI Reversal", document.Metadata?.TemplateName);
+        Assert.Equal("entry-root", entryGroup.Metadata?.RuleId);
+        Assert.Equal("group", entryGroup.Metadata?.RuleType);
+        Assert.Equal("1m", entryGroup.Metadata?.Timeframe);
+        Assert.Equal("entry-rsi", condition.Metadata?.RuleId);
+        Assert.Equal("rsi", condition.Metadata?.RuleType);
+        Assert.Equal(25m, condition.Metadata?.Weight);
+        Assert.True(condition.Metadata?.Enabled);
+    }
+
+    [Fact]
     public void Parse_RejectsUnsupportedSchemaVersion()
     {
         var parser = new StrategyRuleParser();
@@ -60,7 +113,7 @@ public sealed class StrategyRuleParserTests
         var exception = Assert.Throws<StrategyRuleParseException>(() => parser.Parse(
             """
             {
-              "schemaVersion": 2,
+              "schemaVersion": 3,
               "entry": {
                 "path": "context.mode",
                 "comparison": "equals",
@@ -70,5 +123,15 @@ public sealed class StrategyRuleParserTests
             """));
 
         Assert.Contains("schemaVersion", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Parse_RejectsMalformedJson_WithSanitizedParseReason()
+    {
+        var parser = new StrategyRuleParser();
+
+        var exception = Assert.Throws<StrategyRuleParseException>(() => parser.Parse("{ \"schemaVersion\": 2, \"entry\": [ }"));
+
+        Assert.Contains("could not be parsed", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 }

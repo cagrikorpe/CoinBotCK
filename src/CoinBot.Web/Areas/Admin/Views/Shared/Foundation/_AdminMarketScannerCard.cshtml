@@ -61,6 +61,8 @@
                     <span data-cb-scanner-handoff-selection>@latestHandoff.SelectionReason</span>
                     <span> · Strategy: </span>
                     <span data-cb-scanner-handoff-strategy>@latestHandoff.StrategyDecisionOutcome</span>
+                    <span> · Score: </span>
+                    <span data-cb-scanner-handoff-score>@(latestHandoff.StrategyScore?.ToString() ?? "n/a")</span>
                     <span> · Blocker: </span>
                     <span data-cb-scanner-handoff-blocker>@(latestHandoff.BlockerCode ?? "none")</span>
                 </div>
@@ -125,4 +127,5 @@
         }
     </div>
 </div>
+
 

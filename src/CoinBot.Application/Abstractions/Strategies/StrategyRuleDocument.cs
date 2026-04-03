@@ -4,4 +4,5 @@ public sealed record StrategyRuleDocument(
     int SchemaVersion,
     StrategyRuleNode? Entry,
     StrategyRuleNode? Exit,
-    StrategyRuleNode? Risk);
+    StrategyRuleNode? Risk,
+    StrategyDefinitionMetadata? Metadata = null);

@@ -3,14 +3,91 @@ using CoinBot.Application.Abstractions.Strategies;
 
 namespace CoinBot.Infrastructure.Strategies;
 
-public sealed class StrategyEvaluatorService(IStrategyRuleParser parser) : IStrategyEvaluatorService
+public sealed class StrategyEvaluatorService(
+    IStrategyRuleParser parser,
+    IStrategyDefinitionValidator? validator = null) : IStrategyEvaluatorService
 {
+    private readonly IStrategyDefinitionValidator validator = validator ?? new StrategyDefinitionValidator();
+
     public StrategyEvaluationResult Evaluate(string definitionJson, StrategyEvaluationContext context)
     {
-        return Evaluate(parser.Parse(definitionJson), context);
+        var document = parser.Parse(definitionJson);
+        EnsureValid(document);
+        return EvaluateDocument(document, context);
     }
 
     public StrategyEvaluationResult Evaluate(StrategyRuleDocument document, StrategyEvaluationContext context)
+    {
+        EnsureValid(document);
+        return EvaluateDocument(document, context);
+    }
+
+    public StrategyEvaluationReportSnapshot EvaluateReport(StrategyEvaluationReportRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.EvaluationContext);
+
+        var document = parser.Parse(request.DefinitionJson);
+        EnsureValid(document);
+
+        var evaluationResult = EvaluateDocument(document, request.EvaluationContext);
+        var rootSnapshots = new[]
+            {
+                evaluationResult.EntryRuleResult,
+                evaluationResult.ExitRuleResult,
+                evaluationResult.RiskRuleResult
+            }
+            .Where(snapshot => snapshot is not null)
+            .Select(snapshot => snapshot!)
+            .ToArray();
+        var leafRules = rootSnapshots
+            .SelectMany(CollectLeafRules)
+            .Where(rule => rule.Enabled)
+            .ToArray();
+        var totalWeight = leafRules.Sum(rule => rule.Weight);
+        var matchedWeight = leafRules.Where(rule => rule.Matched).Sum(rule => rule.Weight);
+        var aggregateScore = totalWeight <= 0m
+            ? 0
+            : Math.Clamp((int)Math.Round(matchedWeight / totalWeight * 100m, MidpointRounding.AwayFromZero), 0, 100);
+        var passedRules = leafRules
+            .Where(rule => rule.Matched)
+            .Select(DescribeRuleResult)
+            .ToArray();
+        var failedRules = leafRules
+            .Where(rule => !rule.Matched)
+            .Select(DescribeRuleResult)
+            .ToArray();
+        var outcome = ResolveOutcome(evaluationResult);
+        var summary = BuildExplainabilitySummary(
+            request,
+            document.Metadata,
+            outcome,
+            aggregateScore,
+            passedRules,
+            failedRules);
+
+        return new StrategyEvaluationReportSnapshot(
+            request.TradingStrategyId,
+            request.TradingStrategyVersionId,
+            request.StrategyVersionNumber,
+            request.StrategyKey,
+            request.StrategyDisplayName,
+            document.Metadata?.TemplateKey,
+            document.Metadata?.TemplateName,
+            request.EvaluationContext.IndicatorSnapshot.Symbol,
+            request.EvaluationContext.IndicatorSnapshot.Timeframe,
+            NormalizeUtc(request.EvaluatedAtUtc),
+            outcome,
+            aggregateScore,
+            passedRules.Length,
+            failedRules.Length,
+            evaluationResult,
+            passedRules,
+            failedRules,
+            summary);
+    }
+
+    private StrategyEvaluationResult EvaluateDocument(StrategyRuleDocument document, StrategyEvaluationContext context)
     {
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(context);
@@ -37,6 +114,15 @@ public sealed class StrategyEvaluatorService(IStrategyRuleParser parser) : IStra
             RiskRuleResult: riskResult?.Snapshot);
     }
 
+    private void EnsureValid(StrategyRuleDocument document)
+    {
+        var validation = validator.Validate(document);
+        if (!validation.IsValid)
+        {
+            throw new StrategyDefinitionValidationException(validation.StatusCode, validation.Summary, validation.FailureReasons);
+        }
+    }
+
     private static NodeEvaluation EvaluateNode(StrategyRuleNode node, StrategyEvaluationContext context)
     {
         return node switch
@@ -49,6 +135,54 @@ public sealed class StrategyEvaluatorService(IStrategyRuleParser parser) : IStra
 
     private static NodeEvaluation EvaluateGroup(StrategyRuleGroup group, StrategyEvaluationContext context)
     {
+        var metadata = group.Metadata ?? StrategyRuleMetadata.Default;
+        if (!metadata.Enabled)
+        {
+            return new NodeEvaluation(
+                true,
+                new StrategyRuleResultSnapshot(
+                    Matched: true,
+                    GroupOperator: group.Operator,
+                    Path: null,
+                    Comparison: null,
+                    Operand: null,
+                    OperandKind: null,
+                    LeftValue: null,
+                    RightValue: null,
+                    Children: Array.Empty<StrategyRuleResultSnapshot>(),
+                    RuleId: metadata.RuleId,
+                    RuleType: metadata.RuleType,
+                    Timeframe: metadata.Timeframe,
+                    Weight: metadata.Weight,
+                    Enabled: false,
+                    Group: metadata.Group,
+                    Reason: "Rule group is disabled and was skipped."));
+        }
+
+        if (!string.IsNullOrWhiteSpace(metadata.Timeframe) &&
+            !string.Equals(metadata.Timeframe.Trim(), context.IndicatorSnapshot.Timeframe, StringComparison.OrdinalIgnoreCase))
+        {
+            return new NodeEvaluation(
+                false,
+                new StrategyRuleResultSnapshot(
+                    Matched: false,
+                    GroupOperator: group.Operator,
+                    Path: null,
+                    Comparison: null,
+                    Operand: null,
+                    OperandKind: null,
+                    LeftValue: context.IndicatorSnapshot.Timeframe,
+                    RightValue: metadata.Timeframe.Trim(),
+                    Children: Array.Empty<StrategyRuleResultSnapshot>(),
+                    RuleId: metadata.RuleId,
+                    RuleType: metadata.RuleType,
+                    Timeframe: metadata.Timeframe,
+                    Weight: metadata.Weight,
+                    Enabled: true,
+                    Group: metadata.Group,
+                    Reason: $"Rule group timeframe '{metadata.Timeframe.Trim()}' does not match indicator timeframe '{context.IndicatorSnapshot.Timeframe}'."));
+        }
+
         var childEvaluations = group.Rules
             .Select(rule => EvaluateNode(rule, context))
             .ToArray();
@@ -59,6 +193,10 @@ public sealed class StrategyEvaluatorService(IStrategyRuleParser parser) : IStra
             StrategyRuleGroupOperator.Any => childEvaluations.Any(rule => rule.Matched),
             _ => throw new StrategyRuleEvaluationException($"Unsupported strategy rule group operator '{group.Operator}'.")
         };
+        var matchedChildCount = childEvaluations.Count(rule => rule.Matched);
+        var reason = group.Operator == StrategyRuleGroupOperator.All
+            ? $"ALL group matched {matchedChildCount}/{childEvaluations.Length} child rules."
+            : $"ANY group matched {matchedChildCount}/{childEvaluations.Length} child rules.";
 
         return new NodeEvaluation(
             matched,
@@ -71,11 +209,66 @@ public sealed class StrategyEvaluatorService(IStrategyRuleParser parser) : IStra
                 OperandKind: null,
                 LeftValue: null,
                 RightValue: null,
-                Children: childEvaluations.Select(rule => rule.Snapshot).ToArray()));
+                Children: childEvaluations.Select(rule => rule.Snapshot).ToArray(),
+                RuleId: metadata.RuleId,
+                RuleType: metadata.RuleType,
+                Timeframe: metadata.Timeframe,
+                Weight: metadata.Weight,
+                Enabled: true,
+                Group: metadata.Group,
+                Reason: reason));
     }
 
     private static NodeEvaluation EvaluateCondition(StrategyRuleCondition condition, StrategyEvaluationContext context)
     {
+        var metadata = condition.Metadata ?? StrategyRuleMetadata.Default;
+        if (!metadata.Enabled)
+        {
+            return new NodeEvaluation(
+                true,
+                new StrategyRuleResultSnapshot(
+                    Matched: true,
+                    GroupOperator: null,
+                    Path: condition.Path,
+                    Comparison: condition.Comparison,
+                    Operand: condition.Operand.Value,
+                    OperandKind: condition.Operand.Kind,
+                    LeftValue: null,
+                    RightValue: null,
+                    Children: Array.Empty<StrategyRuleResultSnapshot>(),
+                    RuleId: metadata.RuleId,
+                    RuleType: metadata.RuleType,
+                    Timeframe: metadata.Timeframe,
+                    Weight: metadata.Weight,
+                    Enabled: false,
+                    Group: metadata.Group,
+                    Reason: "Rule is disabled and was skipped."));
+        }
+
+        if (!string.IsNullOrWhiteSpace(metadata.Timeframe) &&
+            !string.Equals(metadata.Timeframe.Trim(), context.IndicatorSnapshot.Timeframe, StringComparison.OrdinalIgnoreCase))
+        {
+            return new NodeEvaluation(
+                false,
+                new StrategyRuleResultSnapshot(
+                    Matched: false,
+                    GroupOperator: null,
+                    Path: condition.Path,
+                    Comparison: condition.Comparison,
+                    Operand: condition.Operand.Value,
+                    OperandKind: condition.Operand.Kind,
+                    LeftValue: context.IndicatorSnapshot.Timeframe,
+                    RightValue: metadata.Timeframe.Trim(),
+                    Children: Array.Empty<StrategyRuleResultSnapshot>(),
+                    RuleId: metadata.RuleId,
+                    RuleType: metadata.RuleType,
+                    Timeframe: metadata.Timeframe,
+                    Weight: metadata.Weight,
+                    Enabled: true,
+                    Group: metadata.Group,
+                    Reason: $"Rule timeframe '{metadata.Timeframe.Trim()}' does not match indicator timeframe '{context.IndicatorSnapshot.Timeframe}'."));
+        }
+
         var left = ResolvePathValue(condition.Path, context);
         var right = condition.Operand.Kind == StrategyRuleOperandKind.Path
             ? ResolvePathValue(condition.Operand.Value, context)
@@ -94,6 +287,9 @@ public sealed class StrategyEvaluatorService(IStrategyRuleParser parser) : IStra
             StrategyRuleOperandKind.Boolean => CompareBooleans(left.Value, right.Value, condition.Comparison),
             _ => throw new StrategyRuleEvaluationException($"Unsupported strategy rule operand kind '{left.Kind}'.")
         };
+        var reason = matched
+            ? $"Matched {condition.Path} {condition.Comparison} {right.Value}; left={left.Value}."
+            : $"Failed {condition.Path} {condition.Comparison} {right.Value}; left={left.Value}.";
 
         return new NodeEvaluation(
             matched,
@@ -106,7 +302,81 @@ public sealed class StrategyEvaluatorService(IStrategyRuleParser parser) : IStra
                 OperandKind: condition.Operand.Kind,
                 LeftValue: left.Value,
                 RightValue: right.Value,
-                Children: Array.Empty<StrategyRuleResultSnapshot>()));
+                Children: Array.Empty<StrategyRuleResultSnapshot>(),
+                RuleId: metadata.RuleId,
+                RuleType: metadata.RuleType,
+                Timeframe: metadata.Timeframe,
+                Weight: metadata.Weight,
+                Enabled: true,
+                Group: metadata.Group,
+                Reason: reason));
+    }
+
+    private static IEnumerable<StrategyRuleResultSnapshot> CollectLeafRules(StrategyRuleResultSnapshot snapshot)
+    {
+        if (snapshot.Children.Count == 0)
+        {
+            yield return snapshot;
+            yield break;
+        }
+
+        foreach (var child in snapshot.Children.SelectMany(CollectLeafRules))
+        {
+            yield return child;
+        }
+    }
+
+    private static string DescribeRuleResult(StrategyRuleResultSnapshot snapshot)
+    {
+        var label = !string.IsNullOrWhiteSpace(snapshot.RuleId)
+            ? snapshot.RuleId!.Trim()
+            : !string.IsNullOrWhiteSpace(snapshot.Path)
+                ? snapshot.Path!.Trim()
+                : snapshot.GroupOperator?.ToString() ?? "rule";
+        var ruleType = string.IsNullOrWhiteSpace(snapshot.RuleType) ? "rule" : snapshot.RuleType!.Trim();
+        var timeframe = string.IsNullOrWhiteSpace(snapshot.Timeframe) ? "n/a" : snapshot.Timeframe!.Trim();
+        var reason = string.IsNullOrWhiteSpace(snapshot.Reason) ? "No reason." : snapshot.Reason!.Trim();
+
+        return FormattableString.Invariant(
+            $"{label} [{ruleType}/{timeframe}] {(snapshot.Matched ? "PASS" : "FAIL")} w={snapshot.Weight:0.####} :: {reason}");
+    }
+
+    private static string ResolveOutcome(StrategyEvaluationResult result)
+    {
+        if (result.HasRiskRules && !result.RiskPassed)
+        {
+            return "RiskVetoed";
+        }
+
+        if (result.HasEntryRules && result.EntryMatched)
+        {
+            return "EntryMatched";
+        }
+
+        if (result.HasExitRules && result.ExitMatched)
+        {
+            return "ExitMatched";
+        }
+
+        return "NoSignalCandidate";
+    }
+
+    private static string BuildExplainabilitySummary(
+        StrategyEvaluationReportRequest request,
+        StrategyDefinitionMetadata? metadata,
+        string outcome,
+        int aggregateScore,
+        IReadOnlyCollection<string> passedRules,
+        IReadOnlyCollection<string> failedRules)
+    {
+        var templateLabel = string.IsNullOrWhiteSpace(metadata?.TemplateName)
+            ? "custom"
+            : metadata.TemplateName!.Trim();
+        var failedText = failedRules.Count == 0 ? "none" : string.Join(" | ", failedRules.Take(2));
+        var passedText = passedRules.Count == 0 ? "none" : string.Join(" | ", passedRules.Take(2));
+
+        return FormattableString.Invariant(
+            $"Strategy={request.StrategyKey}; Template={templateLabel}; Symbol={request.EvaluationContext.IndicatorSnapshot.Symbol}; Timeframe={request.EvaluationContext.IndicatorSnapshot.Timeframe}; Outcome={outcome}; Score={aggregateScore}; Passed={passedRules.Count}; Failed={failedRules.Count}; TopPassed={passedText}; TopFailed={failedText}");
     }
 
     private static ResolvedValue ResolvePathValue(string path, StrategyEvaluationContext context)
@@ -221,6 +491,16 @@ public sealed class StrategyEvaluatorService(IStrategyRuleParser parser) : IStra
         }
 
         return path.Trim().ToLowerInvariant();
+    }
+
+    private static DateTime NormalizeUtc(DateTime value)
+    {
+        return value.Kind switch
+        {
+            DateTimeKind.Utc => value,
+            DateTimeKind.Local => value.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+        };
     }
 
     private sealed record ResolvedValue(StrategyRuleOperandKind Kind, string Value)

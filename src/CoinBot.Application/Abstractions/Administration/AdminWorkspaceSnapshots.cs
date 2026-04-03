@@ -186,17 +186,53 @@ public sealed record AdminStrategyUsageSnapshot(
     string LatestSignalType,
     string LatestSignalAtLabel,
     string? LatestVetoReason,
-    string Note);
+    string Note,
+    string TemplateKey,
+    string TemplateName,
+    string ValidationStatusCode,
+    string ValidationSummary,
+    string LatestScoreLabel,
+    string LatestExplainabilitySummary,
+    string LatestRuleSummary);
+
+public sealed record AdminStrategyTemplateSnapshot(
+    string TemplateKey,
+    string TemplateName,
+    string Category,
+    string ValidationStatusCode,
+    string ValidationSummary,
+    int SchemaVersion,
+    string Description);
+
+public sealed record AdminStrategyExplainabilitySnapshot(
+    string StrategyKey,
+    string Symbol,
+    string Timeframe,
+    string Outcome,
+    string ScoreLabel,
+    string Summary,
+    string RuleSummary,
+    string TemplateName,
+    DateTime? EvaluatedAtUtc);
 
 public sealed record AdminStrategyAiMonitoringPageSnapshot(
     string? Query,
     IReadOnlyCollection<AdminStatTileSnapshot> SummaryTiles,
     IReadOnlyCollection<AdminStrategyUsageSnapshot> UsageRows,
     IReadOnlyCollection<AdminStatTileSnapshot> HealthTiles,
+    IReadOnlyCollection<AdminStrategyTemplateSnapshot> TemplateCatalog,
+    AdminStrategyExplainabilitySnapshot LatestExplainability,
     DateTime LastRefreshedAtUtc)
 {
     public static AdminStrategyAiMonitoringPageSnapshot Empty(DateTime lastRefreshedAtUtc) =>
-        new(null, Array.Empty<AdminStatTileSnapshot>(), Array.Empty<AdminStrategyUsageSnapshot>(), Array.Empty<AdminStatTileSnapshot>(), lastRefreshedAtUtc);
+        new(
+            null,
+            Array.Empty<AdminStatTileSnapshot>(),
+            Array.Empty<AdminStrategyUsageSnapshot>(),
+            Array.Empty<AdminStatTileSnapshot>(),
+            Array.Empty<AdminStrategyTemplateSnapshot>(),
+            new AdminStrategyExplainabilitySnapshot("n/a", "n/a", "n/a", "NotEvaluated", "n/a", "Explainability snapshot yok.", "n/a", "custom", null),
+            lastRefreshedAtUtc);
 }
 
 public sealed record AdminSupportLookupSnapshot(
@@ -272,3 +308,4 @@ public sealed record AdminNotificationsPageSnapshot(
     public static AdminNotificationsPageSnapshot Empty(DateTime lastRefreshedAtUtc) =>
         new(null, null, Array.Empty<AdminStatTileSnapshot>(), Array.Empty<AdminNotificationSnapshot>(), lastRefreshedAtUtc);
 }
+

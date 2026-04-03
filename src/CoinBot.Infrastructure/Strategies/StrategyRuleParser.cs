@@ -6,7 +6,7 @@ namespace CoinBot.Infrastructure.Strategies;
 
 public sealed class StrategyRuleParser : IStrategyRuleParser
 {
-    private const int CurrentSchemaVersion = 1;
+    private static readonly HashSet<int> SupportedSchemaVersions = [1, 2];
 
     public StrategyRuleDocument Parse(string definitionJson)
     {
@@ -15,33 +15,41 @@ public sealed class StrategyRuleParser : IStrategyRuleParser
             throw new StrategyRuleParseException("Strategy definition JSON is required.");
         }
 
-        using var document = JsonDocument.Parse(definitionJson);
-        var root = document.RootElement;
-
-        if (root.ValueKind != JsonValueKind.Object)
+        try
         {
-            throw new StrategyRuleParseException("Strategy definition root must be a JSON object.");
+            using var document = JsonDocument.Parse(definitionJson);
+            var root = document.RootElement;
+
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                throw new StrategyRuleParseException("Strategy definition root must be a JSON object.");
+            }
+
+            ValidateAllowedProperties(root, ["schemaVersion", "metadata", "entry", "exit", "risk"], "strategy definition");
+
+            var schemaVersion = ParseSchemaVersion(root);
+            var metadata = ParseDefinitionMetadata(root);
+            var entry = TryGetProperty(root, "entry", out var entryElement)
+                ? ParseNode(entryElement, "entry")
+                : null;
+            var exit = TryGetProperty(root, "exit", out var exitElement)
+                ? ParseNode(exitElement, "exit")
+                : null;
+            var risk = TryGetProperty(root, "risk", out var riskElement)
+                ? ParseNode(riskElement, "risk")
+                : null;
+
+            if (entry is null && exit is null && risk is null)
+            {
+                throw new StrategyRuleParseException("Strategy definition must contain at least one of 'entry', 'exit' or 'risk'.");
+            }
+
+            return new StrategyRuleDocument(schemaVersion, entry, exit, risk, metadata);
         }
-
-        ValidateAllowedProperties(root, ["schemaVersion", "entry", "exit", "risk"], "strategy definition");
-
-        var schemaVersion = ParseSchemaVersion(root);
-        var entry = TryGetProperty(root, "entry", out var entryElement)
-            ? ParseNode(entryElement, "entry")
-            : null;
-        var exit = TryGetProperty(root, "exit", out var exitElement)
-            ? ParseNode(exitElement, "exit")
-            : null;
-        var risk = TryGetProperty(root, "risk", out var riskElement)
-            ? ParseNode(riskElement, "risk")
-            : null;
-
-        if (entry is null && exit is null && risk is null)
+        catch (JsonException exception)
         {
-            throw new StrategyRuleParseException("Strategy definition must contain at least one of 'entry', 'exit' or 'risk'.");
+            throw new StrategyRuleParseException($"Strategy definition JSON could not be parsed: {exception.Message}");
         }
-
-        return new StrategyRuleDocument(schemaVersion, entry, exit, risk);
     }
 
     private static int ParseSchemaVersion(JsonElement root)
@@ -53,13 +61,32 @@ public sealed class StrategyRuleParser : IStrategyRuleParser
             throw new StrategyRuleParseException("Strategy definition must include a numeric 'schemaVersion'.");
         }
 
-        if (schemaVersion != CurrentSchemaVersion)
+        if (!SupportedSchemaVersions.Contains(schemaVersion))
         {
             throw new StrategyRuleParseException(
-                $"Strategy definition schemaVersion '{schemaVersion}' is not supported. Expected '{CurrentSchemaVersion}'.");
+                $"Strategy definition schemaVersion '{schemaVersion}' is not supported. Expected one of '{string.Join(", ", SupportedSchemaVersions.Order())}'.");
         }
 
         return schemaVersion;
+    }
+
+    private static StrategyDefinitionMetadata? ParseDefinitionMetadata(JsonElement root)
+    {
+        if (!TryGetProperty(root, "metadata", out var metadataElement))
+        {
+            return null;
+        }
+
+        if (metadataElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new StrategyRuleParseException("Strategy definition property 'metadata' must be a JSON object.");
+        }
+
+        ValidateAllowedProperties(metadataElement, ["templateKey", "templateName"], "strategy definition.metadata");
+
+        return new StrategyDefinitionMetadata(
+            TryGetOptionalString(metadataElement, "templateKey", "strategy definition.metadata.templateKey"),
+            TryGetOptionalString(metadataElement, "templateName", "strategy definition.metadata.templateName"));
     }
 
     private static StrategyRuleNode ParseNode(JsonElement element, string location)
@@ -92,9 +119,10 @@ public sealed class StrategyRuleParser : IStrategyRuleParser
 
     private static StrategyRuleGroup ParseGroup(JsonElement element, string location)
     {
-        ValidateAllowedProperties(element, ["operator", "rules"], location);
+        ValidateAllowedProperties(element, ["operator", "rules", "ruleId", "ruleType", "timeframe", "weight", "enabled", "group"], location);
 
         var @operator = ParseGroupOperator(GetRequiredString(element, "operator", location));
+        var metadata = ParseRuleMetadata(element, location);
 
         if (!TryGetProperty(element, "rules", out var rulesElement) || rulesElement.ValueKind != JsonValueKind.Array)
         {
@@ -113,15 +141,16 @@ public sealed class StrategyRuleParser : IStrategyRuleParser
             throw new StrategyRuleParseException($"Strategy rule group '{location}' must contain at least one rule.");
         }
 
-        return new StrategyRuleGroup(@operator, rules);
+        return new StrategyRuleGroup(@operator, rules, metadata);
     }
 
     private static StrategyRuleCondition ParseCondition(JsonElement element, string location)
     {
-        ValidateAllowedProperties(element, ["path", "comparison", "value", "valuePath"], location);
+        ValidateAllowedProperties(element, ["path", "comparison", "value", "valuePath", "ruleId", "ruleType", "timeframe", "weight", "enabled", "group"], location);
 
         var path = GetRequiredString(element, "path", location);
         var comparison = ParseComparisonOperator(GetRequiredString(element, "comparison", location));
+        var metadata = ParseRuleMetadata(element, location);
         var hasValue = TryGetProperty(element, "value", out var valueElement);
         var hasValuePath = TryGetProperty(element, "valuePath", out var valuePathElement);
 
@@ -135,7 +164,18 @@ public sealed class StrategyRuleParser : IStrategyRuleParser
             ? ParseLiteralOperand(valueElement, location)
             : new StrategyRuleOperand(StrategyRuleOperandKind.Path, NormalizeRequiredString(valuePathElement.GetString(), $"{location}.valuePath"));
 
-        return new StrategyRuleCondition(path, comparison, operand);
+        return new StrategyRuleCondition(path, comparison, operand, metadata);
+    }
+
+    private static StrategyRuleMetadata ParseRuleMetadata(JsonElement element, string location)
+    {
+        return new StrategyRuleMetadata(
+            TryGetOptionalString(element, "ruleId", $"{location}.ruleId"),
+            TryGetOptionalString(element, "ruleType", $"{location}.ruleType"),
+            TryGetOptionalString(element, "timeframe", $"{location}.timeframe"),
+            TryGetOptionalDecimal(element, "weight", $"{location}.weight") ?? 1m,
+            TryGetOptionalBoolean(element, "enabled", $"{location}.enabled") ?? true,
+            TryGetOptionalString(element, "group", $"{location}.group"));
     }
 
     private static StrategyRuleOperand ParseLiteralOperand(JsonElement valueElement, string location)
@@ -187,6 +227,51 @@ public sealed class StrategyRuleParser : IStrategyRuleParser
         }
 
         return NormalizeRequiredString(propertyValue.GetString(), $"{location}.{propertyName}");
+    }
+
+    private static string? TryGetOptionalString(JsonElement element, string propertyName, string location)
+    {
+        if (!TryGetProperty(element, propertyName, out var propertyValue))
+        {
+            return null;
+        }
+
+        if (propertyValue.ValueKind != JsonValueKind.String)
+        {
+            throw new StrategyRuleParseException($"Strategy rule property '{location}' must be a string.");
+        }
+
+        return NormalizeRequiredString(propertyValue.GetString(), location);
+    }
+
+    private static decimal? TryGetOptionalDecimal(JsonElement element, string propertyName, string location)
+    {
+        if (!TryGetProperty(element, propertyName, out var propertyValue))
+        {
+            return null;
+        }
+
+        if (propertyValue.ValueKind != JsonValueKind.Number || !propertyValue.TryGetDecimal(out var value))
+        {
+            throw new StrategyRuleParseException($"Strategy rule property '{location}' must be numeric.");
+        }
+
+        return value;
+    }
+
+    private static bool? TryGetOptionalBoolean(JsonElement element, string propertyName, string location)
+    {
+        if (!TryGetProperty(element, propertyName, out var propertyValue))
+        {
+            return null;
+        }
+
+        return propertyValue.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            _ => throw new StrategyRuleParseException($"Strategy rule property '{location}' must be boolean.")
+        };
     }
 
     private static string NormalizeRequiredString(string? value, string propertyName)

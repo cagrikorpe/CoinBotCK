@@ -1,0 +1,1116 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <title>Strategy Builder - CoinBot</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700" />
+    <link rel="stylesheet" href="/metronic/assets/plugins/global/plugins.bundle.css?v=T_JZMHDKKnf5IKYuyCdbmrEvirG-ETUsUc7tX38nyIQ" />
+    <link rel="stylesheet" href="/metronic/assets/css/style.bundle.css?v=emFyAB8ca2Lip4nvHVD3kohLlgqSIT8FXQTztZ3pn6o" />
+    <link rel="stylesheet" href="/metronic/assets/css/themes/layout/header/base/light.css?v=si3CQGavOAhYVnqeY2G1LCxNnQdzPwHfFYe3zmQRBls" />
+    <link rel="stylesheet" href="/metronic/assets/css/themes/layout/header/menu/light.css?v=QLXLI2_JzPkSlCHjNHFWxDOXUm6A5xGOad4CgG92kp4" />
+    <link rel="stylesheet" href="/metronic/assets/css/themes/layout/brand/dark.css?v=nI3aXV0-dpAX8Bhgt6oc9M1KJBhnM83rq9umdPncm8o" />
+    <link rel="stylesheet" href="/metronic/assets/css/themes/layout/aside/dark.css?v=BWgcYglmc-u5g8rECGZV9tTvlkqPR02E2BEZU5T6Shs" />
+    <link rel="stylesheet" href="/css/site.css?v=yYnVwOLFPHjRQCk2-41XAC-P0YI1O4WLoQFl20re4mk" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    
+</head>
+<body id="kt_body" class="header-fixed header-mobile-fixed aside-enabled aside-fixed aside-minimize-hoverable page-loading" data-cb-theme="dark">
+    <div b-il7khzt31m id="kt_header_mobile" class="header-mobile align-items-center header-mobile-fixed cb-shell-mobile-header">
+        <a class="brand-logo text-decoration-none" href="/">
+            <span b-il7khzt31m class="app-logo-mark">C</span>
+            <span b-il7khzt31m class="text-white font-size-h5 font-weight-bolder">CoinBot</span>
+        </a>
+        <div b-il7khzt31m class="d-flex align-items-center">
+            <button b-il7khzt31m class="btn p-0 burger-icon burger-icon-left" id="kt_aside_mobile_toggle" type="button">
+                <span b-il7khzt31m></span>
+            </button>
+        </div>
+    </div>
+
+    <div b-il7khzt31m class="d-flex flex-column flex-root">
+        <div b-il7khzt31m class="d-flex flex-row flex-column-fluid page">
+            <div b-il7khzt31m class="aside aside-left aside-fixed d-flex flex-column flex-row-auto cb-shell-aside" id="kt_aside">
+                <div b-il7khzt31m class="brand flex-column-auto cb-shell-brand" id="kt_brand">
+                    <a class="brand-logo text-decoration-none" href="/">
+                        <span b-il7khzt31m class="app-logo-mark">C</span>
+                        <span b-il7khzt31m>
+                            <span b-il7khzt31m class="text-white font-size-h4 font-weight-bolder d-block">CoinBot</span>
+                            <span b-il7khzt31m class="cb-brand-subtitle">Trading Control Center</span>
+                        </span>
+                    </a>
+                    <button b-il7khzt31m class="brand-toggle btn btn-sm px-0" id="kt_aside_toggle" type="button" aria-label="Sidebar toggle">
+                        <span b-il7khzt31m class="svg-icon svg-icon-xl">
+                            <svg b-il7khzt31m xmlns="http://www.w3.org/2000/svg" width="24px" height="24px" viewBox="0 0 24 24" version="1.1">
+                                <g b-il7khzt31m stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+                                    <polygon b-il7khzt31m points="0 0 24 0 24 24 0 24"></polygon>
+                                    <path b-il7khzt31m d="M5.29288961,6.70710318 C4.90236532,6.31657888 4.90236532,5.68341391 5.29288961,5.29288961 C5.68341391,4.90236532 6.31657888,4.90236532 6.70710318,5.29288961 L12.7071032,11.2928896 C13.0856821,11.6714686 13.0989277,12.281055 12.7371505,12.675721 L7.23715054,18.675721 C6.86395813,19.08284 6.23139076,19.1103429 5.82427177,18.7371505 C5.41715278,18.3639581 5.38964985,17.7313908 5.76284226,17.3242718 L10.6158586,12.0300721 L5.29288961,6.70710318 Z" fill="#ffffff" fill-rule="nonzero" transform="translate(8.999997, 11.999999) scale(-1, 1) translate(-8.999997, -11.999999)"></path>
+                                    <path b-il7khzt31m d="M10.7071009,15.7071068 C10.3165766,16.0976311 9.68341162,16.0976311 9.29288733,15.7071068 C8.90236304,15.3165825 8.90236304,14.6834175 9.29288733,14.2928932 L15.2928873,8.29289322 C15.6714663,7.91431428 16.2810527,7.90106866 16.6757187,8.26284586 L22.6757187,13.7628459 C23.0828377,14.1360383 23.1103407,14.7686056 22.7371482,15.1757246 C22.3639558,15.5828436 21.7313885,15.6103465 21.3242695,15.2371541 L16.0300699,10.3841378 L10.7071009,15.7071068 Z" fill="#ffffff" fill-rule="nonzero" opacity="0.35" transform="translate(15.999997, 11.999999) scale(-1, 1) rotate(-270.000000) translate(-15.999997, -11.999999)"></path>
+                                </g>
+                            </svg>
+                        </span>
+                    </button>
+                </div>
+
+                <div b-il7khzt31m class="aside-menu-wrapper flex-column-fluid" id="kt_aside_menu_wrapper">
+                    <div b-il7khzt31m id="kt_aside_menu" class="aside-menu my-4" data-menu-vertical="1" data-menu-scroll="1" data-menu-dropdown-timeout="500">
+                        <ul b-il7khzt31m class="menu-nav cb-menu-nav">
+                                <li b-il7khzt31m class="menu-section">
+                                    <h4 b-il7khzt31m class="menu-text">Core</h4>
+                                    <i b-il7khzt31m class="menu-icon ki ki-bold-more-hor icon-md"></i>
+                                </li>
+                                    <li b-il7khzt31m class="menu-item  " aria-haspopup="true">
+                                            <a class="menu-link" href="/">
+                                                <span b-il7khzt31m class="menu-icon">
+                                                    <span b-il7khzt31m class="cb-menu-icon ">DB</span>
+                                                </span>
+                                                <span b-il7khzt31m class="menu-text">Dashboard</span>
+                                            </a>
+                                    </li>
+                                    <li b-il7khzt31m class="menu-item  " aria-haspopup="true">
+                                            <a class="menu-link" href="/Exchanges">
+                                                <span b-il7khzt31m class="menu-icon">
+                                                    <span b-il7khzt31m class="cb-menu-icon ">EX</span>
+                                                </span>
+                                                <span b-il7khzt31m class="menu-text">Borsalar&#x131;m</span>
+                                            </a>
+                                    </li>
+                                    <li b-il7khzt31m class="menu-item  " aria-haspopup="true">
+                                            <a class="menu-link" href="/Bots">
+                                                <span b-il7khzt31m class="menu-icon">
+                                                    <span b-il7khzt31m class="cb-menu-icon ">BT</span>
+                                                </span>
+                                                <span b-il7khzt31m class="menu-text">Botlar&#x131;m</span>
+                                            </a>
+                                    </li>
+                                <li b-il7khzt31m class="menu-section">
+                                    <h4 b-il7khzt31m class="menu-text">Trade Lab</h4>
+                                    <i b-il7khzt31m class="menu-icon ki ki-bold-more-hor icon-md"></i>
+                                </li>
+                                    <li b-il7khzt31m class="menu-item menu-item-active " aria-haspopup="true">
+                                            <a class="menu-link" href="/StrategyBuilder">
+                                                <span b-il7khzt31m class="menu-icon">
+                                                    <span b-il7khzt31m class="cb-menu-icon is-active">SB</span>
+                                                </span>
+                                                <span b-il7khzt31m class="menu-text">Strategy Builder</span>
+                                            </a>
+                                    </li>
+                                    <li b-il7khzt31m class="menu-item  " aria-haspopup="true">
+                                            <a class="menu-link" href="/AiRobot">
+                                                <span b-il7khzt31m class="menu-icon">
+                                                    <span b-il7khzt31m class="cb-menu-icon ">AI</span>
+                                                </span>
+                                                <span b-il7khzt31m class="menu-text">AI Robot</span>
+                                            </a>
+                                    </li>
+                                    <li b-il7khzt31m class="menu-item  " aria-haspopup="true">
+                                            <a class="menu-link" href="/RiskCenter">
+                                                <span b-il7khzt31m class="menu-icon">
+                                                    <span b-il7khzt31m class="cb-menu-icon ">RK</span>
+                                                </span>
+                                                <span b-il7khzt31m class="menu-text">Risk Merkezi</span>
+                                            </a>
+                                    </li>
+                                    <li b-il7khzt31m class="menu-item  " aria-haspopup="true">
+                                            <a class="menu-link" href="/Backtest">
+                                                <span b-il7khzt31m class="menu-icon">
+                                                    <span b-il7khzt31m class="cb-menu-icon ">BK</span>
+                                                </span>
+                                                <span b-il7khzt31m class="menu-text">Backtest</span>
+                                            </a>
+                                    </li>
+                                    <li b-il7khzt31m class="menu-item  " aria-haspopup="true">
+                                            <a class="menu-link" href="/PaperTrading">
+                                                <span b-il7khzt31m class="menu-icon">
+                                                    <span b-il7khzt31m class="cb-menu-icon ">PT</span>
+                                                </span>
+                                                <span b-il7khzt31m class="menu-text">Paper Trading</span>
+                                            </a>
+                                    </li>
+                                <li b-il7khzt31m class="menu-section">
+                                    <h4 b-il7khzt31m class="menu-text">Execution</h4>
+                                    <i b-il7khzt31m class="menu-icon ki ki-bold-more-hor icon-md"></i>
+                                </li>
+                                    <li b-il7khzt31m class="menu-item  " aria-haspopup="true">
+                                            <a class="menu-link" href="/Positions">
+                                                <span b-il7khzt31m class="menu-icon">
+                                                    <span b-il7khzt31m class="cb-menu-icon ">PZ</span>
+                                                </span>
+                                                <span b-il7khzt31m class="menu-text">Pozisyonlar</span>
+                                            </a>
+                                    </li>
+                                    <li b-il7khzt31m class="menu-item  " aria-haspopup="true">
+                                            <a class="menu-link" href="/Positions/History">
+                                                <span b-il7khzt31m class="menu-icon">
+                                                    <span b-il7khzt31m class="cb-menu-icon ">EG</span>
+                                                </span>
+                                                <span b-il7khzt31m class="menu-text">Emir Ge&#xE7;mi&#x15F;i</span>
+                                            </a>
+                                    </li>
+                                    <li b-il7khzt31m class="menu-item  " aria-haspopup="true">
+                                            <a class="menu-link" href="/Notifications">
+                                                <span b-il7khzt31m class="menu-icon">
+                                                    <span b-il7khzt31m class="cb-menu-icon ">BD</span>
+                                                </span>
+                                                <span b-il7khzt31m class="menu-text">Bildirimler</span>
+                                            </a>
+                                    </li>
+                                <li b-il7khzt31m class="menu-section">
+                                    <h4 b-il7khzt31m class="menu-text">System</h4>
+                                    <i b-il7khzt31m class="menu-icon ki ki-bold-more-hor icon-md"></i>
+                                </li>
+                                    <li b-il7khzt31m class="menu-item  " aria-haspopup="true">
+                                            <a class="menu-link" href="/LogCenter">
+                                                <span b-il7khzt31m class="menu-icon">
+                                                    <span b-il7khzt31m class="cb-menu-icon ">LG</span>
+                                                </span>
+                                                <span b-il7khzt31m class="menu-text">Log Merkezi</span>
+                                            </a>
+                                    </li>
+                                    <li b-il7khzt31m class="menu-item  " aria-haspopup="true">
+                                            <a class="menu-link" href="/Settings">
+                                                <span b-il7khzt31m class="menu-icon">
+                                                    <span b-il7khzt31m class="cb-menu-icon ">AY</span>
+                                                </span>
+                                                <span b-il7khzt31m class="menu-text">Ayarlar</span>
+                                            </a>
+                                    </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div b-il7khzt31m class="d-flex flex-column flex-row-fluid wrapper cb-shell-wrapper" id="kt_wrapper">
+                <div b-il7khzt31m id="kt_header" class="header header-fixed cb-shell-header">
+                    <div b-il7khzt31m class="container-fluid d-flex align-items-center justify-content-between flex-wrap flex-sm-nowrap">
+                        <div b-il7khzt31m class="d-flex align-items-center mr-5 cb-topbar-meta">
+                            <button b-il7khzt31m class="btn btn-icon btn-clean d-lg-none mr-3" id="kt_aside_mobile_toggle_desktop" type="button">
+                                <span b-il7khzt31m class="svg-icon svg-icon-xl">
+                                    <svg b-il7khzt31m xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none">
+                                        <path b-il7khzt31m d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                                    </svg>
+                                </span>
+                            </button>
+                            <div b-il7khzt31m>
+                                <div b-il7khzt31m class="cb-shell-breadcrumb">
+                                        <span b-il7khzt31m>Trade Lab</span>
+                                            <span b-il7khzt31m class="cb-breadcrumb-separator">/</span>
+                                        <span b-il7khzt31m>Strategy Builder</span>
+                                </div>
+                                <h1 b-il7khzt31m class="cb-shell-title mb-0">Strategy Builder</h1>
+                                <div b-il7khzt31m class="cb-shell-description">Template se&#xE7;imi, g&#xF6;rsel kural bloklar&#x131; ve exit/risk kurallar&#x131;n&#x131; ayn&#x131; builder y&#xFC;zeyinde toplayan strategy foundation ekran&#x131;.</div>
+                            </div>
+                        </div>
+
+                        <div b-il7khzt31m class="topbar cb-topbar">
+                            <div b-il7khzt31m class="cb-top-search d-none d-xl-flex">
+                                <span b-il7khzt31m class="cb-top-search-icon">
+                                    <svg b-il7khzt31m xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none">
+                                        <circle b-il7khzt31m cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"></circle>
+                                        <path b-il7khzt31m d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+                                    </svg>
+                                </span>
+                                <input b-il7khzt31m type="text" class="form-control border-0 bg-transparent" placeholder="Global search" />
+                            </div>
+
+                            <div b-il7khzt31m class="cb-topbar-actions">
+                                <button b-il7khzt31m type="button" class="btn btn-light-primary font-weight-bold cb-topbar-action">Quick Action</button>
+                                <a class="btn btn-icon btn-clean cb-icon-button" title="Bildirimler" href="/Notifications">
+                                    <span b-il7khzt31m class="cb-icon-badge">3</span>
+                                    <svg b-il7khzt31m xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none">
+                                        <path b-il7khzt31m d="M12 5a4 4 0 0 0-4 4v2.5c0 .5-.2 1-.6 1.4L6 14.3V16h12v-1.7l-1.4-1.4c-.4-.4-.6-.9-.6-1.4V9a4 4 0 0 0-4-4Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+                                        <path b-il7khzt31m d="M10 18a2 2 0 0 0 4 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                                    </svg>
+                                </a>
+                                <button b-il7khzt31m type="button" class="btn btn-icon btn-clean cb-icon-button" id="cb_theme_toggle" title="Theme toggle">
+                                    <svg b-il7khzt31m xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none">
+                                        <path b-il7khzt31m d="M12 3v2.5M12 18.5V21M4.93 4.93l1.77 1.77M17.3 17.3l1.77 1.77M3 12h2.5M18.5 12H21M4.93 19.07l1.77-1.77M17.3 6.7l1.77-1.77" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                                        <circle b-il7khzt31m cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.6"/>
+                                    </svg>
+                                </button>
+                                <div b-il7khzt31m class="dropdown">
+                                    <button b-il7khzt31m class="btn btn-clean d-flex align-items-center px-2 py-2" type="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                        <span b-il7khzt31m class="cb-user-avatar">SC</span>
+                                        <span b-il7khzt31m class="cb-user-meta d-none d-md-inline-block">
+                                            <span b-il7khzt31m class="cb-user-name">scanner.admin.d88cd38434094291baad47d46b6fa8fa@coinbot.test</span>
+                                            <span b-il7khzt31m class="cb-user-role">SuperAdmin</span>
+                                        </span>
+                                    </button>
+                                    <div b-il7khzt31m class="dropdown-menu dropdown-menu-right dropdown-menu-anim-up dropdown-menu-lg p-0 cb-dropdown-menu">
+                                        <div b-il7khzt31m class="cb-dropdown-header">
+                                            <div b-il7khzt31m class="cb-user-avatar">SC</div>
+                                            <div b-il7khzt31m>
+                                                <div b-il7khzt31m class="font-weight-bolder text-white">scanner.admin.d88cd38434094291baad47d46b6fa8fa@coinbot.test</div>
+                                                <div b-il7khzt31m class="text-white-50">SuperAdmin</div>
+                                            </div>
+                                        </div>
+                                        <div b-il7khzt31m class="navi navi-hover py-2">
+                                                <a class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75" href="/Onboarding">
+                                                    <span b-il7khzt31m class="navi-text">Onboarding</span>
+                                                    <span b-il7khzt31m class="cb-badge cb-badge-success">Flow</span>
+                                                </a>
+                                                <a class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75" href="/Settings">
+                                                    <span b-il7khzt31m class="navi-text">Ayarlar</span>
+                                                    <span b-il7khzt31m class="cb-badge cb-badge-info">User</span>
+                                                </a>
+                                                <form method="post" class="px-4 py-3" action="/Auth/Logout">
+                                                    <button b-il7khzt31m type="submit" class="btn btn-link p-0 d-flex w-100 justify-content-between align-items-center text-white-75">
+                                                        <span b-il7khzt31m class="navi-text">Logout</span>
+                                                        <span b-il7khzt31m class="cb-badge cb-badge-danger">Auth</span>
+                                                    </button>
+                                                <input name="__RequestVerificationToken" type="hidden" value="CfDJ8L3jxasKsTVLuSCM0tIR34Ur24Fjk9YAftrkAOGZWwArS4s7AEAfpC22TWvqk_B79goHfhtf_HkGJKW-UNuUE2rq7FNOdzqTC4Ni6xxOHrFGuKlPwu4Z0Eg4h2ypPwRjrGsqwtGUislt2YSMGmDbD0dww24WniXctAhdp8dJy9ulebMNUDYXg11Y8C4d-4hmhA" /></form>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div b-il7khzt31m class="content d-flex flex-column flex-column-fluid cb-shell-content" id="kt_content">
+                    <div b-il7khzt31m class="d-flex flex-column-fluid">
+                        <div b-il7khzt31m class="container-fluid metronic-page-content cb-content-container">
+                            
+
+<div class="row" data-cb-strategy-builder data-cb-strategy-scenario="blank" data-cb-market-mode="spot">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card">
+            <div class="card-body">
+                <div class="cb-page-header">
+                    <div>
+                        <div class="cb-page-eyebrow">Strategy Builder</div>
+                        <h2 class="cb-page-title">Görsel strateji kurucu</h2>
+                        <p class="cb-page-description">Hazır template’lerden başlayıp entry, exit ve risk mantığını görsel bloklarla düzenlemek için foundation yüzeyi.</p>
+                    </div>
+                    <div class="cb-toolbar">
+                        <span class="cb-badge cb-badge-info">UI-only foundation</span>
+                        <button type="button" class="btn btn-light-primary font-weight-bolder" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Stratejiyi kopyala" data-cb-modal-message="Strateji kopyalama akışı bu fazda placeholder olarak tutulur. Sonraki fazda gerçek save/load akışına bağlanacaktır." data-cb-modal-confirm="Kopya oluştur">Stratejiyi Kopyala</button>
+                        <button type="button" class="btn btn-primary font-weight-bolder" data-cb-strategy-action="new">Yeni Strateji</button>
+                    </div>
+                </div>
+
+                <div class="cb-strategy-summary-strip mt-6">
+    <div class="cb-strategy-strip-card cb-strategy-strip-card-accent">
+        <span class="cb-strategy-strip-label">Strateji adı</span>
+        <strong id="cb_strategy_name" class="cb-strategy-strip-value">Yeni Strategy Draft</strong>
+        <span class="cb-strategy-strip-meta">Kısa açıklama placeholder · giriş/çıkış/risk builder foundation</span>
+    </div>
+    <div class="cb-strategy-strip-card">
+        <span class="cb-strategy-strip-label">Market / yön</span>
+        <strong id="cb_strategy_market_summary" class="cb-strategy-strip-value">Spot · Long only</strong>
+        <span class="cb-strategy-strip-meta">Short rule alanı futures modda açılır</span>
+    </div>
+    <div class="cb-strategy-strip-card">
+        <span class="cb-strategy-strip-label">Durum</span>
+        <strong id="cb_strategy_status_summary" class="cb-strategy-strip-value">Taslak</strong>
+        <span class="cb-strategy-strip-meta">Bağlı bot sayısı: <span class="cb-mono">03</span></span>
+    </div>
+    <div class="cb-strategy-strip-card">
+        <span class="cb-strategy-strip-label">Son güncelleme</span>
+        <strong class="cb-strategy-strip-value cb-mono">14:40</strong>
+        <span class="cb-strategy-strip-meta">Backtest/runtime entegrasyonu sonraki fazda bağlanacak</span>
+    </div>
+</div>
+
+
+                <div class="cb-section mt-6">
+                    <div class="cb-section-title">Builder Senaryoları</div>
+                    <p class="cb-page-description mt-2 mb-0">Boş başlangıç, template seçimi, futures modu, riskli ayar ve eksik strateji yüzeylerini aynı ekranda kontrol edin.</p>
+                    <div class="cb-chip-group mt-4" data-cb-toggle-group>
+                        <button type="button" class="cb-chip is-active" data-cb-toggle-active data-cb-strategy-scenario-trigger="blank">Sıfırdan başla</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-strategy-scenario-trigger="template">Template seçildi</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-strategy-scenario-trigger="futures">Futures + long/short</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-strategy-scenario-trigger="risky">Riskli ayar</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-strategy-scenario-trigger="incomplete">Eksik strateji</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-strategy-scenario-trigger="loading">Builder yükleniyor</button>
+                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-strategy-scenario-trigger="error">Builder hatası</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-8">
+        
+<div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Template seçimi</h3>
+                <div class="text-muted font-size-sm">Hazır strategy şablonları backend catalog servisinden gelir ve publish öncesi validator ile kontrol edilir.</div>
+            </div>
+        </div>
+        <div class="card-toolbar">
+            <button type="button" class="btn btn-light-primary btn-sm font-weight-bolder" data-cb-drawer-target="#cb_strategy_template_drawer">Template detayları</button>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-strategy-template-grid" data-cb-strategy-template-grid>
+                <button type="button"
+                        class="cb-template-card is-selected"
+                        data-cb-template-card
+                        data-cb-template-key="bollinger-mean-reversion"
+                        data-cb-template-name="Bollinger Mean Reversion"
+                        data-cb-template-risk="Orta"
+                        data-cb-template-market="Spot / Futures"
+                        data-cb-template-tag="MeanReversion"
+                        data-cb-template-validation="Valid"
+                        data-cb-template-schema="2"
+                        data-cb-template-description="Lower-band touch entry with ready-state and sample-count risk checks.">
+                    <span class="cb-template-tag">MeanReversion</span>
+                    <div class="cb-template-title-row">
+                        <strong>Bollinger Mean Reversion</strong>
+                        <span class="cb-badge cb-badge-warning">Orta</span>
+                    </div>
+                    <p>Lower-band touch entry with ready-state and sample-count risk checks.</p>
+                    <div class="cb-template-meta">
+                        <span>Schema v@template.SchemaVersion · Valid</span>
+                        <span>Uygula</span>
+                    </div>
+                </button>
+                <button type="button"
+                        class="cb-template-card "
+                        data-cb-template-card
+                        data-cb-template-key="macd-trend"
+                        data-cb-template-name="MACD Trend"
+                        data-cb-template-risk="Y&#xFC;ksek"
+                        data-cb-template-market="Spot / Futures"
+                        data-cb-template-tag="Momentum"
+                        data-cb-template-validation="Valid"
+                        data-cb-template-schema="2"
+                        data-cb-template-description="Trend-following entry when MACD line is above signal line and indicator is ready.">
+                    <span class="cb-template-tag">Momentum</span>
+                    <div class="cb-template-title-row">
+                        <strong>MACD Trend</strong>
+                        <span class="cb-badge cb-badge-danger">Y&#xFC;ksek</span>
+                    </div>
+                    <p>Trend-following entry when MACD line is above signal line and indicator is ready.</p>
+                    <div class="cb-template-meta">
+                        <span>Schema v@template.SchemaVersion · Valid</span>
+                        <span>Uygula</span>
+                    </div>
+                </button>
+                <button type="button"
+                        class="cb-template-card "
+                        data-cb-template-card
+                        data-cb-template-key="rsi-reversal"
+                        data-cb-template-name="RSI Reversal"
+                        data-cb-template-risk="Orta"
+                        data-cb-template-market="Spot / Futures"
+                        data-cb-template-tag="Reversal"
+                        data-cb-template-validation="Valid"
+                        data-cb-template-schema="2"
+                        data-cb-template-description="RSI oversold entry with deterministic sample-count risk guard.">
+                    <span class="cb-template-tag">Reversal</span>
+                    <div class="cb-template-title-row">
+                        <strong>RSI Reversal</strong>
+                        <span class="cb-badge cb-badge-warning">Orta</span>
+                    </div>
+                    <p>RSI oversold entry with deterministic sample-count risk guard.</p>
+                    <div class="cb-template-meta">
+                        <span>Schema v@template.SchemaVersion · Valid</span>
+                        <span>Uygula</span>
+                    </div>
+                </button>
+        </div>
+    </div>
+</div>
+
+
+        <div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Visual rule builder</h3>
+                <div class="text-muted font-size-sm">Koşul, grup ve aksiyon bloklarını satır satır kurgulayarak stratejinin giriş mantığını oluştur.</div>
+            </div>
+        </div>
+        <div class="card-toolbar cb-inline-stack">
+            <button type="button" class="btn btn-light-primary btn-sm font-weight-bolder" data-cb-drawer-target="#cb_strategy_template_drawer">Blok ekle</button>
+            <button type="button" class="btn btn-light-danger btn-sm font-weight-bolder" data-toggle="modal" data-target="#cb_danger_modal" data-cb-modal-title="Kural grubunu sil" data-cb-modal-tone="danger" data-cb-modal-message="Bu grup builder içinde kaldırılacak gibi görünür. Gerçek persist olmadığı için sadece foundation onay akışı gösterilir." data-cb-modal-confirm="Grubu sil">Grubu sil</button>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-builder-empty" data-cb-strategy-panel="blank">
+            
+<div class="cb-state cb-empty-state">
+    <div class="cb-state-icon">
+        <span>SB</span>
+    </div>
+    <div class="cb-state-body">
+        <h4 class="cb-state-title">&#x130;lk kural&#x131;n&#x131; ekle</h4>
+        <p class="cb-state-text">Template se&#xE7;erek haz&#x131;r bloklarla ba&#x15F;la veya toolbox alan&#x131;ndan ilk condition blo&#x11F;unu ekleyerek builder ak&#x131;&#x15F;&#x131;n&#x131; olu&#x15F;tur.</p>
+            <div class="cb-state-actions">
+                    <a href="#templates" class="btn btn-primary font-weight-bolder">Template se&#xE7;</a>
+                    <a href="#toolbox" class="btn btn-clean text-muted font-weight-bold">Toolbox&#x27;&#x131; a&#xE7;</a>
+            </div>
+    </div>
+</div>
+
+        </div>
+
+        <div data-cb-strategy-panel="template" class="d-none">
+            <div class="cb-rule-group">
+                <div class="cb-rule-group-header">
+                    <div>
+                        <span class="cb-rule-group-label">IF grubu</span>
+                        <h4>Trend başlangıcı</h4>
+                    </div>
+                    <div class="cb-inline-stack">
+                        <span class="cb-badge cb-badge-info">AND</span>
+                        <button type="button" class="btn btn-xs btn-light-primary font-weight-bold">Duplicate</button>
+                    </div>
+                </div>
+                <div class="cb-rule-block-list">
+                    <div class="cb-rule-block">
+                        <div class="cb-rule-block-main">
+                            <span class="cb-rule-block-type">RSI</span>
+                            <span class="cb-rule-block-operator">&lt;</span>
+                            <span class="cb-rule-block-value">30</span>
+                            <span class="cb-rule-block-meta">15m</span>
+                        </div>
+                        <div class="cb-rule-block-actions">
+                            <button type="button" class="btn btn-xs btn-light-primary">Kopyala</button>
+                            <button type="button" class="btn btn-xs btn-light-danger">Kaldır</button>
+                        </div>
+                    </div>
+                    <div class="cb-rule-block">
+                        <div class="cb-rule-block-main">
+                            <span class="cb-rule-block-type">EMA 20</span>
+                            <span class="cb-rule-block-operator">cross above</span>
+                            <span class="cb-rule-block-value">EMA 50</span>
+                            <span class="cb-rule-block-meta">1h</span>
+                        </div>
+                        <div class="cb-rule-block-actions">
+                            <button type="button" class="btn btn-xs btn-light-primary">Gruba taşı</button>
+                            <button type="button" class="btn btn-xs btn-light-danger">Sil</button>
+                        </div>
+                    </div>
+                    <div class="cb-rule-action-row">
+                        <span class="cb-badge cb-badge-success">Aksiyon</span>
+                        <strong>Long aç</strong>
+                        <span class="text-muted">Minimum confidence placeholder: <span class="cb-mono">72%</span></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="cb-rule-group mt-5">
+                <div class="cb-rule-group-header">
+                    <div>
+                        <span class="cb-rule-group-label">OR grubu</span>
+                        <h4>Breakout alternatifi</h4>
+                    </div>
+                    <span class="cb-badge cb-badge-warning">Nested group</span>
+                </div>
+                <div class="cb-rule-block-list">
+                    <div class="cb-rule-block">
+                        <div class="cb-rule-block-main">
+                            <span class="cb-rule-block-type">Volume</span>
+                            <span class="cb-rule-block-operator">&gt;</span>
+                            <span class="cb-rule-block-value">Avg x 1.8</span>
+                            <span class="cb-rule-block-meta">5m</span>
+                        </div>
+                        <div class="cb-rule-block-actions">
+                            <button type="button" class="btn btn-xs btn-light-primary">Kopyala</button>
+                            <button type="button" class="btn btn-xs btn-light-danger">Sil</button>
+                        </div>
+                    </div>
+                    <div class="cb-rule-block">
+                        <div class="cb-rule-block-main">
+                            <span class="cb-rule-block-type">Trend Filter</span>
+                            <span class="cb-rule-block-operator">=</span>
+                            <span class="cb-rule-block-value">Bullish</span>
+                            <span class="cb-rule-block-meta">Market regime</span>
+                        </div>
+                        <div class="cb-rule-block-actions">
+                            <button type="button" class="btn btn-xs btn-light-primary">Kopyala</button>
+                            <button type="button" class="btn btn-xs btn-light-danger">Sil</button>
+                        </div>
+                    </div>
+                    <div class="cb-rule-action-row cb-rule-action-row-watch">
+                        <span class="cb-badge cb-badge-info">Aksiyon</span>
+                        <strong>İzle / Watch</strong>
+                        <span class="text-muted">İşlem açmadan alarm üret</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div data-cb-strategy-panel="loading" class="d-none">
+            
+<div class="cb-state cb-loading-state">
+    <div class="cb-state-icon cb-state-icon-loading">
+        <span></span>
+    </div>
+    <div class="cb-state-body">
+        <h4 class="cb-state-title">Builder haz&#x131;rlan&#x131;yor</h4>
+        <p class="cb-state-text">Template bloklar&#x131;, toolbox ve giri&#x15F; kurallar&#x131; y&#xFC;zeyi ayn&#x131; layout i&#xE7;inde skeleton olarak g&#xF6;sterilir.</p>
+        <div class="row mt-6">
+                <div class="col-md-4 mb-4">
+                    <div class="cb-skeleton-card">
+                            <span class="cb-skeleton-line is-wide"></span>
+                            <span class="cb-skeleton-line "></span>
+                            <span class="cb-skeleton-line "></span>
+                            <span class="cb-skeleton-line "></span>
+                    </div>
+                </div>
+                <div class="col-md-4 mb-4">
+                    <div class="cb-skeleton-card">
+                            <span class="cb-skeleton-line is-wide"></span>
+                            <span class="cb-skeleton-line "></span>
+                            <span class="cb-skeleton-line "></span>
+                            <span class="cb-skeleton-line "></span>
+                    </div>
+                </div>
+                <div class="col-md-4 mb-4">
+                    <div class="cb-skeleton-card">
+                            <span class="cb-skeleton-line is-wide"></span>
+                            <span class="cb-skeleton-line "></span>
+                            <span class="cb-skeleton-line "></span>
+                            <span class="cb-skeleton-line "></span>
+                    </div>
+                </div>
+        </div>
+    </div>
+</div>
+
+        </div>
+
+        <div data-cb-strategy-panel="error" class="d-none">
+            
+<div class="cb-state cb-error-state">
+    <div class="cb-state-icon cb-state-icon-danger">
+        <span>!</span>
+    </div>
+    <div class="cb-state-body">
+        <h4 class="cb-state-title">Builder y&#xFC;zeyi al&#x131;namad&#x131;</h4>
+        <p class="cb-state-text">Ger&#xE7;ek rule engine ba&#x11F;l&#x131; olmad&#x131;&#x11F;&#x131;nda bile kullan&#x131;c&#x131; y&#xF6;nlendirmesiz kalmamal&#x131;; retry ve yard&#x131;m aksiyonlar&#x131; haz&#x131;r tutulur.</p>
+        <div class="cb-state-actions">
+                <a href="#builder" class="btn btn-danger font-weight-bolder">Tekrar dene</a>
+                <a href="#templates" class="btn btn-clean text-muted font-weight-bold">Template se&#xE7;imine d&#xF6;n</a>
+        </div>
+    </div>
+</div>
+
+        </div>
+    </div>
+</div>
+
+        <div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Entry rules</h3>
+                <div class="text-muted font-size-sm">Long ve short giriş mantığı builder bloklarının doğal uzantısı olarak ayrı başlıklar altında toplanır.</div>
+            </div>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-strategy-section-grid">
+            <div class="cb-rule-subsection">
+                <div class="cb-rule-subsection-header">
+                    <h4>Long entry rules</h4>
+                    <label class="switch switch-sm switch-outline switch-icon switch-primary mb-0">
+                        <input type="checkbox" checked="checked" />
+                        <span></span>
+                    </label>
+                </div>
+                <div class="cb-form-grid mt-4">
+                    <div>
+                        <label class="cb-form-label">Minimum confidence</label>
+                        <input type="text" class="form-control cb-form-control" value="72%" />
+                    </div>
+                    <div>
+                        <label class="cb-form-label">Minimum volume</label>
+                        <input type="text" class="form-control cb-form-control" value="Ortalama x 1.4" />
+                    </div>
+                    <div>
+                        <label class="cb-form-label">Trend filter</label>
+                        <select class="form-control cb-form-control">
+                            <option>EMA trend aligned</option>
+                            <option>ADX above threshold</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="cb-form-label">Time filter</label>
+                        <select class="form-control cb-form-control">
+                            <option>Avrupa + ABD seansı</option>
+                            <option>Tüm gün</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="cb-rule-subsection cb-rule-subsection-short is-secondary" id="cb_short_rules_section">
+                <div class="cb-rule-subsection-header">
+                    <h4>Short entry rules</h4>
+                    <label class="switch switch-sm switch-outline switch-icon switch-warning mb-0">
+                        <input type="checkbox" id="cb_short_rules_toggle" />
+                        <span></span>
+                    </label>
+                </div>
+                <p class="cb-helper-text mb-4">Spot modda secondary görünür. Futures + long/short senaryosunda aktifleşir.</p>
+                <div class="cb-form-grid">
+                    <div>
+                        <label class="cb-form-label">Minimum confidence</label>
+                        <input type="text" class="form-control cb-form-control" value="68%" />
+                    </div>
+                    <div>
+                        <label class="cb-form-label">Trend filter</label>
+                        <select class="form-control cb-form-control">
+                            <option>Bearish regime only</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+    </div>
+
+    <div class="col-xl-4">
+        <div class="card card-custom gutter-b cb-card" id="toolbox">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Rule toolbox</h3>
+                <div class="text-muted font-size-sm">Indicator, filter ve action bloklarını builder içine eklemek için sade ama genişlemeye açık picker alanı.</div>
+            </div>
+        </div>
+        <div class="card-toolbar">
+            <button type="button" class="btn btn-light-primary btn-sm font-weight-bolder" data-cb-drawer-target="#cb_strategy_template_drawer">Kütüphaneyi aç</button>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-bot-toolbar">
+            <div class="position-relative">
+                <span class="cb-bot-search-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none">
+                        <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.8"></circle>
+                        <path d="M20 20l-3.5-3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+                    </svg>
+                </span>
+                <input type="text" class="form-control cb-form-control pl-12" placeholder="Blok ara (placeholder)" />
+            </div>
+        </div>
+
+        <div class="cb-toolbox-group mt-5">
+            <span class="cb-toolbox-label">Indicator blocks</span>
+            <div class="cb-chip-group cb-chip-group-sm mt-3">
+                <button type="button" class="cb-chip">RSI</button>
+                <button type="button" class="cb-chip">EMA</button>
+                <button type="button" class="cb-chip">MACD</button>
+                <button type="button" class="cb-chip">ATR</button>
+                <button type="button" class="cb-chip">Volume</button>
+            </div>
+        </div>
+        <div class="cb-toolbox-group mt-5">
+            <span class="cb-toolbox-label">Filter blocks</span>
+            <div class="cb-chip-group cb-chip-group-sm mt-3">
+                <button type="button" class="cb-chip">Trend Filter</button>
+                <button type="button" class="cb-chip">Time Window</button>
+                <button type="button" class="cb-chip">Cooldown</button>
+                <button type="button" class="cb-chip">Market Regime</button>
+            </div>
+        </div>
+        <div class="cb-toolbox-group mt-5">
+            <span class="cb-toolbox-label">Action blocks</span>
+            <div class="cb-chip-group cb-chip-group-sm mt-3">
+                <button type="button" class="cb-chip">Long aç</button>
+                <button type="button" class="cb-chip">Short aç</button>
+                <button type="button" class="cb-chip">Watch</button>
+                <button type="button" class="cb-chip">Pozisyonu azalt</button>
+                <button type="button" class="cb-chip">Pozisyonu kapat</button>
+            </div>
+        </div>
+        <div class="cb-toolbox-group mt-5">
+            <span class="cb-toolbox-label">Saved snippet</span>
+            <div class="cb-mini-helper-card mt-3">Önceki fazlarda oluşturulan bot/strategy akışlarından snippet kaydetme özelliği sonraki faz için placeholder bırakıldı.</div>
+        </div>
+    </div>
+</div>
+
+        <div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Exit rules</h3>
+                <div class="text-muted font-size-sm">Take profit, stop loss ve confidence bazlı çıkış kurallarını ayrı ve taranabilir bir alanda düzenle.</div>
+            </div>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-rule-setting-list">
+            <div class="cb-rule-setting-item">
+                <div class="cb-rule-setting-header">
+                    <div>
+                        <strong>Take profit</strong>
+                        <div class="cb-helper-text">Kademeli kar alma sonraki rule engine fazına bağlanacak placeholder alandır.</div>
+                    </div>
+                    <label class="switch switch-sm switch-outline switch-icon switch-success mb-0"><input type="checkbox" checked="checked" /><span></span></label>
+                </div>
+                <input type="text" class="form-control cb-form-control mt-3" value="2.4%" />
+            </div>
+            <div class="cb-rule-setting-item">
+                <div class="cb-rule-setting-header">
+                    <div>
+                        <strong>Stop loss</strong>
+                        <div class="cb-helper-text">Çok gevşek stop yapısı riskli senaryoda warning üretecek foundation alanıdır.</div>
+                    </div>
+                    <label class="switch switch-sm switch-outline switch-icon switch-danger mb-0"><input type="checkbox" checked="checked" /><span></span></label>
+                </div>
+                <input type="text" class="form-control cb-form-control mt-3" id="cb_strategy_stop_loss" value="1.1%" />
+            </div>
+            <div class="cb-rule-setting-item">
+                <div class="cb-rule-setting-header">
+                    <div>
+                        <strong>Trailing stop</strong>
+                        <div class="cb-helper-text">Momentum devam ediyorsa kazancı korumak için trailing stop placeholder.</div>
+                    </div>
+                    <label class="switch switch-sm switch-outline switch-icon switch-warning mb-0"><input type="checkbox" /><span></span></label>
+                </div>
+            </div>
+            <div class="cb-rule-setting-item">
+                <div class="cb-rule-setting-header">
+                    <div>
+                        <strong>Time-based exit</strong>
+                        <div class="cb-helper-text">Belirli süre sonra pozisyondan çıkma kuralı için foundation.</div>
+                    </div>
+                    <label class="switch switch-sm switch-outline switch-icon switch-primary mb-0"><input type="checkbox" /><span></span></label>
+                </div>
+            </div>
+            <div class="cb-rule-setting-item">
+                <div class="cb-rule-setting-header">
+                    <div>
+                        <strong>Low confidence exit</strong>
+                        <div class="cb-helper-text">AI confidence ileride bağlandığında düşük güven sinyalinde çıkış kuralı çalışabilir.</div>
+                    </div>
+                    <label class="switch switch-sm switch-outline switch-icon switch-info mb-0"><input type="checkbox" /><span></span></label>
+                </div>
+            </div>
+        </div>
+        <div class="cb-mini-warning-card mt-4 d-none" id="cb_strategy_exit_warning">Stop loss çok gevşek veya exit kuralı eksik olduğunda bu alanda yönlendirici warning görünür.</div>
+    </div>
+</div>
+
+        <div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Risk rules</h3>
+                <div class="text-muted font-size-sm">Risk engine’e bağlanacak zemin için leverage, risk yüzdesi ve kill switch koşullarını ayrı bölümde tut.</div>
+            </div>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-rule-setting-list">
+            <div class="cb-form-grid">
+                <div>
+                    <label class="cb-form-label">Max leverage</label>
+                    <input type="number" min="1" class="form-control cb-form-control" id="cb_strategy_leverage" value="1" />
+                </div>
+                <div>
+                    <label class="cb-form-label">İşlem başına risk %</label>
+                    <input type="text" class="form-control cb-form-control" value="0.8%" />
+                </div>
+                <div>
+                    <label class="cb-form-label">Max position size</label>
+                    <input type="text" class="form-control cb-form-control" value="Portföy %12" />
+                </div>
+                <div>
+                    <label class="cb-form-label">Günlük max zarar</label>
+                    <input type="text" class="form-control cb-form-control" value="2.5%" />
+                </div>
+                <div>
+                    <label class="cb-form-label">Max açık pozisyon</label>
+                    <input type="text" class="form-control cb-form-control" value="3" />
+                </div>
+                <div>
+                    <label class="cb-form-label">Cooldown</label>
+                    <input type="text" class="form-control cb-form-control" value="45 dk" />
+                </div>
+            </div>
+            <div class="mt-4">
+                <label class="cb-form-label">No-trade hours</label>
+                <select class="form-control cb-form-control">
+                    <option>Yok</option>
+                    <option>Hafta sonu hariç</option>
+                    <option>Düşük likidite saatlerini hariç tut</option>
+                </select>
+            </div>
+            <div class="mt-4">
+                <label class="cb-form-label">Kill switch condition</label>
+                <select class="form-control cb-form-control">
+                    <option>Günlük zarar limiti aşılırsa stop</option>
+                    <option>Art arda 3 başarısız sinyal sonrası stop</option>
+                </select>
+            </div>
+        </div>
+        <div class="cb-mini-warning-card mt-4 d-none" id="cb_strategy_risk_warning">Futures + yüksek leverage kombinasyonu aktif. Risk helper alanı bilinçli olarak daha görünür yapıldı.</div>
+    </div>
+</div>
+
+        <div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Strategy summary</h3>
+                <div class="text-muted font-size-sm">Builder içinde kaybolmamak için seçilen template ve aktif kural özetini bu panelde takip et.</div>
+            </div>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-preview-list">
+            <div class="cb-preview-row"><span>Seçilen template</span><strong id="cb_strategy_preview_template">Sıfırdan Başla</strong></div>
+            <div class="cb-preview-row"><span>Aktif entry rule</span><strong id="cb_strategy_preview_entry">0 placeholder</strong></div>
+            <div class="cb-preview-row"><span>Aktif exit rule</span><strong id="cb_strategy_preview_exit">2 placeholder</strong></div>
+            <div class="cb-preview-row"><span>Risk profili</span><strong id="cb_strategy_preview_risk">Dengeli</strong></div>
+            <div class="cb-preview-row"><span>Market tipi</span><strong id="cb_strategy_preview_market">Spot</strong></div>
+            <div class="cb-preview-row"><span>Yön</span><strong id="cb_strategy_preview_direction">Long only</strong></div>
+        </div>
+        <div class="cb-mini-helper-card mt-4" id="cb_strategy_preview_description">Bu strateji momentum teyidi geldikten sonra trend yönünde giriş arayan, korumacı stop ve sınırlı risk kullanan bir foundation örneği sunar.</div>
+        <div class="cb-mini-warning-card mt-4 d-none" id="cb_strategy_preview_warning">Entry veya exit kuralı eksik olduğunda summary paneli kullanıcıyı yönlendirici şekilde uyarır.</div>
+        <div class="cb-toolbar mt-5">
+            <button type="button" class="btn btn-primary font-weight-bolder">Kaydet</button>
+            <button type="button" class="btn btn-light-primary font-weight-bolder">Taslak Kaydet</button>
+            <button type="button" class="btn btn-clean font-weight-bold">Önizle</button>
+        </div>
+    </div>
+</div>
+
+        <div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">State patterns</h3>
+                <div class="text-muted font-size-sm">Template loading, builder empty ve validation warning davranışları aynı foundation diliyle korunur.</div>
+            </div>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        <div class="cb-state-grid">
+            <div class="cb-strategy-state-card">
+                
+<div class="cb-state cb-loading-state">
+    <div class="cb-state-icon cb-state-icon-loading">
+        <span></span>
+    </div>
+    <div class="cb-state-body">
+        <h4 class="cb-state-title">Template listesi haz&#x131;rlan&#x131;yor</h4>
+        <p class="cb-state-text">Kart grid, toolbox ve builder e&#x15F;zamanl&#x131; y&#xFC;klenirken bo&#x15F; ekran yerine skeleton g&#xF6;sterilir.</p>
+        <div class="row mt-6">
+                <div class="col-md-4 mb-4">
+                    <div class="cb-skeleton-card">
+                            <span class="cb-skeleton-line is-wide"></span>
+                            <span class="cb-skeleton-line "></span>
+                            <span class="cb-skeleton-line "></span>
+                    </div>
+                </div>
+        </div>
+    </div>
+</div>
+
+            </div>
+            <div class="cb-strategy-state-card">
+                <div class="cb-bot-mini-validation">Tamamlanmamış strateji: En az bir entry rule ve bir exit rule eklemeden "hazır" durumuna geçme.</div>
+                <div class="cb-mini-helper-card mt-4">Validation dili sert değil, yönlendirici tutulur. Riskli leverage veya eksik exit kuralı burada öne çıkar.</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+    </div>
+</div>
+
+<aside class="cb-drawer cb-strategy-drawer" id="cb_strategy_template_drawer" aria-hidden="true">
+    <div class="cb-drawer-header">
+        <div>
+            <div class="cb-drawer-eyebrow" id="cb_strategy_drawer_eyebrow">Template detail</div>
+            <h5 class="cb-drawer-title mb-0" id="cb_strategy_drawer_title">Sıfırdan Başla</h5>
+        </div>
+        <button type="button" class="btn btn-xs btn-icon btn-light" data-cb-drawer-close>
+            <span>&times;</span>
+        </button>
+    </div>
+    <div class="cb-drawer-body">
+        <div class="cb-mini-helper-card" id="cb_strategy_drawer_description">Hazır template seçmeden kendi condition ve action bloklarını ekleyebileceğin boş canvas başlangıcı.</div>
+        <div class="cb-section mt-6">
+            <div class="cb-section-title">Uygun market</div>
+            <div class="cb-inline-stack mt-3">
+                <span class="cb-badge cb-badge-info" id="cb_strategy_drawer_market">Spot / Futures</span>
+                <span class="cb-badge cb-badge-warning" id="cb_strategy_drawer_risk">Esnek</span>
+                <span class="cb-badge cb-badge-neutral" id="cb_strategy_drawer_tag">Blank</span>
+            </div>
+        </div>
+        <div class="cb-section mt-6">
+            <div class="cb-section-title">Builder foundation neyi doldurur?</div>
+            <ul class="mb-0 pl-5 text-muted">
+                <li>Örnek entry blokları</li>
+                <li>Exit / risk section varsayılanları</li>
+                <li>Summary açıklama alanı</li>
+            </ul>
+        </div>
+    </div>
+    <div class="cb-drawer-footer">
+        <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-drawer-close>Kapat</button>
+        <button type="button" class="btn btn-primary font-weight-bolder" id="cb_strategy_drawer_apply" data-cb-strategy-apply-template data-cb-drawer-close>Template uygula</button>
+    </div>
+</aside>
+
+
+                        </div>
+                    </div>
+                </div>
+
+                <div b-il7khzt31m class="footer py-4 d-flex flex-lg-column cb-shell-footer" id="kt_footer">
+                    <div b-il7khzt31m class="container-fluid d-flex flex-column flex-md-row align-items-center justify-content-between">
+                        <div b-il7khzt31m class="order-2 order-md-1">
+                            <span b-il7khzt31m class="text-muted font-weight-bold mr-2">2026 ©</span>
+                            <span b-il7khzt31m class="text-white-50">CoinBot UI Foundation / Shell</span>
+                        </div>
+                        <div b-il7khzt31m class="nav nav-dark cb-footer-nav">
+                            <a class="nav-link pl-0 pr-5" href="/">Dashboard</a>
+                            <a class="nav-link pl-0 pr-5" href="/Exchanges">Borsalarım</a>
+                            <a class="nav-link pl-0 pr-0" href="/Bots">Botlarım</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade cb-modal" id="cb_confirm_modal" tabindex="-1" role="dialog" aria-labelledby="cb_confirm_modal_title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="cb_confirm_modal_title">Standart Onay</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="cb-modal-tone cb-modal-tone-warning" id="cb_confirm_modal_tone">Bu modal, ileride kritik olmayan kullanıcı onayları için temel standart olarak kullanılacak.</div>
+                <p class="mb-0 text-muted" id="cb_confirm_modal_message">Başlık, açıklama ve aksiyon butonları tutarlı bir düzenle yerleşir.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-dismiss="modal">Vazgeç</button>
+                <button type="button" class="btn btn-primary font-weight-bolder" data-dismiss="modal" id="cb_confirm_modal_confirm">Onayla</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade cb-modal" id="cb_danger_modal" tabindex="-1" role="dialog" aria-labelledby="cb_danger_modal_title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="cb_danger_modal_title">Tehlikeli Aksiyon</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="cb-modal-tone cb-modal-tone-danger" id="cb_danger_modal_tone">Danger confirm standardı destructive işlemler için ayrıldı.</div>
+                <p class="mb-0 text-muted" id="cb_danger_modal_message">Bu foundation fazında gerçek işlem yok; sadece görsel dil ve buton yerleşimi hazırlanmıştır.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-dismiss="modal">İptal</button>
+                <button type="button" class="btn btn-danger font-weight-bolder" data-dismiss="modal" id="cb_danger_modal_confirm">Devam Et</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade cb-modal" id="cb_form_modal" tabindex="-1" role="dialog" aria-labelledby="cb_form_modal_title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="cb_form_modal_title">Form Modal Foundation</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <label class="cb-form-label">Ad</label>
+                        <input type="text" class="form-control cb-form-control" placeholder="Placeholder" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="cb-form-label">Tip</label>
+                        <select class="form-control cb-form-control">
+                            <option>Seçiniz</option>
+                        </select>
+                    </div>
+                    <div class="col-12 mt-4">
+                        <label class="cb-form-label">Not</label>
+                        <textarea class="form-control cb-form-control" rows="4" placeholder="Açıklama alanı"></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-dismiss="modal">Kapat</button>
+                <button type="button" class="btn btn-primary font-weight-bolder" data-dismiss="modal">Kaydet</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="cb-drawer-backdrop" data-cb-drawer-close></div>
+<aside class="cb-drawer" id="cb_shell_drawer" aria-hidden="true">
+    <div class="cb-drawer-header">
+        <div>
+            <div class="cb-drawer-eyebrow">Foundation</div>
+            <h5 class="cb-drawer-title mb-0">Right Drawer Standardı</h5>
+        </div>
+        <button type="button" class="btn btn-xs btn-icon btn-light" data-cb-drawer-close>
+            <span>&times;</span>
+        </button>
+    </div>
+    <div class="cb-drawer-body">
+        <div class="cb-section">
+            <div class="cb-section-title">Kullanım Amacı</div>
+            <p class="text-muted mb-0">Bot detay, strategy detail, order detail gibi sağ panel akışları için reusable temel yapı hazırlanmıştır.</p>
+        </div>
+        <div class="cb-section mt-6">
+            <div class="cb-section-title">Standart Bölgeler</div>
+            <ul class="mb-0 pl-5 text-muted">
+                <li>Header</li>
+                <li>Scrollable body</li>
+                <li>Sticky footer action bar</li>
+            </ul>
+        </div>
+    </div>
+    <div class="cb-drawer-footer">
+        <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-drawer-close>Kapat</button>
+        <button type="button" class="btn btn-primary font-weight-bolder">Primary Action</button>
+    </div>
+</aside>
+
+
+    <script>
+        var KTAppSettings = {
+            breakpoints: { sm: 576, md: 768, lg: 992, xl: 1200, xxl: 1400 },
+            colors: {
+                theme: {
+                    base: { white: '#ffffff', primary: '#4B7CF3', secondary: '#2C3553', success: '#12C29C', info: '#5AC8FA', warning: '#FFB84D', danger: '#FF647C', light: '#202943', dark: '#0D1324' },
+                    light: { white: '#ffffff', primary: '#E7EEFF', secondary: '#EEF1F7', success: '#D8FFF5', info: '#E6F7FF', warning: '#FFF4DF', danger: '#FFE3E7', light: '#F5F8FF', dark: '#D4DCEC' },
+                    inverse: { white: '#ffffff', primary: '#ffffff', secondary: '#D0D8EA', success: '#ffffff', info: '#ffffff', warning: '#101827', danger: '#ffffff', light: '#4F5D7A', dark: '#ffffff' }
+                },
+                gray: { 'gray-100': '#F8FAFC', 'gray-200': '#DCE3F2', 'gray-300': '#AAB7D1', 'gray-400': '#8291B2', 'gray-500': '#6C7A97', 'gray-600': '#52607B', 'gray-700': '#334155', 'gray-800': '#1E293B', 'gray-900': '#0F172A' }
+            },
+            'font-family': 'Poppins'
+        };
+    </script>
+    <script src="/metronic/assets/plugins/global/plugins.bundle.js?v=3Q4FQejP2MRHG42xeUwNGifugQlsWRPjvacMEg5Y0DA"></script>
+    <script src="/metronic/assets/js/scripts.bundle.js?v=LyZU16poGPlPaOwIeIBS-R5vw3KBVhIeCBruWgUBskg"></script>
+    <script src="/js/site.js?v=L58gOqV0zJTn8wZIHPY0-yJrjO_mcxMKz4kllaI9wlo"></script>
+    
+    <script src="/js/strategy-builder-foundation.js?v=LegqnGdcHKdrjk00bjUhFFv09r6At7hTPLCA8XdzWqs"></script>
+
+</body>
+</html>
+

@@ -1,4 +1,6 @@
+using System.Text.Json;
 using CoinBot.Application.Abstractions.Administration;
+using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Identity;
@@ -101,6 +103,20 @@ public sealed partial class AdminWorkspaceReadModelService
             .AsNoTracking()
             .Where(veto => !veto.IsDeleted)
             .ToListAsync(cancellationToken);
+        var versions = await dbContext.TradingStrategyVersions
+            .AsNoTracking()
+            .Where(version => !version.IsDeleted)
+            .ToListAsync(cancellationToken);
+        var templates = (await strategyTemplateCatalogService.ListAsync(cancellationToken))
+            .Select(template => new AdminStrategyTemplateSnapshot(
+                template.TemplateKey,
+                template.TemplateName,
+                template.Category,
+                template.Validation.StatusCode,
+                template.Validation.Summary,
+                template.SchemaVersion,
+                template.Description))
+            .ToArray();
 
         var rows = strategies.Select(strategy =>
         {
@@ -108,6 +124,12 @@ public sealed partial class AdminWorkspaceReadModelService
             var strategyVetoes = vetoes.Where(veto => veto.TradingStrategyId == strategy.Id).ToArray();
             var latestSignal = strategySignals.OrderByDescending(signal => signal.GeneratedAtUtc).FirstOrDefault();
             var latestVeto = strategyVetoes.OrderByDescending(veto => veto.EvaluatedAtUtc).FirstOrDefault();
+            var latestVersion = versions
+                .Where(version => version.TradingStrategyId == strategy.Id)
+                .OrderByDescending(version => version.VersionNumber)
+                .FirstOrDefault();
+            var definitionSummary = BuildStrategyDefinitionSummary(latestVersion);
+            var explainabilitySummary = BuildStrategyExplainabilitySummary(latestSignal, latestVeto);
             var signalCount = strategySignals.Length;
             var vetoCount = strategyVetoes.Length;
             var vetoRate = signalCount == 0 ? 0m : Math.Round((decimal)vetoCount / signalCount, 4);
@@ -123,7 +145,14 @@ public sealed partial class AdminWorkspaceReadModelService
                 latestSignal is null ? "-" : latestSignal.SignalType.ToString(),
                 latestSignal is null ? "-" : BuildRelativeTimeLabel(now, latestSignal.GeneratedAtUtc),
                 latestVeto is null ? null : latestVeto.ReasonCode.ToString(),
-                strategy.PublishedMode is null ? "Draft / shadow" : $"Published {strategy.PublishedMode}");
+                strategy.PublishedMode is null ? "Draft / shadow" : $"Published {strategy.PublishedMode}",
+                definitionSummary.TemplateKey,
+                definitionSummary.TemplateName,
+                definitionSummary.ValidationStatusCode,
+                definitionSummary.ValidationSummary,
+                explainabilitySummary.ScoreLabel,
+                explainabilitySummary.Summary,
+                explainabilitySummary.RuleSummary);
         }).ToArray();
 
         rows = rows
@@ -154,7 +183,9 @@ public sealed partial class AdminWorkspaceReadModelService
             new AdminStatTileSnapshot("Freshness", rows.Any() ? BuildRelativeTimeLabel(now, signals.OrderByDescending(signal => signal.GeneratedAtUtc).FirstOrDefault()?.GeneratedAtUtc) : "n/a", "Latest generated signal", rows.Any() ? "healthy" : "neutral")
         };
 
-        return new AdminStrategyAiMonitoringPageSnapshot(normalizedQuery, summaryTiles, rows, healthTiles, now);
+        var latestExplainability = BuildLatestStrategyExplainabilitySnapshot(strategies, versions, signals, vetoes);
+
+        return new AdminStrategyAiMonitoringPageSnapshot(normalizedQuery, summaryTiles, rows, healthTiles, templates, latestExplainability, now);
     }
 
     public async Task<AdminSupportLookupSnapshot> GetSupportLookupAsync(
@@ -398,11 +429,234 @@ public sealed partial class AdminWorkspaceReadModelService
         return new AdminNotificationsPageSnapshot(normalizedSeverity, normalizedCategory, summaryTiles, filteredAlerts, now);
     }
 
+    private AdminStrategyExplainabilitySnapshot BuildLatestStrategyExplainabilitySnapshot(
+        IReadOnlyCollection<TradingStrategy> strategies,
+        IReadOnlyCollection<TradingStrategyVersion> versions,
+        IReadOnlyCollection<TradingStrategySignal> signals,
+        IReadOnlyCollection<TradingStrategySignalVeto> vetoes)
+    {
+        var latestSignal = signals.OrderByDescending(signal => signal.GeneratedAtUtc).FirstOrDefault();
+        var latestVeto = vetoes.OrderByDescending(veto => veto.EvaluatedAtUtc).FirstOrDefault();
+
+        if (latestSignal is null && latestVeto is null)
+        {
+            return new AdminStrategyExplainabilitySnapshot(
+                "n/a",
+                "n/a",
+                "n/a",
+                "NotEvaluated",
+                "n/a",
+                "Henüz strategy explainability snapshot'u oluşmadı.",
+                "n/a",
+                "custom",
+                null);
+        }
+
+        if (latestVeto is null || (latestSignal is not null && latestSignal.GeneratedAtUtc >= latestVeto.EvaluatedAtUtc))
+        {
+            var strategy = strategies.FirstOrDefault(item => item.Id == latestSignal!.TradingStrategyId);
+            var version = versions.FirstOrDefault(item => item.Id == latestSignal!.TradingStrategyVersionId);
+            var definitionSummary = BuildStrategyDefinitionSummary(version);
+            var confidence = TryDeserialize<StrategySignalConfidenceSnapshot>(latestSignal!.RiskEvaluationJson)
+                ?? new StrategySignalConfidenceSnapshot(0, StrategySignalConfidenceBand.Low, 0, 0, true, false, false, RiskVetoReasonCode.None, false, "Signal confidence unavailable.");
+            var evaluationResult = TryDeserialize<StrategyEvaluationResult>(latestSignal.RuleResultSnapshotJson);
+
+            return new AdminStrategyExplainabilitySnapshot(
+                strategy?.StrategyKey ?? "n/a",
+                latestSignal.Symbol,
+                latestSignal.Timeframe,
+                latestSignal.SignalType.ToString(),
+                FormattableString.Invariant($"{confidence.ScorePercentage}/100"),
+                confidence.Summary,
+                BuildRuleSummary(evaluationResult),
+                definitionSummary.TemplateName,
+                NormalizeUtc(latestSignal.GeneratedAtUtc));
+        }
+
+        var vetoStrategy = strategies.FirstOrDefault(item => item.Id == latestVeto.TradingStrategyId);
+        var vetoVersion = versions.FirstOrDefault(item => item.Id == latestVeto.TradingStrategyVersionId);
+        var vetoDefinitionSummary = BuildStrategyDefinitionSummary(vetoVersion);
+        var vetoConfidence = TryDeserialize<StrategySignalConfidenceSnapshot>(latestVeto.RiskEvaluationJson)
+            ?? new StrategySignalConfidenceSnapshot(0, StrategySignalConfidenceBand.Low, 0, 0, true, false, true, latestVeto.ReasonCode, false, latestVeto.ReasonCode.ToString());
+
+        return new AdminStrategyExplainabilitySnapshot(
+            vetoStrategy?.StrategyKey ?? "n/a",
+            latestVeto.Symbol,
+            latestVeto.Timeframe,
+            $"Vetoed:{latestVeto.ReasonCode}",
+            FormattableString.Invariant($"{vetoConfidence.ScorePercentage}/100"),
+            vetoConfidence.Summary,
+            $"RiskVeto={latestVeto.ReasonCode}; {vetoConfidence.Summary}",
+            vetoDefinitionSummary.TemplateName,
+            NormalizeUtc(latestVeto.EvaluatedAtUtc));
+    }
+
+    private StrategyDefinitionSummary BuildStrategyDefinitionSummary(TradingStrategyVersion? version)
+    {
+        if (version is null)
+        {
+            return new StrategyDefinitionSummary("custom", "Custom strategy", "MissingVersion", "Published strategy version was not found.");
+        }
+
+        try
+        {
+            var document = strategyRuleParser.Parse(version.DefinitionJson);
+            var validation = strategyDefinitionValidator.Validate(document);
+            var templateKey = string.IsNullOrWhiteSpace(document.Metadata?.TemplateKey)
+                ? "custom"
+                : document.Metadata!.TemplateKey!.Trim();
+            var templateName = string.IsNullOrWhiteSpace(document.Metadata?.TemplateName)
+                ? "Custom strategy"
+                : document.Metadata!.TemplateName!.Trim();
+
+            return new StrategyDefinitionSummary(
+                templateKey,
+                templateName,
+                validation.StatusCode,
+                validation.Summary);
+        }
+        catch (StrategyDefinitionValidationException exception)
+        {
+            return new StrategyDefinitionSummary("custom", "Custom strategy", exception.StatusCode, exception.Message);
+        }
+        catch (StrategyRuleParseException exception)
+        {
+            return new StrategyDefinitionSummary("custom", "Custom strategy", "ParseFailed", exception.Message);
+        }
+    }
+
+    private StrategyExplainabilitySummaryResult BuildStrategyExplainabilitySummary(
+        TradingStrategySignal? latestSignal,
+        TradingStrategySignalVeto? latestVeto)
+    {
+        if (latestSignal is null && latestVeto is null)
+        {
+            return new StrategyExplainabilitySummaryResult("n/a", "Henüz sinyal yok.", "n/a");
+        }
+
+        if (latestVeto is null || (latestSignal is not null && latestSignal.GeneratedAtUtc >= latestVeto.EvaluatedAtUtc))
+        {
+            var confidence = TryDeserialize<StrategySignalConfidenceSnapshot>(latestSignal!.RiskEvaluationJson)
+                ?? new StrategySignalConfidenceSnapshot(0, StrategySignalConfidenceBand.Low, 0, 0, true, false, false, RiskVetoReasonCode.None, false, "Signal confidence unavailable.");
+            var evaluationResult = TryDeserialize<StrategyEvaluationResult>(latestSignal.RuleResultSnapshotJson);
+
+            return new StrategyExplainabilitySummaryResult(
+                FormattableString.Invariant($"{confidence.ScorePercentage}/100"),
+                confidence.Summary,
+                BuildRuleSummary(evaluationResult));
+        }
+
+        var vetoConfidence = TryDeserialize<StrategySignalConfidenceSnapshot>(latestVeto.RiskEvaluationJson)
+            ?? new StrategySignalConfidenceSnapshot(0, StrategySignalConfidenceBand.Low, 0, 0, true, false, true, latestVeto.ReasonCode, false, latestVeto.ReasonCode.ToString());
+
+        return new StrategyExplainabilitySummaryResult(
+            FormattableString.Invariant($"{vetoConfidence.ScorePercentage}/100"),
+            vetoConfidence.Summary,
+            $"RiskVeto={latestVeto.ReasonCode}; {vetoConfidence.Summary}");
+    }
+
+    private static string BuildRuleSummary(StrategyEvaluationResult? evaluationResult)
+    {
+        if (evaluationResult is null)
+        {
+            return "Rule snapshot unavailable.";
+        }
+
+        var passedRules = EnumerateLeafRules(evaluationResult.EntryRuleResult)
+            .Concat(EnumerateLeafRules(evaluationResult.ExitRuleResult))
+            .Concat(EnumerateLeafRules(evaluationResult.RiskRuleResult))
+            .Where(rule => rule.Enabled && rule.Matched)
+            .Select(DescribeRule)
+            .Take(2)
+            .ToArray();
+        var failedRules = EnumerateLeafRules(evaluationResult.EntryRuleResult)
+            .Concat(EnumerateLeafRules(evaluationResult.ExitRuleResult))
+            .Concat(EnumerateLeafRules(evaluationResult.RiskRuleResult))
+            .Where(rule => rule.Enabled && !rule.Matched)
+            .Select(DescribeRule)
+            .Take(2)
+            .ToArray();
+
+        return $"Passed={string.Join(" | ", passedRules.DefaultIfEmpty("none"))}; Failed={string.Join(" | ", failedRules.DefaultIfEmpty("none"))}";
+    }
+
+    private static IEnumerable<StrategyRuleResultSnapshot> EnumerateLeafRules(StrategyRuleResultSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            yield break;
+        }
+
+        if (snapshot.Children.Count == 0)
+        {
+            yield return snapshot;
+            yield break;
+        }
+
+        foreach (var child in snapshot.Children.SelectMany(EnumerateLeafRules))
+        {
+            yield return child;
+        }
+    }
+
+    private static string DescribeRule(StrategyRuleResultSnapshot snapshot)
+    {
+        var label = string.IsNullOrWhiteSpace(snapshot.RuleId)
+            ? snapshot.Path ?? "rule"
+            : snapshot.RuleId!.Trim();
+        var reason = string.IsNullOrWhiteSpace(snapshot.Reason)
+            ? snapshot.Matched ? "PASS" : "FAIL"
+            : snapshot.Reason!.Trim();
+
+        return $"{label}:{reason}";
+    }
+
+    private static TSnapshot? TryDeserialize<TSnapshot>(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return default;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<TSnapshot>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web)
+            {
+                PropertyNameCaseInsensitive = true
+            });
+        }
+        catch (JsonException)
+        {
+            return default;
+        }
+    }
+
+    private static DateTime NormalizeUtc(DateTime value)
+    {
+        return value.Kind switch
+        {
+            DateTimeKind.Utc => value,
+            DateTimeKind.Local => value.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+        };
+    }
+
     private static string BuildTradingModeLabel(ExecutionEnvironment mode) =>
         mode == ExecutionEnvironment.Live ? "Live" : "Demo";
 
     private static string BuildTradingModeTone(ExecutionEnvironment mode) =>
         mode == ExecutionEnvironment.Live ? "critical" : "neutral";
+
+    private sealed record StrategyDefinitionSummary(
+        string TemplateKey,
+        string TemplateName,
+        string ValidationStatusCode,
+        string ValidationSummary);
+
+    private sealed record StrategyExplainabilitySummaryResult(
+        string ScoreLabel,
+        string Summary,
+        string RuleSummary);
 
     private static string BuildStrategyHealthLabel(TradingStrategy strategy, int signalCount, int vetoCount)
     {
@@ -740,3 +994,7 @@ public sealed partial class AdminWorkspaceReadModelService
         return $"{snapshot.Summary}{tags}";
     }
 }
+
+
+
+

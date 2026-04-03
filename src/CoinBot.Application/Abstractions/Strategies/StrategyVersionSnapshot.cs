@@ -9,4 +9,8 @@ public sealed record StrategyVersionSnapshot(
     int VersionNumber,
     StrategyVersionStatus Status,
     DateTime? PublishedAtUtc,
-    DateTime? ArchivedAtUtc);
+    DateTime? ArchivedAtUtc,
+    string? TemplateKey = null,
+    string? TemplateName = null,
+    string ValidationStatusCode = "Unknown",
+    string ValidationSummary = "Not validated");

@@ -101,6 +101,134 @@ public sealed class StrategyEvaluatorServiceTests
         Assert.Contains("resolved to null", exception.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void EvaluateReport_ReturnsDeterministicScore_AndRuleLevelExplainability()
+    {
+        var parser = new StrategyRuleParser();
+        var service = new StrategyEvaluatorService(parser, new StrategyDefinitionValidator());
+        var context = CreateContext(ExecutionEnvironment.Live);
+        var request = new StrategyEvaluationReportRequest(
+            Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            3,
+            "scanner-template",
+            "Scanner Template",
+            """
+            {
+              "schemaVersion": 2,
+              "metadata": {
+                "templateKey": "rsi-reversal",
+                "templateName": "RSI Reversal"
+              },
+              "entry": {
+                "operator": "all",
+                "ruleId": "entry-root",
+                "ruleType": "group",
+                "timeframe": "1m",
+                "weight": 1,
+                "enabled": true,
+                "rules": [
+                  {
+                    "ruleId": "entry-mode",
+                    "ruleType": "context",
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Live",
+                    "timeframe": "1m",
+                    "weight": 20,
+                    "enabled": true
+                  },
+                  {
+                    "ruleId": "entry-rsi",
+                    "ruleType": "rsi",
+                    "path": "indicator.rsi.value",
+                    "comparison": "lessThanOrEqual",
+                    "value": 20,
+                    "timeframe": "1m",
+                    "weight": 80,
+                    "enabled": true
+                  }
+                ]
+              },
+              "risk": {
+                "path": "indicator.sampleCount",
+                "comparison": "greaterThanOrEqual",
+                "value": 100,
+                "ruleId": "risk-sample",
+                "ruleType": "data-quality",
+                "timeframe": "1m",
+                "weight": 20,
+                "enabled": true
+              }
+            }
+            """,
+            context,
+            new DateTime(2026, 4, 3, 10, 0, 0, DateTimeKind.Utc));
+
+        var firstReport = service.EvaluateReport(request);
+        var secondReport = service.EvaluateReport(request);
+
+        Assert.Equal("rsi-reversal", firstReport.TemplateKey);
+        Assert.Equal("RSI Reversal", firstReport.TemplateName);
+        Assert.Equal("BTCUSDT", firstReport.Symbol);
+        Assert.Equal("1m", firstReport.Timeframe);
+        Assert.Equal("NoSignalCandidate", firstReport.Outcome);
+        Assert.Equal(33, firstReport.AggregateScore);
+        Assert.Equal(2, firstReport.PassedRuleCount);
+        Assert.Equal(1, firstReport.FailedRuleCount);
+        Assert.Contains(firstReport.PassedRules, rule => rule.Contains("entry-mode", StringComparison.Ordinal));
+        Assert.Contains("entry-rsi", firstReport.FailedRules.Single(), StringComparison.Ordinal);
+        Assert.Contains("Outcome=NoSignalCandidate", firstReport.ExplainabilitySummary, StringComparison.Ordinal);
+        Assert.Equal(firstReport.Outcome, secondReport.Outcome);
+        Assert.Equal(firstReport.AggregateScore, secondReport.AggregateScore);
+        Assert.Equal(firstReport.PassedRules, secondReport.PassedRules);
+        Assert.Equal(firstReport.FailedRules, secondReport.FailedRules);
+        Assert.Equal(firstReport.ExplainabilitySummary, secondReport.ExplainabilitySummary);
+        Assert.Equal(firstReport.RuleEvaluation.HasEntryRules, secondReport.RuleEvaluation.HasEntryRules);
+        Assert.Equal(firstReport.RuleEvaluation.EntryMatched, secondReport.RuleEvaluation.EntryMatched);
+        Assert.Equal(firstReport.RuleEvaluation.HasRiskRules, secondReport.RuleEvaluation.HasRiskRules);
+        Assert.Equal(firstReport.RuleEvaluation.RiskPassed, secondReport.RuleEvaluation.RiskPassed);
+        Assert.Equal(firstReport.RuleEvaluation.EntryRuleResult?.Reason, secondReport.RuleEvaluation.EntryRuleResult?.Reason);
+        Assert.Equal(firstReport.RuleEvaluation.RiskRuleResult?.Reason, secondReport.RuleEvaluation.RiskRuleResult?.Reason);
+    }
+
+    [Fact]
+    public void Evaluate_RejectsInvalidStrategyDefinition_BeforeRuleEvaluation()
+    {
+        var service = new StrategyEvaluatorService(new StrategyRuleParser(), new StrategyDefinitionValidator());
+
+        var exception = Assert.Throws<StrategyDefinitionValidationException>(() => service.Evaluate(
+            """
+            {
+              "schemaVersion": 2,
+              "entry": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "ruleId": "dup",
+                    "path": "indicator.rsi.value",
+                    "comparison": "lessThanOrEqual",
+                    "value": 20,
+                    "weight": 20,
+                    "enabled": true
+                  },
+                  {
+                    "ruleId": "dup",
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 100,
+                    "weight": 20,
+                    "enabled": true
+                  }
+                ]
+              }
+            }
+            """,
+            CreateContext(ExecutionEnvironment.Live)));
+
+        Assert.Equal("DuplicateRuleId:entry.rules[1]:dup", exception.StatusCode);
+    }
+
     private static StrategyEvaluationContext CreateContext(ExecutionEnvironment mode)
     {
         return new StrategyEvaluationContext(mode, CreateIndicatorSnapshot(rsiValue: 28m));
@@ -138,3 +266,6 @@ public sealed class StrategyEvaluatorServiceTests
             Source: "UnitTest");
     }
 }
+
+
+

@@ -7,6 +7,11 @@ public interface IStrategyVersionService
         string definitionJson,
         CancellationToken cancellationToken = default);
 
+    Task<StrategyVersionSnapshot> CreateDraftFromTemplateAsync(
+        Guid strategyId,
+        string templateKey,
+        CancellationToken cancellationToken = default);
+
     Task<StrategyVersionSnapshot> PublishAsync(
         Guid strategyVersionId,
         CancellationToken cancellationToken = default);

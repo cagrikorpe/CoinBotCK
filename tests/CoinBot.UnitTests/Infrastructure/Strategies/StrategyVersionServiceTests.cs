@@ -21,7 +21,7 @@ public sealed class StrategyVersionServiceTests
         dbContext.TradingStrategies.Add(strategy);
         await dbContext.SaveChangesAsync();
 
-        var service = new StrategyVersionService(dbContext, new StrategyRuleParser(), timeProvider);
+        var service = CreateService(dbContext, timeProvider);
         var firstDraft = await service.CreateDraftAsync(strategy.Id, CreateDefinitionJson("Demo"));
 
         timeProvider.Advance(TimeSpan.FromMinutes(5));
@@ -37,7 +37,60 @@ public sealed class StrategyVersionServiceTests
         Assert.Equal(timeProvider.GetUtcNow().UtcDateTime, persistedVersions[0].ArchivedAtUtc);
         Assert.Equal(StrategyVersionStatus.Draft, persistedVersions[1].Status);
         Assert.Equal(strategy.OwnerUserId, persistedVersions[1].OwnerUserId);
-        Assert.Equal(1, persistedVersions[1].SchemaVersion);
+        Assert.Equal(2, persistedVersions[1].SchemaVersion);
+        Assert.Equal("Valid", secondDraft.ValidationStatusCode);
+    }
+
+    [Fact]
+    public async Task CreateDraftFromTemplateAsync_CreatesValidatedDraft_WithTemplateMetadata()
+    {
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-template-1", "rsi-template-core");
+        dbContext.TradingStrategies.Add(strategy);
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext, new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero)));
+
+        var draft = await service.CreateDraftFromTemplateAsync(strategy.Id, "rsi-reversal");
+        var persistedVersion = await dbContext.TradingStrategyVersions.SingleAsync(entity => entity.Id == draft.StrategyVersionId);
+
+        Assert.Equal("rsi-reversal", draft.TemplateKey);
+        Assert.Equal("RSI Reversal", draft.TemplateName);
+        Assert.Equal("Valid", draft.ValidationStatusCode);
+        Assert.Equal(2, persistedVersion.SchemaVersion);
+        Assert.Contains("\"templateKey\": \"rsi-reversal\"", persistedVersion.DefinitionJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CreateDraftAsync_RejectsInvalidStrategyDefinition_WithExactValidationReason()
+    {
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-invalid-1", "invalid-core");
+        dbContext.TradingStrategies.Add(strategy);
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext, new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero)));
+
+        var exception = await Assert.ThrowsAsync<StrategyDefinitionValidationException>(() => service.CreateDraftAsync(
+            strategy.Id,
+            """
+            {
+              "schemaVersion": 2,
+              "entry": {
+                "path": "indicator.rsi.value",
+                "comparison": "lessThanOrEqual",
+                "value": 101,
+                "ruleId": "entry-rsi",
+                "ruleType": "rsi",
+                "weight": 10,
+                "enabled": true
+              }
+            }
+            """));
+
+        Assert.Equal("InvalidRsiThreshold:entry:101", exception.StatusCode);
+        Assert.Contains("InvalidRsiThreshold", exception.Message, StringComparison.Ordinal);
+        Assert.Empty(await dbContext.TradingStrategyVersions.ToListAsync());
     }
 
     [Fact]
@@ -53,7 +106,7 @@ public sealed class StrategyVersionServiceTests
         dbContext.TradingStrategies.Add(strategy);
         await dbContext.SaveChangesAsync();
 
-        var service = new StrategyVersionService(dbContext, new StrategyRuleParser(), timeProvider);
+        var service = CreateService(dbContext, timeProvider);
         var firstDraft = await service.CreateDraftAsync(strategy.Id, CreateDefinitionJson("Demo"));
         var firstPublished = await service.PublishAsync(firstDraft.StrategyVersionId);
 
@@ -74,6 +127,18 @@ public sealed class StrategyVersionServiceTests
         Assert.Equal(timeProvider.GetUtcNow().UtcDateTime, persistedVersions[1].PublishedAtUtc);
         Assert.Equal(StrategyPromotionState.DemoPublished, persistedStrategy.PromotionState);
         Assert.Equal(ExecutionEnvironment.Demo, persistedStrategy.PublishedMode);
+    }
+
+    private static StrategyVersionService CreateService(ApplicationDbContext dbContext, TimeProvider timeProvider)
+    {
+        var parser = new StrategyRuleParser();
+        var validator = new StrategyDefinitionValidator();
+        return new StrategyVersionService(
+            dbContext,
+            parser,
+            timeProvider,
+            validator,
+            new StrategyTemplateCatalogService(parser, validator));
     }
 
     private static ApplicationDbContext CreateDbContext()
@@ -100,19 +165,38 @@ public sealed class StrategyVersionServiceTests
         return
             $$"""
             {
-              "schemaVersion": 1,
+              "schemaVersion": 2,
+              "metadata": {
+                "templateKey": "custom",
+                "templateName": "Custom Strategy"
+              },
               "entry": {
                 "operator": "all",
+                "ruleId": "entry-root",
+                "ruleType": "group",
+                "timeframe": "1m",
+                "weight": 1,
+                "enabled": true,
                 "rules": [
                   {
+                    "ruleId": "entry-mode",
+                    "ruleType": "context",
                     "path": "context.mode",
                     "comparison": "equals",
-                    "value": "{{mode}}"
+                    "value": "{{mode}}",
+                    "timeframe": "1m",
+                    "weight": 10,
+                    "enabled": true
                   },
                   {
+                    "ruleId": "risk-rsi-ready",
+                    "ruleType": "rsi",
                     "path": "indicator.rsi.isReady",
                     "comparison": "equals",
-                    "value": true
+                    "value": true,
+                    "timeframe": "1m",
+                    "weight": 5,
+                    "enabled": true
                   }
                 ]
               }
@@ -127,3 +211,4 @@ public sealed class StrategyVersionServiceTests
         public bool HasIsolationBypass => true;
     }
 }
+

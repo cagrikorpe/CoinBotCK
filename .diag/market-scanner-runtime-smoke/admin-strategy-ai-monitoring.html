@@ -1,0 +1,2246 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <title>Strategy / AI &#x130;zleme - CoinBot Super Admin</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700" />
+    <link rel="stylesheet" href="/metronic/assets/plugins/global/plugins.bundle.css?v=T_JZMHDKKnf5IKYuyCdbmrEvirG-ETUsUc7tX38nyIQ" />
+    <link rel="stylesheet" href="/metronic/assets/css/style.bundle.css?v=emFyAB8ca2Lip4nvHVD3kohLlgqSIT8FXQTztZ3pn6o" />
+    <link rel="stylesheet" href="/metronic/assets/css/themes/layout/header/base/light.css?v=si3CQGavOAhYVnqeY2G1LCxNnQdzPwHfFYe3zmQRBls" />
+    <link rel="stylesheet" href="/metronic/assets/css/themes/layout/header/menu/light.css?v=QLXLI2_JzPkSlCHjNHFWxDOXUm6A5xGOad4CgG92kp4" />
+    <link rel="stylesheet" href="/metronic/assets/css/themes/layout/brand/dark.css?v=nI3aXV0-dpAX8Bhgt6oc9M1KJBhnM83rq9umdPncm8o" />
+    <link rel="stylesheet" href="/metronic/assets/css/themes/layout/aside/dark.css?v=BWgcYglmc-u5g8rECGZV9tTvlkqPR02E2BEZU5T6Shs" />
+    <link rel="stylesheet" href="/css/site.css?v=yYnVwOLFPHjRQCk2-41XAC-P0YI1O4WLoQFl20re4mk" />
+    <link rel="stylesheet" href="/css/admin.css?v=QO34SgoXYE4T4ShrEkUKq2L2iBNZVzFmwvAOHVPIVeM" />
+    <link rel="stylesheet" href="/CoinBot.Web.styles.css?v=eXtU9B6Trp87ayWRYfu2ggOPOczNbLP-Xf-TGTLF2w8" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    
+</head>
+<body id="kt_body" class="header-fixed header-mobile-fixed aside-enabled aside-fixed aside-minimize-hoverable page-loading cb-admin-shell" data-cb-theme="dark" data-cb-shell="admin" data-cb-admin-role="SuperAdmin">
+    <div id="kt_header_mobile" class="header-mobile align-items-center header-mobile-fixed cb-shell-mobile-header cb-admin-mobile-header">
+        <a class="brand-logo text-decoration-none" href="/admin">
+            <span class="app-logo-mark cb-admin-logo-mark">A</span>
+            <span class="text-white font-size-h5 font-weight-bolder">CoinBot Admin</span>
+        </a>
+        <div class="d-flex align-items-center">
+            <button class="btn p-0 burger-icon burger-icon-left" id="kt_aside_mobile_toggle" type="button">
+                <span></span>
+            </button>
+        </div>
+    </div>
+
+    <div class="d-flex flex-column flex-root">
+        <div class="d-flex flex-row flex-column-fluid page">
+            <div class="aside aside-left aside-fixed d-flex flex-column flex-row-auto cb-shell-aside cb-admin-aside" id="kt_aside">
+    <div class="brand flex-column-auto cb-shell-brand cb-admin-brand" id="kt_brand">
+        <a class="brand-logo text-decoration-none" href="/admin">
+            <span class="app-logo-mark cb-admin-logo-mark">A</span>
+            <span>
+                <span class="text-white font-size-h4 font-weight-bolder d-block">Super Admin</span>
+                <span class="cb-brand-subtitle">Platform Control Center</span>
+            </span>
+        </a>
+        <button class="brand-toggle btn btn-sm px-0" id="kt_aside_toggle" type="button" aria-label="Sidebar toggle">
+            <span class="svg-icon svg-icon-xl">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24px" height="24px" viewBox="0 0 24 24" version="1.1">
+                    <g stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+                        <polygon points="0 0 24 0 24 24 0 24"></polygon>
+                        <path d="M5.29288961,6.70710318 C4.90236532,6.31657888 4.90236532,5.68341391 5.29288961,5.29288961 C5.68341391,4.90236532 6.31657888,4.90236532 6.70710318,5.29288961 L12.7071032,11.2928896 C13.0856821,11.6714686 13.0989277,12.281055 12.7371505,12.675721 L7.23715054,18.675721 C6.86395813,19.08284 6.23139076,19.1103429 5.82427177,18.7371505 C5.41715278,18.3639581 5.38964985,17.7313908 5.76284226,17.3242718 L10.6158586,12.0300721 L5.29288961,6.70710318 Z" fill="#ffffff" fill-rule="nonzero" transform="translate(8.999997, 11.999999) scale(-1, 1) translate(-8.999997, -11.999999)"></path>
+                        <path d="M10.7071009,15.7071068 C10.3165766,16.0976311 9.68341162,16.0976311 9.29288733,15.7071068 C8.90236304,15.3165825 8.90236304,14.6834175 9.29288733,14.2928932 L15.2928873,8.29289322 C15.6714663,7.91431428 16.2810527,7.90106866 16.6757187,8.26284586 L22.6757187,13.7628459 C23.0828377,14.1360383 23.1103407,14.7686056 22.7371482,15.1757246 C22.3639558,15.5828436 21.7313885,15.6103465 21.3242695,15.2371541 L16.0300699,10.3841378 L10.7071009,15.7071068 Z" fill="#ffffff" fill-rule="nonzero" opacity="0.35" transform="translate(15.999997, 11.999999) scale(-1, 1) rotate(-270.000000) translate(-15.999997, -11.999999)"></path>
+                    </g>
+                </svg>
+            </span>
+        </button>
+    </div>
+
+    <div class="cb-admin-side-meta">
+        <span class="cb-admin-side-meta-label">Scope</span>
+        <strong>Tenant: Global</strong>
+        <small>DEMO</small>
+    </div>
+
+    <div class="cb-admin-role-visibility-card">
+        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <span class="cb-admin-badge cb-admin-badge-role">
+        <span class="cb-admin-badge-icon">RB</span>
+    <span>Super Admin g&#xF6;r&#xFC;n&#xFC;m&#xFC;</span>
+</span>
+
+        </div>
+        <small>Menu görünürlüğü admin claim/policy wiring ile hizalıdır. Write aksiyonları ayrıca server-side policy ve antiforgery ile korunur.</small>
+    </div>
+
+    <div class="aside-menu-wrapper flex-column-fluid" id="kt_aside_menu_wrapper">
+        <div id="kt_aside_menu" class="aside-menu my-4" data-menu-vertical="1" data-menu-scroll="1" data-menu-dropdown-timeout="500">
+            <ul class="menu-nav cb-menu-nav cb-admin-menu-nav">
+                    <li class="menu-section">
+                        <h4 class="menu-text">Overview</h4>
+                        <i class="menu-icon ki ki-bold-more-hor icon-md"></i>
+                    </li>
+                        <li class="menu-item " aria-haspopup="true">
+                            <a class="menu-link" href="/admin">
+                                <span class="menu-icon">
+                                    <span class="cb-menu-icon cb-admin-menu-icon ">GV</span>
+                                </span>
+                                <span class="menu-text">Genel Bak&#x131;&#x15F;</span>
+                            </a>
+                        </li>
+                        <li class="menu-item " aria-haspopup="true">
+                            <a class="menu-link" href="/admin/Search">
+                                <span class="menu-icon">
+                                    <span class="cb-menu-icon cb-admin-menu-icon ">GS</span>
+                                </span>
+                                <span class="menu-text">Global Search</span>
+                                    <span class="menu-label">
+                                        <span class="cb-admin-badge cb-admin-badge-info">
+    <span>Trace</span>
+</span>
+
+                                    </span>
+                            </a>
+                        </li>
+                    <li class="menu-section">
+                        <h4 class="menu-text">Identity</h4>
+                        <i class="menu-icon ki ki-bold-more-hor icon-md"></i>
+                    </li>
+                        <li class="menu-item " aria-haspopup="true">
+                            <a class="menu-link" href="/admin/Users">
+                                <span class="menu-icon">
+                                    <span class="cb-menu-icon cb-admin-menu-icon ">US</span>
+                                </span>
+                                <span class="menu-text">Kullan&#x131;c&#x131;lar</span>
+                            </a>
+                        </li>
+                        <li class="menu-item " aria-haspopup="true">
+                            <a class="menu-link" href="/admin/UserDetail">
+                                <span class="menu-icon">
+                                    <span class="cb-menu-icon cb-admin-menu-icon ">UD</span>
+                                </span>
+                                <span class="menu-text">Kullan&#x131;c&#x131; Detay&#x131;</span>
+                                    <span class="menu-label">
+                                        <span class="cb-admin-badge cb-admin-badge-neutral">
+    <span>Drawer</span>
+</span>
+
+                                    </span>
+                            </a>
+                        </li>
+                    <li class="menu-section">
+                        <h4 class="menu-text">Operations</h4>
+                        <i class="menu-icon ki ki-bold-more-hor icon-md"></i>
+                    </li>
+                        <li class="menu-item " aria-haspopup="true">
+                            <a class="menu-link" href="/admin/ExchangeAccounts">
+                                <span class="menu-icon">
+                                    <span class="cb-menu-icon cb-admin-menu-icon ">EX</span>
+                                </span>
+                                <span class="menu-text">Exchange Hesaplar&#x131;</span>
+                            </a>
+                        </li>
+                        <li class="menu-item " aria-haspopup="true">
+                            <a class="menu-link" href="/admin/BotOperations">
+                                <span class="menu-icon">
+                                    <span class="cb-menu-icon cb-admin-menu-icon ">BT</span>
+                                </span>
+                                <span class="menu-text">Bot Operasyonlar&#x131;</span>
+                            </a>
+                        </li>
+                        <li class="menu-item menu-item-active" aria-haspopup="true">
+                            <a class="menu-link" href="/admin/StrategyAiMonitoring">
+                                <span class="menu-icon">
+                                    <span class="cb-menu-icon cb-admin-menu-icon is-active">AI</span>
+                                </span>
+                                <span class="menu-text">Strategy/AI &#x130;zleme</span>
+                                    <span class="menu-label">
+                                        <span class="cb-admin-badge cb-admin-badge-info">
+    <span>Watch</span>
+</span>
+
+                                    </span>
+                            </a>
+                        </li>
+                    <li class="menu-section">
+                        <h4 class="menu-text">Runtime</h4>
+                        <i class="menu-icon ki ki-bold-more-hor icon-md"></i>
+                    </li>
+                        <li class="menu-item " aria-haspopup="true">
+                            <a class="menu-link" href="/admin/SystemHealth">
+                                <span class="menu-icon">
+                                    <span class="cb-menu-icon cb-admin-menu-icon ">HL</span>
+                                </span>
+                                <span class="menu-text">Sistem Sa&#x11F;l&#x131;&#x11F;&#x131;</span>
+                                    <span class="menu-label">
+                                        <span class="cb-admin-badge cb-admin-badge-healthy">
+    <span>Snapshot</span>
+</span>
+
+                                    </span>
+                            </a>
+                        </li>
+                    <li class="menu-section">
+                        <h4 class="menu-text">Observability</h4>
+                        <i class="menu-icon ki ki-bold-more-hor icon-md"></i>
+                    </li>
+                        <li class="menu-item " aria-haspopup="true">
+                            <a class="menu-link" href="/admin/Audit">
+                                <span class="menu-icon">
+                                    <span class="cb-menu-icon cb-admin-menu-icon ">AU</span>
+                                </span>
+                                <span class="menu-text">Audit &amp; Log Merkezi</span>
+                            </a>
+                        </li>
+                        <li class="menu-item " aria-haspopup="true">
+                            <a class="menu-link" href="/admin/SecurityEvents">
+                                <span class="menu-icon">
+                                    <span class="cb-menu-icon cb-admin-menu-icon ">SE</span>
+                                </span>
+                                <span class="menu-text">G&#xFC;venlik Olaylar&#x131;</span>
+                                    <span class="menu-label">
+                                        <span class="cb-admin-badge cb-admin-badge-critical">
+    <span>Critical</span>
+</span>
+
+                                    </span>
+                            </a>
+                        </li>
+                        <li class="menu-item " aria-haspopup="true">
+                            <a class="menu-link" href="/admin/Notifications">
+                                <span class="menu-icon">
+                                    <span class="cb-menu-icon cb-admin-menu-icon ">AL</span>
+                                </span>
+                                <span class="menu-text">Bildirim/Alarm Merkezi</span>
+                            </a>
+                        </li>
+                    <li class="menu-section">
+                        <h4 class="menu-text">Governance</h4>
+                        <i class="menu-icon ki ki-bold-more-hor icon-md"></i>
+                    </li>
+                        <li class="menu-item " aria-haspopup="true">
+                            <a class="menu-link" href="/admin/Approvals">
+                                <span class="menu-icon">
+                                    <span class="cb-menu-icon cb-admin-menu-icon ">AP</span>
+                                </span>
+                                <span class="menu-text">Approval Merkezi</span>
+                                    <span class="menu-label">
+                                        <span class="cb-admin-badge cb-admin-badge-critical">
+    <span>Queue</span>
+</span>
+
+                                    </span>
+                            </a>
+                        </li>
+                        <li class="menu-item " aria-haspopup="true">
+                            <a class="menu-link" href="/admin/Incidents">
+                                <span class="menu-icon">
+                                    <span class="cb-menu-icon cb-admin-menu-icon ">IN</span>
+                                </span>
+                                <span class="menu-text">Incident Merkezi</span>
+                            </a>
+                        </li>
+                        <li class="menu-item " aria-haspopup="true">
+                            <a class="menu-link" href="/admin/ConfigHistory">
+                                <span class="menu-icon">
+                                    <span class="cb-menu-icon cb-admin-menu-icon ">CH</span>
+                                </span>
+                                <span class="menu-text">Config History</span>
+                                    <span class="menu-label">
+                                        <span class="cb-admin-badge cb-admin-badge-info">
+    <span>Version</span>
+</span>
+
+                                    </span>
+                            </a>
+                        </li>
+                        <li class="menu-item " aria-haspopup="true">
+                            <a class="menu-link" href="/admin/SystemStateHistory">
+                                <span class="menu-icon">
+                                    <span class="cb-menu-icon cb-admin-menu-icon ">SH</span>
+                                </span>
+                                <span class="menu-text">State History</span>
+                                    <span class="menu-label">
+                                        <span class="cb-admin-badge cb-admin-badge-warning">
+    <span>Timeline</span>
+</span>
+
+                                    </span>
+                            </a>
+                        </li>
+                    <li class="menu-section">
+                        <h4 class="menu-text">Platform</h4>
+                        <i class="menu-icon ki ki-bold-more-hor icon-md"></i>
+                    </li>
+                        <li class="menu-item " aria-haspopup="true">
+                            <a class="menu-link" href="/admin/SupportTools">
+                                <span class="menu-icon">
+                                    <span class="cb-menu-icon cb-admin-menu-icon ">SP</span>
+                                </span>
+                                <span class="menu-text">Destek Ara&#xE7;lar&#x131;</span>
+                            </a>
+                        </li>
+                        <li class="menu-item " aria-haspopup="true">
+                            <a class="menu-link" href="/admin/Settings">
+                                <span class="menu-icon">
+                                    <span class="cb-menu-icon cb-admin-menu-icon ">GL</span>
+                                </span>
+                                <span class="menu-text">Global Ayarlar</span>
+                                    <span class="menu-label">
+                                        <span class="cb-admin-badge cb-admin-badge-critical">
+    <span>Write</span>
+</span>
+
+                                    </span>
+                            </a>
+                        </li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+
+            <div class="d-flex flex-column flex-row-fluid wrapper cb-shell-wrapper cb-admin-wrapper" id="kt_wrapper">
+                <div id="kt_header" class="header header-fixed cb-shell-header cb-admin-header">
+    <div class="container-fluid d-flex align-items-center justify-content-between flex-wrap flex-sm-nowrap">
+        <div class="d-flex align-items-center mr-5 cb-topbar-meta">
+            <button class="btn btn-icon btn-clean d-lg-none mr-3" id="kt_aside_mobile_toggle_desktop" type="button">
+                <span class="svg-icon svg-icon-xl">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none">
+                        <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    </svg>
+                </span>
+            </button>
+            <div>
+                <div class="cb-shell-breadcrumb cb-admin-breadcrumb">
+                        <span>Super Admin</span>
+                            <span class="cb-breadcrumb-separator">/</span>
+                        <span>&#x130;zleme</span>
+                            <span class="cb-breadcrumb-separator">/</span>
+                        <span>Strategy / AI</span>
+                </div>
+                <h1 class="cb-shell-title cb-admin-shell-title mb-0">Strategy / AI &#x130;zleme</h1>
+                <div class="cb-shell-description">Strategy template kullan&#x131;m&#x131;, AI health, confidence/veto sinyalleri ve explainability &#xF6;rneklerini izleyen admin monitoring y&#xFC;zeyi.</div>
+
+                <div class="cb-admin-quick-meta">
+                    <span class="cb-admin-quick-meta-item">DEMO</span>
+                    <span class="cb-admin-quick-meta-item">Build vNext</span>
+                    <span class="cb-admin-quick-meta-item">Tenant: Global</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="topbar cb-topbar cb-admin-topbar">
+            <form method="get" class="cb-top-search cb-admin-top-search d-none d-xl-flex" action="/admin/Search">
+                <span class="cb-top-search-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none">
+                        <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"></circle>
+                        <path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+                    </svg>
+                </span>
+                <input name="query" type="text" class="form-control border-0 bg-transparent" value="" aria-label="CorrelationId / OrderId / DecisionId / ExecutionAttemptId / IncidentId / UserId" />
+            </form>
+
+            <div class="cb-topbar-actions">
+                <a class="btn btn-light-primary font-weight-bold cb-topbar-action" href="/admin/SecurityEvents">Security events</a>
+
+                <a class="btn btn-icon btn-clean cb-icon-button cb-admin-alert-button" title="System healthy &#xB7; SYSTEM_ACTIVE" href="/admin/SystemHealth">
+                    <span class="cb-icon-badge cb-admin-alert-count">0</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none">
+                        <path d="M12 4l7 13H5L12 4Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"></path>
+                        <path d="M12 9v4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path>
+                        <circle cx="12" cy="16.5" r="1" fill="currentColor"></circle>
+                    </svg>
+                </a>
+
+                <span class="cb-admin-badge cb-admin-badge-warning">
+        <span class="cb-admin-badge-icon">ENV</span>
+    <span>DEMO</span>
+</span>
+
+                <span class="cb-admin-badge cb-admin-badge-healthy">
+        <span class="cb-admin-badge-icon">GS</span>
+    <span>Active</span>
+</span>
+
+                <span class="cb-admin-badge cb-admin-badge-healthy">
+        <span class="cb-admin-badge-icon">FD</span>
+    <span>Fresh</span>
+</span>
+
+                <span class="cb-admin-badge cb-admin-badge-role">
+        <span class="cb-admin-badge-icon">SA</span>
+    <span>Super Admin</span>
+</span>
+
+
+                <div class="dropdown">
+                    <button class="btn btn-clean d-flex align-items-center px-2 py-2" type="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                        <span class="cb-user-avatar cb-admin-user-avatar">SC</span>
+                        <span class="cb-user-meta d-none d-md-inline-block">
+                            <span class="cb-user-name">scanner.admin.d88cd38434094291baad47d46b6fa8fa@coinbot.test</span>
+                            <span class="cb-user-role">Super Admin</span>
+                        </span>
+                    </button>
+                    <div class="dropdown-menu dropdown-menu-right dropdown-menu-anim-up dropdown-menu-lg p-0 cb-dropdown-menu cb-admin-dropdown-menu">
+                        <div class="cb-dropdown-header cb-admin-dropdown-header">
+                            <div class="cb-user-avatar cb-admin-user-avatar">SC</div>
+                            <div>
+                                <div class="font-weight-bolder text-white">scanner.admin.d88cd38434094291baad47d46b6fa8fa@coinbot.test</div>
+                                <div class="text-white-50">Super Admin · Session live</div>
+                            </div>
+                        </div>
+                        <div class="navi navi-hover py-2">
+                            <a class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75" href="/admin">
+                                <span class="navi-text">Genel Bakış</span>
+                                <span class="cb-admin-badge cb-admin-badge-healthy">
+    <span>Shell</span>
+</span>
+
+                            </a>
+                            <a class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75" href="/admin/Audit">
+                                <span class="navi-text">Audit merkezi</span>
+                                <span class="cb-admin-badge cb-admin-badge-info">
+    <span>Trace</span>
+</span>
+
+                            </a>
+                            <a class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75" href="/admin/Users">
+                                <span class="navi-text">Kullanıcı erişimi</span>
+                                <span class="cb-admin-badge cb-admin-badge-role">
+    <span>Identity</span>
+</span>
+
+                            </a>
+                            <a class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75" href="/admin/Login">
+                                <span class="navi-text">Admin access</span>
+                                <span class="cb-admin-badge cb-admin-badge-warning">
+    <span>MFA</span>
+</span>
+
+                            </a>
+                            <a class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75" href="/Auth/Logout">
+                                <span class="navi-text">Çıkış yap</span>
+                                <span class="cb-admin-badge cb-admin-badge-neutral">
+    <span>Auth</span>
+</span>
+
+                            </a>
+                            <a class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75" href="/">
+                                <span class="navi-text">Kullanıcı paneline dön</span>
+                                <span class="cb-admin-badge cb-admin-badge-neutral">
+    <span>UI</span>
+</span>
+
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+                <div class="content d-flex flex-column flex-column-fluid cb-shell-content cb-admin-content" id="kt_content">
+                    <div class="d-flex flex-column-fluid">
+                        <div class="container-fluid metronic-page-content cb-content-container cb-admin-content-container">
+                            <div class="cb-admin-banner-stack">
+                                
+<div class="cb-admin-info-strip cb-admin-info-strip-info">
+    <div class="d-flex flex-wrap align-items-center gap-3">
+        <span class="cb-admin-badge cb-admin-badge-warning">
+        <span class="cb-admin-badge-icon">ENV</span>
+    <span>DEMO</span>
+</span>
+
+        <span class="cb-admin-badge cb-admin-badge-healthy">
+        <span class="cb-admin-badge-icon">GS</span>
+    <span>Active</span>
+</span>
+
+    </div>
+    <div>
+        <div class="cb-admin-info-strip-title">Admin health snapshot</div>
+        <div class="cb-admin-info-strip-text">
+            ReasonCode: SYSTEM_ACTIVE
+        </div>
+    </div>
+    <span class="cb-admin-info-strip-meta">LastUpdatedAtUtc: n/a</span>
+</div>
+
+                                <div class="cb-admin-activity-banner" role="note">
+    <div>
+        <div class="cb-admin-activity-title">Admin-only yüksek ayrıcalık alanı</div>
+        <div class="cb-admin-activity-text">Kritik aksiyonlar audit reason, correlation ve policy guard ile kaydedilir. Onay, stale veri ve ikinci kontrol gerektiren akışlar server-side korunur.</div>
+    </div>
+    <div class="cb-admin-activity-actions">
+        <span class="cb-admin-badge cb-admin-badge-role">
+        <span class="cb-admin-badge-icon">RB</span>
+    <span>Super Admin</span>
+</span>
+
+
+        <span class="cb-admin-badge cb-admin-badge-info">
+        <span class="cb-admin-badge-icon">ENV</span>
+    <span>DEMO</span>
+</span>
+
+
+        <span class="cb-admin-badge cb-admin-badge-healthy">
+        <span class="cb-admin-badge-icon">SC</span>
+    <span>Tenant: Global</span>
+</span>
+
+
+        <a class="btn btn-light-primary font-weight-bold" href="/admin/Approvals">Approval flow</a>
+        <a class="btn btn-primary font-weight-bolder" href="/admin/Audit">Audit / trace</a>
+    </div>
+</div>
+
+                                <div class="cb-admin-session-grid">
+    <div class="cb-admin-session-card is-warning">
+        <div class="cb-admin-session-card-title">Idle timeout yaklaşımı</div>
+        <div class="cb-admin-session-card-text">Kritik degisikliklerden once session boundary yeniden degerlendirilebilir; timeout durumunda yonlendirme tek auth shell'e gider.</div>
+        <a class="cb-admin-session-card-link" href="/admin/SessionExpired">Session expired ekranını gör</a>
+    </div>
+    <div class="cb-admin-session-card is-info">
+        <div class="cb-admin-session-card-title">Başka cihazda aktif oturum olabilir</div>
+        <div class="cb-admin-session-card-text">Coklu cihaz veya lokasyon sinyalleri security event timeline'i ve auth karar zinciri ile birlikte ele alinir.</div>
+        <a class="cb-admin-session-card-link" href="/admin/SecurityEvents">Security events</a>
+    </div>
+    <div class="cb-admin-session-card is-neutral">
+        <div class="cb-admin-session-card-title">Security-sensitive action note</div>
+        <div class="cb-admin-session-card-text">Execution gate, crisis ve policy write akislari ayri command envelope ve audit reason ile korunur.</div>
+        <a class="cb-admin-session-card-link" href="/admin/Settings">Guarded settings</a>
+    </div>
+</div>
+
+                                <div class="cb-admin-info-strip cb-admin-global-stale-strip cb-admin-info-strip-success" role="status" aria-live="polite">
+    <div class="cb-admin-global-stale-copy">
+        <div class="cb-admin-info-strip-title">Strategy / AI &#x130;zleme · stale / freshness guard</div>
+        <div class="cb-admin-info-strip-text">Strategy / AI &#x130;zleme verisi g&#xFC;ncel shell snapshot ile g&#xF6;steriliyor; yine de kritik aksiyon &#xF6;ncesi mod&#xFC;l detaylar&#x131; kontrol edilmelidir.</div>
+    </div>
+    <div class="cb-admin-global-stale-actions">
+        <span class="cb-admin-badge cb-admin-badge-healthy">
+        <span class="cb-admin-badge-icon">FD</span>
+    <span>Fresh</span>
+</span>
+
+
+        <span class="cb-admin-info-strip-meta">Freshness &#xB7; canl&#x131;</span>
+    </div>
+</div>
+
+                            </div>
+                            
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                
+<div class="cb-page-header cb-admin-page-header">
+    <div>
+        <div class="cb-page-eyebrow cb-admin-page-eyebrow">Global AI Ops</div>
+        <div class="d-flex flex-wrap align-items-center gap-3">
+            <h2 class="cb-page-title cb-admin-page-title">Strategy / AI &#x130;zleme</h2>
+<span class="cb-admin-badge cb-admin-badge-degraded">
+        <span class="cb-admin-badge-icon">AI</span>
+    <span>AI Watch</span>
+</span>
+        </div>
+        <p class="cb-page-description cb-admin-page-description">Platform genelindeki strategy template kullan&#x131;m&#x131;, AI health, confidence/veto sinyalleri ve explainability &#xF6;rneklerini tek ekranda &#xF6;zetleyen Super Admin AI izleme y&#xFC;zeyi.</p>
+
+            <div class="cb-admin-page-meta">
+<span class="cb-admin-badge cb-admin-badge-warning">
+        <span class="cb-admin-badge-icon">HL</span>
+    <span>Model Health</span>
+</span>
+<span class="cb-admin-badge cb-admin-badge-info">
+        <span class="cb-admin-badge-icon">XP</span>
+    <span>Explainable</span>
+</span>
+<span class="cb-admin-badge cb-admin-badge-critical">
+        <span class="cb-admin-badge-icon">VT</span>
+    <span>Veto Aware</span>
+</span>
+            </div>
+    </div>
+
+    <div class="cb-toolbar cb-admin-toolbar">
+                <a href="/admin/BotOperations" class="btn btn-light-primary font-weight-bold">Bot operasyonlar&#x131;</a>
+                <a href="/admin/Audit" class="btn btn-primary font-weight-bolder">Audit / loglar</a>
+    </div>
+</div>
+
+
+                <div class="cb-admin-info-strip cb-admin-info-strip-warning">
+    <div>
+        <div class="cb-admin-info-strip-title">Global strategy / AI monitoring</div>
+        <div class="cb-admin-info-strip-text">Ger&#xE7;ek AI backend, model scoring, cluster analizi ve strategy health pipeline bu y&#xFC;zeyle hizalan&#x131;r. Ekran; usage yo&#x11F;unlu&#x11F;u, model health, veto/confidence ve explainability snapshot&#x27;lar&#x131;n&#x131; g&#xF6;sterir.</div>
+    </div>
+        <span class="cb-admin-info-strip-meta">Operational monitoring</span>
+</div>
+
+
+                <div class="mt-6">
+                    
+<div class="cb-admin-summary-grid cb-admin-strategy-ai-summary-grid">
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Strategy</span>
+                <strong>1</strong>
+                <small>Tracked strategies</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Signal</span>
+                <strong>0</strong>
+                <small>Recent signal volume</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Veto</span>
+                <strong>1</strong>
+                <small>Risk guard rejects</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Published</span>
+                <strong>1</strong>
+                <small>Live / demo rollout</small>
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Low confidence</span>
+                <strong>0</strong>
+                <small>Veto rate &gt;= 20%</small>
+            </div>
+</div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-7">
+        
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-table-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Strategy Usage</div>
+                <div class="cb-admin-section-title">Aktif strategy template kullanımı</div>
+                <p class="cb-admin-section-description mb-0">Template kaynağı, validation sonucu, confidence score ve rule-level explainability gerçek strategy snapshot verisinden okunur.</p>
+            </div>
+            <span class="cb-admin-badge cb-admin-badge-info">
+        <span class="cb-admin-badge-icon">ST</span>
+    <span>1 template</span>
+</span>
+
+        </div>
+
+            <div class="cb-admin-strategy-usage-grid mt-6">
+                    <div class="cb-admin-alert-item cb-admin-alert-item-warning" data-cb-strategy-usage-row>
+                        <div class="d-flex align-items-start justify-content-between gap-4">
+                            <div>
+                                <strong data-cb-strategy-usage-name>Scanner Handoff Smoke</strong>
+                                <small data-cb-strategy-usage-note>Published Live</small>
+                            </div>
+                            <span class="cb-admin-badge cb-admin-badge-warning">
+        <span class="cb-admin-badge-icon">PB</span>
+    <span>Guarded</span>
+</span>
+
+                        </div>
+                        <div class="cb-admin-summary-grid cb-admin-strategy-usage-meta">
+                            <div class="cb-admin-summary-card">
+                                <span class="cb-admin-summary-label">Template</span>
+                                <strong data-cb-strategy-usage-template>RSI Reversal</strong>
+                                <small data-cb-strategy-usage-validation>rsi-reversal · Valid</small>
+                            </div>
+                            <div class="cb-admin-summary-card">
+                                <span class="cb-admin-summary-label">Score</span>
+                                <strong class="cb-mono" data-cb-strategy-usage-score>0/100</strong>
+                                <small data-cb-strategy-usage-validation-summary>Strategy definition is valid. EnabledRules=3.</small>
+                            </div>
+                            <div class="cb-admin-summary-card">
+                                <span class="cb-admin-summary-label">Kullanım</span>
+                                <strong class="cb-mono">0</strong>
+                                <small>Signal sayısı</small>
+                            </div>
+                            <div class="cb-admin-summary-card">
+                                <span class="cb-admin-summary-label">Veto</span>
+                                <strong class="cb-mono">1</strong>
+                                <small>Oran 0%</small>
+                            </div>
+                        </div>
+                        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4">
+                            <div>
+                                <div class="cb-admin-info-strip-title">Son evaluation</div>
+                                <div class="cb-admin-info-strip-text" data-cb-strategy-usage-explainability>AccountEquityUnavailable</div>
+                                <div class="cb-admin-info-strip-text mt-2" data-cb-strategy-usage-rule-summary>RiskVeto=AccountEquityUnavailable; AccountEquityUnavailable</div>
+                            </div>
+                            <span class="cb-admin-info-strip-meta">- · - · Veto=AccountEquityUnavailable</span>
+                        </div>
+                    </div>
+            </div>
+    </div>
+</div>
+
+        
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-panel-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Confidence / Veto</div>
+                <div class="cb-admin-section-title">Global confidence ve veto summary</div>
+                <p class="cb-admin-section-description mb-0">Confidence ve veto durumu gerçek strategy health snapshot'ından özetlenir.</p>
+            </div>
+            <span class="cb-admin-badge cb-admin-badge-warning">
+        <span class="cb-admin-badge-icon">VT</span>
+    <span>Snapshot</span>
+</span>
+
+        </div>
+
+        <div class="cb-admin-confidence-grid mt-6">
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Model sa&#x11F;l&#x131;&#x11F;&#x131;</span>
+                    <strong>Guarded</strong>
+                    <small>Live / shadow mix</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Veto yo&#x11F;unlu&#x11F;u</span>
+                    <strong>0%</strong>
+                    <small>Veto / signal ratio</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Explainability</span>
+                    <strong>No signal</strong>
+                    <small>Recent signal feed</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Freshness</span>
+                    <strong>Veri yok</strong>
+                    <small>Latest generated signal</small>
+                </div>
+        </div>
+
+    </div>
+</div>
+
+    </div>
+
+    <div class="col-xl-5">
+        
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-panel-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">AI Health</div>
+                <div class="cb-admin-section-title">Model health ve recommendation durumu</div>
+            </div>
+            <span class="cb-admin-badge cb-admin-badge-warning">
+        <span class="cb-admin-badge-icon">AI</span>
+    <span>Guarded</span>
+</span>
+
+        </div>
+
+            <div class="cb-admin-ai-health-grid mt-6">
+                    <div class="cb-admin-summary-card">
+                        <span class="cb-admin-summary-label">Model sa&#x11F;l&#x131;&#x11F;&#x131;</span>
+                        <strong>Guarded</strong>
+                        <small>Live / shadow mix</small>
+                    </div>
+                    <div class="cb-admin-summary-card">
+                        <span class="cb-admin-summary-label">Veto yo&#x11F;unlu&#x11F;u</span>
+                        <strong>0%</strong>
+                        <small>Veto / signal ratio</small>
+                    </div>
+                    <div class="cb-admin-summary-card">
+                        <span class="cb-admin-summary-label">Explainability</span>
+                        <strong>No signal</strong>
+                        <small>Recent signal feed</small>
+                    </div>
+                    <div class="cb-admin-summary-card">
+                        <span class="cb-admin-summary-label">Freshness</span>
+                        <strong>Veri yok</strong>
+                        <small>Latest generated signal</small>
+                    </div>
+            </div>
+
+        <div class="cb-admin-inline-actions mt-6">
+            <a class="btn btn-primary font-weight-bolder" href="/admin">Dashboard bağlantısı</a>
+            <a class="btn btn-light-primary font-weight-bold" href="/admin/Audit">Audit / loglar</a>
+        </div>
+    </div>
+</div>
+
+        
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-panel-card" data-cb-strategy-explainability-card>
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Explainability</div>
+                <div class="cb-admin-section-title">Recommendation açıklaması</div>
+            </div>
+            <span class="cb-admin-badge cb-admin-badge-warning">
+        <span class="cb-admin-badge-icon">XP</span>
+    <span>Vetoed:AccountEquityUnavailable</span>
+</span>
+
+
+        </div>
+
+        <div class="cb-admin-profile-list mt-6">
+            <div class="cb-admin-profile-row"><span>Recommendation summary</span><strong data-cb-strategy-explainability-summary>BTCUSDT · 1m · 0/100</strong></div>
+            <div class="cb-admin-profile-row"><span>Strategy / Template</span><strong data-cb-strategy-explainability-template>scanner-handoff-smoke · RSI Reversal</strong></div>
+            <div class="cb-admin-profile-row"><span>Neden geçti / kalmadı</span><strong data-cb-strategy-explainability-reason>AccountEquityUnavailable</strong></div>
+        </div>
+
+        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6">
+            <div>
+                <div class="cb-admin-info-strip-title">Rule-level snapshot</div>
+                <div class="cb-admin-info-strip-text" data-cb-strategy-explainability-rules>RiskVeto=AccountEquityUnavailable; AccountEquityUnavailable</div>
+            </div>
+            <span class="cb-admin-info-strip-meta cb-mono" data-cb-strategy-explainability-at>2026-04-03 12:58:30</span>
+        </div>
+
+        <div class="cb-admin-inline-actions mt-6">
+            <a class="btn btn-light-primary font-weight-bold" href="/admin/Audit">Loglara git</a>
+            <a class="btn btn-light-primary font-weight-bold" href="/admin/StrategyAiMonitoring">Strategy / AI</a>
+        </div>
+    </div>
+</div>
+
+        <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-help-card">
+    <div class="card-body">
+        <div class="cb-admin-section-kicker">Monitoring Help</div>
+        <div class="cb-admin-section-title">Bu ekran neyi anlatır?</div>
+        <ul class="cb-admin-help-list mt-5 mb-0">
+            <li>Strategy usage bölümü, hangi template'lerin adoption ve problem yoğunluğu taşıdığını hızlı gösterir.</li>
+            <li>AI health alanı model versiyonu, son skor zamanı ve degraded/warming up durumlarını global ops tonunda özetler.</li>
+            <li>Confidence/veto paneli chart yerine kısa özet, eşik ve son sinyal penceresini gösterir.</li>
+            <li>Explainability detayları audit ve trace ekranları ile çapraz okunur.</li>
+        </ul>
+
+        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6">
+            <div>
+                <div class="cb-admin-info-strip-title">AI operasyon rehberi</div>
+                <div class="cb-admin-info-strip-text">Bu alan, strategy health ve veto yoğunluğu için hızlı operasyon kılavuzu sağlar.</div>
+            </div>
+            <span class="cb-admin-info-strip-meta">Ops</span>
+        </div>
+    </div>
+</div>
+
+    </div>
+</div>
+
+
+                        </div>
+                    </div>
+                </div>
+
+                <div class="footer py-4 d-flex flex-lg-column cb-shell-footer cb-admin-footer" id="kt_footer">
+                    <div class="container-fluid d-flex flex-column flex-md-row align-items-center justify-content-between">
+                        <div class="order-2 order-md-1">
+                            <span class="text-muted font-weight-bold mr-2">2026 ©</span>
+                            <span class="text-white-50">CoinBot Super Admin Shell</span>
+                        </div>
+                        <div class="nav nav-dark cb-footer-nav">
+                            <a class="nav-link pl-0 pr-5" href="/admin">Genel Bakış</a>
+                            <a class="nav-link pl-0 pr-5" href="/admin/Users">Kullanıcılar</a>
+                            <a class="nav-link pl-0 pr-0" href="/admin/SystemHealth">Sistem Sağlığı</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade cb-modal cb-admin-modal" id="cb_admin_confirm_modal" tabindex="-1" role="dialog" aria-labelledby="cb_admin_confirm_modal_title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="cb_admin_confirm_modal_title">Standart Onay</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="cb-modal-tone cb-modal-tone-warning" id="cb_admin_confirm_modal_tone">Standart confirm modal; kritik olmayan admin aksiyonları için foundation olarak ayrıldı.</div>
+                <p class="mb-0 text-muted" id="cb_admin_confirm_modal_message">Başlık, açıklama ve buton yerleşimi sonraki admin fazlarında aynı dil ile kullanılacaktır.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-dismiss="modal">Vazgeç</button>
+                <button type="button" class="btn btn-primary font-weight-bolder" data-dismiss="modal" id="cb_admin_confirm_modal_confirm">Onayla</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade cb-modal cb-admin-modal" id="cb_admin_danger_modal" tabindex="-1" role="dialog" aria-labelledby="cb_admin_danger_modal_title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="cb_admin_danger_modal_title">Danger Confirm</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="cb-modal-tone cb-modal-tone-danger" id="cb_admin_danger_modal_tone">Destructive action standardı: ikonografi, aksiyon özeti, audit reason ve geri alınamaz notu tek tip gösterilir.</div>
+                <p class="mb-4 text-muted" id="cb_admin_danger_modal_message">Gerçek enforcement bu fazda yoktur; yalnızca kontrollü danger UX ve çift onaya hazırlık zemini hazırlanmıştır.</p>
+                <div class="cb-admin-destructive-summary">
+                    <div class="cb-admin-destructive-icon">!</div>
+                    <div>
+                        <strong>Geri alınamaz olabilir</strong>
+                        <p class="mb-0 text-muted">Bu aksiyon bir kullanıcıyı, hizmet akışını veya global davranışı etkileyebilir. İptal / devam hiyerarşisi bilinçli olarak keskin tutulur.</p>
+                    </div>
+                </div>
+                <div class="cb-admin-audit-reason-wrap">
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+        <label class="cb-form-label mb-0">Audit reason</label>
+        <span class="cb-admin-badge cb-admin-badge-warning">
+        <span class="cb-admin-badge-icon">AR</span>
+    <span>Required</span>
+</span>
+
+
+    </div>
+    <textarea class="form-control cb-form-control cb-admin-audit-reason" rows="3" placeholder="Bu aksiyonun neden gerekti&#x11F;ini k&#x131;saca yaz&#x131;n"></textarea>
+    <div class="cb-field-feedback">Ger&#xE7;ek audit persistence yoktur; ancak reason alan&#x131; admin genelinde tek tip ve zorunlu g&#xF6;r&#xFC;n&#xFC;me yak&#x131;n b&#x131;rak&#x131;ld&#x131;.</div>
+</div>
+
+                <label class="cb-admin-double-confirm mt-4">
+                    <input type="checkbox" class="mr-2" />
+                    <span>Bu aksiyonun geniş etkisini anladım ve gerekli kontrolü yaptım.</span>
+                </label>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-dismiss="modal">İptal</button>
+                <button type="button" class="btn btn-danger font-weight-bolder" data-dismiss="modal" id="cb_admin_danger_modal_confirm">Devam Et</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade cb-modal cb-admin-modal" id="cb_admin_info_modal" tabindex="-1" role="dialog" aria-labelledby="cb_admin_info_modal_title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="cb_admin_info_modal_title">Info Modal</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="cb-admin-info-strip cb-admin-info-strip-info">
+                    <div>
+                        <div class="cb-admin-info-strip-title">Admin bilgi modalı</div>
+                        <div class="cb-admin-info-strip-text">Operasyon runbook, açıklama ve context bilgisi için ayrı info modal standardı tanımlandı.</div>
+                    </div>
+                    <span class="cb-admin-info-strip-meta">Read-only</span>
+                </div>
+
+                <div class="row mt-6">
+                    <div class="col-md-6 mb-4">
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">Header</span>
+                            <strong>Severity / context strip</strong>
+                            <small>Başlık ve risk notu aynı blokta kalır.</small>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-4">
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">Footer</span>
+                            <strong>Sticky actions</strong>
+                            <small>Primary / secondary aksiyonlar kontrollü kalır.</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-dismiss="modal">Kapat</button>
+                <button type="button" class="btn btn-primary font-weight-bolder" data-dismiss="modal" id="cb_admin_info_modal_confirm">Tamam</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="cb-drawer-backdrop" data-cb-drawer-close></div>
+<aside class="cb-drawer cb-admin-drawer" id="cb_admin_detail_drawer" aria-hidden="true">
+    <div class="cb-drawer-header cb-admin-drawer-header">
+        <div>
+            <div class="cb-drawer-eyebrow">Detail Drawer</div>
+            <h5 class="cb-drawer-title mb-0">Operasyonel detay standardı</h5>
+        </div>
+        <button type="button" class="btn btn-xs btn-icon btn-light" data-cb-drawer-close>
+            <span>&times;</span>
+        </button>
+    </div>
+    <div class="cb-admin-severity-strip">
+        <span class="cb-admin-severity-dot"></span>
+        <span>Severity / scope / owner bilgisi için sticky üst şerit</span>
+    </div>
+    <div class="cb-drawer-body cb-admin-drawer-body">
+        <div class="cb-section">
+            <div class="cb-section-title">Drawer kullanımı</div>
+            <p class="text-muted mb-0">Kullanıcı detayı, incident açıklaması ve exchange hesabı gibi yan panel akışları için admin standardı hazır.</p>
+        </div>
+        <div class="cb-section mt-6">
+            <div class="cb-section-title">Standart bölgeler</div>
+            <ul class="mb-0 pl-5 text-muted">
+                <li>Header + severity strip</li>
+                <li>Scrollable body</li>
+                <li>Sticky footer action alanı</li>
+            </ul>
+        </div>
+    </div>
+    <div class="cb-drawer-footer cb-admin-drawer-footer">
+        <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-drawer-close>Kapat</button>
+        <button type="button" class="btn btn-primary font-weight-bolder">Primary Action</button>
+    </div>
+</aside>
+
+<aside class="cb-drawer cb-admin-drawer" id="cb_admin_role_matrix_drawer" aria-hidden="true">
+    <div class="cb-drawer-header cb-admin-drawer-header">
+        <div>
+            <div class="cb-drawer-eyebrow">Role Matrix Detail</div>
+            <h5 class="cb-drawer-title mb-0">Scoped permission drawer</h5>
+        </div>
+        <button type="button" class="btn btn-xs btn-icon btn-light" data-cb-drawer-close>
+            <span>&times;</span>
+        </button>
+    </div>
+    <div class="cb-admin-severity-strip">
+        <span class="cb-admin-severity-dot"></span>
+        <span>Role matrix detail drawer placeholder / permission summary / escalation note</span>
+    </div>
+    <div class="cb-drawer-body cb-admin-drawer-body">
+        <div class="cb-section">
+            <div class="cb-section-title">Bu drawer ne için</div>
+            <p class="text-muted mb-0">Rol kapsamı, permission notları ve ek güvenlik açıklamaları yan panelde tekrar kullanılabilsin diye ayrıldı.</p>
+        </div>
+        <div class="cb-section mt-6">
+            <div class="cb-section-title">Örnek notlar</div>
+            <ul class="mb-0 pl-5 text-muted">
+                <li>Global ayarlar: yalnızca scoped re-auth ile</li>
+                <li>Bot operasyonları: destructive aksiyonlarda step-up beklenir</li>
+                <li>Audit erişimi: read-only rol ayrımı görünür kalır</li>
+            </ul>
+        </div>
+    </div>
+    <div class="cb-drawer-footer cb-admin-drawer-footer">
+        <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-drawer-close>Kapat</button>
+        <a class="btn btn-primary font-weight-bolder" href="/admin/RoleMatrix">Sayfaya git</a>
+    </div>
+</aside>
+
+<aside class="cb-drawer cb-admin-drawer cb-admin-user-drawer" id="cb_admin_user_drawer" aria-hidden="true">
+    <div class="cb-drawer-header cb-admin-drawer-header">
+        <div>
+            <div class="cb-drawer-eyebrow">User Detail</div>
+            <h5 class="cb-drawer-title mb-0">Kullanıcı detail drawer</h5>
+        </div>
+        <button type="button" class="btn btn-xs btn-icon btn-light" data-cb-drawer-close>
+            <span>&times;</span>
+        </button>
+    </div>
+    <div class="cb-admin-severity-strip">
+        <span class="cb-admin-severity-dot"></span>
+        <span>Kullanıcı güvenlik durumu, bot/exchange summary, risk özeti ve kontrollü aksiyonlar için reusable detail drawer</span>
+    </div>
+    <div class="cb-drawer-body cb-admin-drawer-body">
+        
+<div class="card card-custom gutter-b cb-card cb-admin-card">
+    <div class="card-body">
+        <div class="cb-admin-section-kicker">Profile Summary</div>
+        <div class="cb-admin-section-title">Profil özeti</div>
+
+<div class="cb-admin-state-wrap">
+    <div class="cb-state cb-empty-state cb-admin-state">
+        <div class="cb-state-icon">
+            <span>ID</span>
+        </div>
+        <div class="cb-state-body">
+            <h4 class="cb-state-title">Kullan&#x131;c&#x131; detay&#x131; yok</h4>
+            <p class="cb-state-text">Bu kullan&#x131;c&#x131; i&#xE7;in detail snapshot bulunamad&#x131;.</p>
+                <div class="cb-state-actions">
+                            <a href="/admin/Users" class="btn btn-primary font-weight-bolder">Kullan&#x131;c&#x131; listesi</a>
+                            <a href="/admin/SupportTools" class="btn btn-clean text-muted font-weight-bold">Destek ara&#xE7;lar&#x131;</a>
+                </div>
+            <div class="cb-state-meta">Read-only / retry / help yönlendirmeleri ortak admin kalite standardı ile tutulur.</div>
+        </div>
+    </div>
+</div>
+    </div>
+</div>
+
+        
+<div class="card card-custom gutter-b cb-card cb-admin-card">
+    <div class="card-body">
+        <div class="cb-admin-section-kicker">Security Status</div>
+        <div class="cb-admin-section-title">Güvenlik durumu</div>
+
+<div class="cb-admin-state-wrap">
+    <div class="cb-state cb-empty-state cb-admin-state">
+        <div class="cb-state-icon">
+            <span>SC</span>
+        </div>
+        <div class="cb-state-body">
+            <h4 class="cb-state-title">G&#xFC;venlik detay&#x131; yok</h4>
+            <p class="cb-state-text">Kullan&#x131;c&#x131; g&#xFC;venlik snapshot&#x27;u bulunamad&#x131;.</p>
+                <div class="cb-state-actions">
+                            <a href="/admin/Users" class="btn btn-primary font-weight-bolder">Kullan&#x131;c&#x131; listesi</a>
+                            <a href="/admin/SecurityEvents" class="btn btn-clean text-muted font-weight-bold">Security events</a>
+                </div>
+            <div class="cb-state-meta">Read-only / retry / help yönlendirmeleri ortak admin kalite standardı ile tutulur.</div>
+        </div>
+    </div>
+</div>
+    </div>
+</div>
+
+        
+<div class="card card-custom gutter-b cb-card cb-admin-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Bot Summary</div>
+                <div class="cb-admin-section-title">Bot özeti</div>
+            </div>
+            <span class="cb-admin-badge cb-admin-badge-neutral">
+        <span class="cb-admin-badge-icon">BT</span>
+    <span>Veri yok</span>
+</span>
+
+        </div>
+
+<div class="cb-admin-state-wrap">
+    <div class="cb-state cb-empty-state cb-admin-state">
+        <div class="cb-state-icon">
+            <span>BT</span>
+        </div>
+        <div class="cb-state-body">
+            <h4 class="cb-state-title">Bot detay&#x131; yok</h4>
+            <p class="cb-state-text">Kullan&#x131;c&#x131; i&#xE7;in bot snapshot&#x27;u bulunamad&#x131;.</p>
+                <div class="cb-state-actions">
+                            <a href="/admin/BotOperations" class="btn btn-primary font-weight-bolder">Bot operasyonlar&#x131;</a>
+                            <a href="/admin/Users" class="btn btn-clean text-muted font-weight-bold">Kullan&#x131;c&#x131; listesi</a>
+                </div>
+            <div class="cb-state-meta">Read-only / retry / help yönlendirmeleri ortak admin kalite standardı ile tutulur.</div>
+        </div>
+    </div>
+</div>
+
+        <a class="btn btn-light-primary font-weight-bold mt-5" href="/admin/BotOperations">Bot operasyonlarına git</a>
+    </div>
+</div>
+
+        
+<div class="card card-custom gutter-b cb-card cb-admin-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Exchange Summary</div>
+                <div class="cb-admin-section-title">Exchange özeti</div>
+            </div>
+            <span class="cb-admin-badge cb-admin-badge-neutral">
+        <span class="cb-admin-badge-icon">EX</span>
+    <span>Veri yok</span>
+</span>
+
+        </div>
+
+<div class="cb-admin-state-wrap">
+    <div class="cb-state cb-empty-state cb-admin-state">
+        <div class="cb-state-icon">
+            <span>EX</span>
+        </div>
+        <div class="cb-state-body">
+            <h4 class="cb-state-title">Exchange detay&#x131; yok</h4>
+            <p class="cb-state-text">Kullan&#x131;c&#x131; i&#xE7;in exchange snapshot&#x27;u bulunamad&#x131;.</p>
+                <div class="cb-state-actions">
+                            <a href="/admin/ExchangeAccounts" class="btn btn-primary font-weight-bolder">Exchange hesaplar&#x131;</a>
+                            <a href="/admin/Users" class="btn btn-clean text-muted font-weight-bold">Kullan&#x131;c&#x131; listesi</a>
+                </div>
+            <div class="cb-state-meta">Read-only / retry / help yönlendirmeleri ortak admin kalite standardı ile tutulur.</div>
+        </div>
+    </div>
+</div>
+
+        <a class="btn btn-light-primary font-weight-bold mt-5" href="/admin/ExchangeAccounts">Exchange hesaplarına git</a>
+    </div>
+</div>
+
+        
+<div class="card card-custom gutter-b cb-card cb-admin-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Risk Summary</div>
+                <div class="cb-admin-section-title">Risk ayarı özeti</div>
+            </div>
+            <span class="cb-admin-badge cb-admin-badge-neutral">
+        <span class="cb-admin-badge-icon">RK</span>
+    <span>Veri yok</span>
+</span>
+
+        </div>
+
+<div class="cb-admin-state-wrap">
+    <div class="cb-state cb-empty-state cb-admin-state">
+        <div class="cb-state-icon">
+            <span>RK</span>
+        </div>
+        <div class="cb-state-body">
+            <h4 class="cb-state-title">Risk detay&#x131; yok</h4>
+            <p class="cb-state-text">Kullan&#x131;c&#x131; risk snapshot&#x27;u bulunamad&#x131;.</p>
+                <div class="cb-state-actions">
+                            <a href="/admin/Users" class="btn btn-primary font-weight-bolder">Kullan&#x131;c&#x131; listesi</a>
+                            <a href="/admin/BotOperations" class="btn btn-clean text-muted font-weight-bold">Bot operasyonlar&#x131;</a>
+                </div>
+            <div class="cb-state-meta">Read-only / retry / help yönlendirmeleri ortak admin kalite standardı ile tutulur.</div>
+        </div>
+    </div>
+</div>
+
+        <a class="btn btn-light-primary font-weight-bold mt-5" href="/admin/Settings">Risk ayarlarına git</a>
+    </div>
+</div>
+
+        
+<div class="card card-custom gutter-b cb-card cb-admin-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Recent Activity</div>
+                <div class="cb-admin-section-title">Son aktiviteler</div>
+            </div>
+            <span class="cb-admin-badge cb-admin-badge-neutral">
+        <span class="cb-admin-badge-icon">TL</span>
+    <span>Veri yok</span>
+</span>
+
+        </div>
+
+<div class="cb-admin-state-wrap">
+    <div class="cb-state cb-empty-state cb-admin-state">
+        <div class="cb-state-icon">
+            <span>TL</span>
+        </div>
+        <div class="cb-state-body">
+            <h4 class="cb-state-title">Aktivite yok</h4>
+            <p class="cb-state-text">Bu kullan&#x131;c&#x131; i&#xE7;in activity snapshot bulunamad&#x131;.</p>
+                <div class="cb-state-actions">
+                            <a href="/admin/Audit" class="btn btn-primary font-weight-bolder">Audit / loglar</a>
+                            <a href="/admin/Users" class="btn btn-clean text-muted font-weight-bold">Kullan&#x131;c&#x131; listesi</a>
+                </div>
+            <div class="cb-state-meta">Read-only / retry / help yönlendirmeleri ortak admin kalite standardı ile tutulur.</div>
+        </div>
+    </div>
+</div>
+    </div>
+</div>
+
+        
+<div class="card card-custom gutter-b cb-card cb-admin-card">
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Critical Logs</div>
+                <div class="cb-admin-section-title">Son kritik loglar</div>
+            </div>
+            <a class="btn btn-light-primary font-weight-bold" href="/admin/Audit">Log merkezine git</a>
+        </div>
+
+<div class="cb-admin-state-wrap">
+    <div class="cb-state cb-empty-state cb-admin-state">
+        <div class="cb-state-icon">
+            <span>LG</span>
+        </div>
+        <div class="cb-state-body">
+            <h4 class="cb-state-title">Kritik log yok</h4>
+            <p class="cb-state-text">Bu kullan&#x131;c&#x131; i&#xE7;in kritik log kayd&#x131; bulunamad&#x131;.</p>
+                <div class="cb-state-actions">
+                            <a href="/admin/Audit" class="btn btn-primary font-weight-bolder">Audit / loglar</a>
+                            <a href="/admin/Users" class="btn btn-clean text-muted font-weight-bold">Kullan&#x131;c&#x131; listesi</a>
+                </div>
+            <div class="cb-state-meta">Read-only / retry / help yönlendirmeleri ortak admin kalite standardı ile tutulur.</div>
+        </div>
+    </div>
+</div>
+    </div>
+</div>
+
+    </div>
+    <div class="cb-drawer-footer cb-admin-drawer-footer cb-admin-user-drawer-footer">
+        <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-drawer-close>Kapat</button>
+        <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_user_note_modal" data-cb-modal-title="Admin notu ekle" data-cb-modal-message="Drawer içinden eklenen not iç kullanım amaçlıdır." data-cb-modal-confirm="Notu kaydet">Not ekle</button>
+        <a class="btn btn-primary font-weight-bolder" href="/admin/UserDetail/usr-001">Detay sayfası</a>
+    </div>
+</aside>
+
+<aside class="cb-drawer cb-admin-drawer" id="cb_admin_alarm_drawer" aria-hidden="true">
+    <div class="cb-drawer-header cb-admin-drawer-header">
+        <div>
+            <div class="cb-drawer-eyebrow">Alarm Detail</div>
+            <h5 class="cb-drawer-title mb-0">Kritik alarm detail drawer</h5>
+        </div>
+        <button type="button" class="btn btn-xs btn-icon btn-light" data-cb-drawer-close>
+            <span>&times;</span>
+        </button>
+    </div>
+    <div class="cb-admin-severity-strip">
+        <span class="cb-admin-severity-dot"></span>
+        <span>AI / Risk / Exchange / Worker / Security alarm detayları için reusable drawer placeholder</span>
+    </div>
+    <div class="cb-drawer-body cb-admin-drawer-body">
+        <div class="cb-section">
+            <div class="cb-section-title">Alarm summary</div>
+            <p class="text-muted mb-0">Kısa alarm başlığı, ilgili modül, son tetiklenme zamanı ve önerilen yönlendirme CTA'ları burada toplanır.</p>
+        </div>
+        <div class="cb-section mt-6">
+            <div class="cb-section-title">Sonraki aksiyonlar</div>
+            <ul class="mb-0 pl-5 text-muted">
+                <li>Audit &amp; Log merkezine git</li>
+                <li>Bildirim / Alarm merkezi ile karşılaştır</li>
+                <li>İlgili modül health ekranını aç</li>
+            </ul>
+        </div>
+    </div>
+    <div class="cb-drawer-footer cb-admin-drawer-footer">
+        <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-drawer-close>Kapat</button>
+        <a class="btn btn-primary font-weight-bolder" href="/admin/Notifications">Alarm merkezi</a>
+    </div>
+</aside>
+
+<aside class="cb-drawer cb-admin-drawer" id="cb_admin_job_drawer" aria-hidden="true">
+    <div class="cb-drawer-header cb-admin-drawer-header">
+        <div>
+            <div class="cb-drawer-eyebrow">Failed Job Detail</div>
+            <h5 class="cb-drawer-title mb-0">Failed / stuck job detail drawer</h5>
+        </div>
+        <button type="button" class="btn btn-xs btn-icon btn-light" data-cb-drawer-close>
+            <span>&times;</span>
+        </button>
+    </div>
+    <div class="cb-admin-severity-strip">
+        <span class="cb-admin-severity-dot"></span>
+        <span>Worker adı, son deneme, kısa hata özeti ve retry guidance için yan panel foundation</span>
+    </div>
+    <div class="cb-drawer-body cb-admin-drawer-body">
+        <div class="cb-section">
+            <div class="cb-section-title">Job summary</div>
+            <p class="text-muted mb-0">Ham stack trace yerine kısa ve okunabilir operasyon özeti gösterilir.</p>
+        </div>
+        <div class="cb-section mt-6">
+            <div class="cb-section-title">Scope</div>
+            <ul class="mb-0 pl-5 text-muted">
+                <li>Worker / queue kimliği</li>
+                <li>Son deneme zamanı</li>
+                <li>Retry veya escalation yönlendirmesi</li>
+            </ul>
+        </div>
+    </div>
+    <div class="cb-drawer-footer cb-admin-drawer-footer">
+        <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-drawer-close>Kapat</button>
+        <a class="btn btn-primary font-weight-bolder" href="/admin/Jobs">Job ekranı</a>
+    </div>
+</aside>
+
+<aside class="cb-drawer cb-admin-drawer cb-admin-exchange-drawer" id="cb_admin_exchange_drawer" aria-hidden="true">
+    <div class="cb-drawer-header cb-admin-drawer-header">
+        <div>
+            <div class="cb-drawer-eyebrow">Exchange Account Detail</div>
+            <h5 class="cb-drawer-title mb-0">Exchange account detail drawer</h5>
+        </div>
+        <button type="button" class="btn btn-xs btn-icon btn-light" data-cb-drawer-close>
+            <span>&times;</span>
+        </button>
+    </div>
+    <div class="cb-admin-severity-strip">
+        <span class="cb-admin-severity-dot"></span>
+        <span>Connection status, permission summary, freshness meta ve credential güvenlik notu aynı drawer içinde toplanır.</span>
+    </div>
+    <div class="cb-drawer-body cb-admin-drawer-body">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Bağlantı Özeti</div>
+                <div class="cb-admin-section-title">Connection summary</div>
+                <div class="cb-admin-profile-list mt-5">
+                    <div class="cb-admin-profile-row"><span>Kullanıcı</span><strong>Ops Primary</strong></div>
+                    <div class="cb-admin-profile-row"><span>Exchange</span><strong>Binance</strong></div>
+                    <div class="cb-admin-profile-row"><span>Mode</span><strong>Live</strong></div>
+                    <div class="cb-admin-profile-row"><span>Spot / Futures</span><strong>Futures</strong></div>
+                    <div class="cb-admin-profile-row"><span>Son sync</span><strong>11 dk önce</strong></div>
+                </div>
+                <div class="cb-admin-badge-stack mt-5">
+                    <span class="cb-admin-badge cb-admin-badge-warning">
+        <span class="cb-admin-badge-icon">CN</span>
+    <span>Degraded</span>
+</span>
+
+                    <span class="cb-admin-badge cb-admin-badge-critical">
+        <span class="cb-admin-badge-icon">MD</span>
+    <span>Live</span>
+</span>
+
+                    <span class="cb-admin-badge cb-admin-badge-warning">
+        <span class="cb-admin-badge-icon">MK</span>
+    <span>Futures</span>
+</span>
+
+                </div>
+            </div>
+        </div>
+
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Permission Summary</div>
+                <div class="cb-admin-section-title">İzin görünümü</div>
+                <div class="cb-admin-profile-list mt-5">
+                    <div class="cb-admin-profile-row"><span>Trade izni</span><strong>Enabled placeholder</strong></div>
+                    <div class="cb-admin-profile-row"><span>Futures izni</span><strong>Expected but uncertain</strong></div>
+                    <div class="cb-admin-profile-row"><span>Account read</span><strong>Available placeholder</strong></div>
+                    <div class="cb-admin-profile-row"><span>Withdrawal risk</span><strong>Flagged</strong></div>
+                </div>
+                <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-5">
+                    <div>
+                        <div class="cb-admin-info-strip-title">Permission mismatch notu</div>
+                        <div class="cb-admin-info-strip-text">Beklenen market capability ile görünen izinler aynı hizada değil. Gerçek fetch/check backend’i bu fazda yoktur.</div>
+                    </div>
+                    <span class="cb-admin-info-strip-meta">Mismatch</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Sağlık / Freshness</div>
+                <div class="cb-admin-section-title">Freshness ve retry sinyalleri</div>
+                <div class="cb-admin-summary-grid mt-5 cb-admin-user-summary-grid">
+                    <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Stale mi?</span><strong>Evet</strong><small>Threshold aşıldı placeholder</small></div>
+                    <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Last sync</span><strong>11 dk önce</strong><small>Delayed window</small></div>
+                    <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Repeated failure</span><strong>3x</strong><small>Retry guidance placeholder</small></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Kullanıcı / Bot Bağlantısı</div>
+                <div class="cb-admin-section-title">Kullanıcı ve bot ilişkisi</div>
+                <div class="cb-admin-summary-grid mt-5 cb-admin-user-summary-grid">
+                    <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Bağlı kullanıcı</span><strong>Ops Primary</strong><small>Detay sayfasına yönlenebilir</small></div>
+                    <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Bot sayısı</span><strong>4</strong><small>2 active / 2 paused placeholder</small></div>
+                    <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Mode etkisi</span><strong>Live heavy</strong><small>Bot operasyonları için dikkat seviyesi</small></div>
+                </div>
+                <a class="btn btn-light-primary font-weight-bold mt-5" href="/admin/UserDetail/usr-014">Kullanıcı ekranına git</a>
+            </div>
+        </div>
+
+        <div class="card card-custom gutter-b cb-card cb-admin-card mb-0">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Güvenlik Notu</div>
+                <div class="cb-admin-section-title">Credential güvenlik zemini</div>
+                <div class="cb-admin-profile-list mt-5">
+                    <div class="cb-admin-profile-row"><span>API key görünümü</span><strong>cbk_****_masked</strong></div>
+                    <div class="cb-admin-profile-row"><span>Secret</span><strong>Asla gösterilmez</strong></div>
+                </div>
+                <div class="cb-admin-info-strip cb-admin-info-strip-critical mt-5">
+                    <div>
+                        <div class="cb-admin-info-strip-title">Withdrawal risk görünürlüğü önemlidir</div>
+                        <div class="cb-admin-info-strip-text">Maskesiz credential veya secret rendering bu foundation içinde bilinçli olarak yoktur.</div>
+                    </div>
+                    <span class="cb-admin-info-strip-meta">Security</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="cb-drawer-footer cb-admin-drawer-footer">
+        <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-drawer-close>Kapat</button>
+        <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_exchange_retest_modal" data-cb-modal-title="Reconnect / retest" data-cb-modal-message="Gerçek retest backend’i yok; bu aksiyon yalnızca kontrol akışını temsil eder." data-cb-modal-confirm="Retest başlat">Retest</button>
+        <a class="btn btn-primary font-weight-bolder" href="/admin/UserDetail/usr-014">Kullanıcıya git</a>
+    </div>
+</aside>
+
+<div class="modal fade cb-modal cb-admin-modal" id="cb_admin_exchange_risk_modal" tabindex="-1" role="dialog" aria-labelledby="cb_admin_exchange_risk_modal_title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="cb_admin_exchange_risk_modal_title">Exchange Risk Warning</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+            </div>
+            <div class="modal-body">
+                <div class="cb-modal-tone cb-modal-tone-danger" id="cb_admin_exchange_risk_modal_tone">Withdrawal risk, permission mismatch ve stale state arasındaki farkı açıklayan bilgi modalı.</div>
+                <p class="mb-0 text-muted" id="cb_admin_exchange_risk_modal_message">Risk flag yalnızca görünürlük sağlar; gerçek enforcement ve remediation bu fazda yoktur.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-dismiss="modal">Kapat</button>
+                <a class="btn btn-primary font-weight-bolder" href="/admin/Audit">Loglara git</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade cb-modal cb-admin-modal" id="cb_admin_exchange_retest_modal" tabindex="-1" role="dialog" aria-labelledby="cb_admin_exchange_retest_modal_title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="cb_admin_exchange_retest_modal_title">Reconnect / Retest</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+            </div>
+            <div class="modal-body">
+                <div class="cb-modal-tone cb-modal-tone-warning" id="cb_admin_exchange_retest_modal_tone">Reconnect, sync retest veya permission re-check akışları için foundation modal.</div>
+                <p class="mb-4 text-muted" id="cb_admin_exchange_retest_modal_message">Gerçek retry/reconnect backend’i bağlı değildir; kullanıcıya hangi doğrulama akışının beklendiği gösterilir.</p>
+                <div class="cb-admin-critical-summary">Önce risk warning ve audit/log ilişkisi kontrol edilir, ardından manuel retest veya kullanıcıya yönlendirme yapılır.</div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-dismiss="modal">İptal</button>
+                <button type="button" class="btn btn-primary font-weight-bolder" data-cb-button-loading>
+                    <span class="cb-btn-label">Retest başlat</span>
+                    <span class="cb-btn-spinner"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<aside class="cb-drawer cb-admin-drawer cb-admin-worker-drawer" id="cb_admin_worker_drawer" aria-hidden="true">
+    <div class="cb-drawer-header cb-admin-drawer-header">
+        <div>
+            <div class="cb-drawer-eyebrow">Worker Detail</div>
+            <h5 class="cb-drawer-title mb-0">Worker health detail drawer</h5>
+        </div>
+        <button type="button" class="btn btn-xs btn-icon btn-light" data-cb-drawer-close>
+            <span>&times;</span>
+        </button>
+    </div>
+    <div class="cb-admin-severity-strip">
+        <span class="cb-admin-severity-dot"></span>
+        <span>Status, last heartbeat, stale warning ve retry guidance aynı worker drawer içinde toplanır.</span>
+    </div>
+    <div class="cb-drawer-body cb-admin-drawer-body">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Worker Summary</div>
+                <div class="cb-admin-section-title">Health summary</div>
+                <div class="cb-admin-profile-list mt-5">
+                    <div class="cb-admin-profile-row"><span>Worker</span><strong>ai-scoring-worker</strong></div>
+                    <div class="cb-admin-profile-row"><span>Status</span><strong>Degraded</strong></div>
+                    <div class="cb-admin-profile-row"><span>Last heartbeat</span><strong>91 sn önce</strong></div>
+                    <div class="cb-admin-profile-row"><span>Stale</span><strong>Threshold near</strong></div>
+                </div>
+                <div class="cb-admin-badge-stack mt-5">
+                    <span class="cb-admin-badge cb-admin-badge-degraded">
+        <span class="cb-admin-badge-icon">WK</span>
+    <span>Degraded</span>
+</span>
+
+                    <span class="cb-admin-badge cb-admin-badge-warning">
+        <span class="cb-admin-badge-icon">RT</span>
+    <span>Retrying</span>
+</span>
+
+                </div>
+            </div>
+        </div>
+
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Heartbeat / Retry</div>
+                <div class="cb-admin-section-title">Freshness guidance</div>
+                <div class="cb-admin-summary-grid mt-5 cb-admin-user-summary-grid">
+                    <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Last run</span><strong>2 dk önce</strong><small>Scheduler tick placeholder</small></div>
+                    <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Retry count</span><strong>2</strong><small>Retry budget placeholder</small></div>
+                    <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Uptime</span><strong>17d 04h</strong><small>Service uptime placeholder</small></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card card-custom gutter-b cb-card cb-admin-card mb-0">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Action Guidance</div>
+                <div class="cb-admin-section-title">Next steps</div>
+                <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-5">
+                    <div>
+                        <div class="cb-admin-info-strip-title">Stale worker uyarısı</div>
+                        <div class="cb-admin-info-strip-text">Retry veya recheck kararı verilmeden önce failed jobs ve incident summary birlikte incelenir.</div>
+                    </div>
+                    <span class="cb-admin-info-strip-meta">Ops</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="cb-drawer-footer cb-admin-drawer-footer">
+        <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-drawer-close>Kapat</button>
+        <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_job_retry_modal" data-cb-modal-title="Worker retry / recheck" data-cb-modal-message="Worker retry placeholder akışı gerçek runtime kontrolü yerine güvenli operatör dilini temsil eder." data-cb-modal-confirm="Retry başlat">Retry / recheck</button>
+        <a class="btn btn-primary font-weight-bolder" href="/admin/Jobs">Job görünümü</a>
+    </div>
+</aside>
+
+<div class="modal fade cb-modal cb-admin-modal" id="cb_admin_job_retry_modal" tabindex="-1" role="dialog" aria-labelledby="cb_admin_job_retry_modal_title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="cb_admin_job_retry_modal_title">Retry / Recheck</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+            </div>
+            <div class="modal-body">
+                <div class="cb-modal-tone cb-modal-tone-warning" id="cb_admin_job_retry_modal_tone">Retry, recheck veya manual intervention akışları için foundation modal.</div>
+                <p class="mb-4 text-muted" id="cb_admin_job_retry_modal_message">Gerçek retry backend'i yoktur; bu modal yalnızca operatörün hangi etkileri gözden geçirmesi gerektiğini anlatır.</p>
+                <div class="cb-admin-critical-summary">Önce stale/heartbeat durumu, ardından failed jobs ve incident severity birlikte değerlendirilir.</div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-dismiss="modal">İptal</button>
+                <button type="button" class="btn btn-primary font-weight-bolder" data-cb-button-loading>
+                    <span class="cb-btn-label">Retry başlat</span>
+                    <span class="cb-btn-spinner"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade cb-modal cb-admin-modal" id="cb_admin_ai_health_modal" tabindex="-1" role="dialog" aria-labelledby="cb_admin_ai_health_modal_title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="cb_admin_ai_health_modal_title">AI Health Detail</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="cb-admin-info-strip cb-admin-info-strip-warning">
+                    <div>
+                        <div class="cb-admin-info-strip-title">AI summary placeholder</div>
+                        <div class="cb-admin-info-strip-text">Model versiyonu, freshness ve düşük güven yoğunluğu için detay modal foundation'ı.</div>
+                    </div>
+                    <span class="cb-admin-info-strip-meta">AI</span>
+                </div>
+                <div class="row mt-6">
+                    <div class="col-md-6 mb-4">
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">Health</span>
+                            <strong>Degraded</strong>
+                            <small>Warming up / paused / healthy state aynı yapı ile sunulur.</small>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-4">
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">Last score</span>
+                            <strong class="cb-mono">4 dk önce</strong>
+                            <small>Freshness threshold yakınında.</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-dismiss="modal">Kapat</button>
+                <a class="btn btn-primary font-weight-bolder" href="/admin/StrategyAiMonitoring">AI ekranı</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade cb-modal cb-admin-modal" id="cb_admin_ai_explain_modal" tabindex="-1" role="dialog" aria-labelledby="cb_admin_ai_explain_modal_title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="cb_admin_ai_explain_modal_title">Explainability Sample Detail</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="cb-admin-info-strip cb-admin-info-strip-info">
+                    <div>
+                        <div class="cb-admin-info-strip-title">Explainability foundation</div>
+                        <div class="cb-admin-info-strip-text">Gerçek feature importance veya SHAP benzeri detaylar olmadan, recommendation nedenlerini ve veto notlarını taranabilir biçimde gösteren bilgi modalı.</div>
+                    </div>
+                    <span class="cb-admin-info-strip-meta">Explain</span>
+                </div>
+                <div class="cb-admin-profile-list mt-6">
+                    <div class="cb-admin-profile-row"><span>Recommendation</span><strong>BTCUSDT · Long watch</strong></div>
+                    <div class="cb-admin-profile-row"><span>Positive signals</span><strong>Trend, momentum, volume alignment placeholder</strong></div>
+                    <div class="cb-admin-profile-row"><span>Veto note</span><strong>Confidence band ve macro risk nedeniyle soft veto placeholder</strong></div>
+                </div>
+                <div class="cb-admin-chip-list mt-6">
+                    <span class="cb-admin-filter-chip">Trend</span>
+                    <span class="cb-admin-filter-chip">Momentum</span>
+                    <span class="cb-admin-filter-chip">Volume</span>
+                    <span class="cb-admin-filter-chip">Risk guard</span>
+                    <span class="cb-admin-filter-chip">Soft veto</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-dismiss="modal">Kapat</button>
+                <a class="btn btn-primary font-weight-bolder" href="/admin/Audit">Audit / loglar</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade cb-modal cb-admin-modal" id="cb_admin_reauth_modal" tabindex="-1" role="dialog" aria-labelledby="cb_admin_reauth_modal_title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="cb_admin_reauth_modal_title">Step-Up Security</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="cb-admin-info-strip cb-admin-info-strip-warning">
+                    <div>
+                        <div class="cb-admin-info-strip-title">Yeniden doğrulama istenebilir</div>
+                        <div class="cb-admin-info-strip-text">Kullanıcı silme, bot force stop, maintenance mode veya global ayar değişimi gibi aksiyonlar öncesi parola ve MFA tekrar sorulabilir.</div>
+                    </div>
+                    <span class="cb-admin-info-strip-meta">Step-Up</span>
+                </div>
+
+                <div class="cb-admin-modal-form-grid mt-6">
+                    <div class="form-group mb-0">
+                        <label class="cb-form-label">İşlem özeti</label>
+                        <div class="cb-admin-critical-summary">Global ayar değişimi placeholder / session boundary re-check</div>
+                    </div>
+
+                    <div class="form-group mb-0">
+                        <label class="cb-form-label">Parolayı tekrar gir</label>
+                        <div class="cb-auth-password-wrap">
+                            <input type="password" id="cb_admin_reauth_password" class="form-control cb-form-control cb-form-control-with-action" placeholder="Parola" autocomplete="current-password" />
+                            <button type="button" class="cb-auth-field-action" data-cb-password-toggle data-cb-password-target="#cb_admin_reauth_password">Göster</button>
+                        </div>
+                    </div>
+
+                    <div class="form-group mb-0">
+                        <label class="cb-form-label">MFA code</label>
+                        <div class="cb-otp-group" data-cb-otp-group>
+                            <input type="text" inputmode="numeric" maxlength="1" class="form-control cb-otp-input" data-cb-otp />
+                            <input type="text" inputmode="numeric" maxlength="1" class="form-control cb-otp-input" data-cb-otp />
+                            <input type="text" inputmode="numeric" maxlength="1" class="form-control cb-otp-input" data-cb-otp />
+                            <input type="text" inputmode="numeric" maxlength="1" class="form-control cb-otp-input" data-cb-otp />
+                            <input type="text" inputmode="numeric" maxlength="1" class="form-control cb-otp-input" data-cb-otp />
+                            <input type="text" inputmode="numeric" maxlength="1" class="form-control cb-otp-input" data-cb-otp />
+                        </div>
+                    </div>
+
+                    <div class="cb-admin-audit-reason-wrap">
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+        <label class="cb-form-label mb-0">Step-up context</label>
+        <span class="cb-admin-badge cb-admin-badge-info">
+        <span class="cb-admin-badge-icon">AR</span>
+    <span>Optional</span>
+</span>
+
+
+    </div>
+    <textarea class="form-control cb-form-control cb-admin-audit-reason" rows="3" placeholder="Hangi kritik aksiyon i&#xE7;in yeniden do&#x11F;rulama gerekti&#x11F;ini not edin"></textarea>
+    <div class="cb-field-feedback">Step-up security placeholder; session boundary ve audit ba&#x11F;lam&#x131; birlikte g&#xF6;sterilir.</div>
+</div>
+
+
+                    <div class="cb-validation-summary cb-validation-summary-danger">
+                        Invalid credential veya invalid code state burada görünür. Gerçek doğrulama backend’i bu fazda bağlanmamıştır.
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-dismiss="modal">İptal</button>
+                <button type="button" class="btn btn-primary font-weight-bolder" data-cb-button-loading>
+                    <span class="cb-btn-label">Doğrulamayı tamamla</span>
+                    <span class="cb-btn-spinner"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade cb-modal cb-admin-modal" id="cb_admin_critical_confirm_modal" tabindex="-1" role="dialog" aria-labelledby="cb_admin_critical_confirm_modal_title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="cb_admin_critical_confirm_modal_title">Critical Confirm</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="cb-modal-tone cb-modal-tone-danger" id="cb_admin_critical_confirm_modal_tone">Kritik admin aksiyonları sıradan confirm ile değil; özet, audit reason ve gerekirse re-auth beklentisi ile ele alınır.</div>
+                <p class="mb-4 text-muted" id="cb_admin_critical_confirm_modal_message">Bu işlem geri alınamaz veya geniş etki alanına sahip olabilir.</p>
+
+                <div class="cb-admin-destructive-summary mb-4">
+                    <div class="cb-admin-destructive-icon">!</div>
+                    <div>
+                        <strong>Critical action summary</strong>
+                        <p class="mb-0 text-muted">İşlem özeti: kullanıcı askıya al / maintenance mode aç / global retention değiştir / emergency broadcast gönder placeholder.</p>
+                    </div>
+                </div>
+
+                <div class="cb-admin-audit-reason-wrap">
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+        <label class="cb-form-label mb-0">Audit reason</label>
+        <span class="cb-admin-badge cb-admin-badge-warning">
+        <span class="cb-admin-badge-icon">AR</span>
+    <span>Required</span>
+</span>
+
+
+    </div>
+    <textarea class="form-control cb-form-control cb-admin-audit-reason" rows="3" placeholder="Bu kritik aksiyonun neden gerekti&#x11F;ini a&#xE7;&#x131;k ve k&#x131;sa yaz&#x131;n"></textarea>
+    <div class="cb-field-feedback">Reason alan&#x131; kritik i&#x15F;lemlerde g&#xF6;r&#xFC;n&#xFC;r ve zorunluya yak&#x131;n tutulur; ger&#xE7;ek audit backend bu fazda ba&#x11F;l&#x131; de&#x11F;ildir.</div>
+</div>
+
+
+                <label class="cb-admin-double-confirm mt-4">
+                    <input type="checkbox" class="mr-2" />
+                    <span>Bu işlemin geri alınamaz veya geniş etki alanına sahip olabileceğini doğruluyorum.</span>
+                </label>
+            </div>
+            <div class="modal-footer cb-admin-critical-actions">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_reauth_modal" data-dismiss="modal">Re-auth gerekli olabilir</button>
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-dismiss="modal">İptal</button>
+                <button type="button" class="btn btn-danger font-weight-bolder" data-cb-button-loading>
+                    <span class="cb-btn-label">Devam et</span>
+                    <span class="cb-btn-spinner"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade cb-modal cb-admin-modal" id="cb_admin_user_note_modal" tabindex="-1" role="dialog" aria-labelledby="cb_admin_user_note_modal_title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="cb_admin_user_note_modal_title">Admin Note</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="cb-modal-tone cb-modal-tone-warning" id="cb_admin_user_note_modal_tone">İç kullanım admin notu; kullanıcıya görünmez ve gerçek persistence bu fazda bağlı değildir.</div>
+                <p class="mb-4 text-muted" id="cb_admin_user_note_modal_message">Kısa operasyon notu, güvenlik gerekçesi veya takip ihtiyacı için placeholder modal foundation.</p>
+                <div class="cb-admin-modal-form-grid">
+                    <div class="form-group mb-0">
+                        <label class="cb-form-label">Note title</label>
+                        <input class="form-control cb-form-control" placeholder="Kısa iç not başlığı" />
+                    </div>
+                    <div class="form-group mb-0">
+                        <label class="cb-form-label">Admin note</label>
+                        <textarea class="form-control cb-form-control" rows="4" placeholder="Bu not yalnızca iç kullanım için görünür şekilde tasarlanmıştır"></textarea>
+                    </div>
+                    <div class="cb-field-feedback">Audit reason / internal comment standardı hazırdır. Gerçek note persistence ve audit kayıt akışı bu fazda yoktur.</div>
+                    <div class="cb-validation-summary cb-validation-summary-danger">Validation veya genel hata alanı burada görünür. Örneğin boş note veya yetki yetersizliği placeholder durumu.</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-dismiss="modal">İptal</button>
+                <button type="button" class="btn btn-primary font-weight-bolder" data-dismiss="modal" id="cb_admin_user_note_modal_confirm">Notu kaydet</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade cb-modal cb-admin-modal" id="cb_admin_permission_info_modal" tabindex="-1" role="dialog" aria-labelledby="cb_admin_permission_info_modal_title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="cb_admin_permission_info_modal_title">Permission Info</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="cb-admin-info-strip cb-admin-info-strip-info">
+                    <div>
+                        <div class="cb-admin-info-strip-title">Permission matrix nasıl okunur</div>
+                        <div class="cb-admin-info-strip-text">Var, sınırlı ve tam etiketleri gerçek policy sonucu değildir; kullanıcı beklentisini doğru ayarlamak için hazırlanmış foundation metinleridir.</div>
+                    </div>
+                    <span class="cb-admin-info-strip-meta">Guide</span>
+                </div>
+                <ul class="cb-admin-help-list mt-5">
+                    <li>Super Admin tam platform etkili yüzeyleri temsil eder.</li>
+                    <li>Admin ve Support rolleri scoped aksiyonlara indirgenebilir.</li>
+                    <li>Auditor ve Viewer rolleri destructive olmayan gözlem yüzeylerine yakın durur.</li>
+                </ul>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-dismiss="modal">Kapat</button>
+                <a class="btn btn-primary font-weight-bolder" href="/admin/RoleMatrix">Role matrix sayfası</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<aside class="cb-drawer cb-admin-drawer cb-admin-bot-drawer" id="cb_admin_bot_drawer" aria-hidden="true">
+    <div class="cb-drawer-header cb-admin-drawer-header">
+        <div>
+            <div class="cb-drawer-eyebrow">Bot Detail</div>
+            <h5 class="cb-drawer-title mb-0">Global bot detail drawer</h5>
+        </div>
+        <button type="button" class="btn btn-xs btn-icon btn-light" data-cb-drawer-close><span>&times;</span></button>
+    </div>
+    <div class="cb-admin-severity-strip">
+        <span class="cb-admin-severity-dot"></span>
+        <span>Strategy, risk, AI etkisi ve son event/hata özetleri tek drawer içinde operasyon kararına yardımcı olacak şekilde toplanır.</span>
+    </div>
+    <div class="cb-drawer-body cb-admin-drawer-body">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Bot Özeti</div>
+                <div class="cb-admin-section-title">Bağlantı ve mod özeti</div>
+                <div class="cb-admin-profile-list mt-5">
+                    <div class="cb-admin-profile-row"><span>Bot adı</span><strong>Delta Futures Surge</strong></div>
+                    <div class="cb-admin-profile-row"><span>Kullanıcı</span><strong>Growth Desk</strong></div>
+                    <div class="cb-admin-profile-row"><span>Bağlı exchange</span><strong>Binance Futures</strong></div>
+                    <div class="cb-admin-profile-row"><span>Market tipi</span><strong>Futures</strong></div>
+                    <div class="cb-admin-profile-row"><span>Paper / Live</span><strong>Live</strong></div>
+                    <div class="cb-admin-profile-row"><span>Durum</span><strong>Error / force-stop watch</strong></div>
+                </div>
+                <div class="cb-admin-badge-stack mt-5">
+                    <span class="cb-admin-badge cb-admin-badge-critical">
+        <span class="cb-admin-badge-icon">ST</span>
+    <span>Hata</span>
+</span>
+
+                    <span class="cb-admin-badge cb-admin-badge-warning">
+        <span class="cb-admin-badge-icon">MK</span>
+    <span>Futures</span>
+</span>
+
+                    <span class="cb-admin-badge cb-admin-badge-critical">
+        <span class="cb-admin-badge-icon">PL</span>
+    <span>Live</span>
+</span>
+
+                </div>
+            </div>
+        </div>
+
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Strategy Summary</div>
+                <div class="cb-admin-section-title">Template ve giriş/çıkış özeti</div>
+                <div class="cb-admin-summary-grid mt-5 cb-admin-user-summary-grid">
+                    <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Template</span><strong>Breakout vNext</strong><small>Strategy template placeholder</small></div>
+                    <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Giriş özeti</span><strong>Momentum + vol filter</strong><small>Entry rule placeholder</small></div>
+                    <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Çıkış özeti</span><strong>ATR trail / hard stop</strong><small>Exit rule placeholder</small></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Risk Summary</div>
+                <div class="cb-admin-section-title">Risk profili ve limitler</div>
+                <div class="cb-admin-profile-list mt-5">
+                    <div class="cb-admin-profile-row"><span>Risk profili</span><strong>Aggressive</strong></div>
+                    <div class="cb-admin-profile-row"><span>Leverage</span><strong>12x placeholder</strong></div>
+                    <div class="cb-admin-profile-row"><span>Limit özeti</span><strong>Max daily loss / pair cap placeholder</strong></div>
+                </div>
+                <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-5">
+                    <div>
+                        <div class="cb-admin-info-strip-title">Risk dikkat</div>
+                        <div class="cb-admin-info-strip-text">Live futures botlarında force stop ve leverage incelemesi birlikte ele alınır.</div>
+                    </div>
+                    <span class="cb-admin-info-strip-meta">Risk</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Son Event'ler</div>
+                <div class="cb-admin-section-title">Kısa activity listesi</div>
+                <div class="cb-admin-activity-list mt-5">
+                    <div class="cb-admin-activity-item"><strong>09:48</strong><span>Signal evaluated placeholder</span></div>
+                    <div class="cb-admin-activity-item"><strong>09:51</strong><span>Risk guard tetiklendi</span></div>
+                    <div class="cb-admin-activity-item"><strong>09:53</strong><span>Retry / cooldown placeholder</span></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Son Hatalar</div>
+                <div class="cb-admin-section-title">Severity-aware hata özeti</div>
+                <div class="cb-admin-log-list mt-5">
+                    <div class="cb-admin-log-item">
+                        <span class="cb-admin-badge cb-admin-badge-critical">
+        <span class="cb-admin-badge-icon">ER</span>
+    <span>Critical</span>
+</span>
+
+                        <div>
+                            <div class="cb-admin-user-name">Order reject placeholder</div>
+                            <div class="cb-admin-user-meta">Exchange response / retry backoff bilgisi maskeli özetle verilir.</div>
+                        </div>
+                    </div>
+                    <div class="cb-admin-log-item">
+                        <span class="cb-admin-badge cb-admin-badge-warning">
+        <span class="cb-admin-badge-icon">ER</span>
+    <span>Warning</span>
+</span>
+
+                        <div>
+                            <div class="cb-admin-user-name">Stale event window</div>
+                            <div class="cb-admin-user-meta">Event stream placeholder gecikmesi</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">AI Etkisi</div>
+                <div class="cb-admin-section-title">AI support placeholder</div>
+                <div class="cb-admin-summary-grid mt-5 cb-admin-user-summary-grid">
+                    <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">AI support</span><strong>Assisted</strong><small>Model influence placeholder</small></div>
+                    <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Confidence</span><strong>0.61</strong><small>Confidence influence placeholder</small></div>
+                    <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Veto</span><strong>Soft veto watch</strong><small>AI notu / veto placeholder</small></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="cb-drawer-footer cb-admin-drawer-footer">
+        <a class="btn btn-light-primary font-weight-bold" href="/admin/UserDetail/usr-042">Kullanıcı</a>
+        <a class="btn btn-light-primary font-weight-bold" href="/admin/ExchangeAccounts">Exchange</a>
+        <button type="button" class="btn btn-danger font-weight-bolder" data-toggle="modal" data-target="#cb_admin_bot_force_stop_modal" data-dismiss="modal">Force stop</button>
+    </div>
+</aside>
+
+
+<div class="modal fade cb-modal cb-admin-modal" id="cb_admin_bot_force_stop_modal" tabindex="-1" role="dialog" aria-labelledby="cb_admin_bot_force_stop_modal_title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="cb_admin_bot_force_stop_modal_title">Botu force stop et</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="cb-modal-tone cb-modal-tone-danger" id="cb_admin_bot_force_stop_modal_tone">Force stop, kritik ve geniş etkili bir aksiyon olarak ele alınır. Gerçek runtime execution bu fazda bağlı değildir.</div>
+                <p class="mb-4 text-muted" id="cb_admin_bot_force_stop_modal_message">Bot stratejisi, risk guard ve açık işlem etkisi aynı anda değerlendirilmelidir.</p>
+
+                <div class="cb-admin-critical-summary mb-4">
+                    İşlem özeti: seçili bot veya tekil bot için acil durdurma placeholder akışı. Audit reason ve gerekiyorsa re-auth beklentisi ile sunulur.
+                </div>
+
+                <div class="form-group mb-0">
+                    <label class="cb-form-label">Audit reason placeholder</label>
+                    <textarea class="form-control cb-form-control" rows="3" placeholder="Force stop nedenini kısaca yazın"></textarea>
+                    <div class="cb-field-feedback">Gerçek persist ve runtime stop işlemi yoktur; sadece kontrollü danger confirm foundation'ı vardır.</div>
+                </div>
+            </div>
+            <div class="modal-footer cb-admin-critical-actions">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_reauth_modal" data-dismiss="modal">Re-auth gerekli olabilir</button>
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-dismiss="modal">İptal</button>
+                <button type="button" class="btn btn-danger font-weight-bolder" data-cb-button-loading>
+                    <span class="cb-btn-label">Force stop</span>
+                    <span class="cb-btn-spinner"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<aside class="cb-drawer cb-admin-drawer cb-admin-log-drawer" id="cb_admin_log_drawer" aria-hidden="true">
+    <div class="cb-drawer-header cb-admin-drawer-header">
+        <div>
+            <div class="cb-drawer-eyebrow">Global Log Detail</div>
+            <h5 class="cb-drawer-title mb-0">Audit / log detail drawer</h5>
+        </div>
+        <button type="button" class="btn btn-xs btn-icon btn-light" data-cb-drawer-close>
+            <span>&times;</span>
+        </button>
+    </div>
+    <div class="cb-admin-severity-strip">
+        <span class="cb-admin-severity-dot"></span>
+        <span>Başlık, severity, kategori, zaman, ilişkili entity, reason tags ve next action placeholder alanlarını tek drawer içinde toplar.</span>
+    </div>
+    <div class="cb-drawer-body cb-admin-drawer-body">
+        <div class="cb-section">
+            <div class="cb-section-title">Olay özeti</div>
+            <div class="cb-admin-profile-list mt-4">
+                <div class="cb-admin-profile-row"><span>Başlık</span><strong>Step-up doğrulama policy mismatch</strong></div>
+                <div class="cb-admin-profile-row"><span>Severity</span><strong>Critical</strong></div>
+                <div class="cb-admin-profile-row"><span>Kategori</span><strong>Security</strong></div>
+                <div class="cb-admin-profile-row"><span>Zaman</span><strong>2026-03-21 20:14</strong></div>
+            </div>
+        </div>
+        <div class="cb-section mt-6">
+            <div class="cb-section-title">Geniş açıklama</div>
+            <p class="text-muted mb-0">Gerçek payload gösterilmeden, olayın kısa ama operasyonel açıklaması, ilişkili modül ve beklenen sonraki adım placeholder olarak sunulur.</p>
+        </div>
+        <div class="cb-section mt-6">
+            <div class="cb-section-title">İlişkili entity / reason tags</div>
+            <div class="cb-admin-chip-list mt-4">
+                <span class="cb-admin-filter-chip">admin-settings</span>
+                <span class="cb-admin-filter-chip">step-up</span>
+                <span class="cb-admin-filter-chip">guard</span>
+                <span class="cb-admin-filter-chip">policy</span>
+            </div>
+        </div>
+        <div class="cb-section mt-6">
+            <div class="cb-section-title">Next action</div>
+            <ul class="mb-0 pl-5 text-muted">
+                <li>İlgili kullanıcı veya admin action zincirini incele</li>
+                <li>Runtime / security yüzeyleriyle korelasyon kur</li>
+                <li>Retention ve export scope’unu doğrula</li>
+            </ul>
+        </div>
+    </div>
+    <div class="cb-drawer-footer cb-admin-drawer-footer">
+        <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-drawer-close>Kapat</button>
+        <a class="btn btn-light-primary font-weight-bold" href="/admin/SecurityEvents">Security olayları</a>
+        <a class="btn btn-primary font-weight-bolder" href="/admin/Audit">Listeye dön</a>
+    </div>
+</aside>
+
+<div class="modal fade cb-modal cb-admin-modal" id="cb_admin_log_export_modal" tabindex="-1" role="dialog" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content cb-admin-modal-content">
+            <div class="modal-header cb-admin-modal-header">
+                <div>
+                    <div class="cb-modal-eyebrow">Export Placeholder</div>
+                    <h5 class="modal-title mb-0">Global log export</h5>
+                </div>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body cb-admin-modal-body">
+                <div class="cb-modal-tone cb-modal-tone-info">
+                    Export yalnızca placeholder’dır; gerçek export pipeline, archive store veya retention enforcement bu fazda yoktur.
+                </div>
+                <div class="cb-admin-critical-summary mt-6">
+                    Export scope’u kategori, severity ve zaman filtresi ile sınırlandırılır; secrets/PII hiçbir durumda dışa verilmez.
+                </div>
+                <div class="cb-modal-form-grid mt-6">
+                    <div>
+                        <label class="cb-form-label">Kategori scope</label>
+                        <select class="form-control cb-form-control">
+                            <option>Security + Admin Actions</option>
+                            <option>Runtime</option>
+                            <option>All placeholder</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="cb-form-label">Export nedeni</label>
+                        <input class="form-control cb-form-control" placeholder="Audit review / investigation placeholder" />
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer cb-admin-modal-footer">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-dismiss="modal">İptal</button>
+                <button type="button" class="btn btn-primary font-weight-bolder">Export başlat</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<aside class="cb-drawer cb-admin-drawer cb-admin-alert-drawer" id="cb_admin_alert_drawer" aria-hidden="true">
+    <div class="cb-drawer-header cb-admin-drawer-header">
+        <div>
+            <div class="cb-drawer-eyebrow">Alert Detail</div>
+            <h5 class="cb-drawer-title mb-0">Platform alarm detail drawer</h5>
+        </div>
+        <button type="button" class="btn btn-xs btn-icon btn-light" data-cb-drawer-close>
+            <span>&times;</span>
+        </button>
+    </div>
+    <div class="cb-admin-severity-strip">
+        <span class="cb-admin-severity-dot"></span>
+        <span>Severity, source, unread/read ve ilgili modül CTA aynı drawer içinde toplanır.</span>
+    </div>
+    <div class="cb-drawer-body cb-admin-drawer-body">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Alarm Summary</div>
+                <div class="cb-admin-section-title">AI confidence band düştü</div>
+                <div class="cb-admin-profile-list mt-5">
+                    <div class="cb-admin-profile-row"><span>Severity</span><strong>Critical</strong></div>
+                    <div class="cb-admin-profile-row"><span>Source</span><strong>score-health-rule</strong></div>
+                    <div class="cb-admin-profile-row"><span>Zaman</span><strong>2026-03-21 09:42</strong></div>
+                    <div class="cb-admin-profile-row"><span>Durum</span><strong>Okunmamış</strong></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Short Detail</div>
+                <div class="cb-admin-section-title">Kısa alarm açıklaması</div>
+                <p class="text-muted mb-0 mt-4">Low confidence cluster ve veto ratio placeholder sinyalleri eşik altına indiği için AI recommendation health kritik alarm kategorisine taşındı.</p>
+            </div>
+        </div>
+
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Related Module</div>
+                <div class="cb-admin-section-title">İlgili modül ve sonraki adım</div>
+                <div class="cb-admin-profile-list mt-5">
+                    <div class="cb-admin-profile-row"><span>Modül</span><strong>Strategy / AI İzleme</strong></div>
+                    <div class="cb-admin-profile-row"><span>Next action</span><strong>AI health ve explainability sample karşılaştır</strong></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="cb-drawer-footer cb-admin-drawer-footer">
+        <button type="button" class="btn btn-light-primary font-weight-bold" data-toggle="modal" data-target="#cb_admin_confirm_modal" data-cb-modal-title="Okundu işaretle" data-cb-modal-message="Read/unread persist bu fazda bağlı değildir; aksiyon yalnızca foundation seviyesindedir." data-cb-modal-confirm="İşaretle">Okundu işaretle</button>
+        <a class="btn btn-primary font-weight-bolder" href="/admin/StrategyAiMonitoring">İlgili modüle git</a>
+        <button type="button" class="btn btn-light" data-cb-drawer-close>Kapat</button>
+    </div>
+</aside>
+
+<div class="modal fade cb-modal cb-admin-modal" id="cb_admin_alert_policy_modal" tabindex="-1" role="dialog" aria-labelledby="cb_admin_alert_policy_modal_title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="cb_admin_alert_policy_modal_title">Notification Policy Placeholder</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+            </div>
+            <div class="modal-body">
+                <div class="cb-modal-tone cb-modal-tone-warning">Rule/source, escalation, channel ve ack policy akışları için placeholder modal.</div>
+                <p class="mb-4 text-muted">Gerçek notification backend ve rule engine bu fazda yoktur; CTA yalnızca policy yönlendirme dilini hazırlar.</p>
+                <div class="cb-admin-critical-summary">Severity bazlı escalation, unread SLA ve modül bazlı routing sonraki fazlarda bu foundation üstüne bağlanacaktır.</div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light-primary font-weight-bold" data-dismiss="modal">Kapat</button>
+                <a class="btn btn-primary font-weight-bolder" href="/admin/Settings">Ayar placeholder</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+    <script>
+        var KTAppSettings = {
+            breakpoints: { sm: 576, md: 768, lg: 992, xl: 1200, xxl: 1400 },
+            colors: {
+                theme: {
+                    base: { white: '#ffffff', primary: '#6D5DF6', secondary: '#2C3553', success: '#1AC8A8', info: '#54B6FF', warning: '#F5A623', danger: '#FF5D73', light: '#202943', dark: '#0D1324' },
+                    light: { white: '#ffffff', primary: '#EFECFF', secondary: '#EEF1F7', success: '#D8FFF5', info: '#E6F7FF', warning: '#FFF4DF', danger: '#FFE3E7', light: '#F5F8FF', dark: '#D4DCEC' },
+                    inverse: { white: '#ffffff', primary: '#ffffff', secondary: '#D0D8EA', success: '#ffffff', info: '#ffffff', warning: '#101827', danger: '#ffffff', light: '#4F5D7A', dark: '#ffffff' }
+                },
+                gray: { 'gray-100': '#F8FAFC', 'gray-200': '#DCE3F2', 'gray-300': '#AAB7D1', 'gray-400': '#8291B2', 'gray-500': '#6C7A97', 'gray-600': '#52607B', 'gray-700': '#334155', 'gray-800': '#1E293B', 'gray-900': '#0F172A' }
+            },
+            'font-family': 'Poppins'
+        };
+    </script>
+    <script src="/metronic/assets/plugins/global/plugins.bundle.js?v=3Q4FQejP2MRHG42xeUwNGifugQlsWRPjvacMEg5Y0DA"></script>
+    <script src="/metronic/assets/js/scripts.bundle.js?v=LyZU16poGPlPaOwIeIBS-R5vw3KBVhIeCBruWgUBskg"></script>
+    <script src="/js/site.js?v=L58gOqV0zJTn8wZIHPY0-yJrjO_mcxMKz4kllaI9wlo"></script>
+    <script src="/js/auth-ui.js?v=gVVYUJdFyPNQQdUXXx4RMyHLlhpACvxYEpQEveZxQ0E"></script>
+    
+</body>
+</html>
+

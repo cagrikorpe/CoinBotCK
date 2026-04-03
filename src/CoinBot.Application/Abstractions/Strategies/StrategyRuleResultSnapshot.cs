@@ -9,4 +9,11 @@ public sealed record StrategyRuleResultSnapshot(
     StrategyRuleOperandKind? OperandKind,
     string? LeftValue,
     string? RightValue,
-    IReadOnlyCollection<StrategyRuleResultSnapshot> Children);
+    IReadOnlyCollection<StrategyRuleResultSnapshot> Children,
+    string? RuleId = null,
+    string? RuleType = null,
+    string? Timeframe = null,
+    decimal Weight = 1m,
+    bool Enabled = true,
+    string? Group = null,
+    string? Reason = null);

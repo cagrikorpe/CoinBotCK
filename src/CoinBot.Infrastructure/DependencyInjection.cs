@@ -249,6 +249,8 @@ public static class DependencyInjection
         services.AddSingleton<ICredentialKeyResolver, CredentialKeyResolver>();
         services.AddSingleton<ICredentialCipher, Aes256CredentialCipher>();
         services.AddSingleton<IStrategyRuleParser, StrategyRuleParser>();
+        services.AddSingleton<IStrategyDefinitionValidator, StrategyDefinitionValidator>();
+        services.AddSingleton<IStrategyTemplateCatalogService, StrategyTemplateCatalogService>();
         services.AddSingleton<IStrategyEvaluatorService, StrategyEvaluatorService>();
         services.AddSingleton<MarketDataCachePolicyProvider>();
         services.AddSingleton<SharedSymbolRegistry>();
@@ -462,5 +464,6 @@ public static class DependencyInjection
         return services;
     }
 }
+
 
 

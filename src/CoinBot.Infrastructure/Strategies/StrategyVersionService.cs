@@ -9,8 +9,13 @@ namespace CoinBot.Infrastructure.Strategies;
 public sealed class StrategyVersionService(
     ApplicationDbContext dbContext,
     IStrategyRuleParser parser,
-    TimeProvider timeProvider) : IStrategyVersionService
+    TimeProvider timeProvider,
+    IStrategyDefinitionValidator? validator = null,
+    IStrategyTemplateCatalogService? templateCatalog = null) : IStrategyVersionService
 {
+    private readonly IStrategyDefinitionValidator validator = validator ?? new StrategyDefinitionValidator();
+    private readonly IStrategyTemplateCatalogService templateCatalog = templateCatalog ?? new StrategyTemplateCatalogService(parser, validator ?? new StrategyDefinitionValidator());
+
     public async Task<StrategyVersionSnapshot> CreateDraftAsync(
         Guid strategyId,
         string definitionJson,
@@ -20,7 +25,7 @@ public sealed class StrategyVersionService(
             .SingleOrDefaultAsync(entity => entity.Id == strategyId && !entity.IsDeleted, cancellationToken)
             ?? throw new InvalidOperationException($"Trading strategy '{strategyId}' was not found.");
 
-        var parsedDocument = parser.Parse(definitionJson);
+        var parsedDefinition = ParseAndValidate(definitionJson);
         var utcNow = GetUtcNow();
         var existingDrafts = await dbContext.TradingStrategyVersions
             .Where(entity => entity.TradingStrategyId == strategy.Id &&
@@ -43,7 +48,7 @@ public sealed class StrategyVersionService(
         {
             OwnerUserId = strategy.OwnerUserId,
             TradingStrategyId = strategy.Id,
-            SchemaVersion = parsedDocument.SchemaVersion,
+            SchemaVersion = parsedDefinition.Document.SchemaVersion,
             VersionNumber = nextVersionNumber + 1,
             Status = StrategyVersionStatus.Draft,
             DefinitionJson = definitionJson.Trim()
@@ -52,7 +57,16 @@ public sealed class StrategyVersionService(
         dbContext.TradingStrategyVersions.Add(version);
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        return ToSnapshot(version);
+        return ToSnapshot(version, parsedDefinition.Document, parsedDefinition.Validation);
+    }
+
+    public async Task<StrategyVersionSnapshot> CreateDraftFromTemplateAsync(
+        Guid strategyId,
+        string templateKey,
+        CancellationToken cancellationToken = default)
+    {
+        var template = await templateCatalog.GetAsync(templateKey, cancellationToken);
+        return await CreateDraftAsync(strategyId, template.DefinitionJson, cancellationToken);
     }
 
     public async Task<StrategyVersionSnapshot> PublishAsync(
@@ -73,7 +87,7 @@ public sealed class StrategyVersionService(
             throw new InvalidOperationException("Only draft strategy versions can be published.");
         }
 
-        parser.Parse(version.DefinitionJson);
+        _ = ParseAndValidate(version.DefinitionJson);
 
         var utcNow = GetUtcNow();
         var publishedVersions = await dbContext.TradingStrategyVersions
@@ -119,20 +133,78 @@ public sealed class StrategyVersionService(
         return ToSnapshot(version);
     }
 
+    private (StrategyRuleDocument Document, StrategyDefinitionValidationSnapshot Validation) ParseAndValidate(string definitionJson)
+    {
+        var document = parser.Parse(definitionJson);
+        var validation = validator.Validate(document);
+        if (!validation.IsValid)
+        {
+            throw new StrategyDefinitionValidationException(validation.StatusCode, validation.Summary, validation.FailureReasons);
+        }
+
+        return (document, validation);
+    }
+
     private DateTime GetUtcNow()
     {
         return timeProvider.GetUtcNow().UtcDateTime;
     }
 
-    private static StrategyVersionSnapshot ToSnapshot(TradingStrategyVersion version)
+    private StrategyVersionSnapshot ToSnapshot(TradingStrategyVersion version)
+    {
+        try
+        {
+            var parsedDefinition = ParseAndValidate(version.DefinitionJson);
+            return ToSnapshot(version, parsedDefinition.Document, parsedDefinition.Validation);
+        }
+        catch (StrategyDefinitionValidationException exception)
+        {
+            return new StrategyVersionSnapshot(
+                version.Id,
+                version.TradingStrategyId,
+                version.SchemaVersion,
+                version.VersionNumber,
+                version.Status,
+                version.PublishedAtUtc,
+                version.ArchivedAtUtc,
+                TemplateKey: null,
+                TemplateName: null,
+                ValidationStatusCode: exception.StatusCode,
+                ValidationSummary: exception.Message);
+        }
+        catch (StrategyRuleParseException exception)
+        {
+            return new StrategyVersionSnapshot(
+                version.Id,
+                version.TradingStrategyId,
+                version.SchemaVersion,
+                version.VersionNumber,
+                version.Status,
+                version.PublishedAtUtc,
+                version.ArchivedAtUtc,
+                TemplateKey: null,
+                TemplateName: null,
+                ValidationStatusCode: "ParseFailed",
+                ValidationSummary: exception.Message);
+        }
+    }
+
+    private static StrategyVersionSnapshot ToSnapshot(
+        TradingStrategyVersion version,
+        StrategyRuleDocument document,
+        StrategyDefinitionValidationSnapshot validation)
     {
         return new StrategyVersionSnapshot(
             version.Id,
             version.TradingStrategyId,
-            version.SchemaVersion,
+            document.SchemaVersion,
             version.VersionNumber,
             version.Status,
             version.PublishedAtUtc,
-            version.ArchivedAtUtc);
+            version.ArchivedAtUtc,
+            document.Metadata?.TemplateKey,
+            document.Metadata?.TemplateName,
+            validation.StatusCode,
+            validation.Summary);
     }
 }

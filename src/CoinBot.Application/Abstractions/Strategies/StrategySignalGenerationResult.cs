@@ -4,4 +4,7 @@ public sealed record StrategySignalGenerationResult(
     StrategyEvaluationResult EvaluationResult,
     IReadOnlyCollection<StrategySignalSnapshot> Signals,
     IReadOnlyCollection<StrategySignalVetoSnapshot> Vetoes,
-    int SuppressedDuplicateCount);
+    int SuppressedDuplicateCount)
+{
+    public StrategyEvaluationReportSnapshot? EvaluationReport { get; init; }
+}

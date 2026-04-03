@@ -53,11 +53,21 @@ public sealed class StrategySignalService(
                 $"Trading strategy '{version.TradingStrategyId}' was not found.");
 
         var normalizedContext = NormalizeContext(request.EvaluationContext);
+        var now = timeProvider.GetUtcNow().UtcDateTime;
         signalActivity.SetTag("coinbot.signal.strategy_id", strategy.Id.ToString());
         signalActivity.SetTag("coinbot.signal.environment", normalizedContext.Mode.ToString());
         signalActivity.SetTag("coinbot.signal.symbol", normalizedContext.IndicatorSnapshot.Symbol);
         signalActivity.SetTag("coinbot.signal.timeframe", normalizedContext.IndicatorSnapshot.Timeframe);
-        var evaluationResult = evaluator.Evaluate(version.DefinitionJson, normalizedContext);
+        var evaluationReport = evaluator.EvaluateReport(new StrategyEvaluationReportRequest(
+            version.TradingStrategyId,
+            version.Id,
+            version.VersionNumber,
+            strategy.StrategyKey,
+            strategy.DisplayName,
+            version.DefinitionJson,
+            normalizedContext,
+            now));
+        var evaluationResult = evaluationReport.RuleEvaluation;
         var candidateSignalTypes = GetCandidateSignalTypes(evaluationResult);
         signalActivity.SetTag("coinbot.signal.candidate_count", candidateSignalTypes.Count);
 
@@ -92,7 +102,10 @@ public sealed class StrategySignalService(
                 evaluationResult,
                 Array.Empty<StrategySignalSnapshot>(),
                 Array.Empty<StrategySignalVetoSnapshot>(),
-                SuppressedDuplicateCount: 0);
+                SuppressedDuplicateCount: 0)
+            {
+                EvaluationReport = evaluationReport
+            };
         }
 
         var persistedSignals = new List<TradingStrategySignal>(candidateSignalTypes.Count);
@@ -295,7 +308,10 @@ public sealed class StrategySignalService(
             evaluationResult,
             snapshots,
             vetoSnapshots,
-            suppressedDuplicateCount);
+            suppressedDuplicateCount)
+        {
+            EvaluationReport = evaluationReport
+        };
     }
 
     public async Task<StrategySignalSnapshot?> GetAsync(
@@ -883,3 +899,6 @@ public sealed class StrategySignalService(
             SerializerOptions);
     }
 }
+
+
+

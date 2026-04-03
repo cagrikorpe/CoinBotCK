@@ -271,6 +271,7 @@ public sealed class MarketScannerHandoffService(
                     symbolMetadata,
                     executionContext,
                     strategySignal,
+                    strategyResult,
                     cancellationToken);
                 return latestAttempt;
             }
@@ -533,13 +534,15 @@ public sealed class MarketScannerHandoffService(
         string symbol,
         string timeframe)
     {
+        var explainabilitySummary = BuildStrategyExplainabilitySummary(strategyResult.EvaluationReport);
+
         if (strategyVeto is not null)
         {
             return (
                 "StrategyVetoed",
                 strategyVeto.ConfidenceSnapshot.Summary,
                 "Vetoed",
-                $"StrategySignalVeto={strategyVeto.ConfidenceSnapshot.RiskReasonCode}; Symbol={symbol}; Timeframe={timeframe}");
+                Truncate($"StrategySignalVeto={strategyVeto.ConfidenceSnapshot.RiskReasonCode}; Symbol={symbol}; Timeframe={timeframe}; {explainabilitySummary}", 512) ?? $"StrategySignalVeto={strategyVeto.ConfidenceSnapshot.RiskReasonCode}; Symbol={symbol}; Timeframe={timeframe}");
         }
 
         if (strategyResult.SuppressedDuplicateCount > 0)
@@ -548,14 +551,14 @@ public sealed class MarketScannerHandoffService(
                 "DuplicateSignalSuppressed",
                 "Scanner handoff skipped execution request creation because the strategy signal was duplicate-suppressed.",
                 "SuppressedDuplicate",
-                $"StrategySignalDuplicateSuppressed={strategyResult.SuppressedDuplicateCount}; Symbol={symbol}; Timeframe={timeframe}");
+                Truncate($"StrategySignalDuplicateSuppressed={strategyResult.SuppressedDuplicateCount}; Symbol={symbol}; Timeframe={timeframe}; {explainabilitySummary}", 512) ?? $"StrategySignalDuplicateSuppressed={strategyResult.SuppressedDuplicateCount}; Symbol={symbol}; Timeframe={timeframe}");
         }
 
         return (
             "NoActionableSignal",
             $"Scanner handoff did not find an actionable entry signal for {symbol} {timeframe}.",
             "NoSignalCandidate",
-            $"StrategySignalOutcome=NoSignalCandidate; Symbol={symbol}; Timeframe={timeframe}");
+            Truncate($"StrategySignalOutcome=NoSignalCandidate; Symbol={symbol}; Timeframe={timeframe}; {explainabilitySummary}", 512) ?? $"StrategySignalOutcome=NoSignalCandidate; Symbol={symbol}; Timeframe={timeframe}");
     }
 
     private async Task<MarketScannerHandoffAttempt> PersistPreparedAttemptAsync(
@@ -566,6 +569,7 @@ public sealed class MarketScannerHandoffService(
         SymbolMetadataSnapshot? symbolMetadata,
         PreparedExecutionContext executionContext,
         StrategySignalSnapshot strategySignal,
+        StrategySignalGenerationResult strategyResult,
         CancellationToken cancellationToken)
     {
         var attempt = CreateAttempt(
@@ -581,7 +585,7 @@ public sealed class MarketScannerHandoffService(
             executionStatus: "Prepared",
             blockerCode: null,
             blockerDetail: null,
-            guardSummary: $"ExecutionGate=Allowed; UserExecutionOverride=Allowed; Symbol={candidate.Symbol}; Timeframe={klineInterval}");
+            guardSummary: BuildPreparedGuardSummary(candidate.Symbol, strategyResult, strategySignal));
 
         dbContext.MarketScannerHandoffAttempts.Add(attempt);
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -694,6 +698,43 @@ public sealed class MarketScannerHandoffService(
             CorrelationId = CreateCorrelationId(),
             CompletedAtUtc = nowUtc
         };
+    }
+
+    private string BuildPreparedGuardSummary(
+        string symbol,
+        StrategySignalGenerationResult strategyResult,
+        StrategySignalSnapshot strategySignal)
+    {
+        var explainabilitySummary = BuildStrategyExplainabilitySummary(strategyResult.EvaluationReport);
+        var signalSummary = string.IsNullOrWhiteSpace(strategySignal.ExplainabilityPayload.UiLog.Summary)
+            ? strategySignal.ExplainabilityPayload.ConfidenceSnapshot.Summary
+            : strategySignal.ExplainabilityPayload.UiLog.Summary;
+
+        return Truncate(
+            $"ExecutionGate=Allowed; UserExecutionOverride=Allowed; Symbol={symbol}; Timeframe={klineInterval}; StrategySignalSummary={signalSummary}; {explainabilitySummary}",
+            512)
+            ?? $"ExecutionGate=Allowed; UserExecutionOverride=Allowed; Symbol={symbol}; Timeframe={klineInterval}";
+    }
+
+    private static string BuildStrategyExplainabilitySummary(StrategyEvaluationReportSnapshot? report)
+    {
+        if (report is null)
+        {
+            return "StrategyExplainability=n/a";
+        }
+
+        var passedRules = report.PassedRules.Count == 0
+            ? "none"
+            : string.Join(" | ", report.PassedRules.Take(2));
+        var failedRules = report.FailedRules.Count == 0
+            ? "none"
+            : string.Join(" | ", report.FailedRules.Take(2));
+        var templateLabel = string.IsNullOrWhiteSpace(report.TemplateKey)
+            ? "custom"
+            : report.TemplateKey!.Trim();
+
+        return FormattableString.Invariant(
+            $"StrategyTemplate={templateLabel}; StrategyOutcome={report.Outcome}; StrategyScore={report.AggregateScore}; PassedRules={passedRules}; FailedRules={failedRules}; Explanation={report.ExplainabilitySummary}");
     }
 
     private static string BuildSelectionReason(MarketScannerCandidate? candidate)
@@ -895,5 +936,7 @@ public sealed class MarketScannerHandoffService(
         decimal Quantity,
         decimal Price);
 }
+
+
 
 

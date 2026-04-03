@@ -5,4 +5,6 @@ public interface IStrategyEvaluatorService
     StrategyEvaluationResult Evaluate(string definitionJson, StrategyEvaluationContext context);
 
     StrategyEvaluationResult Evaluate(StrategyRuleDocument document, StrategyEvaluationContext context);
+
+    StrategyEvaluationReportSnapshot EvaluateReport(StrategyEvaluationReportRequest request);
 }

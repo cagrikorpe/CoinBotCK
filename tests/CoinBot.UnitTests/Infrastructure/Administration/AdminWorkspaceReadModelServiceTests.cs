@@ -125,6 +125,119 @@ public sealed class AdminWorkspaceReadModelServiceTests
         Assert.DoesNotContain(snapshot.BotErrors, item => item.Name == "Range Bot");
     }
 
+    [Fact]
+    public async Task GetStrategyAiMonitoringAsync_ProjectsTemplateMetadata_AndLatestExplainabilitySnapshot()
+    {
+        var now = new DateTime(2026, 4, 3, 12, 0, 0, DateTimeKind.Utc);
+        await using var dbContext = CreateDbContext();
+
+        var strategyId = Guid.NewGuid();
+        var versionId = Guid.NewGuid();
+
+        dbContext.TradingStrategies.Add(new TradingStrategy
+        {
+            Id = strategyId,
+            OwnerUserId = "strategy-owner-001",
+            StrategyKey = "scanner-handoff-smoke",
+            DisplayName = "Scanner Handoff Smoke",
+            PublishedMode = ExecutionEnvironment.Live,
+            PublishedAtUtc = now.AddMinutes(-10),
+            CreatedDate = now.AddHours(-1),
+            UpdatedDate = now.AddMinutes(-10)
+        });
+
+        dbContext.TradingStrategyVersions.Add(new TradingStrategyVersion
+        {
+            Id = versionId,
+            OwnerUserId = "strategy-owner-001",
+            TradingStrategyId = strategyId,
+            SchemaVersion = 2,
+            VersionNumber = 1,
+            Status = StrategyVersionStatus.Published,
+            DefinitionJson = """
+                             {
+                               "schemaVersion": 2,
+                               "metadata": {
+                                 "templateKey": "rsi-reversal",
+                                 "templateName": "RSI Reversal"
+                               },
+                               "entry": {
+                                 "ruleId": "entry-mode",
+                                 "ruleType": "context",
+                                 "path": "context.mode",
+                                 "comparison": "equals",
+                                 "value": "Live",
+                                 "timeframe": "1m",
+                                 "weight": 20,
+                                 "enabled": true
+                               }
+                             }
+                             """,
+            PublishedAtUtc = now.AddMinutes(-10),
+            CreatedDate = now.AddHours(-1),
+            UpdatedDate = now.AddMinutes(-10)
+        });
+
+        dbContext.TradingStrategySignalVetoes.Add(new TradingStrategySignalVeto
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "strategy-owner-001",
+            TradingStrategyId = strategyId,
+            TradingStrategyVersionId = versionId,
+            StrategyVersionNumber = 1,
+            StrategySchemaVersion = 2,
+            SignalType = StrategySignalType.Entry,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            IndicatorOpenTimeUtc = now.AddMinutes(-1),
+            IndicatorCloseTimeUtc = now,
+            IndicatorReceivedAtUtc = now,
+            EvaluatedAtUtc = now,
+            ReasonCode = RiskVetoReasonCode.AccountEquityUnavailable,
+            RiskEvaluationJson = System.Text.Json.JsonSerializer.Serialize(new CoinBot.Application.Abstractions.Strategies.StrategySignalConfidenceSnapshot(
+                0,
+                CoinBot.Application.Abstractions.Strategies.StrategySignalConfidenceBand.Low,
+                0,
+                1,
+                true,
+                false,
+                true,
+                RiskVetoReasonCode.AccountEquityUnavailable,
+                false,
+                "AccountEquityUnavailable")),
+            CreatedDate = now,
+            UpdatedDate = now
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminWorkspaceReadModelService(
+            dbContext,
+            new FakeAdminMonitoringReadModelService(now),
+            new FakeTradingModeResolver(),
+            new FixedTimeProvider(now));
+
+        var snapshot = await service.GetStrategyAiMonitoringAsync("scanner-handoff-smoke");
+
+        var usageRow = Assert.Single(snapshot.UsageRows);
+        Assert.Equal("rsi-reversal", usageRow.TemplateKey);
+        Assert.Equal("RSI Reversal", usageRow.TemplateName);
+        Assert.Equal("Valid", usageRow.ValidationStatusCode);
+        Assert.Equal("0/100", usageRow.LatestScoreLabel);
+        Assert.Equal("AccountEquityUnavailable", usageRow.LatestExplainabilitySummary);
+        Assert.Contains("RiskVeto=AccountEquityUnavailable", usageRow.LatestRuleSummary, StringComparison.Ordinal);
+
+        Assert.Contains(snapshot.TemplateCatalog, template => template.TemplateKey == "rsi-reversal" && template.ValidationStatusCode == "Valid");
+        Assert.Equal("scanner-handoff-smoke", snapshot.LatestExplainability.StrategyKey);
+        Assert.Equal("BTCUSDT", snapshot.LatestExplainability.Symbol);
+        Assert.Equal("1m", snapshot.LatestExplainability.Timeframe);
+        Assert.Equal("Vetoed:AccountEquityUnavailable", snapshot.LatestExplainability.Outcome);
+        Assert.Equal("0/100", snapshot.LatestExplainability.ScoreLabel);
+        Assert.Equal("AccountEquityUnavailable", snapshot.LatestExplainability.Summary);
+        Assert.Contains("RiskVeto=AccountEquityUnavailable", snapshot.LatestExplainability.RuleSummary, StringComparison.Ordinal);
+        Assert.Equal("RSI Reversal", snapshot.LatestExplainability.TemplateName);
+    }
     private static ApplicationDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -173,3 +286,5 @@ public sealed class AdminWorkspaceReadModelServiceTests
         public bool HasIsolationBypass => true;
     }
 }
+
+

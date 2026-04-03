@@ -2,10 +2,12 @@ using System.Globalization;
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Monitoring;
+using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Identity;
 using CoinBot.Infrastructure.Persistence;
+using CoinBot.Infrastructure.Strategies;
 
 namespace CoinBot.Infrastructure.Administration;
 
@@ -13,12 +15,20 @@ public sealed partial class AdminWorkspaceReadModelService(
     ApplicationDbContext dbContext,
     IAdminMonitoringReadModelService monitoringReadModelService,
     ITradingModeResolver tradingModeResolver,
-    TimeProvider timeProvider) : IAdminWorkspaceReadModelService
+    TimeProvider timeProvider,
+    IStrategyRuleParser? strategyRuleParser = null,
+    IStrategyDefinitionValidator? strategyDefinitionValidator = null,
+    IStrategyTemplateCatalogService? strategyTemplateCatalogService = null) : IAdminWorkspaceReadModelService
 {
     private readonly ApplicationDbContext dbContext = dbContext;
     private readonly IAdminMonitoringReadModelService monitoringReadModelService = monitoringReadModelService;
     private readonly ITradingModeResolver tradingModeResolver = tradingModeResolver;
     private readonly TimeProvider timeProvider = timeProvider;
+    private readonly IStrategyRuleParser strategyRuleParser = strategyRuleParser ?? new StrategyRuleParser();
+    private readonly IStrategyDefinitionValidator strategyDefinitionValidator = strategyDefinitionValidator ?? new StrategyDefinitionValidator();
+    private readonly IStrategyTemplateCatalogService strategyTemplateCatalogService = strategyTemplateCatalogService ?? new StrategyTemplateCatalogService(
+        strategyRuleParser ?? new StrategyRuleParser(),
+        strategyDefinitionValidator ?? new StrategyDefinitionValidator());
 
     protected DateTime UtcNow => timeProvider.GetUtcNow().UtcDateTime;
 
@@ -155,3 +165,4 @@ public sealed partial class AdminWorkspaceReadModelService(
         };
     }
 }
+

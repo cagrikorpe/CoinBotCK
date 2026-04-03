@@ -1,0 +1,111 @@
+using CoinBot.Infrastructure.Strategies;
+
+namespace CoinBot.UnitTests.Infrastructure.Strategies;
+
+public sealed class StrategyDefinitionValidatorTests
+{
+    [Fact]
+    public void Validate_ReturnsValidSnapshot_ForSupportedSchemaAndRuleMetadata()
+    {
+        var parser = new StrategyRuleParser();
+        var validator = new StrategyDefinitionValidator();
+
+        var snapshot = validator.Validate(parser.Parse(
+            """
+            {
+              "schemaVersion": 2,
+              "metadata": { "templateKey": "rsi-reversal", "templateName": "RSI Reversal" },
+              "entry": {
+                "operator": "all",
+                "ruleId": "entry-root",
+                "ruleType": "group",
+                "timeframe": "1m",
+                "weight": 1,
+                "enabled": true,
+                "rules": [
+                  {
+                    "ruleId": "entry-rsi",
+                    "ruleType": "rsi",
+                    "path": "indicator.rsi.value",
+                    "comparison": "lessThanOrEqual",
+                    "value": 30,
+                    "timeframe": "1m",
+                    "weight": 10,
+                    "enabled": true
+                  }
+                ]
+              }
+            }
+            """));
+
+        Assert.True(snapshot.IsValid);
+        Assert.Equal("Valid", snapshot.StatusCode);
+        Assert.Equal(1, snapshot.EnabledRuleCount);
+    }
+
+    [Fact]
+    public void Validate_FailsClosed_WithExactReason_ForUnsupportedRuleType()
+    {
+        var parser = new StrategyRuleParser();
+        var validator = new StrategyDefinitionValidator();
+
+        var snapshot = validator.Validate(parser.Parse(
+            """
+            {
+              "schemaVersion": 2,
+              "entry": {
+                "path": "indicator.rsi.value",
+                "comparison": "lessThanOrEqual",
+                "value": 30,
+                "ruleId": "entry-rsi",
+                "ruleType": "unsupported",
+                "weight": 10,
+                "enabled": true
+              }
+            }
+            """));
+
+        Assert.False(snapshot.IsValid);
+        Assert.Equal("UnsupportedRuleType:entry:unsupported", snapshot.StatusCode);
+        Assert.Contains("UnsupportedRuleType:entry:unsupported", snapshot.Summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Validate_FailsClosed_ForDuplicateAndConflictingRules()
+    {
+        var parser = new StrategyRuleParser();
+        var validator = new StrategyDefinitionValidator();
+
+        var snapshot = validator.Validate(parser.Parse(
+            """
+            {
+              "schemaVersion": 2,
+              "entry": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "ruleId": "mode-live",
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Live",
+                    "weight": 10,
+                    "enabled": true
+                  },
+                  {
+                    "ruleId": "mode-live",
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Demo",
+                    "weight": 10,
+                    "enabled": true
+                  }
+                ]
+              }
+            }
+            """));
+
+        Assert.False(snapshot.IsValid);
+        Assert.Contains(snapshot.FailureReasons, reason => reason.StartsWith("DuplicateRuleId:", StringComparison.Ordinal));
+        Assert.Contains(snapshot.FailureReasons, reason => reason.StartsWith("ConflictingRule:", StringComparison.Ordinal));
+    }
+}

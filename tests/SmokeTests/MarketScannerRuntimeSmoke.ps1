@@ -5,6 +5,8 @@ $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $diagRoot = Join-Path $repoRoot '.diag\market-scanner-runtime-smoke'
 $summaryPath = Join-Path $diagRoot 'market-scanner-runtime-smoke-summary.json'
 $pageHtmlPath = Join-Path $diagRoot 'admin-system-health.html'
+$strategyPageHtmlPath = Join-Path $diagRoot 'admin-strategy-ai-monitoring.html'
+$strategyBuilderHtmlPath = Join-Path $diagRoot 'strategy-builder.html'
 $webStdOutPath = Join-Path $diagRoot 'web.stdout.log'
 $webStdErrPath = Join-Path $diagRoot 'web.stderr.log'
 
@@ -215,7 +217,7 @@ END;
 "@ -Parameters @{
         OwnerUserId = $adminRow.Id
         UtcNow = $UtcNow
-        DefinitionJson = '{ "schemaVersion": 1, "entry": { "operator": "all", "rules": [ { "path": "context.mode", "comparison": "equals", "value": "Live" } ] }, "risk": { "operator": "all", "rules": [ { "path": "indicator.sampleCount", "comparison": "greaterThanOrEqual", "value": 34 } ] } }'
+        DefinitionJson = '{ "schemaVersion": 2, "metadata": { "templateKey": "rsi-reversal", "templateName": "RSI Reversal" }, "entry": { "operator": "all", "ruleId": "entry-root", "ruleType": "group", "timeframe": "1m", "weight": 1, "enabled": true, "rules": [ { "ruleId": "entry-mode", "ruleType": "context", "path": "context.mode", "comparison": "equals", "value": "Live", "timeframe": "1m", "weight": 20, "enabled": true }, { "ruleId": "entry-rsi", "ruleType": "rsi", "path": "indicator.rsi.isReady", "comparison": "equals", "value": true, "timeframe": "1m", "weight": 80, "enabled": true } ] }, "risk": { "operator": "all", "ruleId": "risk-root", "ruleType": "group", "timeframe": "1m", "weight": 1, "enabled": true, "rules": [ { "ruleId": "risk-sample", "ruleType": "data-quality", "path": "indicator.sampleCount", "comparison": "greaterThanOrEqual", "value": 34, "timeframe": "1m", "weight": 20, "enabled": true } ] } }'
     } | Out-Null
 
     return $adminRow.Id
@@ -297,6 +299,20 @@ function Read-HtmlText {
     $value = [regex]::Replace($match.Groups['value'].Value, '<[^>]+>', ' ')
     $value = [System.Net.WebUtility]::HtmlDecode($value)
     return [regex]::Replace($value, '\s+', ' ').Trim()
+}
+
+function Read-HtmlAttribute {
+    param([string]$Html, [string]$SelectorAttribute, [string]$ValueAttribute)
+
+    $pattern = '<[^>]*' + [regex]::Escape($SelectorAttribute) + '[^>]*' + [regex]::Escape($ValueAttribute) + '="(?<value>[^"]*)"[^>]*>'
+    $match = [regex]::Match($Html, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::Singleline)
+    if (-not $match.Success) {
+        $pattern = '<[^>]*' + [regex]::Escape($ValueAttribute) + '="(?<value>[^"]*)"[^>]*' + [regex]::Escape($SelectorAttribute) + '[^>]*>'
+        $match = [regex]::Match($Html, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::Singleline)
+    }
+
+    if (-not $match.Success) { return $null }
+    return [System.Net.WebUtility]::HtmlDecode($match.Groups['value'].Value).Trim()
 }
 
 function Get-LatestScannerCycle {
@@ -427,6 +443,12 @@ try {
     $adminPage = Invoke-WebRequest -Uri ($baseUrl + '/admin/SystemHealth') -WebSession $session
     Set-Content -Path $pageHtmlPath -Value $adminPage.Content -Encoding UTF8
 
+    $strategyPage = Invoke-WebRequest -Uri ($baseUrl + '/admin/StrategyAiMonitoring') -WebSession $session
+    Set-Content -Path $strategyPageHtmlPath -Value $strategyPage.Content -Encoding UTF8
+
+    $strategyBuilderPage = Invoke-WebRequest -Uri ($baseUrl + '/StrategyBuilder') -WebSession $session
+    Set-Content -Path $strategyBuilderHtmlPath -Value $strategyBuilderPage.Content -Encoding UTF8
+
     $summary = [ordered]@{
         SmokeDatabaseName = $smokeDatabaseName
         BaseUrl = $baseUrl
@@ -454,7 +476,22 @@ try {
         UiHandoffBlocker = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-handoff-blocker'
         UiHandoffGuard = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-handoff-guard'
         UiHandoffAt = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-handoff-at'
+        UiHandoffScore = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-handoff-score'
+        UiStrategyUsageValidation = Read-HtmlText -Html $strategyPage.Content -DataAttribute 'data-cb-strategy-usage-validation'
+        UiStrategyUsageScore = Read-HtmlText -Html $strategyPage.Content -DataAttribute 'data-cb-strategy-usage-score'
+        UiStrategyUsageExplainability = Read-HtmlText -Html $strategyPage.Content -DataAttribute 'data-cb-strategy-usage-explainability'
+        UiStrategyUsageRuleSummary = Read-HtmlText -Html $strategyPage.Content -DataAttribute 'data-cb-strategy-usage-rule-summary'
+        UiStrategyExplainabilitySummary = Read-HtmlText -Html $strategyPage.Content -DataAttribute 'data-cb-strategy-explainability-summary'
+        UiStrategyExplainabilityTemplate = Read-HtmlText -Html $strategyPage.Content -DataAttribute 'data-cb-strategy-explainability-template'
+        UiStrategyExplainabilityReason = Read-HtmlText -Html $strategyPage.Content -DataAttribute 'data-cb-strategy-explainability-reason'
+        UiStrategyExplainabilityRules = Read-HtmlText -Html $strategyPage.Content -DataAttribute 'data-cb-strategy-explainability-rules'
+        UiTemplateCardKey = Read-HtmlAttribute -Html $strategyBuilderPage.Content -SelectorAttribute 'data-cb-template-card' -ValueAttribute 'data-cb-template-key'
+        UiTemplateCardName = Read-HtmlAttribute -Html $strategyBuilderPage.Content -SelectorAttribute 'data-cb-template-card' -ValueAttribute 'data-cb-template-name'
+        UiTemplateCardValidation = Read-HtmlAttribute -Html $strategyBuilderPage.Content -SelectorAttribute 'data-cb-template-card' -ValueAttribute 'data-cb-template-validation'
+        UiTemplateCardSchema = Read-HtmlAttribute -Html $strategyBuilderPage.Content -SelectorAttribute 'data-cb-template-card' -ValueAttribute 'data-cb-template-schema'
         PageHtmlPath = $pageHtmlPath
+        StrategyPageHtmlPath = $strategyPageHtmlPath
+        StrategyBuilderHtmlPath = $strategyBuilderHtmlPath
         WebStdOutPath = $webStdOutPath
         WebStdErrPath = $webStdErrPath
     }
@@ -475,11 +512,20 @@ try {
     Write-Host ('UiHandoffStatus=' + $summary.UiHandoffStatus)
     Write-Host ('UiHandoffSymbol=' + $summary.UiHandoffSymbol)
     Write-Host ('UiHandoffBlocker=' + $summary.UiHandoffBlocker)
+    Write-Host ('UiStrategyUsageValidation=' + $summary.UiStrategyUsageValidation)
+    Write-Host ('UiStrategyExplainabilitySummary=' + $summary.UiStrategyExplainabilitySummary)
+    Write-Host ('UiTemplateCard=' + $summary.UiTemplateCardKey + '/' + $summary.UiTemplateCardValidation)
     Write-Host ('SummaryPath=' + $summaryPath)
 }
 finally {
     Stop-ManagedProcess -Process $webProcess
 }
+
+
+
+
+
+
 
 
 

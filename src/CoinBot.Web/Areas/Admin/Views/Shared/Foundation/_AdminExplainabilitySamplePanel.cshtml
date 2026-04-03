@@ -1,33 +1,32 @@
-<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-panel-card">
+@using CoinBot.Application.Abstractions.Administration
+@{
+    var snapshot = ViewData["AdminStrategyAiMonitoringPageSnapshot"] as AdminStrategyAiMonitoringPageSnapshot
+        ?? AdminStrategyAiMonitoringPageSnapshot.Empty(DateTime.UtcNow);
+    var explainability = snapshot.LatestExplainability;
+}
+
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-panel-card" data-cb-strategy-explainability-card>
     <div class="card-body">
         <div class="cb-admin-panel-head">
             <div>
                 <div class="cb-admin-section-kicker">Explainability</div>
                 <div class="cb-admin-section-title">Recommendation açıklaması</div>
             </div>
-            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = "Explainable", Tone = "info", IconText = "XP" })
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = explainability.Outcome, Tone = explainability.Outcome.StartsWith("Vetoed", StringComparison.OrdinalIgnoreCase) ? "warning" : "info", IconText = "XP" })
         </div>
 
         <div class="cb-admin-profile-list mt-6">
-            <div class="cb-admin-profile-row"><span>Recommendation summary</span><strong>BTCUSDT · Long watch / assisted</strong></div>
-            <div class="cb-admin-profile-row"><span>Neden önerdi?</span><strong>Trend, momentum ve hacim sinyalleri uyum sağladı</strong></div>
-            <div class="cb-admin-profile-row"><span>Neden veto edildi?</span><strong>Risk bandı ve confidence eşiği uygun değildi</strong></div>
-        </div>
-
-        <div class="cb-admin-chip-list mt-6">
-            <span class="cb-admin-filter-chip">Trend güçlü</span>
-            <span class="cb-admin-filter-chip">Momentum uygun</span>
-            <span class="cb-admin-filter-chip">Hacim desteği</span>
-            <span class="cb-admin-filter-chip">Risk guard</span>
-            <span class="cb-admin-filter-chip">Soft veto</span>
+            <div class="cb-admin-profile-row"><span>Recommendation summary</span><strong data-cb-strategy-explainability-summary>@explainability.Symbol · @explainability.Timeframe · @explainability.ScoreLabel</strong></div>
+            <div class="cb-admin-profile-row"><span>Strategy / Template</span><strong data-cb-strategy-explainability-template>@explainability.StrategyKey · @explainability.TemplateName</strong></div>
+            <div class="cb-admin-profile-row"><span>Neden geçti / kalmadı</span><strong data-cb-strategy-explainability-reason>@explainability.Summary</strong></div>
         </div>
 
         <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6">
             <div>
-                <div class="cb-admin-info-strip-title">Explainability notu</div>
-                <div class="cb-admin-info-strip-text">Operasyonel neden-sonuç bağlamı, audit ve trace ekranlarıyla birlikte okunur.</div>
+                <div class="cb-admin-info-strip-title">Rule-level snapshot</div>
+                <div class="cb-admin-info-strip-text" data-cb-strategy-explainability-rules>@explainability.RuleSummary</div>
             </div>
-            <span class="cb-admin-info-strip-meta">Sample</span>
+            <span class="cb-admin-info-strip-meta cb-mono" data-cb-strategy-explainability-at>@(explainability.EvaluatedAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "No evaluation")</span>
         </div>
 
         <div class="cb-admin-inline-actions mt-6">
