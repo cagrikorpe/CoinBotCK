@@ -32,6 +32,8 @@ public sealed class BinanceWebSocketManagerTests
             memoryCache,
             cachePolicyProvider,
             new MarketPriceStreamHub(),
+            new TestSharedMarketDataCache(),
+            timeProvider,
             NullLogger<MarketDataService>.Instance);
         var indicatorDataService = new IndicatorDataService(
             marketDataService,
@@ -143,6 +145,8 @@ public sealed class BinanceWebSocketManagerTests
             memoryCache,
             cachePolicyProvider,
             new MarketPriceStreamHub(),
+            new TestSharedMarketDataCache(),
+            timeProvider,
             NullLogger<MarketDataService>.Instance);
         var indicatorDataService = new IndicatorDataService(
             marketDataService,
@@ -228,6 +232,8 @@ public sealed class BinanceWebSocketManagerTests
             memoryCache,
             cachePolicyProvider,
             new MarketPriceStreamHub(),
+            new TestSharedMarketDataCache(),
+            timeProvider,
             NullLogger<MarketDataService>.Instance);
         var indicatorDataService = new IndicatorDataService(
             marketDataService,
@@ -438,6 +444,62 @@ public sealed class BinanceWebSocketManagerTests
                     moveNextInFlight = false;
                 }
             }
+        }
+    }
+
+    private sealed class TestSharedMarketDataCache : ISharedMarketDataCache
+    {
+        private readonly Dictionary<string, SharedMarketDataCacheEntry<MarketPriceSnapshot>> entries = new(StringComparer.Ordinal);
+
+        public ValueTask<SharedMarketDataCacheWriteResult> WriteAsync<TPayload>(
+            SharedMarketDataCacheEntry<TPayload> entry,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (entry.Payload is MarketPriceSnapshot snapshot)
+            {
+                entries[SharedMarketDataCacheKeyBuilder.Build(entry.DataType, entry.Symbol, entry.Timeframe)] =
+                    new SharedMarketDataCacheEntry<MarketPriceSnapshot>(
+                        entry.DataType,
+                        entry.Symbol,
+                        entry.Timeframe,
+                        entry.UpdatedAtUtc,
+                        entry.CachedAtUtc,
+                        entry.FreshUntilUtc,
+                        entry.ExpiresAtUtc,
+                        entry.Source,
+                        snapshot);
+            }
+
+            return ValueTask.FromResult(SharedMarketDataCacheWriteResult.Written());
+        }
+
+        public ValueTask<SharedMarketDataCacheReadResult<TPayload>> ReadAsync<TPayload>(
+            SharedMarketDataCacheDataType dataType,
+            string symbol,
+            string? timeframe,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (!entries.TryGetValue(SharedMarketDataCacheKeyBuilder.Build(dataType, symbol, timeframe), out var entry) ||
+                entry.Payload is not TPayload payload)
+            {
+                return ValueTask.FromResult(SharedMarketDataCacheReadResult<TPayload>.Miss());
+            }
+
+            return ValueTask.FromResult(SharedMarketDataCacheReadResult<TPayload>.HitFresh(
+                new SharedMarketDataCacheEntry<TPayload>(
+                    entry.DataType,
+                    entry.Symbol,
+                    entry.Timeframe,
+                    entry.UpdatedAtUtc,
+                    entry.CachedAtUtc,
+                    entry.FreshUntilUtc,
+                    entry.ExpiresAtUtc,
+                    entry.Source,
+                    payload)));
         }
     }
 }

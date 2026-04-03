@@ -20,4 +20,15 @@ public sealed class MarketDataCachePolicyProvider(IOptions<InMemoryCacheOptions>
             .SetSize(1)
             .SetAbsoluteExpiration(TimeSpan.FromSeconds(optionsValue.LatestPriceTtlSeconds));
     }
+
+    public TimeSpan GetLatestPriceFreshness()
+    {
+        return TimeSpan.FromSeconds(optionsValue.LatestPriceTtlSeconds);
+    }
+
+    public TimeSpan GetLatestPriceRetention()
+    {
+        var freshnessSeconds = Math.Max(1, optionsValue.LatestPriceTtlSeconds);
+        return TimeSpan.FromSeconds(freshnessSeconds * 4);
+    }
 }

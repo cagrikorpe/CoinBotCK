@@ -10,6 +10,8 @@ public sealed class MarketDataService(
     IMemoryCache memoryCache,
     MarketDataCachePolicyProvider cachePolicyProvider,
     MarketPriceStreamHub streamHub,
+    ISharedMarketDataCache sharedMarketDataCache,
+    TimeProvider timeProvider,
     ILogger<MarketDataService> logger) : IMarketDataService
 {
     public ValueTask TrackSymbolAsync(string symbol, CancellationToken cancellationToken = default)
@@ -22,14 +24,29 @@ public sealed class MarketDataService(
         return symbolRegistry.TrackSymbolsAsync(symbols, cancellationToken);
     }
 
-    public ValueTask<MarketPriceSnapshot?> GetLatestPriceAsync(string symbol, CancellationToken cancellationToken = default)
+    public async ValueTask<MarketPriceSnapshot?> GetLatestPriceAsync(string symbol, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
         var normalizedSymbol = MarketDataSymbolNormalizer.Normalize(symbol);
-        memoryCache.TryGetValue(GetPriceCacheKey(normalizedSymbol), out MarketPriceSnapshot? snapshot);
+        var cacheResult = await sharedMarketDataCache.ReadAsync<MarketPriceSnapshot>(
+            SharedMarketDataCacheDataType.Ticker,
+            normalizedSymbol,
+            timeframe: null,
+            cancellationToken);
 
-        return ValueTask.FromResult(snapshot);
+        if (cacheResult.Status == SharedMarketDataCacheReadStatus.HitFresh)
+        {
+            return cacheResult.Entry?.Payload;
+        }
+
+        logger.LogDebug(
+            "Shared market-data ticker cache read for {Symbol} returned {Status} ({ReasonCode}).",
+            normalizedSymbol,
+            cacheResult.Status,
+            cacheResult.ReasonCode);
+
+        return null;
     }
 
     public ValueTask<SymbolMetadataSnapshot?> GetSymbolMetadataAsync(string symbol, CancellationToken cancellationToken = default)
@@ -51,7 +68,7 @@ public sealed class MarketDataService(
         }
     }
 
-    internal ValueTask RecordPriceAsync(MarketPriceSnapshot snapshot, CancellationToken cancellationToken = default)
+    internal async ValueTask RecordPriceAsync(MarketPriceSnapshot snapshot, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -63,10 +80,31 @@ public sealed class MarketDataService(
             Source = snapshot.Source.Trim()
         };
 
-        memoryCache.Set(
-            GetPriceCacheKey(normalizedSnapshot.Symbol),
-            normalizedSnapshot,
-            cachePolicyProvider.CreateLatestPriceOptions());
+        var cachedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+        var freshness = cachePolicyProvider.GetLatestPriceFreshness();
+        var retention = cachePolicyProvider.GetLatestPriceRetention();
+        var cacheResult = await sharedMarketDataCache.WriteAsync(
+            new SharedMarketDataCacheEntry<MarketPriceSnapshot>(
+                SharedMarketDataCacheDataType.Ticker,
+                normalizedSnapshot.Symbol,
+                Timeframe: null,
+                UpdatedAtUtc: normalizedSnapshot.ReceivedAtUtc,
+                CachedAtUtc: cachedAtUtc,
+                FreshUntilUtc: normalizedSnapshot.ReceivedAtUtc.Add(freshness),
+                ExpiresAtUtc: cachedAtUtc.Add(retention),
+                Source: normalizedSnapshot.Source,
+                Payload: normalizedSnapshot),
+            cancellationToken);
+
+        if (cacheResult.Status != SharedMarketDataCacheWriteStatus.Written)
+        {
+            logger.LogWarning(
+                "Shared market-data ticker cache write for {Symbol} failed closed with {ReasonCode}.",
+                normalizedSnapshot.Symbol,
+                cacheResult.ReasonCode);
+
+            return;
+        }
 
         streamHub.Publish(normalizedSnapshot);
 
@@ -75,12 +113,7 @@ public sealed class MarketDataService(
             normalizedSnapshot.Symbol,
             normalizedSnapshot.Source);
 
-        return ValueTask.CompletedTask;
-    }
-
-    private static string GetPriceCacheKey(string symbol)
-    {
-        return $"marketdata:price:{symbol}";
+        return;
     }
 
     private static DateTime NormalizeTimestamp(DateTime value)
