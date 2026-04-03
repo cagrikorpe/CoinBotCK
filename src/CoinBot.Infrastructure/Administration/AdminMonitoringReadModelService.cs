@@ -15,7 +15,8 @@ namespace CoinBot.Infrastructure.Administration;
 public sealed class AdminMonitoringReadModelService(
     ApplicationDbContext dbContext,
     IMemoryCache memoryCache,
-    TimeProvider timeProvider) : IAdminMonitoringReadModelService
+    TimeProvider timeProvider,
+    ISharedMarketDataCacheObservabilityCollector? sharedMarketDataCacheObservabilityCollector = null) : IAdminMonitoringReadModelService
 {
     private static readonly object CacheKey = new();
     private static readonly MemoryCacheEntryOptions SnapshotCacheOptions = new MemoryCacheEntryOptions()
@@ -29,6 +30,7 @@ public sealed class AdminMonitoringReadModelService(
                 async entry =>
                 {
                     entry.SetOptions(SnapshotCacheOptions);
+                    var utcNow = timeProvider.GetUtcNow().UtcDateTime;
 
                     var healthSnapshots = await dbContext.HealthSnapshots
                         .AsNoTracking()
@@ -43,9 +45,11 @@ public sealed class AdminMonitoringReadModelService(
                     return new MonitoringDashboardSnapshot(
                         healthSnapshots.Select(MapHealthSnapshot).ToArray(),
                         workerHeartbeats.Select(MapWorkerHeartbeat).ToArray(),
-                        timeProvider.GetUtcNow().UtcDateTime)
+                        utcNow)
                     {
-                        MarketScanner = scannerSnapshot
+                        MarketScanner = scannerSnapshot,
+                        MarketDataCache = sharedMarketDataCacheObservabilityCollector?.GetSnapshot(utcNow)
+                            ?? SharedMarketDataCacheHealthSnapshot.Empty(utcNow)
                     };
                 },
                 SnapshotCacheOptions)!;

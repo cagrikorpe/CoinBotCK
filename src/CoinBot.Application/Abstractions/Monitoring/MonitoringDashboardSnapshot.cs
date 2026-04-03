@@ -7,11 +7,14 @@ public sealed record MonitoringDashboardSnapshot(
 {
     public MarketScannerDashboardSnapshot MarketScanner { get; init; } = MarketScannerDashboardSnapshot.Empty();
 
+    public SharedMarketDataCacheHealthSnapshot MarketDataCache { get; init; } = SharedMarketDataCacheHealthSnapshot.Empty();
+
     public static MonitoringDashboardSnapshot Empty(DateTime lastRefreshedAtUtc)
     {
         return new MonitoringDashboardSnapshot(Array.Empty<HealthSnapshot>(), Array.Empty<WorkerHeartbeat>(), lastRefreshedAtUtc)
         {
-            MarketScanner = MarketScannerDashboardSnapshot.Empty()
+            MarketScanner = MarketScannerDashboardSnapshot.Empty(),
+            MarketDataCache = SharedMarketDataCacheHealthSnapshot.Empty(lastRefreshedAtUtc)
         };
     }
 }

@@ -87,6 +87,7 @@ public sealed class MarketScannerServiceTests
         Assert.True(ada.IsTopCandidate);
         Assert.Equal("historical-candles", ada.UniverseSource);
         Assert.True(btc.IsEligible);
+        Assert.Equal(100m, btc.LastPrice);
         Assert.Equal(2, btc.Rank);
         Assert.True(btc.IsTopCandidate);
         Assert.Equal("config+historical-candles+registry", btc.UniverseSource);
@@ -527,3 +528,4 @@ public sealed class MarketScannerServiceTests
         }
     }
 }
+

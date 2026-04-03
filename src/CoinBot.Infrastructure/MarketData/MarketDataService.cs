@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using CoinBot.Application.Abstractions.MarketData;
+using CoinBot.Application.Abstractions.Monitoring;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 
@@ -12,8 +13,11 @@ public sealed class MarketDataService(
     MarketPriceStreamHub streamHub,
     ISharedMarketDataCache sharedMarketDataCache,
     TimeProvider timeProvider,
-    ILogger<MarketDataService> logger) : IMarketDataService
+    ILogger<MarketDataService> logger,
+    ISharedMarketDataCacheObservabilityCollector? cacheObservabilityCollector = null) : IMarketDataService
 {
+    private readonly ISharedMarketDataCacheObservabilityCollector cacheObservabilityCollector =
+        cacheObservabilityCollector ?? SharedMarketDataCacheObservabilityCollector.NoOp;
     public ValueTask TrackSymbolAsync(string symbol, CancellationToken cancellationToken = default)
     {
         return symbolRegistry.TrackSymbolAsync(symbol, cancellationToken);
@@ -165,7 +169,14 @@ public sealed class MarketDataService(
         var projectionResult = SharedMarketDataProjectionPolicy.NormalizeTicker(snapshot, out var normalizedSnapshot);
         if (projectionResult.Status != SharedMarketDataProjectionStatus.Accepted)
         {
-            return projectionResult;
+            return RecordProjectionAndReturn(
+                SharedMarketDataCacheDataType.Ticker,
+                snapshot.Symbol,
+                timeframe: null,
+                projectionResult,
+                snapshot.ObservedAtUtc,
+                freshUntilUtc: null,
+                snapshot.Source);
         }
 
         var currentReadResult = await sharedMarketDataCache.ReadAsync<MarketPriceSnapshot>(
@@ -180,7 +191,14 @@ public sealed class MarketDataService(
             out var currentTicker,
             out var readFailureResult))
         {
-            return readFailureResult;
+            return RecordProjectionAndReturn(
+                SharedMarketDataCacheDataType.Ticker,
+                normalizedSnapshot.Symbol,
+                timeframe: null,
+                readFailureResult,
+                normalizedSnapshot.ObservedAtUtc,
+                freshUntilUtc: null,
+                normalizedSnapshot.Source);
         }
 
         if (currentTicker is not null)
@@ -190,7 +208,14 @@ public sealed class MarketDataService(
                 currentTicker);
             if (orderingResult.Status != SharedMarketDataProjectionStatus.Accepted)
             {
-                return orderingResult;
+                return RecordProjectionAndReturn(
+                    SharedMarketDataCacheDataType.Ticker,
+                    normalizedSnapshot.Symbol,
+                    timeframe: null,
+                    orderingResult,
+                    currentTicker.ObservedAtUtc,
+                    currentTicker.ReceivedAtUtc.Add(cachePolicyProvider.GetFreshness(SharedMarketDataCacheDataType.Ticker)),
+                    currentTicker.Source);
             }
         }
 
@@ -217,9 +242,16 @@ public sealed class MarketDataService(
                 normalizedSnapshot.Symbol,
                 cacheResult.ReasonCode);
 
-            return MapWriteFailure(
-                cacheResult,
-                SharedMarketDataProjectionReasonCode.InvalidTickerPayload);
+            return RecordProjectionAndReturn(
+                SharedMarketDataCacheDataType.Ticker,
+                normalizedSnapshot.Symbol,
+                timeframe: null,
+                MapWriteFailure(
+                    cacheResult,
+                    SharedMarketDataProjectionReasonCode.InvalidTickerPayload),
+                normalizedSnapshot.ReceivedAtUtc,
+                normalizedSnapshot.ReceivedAtUtc.Add(freshness),
+                normalizedSnapshot.Source);
         }
 
         streamHub.Publish(normalizedSnapshot);
@@ -229,7 +261,14 @@ public sealed class MarketDataService(
             normalizedSnapshot.Symbol,
             normalizedSnapshot.Source);
 
-        return SharedMarketDataProjectionResult.Accepted();
+        return RecordProjectionAndReturn(
+            SharedMarketDataCacheDataType.Ticker,
+            normalizedSnapshot.Symbol,
+            timeframe: null,
+            SharedMarketDataProjectionResult.Accepted(),
+            normalizedSnapshot.ReceivedAtUtc,
+            normalizedSnapshot.ReceivedAtUtc.Add(freshness),
+            normalizedSnapshot.Source);
     }
 
     internal async ValueTask<SharedMarketDataProjectionResult> RecordKlineAsync(
@@ -246,7 +285,14 @@ public sealed class MarketDataService(
             out var normalizedSnapshot);
         if (projectionResult.Status != SharedMarketDataProjectionStatus.Accepted)
         {
-            return projectionResult;
+            return RecordProjectionAndReturn(
+                SharedMarketDataCacheDataType.Kline,
+                snapshot.Symbol,
+                snapshot.Interval,
+                projectionResult,
+                snapshot.CloseTimeUtc,
+                freshUntilUtc: null,
+                snapshot.Source);
         }
 
         var currentReadResult = await sharedMarketDataCache.ReadAsync<MarketCandleSnapshot>(
@@ -261,7 +307,14 @@ public sealed class MarketDataService(
             out var currentKline,
             out var readFailureResult))
         {
-            return readFailureResult;
+            return RecordProjectionAndReturn(
+                SharedMarketDataCacheDataType.Kline,
+                normalizedSnapshot.Symbol,
+                normalizedSnapshot.Interval,
+                readFailureResult,
+                normalizedSnapshot.CloseTimeUtc,
+                freshUntilUtc: null,
+                normalizedSnapshot.Source);
         }
 
         if (currentKline is not null)
@@ -271,11 +324,19 @@ public sealed class MarketDataService(
                 currentKline);
             if (orderingResult.Status != SharedMarketDataProjectionStatus.Accepted)
             {
-                return orderingResult;
+                return RecordProjectionAndReturn(
+                    SharedMarketDataCacheDataType.Kline,
+                    normalizedSnapshot.Symbol,
+                    normalizedSnapshot.Interval,
+                    orderingResult,
+                    currentKline.CloseTimeUtc,
+                    currentKline.CloseTimeUtc.Add(cachePolicyProvider.GetFreshness(SharedMarketDataCacheDataType.Kline)),
+                    currentKline.Source);
             }
         }
 
         var cachedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+        var freshUntilUtc = normalizedSnapshot.CloseTimeUtc.Add(cachePolicyProvider.GetFreshness(SharedMarketDataCacheDataType.Kline));
         var cacheResult = await sharedMarketDataCache.WriteAsync(
             new SharedMarketDataCacheEntry<MarketCandleSnapshot>(
                 SharedMarketDataCacheDataType.Kline,
@@ -283,7 +344,7 @@ public sealed class MarketDataService(
                 normalizedSnapshot.Interval,
                 UpdatedAtUtc: normalizedSnapshot.CloseTimeUtc,
                 CachedAtUtc: cachedAtUtc,
-                FreshUntilUtc: normalizedSnapshot.CloseTimeUtc.Add(cachePolicyProvider.GetFreshness(SharedMarketDataCacheDataType.Kline)),
+                FreshUntilUtc: freshUntilUtc,
                 ExpiresAtUtc: cachedAtUtc.Add(cachePolicyProvider.GetRetention(SharedMarketDataCacheDataType.Kline)),
                 Source: normalizedSnapshot.Source,
                 Payload: normalizedSnapshot),
@@ -297,12 +358,26 @@ public sealed class MarketDataService(
                 normalizedSnapshot.Interval,
                 cacheResult.ReasonCode);
 
-            return MapWriteFailure(
-                cacheResult,
-                SharedMarketDataProjectionReasonCode.InvalidKlinePayload);
+            return RecordProjectionAndReturn(
+                SharedMarketDataCacheDataType.Kline,
+                normalizedSnapshot.Symbol,
+                normalizedSnapshot.Interval,
+                MapWriteFailure(
+                    cacheResult,
+                    SharedMarketDataProjectionReasonCode.InvalidKlinePayload),
+                normalizedSnapshot.CloseTimeUtc,
+                freshUntilUtc,
+                normalizedSnapshot.Source);
         }
 
-        return SharedMarketDataProjectionResult.Accepted();
+        return RecordProjectionAndReturn(
+            SharedMarketDataCacheDataType.Kline,
+            normalizedSnapshot.Symbol,
+            normalizedSnapshot.Interval,
+            SharedMarketDataProjectionResult.Accepted(),
+            normalizedSnapshot.CloseTimeUtc,
+            freshUntilUtc,
+            normalizedSnapshot.Source);
     }
 
     internal async ValueTask<SharedMarketDataProjectionResult> RecordDepthAsync(
@@ -315,7 +390,14 @@ public sealed class MarketDataService(
         var projectionResult = SharedMarketDataProjectionPolicy.NormalizeDepth(snapshot, out var normalizedSnapshot);
         if (projectionResult.Status != SharedMarketDataProjectionStatus.Accepted)
         {
-            return projectionResult;
+            return RecordProjectionAndReturn(
+                SharedMarketDataCacheDataType.Depth,
+                snapshot.Symbol,
+                timeframe: null,
+                projectionResult,
+                snapshot.EventTimeUtc,
+                freshUntilUtc: null,
+                snapshot.Source);
         }
 
         var currentReadResult = await sharedMarketDataCache.ReadAsync<MarketDepthSnapshot>(
@@ -330,7 +412,14 @@ public sealed class MarketDataService(
             out var currentDepth,
             out var readFailureResult))
         {
-            return readFailureResult;
+            return RecordProjectionAndReturn(
+                SharedMarketDataCacheDataType.Depth,
+                normalizedSnapshot.Symbol,
+                timeframe: null,
+                readFailureResult,
+                normalizedSnapshot.EventTimeUtc,
+                freshUntilUtc: null,
+                normalizedSnapshot.Source);
         }
 
         if (currentDepth is not null)
@@ -340,11 +429,19 @@ public sealed class MarketDataService(
                 currentDepth);
             if (orderingResult.Status != SharedMarketDataProjectionStatus.Accepted)
             {
-                return orderingResult;
+                return RecordProjectionAndReturn(
+                    SharedMarketDataCacheDataType.Depth,
+                    normalizedSnapshot.Symbol,
+                    timeframe: null,
+                    orderingResult,
+                    currentDepth.EventTimeUtc,
+                    currentDepth.EventTimeUtc.Add(cachePolicyProvider.GetFreshness(SharedMarketDataCacheDataType.Depth)),
+                    currentDepth.Source);
             }
         }
 
         var cachedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+        var freshUntilUtc = normalizedSnapshot.EventTimeUtc.Add(cachePolicyProvider.GetFreshness(SharedMarketDataCacheDataType.Depth));
         var cacheResult = await sharedMarketDataCache.WriteAsync(
             new SharedMarketDataCacheEntry<MarketDepthSnapshot>(
                 SharedMarketDataCacheDataType.Depth,
@@ -352,7 +449,7 @@ public sealed class MarketDataService(
                 Timeframe: null,
                 UpdatedAtUtc: normalizedSnapshot.EventTimeUtc,
                 CachedAtUtc: cachedAtUtc,
-                FreshUntilUtc: normalizedSnapshot.EventTimeUtc.Add(cachePolicyProvider.GetFreshness(SharedMarketDataCacheDataType.Depth)),
+                FreshUntilUtc: freshUntilUtc,
                 ExpiresAtUtc: cachedAtUtc.Add(cachePolicyProvider.GetRetention(SharedMarketDataCacheDataType.Depth)),
                 Source: normalizedSnapshot.Source,
                 Payload: normalizedSnapshot),
@@ -365,12 +462,26 @@ public sealed class MarketDataService(
                 normalizedSnapshot.Symbol,
                 cacheResult.ReasonCode);
 
-            return MapWriteFailure(
-                cacheResult,
-                SharedMarketDataProjectionReasonCode.InvalidDepthPayload);
+            return RecordProjectionAndReturn(
+                SharedMarketDataCacheDataType.Depth,
+                normalizedSnapshot.Symbol,
+                timeframe: null,
+                MapWriteFailure(
+                    cacheResult,
+                    SharedMarketDataProjectionReasonCode.InvalidDepthPayload),
+                normalizedSnapshot.EventTimeUtc,
+                freshUntilUtc,
+                normalizedSnapshot.Source);
         }
 
-        return SharedMarketDataProjectionResult.Accepted();
+        return RecordProjectionAndReturn(
+            SharedMarketDataCacheDataType.Depth,
+            normalizedSnapshot.Symbol,
+            timeframe: null,
+            SharedMarketDataProjectionResult.Accepted(),
+            normalizedSnapshot.EventTimeUtc,
+            freshUntilUtc,
+            normalizedSnapshot.Source);
     }
 
     private static bool TryResolveCurrentProjection<TPayload>(
@@ -423,5 +534,25 @@ public sealed class MarketDataService(
             DateTimeKind.Local => value.ToUniversalTime(),
             _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
         };
+    }
+
+    private SharedMarketDataProjectionResult RecordProjectionAndReturn(
+        SharedMarketDataCacheDataType dataType,
+        string symbol,
+        string? timeframe,
+        SharedMarketDataProjectionResult result,
+        DateTime? updatedAtUtc,
+        DateTime? freshUntilUtc,
+        string? sourceLayer)
+    {
+        cacheObservabilityCollector.RecordProjection(
+            dataType,
+            symbol,
+            timeframe,
+            result,
+            updatedAtUtc,
+            freshUntilUtc,
+            sourceLayer);
+        return result;
     }
 }

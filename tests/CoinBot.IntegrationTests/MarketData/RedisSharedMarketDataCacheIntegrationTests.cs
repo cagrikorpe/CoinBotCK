@@ -2,11 +2,18 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Autonomy;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
+using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Administration;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.MarketData;
+using CoinBot.Infrastructure.Persistence;
+using CoinBot.IntegrationTests.Infrastructure;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -341,6 +348,117 @@ public sealed class RedisSharedMarketDataCacheIntegrationTests
         Assert.Equal(1, indicatorSnapshot.SampleCount);
     }
 
+    [Fact]
+    public async Task MarketDataService_ProjectsCacheHealthSnapshotAndConsumerParityAcrossScannerAndIndicatorConsumers()
+    {
+        var databaseName = $"CoinBotMarketDataCacheHealthInt_{Guid.NewGuid():N}";
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString(databaseName);
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 18, 30, 0, TimeSpan.Zero);
+        await using var fakeRedis = await FakeRedisServer.StartAsync();
+        await using var dbContext = CreateDbContext(connectionString);
+        await dbContext.Database.EnsureDeletedAsync();
+        await dbContext.Database.EnsureCreatedAsync();
+
+        try
+        {
+            using var workerMemoryCache = new MemoryCache(new MemoryCacheOptions { SizeLimit = 64 });
+            using var webMemoryCache = new MemoryCache(new MemoryCacheOptions { SizeLimit = 64 });
+            using var adminMemoryCache = new MemoryCache(new MemoryCacheOptions { SizeLimit = 64 });
+            var cacheCollector = new SharedMarketDataCacheObservabilityCollector(new FixedTimeProvider(nowUtc.AddSeconds(2)));
+            var workerPolicyProvider = CreatePolicyProvider();
+            var webPolicyProvider = CreatePolicyProvider();
+            var workerService = new MarketDataService(
+                new SharedSymbolRegistry(workerMemoryCache, workerPolicyProvider, NullLogger<SharedSymbolRegistry>.Instance),
+                workerMemoryCache,
+                workerPolicyProvider,
+                new MarketPriceStreamHub(),
+                CreateCache(fakeRedis.ConnectionString, nowUtc, cacheCollector),
+                new FixedTimeProvider(nowUtc),
+                NullLogger<MarketDataService>.Instance,
+                cacheCollector);
+            var webService = new MarketDataService(
+                new SharedSymbolRegistry(webMemoryCache, webPolicyProvider, NullLogger<SharedSymbolRegistry>.Instance),
+                webMemoryCache,
+                webPolicyProvider,
+                new MarketPriceStreamHub(),
+                CreateCache(fakeRedis.ConnectionString, nowUtc.AddSeconds(2), cacheCollector),
+                new FixedTimeProvider(nowUtc.AddSeconds(2)),
+                NullLogger<MarketDataService>.Instance,
+                cacheCollector);
+            var indicatorDataService = new IndicatorDataService(
+                webService,
+                new IndicatorStreamHub(),
+                Options.Create(new IndicatorEngineOptions()),
+                NullLogger<IndicatorDataService>.Instance);
+
+            var tickerWrite = await workerService.RecordPriceAsync(new MarketPriceSnapshot(
+                "btcusdt",
+                65250m,
+                nowUtc.UtcDateTime.AddSeconds(-1),
+                nowUtc.UtcDateTime,
+                "Binance.WebSocket.Ticker"));
+            var klineWrite = await workerService.RecordKlineAsync(new MarketCandleSnapshot(
+                "btcusdt",
+                "1m",
+                nowUtc.UtcDateTime.AddMinutes(-1),
+                nowUtc.UtcDateTime.AddMilliseconds(-1),
+                65100m,
+                65300m,
+                65000m,
+                65250m,
+                10m,
+                true,
+                nowUtc.UtcDateTime,
+                "Binance.WebSocket.Kline"));
+
+            var tickerRead = await webService.ReadLatestPriceAsync("BTCUSDT");
+            var klineRead = await webService.ReadLatestKlineAsync("BTCUSDT", "1m");
+            var indicatorSnapshot = await indicatorDataService.GetLatestAsync("BTCUSDT", "1m");
+            var adminService = new AdminMonitoringReadModelService(
+                dbContext,
+                adminMemoryCache,
+                new FixedTimeProvider(nowUtc.AddSeconds(2)),
+                cacheCollector);
+
+            var dashboardSnapshot = await adminService.GetSnapshotAsync();
+
+            Assert.Equal(SharedMarketDataProjectionStatus.Accepted, tickerWrite.Status);
+            Assert.Equal(SharedMarketDataProjectionStatus.Accepted, klineWrite.Status);
+            Assert.Equal(SharedMarketDataCacheReadStatus.HitFresh, tickerRead.Status);
+            Assert.Equal(SharedMarketDataCacheReadStatus.HitFresh, klineRead.Status);
+            Assert.NotNull(tickerRead.Entry);
+            Assert.NotNull(klineRead.Entry);
+            Assert.NotNull(indicatorSnapshot);
+            Assert.Equal(65250m, tickerRead.Entry!.Payload.Price);
+            Assert.Equal(klineRead.Entry!.UpdatedAtUtc, indicatorSnapshot!.CloseTimeUtc);
+            Assert.Equal("BTCUSDT", indicatorSnapshot.Symbol);
+            Assert.Equal("1m", indicatorSnapshot.Timeframe);
+            Assert.True(dashboardSnapshot.MarketDataCache.HitCount >= 3);
+            Assert.True(dashboardSnapshot.MarketDataCache.MissCount >= 2);
+
+            var tickerScope = Assert.Single(dashboardSnapshot.MarketDataCache.SymbolFreshness, item => item.DataType == SharedMarketDataCacheDataType.Ticker && item.Symbol == "BTCUSDT");
+            Assert.Equal(SharedMarketDataCacheReadStatus.HitFresh, tickerScope.LastReadStatus);
+            Assert.Equal(SharedMarketDataCacheStaleReasonCode.Fresh, tickerScope.StaleReasonCode);
+            Assert.Equal("Binance.WebSocket.Ticker", tickerScope.SourceLayer);
+            Assert.Equal(tickerRead.Entry.UpdatedAtUtc, tickerScope.UpdatedAtUtc);
+
+            var klineScope = Assert.Single(dashboardSnapshot.MarketDataCache.SymbolFreshness, item => item.DataType == SharedMarketDataCacheDataType.Kline && item.Symbol == "BTCUSDT" && item.Timeframe == "1m");
+            Assert.Equal(SharedMarketDataCacheReadStatus.HitFresh, klineScope.LastReadStatus);
+            Assert.Equal(SharedMarketDataCacheStaleReasonCode.Fresh, klineScope.StaleReasonCode);
+            Assert.Equal("Binance.WebSocket.Kline", klineScope.SourceLayer);
+            Assert.Equal(klineRead.Entry.UpdatedAtUtc, klineScope.UpdatedAtUtc);
+
+            var klineStream = Assert.Single(dashboardSnapshot.MarketDataCache.StreamSnapshots, item => item.DataType == SharedMarketDataCacheDataType.Kline);
+            Assert.Equal("BTCUSDT", klineStream.Symbol);
+            Assert.Equal("1m", klineStream.Timeframe);
+            Assert.Equal("Binance.WebSocket.Kline", klineStream.SourceLayer);
+        }
+        finally
+        {
+            await dbContext.Database.EnsureDeletedAsync();
+        }
+    }
+
     private static MarketDataCachePolicyProvider CreatePolicyProvider()
     {
         return new MarketDataCachePolicyProvider(Options.Create(new InMemoryCacheOptions
@@ -351,7 +469,7 @@ public sealed class RedisSharedMarketDataCacheIntegrationTests
         }));
     }
 
-    private static RedisSharedMarketDataCache CreateCache(string connectionString, DateTimeOffset nowUtc)
+    private static RedisSharedMarketDataCache CreateCache(string connectionString, DateTimeOffset nowUtc, ISharedMarketDataCacheObservabilityCollector? cacheCollector = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -363,9 +481,18 @@ public sealed class RedisSharedMarketDataCacheIntegrationTests
         return new RedisSharedMarketDataCache(
             configuration,
             new FixedTimeProvider(nowUtc),
-            NullLogger<RedisSharedMarketDataCache>.Instance);
+            NullLogger<RedisSharedMarketDataCache>.Instance,
+            cacheCollector);
     }
 
+    private static ApplicationDbContext CreateDbContext(string connectionString)
+    {
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseSqlServer(connectionString)
+            .Options;
+
+        return new ApplicationDbContext(options, new TestDataScopeContext());
+    }
     private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow()
@@ -611,4 +738,28 @@ public sealed class RedisSharedMarketDataCacheIntegrationTests
             return Task.CompletedTask;
         }
     }
+
+    private sealed class TestDataScopeContext : IDataScopeContext
+    {
+        public string? UserId => null;
+
+        public bool HasIsolationBypass => true;
+    }
+
+    private sealed class FakeSharedSymbolRegistry(IReadOnlyCollection<SymbolMetadataSnapshot> snapshots) : ISharedSymbolRegistry
+    {
+        public ValueTask<SymbolMetadataSnapshot?> GetSymbolAsync(string symbol, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(snapshots.SingleOrDefault(item => item.Symbol == symbol));
+        }
+
+        public ValueTask<IReadOnlyCollection<SymbolMetadataSnapshot>> ListSymbolsAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(snapshots);
+        }
+    }
 }
+
+

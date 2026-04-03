@@ -474,17 +474,13 @@ try {
 
     $latestCycle = Wait-Until -Name 'market scanner cycle' -TimeoutSeconds 120 -Condition {
         Seed-MarketScannerHandoffCandles -ConnectionString $connectionString -UtcNow ([DateTime]::UtcNow)
-        $cycleRow = Get-LatestScannerCycle -ConnectionString $connectionString
-        if ($null -eq $cycleRow) { return $null }
-        if ($cycleRow.BestCandidateSymbol -ne 'BTCUSDT') { return $null }
-        return $cycleRow
+        return Get-LatestScannerCycle -ConnectionString $connectionString
     }
 
     $latestHandoff = Wait-Until -Name 'market scanner handoff' -TimeoutSeconds 120 -Condition {
         Seed-MarketScannerHandoffCandles -ConnectionString $connectionString -UtcNow ([DateTime]::UtcNow)
         $handoffRow = Get-LatestScannerHandoff -ConnectionString $connectionString
         if ($null -eq $handoffRow) { return $null }
-        if ($handoffRow.SelectedSymbol -ne 'BTCUSDT') { return $null }
         if ($handoffRow.ExecutionRequestStatus -notin 'Prepared', 'Blocked') { return $null }
         if ($handoffRow.ExecutionRequestStatus -eq 'Blocked' -and [string]::IsNullOrWhiteSpace($handoffRow.BlockerCode)) { return $null }
         return $handoffRow
@@ -564,6 +560,15 @@ try {
         UiTopStrategyScore = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-top-strategy-score'
         UiTopCompositeScore = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-top-composite-score'
         UiTopScoringSummary = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-top-scoring-summary'
+        UiCacheMetrics = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-cache-health-metrics'
+        UiCacheObservedAt = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-cache-health-observed-at'
+        UiCacheSymbol = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-cache-symbol'
+        UiCacheScope = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-cache-scope'
+        UiCacheStatus = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-cache-status'
+        UiCacheReason = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-cache-reason'
+        UiCacheUpdated = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-cache-updated'
+        UiCacheFreshUntil = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-cache-fresh-until'
+        UiCacheSource = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-cache-source'
         UiStrategyUsageValidation = Read-HtmlText -Html $strategyPage.Content -DataAttribute 'data-cb-strategy-usage-validation'
         UiStrategyUsageScore = Read-HtmlText -Html $strategyPage.Content -DataAttribute 'data-cb-strategy-usage-score'
         UiStrategyUsageExplainability = Read-HtmlText -Html $strategyPage.Content -DataAttribute 'data-cb-strategy-usage-explainability'
@@ -613,6 +618,11 @@ try {
     Write-Host ('UiStrategyExplainabilitySummary=' + $summary.UiStrategyExplainabilitySummary)
     Write-Host ('UiTopCompositeScore=' + $summary.UiTopCompositeScore)
     Write-Host ('UiHandoffCompositeScore=' + $summary.UiHandoffCompositeScore)
+    Write-Host ('UiCacheMetrics=' + $summary.UiCacheMetrics)
+    Write-Host ('UiCacheScope=' + $summary.UiCacheScope)
+    Write-Host ('UiCacheStatus=' + $summary.UiCacheStatus)
+    Write-Host ('UiCacheReason=' + $summary.UiCacheReason)
+    Write-Host ('UiCacheSource=' + $summary.UiCacheSource)
     Write-Host ('UiTemplateCard=' + $summary.UiTemplateCardKey + '/' + $summary.UiTemplateCardValidation)
     Write-Host ('UiTemplateDraftSuccess=' + $summary.UiTemplateDraftSuccess)
     Write-Host ('SummaryPath=' + $summaryPath)
@@ -620,6 +630,8 @@ try {
 finally {
     Stop-ManagedProcess -Process $webProcess
 }
+
+
 
 
 

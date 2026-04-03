@@ -1,8 +1,10 @@
 using CoinBot.Application.Abstractions.DataScope;
+using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
+using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
@@ -244,6 +246,80 @@ public sealed class AdminMonitoringReadModelServiceTests
         Assert.Equal("StrategyVetoed", snapshot.MarketScanner.LastBlockedHandoff.BlockerCode);
         Assert.Equal(DateTimeKind.Utc, snapshot.MarketScanner.LatestHandoff.CompletedAtUtc!.Value.Kind);
     }
+    [Fact]
+    public async Task GetSnapshotAsync_ProjectsSharedMarketDataCacheHealthSnapshot_FromCollector()
+    {
+        var now = new DateTime(2026, 4, 3, 21, 0, 0, DateTimeKind.Utc);
+        await using var dbContext = CreateDbContext();
+        var cacheCollector = new SharedMarketDataCacheObservabilityCollector(new FixedTimeProvider(now));
+        var tickerEntry = new SharedMarketDataCacheEntry<MarketPriceSnapshot>(
+            SharedMarketDataCacheDataType.Ticker,
+            "BTCUSDT",
+            "spot",
+            now.AddSeconds(-1),
+            now,
+            now.AddSeconds(10),
+            now.AddMinutes(1),
+            "Binance.WebSocket.Ticker",
+            new MarketPriceSnapshot("BTCUSDT", 65000m, now.AddSeconds(-1), now, "Binance.WebSocket.Ticker"));
+
+        cacheCollector.RecordRead(
+            SharedMarketDataCacheDataType.Ticker,
+            "btcusdt",
+            null,
+            SharedMarketDataCacheReadResult<MarketPriceSnapshot>.HitFresh(tickerEntry));
+        cacheCollector.RecordRead(
+            SharedMarketDataCacheDataType.Kline,
+            "ethusdt",
+            "1m",
+            SharedMarketDataCacheReadResult<MarketCandleSnapshot>.ProviderUnavailable("Redis unavailable."));
+        cacheCollector.RecordProjection(
+            SharedMarketDataCacheDataType.Depth,
+            "solusdt",
+            null,
+            SharedMarketDataProjectionResult.IgnoredOutOfOrder(SharedMarketDataProjectionReasonCode.DepthOutOfOrder, "Older depth."),
+            now.AddSeconds(-5),
+            now.AddSeconds(5),
+            "Binance.WebSocket.Depth");
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            new FixedTimeProvider(now),
+            cacheCollector);
+
+        var snapshot = await service.GetSnapshotAsync();
+
+        Assert.Equal(1, snapshot.MarketDataCache.HitCount);
+        Assert.Equal(1, snapshot.MarketDataCache.ProviderUnavailableCount);
+        Assert.Equal(0, snapshot.MarketDataCache.MissCount);
+        Assert.Equal(DateTime.SpecifyKind(now, DateTimeKind.Utc), snapshot.MarketDataCache.LastObservedAtUtc);
+
+        var tickerScope = Assert.Single(snapshot.MarketDataCache.SymbolFreshness, item => item.DataType == SharedMarketDataCacheDataType.Ticker && item.Symbol == "BTCUSDT");
+        Assert.Equal(SharedMarketDataCacheReadStatus.HitFresh, tickerScope.LastReadStatus);
+        Assert.Equal(SharedMarketDataCacheStaleReasonCode.Fresh, tickerScope.StaleReasonCode);
+        Assert.Equal("Binance.WebSocket.Ticker", tickerScope.SourceLayer);
+        Assert.Equal(DateTime.SpecifyKind(now.AddSeconds(-1), DateTimeKind.Utc), tickerScope.UpdatedAtUtc);
+
+        var klineScope = Assert.Single(snapshot.MarketDataCache.SymbolFreshness, item => item.DataType == SharedMarketDataCacheDataType.Kline && item.Symbol == "ETHUSDT");
+        Assert.Equal(SharedMarketDataCacheReadStatus.ProviderUnavailable, klineScope.LastReadStatus);
+        Assert.Equal(SharedMarketDataCacheStaleReasonCode.ProviderUnavailable, klineScope.StaleReasonCode);
+
+        var depthScope = Assert.Single(snapshot.MarketDataCache.SymbolFreshness, item => item.DataType == SharedMarketDataCacheDataType.Depth && item.Symbol == "SOLUSDT");
+        Assert.Equal(SharedMarketDataProjectionStatus.IgnoredOutOfOrder, depthScope.LastProjectionStatus);
+        Assert.Equal(SharedMarketDataCacheStaleReasonCode.IgnoredOutOfOrder, depthScope.StaleReasonCode);
+        Assert.Equal("Older depth.", depthScope.ReasonSummary);
+
+        var tickerStream = Assert.Single(snapshot.MarketDataCache.StreamSnapshots, item => item.DataType == SharedMarketDataCacheDataType.Ticker);
+        Assert.Equal("BTCUSDT", tickerStream.Symbol);
+        Assert.Equal("spot", tickerStream.Timeframe);
+        Assert.Equal("Binance.WebSocket.Ticker", tickerStream.SourceLayer);
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => utcNow;
+    }
     private static ApplicationDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -260,4 +336,6 @@ public sealed class AdminMonitoringReadModelServiceTests
         public bool HasIsolationBypass => true;
     }
 }
+
+
 

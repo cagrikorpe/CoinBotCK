@@ -253,6 +253,7 @@ public static class DependencyInjection
         services.AddSingleton<IStrategyTemplateCatalogService, StrategyTemplateCatalogService>();
         services.AddSingleton<IStrategyEvaluatorService, StrategyEvaluatorService>();
         services.AddSingleton<MarketDataCachePolicyProvider>();
+        services.AddSingleton<ISharedMarketDataCacheObservabilityCollector, SharedMarketDataCacheObservabilityCollector>();
         services.AddSingleton<ISharedMarketDataCache, RedisSharedMarketDataCache>();
         services.AddSingleton<SharedSymbolRegistry>();
         services.AddSingleton<ISharedSymbolRegistry>(serviceProvider => serviceProvider.GetRequiredService<SharedSymbolRegistry>());

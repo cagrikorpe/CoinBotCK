@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using CoinBot.Application.Abstractions.MarketData;
+using CoinBot.Application.Abstractions.Monitoring;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -11,10 +12,13 @@ namespace CoinBot.Infrastructure.MarketData;
 internal sealed class RedisSharedMarketDataCache(
     IConfiguration configuration,
     TimeProvider timeProvider,
-    ILogger<RedisSharedMarketDataCache> logger) : ISharedMarketDataCache
+    ILogger<RedisSharedMarketDataCache> logger,
+    ISharedMarketDataCacheObservabilityCollector? cacheObservabilityCollector = null) : ISharedMarketDataCache
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(5);
     private static readonly JsonSerializerOptions JsonSerializerOptions = new(JsonSerializerDefaults.Web);
+    private readonly ISharedMarketDataCacheObservabilityCollector cacheObservabilityCollector =
+        cacheObservabilityCollector ?? SharedMarketDataCacheObservabilityCollector.NoOp;
 
     public async ValueTask<SharedMarketDataCacheWriteResult> WriteAsync<TPayload>(
         SharedMarketDataCacheEntry<TPayload> entry,
@@ -85,7 +89,11 @@ internal sealed class RedisSharedMarketDataCache(
         if (string.IsNullOrWhiteSpace(connectionString) ||
             !TryParseConnectionDetails(connectionString, out var details))
         {
-            return SharedMarketDataCacheReadResult<TPayload>.ProviderUnavailable("Redis connection string is missing or invalid.");
+            return RecordReadAndReturn(
+                dataType,
+                symbol,
+                timeframe,
+                SharedMarketDataCacheReadResult<TPayload>.ProviderUnavailable("Redis connection string is missing or invalid."));
         }
 
         string key;
@@ -95,7 +103,11 @@ internal sealed class RedisSharedMarketDataCache(
         }
         catch (ArgumentException exception)
         {
-            return SharedMarketDataCacheReadResult<TPayload>.InvalidPayload(SanitizeMessage(exception.Message));
+            return RecordReadAndReturn(
+                dataType,
+                symbol,
+                timeframe,
+                SharedMarketDataCacheReadResult<TPayload>.InvalidPayload(SanitizeMessage(exception.Message)));
         }
 
         string? payloadJson;
@@ -110,12 +122,20 @@ internal sealed class RedisSharedMarketDataCache(
         catch (Exception exception)
         {
             logger.LogDebug(exception, "Redis shared market-data cache read failed for {Endpoint}.", details.EndpointDisplay);
-            return SharedMarketDataCacheReadResult<TPayload>.ProviderUnavailable(SanitizeMessage(exception.Message));
+            return RecordReadAndReturn(
+                dataType,
+                symbol,
+                timeframe,
+                SharedMarketDataCacheReadResult<TPayload>.ProviderUnavailable(SanitizeMessage(exception.Message)));
         }
 
         if (payloadJson is null)
         {
-            return SharedMarketDataCacheReadResult<TPayload>.Miss($"Cache key {key} was not found.");
+            return RecordReadAndReturn(
+                dataType,
+                symbol,
+                timeframe,
+                SharedMarketDataCacheReadResult<TPayload>.Miss($"Cache key {key} was not found."));
         }
 
         SharedMarketDataCacheEntry<TPayload>? entry;
@@ -125,19 +145,41 @@ internal sealed class RedisSharedMarketDataCache(
         }
         catch (JsonException exception)
         {
-            return SharedMarketDataCacheReadResult<TPayload>.DeserializeFailed(SanitizeMessage(exception.Message));
+            return RecordReadAndReturn(
+                dataType,
+                symbol,
+                timeframe,
+                SharedMarketDataCacheReadResult<TPayload>.DeserializeFailed(SanitizeMessage(exception.Message)));
         }
 
         if (!TryValidateReadEntry(dataType, symbol, timeframe, entry, out var invalidReason))
         {
-            return SharedMarketDataCacheReadResult<TPayload>.InvalidPayload(invalidReason);
+            return RecordReadAndReturn(
+                dataType,
+                symbol,
+                timeframe,
+                SharedMarketDataCacheReadResult<TPayload>.InvalidPayload(invalidReason));
         }
 
         var utcNow = timeProvider.GetUtcNow().UtcDateTime;
 
-        return utcNow <= entry.FreshUntilUtc
+        return RecordReadAndReturn(
+            dataType,
+            symbol,
+            timeframe,
+            utcNow <= entry.FreshUntilUtc
             ? SharedMarketDataCacheReadResult<TPayload>.HitFresh(entry)
-            : SharedMarketDataCacheReadResult<TPayload>.HitStale(entry);
+            : SharedMarketDataCacheReadResult<TPayload>.HitStale(entry));
+    }
+
+    private SharedMarketDataCacheReadResult<TPayload> RecordReadAndReturn<TPayload>(
+        SharedMarketDataCacheDataType dataType,
+        string symbol,
+        string? timeframe,
+        SharedMarketDataCacheReadResult<TPayload> result)
+    {
+        cacheObservabilityCollector.RecordRead(dataType, symbol, timeframe, result);
+        return result;
     }
 
     private string? ResolveConnectionString()
