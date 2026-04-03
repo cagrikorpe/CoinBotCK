@@ -16,6 +16,8 @@ public sealed class MarketScannerHandoffAttempt : BaseEntity
 
     public int? CandidateRank { get; set; }
 
+    public decimal? CandidateMarketScore { get; set; }
+
     public decimal? CandidateScore { get; set; }
 
     public string SelectionReason { get; set; } = string.Empty;

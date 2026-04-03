@@ -1,7 +1,10 @@
 @using CoinBot.Application.Abstractions.Strategies
+@using Microsoft.AspNetCore.Mvc.Rendering
 @{
     var templateSnapshots = ViewData["StrategyTemplateCatalog"] as IReadOnlyCollection<StrategyTemplateSnapshot>
         ?? Array.Empty<StrategyTemplateSnapshot>();
+    var draftTargets = ViewData["StrategyBuilderDraftTargets"] as IReadOnlyCollection<SelectListItem>
+        ?? Array.Empty<SelectListItem>();
     var templates = templateSnapshots.Select((template, index) => new
     {
         Key = template.TemplateKey,
@@ -56,6 +59,44 @@
                 </button>
             }
         </div>
+        <form asp-controller="StrategyBuilder"
+              asp-action="CreateDraftFromTemplate"
+              method="post"
+              class="mt-6 d-flex flex-wrap align-items-end"
+              style="gap: 12px;"
+              data-cb-template-draft-form>
+            <input type="hidden"
+                   id="cb_strategy_template_draft_key"
+                   name="templateKey"
+                   value="@(templates.FirstOrDefault()?.Key ?? string.Empty)"
+                   data-cb-template-draft-template />
+            <div class="flex-grow-1" style="min-width: 240px;">
+                <label class="text-muted font-size-sm mb-2" for="cb_strategy_template_draft_target">Hedef strategy</label>
+                <select class="form-control"
+                        id="cb_strategy_template_draft_target"
+                        name="strategyId"
+                        data-cb-template-draft-target
+                        disabled="@(draftTargets.Count == 0)">
+                    @if (draftTargets.Count == 0)
+                    {
+                        <option value="">Kullanıcıya ait strategy bulunamadı</option>
+                    }
+                    else
+                    {
+                        @foreach (var target in draftTargets)
+                        {
+                            <option value="@target.Value">@target.Text</option>
+                        }
+                    }
+                </select>
+            </div>
+            <button type="submit"
+                    class="btn btn-primary font-weight-bolder"
+                    data-cb-template-draft-submit
+                    disabled="@(draftTargets.Count == 0 || templates.Length == 0)">
+                Seçili template’ten draft oluştur
+            </button>
+        </form>
     </div>
 </div>
 

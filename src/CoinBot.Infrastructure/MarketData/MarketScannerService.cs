@@ -1,7 +1,10 @@
 using System.Globalization;
+using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
+using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -17,7 +20,10 @@ public sealed class MarketScannerService(
     IOptions<BinanceMarketDataOptions> marketDataOptions,
     TimeProvider timeProvider,
     ILogger<MarketScannerService> logger,
-    MarketScannerHandoffService? handoffService = null)
+    MarketScannerHandoffService? handoffService = null,
+    IIndicatorDataService? indicatorDataService = null,
+    IStrategyEvaluatorService? strategyEvaluatorService = null,
+    IOptions<BotExecutionPilotOptions>? botExecutionPilotOptions = null)
 {
     internal const string WorkerKey = "market-scanner";
     internal const string WorkerName = "Market Scanner";
@@ -34,6 +40,8 @@ public sealed class MarketScannerService(
         .OrderByDescending(item => item.Length)
         .ThenBy(item => item, StringComparer.Ordinal)
         .ToArray();
+    private readonly ExecutionEnvironment signalEvaluationMode =
+        botExecutionPilotOptions?.Value.SignalEvaluationMode ?? ExecutionEnvironment.Live;
 
     public async Task<MarketScannerCycle> RunOnceAsync(CancellationToken cancellationToken = default)
     {
@@ -164,6 +172,7 @@ public sealed class MarketScannerService(
         var quoteVolume = candles.Count == 0
             ? (decimal?)null
             : candles.Sum(item => item.ClosePrice * item.Volume);
+        var marketScore = quoteVolume ?? 0m;
         var rejectionReason = ResolveRejectionReason(
             metadata,
             quoteAsset,
@@ -171,6 +180,16 @@ public sealed class MarketScannerService(
             quoteVolume,
             latestCandle,
             nowUtc);
+        var strategyScoring = rejectionReason is null
+            ? await ResolveStrategyScoringAsync(
+                universeCandidate.Symbol,
+                candles,
+                nowUtc,
+                cancellationToken)
+            : MarketScannerStrategyScoreSummary.MarketRejected(
+                rejectionReason,
+                $"MarketRejected={rejectionReason}; MarketScore={marketScore.ToString("0.####", CultureInfo.InvariantCulture)}");
+        rejectionReason ??= strategyScoring.RejectionReason;
         var isEligible = rejectionReason is null;
 
         return new MarketScannerCandidate
@@ -183,9 +202,12 @@ public sealed class MarketScannerService(
             LastCandleAtUtc = latestCandle?.CloseTimeUtc,
             LastPrice = latestPrice,
             QuoteVolume24h = quoteVolume,
+            MarketScore = marketScore,
+            StrategyScore = strategyScoring.StrategyScore,
+            ScoringSummary = strategyScoring.ScoringSummary,
             IsEligible = isEligible,
             RejectionReason = rejectionReason,
-            Score = isEligible ? quoteVolume!.Value : 0m,
+            Score = isEligible ? ResolveCompositeScore(marketScore, strategyScoring.StrategyScore) : 0m,
             Rank = null,
             IsTopCandidate = false
         };
@@ -347,6 +369,208 @@ public sealed class MarketScannerService(
         return null;
     }
 
+    private async Task<MarketScannerStrategyScoreSummary> ResolveStrategyScoringAsync(
+        string symbol,
+        IReadOnlyCollection<HistoricalMarketCandle> historicalCandles,
+        DateTime nowUtc,
+        CancellationToken cancellationToken)
+    {
+        if (!scannerOptionsValue.HandoffEnabled)
+        {
+            return MarketScannerStrategyScoreSummary.Accepted(
+                0,
+                "StrategyScoring=Skipped; Reason=ScannerHandoffDisabled");
+        }
+
+        var strategyBinding = await ResolveStrategyBindingAsync(symbol, cancellationToken);
+        if (strategyBinding is null)
+        {
+            return MarketScannerStrategyScoreSummary.Rejected(
+                "NoPublishedStrategy",
+                $"StrategyScore=n/a; StrategyOutcome=NoPublishedStrategy; Symbol={symbol}; Timeframe={klineInterval}");
+        }
+
+        if (indicatorDataService is null || strategyEvaluatorService is null)
+        {
+            return MarketScannerStrategyScoreSummary.Rejected(
+                "StrategyScoringUnavailable",
+                $"StrategyScore=n/a; StrategyOutcome=StrategyScoringUnavailable; StrategyKey={strategyBinding.StrategyKey}; Symbol={symbol}; Timeframe={klineInterval}");
+        }
+
+        await indicatorDataService.TrackSymbolAsync(symbol, cancellationToken);
+        var indicatorSnapshot = await indicatorDataService.GetLatestAsync(symbol, klineInterval, cancellationToken);
+        if (indicatorSnapshot is null || indicatorSnapshot.State != IndicatorDataState.Ready)
+        {
+            var marketCandles = historicalCandles
+                .OrderBy(entity => entity.OpenTimeUtc)
+                .Select(entity => new MarketCandleSnapshot(
+                    entity.Symbol,
+                    entity.Interval,
+                    NormalizeUtc(entity.OpenTimeUtc),
+                    NormalizeUtc(entity.CloseTimeUtc),
+                    entity.OpenPrice,
+                    entity.HighPrice,
+                    entity.LowPrice,
+                    entity.ClosePrice,
+                    entity.Volume,
+                    true,
+                    NormalizeUtc(entity.ReceivedAtUtc),
+                    entity.Source))
+                .ToArray();
+
+            if (marketCandles.Length > 0)
+            {
+                indicatorSnapshot = await indicatorDataService.PrimeAsync(symbol, klineInterval, marketCandles, cancellationToken);
+            }
+        }
+
+        if (indicatorSnapshot is null ||
+            indicatorSnapshot.State != IndicatorDataState.Ready ||
+            !string.Equals(indicatorSnapshot.Symbol, symbol, StringComparison.Ordinal) ||
+            !string.Equals(indicatorSnapshot.Timeframe, klineInterval, StringComparison.Ordinal))
+        {
+            return MarketScannerStrategyScoreSummary.Rejected(
+                "MissingFreshSignalData",
+                $"StrategyScore=n/a; StrategyOutcome=MissingFreshSignalData; StrategyKey={strategyBinding.StrategyKey}; Symbol={symbol}; Timeframe={klineInterval}");
+        }
+
+        try
+        {
+            var report = strategyEvaluatorService.EvaluateReport(
+                new StrategyEvaluationReportRequest(
+                    strategyBinding.TradingStrategyId,
+                    strategyBinding.TradingStrategyVersionId,
+                    strategyBinding.VersionNumber,
+                    strategyBinding.StrategyKey,
+                    strategyBinding.DisplayName,
+                    strategyBinding.DefinitionJson,
+                    new StrategyEvaluationContext(signalEvaluationMode, indicatorSnapshot),
+                    nowUtc));
+
+            var summary = Truncate(
+                $"StrategyKey={strategyBinding.StrategyKey}; Template={report.TemplateKey ?? "custom"}; Outcome={report.Outcome}; StrategyScore={report.AggregateScore}; Passed={report.PassedRuleCount}; Failed={report.FailedRuleCount}; {report.ExplainabilitySummary}",
+                512);
+
+            if (!string.Equals(report.Outcome, "EntryMatched", StringComparison.Ordinal))
+            {
+                return MarketScannerStrategyScoreSummary.Rejected(
+                    $"Strategy{report.Outcome}",
+                    summary ?? $"StrategyKey={strategyBinding.StrategyKey}; Outcome={report.Outcome}; StrategyScore={report.AggregateScore}");
+            }
+
+            return MarketScannerStrategyScoreSummary.Accepted(report.AggregateScore, summary);
+        }
+        catch (StrategyDefinitionValidationException exception)
+        {
+            return MarketScannerStrategyScoreSummary.Rejected(
+                "StrategyDefinitionInvalid",
+                Truncate(
+                    $"StrategyValidation={exception.StatusCode}; StrategyKey={strategyBinding.StrategyKey}; Symbol={symbol}; Timeframe={klineInterval}",
+                    512));
+        }
+        catch (StrategyRuleParseException)
+        {
+            return MarketScannerStrategyScoreSummary.Rejected(
+                "StrategyParseFailed",
+                $"StrategyParseFailed; StrategyKey={strategyBinding.StrategyKey}; Symbol={symbol}; Timeframe={klineInterval}");
+        }
+        catch (StrategyRuleEvaluationException)
+        {
+            return MarketScannerStrategyScoreSummary.Rejected(
+                "StrategyEvaluationFailed",
+                $"StrategyEvaluationFailed; StrategyKey={strategyBinding.StrategyKey}; Symbol={symbol}; Timeframe={klineInterval}");
+        }
+    }
+
+    private async Task<MarketScannerStrategyBinding?> ResolveStrategyBindingAsync(
+        string symbol,
+        CancellationToken cancellationToken)
+    {
+        var candidateBots = await dbContext.TradingBots
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity => entity.IsEnabled && !entity.IsDeleted && entity.Symbol != null)
+            .OrderBy(entity => entity.OwnerUserId)
+            .ThenBy(entity => entity.Id)
+            .Select(entity => new
+            {
+                entity.Id,
+                entity.OwnerUserId,
+                entity.StrategyKey,
+                entity.Symbol
+            })
+            .ToListAsync(cancellationToken);
+
+        foreach (var bot in candidateBots)
+        {
+            if (!string.Equals(MarketDataSymbolNormalizer.Normalize(bot.Symbol!), symbol, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var strategy = await dbContext.TradingStrategies
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.OwnerUserId == bot.OwnerUserId &&
+                    entity.StrategyKey == bot.StrategyKey &&
+                    !entity.IsDeleted)
+                .OrderByDescending(entity => entity.UpdatedDate)
+                .ThenByDescending(entity => entity.CreatedDate)
+                .Select(entity => new
+                {
+                    entity.Id,
+                    entity.StrategyKey,
+                    entity.DisplayName
+                })
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (strategy is null)
+            {
+                continue;
+            }
+
+            var strategyVersion = await dbContext.TradingStrategyVersions
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.TradingStrategyId == strategy.Id &&
+                    entity.Status == StrategyVersionStatus.Published &&
+                    !entity.IsDeleted)
+                .OrderByDescending(entity => entity.VersionNumber)
+                .Select(entity => new
+                {
+                    entity.Id,
+                    entity.VersionNumber,
+                    entity.DefinitionJson
+                })
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (strategyVersion is null)
+            {
+                continue;
+            }
+
+            return new MarketScannerStrategyBinding(
+                strategy.Id,
+                strategyVersion.Id,
+                strategyVersion.VersionNumber,
+                strategy.StrategyKey,
+                string.IsNullOrWhiteSpace(strategy.DisplayName) ? strategy.StrategyKey : strategy.DisplayName,
+                strategyVersion.DefinitionJson);
+        }
+
+        return null;
+    }
+
+    private decimal ResolveCompositeScore(decimal marketScore, int? strategyScore)
+    {
+        return decimal.Round(
+            marketScore + ((strategyScore ?? 0) * Math.Max(scannerOptionsValue.StrategyScoreWeight, 0m)),
+            4,
+            MidpointRounding.AwayFromZero);
+    }
+
     private static string ResolveUniverseSummary(IReadOnlyCollection<UniverseSymbolCandidate> universe)
     {
         if (universe.Count == 0)
@@ -412,6 +636,29 @@ public sealed class MarketScannerService(
     }
 
     private readonly record struct UniverseSymbolCandidate(string Symbol, string UniverseSource);
+
+    private sealed record MarketScannerStrategyBinding(
+        Guid TradingStrategyId,
+        Guid TradingStrategyVersionId,
+        int VersionNumber,
+        string StrategyKey,
+        string DisplayName,
+        string DefinitionJson);
+
+    private sealed record MarketScannerStrategyScoreSummary(
+        int? StrategyScore,
+        string? RejectionReason,
+        string? ScoringSummary)
+    {
+        public static MarketScannerStrategyScoreSummary Accepted(int strategyScore, string? scoringSummary) =>
+            new(strategyScore, null, scoringSummary);
+
+        public static MarketScannerStrategyScoreSummary Rejected(string rejectionReason, string? scoringSummary) =>
+            new(null, rejectionReason, scoringSummary);
+
+        public static MarketScannerStrategyScoreSummary MarketRejected(string rejectionReason, string? scoringSummary) =>
+            new(null, rejectionReason, scoringSummary);
+    }
 }
 
 

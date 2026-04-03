@@ -26,6 +26,16 @@
                     </div>
                 </div>
 
+                @if (TempData["StrategyBuilderTemplateSuccess"] is string templateSuccess && !string.IsNullOrWhiteSpace(templateSuccess))
+                {
+                    <div class="alert alert-success mb-6" data-cb-template-draft-success>@templateSuccess</div>
+                }
+
+                @if (TempData["StrategyBuilderTemplateError"] is string templateError && !string.IsNullOrWhiteSpace(templateError))
+                {
+                    <div class="alert alert-danger mb-6" data-cb-template-draft-error>@templateError</div>
+                }
+
                 @await Html.PartialAsync("StrategyBuilder/_SummaryStrip")
 
                 <div class="cb-section mt-6">

@@ -59,10 +59,14 @@
                     <span data-cb-scanner-handoff-symbol>@(latestHandoff.SelectedSymbol ?? "n/a")</span>
                     <span> · </span>
                     <span data-cb-scanner-handoff-selection>@latestHandoff.SelectionReason</span>
+                    <span> · Market: </span>
+                    <span data-cb-scanner-handoff-market-score>@(latestHandoff.CandidateMarketScore?.ToString("0.####") ?? "n/a")</span>
                     <span> · Strategy: </span>
                     <span data-cb-scanner-handoff-strategy>@latestHandoff.StrategyDecisionOutcome</span>
-                    <span> · Score: </span>
+                    <span> · Strategy Score: </span>
                     <span data-cb-scanner-handoff-score>@(latestHandoff.StrategyScore?.ToString() ?? "n/a")</span>
+                    <span> · Final: </span>
+                    <span data-cb-scanner-handoff-composite-score>@(latestHandoff.CandidateScore?.ToString("0.####") ?? "n/a")</span>
                     <span> · Blocker: </span>
                     <span data-cb-scanner-handoff-blocker>@(latestHandoff.BlockerCode ?? "none")</span>
                 </div>
@@ -89,8 +93,8 @@
                     <tr>
                         <th>Rank</th>
                         <th>Symbol</th>
-                        <th>Score</th>
-                        <th>24h Quote Vol</th>
+                        <th>Market / Strategy</th>
+                        <th>Composite</th>
                         <th>Source</th>
                     </tr>
                     </thead>
@@ -103,8 +107,14 @@
                                 <div class="cb-admin-job-title" data-cb-scanner-top-symbol>@candidate.Symbol</div>
                                 <small class="cb-admin-job-meta" data-cb-scanner-top-price>@(candidate.LastPrice?.ToString("0.########") ?? "n/a")</small>
                             </td>
-                            <td class="cb-mono" data-cb-scanner-top-score>@candidate.Score.ToString("0.####")</td>
-                            <td class="cb-mono" data-cb-scanner-top-volume>@(candidate.QuoteVolume24h?.ToString("0.##") ?? "n/a")</td>
+                            <td>
+                                <div class="cb-mono" data-cb-scanner-top-market-score>@candidate.MarketScore.ToString("0.####")</div>
+                                <small class="cb-admin-job-meta" data-cb-scanner-top-strategy-score>@(candidate.StrategyScore?.ToString() ?? "n/a")</small>
+                            </td>
+                            <td>
+                                <div class="cb-mono" data-cb-scanner-top-composite-score>@candidate.Score.ToString("0.####")</div>
+                                <small class="cb-admin-job-meta" data-cb-scanner-top-scoring-summary>@(candidate.ScoringSummary ?? "n/a")</small>
+                            </td>
                             <td data-cb-scanner-top-source>@candidate.UniverseSource</td>
                         </tr>
                     }

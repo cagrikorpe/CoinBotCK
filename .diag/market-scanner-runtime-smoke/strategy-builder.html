@@ -234,7 +234,7 @@
                                     <button b-il7khzt31m class="btn btn-clean d-flex align-items-center px-2 py-2" type="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
                                         <span b-il7khzt31m class="cb-user-avatar">SC</span>
                                         <span b-il7khzt31m class="cb-user-meta d-none d-md-inline-block">
-                                            <span b-il7khzt31m class="cb-user-name">scanner.admin.d88cd38434094291baad47d46b6fa8fa@coinbot.test</span>
+                                            <span b-il7khzt31m class="cb-user-name">scanner.admin.a62744dbd40246999995eac88564fec8@coinbot.test</span>
                                             <span b-il7khzt31m class="cb-user-role">SuperAdmin</span>
                                         </span>
                                     </button>
@@ -242,7 +242,7 @@
                                         <div b-il7khzt31m class="cb-dropdown-header">
                                             <div b-il7khzt31m class="cb-user-avatar">SC</div>
                                             <div b-il7khzt31m>
-                                                <div b-il7khzt31m class="font-weight-bolder text-white">scanner.admin.d88cd38434094291baad47d46b6fa8fa@coinbot.test</div>
+                                                <div b-il7khzt31m class="font-weight-bolder text-white">scanner.admin.a62744dbd40246999995eac88564fec8@coinbot.test</div>
                                                 <div b-il7khzt31m class="text-white-50">SuperAdmin</div>
                                             </div>
                                         </div>
@@ -260,7 +260,7 @@
                                                         <span b-il7khzt31m class="navi-text">Logout</span>
                                                         <span b-il7khzt31m class="cb-badge cb-badge-danger">Auth</span>
                                                     </button>
-                                                <input name="__RequestVerificationToken" type="hidden" value="CfDJ8L3jxasKsTVLuSCM0tIR34Ur24Fjk9YAftrkAOGZWwArS4s7AEAfpC22TWvqk_B79goHfhtf_HkGJKW-UNuUE2rq7FNOdzqTC4Ni6xxOHrFGuKlPwu4Z0Eg4h2ypPwRjrGsqwtGUislt2YSMGmDbD0dww24WniXctAhdp8dJy9ulebMNUDYXg11Y8C4d-4hmhA" /></form>
+                                                <input name="__RequestVerificationToken" type="hidden" value="CfDJ8L3jxasKsTVLuSCM0tIR34UEDwsFgqQSi-8-HKXN1bRA4SPg7KhG0EOz6oNYXOvq3K-MzjBYjIvf4JNjDcH9PgDGeqhv7IPEJ2xOY4xvp_aPvOA9mTMbi3P8OdxWmv6KFmmfmF_eCRP8UO2JPwSxa-fw9cP5h51xk3wrx3x_Xgvt_EWDc6HjC1YLBUGgrxdBSQ" /></form>
                                         </div>
                                     </div>
                                 </div>
@@ -290,6 +290,9 @@
                         <button type="button" class="btn btn-primary font-weight-bolder" data-cb-strategy-action="new">Yeni Strateji</button>
                     </div>
                 </div>
+
+                    <div class="alert alert-success mb-6" data-cb-template-draft-success>Draft olu&#x15F;turuldu. Template=rsi-reversal; Version=2; Validation=Valid.</div>
+
 
                 <div class="cb-strategy-summary-strip mt-6">
     <div class="cb-strategy-strip-card cb-strategy-strip-card-accent">
@@ -415,6 +418,27 @@
                     </div>
                 </button>
         </div>
+        <form method="post" class="mt-6 d-flex flex-wrap align-items-end" style="gap: 12px;" data-cb-template-draft-form action="/StrategyBuilder/CreateDraftFromTemplate">
+            <input type="hidden"
+                   id="cb_strategy_template_draft_key"
+                   name="templateKey"
+                   value="bollinger-mean-reversion"
+                   data-cb-template-draft-template />
+            <div class="flex-grow-1" style="min-width: 240px;">
+                <label class="text-muted font-size-sm mb-2" for="cb_strategy_template_draft_target">Hedef strategy</label>
+                <select class="form-control"
+                        id="cb_strategy_template_draft_target"
+                        name="strategyId"
+                        data-cb-template-draft-target>
+                            <option value="940F7148-0770-43D0-AAD7-180A894A5607">Scanner Handoff Smoke</option>
+                </select>
+            </div>
+            <button type="submit"
+                    class="btn btn-primary font-weight-bolder"
+                    data-cb-template-draft-submit>
+                Seçili template’ten draft oluştur
+            </button>
+        <input name="__RequestVerificationToken" type="hidden" value="CfDJ8L3jxasKsTVLuSCM0tIR34UEDwsFgqQSi-8-HKXN1bRA4SPg7KhG0EOz6oNYXOvq3K-MzjBYjIvf4JNjDcH9PgDGeqhv7IPEJ2xOY4xvp_aPvOA9mTMbi3P8OdxWmv6KFmmfmF_eCRP8UO2JPwSxa-fw9cP5h51xk3wrx3x_Xgvt_EWDc6HjC1YLBUGgrxdBSQ" /></form>
     </div>
 </div>
 
@@ -1109,7 +1133,7 @@
     <script src="/metronic/assets/js/scripts.bundle.js?v=LyZU16poGPlPaOwIeIBS-R5vw3KBVhIeCBruWgUBskg"></script>
     <script src="/js/site.js?v=L58gOqV0zJTn8wZIHPY0-yJrjO_mcxMKz4kllaI9wlo"></script>
     
-    <script src="/js/strategy-builder-foundation.js?v=LegqnGdcHKdrjk00bjUhFFv09r6At7hTPLCA8XdzWqs"></script>
+    <script src="/js/strategy-builder-foundation.js?v=TgA4JBh0MtiR66QO2b2HHMT1a5XcGdwMWaDXNAQGoXs"></script>
 
 </body>
 </html>

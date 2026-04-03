@@ -1,7 +1,10 @@
 using CoinBot.Application.Abstractions.DataScope;
+using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
+using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.UnitTests.Infrastructure.Mfa;
@@ -53,7 +56,8 @@ public sealed class MarketScannerServiceTests
                 MaxUniverseSymbols = 50,
                 Min24hQuoteVolume = 50_000m,
                 MaxDataAgeSeconds = 120,
-                AllowedQuoteAssets = ["USDT"]
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = false
             }),
             Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["BTCUSDT", "   ", "SOLUSDT"] }),
             timeProvider,
@@ -97,6 +101,78 @@ public sealed class MarketScannerServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_AppliesStrategyAwareCompositeScore_AndPersistsScoringSummaryDeterministically()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        var btcStrategy = await SeedStrategyGraphAsync(dbContext, "user-btc", "BTCUSDT", "scanner-btc", "{}");
+        var ethStrategy = await SeedStrategyGraphAsync(dbContext, "user-eth", "ETHUSDT", "scanner-eth", "{}");
+        SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        SeedCandles(dbContext, "ETHUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 2_000m);
+        await dbContext.SaveChangesAsync();
+
+        var indicatorDataService = new FakeIndicatorDataService();
+        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", nowUtc.UtcDateTime));
+        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("ETHUSDT", "1m", nowUtc.UtcDateTime));
+
+        var strategyEvaluatorService = new FakeStrategyEvaluatorService();
+        strategyEvaluatorService.SetReport("BTCUSDT", CreateEvaluationReport(btcStrategy.TradingStrategyId, btcStrategy.TradingStrategyVersionId, "scanner-btc", "BTCUSDT", "1m", nowUtc.UtcDateTime, 95, "BTC strategy accepted."));
+        strategyEvaluatorService.SetReport("ETHUSDT", CreateEvaluationReport(ethStrategy.TradingStrategyId, ethStrategy.TradingStrategyVersionId, "scanner-eth", "ETHUSDT", "1m", nowUtc.UtcDateTime, 5, "ETH strategy weak but accepted."));
+
+        var service = new MarketScannerService(
+            dbContext,
+            new FakeMarketDataService(),
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("BTCUSDT", "Binance", "BTC", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime),
+                new SymbolMetadataSnapshot("ETHUSDT", "Binance", "ETH", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 2,
+                MaxUniverseSymbols = 50,
+                Min24hQuoteVolume = 1_000m,
+                MaxDataAgeSeconds = 120,
+                StrategyScoreWeight = 20_000m,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = true
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["BTCUSDT", "ETHUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance,
+            handoffService: null,
+            indicatorDataService,
+            strategyEvaluatorService,
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }));
+
+        var cycle = await service.RunOnceAsync();
+
+        var rankedCandidates = await dbContext.MarketScannerCandidates
+            .Where(entity => entity.ScanCycleId == cycle.Id && entity.IsEligible)
+            .OrderBy(entity => entity.Rank)
+            .ToListAsync();
+
+        Assert.Equal("BTCUSDT", cycle.BestCandidateSymbol);
+        Assert.Equal(["BTCUSDT", "ETHUSDT"], rankedCandidates.Select(candidate => candidate.Symbol).ToArray());
+
+        var btc = Assert.Single(rankedCandidates, candidate => candidate.Symbol == "BTCUSDT");
+        var eth = Assert.Single(rankedCandidates, candidate => candidate.Symbol == "ETHUSDT");
+
+        Assert.Equal(1_000_000m, btc.MarketScore);
+        Assert.Equal(95, btc.StrategyScore);
+        Assert.Equal(2_900_000m, btc.Score);
+        Assert.Contains("StrategyKey=scanner-btc", btc.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("StrategyScore=95", btc.ScoringSummary, StringComparison.Ordinal);
+
+        Assert.Equal(2_000_000m, eth.MarketScore);
+        Assert.Equal(5, eth.StrategyScore);
+        Assert.Equal(2_100_000m, eth.Score);
+        Assert.True(btc.Score > eth.Score);
+        Assert.Equal("BTCUSDT", strategyEvaluatorService.RequestedSymbols[0]);
+        Assert.Equal("ETHUSDT", strategyEvaluatorService.RequestedSymbols[1]);
+    }
+
+    [Fact]
     public async Task RunOnceAsync_RejectsDisabledUnsupportedStaleAndMissingMarketData_FailClosed()
     {
         var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
@@ -119,7 +195,8 @@ public sealed class MarketScannerServiceTests
                 MaxUniverseSymbols = 50,
                 Min24hQuoteVolume = 100m,
                 MaxDataAgeSeconds = 120,
-                AllowedQuoteAssets = ["USDT"]
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = false
             }),
             Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["STALEUSDT", "XRPBTC", "HALTUSDT", "MISSINGUSDT", " "] }),
             timeProvider,
@@ -156,7 +233,8 @@ public sealed class MarketScannerServiceTests
                 MaxUniverseSymbols = 50,
                 Min24hQuoteVolume = 10m,
                 MaxDataAgeSeconds = 120,
-                AllowedQuoteAssets = ["USDT"]
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = false
             }),
             Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["ETHUSDT", "BTCUSDT"] }),
             new AdjustableTimeProvider(nowUtc),
@@ -205,6 +283,101 @@ public sealed class MarketScannerServiceTests
                 Source = "unit-test"
             });
         }
+    }
+
+    private static async Task<(Guid TradingStrategyId, Guid TradingStrategyVersionId)> SeedStrategyGraphAsync(
+        ApplicationDbContext dbContext,
+        string ownerUserId,
+        string symbol,
+        string strategyKey,
+        string definitionJson)
+    {
+        var tradingStrategyId = Guid.NewGuid();
+        var tradingStrategyVersionId = Guid.NewGuid();
+
+        dbContext.TradingStrategies.Add(new TradingStrategy
+        {
+            Id = tradingStrategyId,
+            OwnerUserId = ownerUserId,
+            StrategyKey = strategyKey,
+            DisplayName = strategyKey,
+            PromotionState = StrategyPromotionState.LivePublished,
+            PublishedMode = ExecutionEnvironment.Live,
+            PublishedAtUtc = new DateTime(2026, 4, 3, 11, 55, 0, DateTimeKind.Utc)
+        });
+        dbContext.TradingStrategyVersions.Add(new TradingStrategyVersion
+        {
+            Id = tradingStrategyVersionId,
+            OwnerUserId = ownerUserId,
+            TradingStrategyId = tradingStrategyId,
+            SchemaVersion = 1,
+            VersionNumber = 1,
+            Status = StrategyVersionStatus.Published,
+            DefinitionJson = definitionJson,
+            PublishedAtUtc = new DateTime(2026, 4, 3, 11, 56, 0, DateTimeKind.Utc)
+        });
+        dbContext.TradingBots.Add(new TradingBot
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = ownerUserId,
+            Name = $"{strategyKey} bot",
+            StrategyKey = strategyKey,
+            Symbol = symbol,
+            IsEnabled = true
+        });
+
+        await dbContext.SaveChangesAsync();
+        return (tradingStrategyId, tradingStrategyVersionId);
+    }
+
+    private static StrategyIndicatorSnapshot CreateIndicatorSnapshot(string symbol, string timeframe, DateTime closeTimeUtc)
+    {
+        return new StrategyIndicatorSnapshot(
+            symbol,
+            timeframe,
+            closeTimeUtc.AddMinutes(-1),
+            closeTimeUtc,
+            closeTimeUtc,
+            100,
+            34,
+            IndicatorDataState.Ready,
+            DegradedModeReasonCode.None,
+            new RelativeStrengthIndexSnapshot(14, true, 30m),
+            new MovingAverageConvergenceDivergenceSnapshot(12, 26, 9, true, 1m, 0.8m, 0.2m),
+            new BollingerBandsSnapshot(20, 2m, true, 100m, 110m, 90m, 3m),
+            "unit-test");
+    }
+
+    private static StrategyEvaluationReportSnapshot CreateEvaluationReport(
+        Guid tradingStrategyId,
+        Guid tradingStrategyVersionId,
+        string strategyKey,
+        string symbol,
+        string timeframe,
+        DateTime evaluatedAtUtc,
+        int aggregateScore,
+        string explanation)
+    {
+        var indicatorSnapshot = CreateIndicatorSnapshot(symbol, timeframe, evaluatedAtUtc);
+        return new StrategyEvaluationReportSnapshot(
+            tradingStrategyId,
+            tradingStrategyVersionId,
+            1,
+            strategyKey,
+            strategyKey,
+            "rsi-reversal",
+            "RSI Reversal",
+            symbol,
+            timeframe,
+            evaluatedAtUtc,
+            "EntryMatched",
+            aggregateScore,
+            2,
+            0,
+            new StrategyEvaluationResult(true, true, false, false, true, true, null, null, null),
+            ["entry-mode [context/1m] PASS w=20 :: matched"],
+            [],
+            $"Strategy={strategyKey}; Symbol={indicatorSnapshot.Symbol}; Timeframe={indicatorSnapshot.Timeframe}; Outcome=EntryMatched; Score={aggregateScore}; {explanation}");
     }
 
     private sealed class TestDataScopeContext : IDataScopeContext
@@ -259,6 +432,68 @@ public sealed class MarketScannerServiceTests
         {
             await Task.CompletedTask;
             yield break;
+        }
+    }
+
+    private sealed class FakeIndicatorDataService : IIndicatorDataService
+    {
+        private readonly Dictionary<string, StrategyIndicatorSnapshot> snapshots = new(StringComparer.Ordinal);
+
+        public void SetReadySnapshot(StrategyIndicatorSnapshot snapshot)
+        {
+            snapshots[$"{snapshot.Symbol}|{snapshot.Timeframe}"] = snapshot;
+        }
+
+        public ValueTask TrackSymbolAsync(string symbol, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+
+        public ValueTask TrackSymbolsAsync(IEnumerable<string> symbols, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+
+        public ValueTask<StrategyIndicatorSnapshot?> GetLatestAsync(string symbol, string timeframe, CancellationToken cancellationToken = default)
+        {
+            snapshots.TryGetValue($"{symbol}|{timeframe}", out var snapshot);
+            return ValueTask.FromResult<StrategyIndicatorSnapshot?>(snapshot);
+        }
+
+        public ValueTask<StrategyIndicatorSnapshot?> PrimeAsync(string symbol, string timeframe, IReadOnlyCollection<MarketCandleSnapshot> historicalCandles, CancellationToken cancellationToken = default)
+        {
+            snapshots.TryGetValue($"{symbol}|{timeframe}", out var snapshot);
+            return ValueTask.FromResult<StrategyIndicatorSnapshot?>(snapshot);
+        }
+
+        public async IAsyncEnumerable<StrategyIndicatorSnapshot> WatchAsync(
+            IEnumerable<IndicatorSubscription> subscriptions,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
+    }
+
+    private sealed class FakeStrategyEvaluatorService : IStrategyEvaluatorService
+    {
+        private readonly Dictionary<string, StrategyEvaluationReportSnapshot> reports = new(StringComparer.Ordinal);
+
+        public List<string> RequestedSymbols { get; } = [];
+
+        public void SetReport(string symbol, StrategyEvaluationReportSnapshot report)
+        {
+            reports[symbol] = report;
+        }
+
+        public StrategyEvaluationResult Evaluate(string definitionJson, StrategyEvaluationContext context)
+        {
+            throw new NotSupportedException();
+        }
+
+        public StrategyEvaluationResult Evaluate(StrategyRuleDocument document, StrategyEvaluationContext context)
+        {
+            throw new NotSupportedException();
+        }
+
+        public StrategyEvaluationReportSnapshot EvaluateReport(StrategyEvaluationReportRequest request)
+        {
+            RequestedSymbols.Add(request.EvaluationContext.IndicatorSnapshot.Symbol);
+            return reports[request.EvaluationContext.IndicatorSnapshot.Symbol];
         }
     }
 }

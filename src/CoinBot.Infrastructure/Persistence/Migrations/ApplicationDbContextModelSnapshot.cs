@@ -2669,6 +2669,10 @@ namespace CoinBot.Infrastructure.Persistence.Migrations
                         .HasPrecision(38, 18)
                         .HasColumnType("decimal(38,18)");
 
+                    b.Property<decimal>("MarketScore")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
                     b.Property<DateTime>("ObservedAtUtc")
                         .HasColumnType("datetime2");
 
@@ -2689,6 +2693,13 @@ namespace CoinBot.Infrastructure.Persistence.Migrations
                     b.Property<decimal>("Score")
                         .HasPrecision(38, 18)
                         .HasColumnType("decimal(38,18)");
+
+                    b.Property<string>("ScoringSummary")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<int?>("StrategyScore")
+                        .HasColumnType("int");
 
                     b.Property<string>("Symbol")
                         .IsRequired()
@@ -2783,6 +2794,10 @@ namespace CoinBot.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("BotId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<decimal?>("CandidateMarketScore")
+                        .HasPrecision(38, 18)
+                        .HasColumnType("decimal(38,18)");
+
                     b.Property<int?>("CandidateRank")
                         .HasColumnType("int");
 
@@ -2856,8 +2871,8 @@ namespace CoinBot.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("SelectionReason")
                         .IsRequired()
-                        .HasMaxLength(256)
-                        .HasColumnType("nvarchar(256)");
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
 
                     b.Property<string>("StrategyDecisionOutcome")
                         .IsRequired()

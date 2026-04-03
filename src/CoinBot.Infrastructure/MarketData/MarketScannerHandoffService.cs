@@ -674,6 +674,7 @@ public sealed class MarketScannerHandoffService(
             SelectedTimeframe = selectedSymbol is null ? null : klineInterval,
             SelectedAtUtc = nowUtc,
             CandidateRank = selectedCandidate?.Rank,
+            CandidateMarketScore = selectedCandidate?.MarketScore,
             CandidateScore = selectedCandidate?.Score,
             SelectionReason = BuildSelectionReason(selectedCandidate),
             OwnerUserId = ownerUserId?.Trim(),
@@ -685,7 +686,9 @@ public sealed class MarketScannerHandoffService(
             StrategySignalVetoId = strategyVeto?.StrategySignalVetoId,
             StrategyDecisionOutcome = strategyDecisionOutcome,
             StrategyVetoReasonCode = strategyVeto?.ConfidenceSnapshot.RiskReasonCode.ToString(),
-            StrategyScore = strategySignal?.ExplainabilityPayload.ConfidenceSnapshot.ScorePercentage ?? strategyVeto?.ConfidenceSnapshot.ScorePercentage,
+            StrategyScore = selectedCandidate?.StrategyScore
+                ?? strategySignal?.ExplainabilityPayload.ConfidenceSnapshot.ScorePercentage
+                ?? strategyVeto?.ConfidenceSnapshot.ScorePercentage,
             ExecutionRequestStatus = executionStatus,
             ExecutionSide = executionContext?.Side,
             ExecutionOrderType = executionContext?.OrderType,
@@ -744,8 +747,11 @@ public sealed class MarketScannerHandoffService(
             return "No eligible candidate available.";
         }
 
-        return FormattableString.Invariant(
-            $"Top-ranked eligible candidate selected. Symbol={candidate.Symbol}; Rank={candidate.Rank?.ToString(CultureInfo.InvariantCulture) ?? "n/a"}; Score={candidate.Score.ToString("0.####", CultureInfo.InvariantCulture)}; UniverseSource={candidate.UniverseSource}");
+        return Truncate(
+            FormattableString.Invariant(
+                $"Top-ranked eligible candidate selected. Symbol={candidate.Symbol}; Rank={candidate.Rank?.ToString(CultureInfo.InvariantCulture) ?? "n/a"}; MarketScore={candidate.MarketScore.ToString("0.####", CultureInfo.InvariantCulture)}; StrategyScore={candidate.StrategyScore?.ToString(CultureInfo.InvariantCulture) ?? "n/a"}; CompositeScore={candidate.Score.ToString("0.####", CultureInfo.InvariantCulture)}; UniverseSource={candidate.UniverseSource}; {candidate.ScoringSummary ?? "StrategyScore=n/a"}"),
+            512)
+            ?? "Top-ranked eligible candidate selected.";
     }
 
     private decimal ResolveHandoffQuantity(SymbolMetadataSnapshot? symbolMetadata, decimal referencePrice)

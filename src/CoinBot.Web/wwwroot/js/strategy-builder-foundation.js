@@ -5,6 +5,7 @@
     }
 
     const templateCards = Array.from(page.querySelectorAll('[data-cb-template-card]'));
+    const templateDraftInput = page.querySelector('[data-cb-template-draft-template]');
     const templates = Object.fromEntries(templateCards.map(function (card) {
         return [card.getAttribute('data-cb-template-key'), {
             key: card.getAttribute('data-cb-template-key'),
@@ -36,6 +37,9 @@
         });
 
         const template = templates[key];
+        if (templateDraftInput) {
+            templateDraftInput.value = key;
+        }
         text('cb_strategy_preview_template', template.name);
         text('cb_strategy_drawer_title', template.name);
         text('cb_strategy_drawer_description', template.description);

@@ -2071,6 +2071,12 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         builder.Property(entity => entity.QuoteVolume24h)
             .HasPrecision(38, 18);
 
+        builder.Property(entity => entity.MarketScore)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.ScoringSummary)
+            .HasMaxLength(512);
+
         builder.Property(entity => entity.RejectionReason)
             .HasMaxLength(64);
 
@@ -2099,8 +2105,11 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         builder.Property(entity => entity.CandidateScore)
             .HasPrecision(38, 18);
 
+        builder.Property(entity => entity.CandidateMarketScore)
+            .HasPrecision(38, 18);
+
         builder.Property(entity => entity.SelectionReason)
-            .HasMaxLength(256)
+            .HasMaxLength(512)
             .IsRequired();
 
         builder.Property(entity => entity.OwnerUserId)

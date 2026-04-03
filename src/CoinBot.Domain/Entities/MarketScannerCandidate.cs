@@ -16,6 +16,12 @@ public sealed class MarketScannerCandidate : BaseEntity
 
     public decimal? QuoteVolume24h { get; set; }
 
+    public decimal MarketScore { get; set; }
+
+    public int? StrategyScore { get; set; }
+
+    public string? ScoringSummary { get; set; }
+
     public bool IsEligible { get; set; }
 
     public string? RejectionReason { get; set; }

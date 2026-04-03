@@ -257,6 +257,7 @@ SELECT TOP (1)
     SelectedSymbol,
     SelectedTimeframe,
     CandidateRank,
+    CandidateMarketScore,
     CandidateScore,
     SelectionReason,
     OwnerUserId,
@@ -274,6 +275,20 @@ SELECT TOP (1)
 FROM MarketScannerHandoffAttempts
 ORDER BY CompletedAtUtc DESC, CreatedDate DESC;
 "@
+}
+function Get-StrategyDraftTarget {
+    param([string]$ConnectionString, [string]$OwnerUserId)
+
+    return Invoke-SqlRow -ConnectionString $ConnectionString -CommandText @"
+SELECT TOP (1)
+    Id,
+    StrategyKey,
+    DisplayName
+FROM TradingStrategies
+WHERE OwnerUserId = @OwnerUserId
+  AND IsDeleted = 0
+ORDER BY DisplayName, StrategyKey;
+"@ -Parameters @{ OwnerUserId = $OwnerUserId }
 }
 function Get-AntiforgeryToken {
     param([string]$Html)
@@ -340,7 +355,7 @@ function Get-ScannerCandidates {
     param([string]$ConnectionString, [guid]$ScanCycleId)
 
     return Invoke-SqlRows -ConnectionString $ConnectionString -CommandText @"
-SELECT Symbol, UniverseSource, LastCandleAtUtc, LastPrice, QuoteVolume24h, IsEligible, RejectionReason, Score, Rank, IsTopCandidate
+SELECT Symbol, UniverseSource, LastCandleAtUtc, LastPrice, QuoteVolume24h, MarketScore, StrategyScore, ScoringSummary, IsEligible, RejectionReason, Score, Rank, IsTopCandidate
 FROM MarketScannerCandidates
 WHERE ScanCycleId = @ScanCycleId
 ORDER BY Symbol;
@@ -447,6 +462,16 @@ try {
     Set-Content -Path $strategyPageHtmlPath -Value $strategyPage.Content -Encoding UTF8
 
     $strategyBuilderPage = Invoke-WebRequest -Uri ($baseUrl + '/StrategyBuilder') -WebSession $session
+    $templateDraftToken = Get-AntiforgeryToken -Html $strategyBuilderPage.Content
+    $strategyDraftTarget = Get-StrategyDraftTarget -ConnectionString $connectionString -OwnerUserId $adminUserId
+    if ($null -ne $strategyDraftTarget) {
+        $draftBody = @{
+            strategyId = $strategyDraftTarget.Id
+            templateKey = 'rsi-reversal'
+            __RequestVerificationToken = $templateDraftToken
+        }
+        $strategyBuilderPage = Invoke-WebRequest -Uri ($baseUrl + '/StrategyBuilder/CreateDraftFromTemplate') -Method Post -WebSession $session -Body $draftBody
+    }
     Set-Content -Path $strategyBuilderHtmlPath -Value $strategyBuilderPage.Content -Encoding UTF8
 
     $summary = [ordered]@{
@@ -476,7 +501,13 @@ try {
         UiHandoffBlocker = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-handoff-blocker'
         UiHandoffGuard = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-handoff-guard'
         UiHandoffAt = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-handoff-at'
+        UiHandoffMarketScore = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-handoff-market-score'
         UiHandoffScore = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-handoff-score'
+        UiHandoffCompositeScore = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-handoff-composite-score'
+        UiTopMarketScore = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-top-market-score'
+        UiTopStrategyScore = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-top-strategy-score'
+        UiTopCompositeScore = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-top-composite-score'
+        UiTopScoringSummary = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-top-scoring-summary'
         UiStrategyUsageValidation = Read-HtmlText -Html $strategyPage.Content -DataAttribute 'data-cb-strategy-usage-validation'
         UiStrategyUsageScore = Read-HtmlText -Html $strategyPage.Content -DataAttribute 'data-cb-strategy-usage-score'
         UiStrategyUsageExplainability = Read-HtmlText -Html $strategyPage.Content -DataAttribute 'data-cb-strategy-usage-explainability'
@@ -489,6 +520,8 @@ try {
         UiTemplateCardName = Read-HtmlAttribute -Html $strategyBuilderPage.Content -SelectorAttribute 'data-cb-template-card' -ValueAttribute 'data-cb-template-name'
         UiTemplateCardValidation = Read-HtmlAttribute -Html $strategyBuilderPage.Content -SelectorAttribute 'data-cb-template-card' -ValueAttribute 'data-cb-template-validation'
         UiTemplateCardSchema = Read-HtmlAttribute -Html $strategyBuilderPage.Content -SelectorAttribute 'data-cb-template-card' -ValueAttribute 'data-cb-template-schema'
+        UiTemplateDraftSuccess = Read-HtmlText -Html $strategyBuilderPage.Content -DataAttribute 'data-cb-template-draft-success'
+        UiTemplateDraftError = Read-HtmlText -Html $strategyBuilderPage.Content -DataAttribute 'data-cb-template-draft-error'
         PageHtmlPath = $pageHtmlPath
         StrategyPageHtmlPath = $strategyPageHtmlPath
         StrategyBuilderHtmlPath = $strategyBuilderHtmlPath
@@ -514,12 +547,17 @@ try {
     Write-Host ('UiHandoffBlocker=' + $summary.UiHandoffBlocker)
     Write-Host ('UiStrategyUsageValidation=' + $summary.UiStrategyUsageValidation)
     Write-Host ('UiStrategyExplainabilitySummary=' + $summary.UiStrategyExplainabilitySummary)
+    Write-Host ('UiTopCompositeScore=' + $summary.UiTopCompositeScore)
+    Write-Host ('UiHandoffCompositeScore=' + $summary.UiHandoffCompositeScore)
     Write-Host ('UiTemplateCard=' + $summary.UiTemplateCardKey + '/' + $summary.UiTemplateCardValidation)
+    Write-Host ('UiTemplateDraftSuccess=' + $summary.UiTemplateDraftSuccess)
     Write-Host ('SummaryPath=' + $summaryPath)
 }
 finally {
     Stop-ManagedProcess -Process $webProcess
 }
+
+
 
 
 
