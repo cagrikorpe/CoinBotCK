@@ -1,3 +1,12 @@
+@using CoinBot.Application.Abstractions.Dashboard
+@model UserDashboardPortfolioSnapshot
+@{
+    var closedRows = Model.TradeHistory
+        .Where(item => item.FinalState is "Filled" or "Cancelled" or "Rejected" or "Failed")
+        .OrderByDescending(item => item.LastUpdatedAtUtc)
+        .Take(12)
+        .ToArray();
+}
 <div class="card card-custom gutter-b cb-card">
     <div class="card-header border-0 pt-6">
         <div class="card-title">
@@ -8,7 +17,7 @@
         </div>
     </div>
     <div class="card-body pt-2">
-        <div class="cb-table-wrap" data-cb-closed-positions-panel="list">
+        <div class="cb-table-wrap @(closedRows.Length == 0 ? "d-none" : string.Empty)" data-cb-closed-positions-panel="list">
             <table class="table table-borderless cb-table mb-0">
                 <thead>
                     <tr>
@@ -25,35 +34,36 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <tr data-cb-position-detail="eth-closed" data-cb-position-kind="closed">
-                        <td><div class="cb-bot-row-title">ETHUSDT</div><div class="cb-bot-row-subtitle">Momentum cycle</div></td>
-                        <td><span class="cb-badge cb-badge-success cb-direction-badge">▲ Long</span></td>
-                        <td><span class="cb-badge cb-badge-neutral">—</span></td>
-                        <td class="cb-mono">3,180 / 3,246</td>
-                        <td class="cb-mono cb-text-positive">+$96</td>
-                        <td><span class="cb-badge cb-badge-success">Take Profit</span></td>
-                        <td><div class="cb-mono">2 sa 11 dk</div><div class="cb-bot-inline-help">Holding time</div></td>
-                        <td><span class="cb-badge cb-badge-info">Alpha Spot Pulse</span></td>
-                        <td><div class="cb-mono">21 Mar · 08:44</div></td>
-                        <td class="text-right"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-position-open-detail="eth-closed" data-cb-drawer-target="#cb_positions_detail_drawer">Detay</button></td>
-                    </tr>
-                    <tr data-cb-position-detail="btc-closed" data-cb-position-kind="closed">
-                        <td><div class="cb-bot-row-title">BTCUSDT</div><div class="cb-bot-row-subtitle">Breakout fade</div></td>
-                        <td><span class="cb-badge cb-badge-danger cb-direction-badge">▼ Short</span></td>
-                        <td><span class="cb-badge cb-badge-warning">4x</span></td>
-                        <td class="cb-mono">62,310 / 62,540</td>
-                        <td class="cb-mono cb-text-negative">-$58</td>
-                        <td><span class="cb-badge cb-badge-danger">Stop Loss</span></td>
-                        <td><div class="cb-mono">36 dk</div><div class="cb-bot-inline-help">Holding time</div></td>
-                        <td><span class="cb-badge cb-badge-warning">Beta Hedge Runner</span></td>
-                        <td><div class="cb-mono">21 Mar · 07:52</div></td>
-                        <td class="text-right"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-position-open-detail="btc-closed" data-cb-drawer-target="#cb_positions_detail_drawer">Detay</button></td>
-                    </tr>
+                    @foreach (var row in closedRows)
+                    {
+                        var sideTone = row.Side.Equals("Buy", StringComparison.OrdinalIgnoreCase) ? "cb-badge-success" : "cb-badge-danger";
+                        var resultTone = row.ExecutionResultCategory switch
+                        {
+                            "Filled" => "cb-badge-success",
+                            "Partial" => "cb-badge-warning",
+                            "Canceled" => "cb-badge-neutral",
+                            "Rejected" or "Failed" => "cb-badge-danger",
+                            _ => "cb-badge-info"
+                        };
+                        var pnlTone = row.RealizedPnl >= 0m ? "cb-text-positive" : "cb-text-negative";
+                        <tr data-cb-position-detail="@row.OrderId.ToString("N")" data-cb-position-kind="closed" data-cb-closed-position-row>
+                            <td><div class="cb-bot-row-title" data-cb-closed-position-symbol>@row.Symbol</div><div class="cb-bot-row-subtitle">@row.Timeframe</div></td>
+                            <td><span class="cb-badge @sideTone cb-direction-badge" data-cb-closed-position-side>@row.Side</span></td>
+                            <td><span class="cb-badge cb-badge-neutral">—</span></td>
+                            <td class="cb-mono" data-cb-closed-position-price>@($"{row.AverageFillPrice?.ToString("0.####") ?? "-"} / {row.AverageFillPrice?.ToString("0.####") ?? "-"}")</td>
+                            <td class="cb-mono @pnlTone" data-cb-closed-position-realized>@($"{(row.RealizedPnl >= 0m ? "+" : string.Empty)}{row.RealizedPnl:0.####}")</td>
+                            <td><span class="cb-badge @resultTone" data-cb-closed-position-result>@row.ExecutionResultCode</span></td>
+                            <td><div class="cb-mono">@((row.ClosedAtUtc ?? row.LastUpdatedAtUtc).ToUniversalTime().ToString("HH:mm"))</div><div class="cb-bot-inline-help">UTC</div></td>
+                            <td><span class="cb-badge cb-badge-info">History</span></td>
+                            <td><div class="cb-mono" data-cb-closed-position-updated>@row.LastUpdatedAtUtc.ToUniversalTime().ToString("dd MMM · HH:mm")</div></td>
+                            <td class="text-right"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-position-open-detail="@row.OrderId.ToString("N")" data-cb-drawer-target="#cb_positions_detail_drawer">Detay</button></td>
+                        </tr>
+                    }
                 </tbody>
             </table>
         </div>
 
-        <div class="d-none" data-cb-closed-positions-panel="empty">
+        <div class="@(closedRows.Length == 0 ? string.Empty : "d-none")" data-cb-closed-positions-panel="empty">
             @await Html.PartialAsync("Foundation/_EmptyState", new UiStateViewModel
             {
                 IconText = "CP",

@@ -1,3 +1,5 @@
+@using CoinBot.Application.Abstractions.Dashboard
+@model UserDashboardPortfolioSnapshot
 @{
     var defaultTab = (ViewData["DefaultTab"]?.ToString() ?? "positions").ToLowerInvariant();
 }
@@ -17,7 +19,7 @@
                         <p class="cb-page-description">Açık ve kapalı pozisyonları, leverage ve PnL özetini, emir geçmişini ve neden açıldı / neden kapandı bilgisini aynı operasyonel foundation ekranda toplar.</p>
                     </div>
                     <div class="cb-toolbar">
-                        <span class="cb-badge cb-badge-info">UI-only foundation</span>
+                        <span class="cb-badge cb-badge-info" data-cb-positions-sync-status>@Model.SyncStatusLabel</span>
                         <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-positions-refresh>Yenile</button>
                         <button type="button" class="btn btn-primary font-weight-bolder" data-cb-position-open-detail="btc-open" data-cb-drawer-target="#cb_positions_detail_drawer">Detay drawer örneği</button>
                     </div>
@@ -25,7 +27,7 @@
 
                 <div class="cb-section mt-6">
                     <div class="cb-section-title">Durum Senaryoları</div>
-                    <p class="cb-page-description mt-2 mb-0">Açık pozisyon, history yoğunluğu, bekleme ve hata yüzeylerini tek foundation içinde kontrol edin. Gerçek exchange sync veya execution bağlantısı bu fazda yoktur.</p>
+                    <p class="cb-page-description mt-2 mb-0" data-cb-positions-pnl-consistency>@Model.PnlConsistencySummary</p>
                     <div class="cb-chip-group mt-4" data-cb-toggle-group>
                         <button type="button" class="cb-chip" data-cb-toggle-active data-cb-positions-scenario-trigger="empty">İlk kullanım / boş durum</button>
                         <button type="button" class="cb-chip is-active" data-cb-toggle-active data-cb-positions-scenario-trigger="active">Açık pozisyon var</button>
@@ -40,7 +42,7 @@
     </div>
 
     <div class="col-12" data-cb-positions-panel="content">
-        @await Html.PartialAsync("Positions/_SummaryCards")
+        @await Html.PartialAsync("Positions/_SummaryCards", Model)
     </div>
 
     <div class="col-12" data-cb-positions-panel="content">
@@ -58,12 +60,12 @@
         </div>
 
         <div data-cb-positions-tab-panel="positions">
-            @await Html.PartialAsync("Positions/_OpenPositionsCard")
-            @await Html.PartialAsync("Positions/_ClosedPositionsCard")
+            @await Html.PartialAsync("Positions/_OpenPositionsCard", Model)
+            @await Html.PartialAsync("Positions/_ClosedPositionsCard", Model)
         </div>
 
         <div class="d-none" data-cb-positions-tab-panel="history">
-            @await Html.PartialAsync("Positions/_OrderHistoryCard")
+            @await Html.PartialAsync("Positions/_OrderHistoryCard", Model)
         </div>
     </div>
 

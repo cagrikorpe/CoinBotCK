@@ -224,12 +224,17 @@ public sealed class HomeControllerTests
             "Canli senkron bagli",
             "positive",
             At(0),
+            12.5m,
+            15.5m,
+            28m,
+            "PnL consistent. Realized=12.5; Unrealized=15.5; Total=28; LedgerDelta=12.5.",
             [
                 new UserDashboardBalanceSnapshot("USDT", 1500m, 1490m, 1200m, 1200m, At(0), At(0))
             ],
             [
                 new UserDashboardPositionSnapshot("XRPUSDT", "LONG", 25m, 0.51m, 0.51m, 15.5m, "cross", 0m, At(0), At(0))
-            ]);
+            ],
+            []);
 
         public Task<UserDashboardPortfolioSnapshot> GetSnapshotAsync(string userId, CancellationToken cancellationToken = default)
         {

@@ -21,6 +21,7 @@ const dashboardScreenshotPath = path.join(diagDirectory, 'bot-ui-dashboard.png')
 const botsScreenshotPath = path.join(diagDirectory, 'bot-ui-bots.png');
 const botsDisabledScreenshotPath = path.join(diagDirectory, 'bot-ui-bots-disabled.png');
 const botsEnabledScreenshotPath = path.join(diagDirectory, 'bot-ui-bots-enabled.png');
+const positionsScreenshotPath = path.join(diagDirectory, 'bot-ui-positions.png');
 const exchangesScreenshotPath = path.join(diagDirectory, 'bot-ui-exchanges.png');
 const browserSummaryPath = path.join(diagDirectory, 'bot-ui-browser-summary.json');
 
@@ -492,6 +493,53 @@ async function inspectRuntimeUi() {
       };
     })()`);
 
+    await client.navigate(`${baseUrl}/Positions/History`);
+    await client.waitForReady();
+    await client.waitForLocationContains('/Positions/History');
+    await client.evaluate(`(() => { document.querySelector('[data-cb-order-history-panel="list"]')?.scrollIntoView({ block: 'center' }); return true; })()`);
+    await sleep(500);
+    await client.captureScreenshot(positionsScreenshotPath);
+
+    const positionsState = await client.evaluate(`(() => {
+      const readText = selector => document.querySelector(selector)?.innerText?.trim() || '';
+      const row = document.querySelector('[data-cb-order-history-row]');
+      const readRowText = selector => row?.querySelector(selector)?.innerText?.trim() || '';
+      return {
+        syncStatusText: readText('[data-cb-positions-sync-status]'),
+        pnlConsistencyText: readText('[data-cb-positions-pnl-consistency]'),
+        summaryOpenText: readText('[data-cb-positions-summary-open]'),
+        summaryClosedText: readText('[data-cb-positions-summary-closed]'),
+        summaryUnrealizedText: readText('[data-cb-positions-summary-unrealized]'),
+        summaryRealizedText: readText('[data-cb-positions-summary-realized]'),
+        historySymbolText: readRowText('[data-cb-history-symbol]'),
+        historyResultCategoryText: readRowText('[data-cb-history-result-category]'),
+        historyResultCodeText: readRowText('[data-cb-history-result-code]'),
+        historyResultSummaryText: readRowText('[data-cb-history-result-summary]'),
+        historyReasonChainText: readRowText('[data-cb-history-reason-chain]'),
+        historyPnlText: readRowText('[data-cb-history-pnl]'),
+        historyAiLabelText: readRowText('[data-cb-history-ai-label]'),
+        historyAiSummaryText: readRowText('[data-cb-history-ai-summary]'),
+        historyAiSourceText: readRowText('[data-cb-history-ai-source]'),
+        historyStageText: readRowText('[data-cb-history-stage]'),
+        historySubmittedText: readRowText('[data-cb-history-submit]'),
+        historyRetryText: readRowText('[data-cb-history-retry]'),
+        historyCorrelationText: readRowText('[data-cb-history-correlation]'),
+        historyClientOrderText: readRowText('[data-cb-history-client-order]')
+      };
+    })()`);
+
+    if (!positionsState.pnlConsistencyText) {
+      throw new Error('Portfolio PnL consistency summary was not rendered on /Positions/History.');
+    }
+
+    if (!positionsState.historySymbolText || !positionsState.historyResultCodeText || !positionsState.historyReasonChainText) {
+      throw new Error('Trade history row / reason chain was not rendered on /Positions/History.');
+    }
+
+    if (!positionsState.historyAiLabelText || !positionsState.historyAiSummaryText) {
+      throw new Error('AI score placeholder fields were not rendered on /Positions/History.');
+    }
+
     await client.navigate(`${baseUrl}/Exchanges`);
     await client.waitForReady();
     await client.waitForLocationContains('/Exchanges');
@@ -579,6 +627,28 @@ async function inspectRuntimeUi() {
         exchangeStatusText: String(dashboardState.exchangeStatusText || ''),
         exchangeBannerText: String(dashboardState.exchangeBannerText || '')
       },
+      positions: {
+        syncStatusText: String(positionsState.syncStatusText || ''),
+        pnlConsistencyText: String(positionsState.pnlConsistencyText || ''),
+        summaryOpenText: String(positionsState.summaryOpenText || ''),
+        summaryClosedText: String(positionsState.summaryClosedText || ''),
+        summaryUnrealizedText: String(positionsState.summaryUnrealizedText || ''),
+        summaryRealizedText: String(positionsState.summaryRealizedText || ''),
+        historySymbolText: String(positionsState.historySymbolText || ''),
+        historyResultCategoryText: String(positionsState.historyResultCategoryText || ''),
+        historyResultCodeText: String(positionsState.historyResultCodeText || ''),
+        historyResultSummaryText: String(positionsState.historyResultSummaryText || ''),
+        historyReasonChainText: String(positionsState.historyReasonChainText || ''),
+        historyPnlText: String(positionsState.historyPnlText || ''),
+        historyAiLabelText: String(positionsState.historyAiLabelText || ''),
+        historyAiSummaryText: String(positionsState.historyAiSummaryText || ''),
+        historyAiSourceText: String(positionsState.historyAiSourceText || ''),
+        historyStageText: String(positionsState.historyStageText || ''),
+        historySubmittedText: String(positionsState.historySubmittedText || ''),
+        historyRetryText: String(positionsState.historyRetryText || ''),
+        historyCorrelationText: String(positionsState.historyCorrelationText || ''),
+        historyClientOrderText: String(positionsState.historyClientOrderText || '')
+      },
       exchanges: {
         bannerTitleText: String(exchangeState.bannerTitleText || ''),
         bannerDetailText: String(exchangeState.bannerDetailText || ''),
@@ -590,6 +660,7 @@ async function inspectRuntimeUi() {
         bots: botsScreenshotPath,
         botsDisabled: botsDisabledScreenshotPath,
         botsEnabled: botsEnabledScreenshotPath,
+        positions: positionsScreenshotPath,
         exchanges: exchangesScreenshotPath
       },
       logs: {
@@ -636,6 +707,9 @@ if (mode === 'register') {
 } else {
   throw new Error(`Unsupported bot UI smoke mode: ${mode}`);
 }
+
+
+
 
 
 

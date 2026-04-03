@@ -1,3 +1,8 @@
+@using CoinBot.Application.Abstractions.Dashboard
+@model UserDashboardPortfolioSnapshot
+@{
+    var openRows = Model.Positions.OrderBy(item => item.Symbol, StringComparer.Ordinal).ToArray();
+}
 <div class="card card-custom gutter-b cb-card">
     <div class="card-header border-0 pt-6">
         <div class="card-title">
@@ -7,11 +12,11 @@
             </div>
         </div>
         <div class="card-toolbar cb-inline-stack">
-            <span class="cb-badge cb-badge-info" id="cb_positions_open_badge">2 aktif</span>
+            <span class="cb-badge cb-badge-info" id="cb_positions_open_badge" data-cb-open-positions-count>@openRows.Length.ToString(System.Globalization.CultureInfo.InvariantCulture) aktif</span>
         </div>
     </div>
     <div class="card-body pt-2">
-        <div class="cb-table-wrap" data-cb-open-positions-panel="list">
+        <div class="cb-table-wrap @(openRows.Length == 0 ? "d-none" : string.Empty)" data-cb-open-positions-panel="list">
             <table class="table table-borderless cb-table mb-0">
                 <thead>
                     <tr>
@@ -30,39 +35,32 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <tr data-cb-position-detail="btc-open" data-cb-position-kind="open">
-                        <td><div class="cb-bot-row-title">BTCUSDT</div><div class="cb-bot-row-subtitle">Futures contract</div></td>
-                        <td><span class="cb-badge cb-badge-success cb-direction-badge">▲ Long</span></td>
-                        <td><span class="cb-badge cb-badge-info">Futures</span></td>
-                        <td><span class="cb-badge cb-badge-warning">3x</span></td>
-                        <td class="cb-numeric-cell">61,420</td>
-                        <td class="cb-numeric-cell">62,140</td>
-                        <td class="cb-numeric-cell cb-text-positive">+$126</td>
-                        <td class="cb-numeric-cell">0.42 BTC</td>
-                        <td><div class="cb-numeric-cell">09:14</div><div class="cb-bot-inline-help">42 dk önce</div></td>
-                        <td><span class="cb-badge cb-badge-info">Alpha Spot Pulse</span></td>
-                        <td><span class="cb-badge cb-badge-warning">İzleniyor</span></td>
-                        <td class="text-right"><div class="cb-table-actions justify-content-end"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-position-open-detail="btc-open" data-cb-drawer-target="#cb_positions_detail_drawer">Detay</button><button type="button" class="btn btn-xs btn-light-warning font-weight-bold" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Pozisyonu azalt" data-cb-modal-message="Reduce akışı foundation olarak hazırlanmıştır. Gerçek execution bu fazda bağlı değildir." data-cb-modal-confirm="Azalt">Azalt</button><button type="button" class="btn btn-xs btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_danger_modal" data-cb-modal-title="Pozisyonu kapat" data-cb-modal-message="Close placeholder onayı mevcut danger confirm standardı ile gösterilir." data-cb-modal-tone="danger" data-cb-modal-confirm="Kapat">Kapat</button></div></td>
-                    </tr>
-                    <tr data-cb-position-detail="sol-open" data-cb-position-kind="open">
-                        <td><div class="cb-bot-row-title">SOLUSDT</div><div class="cb-bot-row-subtitle">Hedge leg</div></td>
-                        <td><span class="cb-badge cb-badge-danger cb-direction-badge">▼ Short</span></td>
-                        <td><span class="cb-badge cb-badge-info">Futures</span></td>
-                        <td><span class="cb-badge cb-badge-danger">8x</span></td>
-                        <td class="cb-numeric-cell">131.8</td>
-                        <td class="cb-numeric-cell">130.7</td>
-                        <td class="cb-numeric-cell cb-text-positive">+$84</td>
-                        <td class="cb-numeric-cell">12 SOL</td>
-                        <td><div class="cb-numeric-cell">08:31</div><div class="cb-bot-inline-help">1 sa 20 dk</div></td>
-                        <td><span class="cb-badge cb-badge-warning">Beta Hedge Runner</span></td>
-                        <td><span class="cb-badge cb-badge-danger">High leverage</span></td>
-                        <td class="text-right"><div class="cb-table-actions justify-content-end"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-position-open-detail="sol-open" data-cb-drawer-target="#cb_positions_detail_drawer">Detay</button><button type="button" class="btn btn-xs btn-light-warning font-weight-bold" data-toggle="modal" data-target="#cb_confirm_modal" data-cb-modal-title="Pozisyonu azalt" data-cb-modal-message="Short paper/runtime azaltma akışı sonradan execution guard’larına bağlanacaktır." data-cb-modal-confirm="Azalt">Azalt</button><button type="button" class="btn btn-xs btn-light-danger font-weight-bold" data-toggle="modal" data-target="#cb_danger_modal" data-cb-modal-title="Pozisyonu kapat" data-cb-modal-message="Short pozisyon kapatma confirm akışı yalnızca foundation seviyesindedir." data-cb-modal-tone="danger" data-cb-modal-confirm="Kapat">Kapat</button></div></td>
-                    </tr>
+                    @foreach (var row in openRows)
+                    {
+                        var direction = row.PositionSide.Equals("SHORT", StringComparison.OrdinalIgnoreCase) || row.Quantity < 0m ? "Short" : "Long";
+                        var directionTone = direction == "Long" ? "cb-badge-success" : "cb-badge-danger";
+                        var pnlTone = row.UnrealizedProfit >= 0m ? "cb-text-positive" : "cb-text-negative";
+                        var riskTone = row.MarginType.Equals("isolated", StringComparison.OrdinalIgnoreCase) ? "cb-badge-warning" : "cb-badge-success";
+                        <tr data-cb-position-detail="@row.Symbol" data-cb-position-kind="open" data-cb-open-position-row>
+                            <td><div class="cb-bot-row-title" data-cb-open-position-symbol>@row.Symbol</div><div class="cb-bot-row-subtitle">@row.MarginType</div></td>
+                            <td><span class="cb-badge @directionTone cb-direction-badge" data-cb-open-position-side>@(direction == "Long" ? "▲ Long" : "▼ Short")</span></td>
+                            <td><span class="cb-badge cb-badge-info">Runtime</span></td>
+                            <td><span class="cb-badge cb-badge-warning">1x</span></td>
+                            <td class="cb-numeric-cell" data-cb-open-position-entry>@row.EntryPrice.ToString("0.####")</td>
+                            <td class="cb-numeric-cell" data-cb-open-position-current>@row.BreakEvenPrice.ToString("0.####")</td>
+                            <td class="cb-numeric-cell @pnlTone" data-cb-open-position-unrealized>@($"{(row.UnrealizedProfit >= 0m ? "+" : string.Empty)}{row.UnrealizedProfit:0.####}")</td>
+                            <td class="cb-numeric-cell" data-cb-open-position-qty>@Math.Abs(row.Quantity).ToString("0.####")</td>
+                            <td><div class="cb-numeric-cell" data-cb-open-position-opened>@row.SyncedAtUtc.ToUniversalTime().ToString("HH:mm")</div><div class="cb-bot-inline-help">UTC</div></td>
+                            <td><span class="cb-badge cb-badge-info">Portfolio</span></td>
+                            <td><span class="cb-badge @riskTone" data-cb-open-position-risk>@row.MarginType</span></td>
+                            <td class="text-right"><div class="cb-table-actions justify-content-end"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-position-open-detail="@row.Symbol" data-cb-drawer-target="#cb_positions_detail_drawer">Detay</button></div></td>
+                        </tr>
+                    }
                 </tbody>
             </table>
         </div>
 
-        <div class="d-none" data-cb-open-positions-panel="empty">
+        <div class="@(openRows.Length == 0 ? string.Empty : "d-none")" data-cb-open-positions-panel="empty">
             @await Html.PartialAsync("Foundation/_EmptyState", new UiStateViewModel
             {
                 IconText = "OP",

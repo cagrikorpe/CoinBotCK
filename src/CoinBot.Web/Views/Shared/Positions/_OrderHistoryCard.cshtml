@@ -1,3 +1,8 @@
+@using CoinBot.Application.Abstractions.Dashboard
+@model UserDashboardPortfolioSnapshot
+@{
+    var historyRows = Model.TradeHistory.OrderByDescending(item => item.LastUpdatedAtUtc).ToArray();
+}
 <div class="card card-custom gutter-b cb-card">
     <div class="card-header border-0 pt-6">
         <div class="card-title">
@@ -16,7 +21,7 @@
         </div>
     </div>
     <div class="card-body pt-2">
-        <div class="cb-table-wrap" data-cb-order-history-panel="list">
+        <div class="cb-table-wrap @(historyRows.Length == 0 ? "d-none" : string.Empty)" data-cb-order-history-panel="list">
             <table class="table table-borderless cb-table mb-0">
                 <thead>
                     <tr>
@@ -34,50 +39,56 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <tr data-cb-position-open-detail="ord-btc-buy">
-                        <td><div class="cb-bot-row-title cb-numeric">21 Mar</div><div class="cb-bot-row-subtitle">09:14</div></td>
-                        <td><div class="cb-bot-row-title">BTCUSDT</div><div class="cb-bot-row-subtitle">1h</div></td>
-                        <td><span class="cb-badge cb-badge-success">Buy</span></td>
-                        <td><span class="cb-badge cb-badge-success">Long</span></td>
-                        <td class="cb-numeric-cell">0.42</td>
-                        <td class="cb-numeric-cell">61,420</td>
-                        <td><span class="cb-badge cb-badge-info">Market</span></td>
-                        <td><span class="cb-badge cb-badge-success">Filled</span></td>
-                        <td><span class="cb-badge cb-badge-neutral">Manual/Auto</span></td>
-                        <td><span class="cb-badge cb-badge-info">Alpha Spot Pulse</span></td>
-                        <td class="text-right"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-position-open-detail="ord-btc-buy" data-cb-drawer-target="#cb_positions_detail_drawer">Detay</button></td>
-                    </tr>
-                    <tr data-cb-position-open-detail="ord-sol-stop">
-                        <td><div class="cb-bot-row-title cb-numeric">21 Mar</div><div class="cb-bot-row-subtitle">08:54</div></td>
-                        <td><div class="cb-bot-row-title">SOLUSDT</div><div class="cb-bot-row-subtitle">15m</div></td>
-                        <td><span class="cb-badge cb-badge-danger">Sell</span></td>
-                        <td><span class="cb-badge cb-badge-danger">Short</span></td>
-                        <td class="cb-numeric-cell">12</td>
-                        <td class="cb-numeric-cell">132.4</td>
-                        <td><span class="cb-badge cb-badge-warning">Stop</span></td>
-                        <td><span class="cb-badge cb-badge-warning">Partial</span></td>
-                        <td><span class="cb-badge cb-badge-danger">Stop/TP</span></td>
-                        <td><span class="cb-badge cb-badge-warning">Beta Hedge Runner</span></td>
-                        <td class="text-right"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-position-open-detail="ord-sol-stop" data-cb-drawer-target="#cb_positions_detail_drawer">Detay</button></td>
-                    </tr>
-                    <tr data-cb-position-open-detail="ord-eth-cancel">
-                        <td><div class="cb-bot-row-title cb-numeric">21 Mar</div><div class="cb-bot-row-subtitle">07:41</div></td>
-                        <td><div class="cb-bot-row-title">ETHUSDT</div><div class="cb-bot-row-subtitle">4h</div></td>
-                        <td><span class="cb-badge cb-badge-success">Buy</span></td>
-                        <td><span class="cb-badge cb-badge-info">Long</span></td>
-                        <td class="cb-numeric-cell">1.4</td>
-                        <td class="cb-numeric-cell">3,160</td>
-                        <td><span class="cb-badge cb-badge-info">Limit</span></td>
-                        <td><span class="cb-badge cb-badge-neutral">Canceled</span></td>
-                        <td><span class="cb-badge cb-badge-neutral">Rejected/None</span></td>
-                        <td><span class="cb-badge cb-badge-info">Gamma Mean Reversion</span></td>
-                        <td class="text-right"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-position-open-detail="ord-eth-cancel" data-cb-drawer-target="#cb_positions_detail_drawer">Detay</button></td>
-                    </tr>
+                    @foreach (var row in historyRows)
+                    {
+                        var sideTone = row.Side.Equals("Buy", StringComparison.OrdinalIgnoreCase) ? "cb-badge-success" : "cb-badge-danger";
+                        var statusTone = row.ExecutionResultCategory switch
+                        {
+                            "Filled" => "cb-badge-success",
+                            "Partial" => "cb-badge-warning",
+                            "Canceled" => "cb-badge-neutral",
+                            "Rejected" or "Failed" => "cb-badge-danger",
+                            _ => "cb-badge-info"
+                        };
+                        <tr data-cb-order-history-row="@row.OrderId.ToString("N")">
+                            <td>
+                                <div class="cb-bot-row-title cb-numeric" data-cb-history-opened-date>@row.OpenedAtUtc.ToUniversalTime().ToString("dd MMM")</div>
+                                <div class="cb-bot-row-subtitle" data-cb-history-opened-time>@row.OpenedAtUtc.ToUniversalTime().ToString("HH:mm") UTC</div>
+                            </td>
+                            <td>
+                                <div class="cb-bot-row-title" data-cb-history-symbol>@row.Symbol</div>
+                                <div class="cb-bot-row-subtitle" data-cb-history-timeframe>@row.Timeframe</div>
+                                <div class="cb-bot-inline-help" data-cb-history-correlation>@row.CorrelationId</div>
+                                <div class="cb-bot-inline-help" data-cb-history-client-order>@(row.ClientOrderId ?? "ClientOrderId=n/a")</div>
+                            </td>
+                            <td><span class="cb-badge @sideTone" data-cb-history-side>@row.Side</span></td>
+                            <td><span class="cb-badge @sideTone">@(row.Side.Equals("Buy", StringComparison.OrdinalIgnoreCase) ? "Long" : "Short")</span></td>
+                            <td class="cb-numeric-cell" data-cb-history-quantity>@row.Quantity.ToString("0.####")</td>
+                            <td class="cb-numeric-cell" data-cb-history-fill-price>@(row.AverageFillPrice?.ToString("0.####") ?? "-")</td>
+                            <td><span class="cb-badge cb-badge-info">@row.FinalState</span></td>
+                            <td><span class="cb-badge @statusTone" data-cb-history-result-category>@row.ExecutionResultCategory</span></td>
+                            <td>
+                                <span class="cb-badge cb-badge-neutral" data-cb-history-result-code>@row.ExecutionResultCode</span>
+                                <div class="cb-bot-inline-help" data-cb-history-result-summary>@row.ExecutionResultSummary</div>
+                                <div class="cb-bot-inline-help" data-cb-history-reason-chain>@row.ReasonChainSummary</div>
+                                <div class="cb-bot-inline-help" data-cb-history-pnl>Realized @($"{(row.RealizedPnl >= 0m ? "+" : string.Empty)}{row.RealizedPnl:0.####}") · Unrealized @(row.UnrealizedPnlContribution?.ToString("0.####") ?? "0") · Fee @(row.FeeAmountInQuote?.ToString("0.####") ?? "0")</div>
+                                <div class="cb-bot-inline-help" data-cb-history-ai-label>@row.AiScoreLabel</div>
+                                <div class="cb-bot-inline-help" data-cb-history-ai-summary>@row.AiScoreSummary</div>
+                            </td>
+                            <td>
+                                <span class="cb-badge cb-badge-info" data-cb-history-stage>@row.RejectionStage</span>
+                                <div class="cb-bot-inline-help" data-cb-history-submit>Submitted: @(row.SubmittedToBroker ? "Yes" : "No")</div>
+                                <div class="cb-bot-inline-help" data-cb-history-retry>Retry: @(row.RetryEligible ? "Yes" : "No") · Cooldown: @(row.CooldownApplied ? "Yes" : "No")</div>
+                                <div class="cb-bot-inline-help" data-cb-history-ai-source>@row.AiScoreSource · Placeholder=@(row.AiScoreIsPlaceholder ? "Yes" : "No")</div>
+                            </td>
+                            <td class="text-right"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-position-open-detail="@row.OrderId.ToString("N")" data-cb-drawer-target="#cb_positions_detail_drawer">Detay</button></td>
+                        </tr>
+                    }
                 </tbody>
             </table>
         </div>
 
-        <div class="d-none" data-cb-order-history-panel="empty">
+        <div class="@(historyRows.Length == 0 ? string.Empty : "d-none")" data-cb-order-history-panel="empty">
             @await Html.PartialAsync("Foundation/_EmptyState", new UiStateViewModel
             {
                 IconText = "OH",

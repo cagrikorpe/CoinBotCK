@@ -119,14 +119,10 @@
             setPanel('order-history', scenario.history);
         }
 
-        const s = scenario.summary;
-        text('cb_positions_summary_open', s[0]);
-        text('cb_positions_summary_closed', s[1]);
-        text('cb_positions_summary_unrealized', s[2]);
-        text('cb_positions_summary_realized', s[3]);
-        text('cb_positions_summary_long', s[4]);
-        text('cb_positions_summary_short', s[5]);
-        text('cb_positions_open_badge', s[0] + ' aktif');
+        const openBadge = document.getElementById('cb_positions_open_badge');
+        if (openBadge && scenario.panel !== 'content') {
+            openBadge.textContent = '0 aktif';
+        }
     }
 
     function fillChips(prefix, values) {

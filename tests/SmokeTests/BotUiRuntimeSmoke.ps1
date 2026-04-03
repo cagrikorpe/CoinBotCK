@@ -471,6 +471,21 @@ try {
         Write-Host ('UiBotCooldownBadge=' + $summary.Ui.bots.postToggleCooldownBadgeText)
         Write-Host ('UiBotCooldownRemaining=' + $summary.Ui.bots.postToggleCooldownRemainingText)
         Write-Host ('UiDashboardDriftSummary=' + $summary.Ui.dashboard.driftSummaryText)
+        Write-Host ('UiPositionsPnlConsistency=' + $summary.Ui.positions.pnlConsistencyText)
+        Write-Host ('UiPositionsSummaryUnrealized=' + $summary.Ui.positions.summaryUnrealizedText)
+        Write-Host ('UiPositionsSummaryRealized=' + $summary.Ui.positions.summaryRealizedText)
+        Write-Host ('UiHistorySymbol=' + $summary.Ui.positions.historySymbolText)
+        Write-Host ('UiHistoryResultCode=' + $summary.Ui.positions.historyResultCodeText)
+        Write-Host ('UiHistoryReasonChain=' + $summary.Ui.positions.historyReasonChainText)
+        Write-Host ('UiHistoryPnl=' + $summary.Ui.positions.historyPnlText)
+        Write-Host ('UiHistoryAiLabel=' + $summary.Ui.positions.historyAiLabelText)
+        Write-Host ('UiHistoryAiSummary=' + $summary.Ui.positions.historyAiSummaryText)
+        Write-Host ('UiHistoryAiSource=' + $summary.Ui.positions.historyAiSourceText)
+        Write-Host ('UiHistoryStage=' + $summary.Ui.positions.historyStageText)
+        Write-Host ('UiHistorySubmitted=' + $summary.Ui.positions.historySubmittedText)
+        Write-Host ('UiHistoryRetry=' + $summary.Ui.positions.historyRetryText)
+        Write-Host ('UiHistoryCorrelation=' + $summary.Ui.positions.historyCorrelationText)
+        Write-Host ('UiHistoryClientOrder=' + $summary.Ui.positions.historyClientOrderText)
         Write-Host ('UiExchangeBannerDetail=' + $summary.Ui.exchanges.bannerDetailText)
         Write-Host ('UiToggleCycle=' + $summary.Ui.bots.disableThenEnableCycle)
     }
@@ -483,6 +498,7 @@ finally {
         [System.Security.Cryptography.CryptographicOperations]::ZeroMemory($randomKeyBytes)
     }
 }
+
 
 
 
