@@ -40,7 +40,8 @@ public sealed class CrisisEscalationService(
         ExecutionOrderState.GatePassed,
         ExecutionOrderState.Dispatching,
         ExecutionOrderState.Submitted,
-        ExecutionOrderState.PartiallyFilled
+        ExecutionOrderState.PartiallyFilled,
+        ExecutionOrderState.CancelRequested
     };
     private static readonly string[] KnownQuoteAssets =
     [
@@ -434,17 +435,17 @@ public sealed class CrisisEscalationService(
         string? correlationId,
         CancellationToken cancellationToken)
     {
-        if (order.State is ExecutionOrderState.Submitted or ExecutionOrderState.PartiallyFilled)
+        if (order.State is ExecutionOrderState.Submitted or ExecutionOrderState.PartiallyFilled or ExecutionOrderState.CancelRequested)
         {
             await ReleaseOutstandingDemoReservationAsync(order, cancellationToken);
         }
 
         await LocalTerminalizeOrderAsync(
             order,
-            order.State is ExecutionOrderState.Submitted or ExecutionOrderState.PartiallyFilled
+            order.State is ExecutionOrderState.Submitted or ExecutionOrderState.PartiallyFilled or ExecutionOrderState.CancelRequested
                 ? ExecutionOrderState.Cancelled
                 : ExecutionOrderState.Failed,
-            order.State is ExecutionOrderState.Submitted or ExecutionOrderState.PartiallyFilled
+            order.State is ExecutionOrderState.Submitted or ExecutionOrderState.PartiallyFilled or ExecutionOrderState.CancelRequested
                 ? "CrisisOrderPurgeCancelled"
                 : "CrisisOrderPurgeFailedClosed",
             correlationId,

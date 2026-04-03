@@ -104,7 +104,8 @@ public sealed class BinanceExecutor(
                     order.RootCorrelationId,
                     ExecutionAttemptId: null,
                     order.Id,
-                    command.OwnerUserId),
+                    command.OwnerUserId,
+                    command.ReduceOnly),
                 cancellationToken);
 
             if (dependencyCircuitBreakerStateManager is not null)

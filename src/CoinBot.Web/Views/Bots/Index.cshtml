@@ -87,6 +87,29 @@
                                         <td>
                                             <div class="font-weight-bolder">@bot.LastExecutionState</div>
                                             <div class="text-muted small">@(string.IsNullOrWhiteSpace(bot.LastExecutionFailureCode) ? "Failure yok" : bot.LastExecutionFailureCode)</div>
+                                            <div class="text-muted small" data-cb-bot-exec-submit>@bot.LastExecutionSubmitStatusText</div>
+                                            <div class="text-muted small" data-cb-bot-exec-retry>@bot.LastExecutionRetryText</div>
+                                            <div class="text-muted small" data-cb-bot-exec-protection>@bot.LastExecutionProtectionText</div>
+                                            @if (!string.IsNullOrWhiteSpace(bot.LastExecutionStageText))
+                                            {
+                                                <div class="text-muted small" data-cb-bot-exec-stage>@bot.LastExecutionStageText</div>
+                                            }
+                                            @if (!string.IsNullOrWhiteSpace(bot.LastExecutionTransitionText))
+                                            {
+                                                <div class="text-muted small" data-cb-bot-exec-transition>@bot.LastExecutionTransitionText</div>
+                                            }
+                                            @if (!string.IsNullOrWhiteSpace(bot.LastExecutionCorrelationText))
+                                            {
+                                                <div class="text-muted small" data-cb-bot-exec-correlation>@bot.LastExecutionCorrelationText</div>
+                                            }
+                                            @if (!string.IsNullOrWhiteSpace(bot.LastExecutionClientOrderText))
+                                            {
+                                                <div class="text-muted small" data-cb-bot-exec-client-order>@bot.LastExecutionClientOrderText</div>
+                                            }
+                                            @if (!string.IsNullOrWhiteSpace(bot.LastExecutionDuplicateText))
+                                            {
+                                                <div class="small text-warning" data-cb-bot-exec-duplicate>@bot.LastExecutionDuplicateText</div>
+                                            }
                                             @if (!string.IsNullOrWhiteSpace(bot.LastExecutionBlockDetail))
                                             {
                                                 <div class="small text-dark">@bot.LastExecutionBlockDetail</div>

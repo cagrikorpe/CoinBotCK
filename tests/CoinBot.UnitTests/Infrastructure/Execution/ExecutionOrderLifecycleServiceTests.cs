@@ -1,0 +1,180 @@
+using CoinBot.Application.Abstractions.Auditing;
+using CoinBot.Application.Abstractions.DataScope;
+using CoinBot.Domain.Entities;
+using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Auditing;
+using CoinBot.Infrastructure.Execution;
+using CoinBot.Infrastructure.Exchange;
+using CoinBot.Infrastructure.Observability;
+using CoinBot.Infrastructure.Persistence;
+using CoinBot.UnitTests.Infrastructure.Mfa;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+
+namespace CoinBot.UnitTests.Infrastructure.Execution;
+
+public sealed class ExecutionOrderLifecycleServiceTests
+{
+    [Fact]
+    public async Task ApplyExchangeUpdateAsync_PersistsCancelRequestedThenCancelled()
+    {
+        await using var dbContext = CreateContext();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var lifecycleService = CreateService(dbContext, timeProvider);
+        var orderId = await SeedOrderAsync(dbContext, ExecutionOrderState.Submitted, filledQuantity: 0m);
+
+        var cancelRequested = await lifecycleService.ApplyExchangeUpdateAsync(
+            CreateSnapshot(orderId, "PENDING_CANCEL", executedQuantity: 0m, timeProvider.GetUtcNow().UtcDateTime));
+        var cancelled = await lifecycleService.ApplyExchangeUpdateAsync(
+            CreateSnapshot(orderId, "CANCELED", executedQuantity: 0m, timeProvider.GetUtcNow().UtcDateTime.AddSeconds(1)));
+
+        var order = await dbContext.ExecutionOrders.SingleAsync(entity => entity.Id == orderId);
+        var transitions = await dbContext.ExecutionOrderTransitions
+            .OrderBy(entity => entity.SequenceNumber)
+            .Select(entity => entity.State)
+            .ToListAsync();
+
+        Assert.True(cancelRequested);
+        Assert.True(cancelled);
+        Assert.Equal(ExecutionOrderState.Cancelled, order.State);
+        Assert.True(order.SubmittedToBroker);
+        Assert.Equal(ExecutionRejectionStage.None, order.RejectionStage);
+        Assert.Equal(
+            [ExecutionOrderState.CancelRequested, ExecutionOrderState.Cancelled],
+            transitions);
+    }
+
+    [Fact]
+    public async Task ApplyExchangeUpdateAsync_IgnoresDuplicatePartialFillAndOutOfOrderReject()
+    {
+        await using var dbContext = CreateContext();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var lifecycleService = CreateService(dbContext, timeProvider);
+        var orderId = await SeedOrderAsync(dbContext, ExecutionOrderState.PartiallyFilled, filledQuantity: 0.02m);
+
+        var duplicatePartialFill = await lifecycleService.ApplyExchangeUpdateAsync(
+            CreateSnapshot(orderId, "PARTIALLY_FILLED", executedQuantity: 0.02m, timeProvider.GetUtcNow().UtcDateTime));
+        var outOfOrderReject = await lifecycleService.ApplyExchangeUpdateAsync(
+            CreateSnapshot(orderId, "REJECTED", executedQuantity: 0.02m, timeProvider.GetUtcNow().UtcDateTime.AddSeconds(1)));
+
+        var order = await dbContext.ExecutionOrders.SingleAsync(entity => entity.Id == orderId);
+        var transitionCount = await dbContext.ExecutionOrderTransitions.CountAsync(entity => entity.ExecutionOrderId == orderId);
+
+        Assert.True(duplicatePartialFill);
+        Assert.True(outOfOrderReject);
+        Assert.Equal(ExecutionOrderState.PartiallyFilled, order.State);
+        Assert.Equal(0.02m, order.FilledQuantity);
+        Assert.Equal(0, transitionCount);
+    }
+
+    [Fact]
+    public async Task ApplyExchangeUpdateAsync_IgnoresDuplicateCancelAndLateCallbackAfterTerminalState()
+    {
+        await using var dbContext = CreateContext();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var lifecycleService = CreateService(dbContext, timeProvider);
+        var orderId = await SeedOrderAsync(dbContext, ExecutionOrderState.Cancelled, filledQuantity: 0m);
+
+        var duplicateCancel = await lifecycleService.ApplyExchangeUpdateAsync(
+            CreateSnapshot(orderId, "CANCELED", executedQuantity: 0m, timeProvider.GetUtcNow().UtcDateTime));
+        var lateFill = await lifecycleService.ApplyExchangeUpdateAsync(
+            CreateSnapshot(orderId, "FILLED", executedQuantity: 0.05m, timeProvider.GetUtcNow().UtcDateTime.AddSeconds(1)));
+
+        var order = await dbContext.ExecutionOrders.SingleAsync(entity => entity.Id == orderId);
+        var transitionCount = await dbContext.ExecutionOrderTransitions.CountAsync(entity => entity.ExecutionOrderId == orderId);
+
+        Assert.True(duplicateCancel);
+        Assert.True(lateFill);
+        Assert.Equal(ExecutionOrderState.Cancelled, order.State);
+        Assert.Equal(0.05m, order.FilledQuantity);
+        Assert.Equal(0, transitionCount);
+    }
+
+    private static ExecutionOrderLifecycleService CreateService(
+        ApplicationDbContext dbContext,
+        TimeProvider timeProvider)
+    {
+        return new ExecutionOrderLifecycleService(
+            dbContext,
+            new AuditLogService(dbContext, new CorrelationContextAccessor()),
+            timeProvider,
+            NullLogger<ExecutionOrderLifecycleService>.Instance);
+    }
+
+    private static ApplicationDbContext CreateContext()
+    {
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+            .Options;
+
+        return new ApplicationDbContext(options, new TestDataScopeContext());
+    }
+
+    private static async Task<Guid> SeedOrderAsync(
+        ApplicationDbContext dbContext,
+        ExecutionOrderState state,
+        decimal filledQuantity)
+    {
+        var orderId = Guid.NewGuid();
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = orderId,
+            OwnerUserId = "user-lifecycle",
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            ExchangeAccountId = Guid.NewGuid(),
+            StrategyKey = "lifecycle-core",
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.05m,
+            Price = 65000m,
+            FilledQuantity = filledQuantity,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            State = state,
+            IdempotencyKey = $"lifecycle_{orderId:N}",
+            RootCorrelationId = "corr-lifecycle-root",
+            ExternalOrderId = "binance-order-1",
+            SubmittedAtUtc = new DateTime(2026, 4, 3, 11, 59, 0, DateTimeKind.Utc),
+            SubmittedToBroker = true,
+            LastStateChangedAtUtc = new DateTime(2026, 4, 3, 11, 59, 0, DateTimeKind.Utc)
+        });
+        await dbContext.SaveChangesAsync();
+
+        return orderId;
+    }
+
+    private static BinanceOrderStatusSnapshot CreateSnapshot(
+        Guid orderId,
+        string status,
+        decimal executedQuantity,
+        DateTime eventTimeUtc)
+    {
+        return new BinanceOrderStatusSnapshot(
+            "BTCUSDT",
+            "binance-order-1",
+            ExecutionClientOrderId.Create(orderId),
+            status,
+            0.05m,
+            executedQuantity,
+            0m,
+            executedQuantity > 0m ? 65000m : 0m,
+            0m,
+            0m,
+            eventTimeUtc,
+            "Binance.PrivateStream.ExecutionReport");
+    }
+
+    private sealed class TestDataScopeContext : IDataScopeContext
+    {
+        public string? UserId => null;
+
+        public bool HasIsolationBypass => true;
+    }
+}

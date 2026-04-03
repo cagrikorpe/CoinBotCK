@@ -275,6 +275,7 @@ public sealed class UserExecutionOverrideGuard(
             .IgnoreQueryFilters()
             .Where(entity =>
                 entity.OwnerUserId == userId &&
+                entity.CooldownApplied &&
                 (!currentExecutionOrderId.HasValue || entity.Id != currentExecutionOrderId.Value) &&
                 !entity.IsDeleted &&
                 entity.CreatedDate >= thresholdUtc);

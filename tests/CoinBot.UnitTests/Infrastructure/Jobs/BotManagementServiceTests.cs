@@ -152,6 +152,13 @@ public sealed class BotManagementServiceTests
             State = ExecutionOrderState.Rejected,
             FailureCode = "InvalidOperationException",
             FailureDetail = "Cache entry must specify a value for Size when SizeLimit is set.",
+            RejectionStage = ExecutionRejectionStage.PreSubmit,
+            SubmittedToBroker = false,
+            RetryEligible = false,
+            CooldownApplied = true,
+            ReduceOnly = true,
+            StopLossPrice = 59000m,
+            DuplicateSuppressed = true,
             ExecutorKind = ExecutionOrderExecutorKind.Binance,
             ExecutionEnvironment = ExecutionEnvironment.Live,
             CreatedDate = DateTime.UtcNow.AddSeconds(-30),
@@ -188,6 +195,16 @@ public sealed class BotManagementServiceTests
         Assert.Equal("Rejected", row.LastExecutionState);
         Assert.Equal("InvalidOperationException", row.LastExecutionFailureCode);
         Assert.Equal("Execution blocked because the bot cooldown is still active.", row.LastExecutionBlockDetail);
+        Assert.Equal("PreSubmit", row.LastExecutionRejectionStage);
+        Assert.False(row.LastExecutionSubmittedToBroker);
+        Assert.False(row.LastExecutionRetryEligible);
+        Assert.True(row.LastExecutionCooldownApplied);
+        Assert.True(row.LastExecutionReduceOnly);
+        Assert.True(row.LastExecutionStopLossAttached);
+        Assert.False(row.LastExecutionTakeProfitAttached);
+        Assert.True(row.LastExecutionDuplicateSuppressed);
+        Assert.Equal("UserExecutionOverrideBlocked", row.LastExecutionTransitionCode);
+        Assert.Equal("corr-user-page", row.LastExecutionTransitionCorrelationId);
         Assert.Equal(DateTime.SpecifyKind(persistedOrder.CreatedDate.AddSeconds(120), DateTimeKind.Utc), row.CooldownBlockedUntilUtc);
         Assert.Equal(90, row.CooldownRemainingSeconds);
     }

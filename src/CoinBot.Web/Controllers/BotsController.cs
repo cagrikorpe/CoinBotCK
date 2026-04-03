@@ -224,6 +224,14 @@ public class BotsController(
                 item.LastExecutionState ?? "N/A",
                 item.LastExecutionFailureCode,
                 item.LastExecutionBlockDetail,
+                ResolveExecutionStageText(item.LastExecutionRejectionStage),
+                $"Submitted: {(item.LastExecutionSubmittedToBroker ? "Yes" : "No")}",
+                $"Retry: {(item.LastExecutionRetryEligible ? "Eligible" : "No")} | Cooldown: {(item.LastExecutionCooldownApplied ? "Applied" : "No")}",
+                $"ReduceOnly: {(item.LastExecutionReduceOnly ? "Yes" : "No")} | SL: {(item.LastExecutionStopLossAttached ? "Yes" : "No")} | TP: {(item.LastExecutionTakeProfitAttached ? "Yes" : "No")}",
+                ResolveExecutionTransitionText(item.LastExecutionTransitionCode),
+                ResolveExecutionCorrelationText(item.LastExecutionTransitionCorrelationId),
+                ResolveExecutionClientOrderText(item.LastExecutionClientOrderId),
+                item.LastExecutionDuplicateSuppressed ? "Duplicate suppressed" : null,
                 item.CooldownBlockedUntilUtc.HasValue,
                 item.CooldownBlockedUntilUtc.HasValue
                     ? FormatTimestamp(item.CooldownBlockedUntilUtc, timeZoneInfo)
@@ -314,6 +322,39 @@ public class BotsController(
                 ? symbol
                 : $"{symbol} / {timeframe}";
     }
+
+    private static string? ResolveExecutionStageText(string? rejectionStage)
+    {
+        if (string.IsNullOrWhiteSpace(rejectionStage) ||
+            string.Equals(rejectionStage, "None", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return $"Stage: {rejectionStage.Trim()}";
+    }
+
+    private static string? ResolveExecutionTransitionText(string? transitionCode)
+    {
+        return string.IsNullOrWhiteSpace(transitionCode)
+            ? null
+            : $"Transition: {transitionCode.Trim()}";
+    }
+
+    private static string? ResolveExecutionCorrelationText(string? correlationId)
+    {
+        return string.IsNullOrWhiteSpace(correlationId)
+            ? null
+            : $"Correlation: {correlationId.Trim()}";
+    }
+
+    private static string? ResolveExecutionClientOrderText(string? clientOrderId)
+    {
+        return string.IsNullOrWhiteSpace(clientOrderId)
+            ? null
+            : $"ClientOrderId: {clientOrderId.Trim()}";
+    }
+
     private static TimeZoneInfo ResolveTimeZone(string? timeZoneId)
     {
         if (!string.IsNullOrWhiteSpace(timeZoneId))

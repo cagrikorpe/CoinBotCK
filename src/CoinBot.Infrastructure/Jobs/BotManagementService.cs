@@ -113,8 +113,8 @@ public sealed class BotManagementService(
         var latestOrderIds = ordersByBotId.Values
             .Select(entity => entity.Id)
             .ToArray();
-        var latestTransitionDiagnosticsByOrderId = latestOrderIds.Length == 0
-            ? new Dictionary<Guid, LastExecutionDiagnosticSnapshot>()
+        var latestTransitionSnapshotsByOrderId = latestOrderIds.Length == 0
+            ? new Dictionary<Guid, LastExecutionTransitionSnapshot>()
             : (await dbContext.ExecutionOrderTransitions
                 .AsNoTracking()
                 .IgnoreQueryFilters()
@@ -126,7 +126,7 @@ public sealed class BotManagementService(
             .GroupBy(entity => entity.ExecutionOrderId)
             .ToDictionary(
                 group => group.Key,
-                group => CreateLastExecutionDiagnosticSnapshot(group.First().Detail));
+                group => CreateLastExecutionTransitionSnapshot(group));
         var utcNow = timeProvider.GetUtcNow().UtcDateTime;
 
         var snapshots = bots
@@ -144,11 +144,15 @@ public sealed class BotManagementService(
                 ordersByBotId.TryGetValue(bot.Id, out var order);
                 var cooldownBlockedUntilUtc = ResolveCooldownBlockedUntilUtc(bot, order, utcNow);
                 var cooldownRemainingSeconds = ResolveCooldownRemainingSeconds(cooldownBlockedUntilUtc, utcNow);
-                LastExecutionDiagnosticSnapshot? lastExecutionDiagnostics = null;
+                LastExecutionTransitionSnapshot? lastExecutionTransition = null;
 
                 if (order?.State is ExecutionOrderState.Rejected or ExecutionOrderState.Failed)
                 {
-                    latestTransitionDiagnosticsByOrderId.TryGetValue(order.Id, out lastExecutionDiagnostics);
+                    latestTransitionSnapshotsByOrderId.TryGetValue(order.Id, out lastExecutionTransition);
+                }
+                else if (order is not null)
+                {
+                    latestTransitionSnapshotsByOrderId.TryGetValue(order.Id, out lastExecutionTransition);
                 }
 
                 return new BotManagementBotSnapshot(
@@ -172,18 +176,33 @@ public sealed class BotManagementService(
                     state?.LastErrorCode,
                     order?.State.ToString(),
                     order?.FailureCode,
-                    lastExecutionDiagnostics?.BlockDetail,
+                    order?.State is ExecutionOrderState.Rejected or ExecutionOrderState.Failed
+                        ? lastExecutionTransition?.Diagnostics.BlockDetail
+                        : null,
+                    order?.RejectionStage.ToString(),
+                    order?.SubmittedToBroker ?? false,
+                    order?.RetryEligible ?? false,
+                    order?.CooldownApplied ?? false,
+                    order?.ReduceOnly ?? false,
+                    order?.StopLossPrice.HasValue ?? false,
+                    order?.TakeProfitPrice.HasValue ?? false,
+                    order?.DuplicateSuppressed ?? false,
+                    lastExecutionTransition?.EventCode,
+                    NormalizeOptionalExecutionDiagnosticValue(
+                        lastExecutionTransition?.CorrelationId,
+                        toUpperInvariant: false),
+                    lastExecutionTransition?.ClientOrderId,
                     cooldownBlockedUntilUtc,
                     cooldownRemainingSeconds,
                     order?.UpdatedDate,
                     bot.UpdatedDate,
-                    lastExecutionDiagnostics?.LastCandleAtUtc,
-                    lastExecutionDiagnostics?.DataAgeMilliseconds,
-                    lastExecutionDiagnostics?.ContinuityState,
-                    lastExecutionDiagnostics?.ContinuityGapCount,
-                    lastExecutionDiagnostics?.StaleReason,
-                    lastExecutionDiagnostics?.AffectedSymbol,
-                    lastExecutionDiagnostics?.AffectedTimeframe);
+                    lastExecutionTransition?.Diagnostics.LastCandleAtUtc,
+                    lastExecutionTransition?.Diagnostics.DataAgeMilliseconds,
+                    lastExecutionTransition?.Diagnostics.ContinuityState,
+                    lastExecutionTransition?.Diagnostics.ContinuityGapCount,
+                    lastExecutionTransition?.Diagnostics.StaleReason,
+                    lastExecutionTransition?.Diagnostics.AffectedSymbol,
+                    lastExecutionTransition?.Diagnostics.AffectedTimeframe);
             })
             .ToArray();
 
@@ -629,6 +648,7 @@ public sealed class BotManagementService(
     {
         if (!bot.IsEnabled ||
             latestOrder is null ||
+            !latestOrder.CooldownApplied ||
             optionsValue.PerBotCooldownSeconds <= 0)
         {
             return null;
@@ -690,6 +710,20 @@ public sealed class BotManagementService(
             ResolveStaleReason(latencyReasonCode),
             affectedSymbol,
             affectedTimeframe);
+    }
+
+    private static LastExecutionTransitionSnapshot CreateLastExecutionTransitionSnapshot(
+        IEnumerable<ExecutionOrderTransition> transitions)
+    {
+        var transition = transitions.First();
+
+        return new LastExecutionTransitionSnapshot(
+            transition.EventCode,
+            TruncateClientFacingToken(transition.CorrelationId, 48),
+            transitions
+                .Select(item => ExtractClientOrderId(item.Detail))
+                .FirstOrDefault(item => !string.IsNullOrWhiteSpace(item)),
+            CreateLastExecutionDiagnosticSnapshot(transition.Detail));
     }
 
     private static string? ResolveContinuityState(string? latencyReasonCode, int? continuityGapCount)
@@ -780,6 +814,30 @@ public sealed class BotManagementService(
             : normalizedDetail[..LastExecutionBlockDetailMaxLength];
     }
 
+    private static string? ExtractClientOrderId(string? detail)
+    {
+        if (!TryExtractExecutionDiagnosticToken(detail, "ClientOrderId", out var value))
+        {
+            return null;
+        }
+
+        return TruncateClientFacingToken(value, 64);
+    }
+
+    private static string? TruncateClientFacingToken(string? value, int maxLength)
+    {
+        var normalizedValue = value?.Trim();
+
+        if (string.IsNullOrWhiteSpace(normalizedValue))
+        {
+            return null;
+        }
+
+        return normalizedValue.Length <= maxLength
+            ? normalizedValue
+            : normalizedValue[..maxLength];
+    }
+
     private sealed record LastExecutionDiagnosticSnapshot(
         string? BlockDetail,
         DateTime? LastCandleAtUtc,
@@ -789,6 +847,12 @@ public sealed class BotManagementService(
         string? StaleReason,
         string? AffectedSymbol,
         string? AffectedTimeframe);
+
+    private sealed record LastExecutionTransitionSnapshot(
+        string EventCode,
+        string? CorrelationId,
+        string? ClientOrderId,
+        LastExecutionDiagnosticSnapshot Diagnostics);
     private string[] ResolveSymbolOptions(string? currentSymbol = null)
     {
         var symbols = optionsValue.AllowedSymbols

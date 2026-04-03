@@ -323,7 +323,8 @@ public sealed class AutonomyService(
                  entity.State == ExecutionOrderState.GatePassed ||
                  entity.State == ExecutionOrderState.Dispatching ||
                  entity.State == ExecutionOrderState.Submitted ||
-                 entity.State == ExecutionOrderState.PartiallyFilled));
+                 entity.State == ExecutionOrderState.PartiallyFilled ||
+                 entity.State == ExecutionOrderState.CancelRequested));
 
         if (!string.IsNullOrWhiteSpace(userId))
         {

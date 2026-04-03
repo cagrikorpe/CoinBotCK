@@ -1313,6 +1313,32 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         builder.Property(entity => entity.FailureDetail)
             .HasMaxLength(512);
 
+        builder.Property(entity => entity.RejectionStage)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .HasDefaultValue(ExecutionRejectionStage.None)
+            .IsRequired();
+
+        builder.Property(entity => entity.SubmittedToBroker)
+            .HasDefaultValue(false)
+            .IsRequired();
+
+        builder.Property(entity => entity.RetryEligible)
+            .HasDefaultValue(false)
+            .IsRequired();
+
+        builder.Property(entity => entity.CooldownApplied)
+            .HasDefaultValue(false)
+            .IsRequired();
+
+        builder.Property(entity => entity.ReduceOnly)
+            .HasDefaultValue(false)
+            .IsRequired();
+
+        builder.Property(entity => entity.DuplicateSuppressed)
+            .HasDefaultValue(false)
+            .IsRequired();
+
         builder.Property(entity => entity.ReconciliationStatus)
             .HasConversion<string>()
             .HasMaxLength(32)

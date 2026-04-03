@@ -43,6 +43,17 @@ public sealed class BotsControllerTests
                         "Rejected",
                         "InvalidOperationException",
                         "Execution blocked because the bot cooldown is still active.",
+                        "PreSubmit",
+                        false,
+                        false,
+                        true,
+                        true,
+                        true,
+                        false,
+                        true,
+                        "UserExecutionOverrideBlocked",
+                        "corr-user-page",
+                        "cb_aaaaaaaaaaaaaaaaaaaaaa",
                         new DateTime(2026, 4, 2, 12, 2, 0, DateTimeKind.Utc),
                         90,
                         DateTime.UtcNow,
@@ -65,6 +76,14 @@ public sealed class BotsControllerTests
 
         var row = Assert.Single(model.Bots);
         Assert.Equal("Execution blocked because the bot cooldown is still active.", row.LastExecutionBlockDetail);
+        Assert.Equal("Stage: PreSubmit", row.LastExecutionStageText);
+        Assert.Equal("Submitted: No", row.LastExecutionSubmitStatusText);
+        Assert.Equal("Retry: No | Cooldown: Applied", row.LastExecutionRetryText);
+        Assert.Equal("ReduceOnly: Yes | SL: Yes | TP: No", row.LastExecutionProtectionText);
+        Assert.Equal("Transition: UserExecutionOverrideBlocked", row.LastExecutionTransitionText);
+        Assert.Equal("Correlation: corr-user-page", row.LastExecutionCorrelationText);
+        Assert.Equal("ClientOrderId: cb_aaaaaaaaaaaaaaaaaaaaaa", row.LastExecutionClientOrderText);
+        Assert.Equal("Duplicate suppressed", row.LastExecutionDuplicateText);
         Assert.True(row.IsCooldownActive);
         Assert.Equal("90 sn", row.CooldownRemainingText);
         Assert.Equal("Data latency high", row.MarketDataBadgeText);

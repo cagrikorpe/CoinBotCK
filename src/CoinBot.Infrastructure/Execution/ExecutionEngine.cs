@@ -39,7 +39,8 @@ public sealed class ExecutionEngine(
         ExecutionOrderState.GatePassed,
         ExecutionOrderState.Dispatching,
         ExecutionOrderState.Submitted,
-        ExecutionOrderState.PartiallyFilled
+        ExecutionOrderState.PartiallyFilled,
+        ExecutionOrderState.CancelRequested
     ];
 
     public async Task<ExecutionDispatchResult> DispatchAsync(
@@ -71,12 +72,13 @@ public sealed class ExecutionEngine(
                 normalizedCommand.OwnerUserId,
                 normalizedCommand.StrategySignalId);
 
+            await MarkDuplicateSuppressedAsync(existingOrderId, cancellationToken);
+
             return new ExecutionDispatchResult(
                 await GetSnapshotAsync(existingOrderId, cancellationToken),
                 IsDuplicate: true);
         }
 
-        await EnsureReplacementOrderEligibleAsync(normalizedCommand, cancellationToken);
         var requestedEnvironment = await ResolveRequestedEnvironmentAsync(normalizedCommand, cancellationToken);
         var executor = ResolveExecutor(requestedEnvironment);
         var utcNow = timeProvider.GetUtcNow().UtcDateTime;
@@ -100,6 +102,7 @@ public sealed class ExecutionEngine(
             Price = normalizedCommand.Price,
             StopLossPrice = normalizedCommand.StopLossPrice,
             TakeProfitPrice = normalizedCommand.TakeProfitPrice,
+            ReduceOnly = normalizedCommand.ReduceOnly,
             ReplacesExecutionOrderId = normalizedCommand.ReplacesExecutionOrderId,
             ExecutionEnvironment = requestedEnvironment,
             ExecutorKind = executor.Kind,
@@ -134,6 +137,9 @@ public sealed class ExecutionEngine(
 
         try
         {
+            await EnsureReplacementOrderEligibleAsync(normalizedCommand, cancellationToken);
+            await ValidatePreSubmitOrderAsync(normalizedCommand, requestedEnvironment, cancellationToken);
+
             await executionGate.EnsureExecutionAllowedAsync(
                 new ExecutionGateRequest(
                     Actor: normalizedCommand.Actor,
@@ -194,6 +200,7 @@ public sealed class ExecutionEngine(
                 {
                     order.FailureCode = overrideEvaluation.BlockCode;
                     order.FailureDetail = Truncate(overrideEvaluation.Message, 512);
+                    ApplyPreSubmitRejectionMetadata(order);
 
                     lastTransition = await PersistTransitionAsync(
                         order,
@@ -221,9 +228,16 @@ public sealed class ExecutionEngine(
                 }
             }
 
+            order.SubmittedToBroker = true;
+            order.RejectionStage = ExecutionRejectionStage.None;
+            order.RetryEligible = false;
+            order.CooldownApplied = false;
+            await dbContext.SaveChangesAsync(cancellationToken);
+
             var dispatchResult = await executor.DispatchAsync(order, normalizedCommand, cancellationToken);
             order.ExternalOrderId = NormalizeOptional(dispatchResult.ExternalOrderId);
             order.SubmittedAtUtc = dispatchResult.SubmittedAtUtc;
+            order.CooldownApplied = true;
 
             lastTransition = await PersistTransitionAsync(
                 order,
@@ -246,10 +260,35 @@ public sealed class ExecutionEngine(
                     cancellationToken);
             }
         }
+        catch (ExecutionValidationException exception)
+        {
+            order.FailureCode = exception.ReasonCode;
+            order.FailureDetail = Truncate(exception.Message, 512);
+            ApplyPreSubmitRejectionMetadata(order);
+
+            lastTransition = await PersistTransitionAsync(
+                order,
+                transitions,
+                ExecutionOrderState.Rejected,
+                "ExecutionValidationRejected",
+                Truncate(exception.Message, 512),
+                lastTransition.CorrelationId,
+                cancellationToken);
+
+            await TrySendExecutionAlertAsync(order, lastTransition, cancellationToken);
+            userOperationsStreamHub?.Publish(BuildOperationsUpdate(order, lastTransition));
+
+            logger.LogWarning(
+                exception,
+                "Execution engine rejected order {ExecutionOrderId} before broker submission with validation reason {ReasonCode}.",
+                order.Id,
+                exception.ReasonCode);
+        }
         catch (ExecutionGateRejectedException exception)
         {
             order.FailureCode = exception.Reason.ToString();
             order.FailureDetail = Truncate(exception.Message, 512);
+            ApplyPreSubmitRejectionMetadata(order);
 
             lastTransition = await PersistTransitionAsync(
                 order,
@@ -272,12 +311,27 @@ public sealed class ExecutionEngine(
         {
             order.FailureCode = exception.GetType().Name;
             order.FailureDetail = Truncate(exception.Message, 512);
+            var transitionState = order.SubmittedToBroker
+                ? ExecutionOrderState.Failed
+                : ExecutionOrderState.Rejected;
+            var eventCode = order.SubmittedToBroker
+                ? "DispatchFailed"
+                : "PreSubmitFailed";
+
+            if (order.SubmittedToBroker)
+            {
+                ApplyPostSubmitFailureMetadata(order);
+            }
+            else
+            {
+                ApplyPreSubmitRejectionMetadata(order);
+            }
 
             lastTransition = await PersistTransitionAsync(
                 order,
                 transitions,
-                ExecutionOrderState.Failed,
-                "DispatchFailed",
+                transitionState,
+                eventCode,
                 Truncate(exception.Message, 512),
                 lastTransition.CorrelationId,
                 cancellationToken);
@@ -385,6 +439,7 @@ public sealed class ExecutionEngine(
 
             order.FailureCode = exception.GetType().Name;
             order.FailureDetail = Truncate(exception.Message, 512);
+            ApplyPostSubmitFailureMetadata(order);
 
             logger.LogWarning(
                 exception,
@@ -501,6 +556,7 @@ public sealed class ExecutionEngine(
             order.LastFilledAtUtc,
             order.StopLossPrice,
             order.TakeProfitPrice,
+            order.ReduceOnly,
             order.ReplacesExecutionOrderId,
             order.ExecutionEnvironment,
             order.ExecutorKind,
@@ -511,6 +567,14 @@ public sealed class ExecutionEngine(
             order.ExternalOrderId,
             order.FailureCode,
             order.FailureDetail,
+            order.RejectionStage,
+            order.SubmittedToBroker,
+            order.RetryEligible,
+            order.CooldownApplied,
+            order.DuplicateSuppressed,
+            order.StopLossPrice.HasValue,
+            order.TakeProfitPrice.HasValue,
+            ResolveClientOrderId(order, transitions),
             order.SubmittedAtUtc,
             order.LastReconciledAtUtc,
             order.ReconciliationStatus,
@@ -575,24 +639,139 @@ public sealed class ExecutionEngine(
                           entity.OwnerUserId == command.OwnerUserId &&
                           !entity.IsDeleted,
                 cancellationToken)
-            ?? throw new InvalidOperationException(
-                $"Replacement source execution order '{command.ReplacesExecutionOrderId.Value}' was not found.");
+            ?? throw new ExecutionValidationException(
+                "ReplacementSourceOrderNotFound",
+                $"Execution blocked because replacement source order '{command.ReplacesExecutionOrderId.Value}' was not found.");
 
         if (!OpenStates.Contains(existingOrder.State))
         {
-            throw new InvalidOperationException("Replacement source execution order is not open.");
+            throw new ExecutionValidationException(
+                "ReplacementSourceOrderClosed",
+                "Execution blocked because the replacement source order is not open.");
         }
 
         if (!string.Equals(existingOrder.Symbol, command.Symbol, StringComparison.Ordinal) ||
             existingOrder.Side != command.Side)
         {
-            throw new InvalidOperationException("Replacement source execution order does not match symbol and side.");
+            throw new ExecutionValidationException(
+                "ReplacementSourceOrderScopeMismatch",
+                "Execution blocked because the replacement source order does not match symbol and side.");
         }
 
         if (existingOrder.ExchangeAccountId != command.ExchangeAccountId)
         {
-            throw new InvalidOperationException("Replacement source execution order does not match the exchange account scope.");
+            throw new ExecutionValidationException(
+                "ReplacementSourceOrderExchangeMismatch",
+                "Execution blocked because the replacement source order does not match the exchange account scope.");
         }
+    }
+
+    private async Task ValidatePreSubmitOrderAsync(
+        ExecutionCommand command,
+        ExecutionEnvironment requestedEnvironment,
+        CancellationToken cancellationToken)
+    {
+        ValidateProtectiveTargets(command);
+        await ValidateReduceOnlyOrderAsync(command, requestedEnvironment, cancellationToken);
+    }
+
+    private async Task ValidateReduceOnlyOrderAsync(
+        ExecutionCommand command,
+        ExecutionEnvironment requestedEnvironment,
+        CancellationToken cancellationToken)
+    {
+        if (!command.ReduceOnly)
+        {
+            return;
+        }
+
+        var netQuantity = await ResolveNetPositionQuantityAsync(
+            command.OwnerUserId,
+            command.Symbol,
+            requestedEnvironment,
+            cancellationToken);
+
+        if (netQuantity == 0m)
+        {
+            throw new ExecutionValidationException(
+                "ReduceOnlyWithoutOpenPosition",
+                $"Execution blocked because reduce-only order requires an open position for {command.Symbol}.");
+        }
+
+        var expectedSide = netQuantity > 0m
+            ? ExecutionOrderSide.Sell
+            : ExecutionOrderSide.Buy;
+
+        if (command.Side != expectedSide)
+        {
+            throw new ExecutionValidationException(
+                "ReduceOnlyWouldIncreaseExposure",
+                $"Execution blocked because reduce-only {command.Side} would increase exposure for {command.Symbol}.");
+        }
+
+        var openQuantity = Math.Abs(netQuantity);
+        if (command.Quantity > openQuantity)
+        {
+            throw new ExecutionValidationException(
+                "ReduceOnlyQuantityExceedsOpenPosition",
+                $"Execution blocked because reduce-only quantity {command.Quantity.ToString("0.##################", CultureInfo.InvariantCulture)} exceeds open position {openQuantity.ToString("0.##################", CultureInfo.InvariantCulture)} for {command.Symbol}.");
+        }
+    }
+
+    private async Task<decimal> ResolveNetPositionQuantityAsync(
+        string ownerUserId,
+        string symbol,
+        ExecutionEnvironment requestedEnvironment,
+        CancellationToken cancellationToken)
+    {
+        return requestedEnvironment == ExecutionEnvironment.Demo
+            ? await dbContext.DemoPositions
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.OwnerUserId == ownerUserId &&
+                    entity.Symbol == symbol &&
+                    !entity.IsDeleted)
+                .SumAsync(entity => entity.Quantity, cancellationToken)
+            : await dbContext.ExchangePositions
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.OwnerUserId == ownerUserId &&
+                    entity.Symbol == symbol &&
+                    !entity.IsDeleted)
+                .SumAsync(entity => entity.Quantity, cancellationToken);
+    }
+
+    private async Task MarkDuplicateSuppressedAsync(
+        Guid executionOrderId,
+        CancellationToken cancellationToken)
+    {
+        var existingOrder = await dbContext.ExecutionOrders
+            .IgnoreQueryFilters()
+            .SingleAsync(
+                entity => entity.Id == executionOrderId &&
+                          !entity.IsDeleted,
+                cancellationToken);
+
+        existingOrder.DuplicateSuppressed = true;
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private static void ApplyPreSubmitRejectionMetadata(ExecutionOrder order)
+    {
+        order.SubmittedToBroker = false;
+        order.RejectionStage = ExecutionRejectionStage.PreSubmit;
+        order.RetryEligible = false;
+        order.CooldownApplied = false;
+    }
+
+    private static void ApplyPostSubmitFailureMetadata(ExecutionOrder order)
+    {
+        order.SubmittedToBroker = true;
+        order.RejectionStage = ExecutionRejectionStage.PostSubmit;
+        order.RetryEligible = true;
+        order.CooldownApplied = true;
     }
 
     private IExecutionTargetExecutor ResolveExecutor(ExecutionEnvironment requestedEnvironment)
@@ -738,7 +917,6 @@ public sealed class ExecutionEngine(
         };
 
         ValidateAdministrativeOverride(normalizedCommand);
-        ValidateProtectiveTargets(normalizedCommand);
         return normalizedCommand;
     }
 
@@ -771,6 +949,7 @@ public sealed class ExecutionEngine(
             command.Price.ToString("0.##################", CultureInfo.InvariantCulture),
             command.StopLossPrice?.ToString("0.##################", CultureInfo.InvariantCulture) ?? "none",
             command.TakeProfitPrice?.ToString("0.##################", CultureInfo.InvariantCulture) ?? "none",
+            command.ReduceOnly ? "true" : "false",
             command.BotId?.ToString("N") ?? "none",
             command.ExchangeAccountId?.ToString("N") ?? "none",
             command.IsDemo?.ToString() ?? "auto",
@@ -870,6 +1049,21 @@ public sealed class ExecutionEngine(
 
         var isBuy = command.Side == ExecutionOrderSide.Buy;
 
+        if (command.StopLossPrice.HasValue &&
+            command.TakeProfitPrice.HasValue)
+        {
+            var hasMatchingProtectiveSide = isBuy
+                ? command.StopLossPrice.Value < command.TakeProfitPrice.Value
+                : command.StopLossPrice.Value > command.TakeProfitPrice.Value;
+
+            if (!hasMatchingProtectiveSide)
+            {
+                throw new ExecutionValidationException(
+                    "ProtectiveOrderSideMismatch",
+                    "Execution blocked because stop-loss and take-profit targets are not aligned with the execution side.");
+            }
+        }
+
         if (command.StopLossPrice.HasValue)
         {
             var isValidStop = isBuy
@@ -878,9 +1072,9 @@ public sealed class ExecutionEngine(
 
             if (!isValidStop)
             {
-                throw new ArgumentOutOfRangeException(
-                    nameof(command.StopLossPrice),
-                    "StopLossPrice must be on the protective side of the entry price.");
+                throw new ExecutionValidationException(
+                    "InvalidStopLossConfiguration",
+                    "Execution blocked because StopLossPrice must be on the protective side of the entry price.");
             }
         }
 
@@ -892,26 +1086,41 @@ public sealed class ExecutionEngine(
 
             if (!isValidTakeProfit)
             {
-                throw new ArgumentOutOfRangeException(
-                    nameof(command.TakeProfitPrice),
-                    "TakeProfitPrice must be on the favorable side of the entry price.");
+                throw new ExecutionValidationException(
+                    "InvalidTakeProfitConfiguration",
+                    "Execution blocked because TakeProfitPrice must be on the favorable side of the entry price.");
             }
         }
+    }
 
-        if (command.StopLossPrice.HasValue &&
-            command.TakeProfitPrice.HasValue)
+    private string? ResolveClientOrderId(
+        ExecutionOrder order,
+        IReadOnlyCollection<ExecutionOrderTransition> transitions)
+    {
+        foreach (var transition in transitions.OrderByDescending(item => item.SequenceNumber))
         {
-            var hasConsistentBracket = isBuy
-                ? command.StopLossPrice.Value < command.TakeProfitPrice.Value
-                : command.StopLossPrice.Value > command.TakeProfitPrice.Value;
-
-            if (!hasConsistentBracket)
+            var clientOrderId = ExtractClientOrderId(transition.Detail);
+            if (!string.IsNullOrWhiteSpace(clientOrderId))
             {
-                throw new ArgumentOutOfRangeException(
-                    nameof(command.TakeProfitPrice),
-                    "Protective bracket values are not internally consistent.");
+                return Truncate(clientOrderId, 128);
             }
         }
+
+        if (!string.IsNullOrWhiteSpace(order.ExternalOrderId) &&
+            order.ExecutionEnvironment == ExecutionEnvironment.Demo)
+        {
+            return Truncate(order.ExternalOrderId, 128);
+        }
+
+        if (order.SubmittedToBroker &&
+            order.ExecutionEnvironment == ExecutionEnvironment.Live)
+        {
+            return hostEnvironment?.IsDevelopment() == true
+                ? ExecutionClientOrderId.CreateDevelopmentFuturesPilot(order.Id)
+                : ExecutionClientOrderId.Create(order.Id);
+        }
+
+        return null;
     }
 
     private static string? NormalizeOptional(string? value)

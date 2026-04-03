@@ -7,8 +7,9 @@ public enum ExecutionOrderState
     Dispatching = 2,
     Submitted = 3,
     PartiallyFilled = 4,
-    Filled = 5,
-    Cancelled = 6,
-    Rejected = 7,
-    Failed = 8
+    CancelRequested = 5,
+    Filled = 6,
+    Cancelled = 7,
+    Rejected = 8,
+    Failed = 9
 }

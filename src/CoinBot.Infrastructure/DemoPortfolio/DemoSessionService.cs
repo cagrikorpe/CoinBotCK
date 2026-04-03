@@ -29,7 +29,8 @@ public sealed class DemoSessionService(
         ExecutionOrderState.GatePassed,
         ExecutionOrderState.Dispatching,
         ExecutionOrderState.Submitted,
-        ExecutionOrderState.PartiallyFilled
+        ExecutionOrderState.PartiallyFilled,
+        ExecutionOrderState.CancelRequested
     };
 
     public async Task<DemoSessionSnapshot?> GetActiveSessionAsync(string ownerUserId, CancellationToken cancellationToken = default)

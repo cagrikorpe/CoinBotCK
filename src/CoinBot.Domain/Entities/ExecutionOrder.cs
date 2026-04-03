@@ -44,6 +44,8 @@ public sealed class ExecutionOrder : UserOwnedEntity
 
     public decimal? TakeProfitPrice { get; set; }
 
+    public bool ReduceOnly { get; set; }
+
     public Guid? ReplacesExecutionOrderId { get; set; }
 
     public ExecutionEnvironment ExecutionEnvironment { get; set; }
@@ -63,6 +65,16 @@ public sealed class ExecutionOrder : UserOwnedEntity
     public string? FailureCode { get; set; }
 
     public string? FailureDetail { get; set; }
+
+    public ExecutionRejectionStage RejectionStage { get; set; } = ExecutionRejectionStage.None;
+
+    public bool SubmittedToBroker { get; set; }
+
+    public bool RetryEligible { get; set; }
+
+    public bool CooldownApplied { get; set; }
+
+    public bool DuplicateSuppressed { get; set; }
 
     public DateTime? SubmittedAtUtc { get; set; }
 

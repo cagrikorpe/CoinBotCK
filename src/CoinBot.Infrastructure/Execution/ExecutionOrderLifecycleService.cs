@@ -28,7 +28,8 @@ public sealed class ExecutionOrderLifecycleService(
         ExecutionOrderState.GatePassed,
         ExecutionOrderState.Dispatching,
         ExecutionOrderState.Submitted,
-        ExecutionOrderState.PartiallyFilled
+        ExecutionOrderState.PartiallyFilled,
+        ExecutionOrderState.CancelRequested
     ];
 
     public async Task<bool> ApplyExchangeUpdateAsync(
@@ -135,6 +136,13 @@ public sealed class ExecutionOrderLifecycleService(
             order.ExternalOrderId = normalizedSnapshot.ExchangeOrderId;
         }
 
+        order.SubmittedToBroker = order.SubmittedToBroker ||
+            order.SubmittedAtUtc.HasValue ||
+            previousState is ExecutionOrderState.Submitted or
+                ExecutionOrderState.PartiallyFilled or
+                ExecutionOrderState.CancelRequested ||
+            !string.IsNullOrWhiteSpace(order.ExternalOrderId);
+
         ApplyFillState(order, normalizedSnapshot);
         fillProgressAdvanced = order.FilledQuantity > previousFilledQuantity;
 
@@ -158,6 +166,14 @@ public sealed class ExecutionOrderLifecycleService(
 
             dbContext.ExecutionOrderTransitions.Add(transition);
             stateChanged = previousState != targetState;
+
+            if (targetState is ExecutionOrderState.Rejected or ExecutionOrderState.Failed &&
+                order.SubmittedToBroker)
+            {
+                order.RejectionStage = ExecutionRejectionStage.PostSubmit;
+                order.RetryEligible = targetState == ExecutionOrderState.Failed;
+                order.CooldownApplied = true;
+            }
         }
 
         await auditLogService.WriteAsync(
@@ -327,7 +343,7 @@ public sealed class ExecutionOrderLifecycleService(
             "FILLED" => ExecutionOrderState.Filled,
             "CANCELED" => ExecutionOrderState.Cancelled,
             "EXPIRED" => ExecutionOrderState.Cancelled,
-            "PENDING_CANCEL" => ExecutionOrderState.Cancelled,
+            "PENDING_CANCEL" => ExecutionOrderState.CancelRequested,
             "REJECTED" => ExecutionOrderState.Rejected,
             _ => ExecutionOrderState.Submitted
         };
@@ -348,7 +364,8 @@ public sealed class ExecutionOrderLifecycleService(
             return false;
         }
 
-        return GetStateRank(targetState) >= GetStateRank(currentState);
+        return GetStateRank(targetState) >= GetStateRank(currentState) &&
+            ExecutionOrderStateMachine.CanTransition(currentState, targetState);
     }
 
     private static bool IsTerminalState(ExecutionOrderState state)
@@ -368,6 +385,7 @@ public sealed class ExecutionOrderLifecycleService(
             ExecutionOrderState.Dispatching => 2,
             ExecutionOrderState.Submitted => 3,
             ExecutionOrderState.PartiallyFilled => 4,
+            ExecutionOrderState.CancelRequested => 4,
             ExecutionOrderState.Filled => 5,
             ExecutionOrderState.Cancelled => 5,
             ExecutionOrderState.Rejected => 5,
@@ -392,6 +410,7 @@ public sealed class ExecutionOrderLifecycleService(
         {
             ExecutionOrderState.Submitted => "ExchangeSubmitted",
             ExecutionOrderState.PartiallyFilled => "ExchangePartiallyFilled",
+            ExecutionOrderState.CancelRequested => "ExchangeCancelRequested",
             ExecutionOrderState.Filled => "ExchangeFilled",
             ExecutionOrderState.Cancelled => "ExchangeCancelled",
             ExecutionOrderState.Rejected => "ExchangeRejected",

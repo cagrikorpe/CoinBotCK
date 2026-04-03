@@ -217,7 +217,7 @@ function Get-SmokeUser {
 
 function Get-SmokeOrders {
     param([string]$ConnectionString, [guid]$BotId)
-    return Invoke-SqlRows -ConnectionString $ConnectionString -CommandText "SELECT TOP (10) Id, BotId, StrategySignalId, State, FailureCode, FailureDetail, SubmittedAtUtc, LastStateChangedAtUtc, CreatedDate, ExternalOrderId FROM ExecutionOrders WHERE BotId = @BotId ORDER BY CreatedDate ASC;" -Parameters @{ BotId = $BotId }
+    return Invoke-SqlRows -ConnectionString $ConnectionString -CommandText "SELECT TOP (10) Id, BotId, StrategySignalId, State, FailureCode, FailureDetail, RejectionStage, SubmittedToBroker, RetryEligible, CooldownApplied, ReduceOnly, StopLossPrice, TakeProfitPrice, DuplicateSuppressed, SubmittedAtUtc, LastStateChangedAtUtc, CreatedDate, ExternalOrderId FROM ExecutionOrders WHERE BotId = @BotId ORDER BY CreatedDate ASC;" -Parameters @{ BotId = $BotId }
 }
 
 function Get-SmokeBotSnapshot {
@@ -445,6 +445,14 @@ try {
     if ($summary.Attempt1) {
         Write-Host ('Attempt1FailureCode=' + $summary.Attempt1.FailureCode)
         Write-Host ('Attempt1FailureDetail=' + $summary.Attempt1.FailureDetail)
+        Write-Host ('Attempt1RejectionStage=' + $summary.Attempt1.RejectionStage)
+        Write-Host ('Attempt1SubmittedToBroker=' + $summary.Attempt1.SubmittedToBroker)
+        Write-Host ('Attempt1RetryEligible=' + $summary.Attempt1.RetryEligible)
+        Write-Host ('Attempt1CooldownApplied=' + $summary.Attempt1.CooldownApplied)
+        Write-Host ('Attempt1ReduceOnly=' + $summary.Attempt1.ReduceOnly)
+        Write-Host ('Attempt1StopLossPrice=' + $summary.Attempt1.StopLossPrice)
+        Write-Host ('Attempt1TakeProfitPrice=' + $summary.Attempt1.TakeProfitPrice)
+        Write-Host ('Attempt1DuplicateSuppressed=' + $summary.Attempt1.DuplicateSuppressed)
     }
     if ($summary.Ui) {
         Write-Host ('UiBotName=' + $summary.Ui.bots.botNameText)
@@ -452,6 +460,14 @@ try {
         Write-Host ('UiBotExecutionState=' + $summary.Ui.bots.postToggleExecutionStateText)
         Write-Host ('UiBotExecutionError=' + $summary.Ui.bots.postToggleExecutionFailureText)
         Write-Host ('UiBotExecutionBlockDetail=' + $summary.Ui.bots.postToggleExecutionBlockDetailText)
+        Write-Host ('UiBotExecutionSubmit=' + $summary.Ui.bots.postToggleExecutionSubmitText)
+        Write-Host ('UiBotExecutionRetry=' + $summary.Ui.bots.postToggleExecutionRetryText)
+        Write-Host ('UiBotExecutionProtection=' + $summary.Ui.bots.postToggleExecutionProtectionText)
+        Write-Host ('UiBotExecutionStage=' + $summary.Ui.bots.postToggleExecutionStageText)
+        Write-Host ('UiBotExecutionTransition=' + $summary.Ui.bots.postToggleExecutionTransitionText)
+        Write-Host ('UiBotExecutionCorrelation=' + $summary.Ui.bots.postToggleExecutionCorrelationText)
+        Write-Host ('UiBotExecutionClientOrder=' + $summary.Ui.bots.postToggleExecutionClientOrderText)
+        Write-Host ('UiBotExecutionDuplicate=' + $summary.Ui.bots.postToggleExecutionDuplicateText)
         Write-Host ('UiBotCooldownBadge=' + $summary.Ui.bots.postToggleCooldownBadgeText)
         Write-Host ('UiBotCooldownRemaining=' + $summary.Ui.bots.postToggleCooldownRemainingText)
         Write-Host ('UiDashboardDriftSummary=' + $summary.Ui.dashboard.driftSummaryText)
@@ -467,6 +483,7 @@ finally {
         [System.Security.Cryptography.CryptographicOperations]::ZeroMemory($randomKeyBytes)
     }
 }
+
 
 
 

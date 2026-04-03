@@ -28,6 +28,7 @@ internal static class ExecutionOrderStateMachine
             },
             [ExecutionOrderState.Submitted] = new HashSet<ExecutionOrderState>
             {
+                ExecutionOrderState.CancelRequested,
                 ExecutionOrderState.PartiallyFilled,
                 ExecutionOrderState.Filled,
                 ExecutionOrderState.Cancelled,
@@ -35,6 +36,14 @@ internal static class ExecutionOrderStateMachine
                 ExecutionOrderState.Failed
             },
             [ExecutionOrderState.PartiallyFilled] = new HashSet<ExecutionOrderState>
+            {
+                ExecutionOrderState.CancelRequested,
+                ExecutionOrderState.PartiallyFilled,
+                ExecutionOrderState.Filled,
+                ExecutionOrderState.Cancelled,
+                ExecutionOrderState.Failed
+            },
+            [ExecutionOrderState.CancelRequested] = new HashSet<ExecutionOrderState>
             {
                 ExecutionOrderState.PartiallyFilled,
                 ExecutionOrderState.Filled,
@@ -46,6 +55,14 @@ internal static class ExecutionOrderStateMachine
             [ExecutionOrderState.Rejected] = new HashSet<ExecutionOrderState>(),
             [ExecutionOrderState.Failed] = new HashSet<ExecutionOrderState>()
         };
+
+    public static bool CanTransition(
+        ExecutionOrderState currentState,
+        ExecutionOrderState targetState)
+    {
+        return AllowedTransitions.TryGetValue(currentState, out var allowedStates) &&
+            allowedStates.Contains(targetState);
+    }
 
     public static ExecutionOrderTransition CreateInitialTransition(
         ExecutionOrder order,
@@ -78,8 +95,7 @@ internal static class ExecutionOrderStateMachine
         string? parentCorrelationId,
         string? detail = null)
     {
-        if (!AllowedTransitions.TryGetValue(order.State, out var allowedStates) ||
-            !allowedStates.Contains(targetState))
+        if (!CanTransition(order.State, targetState))
         {
             throw new InvalidOperationException(
                 $"Execution order state '{order.State}' cannot transition to '{targetState}'.");

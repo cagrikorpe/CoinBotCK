@@ -39,7 +39,7 @@ public sealed class ExecutionEngineTests
         await SeedDemoWalletAsync(harness.DbContext, "user-demo", "USDT", 1000m);
         harness.MarketDataService.SetLatestPrice("AAVEUSDT", 100m, harness.TimeProvider.GetUtcNow().UtcDateTime, "unit-test");
         harness.MarketDataService.SetSymbolMetadata("AAVEUSDT", "AAVE", "USDT", 0.01m, 0.001m);
-        await PrimeFreshMarketDataAsync(harness, "corr-demo-1");
+        await PrimeFreshMarketDataAsync(harness, "corr-demo-1", "AAVEUSDT", "1m");
         await harness.SwitchService.SetTradeMasterStateAsync(
             TradeMasterSwitchState.Armed,
             actor: "admin-demo",
@@ -98,7 +98,7 @@ public sealed class ExecutionEngineTests
         await SeedDemoWalletAsync(harness.DbContext, "user-limit", "USDT", 1000m);
         harness.MarketDataService.SetLatestPrice("AAVEUSDT", 105m, harness.TimeProvider.GetUtcNow().UtcDateTime, "unit-test");
         harness.MarketDataService.SetSymbolMetadata("AAVEUSDT", "AAVE", "USDT", 0.01m, 0.001m);
-        await PrimeFreshMarketDataAsync(harness, "corr-limit-1");
+        await PrimeFreshMarketDataAsync(harness, "corr-limit-1", "AAVEUSDT", "1m");
         await harness.SwitchService.SetTradeMasterStateAsync(
             TradeMasterSwitchState.Armed,
             actor: "admin-limit",
@@ -270,16 +270,20 @@ public sealed class ExecutionEngineTests
               },
               CancellationToken.None);
 
-        Assert.Equal(ExecutionOrderState.Failed, result.Order.State);
+        Assert.Equal(ExecutionOrderState.Rejected, result.Order.State);
         Assert.Equal(nameof(ExecutionValidationException), result.Order.FailureCode);
         Assert.Contains("minimum notional", result.Order.FailureDetail, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(ExecutionRejectionStage.PreSubmit, result.Order.RejectionStage);
+        Assert.False(result.Order.SubmittedToBroker);
+        Assert.False(result.Order.RetryEligible);
+        Assert.False(result.Order.CooldownApplied);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
         Assert.Equal(
             [
                 ExecutionOrderState.Received,
                 ExecutionOrderState.GatePassed,
                 ExecutionOrderState.Dispatching,
-                ExecutionOrderState.Failed
+                ExecutionOrderState.Rejected
             ],
             result.Order.Transitions.Select(transition => transition.State).ToArray());
         Assert.Contains(
@@ -430,6 +434,7 @@ public sealed class ExecutionEngineTests
 
         Assert.False(first.IsDuplicate);
         Assert.True(second.IsDuplicate);
+        Assert.True(second.Order.DuplicateSuppressed);
         Assert.Equal(first.Order.ExecutionOrderId, second.Order.ExecutionOrderId);
         Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
         Assert.Equal(1, await harness.DbContext.ExecutionOrders.CountAsync());
@@ -495,6 +500,8 @@ public sealed class ExecutionEngineTests
 
         Assert.Equal(64000m, result.Order.StopLossPrice);
         Assert.Equal(68000m, result.Order.TakeProfitPrice);
+        Assert.True(result.Order.StopLossAttached);
+        Assert.True(result.Order.TakeProfitAttached);
         Assert.Equal(replacementOrderId, result.Order.ReplacesExecutionOrderId);
         var terminalTransition = result.Order.Transitions.Last();
 
@@ -513,18 +520,236 @@ public sealed class ExecutionEngineTests
     {
         await using var harness = CreateHarness();
 
-        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
-            harness.Engine.DispatchAsync(
-                CreateCommand(
-                    ownerUserId: "user-invalid-protect",
-                    strategyKey: "protect-core",
-                    isDemo: true) with
-                {
-                    StopLossPrice = 66000m
-                },
-                CancellationToken.None));
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-invalid-protect",
+                strategyKey: "protect-core",
+                isDemo: true) with
+            {
+                StopLossPrice = 66000m
+            },
+            CancellationToken.None);
 
-        Assert.Equal(0, await harness.DbContext.ExecutionOrders.CountAsync());
+        Assert.Equal(ExecutionOrderState.Rejected, result.Order.State);
+        Assert.Equal("InvalidStopLossConfiguration", result.Order.FailureCode);
+        Assert.Equal(ExecutionRejectionStage.PreSubmit, result.Order.RejectionStage);
+        Assert.False(result.Order.SubmittedToBroker);
+        Assert.False(result.Order.RetryEligible);
+        Assert.False(result.Order.CooldownApplied);
+        Assert.Equal(1, await harness.DbContext.ExecutionOrders.CountAsync());
+    }
+
+    [Fact]
+    public async Task DispatchAsync_FailsClosed_WhenTakeProfitConfigurationIsInvalid()
+    {
+        await using var harness = CreateHarness();
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-invalid-tp",
+                strategyKey: "protect-core",
+                isDemo: true) with
+            {
+                TakeProfitPrice = 64000m
+            },
+            CancellationToken.None);
+
+        Assert.Equal(ExecutionOrderState.Rejected, result.Order.State);
+        Assert.Equal("InvalidTakeProfitConfiguration", result.Order.FailureCode);
+        Assert.Equal(ExecutionRejectionStage.PreSubmit, result.Order.RejectionStage);
+        Assert.False(result.Order.SubmittedToBroker);
+        Assert.False(result.Order.RetryEligible);
+        Assert.False(result.Order.CooldownApplied);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_FailsClosed_WhenProtectiveBracketIsSideMismatched()
+    {
+        await using var harness = CreateHarness();
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-invalid-bracket",
+                strategyKey: "protect-core",
+                isDemo: true) with
+            {
+                StopLossPrice = 68000m,
+                TakeProfitPrice = 67000m
+            },
+            CancellationToken.None);
+
+        Assert.Equal(ExecutionOrderState.Rejected, result.Order.State);
+        Assert.Equal("ProtectiveOrderSideMismatch", result.Order.FailureCode);
+        Assert.Equal(ExecutionRejectionStage.PreSubmit, result.Order.RejectionStage);
+        Assert.False(result.Order.SubmittedToBroker);
+        Assert.False(result.Order.RetryEligible);
+        Assert.False(result.Order.CooldownApplied);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_FailsClosed_WhenReduceOnlyHasNoOpenPosition()
+    {
+        await using var harness = CreateHarness();
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-reduce-missing",
+                strategyKey: "reduce-core",
+                isDemo: true) with
+            {
+                ReduceOnly = true,
+                Side = ExecutionOrderSide.Sell
+            },
+            CancellationToken.None);
+
+        Assert.Equal(ExecutionOrderState.Rejected, result.Order.State);
+        Assert.True(result.Order.ReduceOnly);
+        Assert.Equal("ReduceOnlyWithoutOpenPosition", result.Order.FailureCode);
+        Assert.Equal(ExecutionRejectionStage.PreSubmit, result.Order.RejectionStage);
+        Assert.False(result.Order.SubmittedToBroker);
+        Assert.False(result.Order.RetryEligible);
+        Assert.False(result.Order.CooldownApplied);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_FailsClosed_WhenReduceOnlyWouldIncreaseExposure()
+    {
+        await using var harness = CreateHarness();
+        await SeedDemoPositionAsync(harness.DbContext, "user-reduce-side", "BTCUSDT", "BTC", "USDT", 0.05m, 65000m);
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-reduce-side",
+                strategyKey: "reduce-core",
+                isDemo: true) with
+            {
+                ReduceOnly = true,
+                Side = ExecutionOrderSide.Buy,
+                Quantity = 0.01m,
+                Price = 65000m
+            },
+            CancellationToken.None);
+
+        Assert.Equal(ExecutionOrderState.Rejected, result.Order.State);
+        Assert.Equal("ReduceOnlyWouldIncreaseExposure", result.Order.FailureCode);
+        Assert.Equal(ExecutionRejectionStage.PreSubmit, result.Order.RejectionStage);
+        Assert.False(result.Order.SubmittedToBroker);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_FailsClosed_WhenReduceOnlyQuantityExceedsOpenPosition()
+    {
+        await using var harness = CreateHarness();
+        await SeedDemoPositionAsync(harness.DbContext, "user-reduce-qty", "BTCUSDT", "BTC", "USDT", 0.05m, 65000m);
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-reduce-qty",
+                strategyKey: "reduce-core",
+                isDemo: true) with
+            {
+                ReduceOnly = true,
+                Side = ExecutionOrderSide.Sell,
+                Quantity = 0.06m,
+                Price = 65000m
+            },
+            CancellationToken.None);
+
+        Assert.Equal(ExecutionOrderState.Rejected, result.Order.State);
+        Assert.Equal("ReduceOnlyQuantityExceedsOpenPosition", result.Order.FailureCode);
+        Assert.Equal(ExecutionRejectionStage.PreSubmit, result.Order.RejectionStage);
+        Assert.False(result.Order.SubmittedToBroker);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_AllowsReduceOnlyPartialClose_AndPassesReduceOnlyToBroker()
+    {
+        await using var harness = CreateHarness();
+        var strategyId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        await SeedUserAsync(harness.DbContext, "user-reduce-live");
+        await SeedLiveStrategyAsync(harness.DbContext, "user-reduce-live", strategyId, "reduce-live");
+        await SeedExchangeAccountAsync(harness.DbContext, "user-reduce-live", exchangeAccountId);
+        await SeedExchangePositionAsync(harness.DbContext, "user-reduce-live", exchangeAccountId, "BTCUSDT", "LONG", 0.05m, 65000m);
+        await PrimeFreshMarketDataAsync(harness, "corr-reduce-live-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-reduce-live",
+            context: "Open live reduce-only execution",
+            correlationId: "corr-reduce-live-2");
+        await harness.SwitchService.SetDemoModeAsync(
+            isEnabled: false,
+            actor: "admin-reduce-live",
+            liveApproval: new TradingModeLiveApproval("reduce-live-approval"),
+            context: "Switch to live reduce-only",
+            correlationId: "corr-reduce-live-3");
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-reduce-live",
+                strategyId: strategyId,
+                strategyKey: "reduce-live",
+                exchangeAccountId: exchangeAccountId,
+                isDemo: null) with
+            {
+                ReduceOnly = true,
+                Side = ExecutionOrderSide.Sell,
+                Quantity = 0.02m,
+                Price = 65000m
+            },
+            CancellationToken.None);
+
+        Assert.Equal(ExecutionOrderState.Submitted, result.Order.State);
+        Assert.True(result.Order.ReduceOnly);
+        Assert.True(result.Order.SubmittedToBroker);
+        Assert.Equal(ExecutionRejectionStage.None, result.Order.RejectionStage);
+        Assert.True(result.Order.CooldownApplied);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.NotNull(harness.PrivateRestClient.LastPlacementRequest);
+        Assert.True(harness.PrivateRestClient.LastPlacementRequest.ReduceOnly);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_FailsPostSubmit_WithRetryEligibleAndCooldownApplied_WhenBrokerRequestFails()
+    {
+        await using var harness = CreateHarness(environmentName: Environments.Development);
+        var strategyId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        await SeedUserAsync(harness.DbContext, "user-post-submit");
+        await SeedLiveStrategyAsync(harness.DbContext, "user-post-submit", strategyId, "post-submit");
+        await SeedExchangeAccountAsync(harness.DbContext, "user-post-submit", exchangeAccountId);
+        await PrimeFreshMarketDataAsync(harness, "corr-post-submit-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-post-submit",
+            context: "Open live execution",
+            correlationId: "corr-post-submit-2");
+        await harness.SwitchService.SetDemoModeAsync(
+            isEnabled: false,
+            actor: "admin-post-submit",
+            liveApproval: new TradingModeLiveApproval("post-submit-approval"),
+            context: "Switch to live",
+            correlationId: "corr-post-submit-3");
+        harness.PrivateRestClient.PlaceOrderException = new InvalidOperationException("Broker request timed out.");
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-post-submit",
+                strategyId: strategyId,
+                strategyKey: "post-submit",
+                exchangeAccountId: exchangeAccountId,
+                isDemo: null),
+            CancellationToken.None);
+
+        Assert.Equal(ExecutionOrderState.Failed, result.Order.State);
+        Assert.Equal(nameof(InvalidOperationException), result.Order.FailureCode);
+        Assert.Equal(ExecutionRejectionStage.PostSubmit, result.Order.RejectionStage);
+        Assert.True(result.Order.SubmittedToBroker);
+        Assert.True(result.Order.RetryEligible);
+        Assert.True(result.Order.CooldownApplied);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.StartsWith("cbp0_", result.Order.ClientOrderId, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -798,10 +1023,20 @@ public sealed class ExecutionEngineTests
             alertDispatchCoordinator);
     }
 
-    private static async Task PrimeFreshMarketDataAsync(TestHarness harness, string correlationId)
+    private static async Task PrimeFreshMarketDataAsync(
+        TestHarness harness,
+        string correlationId,
+        string symbol = "BTCUSDT",
+        string timeframe = "1m")
     {
         await harness.CircuitBreaker.RecordHeartbeatAsync(
-            new DataLatencyHeartbeat("binance-btcusdt", harness.TimeProvider.GetUtcNow().UtcDateTime),
+            new DataLatencyHeartbeat(
+                $"binance-{symbol.ToLowerInvariant()}",
+                harness.TimeProvider.GetUtcNow().UtcDateTime,
+                Symbol: symbol,
+                Timeframe: timeframe,
+                ExpectedOpenTimeUtc: harness.TimeProvider.GetUtcNow().UtcDateTime,
+                ContinuityGapCount: 0),
             correlationId);
     }
 
@@ -933,6 +1168,59 @@ public sealed class ExecutionEngineTests
         await dbContext.SaveChangesAsync();
     }
 
+    private static async Task SeedDemoPositionAsync(
+        ApplicationDbContext dbContext,
+        string ownerUserId,
+        string symbol,
+        string baseAsset,
+        string quoteAsset,
+        decimal quantity,
+        decimal averageEntryPrice)
+    {
+        dbContext.DemoPositions.Add(new DemoPosition
+        {
+            OwnerUserId = ownerUserId,
+            PositionScopeKey = $"{ownerUserId}:{symbol}",
+            Symbol = symbol,
+            BaseAsset = baseAsset,
+            QuoteAsset = quoteAsset,
+            Quantity = quantity,
+            CostBasis = quantity * averageEntryPrice,
+            AverageEntryPrice = averageEntryPrice,
+            LastPrice = averageEntryPrice,
+            LastMarkPrice = averageEntryPrice,
+            LastValuationAtUtc = new DateTime(2026, 3, 22, 11, 55, 0, DateTimeKind.Utc)
+        });
+
+        await dbContext.SaveChangesAsync();
+    }
+
+    private static async Task SeedExchangePositionAsync(
+        ApplicationDbContext dbContext,
+        string ownerUserId,
+        Guid exchangeAccountId,
+        string symbol,
+        string positionSide,
+        decimal quantity,
+        decimal entryPrice)
+    {
+        dbContext.ExchangePositions.Add(new ExchangePosition
+        {
+            OwnerUserId = ownerUserId,
+            ExchangeAccountId = exchangeAccountId,
+            Symbol = symbol,
+            PositionSide = positionSide,
+            Quantity = quantity,
+            EntryPrice = entryPrice,
+            BreakEvenPrice = entryPrice,
+            MarginType = "ISOLATED",
+            ExchangeUpdatedAtUtc = new DateTime(2026, 3, 22, 11, 55, 0, DateTimeKind.Utc),
+            SyncedAtUtc = new DateTime(2026, 3, 22, 11, 55, 0, DateTimeKind.Utc)
+        });
+
+        await dbContext.SaveChangesAsync();
+    }
+
     private static ExecutionCommand CreateCommand(
         string ownerUserId,
         string strategyKey,
@@ -1052,6 +1340,10 @@ public sealed class ExecutionEngineTests
 
         public int EnsureLeverageCalls { get; private set; }
 
+        public BinanceOrderPlacementRequest? LastPlacementRequest { get; private set; }
+
+        public Exception? PlaceOrderException { get; set; }
+
         public Task EnsureMarginTypeAsync(
             Guid exchangeAccountId,
             string symbol,
@@ -1081,6 +1373,12 @@ public sealed class ExecutionEngineTests
             CancellationToken cancellationToken = default)
         {
             PlaceOrderCalls++;
+            LastPlacementRequest = request;
+
+            if (PlaceOrderException is not null)
+            {
+                throw PlaceOrderException;
+            }
 
             return Task.FromResult(
                 new BinanceOrderPlacementResult(

@@ -18,7 +18,8 @@ public sealed class ExecutionReconciliationService(
     private static readonly ExecutionOrderState[] OpenStates =
     [
         ExecutionOrderState.Submitted,
-        ExecutionOrderState.PartiallyFilled
+        ExecutionOrderState.PartiallyFilled,
+        ExecutionOrderState.CancelRequested
     ];
 
     internal async Task<int> RunOnceAsync(CancellationToken cancellationToken = default)
@@ -156,7 +157,7 @@ public sealed class ExecutionReconciliationService(
             "FILLED" => ExecutionOrderState.Filled,
             "CANCELED" => ExecutionOrderState.Cancelled,
             "EXPIRED" => ExecutionOrderState.Cancelled,
-            "PENDING_CANCEL" => ExecutionOrderState.Cancelled,
+            "PENDING_CANCEL" => ExecutionOrderState.CancelRequested,
             "REJECTED" => ExecutionOrderState.Rejected,
             _ => ExecutionOrderState.Submitted
         };

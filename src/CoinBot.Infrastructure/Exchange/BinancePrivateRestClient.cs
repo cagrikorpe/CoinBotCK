@@ -129,6 +129,11 @@ public sealed class BinancePrivateRestClient(
             parameters.Add(new("price", FormatDecimal(request.Price)));
         }
 
+        if (request.ReduceOnly)
+        {
+            parameters.Add(new("reduceOnly", "true"));
+        }
+
         var unsignedQuery = string.Join(
             "&",
             parameters.Select(parameter =>

@@ -25,7 +25,8 @@ public sealed class VirtualExecutionWatchdogService(
     private static readonly IReadOnlySet<ExecutionOrderState> OpenOrderStates = new HashSet<ExecutionOrderState>
     {
         ExecutionOrderState.Submitted,
-        ExecutionOrderState.PartiallyFilled
+        ExecutionOrderState.PartiallyFilled,
+        ExecutionOrderState.CancelRequested
     };
 
     private readonly DemoFillSimulatorOptions fillOptionsValue = fillOptions.Value;

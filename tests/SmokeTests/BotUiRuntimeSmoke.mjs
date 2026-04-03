@@ -340,7 +340,7 @@ async function inspectRuntimeUi() {
         workerStateText: cells[4]?.querySelector('.font-weight-bolder')?.innerText?.trim() || '',
         workerErrorText: cells[4]?.querySelector('.text-muted')?.innerText?.trim() || '',
         executionStateText: cells[5]?.querySelector('.font-weight-bolder')?.innerText?.trim() || '',
-        executionFailureText: executionLines.find(text => !text.startsWith('Last execution:') && !text.startsWith('Blok bitişi:') && !text.startsWith('Kalan:') && text !== 'Cooldown aktif' && text !== 'Failure yok') || '',
+        executionFailureText: executionLines.find(text => !text.startsWith('Last execution:') && !text.startsWith('Blok bitişi:') && !text.startsWith('Kalan:') && !text.startsWith('Submitted:') && !text.startsWith('Retry:') && !text.startsWith('ReduceOnly:') && !text.startsWith('Stage:') && !text.startsWith('Transition:') && !text.startsWith('Correlation:') && !text.startsWith('ClientOrderId:') && text !== 'Cooldown aktif' && text !== 'Failure yok' && text !== 'Duplicate suppressed') || '',
         executionBlockDetailText: executionLines.find(text => text.startsWith('Execution blocked because')) || '',
         marketDataBadgeText: cells[5]?.querySelector('[data-cb-bot-market-badge]')?.innerText?.trim() || '',
         marketDataReasonText: cells[5]?.querySelector('[data-cb-bot-market-reason]')?.innerText?.trim() || '',
@@ -348,6 +348,14 @@ async function inspectRuntimeUi() {
         marketDataLastCandleText: cells[5]?.querySelector('[data-cb-bot-market-candle]')?.innerText?.trim() || '',
         marketDataAgeText: cells[5]?.querySelector('[data-cb-bot-market-age]')?.innerText?.trim() || '',
         marketDataContinuityText: cells[5]?.querySelector('[data-cb-bot-market-continuity]')?.innerText?.replace(/\s+/g, ' ')?.trim() || '',
+        executionSubmitText: cells[5]?.querySelector('[data-cb-bot-exec-submit]')?.innerText?.trim() || '',
+        executionRetryText: cells[5]?.querySelector('[data-cb-bot-exec-retry]')?.innerText?.trim() || '',
+        executionProtectionText: cells[5]?.querySelector('[data-cb-bot-exec-protection]')?.innerText?.trim() || '',
+        executionStageText: cells[5]?.querySelector('[data-cb-bot-exec-stage]')?.innerText?.trim() || '',
+        executionTransitionText: cells[5]?.querySelector('[data-cb-bot-exec-transition]')?.innerText?.trim() || '',
+        executionCorrelationText: cells[5]?.querySelector('[data-cb-bot-exec-correlation]')?.innerText?.trim() || '',
+        executionClientOrderText: cells[5]?.querySelector('[data-cb-bot-exec-client-order]')?.innerText?.trim() || '',
+        executionDuplicateText: cells[5]?.querySelector('[data-cb-bot-exec-duplicate]')?.innerText?.trim() || '',
         cooldownBadgeText: cells[5]?.querySelector('[data-cb-bot-cooldown-badge]')?.innerText?.trim() || '',
         cooldownBlockedUntilText: executionLines.find(text => text.startsWith('Blok bitişi:')) || '',
         cooldownRemainingText: executionLines.find(text => text.startsWith('Kalan:')) || '',
@@ -417,7 +425,7 @@ async function inspectRuntimeUi() {
         workerStateText: cells[4]?.querySelector('.font-weight-bolder')?.innerText?.trim() || '',
         workerErrorText: cells[4]?.querySelector('.text-muted')?.innerText?.trim() || '',
         executionStateText: cells[5]?.querySelector('.font-weight-bolder')?.innerText?.trim() || '',
-        executionFailureText: executionLines.find(text => !text.startsWith('Last execution:') && !text.startsWith('Blok bitişi:') && !text.startsWith('Kalan:') && text !== 'Cooldown aktif' && text !== 'Failure yok') || '',
+        executionFailureText: executionLines.find(text => !text.startsWith('Last execution:') && !text.startsWith('Blok bitişi:') && !text.startsWith('Kalan:') && !text.startsWith('Submitted:') && !text.startsWith('Retry:') && !text.startsWith('ReduceOnly:') && !text.startsWith('Stage:') && !text.startsWith('Transition:') && !text.startsWith('Correlation:') && !text.startsWith('ClientOrderId:') && text !== 'Cooldown aktif' && text !== 'Failure yok' && text !== 'Duplicate suppressed') || '',
         executionBlockDetailText: executionLines.find(text => text.startsWith('Execution blocked because')) || '',
         marketDataBadgeText: cells[5]?.querySelector('[data-cb-bot-market-badge]')?.innerText?.trim() || '',
         marketDataReasonText: cells[5]?.querySelector('[data-cb-bot-market-reason]')?.innerText?.trim() || '',
@@ -425,11 +433,39 @@ async function inspectRuntimeUi() {
         marketDataLastCandleText: cells[5]?.querySelector('[data-cb-bot-market-candle]')?.innerText?.trim() || '',
         marketDataAgeText: cells[5]?.querySelector('[data-cb-bot-market-age]')?.innerText?.trim() || '',
         marketDataContinuityText: cells[5]?.querySelector('[data-cb-bot-market-continuity]')?.innerText?.replace(/\s+/g, ' ')?.trim() || '',
+        executionSubmitText: cells[5]?.querySelector('[data-cb-bot-exec-submit]')?.innerText?.trim() || '',
+        executionRetryText: cells[5]?.querySelector('[data-cb-bot-exec-retry]')?.innerText?.trim() || '',
+        executionProtectionText: cells[5]?.querySelector('[data-cb-bot-exec-protection]')?.innerText?.trim() || '',
+        executionStageText: cells[5]?.querySelector('[data-cb-bot-exec-stage]')?.innerText?.trim() || '',
+        executionTransitionText: cells[5]?.querySelector('[data-cb-bot-exec-transition]')?.innerText?.trim() || '',
+        executionCorrelationText: cells[5]?.querySelector('[data-cb-bot-exec-correlation]')?.innerText?.trim() || '',
+        executionClientOrderText: cells[5]?.querySelector('[data-cb-bot-exec-client-order]')?.innerText?.trim() || '',
+        executionDuplicateText: cells[5]?.querySelector('[data-cb-bot-exec-duplicate]')?.innerText?.trim() || '',
         cooldownBadgeText: cells[5]?.querySelector('[data-cb-bot-cooldown-badge]')?.innerText?.trim() || '',
         cooldownBlockedUntilText: executionLines.find(text => text.startsWith('Blok bitişi:')) || '',
         cooldownRemainingText: executionLines.find(text => text.startsWith('Kalan:')) || ''
       };
     })()`);
+
+    if (!toggledBotState.executionSubmitText) {
+      throw new Error('Execution submit status was not rendered on /Bots.');
+    }
+
+    if (!toggledBotState.executionRetryText) {
+      throw new Error('Execution retry/cooldown status was not rendered on /Bots.');
+    }
+
+    if (!toggledBotState.executionProtectionText) {
+      throw new Error('Execution reduce-only / stop-tp status was not rendered on /Bots.');
+    }
+
+    if (!toggledBotState.executionStageText) {
+      throw new Error('Execution rejection stage was not rendered on /Bots.');
+    }
+
+    if (!toggledBotState.executionTransitionText) {
+      throw new Error('Execution transition code was not rendered on /Bots.');
+    }
 
     await client.navigate(`${baseUrl}/`);
     await client.waitForReady();
@@ -491,6 +527,14 @@ async function inspectRuntimeUi() {
         initialMarketDataLastCandleText: String(initialBotState.marketDataLastCandleText || ''),
         initialMarketDataAgeText: String(initialBotState.marketDataAgeText || ''),
         initialMarketDataContinuityText: String(initialBotState.marketDataContinuityText || ''),
+        initialExecutionSubmitText: String(initialBotState.executionSubmitText || ''),
+        initialExecutionRetryText: String(initialBotState.executionRetryText || ''),
+        initialExecutionProtectionText: String(initialBotState.executionProtectionText || ''),
+        initialExecutionStageText: String(initialBotState.executionStageText || ''),
+        initialExecutionTransitionText: String(initialBotState.executionTransitionText || ''),
+        initialExecutionCorrelationText: String(initialBotState.executionCorrelationText || ''),
+        initialExecutionClientOrderText: String(initialBotState.executionClientOrderText || ''),
+        initialExecutionDuplicateText: String(initialBotState.executionDuplicateText || ''),
         initialCooldownBadgeText: String(initialBotState.cooldownBadgeText || ''),
         initialCooldownBlockedUntilText: String(initialBotState.cooldownBlockedUntilText || ''),
         initialCooldownRemainingText: String(initialBotState.cooldownRemainingText || ''),
@@ -509,6 +553,14 @@ async function inspectRuntimeUi() {
         postToggleMarketDataLastCandleText: String(toggledBotState.marketDataLastCandleText || ''),
         postToggleMarketDataAgeText: String(toggledBotState.marketDataAgeText || ''),
         postToggleMarketDataContinuityText: String(toggledBotState.marketDataContinuityText || ''),
+        postToggleExecutionSubmitText: String(toggledBotState.executionSubmitText || ''),
+        postToggleExecutionRetryText: String(toggledBotState.executionRetryText || ''),
+        postToggleExecutionProtectionText: String(toggledBotState.executionProtectionText || ''),
+        postToggleExecutionStageText: String(toggledBotState.executionStageText || ''),
+        postToggleExecutionTransitionText: String(toggledBotState.executionTransitionText || ''),
+        postToggleExecutionCorrelationText: String(toggledBotState.executionCorrelationText || ''),
+        postToggleExecutionClientOrderText: String(toggledBotState.executionClientOrderText || ''),
+        postToggleExecutionDuplicateText: String(toggledBotState.executionDuplicateText || ''),
         postToggleCooldownBadgeText: String(toggledBotState.cooldownBadgeText || ''),
         postToggleCooldownBlockedUntilText: String(toggledBotState.cooldownBlockedUntilText || ''),
         postToggleCooldownRemainingText: String(toggledBotState.cooldownRemainingText || '')
@@ -562,6 +614,14 @@ async function inspectRuntimeUi() {
   console.log(`BotMarketDataLastCandle=${summary.bots.postToggleMarketDataLastCandleText}`);
   console.log(`BotMarketDataAge=${summary.bots.postToggleMarketDataAgeText}`);
   console.log(`BotMarketDataContinuity=${summary.bots.postToggleMarketDataContinuityText}`);
+  console.log(`BotExecutionSubmit=${summary.bots.postToggleExecutionSubmitText}`);
+  console.log(`BotExecutionRetry=${summary.bots.postToggleExecutionRetryText}`);
+  console.log(`BotExecutionProtection=${summary.bots.postToggleExecutionProtectionText}`);
+  console.log(`BotExecutionStage=${summary.bots.postToggleExecutionStageText}`);
+  console.log(`BotExecutionTransition=${summary.bots.postToggleExecutionTransitionText}`);
+  console.log(`BotExecutionCorrelation=${summary.bots.postToggleExecutionCorrelationText}`);
+  console.log(`BotExecutionClientOrder=${summary.bots.postToggleExecutionClientOrderText}`);
+  console.log(`BotExecutionDuplicate=${summary.bots.postToggleExecutionDuplicateText}`);
   console.log(`BotCooldownBadge=${summary.bots.postToggleCooldownBadgeText}`);
   console.log(`BotCooldownRemaining=${summary.bots.postToggleCooldownRemainingText}`);
   console.log(`DashboardDriftSummary=${summary.dashboard.driftSummaryText}`);
@@ -576,6 +636,9 @@ if (mode === 'register') {
 } else {
   throw new Error(`Unsupported bot UI smoke mode: ${mode}`);
 }
+
+
+
 
 
 
