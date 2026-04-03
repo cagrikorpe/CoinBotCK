@@ -98,6 +98,8 @@ public sealed class MarketScannerServiceTests
         Assert.Equal("LowQuoteVolume", sol.RejectionReason);
         Assert.Equal(MonitoringHealthState.Healthy, heartbeat.HealthState);
         Assert.Contains("BestCandidate=ADAUSDT", heartbeat.Detail ?? string.Empty, StringComparison.Ordinal);
+        Assert.Equal(4, marketDataService.SharedPriceReadCount);
+        Assert.Equal(0, marketDataService.LegacyPriceReadCount);
     }
 
     [Fact]
@@ -406,6 +408,10 @@ public sealed class MarketScannerServiceTests
     {
         private readonly Dictionary<string, MarketPriceSnapshot> latestPrices = new(StringComparer.Ordinal);
 
+        public int SharedPriceReadCount { get; private set; }
+
+        public int LegacyPriceReadCount { get; private set; }
+
         public void SetLatestPrice(string symbol, decimal price, DateTime observedAtUtc)
         {
             latestPrices[symbol] = new MarketPriceSnapshot(symbol, price, observedAtUtc, observedAtUtc, "unit-test");
@@ -417,8 +423,32 @@ public sealed class MarketScannerServiceTests
 
         public ValueTask<MarketPriceSnapshot?> GetLatestPriceAsync(string symbol, CancellationToken cancellationToken = default)
         {
+            LegacyPriceReadCount++;
             latestPrices.TryGetValue(symbol, out var snapshot);
             return ValueTask.FromResult<MarketPriceSnapshot?>(snapshot);
+        }
+
+        public ValueTask<SharedMarketDataCacheReadResult<MarketPriceSnapshot>> ReadLatestPriceAsync(
+            string symbol,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            SharedPriceReadCount++;
+            latestPrices.TryGetValue(symbol, out var snapshot);
+
+            return ValueTask.FromResult(snapshot is null
+                ? SharedMarketDataCacheReadResult<MarketPriceSnapshot>.Miss("No shared ticker snapshot.")
+                : SharedMarketDataCacheReadResult<MarketPriceSnapshot>.HitFresh(
+                    new SharedMarketDataCacheEntry<MarketPriceSnapshot>(
+                        SharedMarketDataCacheDataType.Ticker,
+                        snapshot.Symbol,
+                        Timeframe: null,
+                        UpdatedAtUtc: snapshot.ObservedAtUtc,
+                        CachedAtUtc: snapshot.ReceivedAtUtc,
+                        FreshUntilUtc: snapshot.ReceivedAtUtc.AddSeconds(15),
+                        ExpiresAtUtc: snapshot.ReceivedAtUtc.AddMinutes(5),
+                        Source: snapshot.Source,
+                        Payload: snapshot)));
         }
 
         public ValueTask<SymbolMetadataSnapshot?> GetSymbolMetadataAsync(string symbol, CancellationToken cancellationToken = default)

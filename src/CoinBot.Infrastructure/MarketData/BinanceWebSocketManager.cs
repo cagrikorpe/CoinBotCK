@@ -15,6 +15,7 @@ public sealed class BinanceWebSocketManager(
     IndicatorDataService indicatorDataService,
     IBinanceExchangeInfoClient exchangeInfoClient,
     IBinanceCandleStreamClient candleStreamClient,
+    IBinanceDepthStreamClient depthStreamClient,
     CandleDataQualityGuard dataQualityGuard,
     IMarketDataHeartbeatRecorder heartbeatRecorder,
     IOptions<BinanceMarketDataOptions> options,
@@ -108,17 +109,59 @@ public sealed class BinanceWebSocketManager(
     {
         var reconnectGeneration = webSocketReconnectCoordinator?.GetGeneration() ?? 0L;
         var hasRecordedHealthyState = false;
+        var candleStreamCompleted = false;
         Task<bool>? pendingMoveNextTask = null;
+        Task<bool>? pendingDepthMoveNextTask = null;
+        var depthStreamCompleted = false;
         await using var enumerator = candleStreamClient
+            .StreamAsync(trackedSymbols.Symbols, cancellationToken)
+            .GetAsyncEnumerator(cancellationToken);
+        await using var depthEnumerator = depthStreamClient
             .StreamAsync(trackedSymbols.Symbols, cancellationToken)
             .GetAsyncEnumerator(cancellationToken);
 
         while (!cancellationToken.IsCancellationRequested)
         {
-            pendingMoveNextTask ??= enumerator.MoveNextAsync().AsTask();
+            if (!candleStreamCompleted)
+            {
+                pendingMoveNextTask ??= enumerator.MoveNextAsync().AsTask();
+            }
+
+            if (!depthStreamCompleted)
+            {
+                pendingDepthMoveNextTask ??= depthEnumerator.MoveNextAsync().AsTask();
+            }
+
             var completedTask = await Task.WhenAny(
-                pendingMoveNextTask,
+                pendingMoveNextTask ?? Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken),
+                pendingDepthMoveNextTask ?? Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken),
                 Task.Delay(InterruptionPollInterval, cancellationToken));
+
+            if (!depthStreamCompleted &&
+                completedTask == pendingDepthMoveNextTask)
+            {
+                if (!await pendingDepthMoveNextTask!)
+                {
+                    depthStreamCompleted = true;
+                    pendingDepthMoveNextTask = null;
+                    if (candleStreamCompleted)
+                    {
+                        return;
+                    }
+
+                    continue;
+                }
+
+                pendingDepthMoveNextTask = null;
+                await RecordDepthSnapshotAsync(depthEnumerator.Current, cancellationToken);
+
+                if (ShouldRestartStream(trackedSymbols.Version, reconnectGeneration))
+                {
+                    return;
+                }
+
+                continue;
+            }
 
             if (completedTask != pendingMoveNextTask)
             {
@@ -130,9 +173,23 @@ public sealed class BinanceWebSocketManager(
                 continue;
             }
 
-            if (!await pendingMoveNextTask)
+            if (!candleStreamCompleted &&
+                completedTask == pendingMoveNextTask &&
+                !await pendingMoveNextTask!)
             {
-                return;
+                candleStreamCompleted = true;
+                pendingMoveNextTask = null;
+                if (depthStreamCompleted)
+                {
+                    return;
+                }
+
+                continue;
+            }
+
+            if (completedTask != pendingMoveNextTask)
+            {
+                continue;
             }
 
             pendingMoveNextTask = null;
@@ -238,6 +295,33 @@ public sealed class BinanceWebSocketManager(
             Symbol: snapshot.Symbol,
             Timeframe: snapshot.Interval,
             ContinuityGapCount: null);
+    }
+
+    private async Task RecordDepthSnapshotAsync(
+        MarketDepthSnapshot snapshot,
+        CancellationToken cancellationToken)
+    {
+        lastMessageReceivedAtUtc = snapshot.ReceivedAtUtc;
+
+        var depthProjectionResult = await marketDataService.RecordDepthAsync(snapshot, cancellationToken);
+        if (depthProjectionResult.Status == SharedMarketDataProjectionStatus.Accepted)
+        {
+            RecordTelemetry();
+            return;
+        }
+
+        if (depthProjectionResult.Status == SharedMarketDataProjectionStatus.IgnoredOutOfOrder)
+        {
+            streamGapCount++;
+        }
+
+        logger.LogWarning(
+            "Depth projection rejected {Symbol} with {Status} ({ReasonCode}).",
+            snapshot.Symbol,
+            depthProjectionResult.Status,
+            depthProjectionResult.ReasonCode);
+
+        RecordTelemetry();
     }
 
     private bool ShouldRestartStream(long trackedSymbolVersion, long reconnectGeneration)

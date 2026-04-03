@@ -216,6 +216,53 @@ public sealed class MarketDataServiceProjectionTests
         Assert.Equal(SharedMarketDataProjectionReasonCode.CacheWriteFailed, writeFailedResult.ReasonCode);
     }
 
+    [Fact]
+    public async Task ReadLatestSnapshotsAsync_ReturnTypedStatusAndFreshnessMetadata_FromSharedCacheContract()
+    {
+        using var fixture = CreateFixture();
+        var observedAtUtc = new DateTime(2026, 4, 3, 12, 0, 0, DateTimeKind.Utc);
+        var receivedAtUtc = new DateTime(2026, 4, 3, 12, 0, 1, DateTimeKind.Utc);
+        var closeTimeUtc = new DateTime(2026, 4, 3, 12, 0, 59, 999, DateTimeKind.Utc);
+        var klineReceivedAtUtc = closeTimeUtc.AddMilliseconds(1);
+
+        await fixture.MarketDataService.RecordPriceAsync(CreateTicker("btcusdt", 64000m, observedAtUtc, receivedAtUtc));
+        await fixture.MarketDataService.RecordKlineAsync(CreateCandle(
+            "btcusdt",
+            "1M",
+            closeTimeUtc.AddMilliseconds(-59999),
+            closeTimeUtc,
+            64000m,
+            isClosed: true,
+            klineReceivedAtUtc));
+        await fixture.MarketDataService.RecordDepthAsync(CreateDepth(
+            "btcusdt",
+            1001,
+            observedAtUtc,
+            receivedAtUtc,
+            [new MarketDepthLevelSnapshot(63999m, 1m)],
+            [new MarketDepthLevelSnapshot(64001m, 1m)]));
+
+        var tickerRead = await fixture.MarketDataService.ReadLatestPriceAsync("BTCUSDT");
+        var klineRead = await fixture.MarketDataService.ReadLatestKlineAsync("BTCUSDT", "1m");
+        var depthRead = await fixture.MarketDataService.ReadLatestDepthAsync("BTCUSDT");
+
+        Assert.Equal(SharedMarketDataCacheReadStatus.HitFresh, tickerRead.Status);
+        Assert.Equal("BTCUSDT", tickerRead.Entry?.Symbol);
+        Assert.Equal(receivedAtUtc, tickerRead.Entry?.UpdatedAtUtc);
+        Assert.Equal(receivedAtUtc.AddSeconds(15), tickerRead.Entry?.FreshUntilUtc);
+        Assert.Equal(64000m, tickerRead.Entry?.Payload.Price);
+
+        Assert.Equal(SharedMarketDataCacheReadStatus.HitFresh, klineRead.Status);
+        Assert.Equal("BTCUSDT", klineRead.Entry?.Symbol);
+        Assert.Equal("1m", klineRead.Entry?.Timeframe);
+        Assert.Equal(closeTimeUtc, klineRead.Entry?.UpdatedAtUtc);
+        Assert.Equal(64000m, klineRead.Entry?.Payload.ClosePrice);
+
+        Assert.Equal(SharedMarketDataCacheReadStatus.HitFresh, depthRead.Status);
+        Assert.Equal("BTCUSDT", depthRead.Entry?.Symbol);
+        Assert.Equal(1001, depthRead.Entry?.Payload.LastUpdateId);
+    }
+
     private static TestFixture CreateFixture(ConfigurableSharedMarketDataCache? sharedMarketDataCache = null)
     {
         var timeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 4, 3, 12, 5, 0, TimeSpan.Zero));

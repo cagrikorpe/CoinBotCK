@@ -29,19 +29,42 @@ public sealed class IndicatorDataService(
         return marketDataService.TrackSymbolsAsync(symbols, cancellationToken);
     }
 
-    public ValueTask<StrategyIndicatorSnapshot?> GetLatestAsync(
+    public async ValueTask<StrategyIndicatorSnapshot?> GetLatestAsync(
         string symbol,
         string timeframe,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var key = CreateKey(
-            MarketDataSymbolNormalizer.Normalize(symbol),
-            NormalizeTimeframe(timeframe));
+        var normalizedSymbol = MarketDataSymbolNormalizer.Normalize(symbol);
+        var normalizedTimeframe = NormalizeTimeframe(timeframe);
+        var key = CreateKey(normalizedSymbol, normalizedTimeframe);
 
         latestSnapshots.TryGetValue(key, out StrategyIndicatorSnapshot? snapshot);
-        return ValueTask.FromResult(snapshot);
+
+        var sharedKlineRead = await marketDataService.ReadLatestKlineAsync(
+            normalizedSymbol,
+            normalizedTimeframe,
+            cancellationToken);
+        if (sharedKlineRead.Status == SharedMarketDataCacheReadStatus.HitFresh &&
+            sharedKlineRead.Entry?.Payload is MarketCandleSnapshot sharedSnapshot &&
+            ShouldAdvanceFromSharedSnapshot(snapshot, sharedSnapshot))
+        {
+            await RecordAcceptedCandleAsync(sharedSnapshot, cancellationToken);
+            latestSnapshots.TryGetValue(key, out snapshot);
+        }
+        else if (sharedKlineRead.Status != SharedMarketDataCacheReadStatus.HitFresh &&
+                 snapshot is null)
+        {
+            logger.LogDebug(
+                "Shared indicator input read for {Symbol} {Timeframe} returned {Status} ({ReasonCode}).",
+                normalizedSymbol,
+                normalizedTimeframe,
+                sharedKlineRead.Status,
+                sharedKlineRead.ReasonCode);
+        }
+
+        return snapshot;
     }
 
     public async ValueTask<StrategyIndicatorSnapshot?> PrimeAsync(
@@ -231,6 +254,28 @@ public sealed class IndicatorDataService(
     private static string CreateKey(string symbol, string timeframe)
     {
         return $"{symbol}:{timeframe}";
+    }
+
+    private static bool ShouldAdvanceFromSharedSnapshot(
+        StrategyIndicatorSnapshot? currentSnapshot,
+        MarketCandleSnapshot sharedSnapshot)
+    {
+        if (!sharedSnapshot.IsClosed)
+        {
+            return false;
+        }
+
+        if (currentSnapshot is null)
+        {
+            return true;
+        }
+
+        var sharedCloseTimeUtc = NormalizeTimestamp(sharedSnapshot.CloseTimeUtc);
+        var sharedReceivedAtUtc = NormalizeTimestamp(sharedSnapshot.ReceivedAtUtc);
+
+        return sharedCloseTimeUtc > currentSnapshot.CloseTimeUtc ||
+            (sharedCloseTimeUtc == currentSnapshot.CloseTimeUtc &&
+             sharedReceivedAtUtc > currentSnapshot.ReceivedAtUtc);
     }
 
     private static DateTime NormalizeTimestamp(DateTime value)

@@ -160,6 +160,28 @@ public sealed class IndicatorDataServiceTests
         Assert.Equal(35, primedSnapshot!.SampleCount);
     }
 
+    [Fact]
+    public async Task GetLatestAsync_AdvancesFromSharedFreshKlineSnapshot_WhenLocalSnapshotIsMissing()
+    {
+        var marketDataService = new FakeMarketDataService();
+        var sharedKline = CreateClosedCandleSnapshot("btcusdt", 42, 123m);
+        marketDataService.SetLatestKline(sharedKline);
+        var service = CreateService(marketDataService);
+
+        var snapshot = await service.GetLatestAsync("BTCUSDT", "1m");
+        var secondSnapshot = await service.GetLatestAsync("BTCUSDT", "1m");
+
+        Assert.NotNull(snapshot);
+        Assert.Equal("BTCUSDT", snapshot!.Symbol);
+        Assert.Equal("1m", snapshot.Timeframe);
+        Assert.Equal(sharedKline.CloseTimeUtc, snapshot.CloseTimeUtc);
+        Assert.Equal(sharedKline.ReceivedAtUtc, snapshot.ReceivedAtUtc);
+        Assert.Equal(1, snapshot.SampleCount);
+        Assert.Equal(IndicatorDataState.WarmingUp, snapshot.State);
+        Assert.Equal(2, marketDataService.SharedKlineReadCount);
+        Assert.Equal(1, secondSnapshot!.SampleCount);
+    }
+
     private static IndicatorDataService CreateService(FakeMarketDataService marketDataService)
     {
         return new IndicatorDataService(
@@ -192,8 +214,19 @@ public sealed class IndicatorDataServiceTests
     private sealed class FakeMarketDataService : IMarketDataService
     {
         private readonly HashSet<string> trackedSymbols = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, MarketCandleSnapshot> latestKlines = new(StringComparer.Ordinal);
 
         public IReadOnlyCollection<string> TrackedSymbols => trackedSymbols.OrderBy(symbol => symbol, StringComparer.Ordinal).ToArray();
+
+        public int SharedKlineReadCount { get; private set; }
+
+        public void SetLatestKline(MarketCandleSnapshot snapshot)
+        {
+            latestKlines[$"{MarketDataSymbolNormalizer.Normalize(snapshot.Symbol)}:{snapshot.Interval}"] = snapshot with
+            {
+                Symbol = MarketDataSymbolNormalizer.Normalize(snapshot.Symbol)
+            };
+        }
 
         public ValueTask TrackSymbolAsync(string symbol, CancellationToken cancellationToken = default)
         {
@@ -220,6 +253,35 @@ public sealed class IndicatorDataServiceTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             return ValueTask.FromResult<SymbolMetadataSnapshot?>(null);
+        }
+
+        public ValueTask<SharedMarketDataCacheReadResult<MarketCandleSnapshot>> ReadLatestKlineAsync(
+            string symbol,
+            string timeframe,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            SharedKlineReadCount++;
+
+            var key = $"{MarketDataSymbolNormalizer.Normalize(symbol)}:{timeframe.Trim()}";
+            if (!latestKlines.TryGetValue(key, out var snapshot))
+            {
+                return ValueTask.FromResult(
+                    SharedMarketDataCacheReadResult<MarketCandleSnapshot>.Miss("No shared kline snapshot."));
+            }
+
+            return ValueTask.FromResult(
+                SharedMarketDataCacheReadResult<MarketCandleSnapshot>.HitFresh(
+                    new SharedMarketDataCacheEntry<MarketCandleSnapshot>(
+                        SharedMarketDataCacheDataType.Kline,
+                        snapshot.Symbol,
+                        snapshot.Interval,
+                        UpdatedAtUtc: snapshot.CloseTimeUtc,
+                        CachedAtUtc: snapshot.ReceivedAtUtc,
+                        FreshUntilUtc: snapshot.CloseTimeUtc.AddSeconds(15),
+                        ExpiresAtUtc: snapshot.ReceivedAtUtc.AddMinutes(5),
+                        Source: snapshot.Source,
+                        Payload: snapshot)));
         }
 
         public async IAsyncEnumerable<MarketPriceSnapshot> WatchAsync(

@@ -1,5 +1,6 @@
 using CoinBot.Application.Abstractions.Alerts;
 using CoinBot.Application.Abstractions.Execution;
+using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Persistence;
@@ -15,7 +16,8 @@ public sealed class DataLatencyCircuitBreaker(
     IAlertService alertService,
     IOptions<DataLatencyGuardOptions> options,
     TimeProvider timeProvider,
-    ILogger<DataLatencyCircuitBreaker> logger) : IDataLatencyCircuitBreaker
+    ILogger<DataLatencyCircuitBreaker> logger,
+    IMarketDataService? marketDataService = null) : IDataLatencyCircuitBreaker
 {
     private readonly DataLatencyGuardOptions optionsValue = options.Value;
 
@@ -31,12 +33,18 @@ public sealed class DataLatencyCircuitBreaker(
             symbol,
             timeframe,
             cancellationToken);
+        var hasSharedSnapshotRefresh = await TrySynchronizeScopedStateFromSharedKlineAsync(
+            state,
+            evaluationTimeUtc,
+            symbol,
+            timeframe,
+            cancellationToken);
         var previousSnapshot = MapSnapshot(state, evaluationTimeUtc, isPersisted: true);
         var desiredState = EvaluateState(state, evaluationTimeUtc);
         var hasStateChanged = ApplyState(state, desiredState, evaluationTimeUtc);
         var wasCreated = dbContext.Entry(state).State == EntityState.Added;
 
-        if (wasCreated || hasStateChanged)
+        if (wasCreated || hasSharedSnapshotRefresh || hasStateChanged)
         {
             state = await SaveStateAsync(state, cancellationToken);
         }
@@ -48,6 +56,80 @@ public sealed class DataLatencyCircuitBreaker(
         }
 
         return MapSnapshot(state, evaluationTimeUtc, isPersisted: true);
+    }
+
+    private async Task<bool> TrySynchronizeScopedStateFromSharedKlineAsync(
+        DegradedModeState state,
+        DateTime evaluationTimeUtc,
+        string? symbol,
+        string? timeframe,
+        CancellationToken cancellationToken)
+    {
+        if (marketDataService is null ||
+            string.IsNullOrWhiteSpace(symbol) ||
+            string.IsNullOrWhiteSpace(timeframe))
+        {
+            return false;
+        }
+
+        var normalizedSymbol = NormalizeOptional(symbol, maxLength: 32);
+        var normalizedTimeframe = NormalizeOptional(timeframe, maxLength: 16);
+        if (normalizedSymbol is null || normalizedTimeframe is null)
+        {
+            return false;
+        }
+
+        var previousDataTimestampUtc = state.LatestDataTimestampAtUtc;
+        var previousHeartbeatReceivedAtUtc = state.LatestHeartbeatReceivedAtUtc;
+        var previousClockDriftMilliseconds = state.LatestClockDriftMilliseconds;
+        var previousHeartbeatSource = state.LatestHeartbeatSource;
+        var previousExpectedOpenTimeUtc = state.LatestExpectedOpenTimeUtc;
+
+        var sharedKlineRead = await marketDataService.ReadLatestKlineAsync(
+            normalizedSymbol,
+            normalizedTimeframe,
+            cancellationToken);
+
+        if (sharedKlineRead.Status is SharedMarketDataCacheReadStatus.HitFresh or SharedMarketDataCacheReadStatus.HitStale &&
+            sharedKlineRead.Entry?.Payload is MarketCandleSnapshot sharedSnapshot)
+        {
+            var sharedDataTimestampUtc = NormalizeTimestamp(sharedKlineRead.Entry.UpdatedAtUtc);
+            state.LatestDataTimestampAtUtc = sharedDataTimestampUtc;
+            state.LatestHeartbeatReceivedAtUtc = NormalizeTimestamp(sharedKlineRead.Entry.CachedAtUtc);
+            state.LatestClockDriftMilliseconds = ToMilliseconds(
+                Math.Abs((evaluationTimeUtc - sharedDataTimestampUtc).TotalMilliseconds));
+            state.LatestHeartbeatSource = sharedKlineRead.Entry.Source;
+            state.LatestSymbol = normalizedSymbol;
+            state.LatestTimeframe = normalizedTimeframe;
+            state.LatestExpectedOpenTimeUtc = NormalizeTimestamp(sharedSnapshot.CloseTimeUtc).AddMilliseconds(1);
+
+            return state.LatestDataTimestampAtUtc != previousDataTimestampUtc ||
+                state.LatestHeartbeatReceivedAtUtc != previousHeartbeatReceivedAtUtc ||
+                state.LatestClockDriftMilliseconds != previousClockDriftMilliseconds ||
+                !string.Equals(state.LatestHeartbeatSource, previousHeartbeatSource, StringComparison.Ordinal) ||
+                state.LatestExpectedOpenTimeUtc != previousExpectedOpenTimeUtc;
+        }
+
+        if (sharedKlineRead.Status == SharedMarketDataCacheReadStatus.Miss ||
+            sharedKlineRead.Status == SharedMarketDataCacheReadStatus.ProviderUnavailable ||
+            sharedKlineRead.Status == SharedMarketDataCacheReadStatus.DeserializeFailed ||
+            sharedKlineRead.Status == SharedMarketDataCacheReadStatus.InvalidPayload)
+        {
+            state.LatestDataTimestampAtUtc = null;
+            state.LatestClockDriftMilliseconds = null;
+            state.LatestHeartbeatSource = $"shared-cache:kline:{sharedKlineRead.Status}";
+            state.LatestSymbol = normalizedSymbol;
+            state.LatestTimeframe = normalizedTimeframe;
+            state.LatestExpectedOpenTimeUtc = null;
+            state.LatestContinuityGapCount = null;
+
+            return state.LatestDataTimestampAtUtc != previousDataTimestampUtc ||
+                state.LatestClockDriftMilliseconds != previousClockDriftMilliseconds ||
+                !string.Equals(state.LatestHeartbeatSource, previousHeartbeatSource, StringComparison.Ordinal) ||
+                state.LatestExpectedOpenTimeUtc != previousExpectedOpenTimeUtc;
+        }
+
+        return false;
     }
 
     public async Task<DegradedModeSnapshot> RecordHeartbeatAsync(

@@ -272,6 +272,7 @@ public static class DependencyInjection
         services.AddSingleton<CandleDataQualityGuard>();
         services.AddSingleton<IMarketDataHeartbeatRecorder, MarketDataHeartbeatRecorder>();
         services.AddSingleton<IBinanceCandleStreamClient, BinanceCandleStreamClient>();
+        services.AddSingleton<IBinanceDepthStreamClient, BinanceDepthStreamClient>();
         services.AddSingleton<IBinancePrivateStreamClient, BinancePrivateStreamClient>();
         services.AddScoped<HistoricalGapFillerService>();
         services.AddScoped<ExchangeAccountSyncStateService>();

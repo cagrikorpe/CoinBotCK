@@ -26,6 +26,16 @@ public sealed class MarketDataService(
 
     public async ValueTask<MarketPriceSnapshot?> GetLatestPriceAsync(string symbol, CancellationToken cancellationToken = default)
     {
+        var cacheResult = await ReadLatestPriceAsync(symbol, cancellationToken);
+        return cacheResult.Status == SharedMarketDataCacheReadStatus.HitFresh
+            ? cacheResult.Entry?.Payload
+            : null;
+    }
+
+    public async ValueTask<SharedMarketDataCacheReadResult<MarketPriceSnapshot>> ReadLatestPriceAsync(
+        string symbol,
+        CancellationToken cancellationToken = default)
+    {
         cancellationToken.ThrowIfCancellationRequested();
 
         var normalizedSymbol = MarketDataSymbolNormalizer.Normalize(symbol);
@@ -37,7 +47,7 @@ public sealed class MarketDataService(
 
         if (cacheResult.Status == SharedMarketDataCacheReadStatus.HitFresh)
         {
-            return cacheResult.Entry?.Payload;
+            return cacheResult;
         }
 
         logger.LogDebug(
@@ -46,10 +56,21 @@ public sealed class MarketDataService(
             cacheResult.Status,
             cacheResult.ReasonCode);
 
-        return null;
+        return cacheResult;
     }
 
     internal async ValueTask<MarketCandleSnapshot?> GetLatestKlineAsync(
+        string symbol,
+        string timeframe,
+        CancellationToken cancellationToken = default)
+    {
+        var cacheResult = await ReadLatestKlineAsync(symbol, timeframe, cancellationToken);
+        return cacheResult.Status == SharedMarketDataCacheReadStatus.HitFresh
+            ? cacheResult.Entry?.Payload
+            : null;
+    }
+
+    public async ValueTask<SharedMarketDataCacheReadResult<MarketCandleSnapshot>> ReadLatestKlineAsync(
         string symbol,
         string timeframe,
         CancellationToken cancellationToken = default)
@@ -65,7 +86,7 @@ public sealed class MarketDataService(
 
         if (cacheResult.Status == SharedMarketDataCacheReadStatus.HitFresh)
         {
-            return cacheResult.Entry?.Payload;
+            return cacheResult;
         }
 
         logger.LogDebug(
@@ -75,10 +96,20 @@ public sealed class MarketDataService(
             cacheResult.Status,
             cacheResult.ReasonCode);
 
-        return null;
+        return cacheResult;
     }
 
     internal async ValueTask<MarketDepthSnapshot?> GetLatestDepthAsync(
+        string symbol,
+        CancellationToken cancellationToken = default)
+    {
+        var cacheResult = await ReadLatestDepthAsync(symbol, cancellationToken);
+        return cacheResult.Status == SharedMarketDataCacheReadStatus.HitFresh
+            ? cacheResult.Entry?.Payload
+            : null;
+    }
+
+    public async ValueTask<SharedMarketDataCacheReadResult<MarketDepthSnapshot>> ReadLatestDepthAsync(
         string symbol,
         CancellationToken cancellationToken = default)
     {
@@ -93,7 +124,7 @@ public sealed class MarketDataService(
 
         if (cacheResult.Status == SharedMarketDataCacheReadStatus.HitFresh)
         {
-            return cacheResult.Entry?.Payload;
+            return cacheResult;
         }
 
         logger.LogDebug(
@@ -102,7 +133,7 @@ public sealed class MarketDataService(
             cacheResult.Status,
             cacheResult.ReasonCode);
 
-        return null;
+        return cacheResult;
     }
 
     public ValueTask<SymbolMetadataSnapshot?> GetSymbolMetadataAsync(string symbol, CancellationToken cancellationToken = default)

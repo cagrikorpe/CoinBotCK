@@ -288,6 +288,110 @@ public sealed class BinanceWebSocketManagerTests
         Assert.Equal(1, candleStreamClient.MoveNextCallCount);
     }
 
+    [Fact]
+    public async Task RunCycleAsync_ProjectsNativeDepthSnapshots_ToSharedCache_AndPreservesLatestHealthyDepth()
+    {
+        var now = new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(now);
+        using var memoryCache = new MemoryCache(new MemoryCacheOptions { SizeLimit = 64 });
+        var cachePolicyProvider = new MarketDataCachePolicyProvider(Options.Create(new InMemoryCacheOptions
+        {
+            SizeLimit = 64,
+            SymbolMetadataTtlMinutes = 60,
+            LatestPriceTtlSeconds = 15
+        }));
+        var symbolRegistry = new SharedSymbolRegistry(
+            memoryCache,
+            cachePolicyProvider,
+            NullLogger<SharedSymbolRegistry>.Instance);
+        var marketDataService = new MarketDataService(
+            symbolRegistry,
+            memoryCache,
+            cachePolicyProvider,
+            new MarketPriceStreamHub(),
+            new TestSharedMarketDataCache(),
+            timeProvider,
+            NullLogger<MarketDataService>.Instance);
+        var indicatorDataService = new IndicatorDataService(
+            marketDataService,
+            new IndicatorStreamHub(),
+            Options.Create(new IndicatorEngineOptions()),
+            NullLogger<IndicatorDataService>.Instance);
+        var exchangeInfoClient = new FakeExchangeInfoClient(
+        [
+            new SymbolMetadataSnapshot(
+                "BTCUSDT",
+                "Binance",
+                "BTC",
+                "USDT",
+                0.01m,
+                0.0001m,
+                "TRADING",
+                true,
+                now.UtcDateTime)
+        ]);
+        var candleStreamClient = new FakeCandleStreamClient(
+        [
+            CreateClosedCandleSnapshot(
+                "BTCUSDT",
+                openTimeUtc: now.UtcDateTime,
+                closeTimeUtc: now.UtcDateTime.AddMinutes(1).AddMilliseconds(-1),
+                closePrice: 64000.50m)
+        ]);
+        var depthStreamClient = new FakeDepthStreamClient(
+        [
+            new MarketDepthSnapshot(
+                "btcusdt",
+                [new MarketDepthLevelSnapshot(64000m, 1.5m)],
+                [new MarketDepthLevelSnapshot(64001m, 1.2m)],
+                LastUpdateId: 1001,
+                EventTimeUtc: now.UtcDateTime.AddSeconds(1),
+                ReceivedAtUtc: now.UtcDateTime.AddSeconds(2),
+                Source: "Binance.WebSocket.Depth"),
+            new MarketDepthSnapshot(
+                "BTCUSDT",
+                [new MarketDepthLevelSnapshot(63990m, 2m)],
+                [new MarketDepthLevelSnapshot(63991m, 2m)],
+                LastUpdateId: 1000,
+                EventTimeUtc: now.UtcDateTime.AddSeconds(3),
+                ReceivedAtUtc: now.UtcDateTime.AddSeconds(4),
+                Source: "Binance.WebSocket.Depth"),
+            new MarketDepthSnapshot(
+                "BTCUSDT",
+                [new MarketDepthLevelSnapshot(64010m, 2m)],
+                [],
+                LastUpdateId: 1002,
+                EventTimeUtc: now.UtcDateTime.AddSeconds(5),
+                ReceivedAtUtc: now.UtcDateTime.AddSeconds(6),
+                Source: "Binance.WebSocket.Depth")
+        ]);
+        var heartbeatRecorder = new FakeHeartbeatRecorder();
+        var manager = CreateManager(
+            symbolRegistry,
+            marketDataService,
+            indicatorDataService,
+            exchangeInfoClient,
+            candleStreamClient,
+            heartbeatRecorder,
+            timeProvider,
+            depthStreamClient);
+
+        await marketDataService.TrackSymbolAsync("BTCUSDT");
+
+        await manager.RunCycleAsync();
+
+        var latestDepth = await marketDataService.GetLatestDepthAsync("BTCUSDT");
+
+        Assert.NotNull(latestDepth);
+        Assert.Equal("BTCUSDT", latestDepth!.Symbol);
+        Assert.Equal(1001, latestDepth.LastUpdateId);
+        Assert.Equal(now.UtcDateTime.AddSeconds(1), latestDepth.EventTimeUtc);
+        Assert.Equal(now.UtcDateTime.AddSeconds(2), latestDepth.ReceivedAtUtc);
+        Assert.Equal(64000m, latestDepth.Bids.First().Price);
+        Assert.Equal(64001m, latestDepth.Asks.First().Price);
+        Assert.Equal(1, depthStreamClient.InvocationCount);
+    }
+
     private static BinanceWebSocketManager CreateManager(
         SharedSymbolRegistry symbolRegistry,
         MarketDataService marketDataService,
@@ -295,7 +399,8 @@ public sealed class BinanceWebSocketManagerTests
         FakeExchangeInfoClient exchangeInfoClient,
         IBinanceCandleStreamClient candleStreamClient,
         FakeHeartbeatRecorder heartbeatRecorder,
-        AdjustableTimeProvider timeProvider)
+        AdjustableTimeProvider timeProvider,
+        IBinanceDepthStreamClient? depthStreamClient = null)
     {
         return new BinanceWebSocketManager(
             symbolRegistry,
@@ -303,6 +408,7 @@ public sealed class BinanceWebSocketManagerTests
             indicatorDataService,
             exchangeInfoClient,
             candleStreamClient,
+            depthStreamClient ?? new FakeDepthStreamClient([]),
             new CandleDataQualityGuard(
                 new CandleContinuityValidator(NullLogger<CandleContinuityValidator>.Instance),
                 NullLogger<CandleDataQualityGuard>.Instance),
@@ -358,6 +464,25 @@ public sealed class BinanceWebSocketManagerTests
         public Task<DateTime?> GetServerTimeUtcAsync(CancellationToken cancellationToken = default)
         {
             return Task.FromResult<DateTime?>(null);
+        }
+    }
+
+    private sealed class FakeDepthStreamClient(IReadOnlyCollection<MarketDepthSnapshot> snapshots) : IBinanceDepthStreamClient
+    {
+        public int InvocationCount { get; private set; }
+
+        public async IAsyncEnumerable<MarketDepthSnapshot> StreamAsync(
+            IReadOnlyCollection<string> symbols,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            InvocationCount++;
+
+            foreach (var snapshot in snapshots)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return snapshot;
+                await Task.Yield();
+            }
         }
     }
 

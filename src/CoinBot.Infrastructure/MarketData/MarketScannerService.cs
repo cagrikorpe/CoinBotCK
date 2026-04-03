@@ -152,7 +152,10 @@ public sealed class MarketScannerService(
         CancellationToken cancellationToken)
     {
         var metadata = await sharedSymbolRegistry.GetSymbolAsync(universeCandidate.Symbol, cancellationToken);
-        var latestPriceSnapshot = await marketDataService.GetLatestPriceAsync(universeCandidate.Symbol, cancellationToken);
+        var latestPriceRead = await marketDataService.ReadLatestPriceAsync(universeCandidate.Symbol, cancellationToken);
+        var latestPriceSnapshot = latestPriceRead.Status == SharedMarketDataCacheReadStatus.HitFresh
+            ? latestPriceRead.Entry?.Payload
+            : null;
         var windowStartUtc = nowUtc.AddHours(-scannerOptionsValue.VolumeLookbackHours);
         var candles = await dbContext.HistoricalMarketCandles
             .AsNoTracking()
@@ -176,6 +179,7 @@ public sealed class MarketScannerService(
         var rejectionReason = ResolveRejectionReason(
             metadata,
             quoteAsset,
+            latestPriceRead.Status,
             latestPrice,
             quoteVolume,
             latestCandle,
@@ -320,6 +324,7 @@ public sealed class MarketScannerService(
     private string? ResolveRejectionReason(
         SymbolMetadataSnapshot? metadata,
         string? quoteAsset,
+        SharedMarketDataCacheReadStatus latestPriceReadStatus,
         decimal? latestPrice,
         decimal? quoteVolume,
         HistoricalMarketCandle? latestCandle,
@@ -333,6 +338,22 @@ public sealed class MarketScannerService(
         if (string.IsNullOrWhiteSpace(quoteAsset) || !allowedQuoteAssets.Contains(quoteAsset, StringComparer.Ordinal))
         {
             return "QuoteAssetNotAllowed";
+        }
+
+        if (latestPriceReadStatus == SharedMarketDataCacheReadStatus.ProviderUnavailable)
+        {
+            return "MarketDataProviderUnavailable";
+        }
+
+        if (latestPriceReadStatus is SharedMarketDataCacheReadStatus.DeserializeFailed or
+            SharedMarketDataCacheReadStatus.InvalidPayload)
+        {
+            return "MarketDataInvalidPayload";
+        }
+
+        if (latestPriceReadStatus == SharedMarketDataCacheReadStatus.HitStale)
+        {
+            return "StaleMarketData";
         }
 
         if (!latestPrice.HasValue)
