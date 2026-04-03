@@ -104,7 +104,8 @@ public sealed class MarketScannerWorkerTests
             TopCandidateCount = 5,
             Min24hQuoteVolume = 100m,
             MaxDataAgeSeconds = 120,
-            AllowedQuoteAssets = ["USDT"]
+            AllowedQuoteAssets = ["USDT"],
+            HandoffEnabled = false
         }));
         services.AddSingleton(Options.Create(new BinanceMarketDataOptions
         {
