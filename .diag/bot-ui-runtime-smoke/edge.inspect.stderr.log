@@ -1,3 +1,0 @@
-
-DevTools listening on ws://127.0.0.1:43364/devtools/browser/a8689ecc-7a5a-49a9-b6fc-1b9016fa2ec8
-[24772:53416:0403/021748.790:ERROR:chrome\browser\task_manager\providers\fallback_task_provider.cc:126] Every renderer should have at least one task provided by a primary task provider. If a "Renderer" fallback task is shown, it is a bug. If you have repro steps, please file a new bug and tag it as a dependency of crbug.com/40528867.
