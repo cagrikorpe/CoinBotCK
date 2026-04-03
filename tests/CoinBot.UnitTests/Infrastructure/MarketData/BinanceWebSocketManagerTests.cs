@@ -106,12 +106,18 @@ public sealed class BinanceWebSocketManagerTests
         Assert.True(heartbeatRecorder.RecordedResults[0].IsAccepted);
 
         var latestPrice = await marketDataService.GetLatestPriceAsync("BTCUSDT");
+        var latestKline = await marketDataService.GetLatestKlineAsync("BTCUSDT", "1m");
         var latestIndicator = await indicatorDataService.GetLatestAsync("BTCUSDT", "1m");
         var metadata = await marketDataService.GetSymbolMetadataAsync("BTCUSDT");
         var listedSymbols = await symbolRegistry.ListSymbolsAsync();
 
         Assert.NotNull(latestPrice);
+        Assert.NotNull(latestKline);
         Assert.NotNull(latestIndicator);
+        Assert.Equal("BTCUSDT", latestKline!.Symbol);
+        Assert.Equal("1m", latestKline.Interval);
+        Assert.Equal(64000.50m, latestKline.ClosePrice);
+        Assert.True(latestKline.IsClosed);
         Assert.NotNull(metadata);
         Assert.Single(listedSymbols);
         Assert.Equal(IndicatorDataState.WarmingUp, latestIndicator!.State);
@@ -194,11 +200,16 @@ public sealed class BinanceWebSocketManagerTests
         await manager.RunCycleAsync();
 
         var latestPrice = await marketDataService.GetLatestPriceAsync("BTCUSDT");
+        var latestKline = await marketDataService.GetLatestKlineAsync("BTCUSDT", "1m");
         var latestIndicator = await indicatorDataService.GetLatestAsync("BTCUSDT", "1m");
 
         Assert.NotNull(latestPrice);
+        Assert.NotNull(latestKline);
         Assert.NotNull(latestIndicator);
         Assert.Equal(64000.50m, latestPrice!.Price);
+        Assert.Equal(64000.50m, latestKline!.ClosePrice);
+        Assert.Equal(now.UtcDateTime, latestKline.OpenTimeUtc);
+        Assert.Equal(now.UtcDateTime.AddMinutes(1).AddMilliseconds(-1), latestKline.CloseTimeUtc);
         Assert.Equal(IndicatorDataState.MissingData, latestIndicator!.State);
         Assert.Equal(DegradedModeReasonCode.CandleDataGapDetected, latestIndicator.DataQualityReasonCode);
         Assert.Equal(1, latestIndicator.SampleCount);
@@ -449,7 +460,7 @@ public sealed class BinanceWebSocketManagerTests
 
     private sealed class TestSharedMarketDataCache : ISharedMarketDataCache
     {
-        private readonly Dictionary<string, SharedMarketDataCacheEntry<MarketPriceSnapshot>> entries = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, object> entries = new(StringComparer.Ordinal);
 
         public ValueTask<SharedMarketDataCacheWriteResult> WriteAsync<TPayload>(
             SharedMarketDataCacheEntry<TPayload> entry,
@@ -457,20 +468,7 @@ public sealed class BinanceWebSocketManagerTests
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (entry.Payload is MarketPriceSnapshot snapshot)
-            {
-                entries[SharedMarketDataCacheKeyBuilder.Build(entry.DataType, entry.Symbol, entry.Timeframe)] =
-                    new SharedMarketDataCacheEntry<MarketPriceSnapshot>(
-                        entry.DataType,
-                        entry.Symbol,
-                        entry.Timeframe,
-                        entry.UpdatedAtUtc,
-                        entry.CachedAtUtc,
-                        entry.FreshUntilUtc,
-                        entry.ExpiresAtUtc,
-                        entry.Source,
-                        snapshot);
-            }
+            entries[SharedMarketDataCacheKeyBuilder.Build(entry.DataType, entry.Symbol, entry.Timeframe)] = entry;
 
             return ValueTask.FromResult(SharedMarketDataCacheWriteResult.Written());
         }
@@ -484,22 +482,22 @@ public sealed class BinanceWebSocketManagerTests
             cancellationToken.ThrowIfCancellationRequested();
 
             if (!entries.TryGetValue(SharedMarketDataCacheKeyBuilder.Build(dataType, symbol, timeframe), out var entry) ||
-                entry.Payload is not TPayload payload)
+                entry is not SharedMarketDataCacheEntry<TPayload> typedEntry)
             {
                 return ValueTask.FromResult(SharedMarketDataCacheReadResult<TPayload>.Miss());
             }
 
             return ValueTask.FromResult(SharedMarketDataCacheReadResult<TPayload>.HitFresh(
                 new SharedMarketDataCacheEntry<TPayload>(
-                    entry.DataType,
-                    entry.Symbol,
-                    entry.Timeframe,
-                    entry.UpdatedAtUtc,
-                    entry.CachedAtUtc,
-                    entry.FreshUntilUtc,
-                    entry.ExpiresAtUtc,
-                    entry.Source,
-                    payload)));
+                    typedEntry.DataType,
+                    typedEntry.Symbol,
+                    typedEntry.Timeframe,
+                    typedEntry.UpdatedAtUtc,
+                    typedEntry.CachedAtUtc,
+                    typedEntry.FreshUntilUtc,
+                    typedEntry.ExpiresAtUtc,
+                    typedEntry.Source,
+                    typedEntry.Payload)));
         }
     }
 }

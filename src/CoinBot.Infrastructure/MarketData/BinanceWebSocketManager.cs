@@ -141,6 +141,7 @@ public sealed class BinanceWebSocketManager(
 
             if (!snapshot.IsClosed)
             {
+                await marketDataService.RecordKlineAsync(snapshot, guardResult: null, cancellationToken);
                 RecordTelemetry();
                 continue;
             }
@@ -153,10 +154,25 @@ public sealed class BinanceWebSocketManager(
             }
 
             var guardResult = dataQualityGuard.Evaluate(snapshot);
+            var klineProjectionResult = await marketDataService.RecordKlineAsync(snapshot, guardResult, cancellationToken);
+            var effectiveGuardResult = guardResult;
 
             if (guardResult.IsAccepted)
             {
-                await marketDataService.RecordPriceAsync(
+                if (klineProjectionResult.Status != SharedMarketDataProjectionStatus.Accepted)
+                {
+                    effectiveGuardResult = CreateProjectionFailureGuardResult(snapshot, klineProjectionResult);
+
+                    logger.LogWarning(
+                        "Kline projection rejected {Symbol} {Interval} with {Status} ({ReasonCode}).",
+                        snapshot.Symbol,
+                        snapshot.Interval,
+                        klineProjectionResult.Status,
+                        klineProjectionResult.ReasonCode);
+                }
+                else
+                {
+                    var tickerProjectionResult = await marketDataService.RecordPriceAsync(
                     new MarketPriceSnapshot(
                         snapshot.Symbol,
                         snapshot.ClosePrice,
@@ -165,7 +181,21 @@ public sealed class BinanceWebSocketManager(
                         snapshot.Source),
                     cancellationToken);
 
-                await indicatorDataService.RecordAcceptedCandleAsync(snapshot, cancellationToken);
+                    if (tickerProjectionResult.Status == SharedMarketDataProjectionStatus.Accepted)
+                    {
+                        await indicatorDataService.RecordAcceptedCandleAsync(snapshot, cancellationToken);
+                    }
+                    else
+                    {
+                        effectiveGuardResult = CreateProjectionFailureGuardResult(snapshot, tickerProjectionResult);
+
+                        logger.LogWarning(
+                            "Ticker projection rejected {Symbol} with {Status} ({ReasonCode}); accepted candle processing was skipped.",
+                            snapshot.Symbol,
+                            tickerProjectionResult.Status,
+                            tickerProjectionResult.ReasonCode);
+                    }
+                }
             }
             else
             {
@@ -183,7 +213,7 @@ public sealed class BinanceWebSocketManager(
                     guardResult.GuardReasonCode);
             }
 
-            await heartbeatRecorder.RecordAsync(guardResult, cancellationToken);
+            await heartbeatRecorder.RecordAsync(effectiveGuardResult, cancellationToken);
             RecordTelemetry();
 
             if (ShouldRestartStream(trackedSymbols.Version, reconnectGeneration))
@@ -191,6 +221,23 @@ public sealed class BinanceWebSocketManager(
                 return;
             }
         }
+    }
+
+    private static CandleDataQualityGuardResult CreateProjectionFailureGuardResult(
+        MarketCandleSnapshot snapshot,
+        SharedMarketDataProjectionResult projectionResult)
+    {
+        return new CandleDataQualityGuardResult(
+            IsAccepted: false,
+            GuardStateCode: DegradedModeStateCode.Degraded,
+            GuardReasonCode: projectionResult.Status == SharedMarketDataProjectionStatus.IgnoredOutOfOrder
+                ? DegradedModeReasonCode.CandleDataOutOfOrderDetected
+                : DegradedModeReasonCode.MarketDataUnavailable,
+            EffectiveDataTimestampUtc: snapshot.CloseTimeUtc,
+            ExpectedOpenTimeUtc: snapshot.OpenTimeUtc,
+            Symbol: snapshot.Symbol,
+            Timeframe: snapshot.Interval,
+            ContinuityGapCount: null);
     }
 
     private bool ShouldRestartStream(long trackedSymbolVersion, long reconnectGeneration)

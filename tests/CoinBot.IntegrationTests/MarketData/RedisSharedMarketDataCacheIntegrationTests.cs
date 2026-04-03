@@ -47,25 +47,104 @@ public sealed class RedisSharedMarketDataCacheIntegrationTests
             new FixedTimeProvider(nowUtc.AddSeconds(5)),
             NullLogger<MarketDataService>.Instance);
 
-        await workerService.RecordPriceAsync(new MarketPriceSnapshot(
+        var tickerWriteResult = await workerService.RecordPriceAsync(new MarketPriceSnapshot(
             "btcusdt",
             65234.12m,
             nowUtc.UtcDateTime.AddSeconds(-1),
             nowUtc.UtcDateTime,
             "Binance.WebSocket.Kline"));
+        var klineWriteResult = await workerService.RecordKlineAsync(new MarketCandleSnapshot(
+            "btcusdt",
+            "1M",
+            nowUtc.UtcDateTime.AddMinutes(-1),
+            nowUtc.UtcDateTime.AddMilliseconds(-1),
+            65100m,
+            65300m,
+            65050m,
+            65234.12m,
+            120.5m,
+            true,
+            nowUtc.UtcDateTime,
+            "Binance.WebSocket.Kline"));
+        var depthWriteResult = await workerService.RecordDepthAsync(new MarketDepthSnapshot(
+            "btcusdt",
+            [
+                new MarketDepthLevelSnapshot(65234.00m, 1.2m),
+                new MarketDepthLevelSnapshot(65233.90m, 0.8m)
+            ],
+            [
+                new MarketDepthLevelSnapshot(65234.20m, 1.4m),
+                new MarketDepthLevelSnapshot(65234.30m, 0.9m)
+            ],
+            LastUpdateId: 500,
+            EventTimeUtc: nowUtc.UtcDateTime,
+            ReceivedAtUtc: nowUtc.UtcDateTime.AddMilliseconds(50),
+            Source: "integration-test-depth"));
+        var staleDepthWriteResult = await workerService.RecordDepthAsync(new MarketDepthSnapshot(
+            "BTCUSDT",
+            [new MarketDepthLevelSnapshot(65000m, 9.9m)],
+            [new MarketDepthLevelSnapshot(65001m, 8.8m)],
+            LastUpdateId: 499,
+            EventTimeUtc: nowUtc.UtcDateTime.AddSeconds(2),
+            ReceivedAtUtc: nowUtc.UtcDateTime.AddSeconds(3),
+            Source: "integration-test-depth"));
+        var degradedKlineWriteResult = await workerService.RecordKlineAsync(new MarketCandleSnapshot(
+            "BTCUSDT",
+            "1m",
+            nowUtc.UtcDateTime,
+            nowUtc.UtcDateTime.AddMinutes(1).AddMilliseconds(-1),
+            65234.12m,
+            65240m,
+            65220m,
+            65238m,
+            90m,
+            false,
+            nowUtc.UtcDateTime.AddSeconds(2),
+            "Binance.WebSocket.Kline"));
 
         var latestPrice = await webService.GetLatestPriceAsync("BTCUSDT");
+        var latestKline = await webService.GetLatestKlineAsync("BTCUSDT", "1m");
+        var latestDepth = await webService.GetLatestDepthAsync("BTCUSDT");
         var rawRead = await CreateCache(fakeRedis.ConnectionString, nowUtc.AddSeconds(5))
             .ReadAsync<MarketPriceSnapshot>(SharedMarketDataCacheDataType.Ticker, "BTCUSDT", null);
+        var rawKlineRead = await CreateCache(fakeRedis.ConnectionString, nowUtc.AddSeconds(5))
+            .ReadAsync<MarketCandleSnapshot>(SharedMarketDataCacheDataType.Kline, "BTCUSDT", "1m");
+        var rawDepthRead = await CreateCache(fakeRedis.ConnectionString, nowUtc.AddSeconds(5))
+            .ReadAsync<MarketDepthSnapshot>(SharedMarketDataCacheDataType.Depth, "BTCUSDT", null);
 
+        Assert.Equal(SharedMarketDataProjectionStatus.Accepted, tickerWriteResult.Status);
+        Assert.Equal(SharedMarketDataProjectionStatus.Accepted, klineWriteResult.Status);
+        Assert.Equal(SharedMarketDataProjectionStatus.Accepted, depthWriteResult.Status);
+        Assert.Equal(SharedMarketDataProjectionStatus.IgnoredOutOfOrder, staleDepthWriteResult.Status);
+        Assert.Equal(SharedMarketDataProjectionReasonCode.DepthOutOfOrder, staleDepthWriteResult.ReasonCode);
+        Assert.Equal(SharedMarketDataProjectionStatus.IgnoredDegraded, degradedKlineWriteResult.Status);
+        Assert.Equal(SharedMarketDataProjectionReasonCode.KlineDegraded, degradedKlineWriteResult.ReasonCode);
         Assert.NotNull(latestPrice);
         Assert.Equal("BTCUSDT", latestPrice!.Symbol);
         Assert.Equal(65234.12m, latestPrice.Price);
         Assert.Equal("Binance.WebSocket.Kline", latestPrice.Source);
+        Assert.NotNull(latestKline);
+        Assert.Equal("BTCUSDT", latestKline!.Symbol);
+        Assert.Equal("1m", latestKline.Interval);
+        Assert.True(latestKline.IsClosed);
+        Assert.Equal(65234.12m, latestKline.ClosePrice);
+        Assert.NotNull(latestDepth);
+        Assert.Equal("BTCUSDT", latestDepth!.Symbol);
+        Assert.Equal(500, latestDepth.LastUpdateId);
+        Assert.Equal(65234.00m, latestDepth.Bids.First().Price);
+        Assert.Equal(65234.20m, latestDepth.Asks.First().Price);
         Assert.Equal(SharedMarketDataCacheReadStatus.HitFresh, rawRead.Status);
         Assert.Equal("BTCUSDT", rawRead.Entry?.Symbol);
         Assert.Equal("spot", rawRead.Entry?.Timeframe);
         Assert.Equal(nowUtc.UtcDateTime, rawRead.Entry?.UpdatedAtUtc);
+        Assert.Equal(SharedMarketDataCacheReadStatus.HitFresh, rawKlineRead.Status);
+        Assert.Equal("BTCUSDT", rawKlineRead.Entry?.Symbol);
+        Assert.Equal("1m", rawKlineRead.Entry?.Timeframe);
+        Assert.Equal(nowUtc.UtcDateTime.AddMilliseconds(-1), rawKlineRead.Entry?.UpdatedAtUtc);
+        Assert.Equal(SharedMarketDataCacheReadStatus.HitFresh, rawDepthRead.Status);
+        Assert.Equal("BTCUSDT", rawDepthRead.Entry?.Symbol);
+        Assert.Equal("spot", rawDepthRead.Entry?.Timeframe);
+        Assert.Equal(nowUtc.UtcDateTime, rawDepthRead.Entry?.UpdatedAtUtc);
     }
 
     private static MarketDataCachePolicyProvider CreatePolicyProvider()
