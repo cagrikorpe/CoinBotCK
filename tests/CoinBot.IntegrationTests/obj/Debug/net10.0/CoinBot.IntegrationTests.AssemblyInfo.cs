@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("CoinBot.IntegrationTests")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+faa75e3e60a2eadacd003e93b7c46f134e05abb5")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+143d01275f4482fb515ac0d1bee4e07a68d84766")]
 [assembly: System.Reflection.AssemblyProductAttribute("CoinBot.IntegrationTests")]
 [assembly: System.Reflection.AssemblyTitleAttribute("CoinBot.IntegrationTests")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
