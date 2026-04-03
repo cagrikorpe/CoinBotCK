@@ -435,7 +435,9 @@ $environmentVariables = @{
     IdentitySeed__SuperAdminPassword = $adminPassword
     IdentitySeed__SuperAdminFullName = 'Scanner Smoke Admin'
     ExchangeSync__Binance__Enabled = 'false'
+    ExchangeSync__Binance__RestBaseUrl = 'http://127.0.0.1:' + (New-FreeTcpPort)
     MarketData__Binance__Enabled = 'false'
+    MarketData__Binance__RestBaseUrl = 'http://127.0.0.1:' + (New-FreeTcpPort)
     MarketData__Scanner__Enabled = 'true'
     MarketData__Scanner__HandoffEnabled = 'true'
     MarketData__Scanner__ScanIntervalSeconds = '5'
@@ -590,6 +592,10 @@ try {
         WebStdErrPath = $webStdErrPath
     }
 
+    if ([string]::IsNullOrWhiteSpace($summary.UiCacheMetrics) -or [string]::IsNullOrWhiteSpace($summary.UiCacheScope) -or [string]::IsNullOrWhiteSpace($summary.UiCacheStatus) -or [string]::IsNullOrWhiteSpace($summary.UiCacheReason) -or [string]::IsNullOrWhiteSpace($summary.UiCacheUpdated) -or [string]::IsNullOrWhiteSpace($summary.UiCacheFreshUntil)) {
+        throw 'Market-data cache health selectors were not rendered on /admin/SystemHealth.'
+    }
+
     $summary | ConvertTo-Json -Depth 8 | Set-Content -Path $summaryPath -Encoding UTF8
 
     Write-Host ('SmokeDatabaseName=' + $summary.SmokeDatabaseName)
@@ -622,6 +628,8 @@ try {
     Write-Host ('UiCacheScope=' + $summary.UiCacheScope)
     Write-Host ('UiCacheStatus=' + $summary.UiCacheStatus)
     Write-Host ('UiCacheReason=' + $summary.UiCacheReason)
+    Write-Host ('UiCacheUpdated=' + $summary.UiCacheUpdated)
+    Write-Host ('UiCacheFreshUntil=' + $summary.UiCacheFreshUntil)
     Write-Host ('UiCacheSource=' + $summary.UiCacheSource)
     Write-Host ('UiTemplateCard=' + $summary.UiTemplateCardKey + '/' + $summary.UiTemplateCardValidation)
     Write-Host ('UiTemplateDraftSuccess=' + $summary.UiTemplateDraftSuccess)
@@ -630,6 +638,8 @@ try {
 finally {
     Stop-ManagedProcess -Process $webProcess
 }
+
+
 
 
 

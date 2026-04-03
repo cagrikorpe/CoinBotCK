@@ -17,15 +17,26 @@ public sealed class RedisSharedMarketDataCacheTests
     [Fact]
     public void Build_ReturnsDeterministicNamespacedKeys_WithNormalizedSymbolAndTimeframe()
     {
+        var klineKey = SharedMarketDataCacheKeyBuilder.Build(SharedMarketDataCacheDataType.Kline, " btcusdt ", " 1M ");
+
         Assert.Equal(
             "coinbot:market-data:v1:kline:BTCUSDT:1m",
-            SharedMarketDataCacheKeyBuilder.Build(SharedMarketDataCacheDataType.Kline, " btcusdt ", " 1M "));
+            klineKey);
+        Assert.Equal(
+            klineKey,
+            SharedMarketDataCacheKeyBuilder.Build(SharedMarketDataCacheDataType.Kline, "BTCUSDT", "1m"));
         Assert.Equal(
             "coinbot:market-data:v1:ticker:BTCUSDT:spot",
             SharedMarketDataCacheKeyBuilder.Build(SharedMarketDataCacheDataType.Ticker, "btcusdt", null));
         Assert.Equal(
             "coinbot:market-data:v1:depth:BTCUSDT:spot",
             SharedMarketDataCacheKeyBuilder.Build(SharedMarketDataCacheDataType.Depth, "BTCUSDT", ""));
+        Assert.NotEqual(
+            SharedMarketDataCacheKeyBuilder.Build(SharedMarketDataCacheDataType.Ticker, "BTCUSDT", null),
+            SharedMarketDataCacheKeyBuilder.Build(SharedMarketDataCacheDataType.Depth, "BTCUSDT", null));
+        Assert.NotEqual(
+            SharedMarketDataCacheKeyBuilder.Build(SharedMarketDataCacheDataType.Kline, "BTCUSDT", "1m"),
+            SharedMarketDataCacheKeyBuilder.Build(SharedMarketDataCacheDataType.Kline, "BTCUSDT", "5m"));
     }
 
     [Fact]
