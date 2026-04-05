@@ -15,7 +15,9 @@ public sealed class ExchangePositionSyncService(
         ArgumentNullException.ThrowIfNull(snapshot);
 
         var existingPositions = await dbContext.ExchangePositions
-            .Where(entity => entity.ExchangeAccountId == snapshot.ExchangeAccountId)
+            .Where(entity =>
+                entity.ExchangeAccountId == snapshot.ExchangeAccountId &&
+                entity.Plane == snapshot.Plane)
             .ToListAsync(cancellationToken);
         var positionsByKey = existingPositions.ToDictionary(
             entity => CreateKey(entity.Symbol, entity.PositionSide),
@@ -35,6 +37,7 @@ public sealed class ExchangePositionSyncService(
                 {
                     OwnerUserId = snapshot.OwnerUserId.Trim(),
                     ExchangeAccountId = snapshot.ExchangeAccountId,
+                    Plane = snapshot.Plane,
                     Symbol = symbol,
                     PositionSide = positionSide
                 };
@@ -43,6 +46,7 @@ public sealed class ExchangePositionSyncService(
             }
 
             entity.OwnerUserId = snapshot.OwnerUserId.Trim();
+            entity.Plane = snapshot.Plane;
             entity.Symbol = symbol;
             entity.PositionSide = positionSide;
             entity.IsDeleted = false;
@@ -70,8 +74,9 @@ public sealed class ExchangePositionSyncService(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         logger.LogDebug(
-            "Exchange positions synchronized for account {ExchangeAccountId}. Count={PositionCount}.",
+            "Exchange positions synchronized for account {ExchangeAccountId}. Plane={Plane}. Count={PositionCount}.",
             snapshot.ExchangeAccountId,
+            snapshot.Plane,
             snapshot.Positions.Count);
     }
 

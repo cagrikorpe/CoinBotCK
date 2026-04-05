@@ -49,7 +49,9 @@ public sealed class UserDashboardPortfolioReadModelService(
                 entity.AvailableBalance,
                 entity.MaxWithdrawAmount,
                 entity.ExchangeUpdatedAtUtc,
-                entity.SyncedAtUtc))
+                entity.SyncedAtUtc,
+                entity.LockedBalance,
+                entity.Plane))
             .ToListAsync(cancellationToken);
 
         var positions = activeAccounts.Count == 0
@@ -72,7 +74,8 @@ public sealed class UserDashboardPortfolioReadModelService(
                 entity.MarginType,
                 entity.IsolatedWallet,
                 entity.ExchangeUpdatedAtUtc,
-                entity.SyncedAtUtc))
+                entity.SyncedAtUtc,
+                entity.Plane))
             .ToListAsync(cancellationToken);
 
         var syncStates = activeAccounts.Count == 0

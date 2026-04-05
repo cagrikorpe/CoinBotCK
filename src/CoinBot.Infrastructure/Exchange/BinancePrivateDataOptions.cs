@@ -12,6 +12,12 @@ public sealed class BinancePrivateDataOptions
     [Required]
     public string WebSocketBaseUrl { get; set; } = "wss://fstream.binance.com";
 
+    [Required]
+    public string SpotRestBaseUrl { get; set; } = "https://api.binance.com";
+
+    [Required]
+    public string SpotWebSocketBaseUrl { get; set; } = "wss://stream.binance.com:9443";
+
     [Range(5, 300)]
     public int SessionScanIntervalSeconds { get; set; } = 15;
 

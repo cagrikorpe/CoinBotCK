@@ -778,6 +778,7 @@ public sealed class CrisisEscalationService(
             .IgnoreQueryFilters()
             .Where(entity =>
                 !entity.IsDeleted &&
+                entity.Plane == ExchangeDataPlane.Futures &&
                 entity.Quantity != 0m);
 
         return scope.IsGlobal

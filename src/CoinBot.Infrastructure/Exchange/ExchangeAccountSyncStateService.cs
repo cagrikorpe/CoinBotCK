@@ -18,7 +18,7 @@ public sealed class ExchangeAccountSyncStateService(ApplicationDbContext dbConte
         DateTime? lastPrivateStreamEventAtUtc = null,
         CancellationToken cancellationToken = default)
     {
-        var state = await GetOrCreateAsync(account.ExchangeAccountId, account.OwnerUserId, cancellationToken);
+        var state = await GetOrCreateAsync(account.ExchangeAccountId, account.OwnerUserId, account.Plane, cancellationToken);
 
         state.PrivateStreamConnectionState = connectionState;
         state.LastErrorCode = NormalizeOptional(errorCode);
@@ -48,14 +48,14 @@ public sealed class ExchangeAccountSyncStateService(ApplicationDbContext dbConte
 
     public async Task RecordBalanceSyncAsync(ExchangeAccountSnapshot snapshot, CancellationToken cancellationToken = default)
     {
-        var state = await GetOrCreateAsync(snapshot.ExchangeAccountId, snapshot.OwnerUserId, cancellationToken);
+        var state = await GetOrCreateAsync(snapshot.ExchangeAccountId, snapshot.OwnerUserId, snapshot.Plane, cancellationToken);
         state.LastBalanceSyncedAtUtc = NormalizeTimestamp(snapshot.ReceivedAtUtc);
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
     public async Task RecordPositionSyncAsync(ExchangeAccountSnapshot snapshot, CancellationToken cancellationToken = default)
     {
-        var state = await GetOrCreateAsync(snapshot.ExchangeAccountId, snapshot.OwnerUserId, cancellationToken);
+        var state = await GetOrCreateAsync(snapshot.ExchangeAccountId, snapshot.OwnerUserId, snapshot.Plane, cancellationToken);
         state.LastPositionSyncedAtUtc = NormalizeTimestamp(snapshot.ReceivedAtUtc);
         await dbContext.SaveChangesAsync(cancellationToken);
     }
@@ -69,7 +69,7 @@ public sealed class ExchangeAccountSyncStateService(ApplicationDbContext dbConte
         string? errorCode,
         CancellationToken cancellationToken = default)
     {
-        var state = await GetOrCreateAsync(account.ExchangeAccountId, account.OwnerUserId, cancellationToken);
+        var state = await GetOrCreateAsync(account.ExchangeAccountId, account.OwnerUserId, account.Plane, cancellationToken);
         state.LastStateReconciledAtUtc = NormalizeTimestamp(reconciledAtUtc);
         state.DriftStatus = driftStatus;
         state.DriftSummary = TrimToLength(driftSummary, 512);
@@ -85,11 +85,14 @@ public sealed class ExchangeAccountSyncStateService(ApplicationDbContext dbConte
     private async Task<ExchangeAccountSyncState> GetOrCreateAsync(
         Guid exchangeAccountId,
         string ownerUserId,
+        ExchangeDataPlane plane,
         CancellationToken cancellationToken)
     {
         var state = await dbContext.ExchangeAccountSyncStates
             .SingleOrDefaultAsync(
-                entity => entity.ExchangeAccountId == exchangeAccountId && !entity.IsDeleted,
+                entity => entity.ExchangeAccountId == exchangeAccountId &&
+                          entity.Plane == plane &&
+                          !entity.IsDeleted,
                 cancellationToken);
 
         if (state is not null)
@@ -100,7 +103,8 @@ public sealed class ExchangeAccountSyncStateService(ApplicationDbContext dbConte
         state = new ExchangeAccountSyncState
         {
             OwnerUserId = ownerUserId.Trim(),
-            ExchangeAccountId = exchangeAccountId
+            ExchangeAccountId = exchangeAccountId,
+            Plane = plane
         };
 
         dbContext.ExchangeAccountSyncStates.Add(state);
@@ -116,7 +120,9 @@ public sealed class ExchangeAccountSyncStateService(ApplicationDbContext dbConte
 
             return await dbContext.ExchangeAccountSyncStates
                 .SingleAsync(
-                    entity => entity.ExchangeAccountId == exchangeAccountId && !entity.IsDeleted,
+                    entity => entity.ExchangeAccountId == exchangeAccountId &&
+                              entity.Plane == plane &&
+                              !entity.IsDeleted,
                     cancellationToken);
         }
     }

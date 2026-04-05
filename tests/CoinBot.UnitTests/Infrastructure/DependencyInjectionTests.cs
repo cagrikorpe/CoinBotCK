@@ -125,12 +125,16 @@ public sealed class DependencyInjectionTests
         var exchangeAccountSnapshotHub = provider.GetRequiredService<ExchangeAccountSnapshotHub>();
         var timeSyncService = provider.GetRequiredService<IBinanceTimeSyncService>();
         var privateRestClient = provider.GetRequiredService<IBinancePrivateRestClient>();
+        var spotPrivateRestClient = provider.GetRequiredService<IBinanceSpotPrivateRestClient>();
         var privateStreamClient = provider.GetRequiredService<IBinancePrivateStreamClient>();
+        var spotPrivateStreamClient = provider.GetRequiredService<IBinanceSpotPrivateStreamClient>();
+        var spotTimeSyncService = provider.GetRequiredService<IBinanceSpotTimeSyncService>();
         var monitoringTelemetryCollector = provider.GetRequiredService<IMonitoringTelemetryCollector>();
         var exchangeAccountSyncStateService = provider.GetRequiredService<ExchangeAccountSyncStateService>();
         var exchangeBalanceSyncService = provider.GetRequiredService<ExchangeBalanceSyncService>();
         var exchangePositionSyncService = provider.GetRequiredService<ExchangePositionSyncService>();
         var exchangeAppStateSyncService = provider.GetRequiredService<ExchangeAppStateSyncService>();
+        var spotExchangeAppStateSyncService = provider.GetRequiredService<SpotExchangeAppStateSyncService>();
         var userSettingsService = provider.GetRequiredService<IUserSettingsService>();
         var totpService = provider.GetRequiredService<ITotpService>();
         var emailOtpService = provider.GetRequiredService<IEmailOtpService>();
@@ -169,6 +173,8 @@ public sealed class DependencyInjectionTests
         Assert.False(privateDataOptions.Enabled);
         Assert.Equal("https://fapi.binance.com", privateDataOptions.RestBaseUrl);
         Assert.Equal("wss://fstream.binance.com", privateDataOptions.WebSocketBaseUrl);
+        Assert.Equal("https://api.binance.com", privateDataOptions.SpotRestBaseUrl);
+        Assert.Equal("wss://stream.binance.com:9443", privateDataOptions.SpotWebSocketBaseUrl);
         Assert.Equal(30, privateDataOptions.ListenKeyRenewalIntervalMinutes);
         Assert.Equal(5, privateDataOptions.ReconciliationIntervalMinutes);
         Assert.Equal(30, privateDataOptions.ServerTimeSyncRefreshSeconds);
@@ -255,13 +261,17 @@ public sealed class DependencyInjectionTests
         Assert.NotNull(historicalGapFillerService);
         Assert.NotNull(exchangeAccountSnapshotHub);
         Assert.NotNull(timeSyncService);
+        Assert.NotNull(spotTimeSyncService);
         Assert.NotNull(privateRestClient);
+        Assert.NotNull(spotPrivateRestClient);
         Assert.NotNull(privateStreamClient);
+        Assert.NotNull(spotPrivateStreamClient);
         Assert.NotNull(monitoringTelemetryCollector);
         Assert.NotNull(exchangeAccountSyncStateService);
         Assert.NotNull(exchangeBalanceSyncService);
         Assert.NotNull(exchangePositionSyncService);
         Assert.NotNull(exchangeAppStateSyncService);
+        Assert.NotNull(spotExchangeAppStateSyncService);
         Assert.NotNull(userSettingsService);
         Assert.NotNull(totpService);
         Assert.NotNull(emailOtpService);
@@ -271,6 +281,8 @@ public sealed class DependencyInjectionTests
         Assert.Contains(hostedServices, service => service is MonitoringSnapshotWorker);
         Assert.Contains(hostedServices, service => service is AutonomySelfHealingWorker);
         Assert.Contains(hostedServices, service => service is MarketAnomalyWorker);
+        Assert.Contains(hostedServices, service => service is BinanceSpotPrivateStreamManager);
+        Assert.Contains(hostedServices, service => service is SpotExchangeAppStateSyncWorker);
     }
 
     [Fact]

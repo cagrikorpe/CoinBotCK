@@ -1,3 +1,5 @@
+using CoinBot.Domain.Enums;
+
 namespace CoinBot.Infrastructure.Exchange;
 
 public sealed record BinanceOrderStatusSnapshot(
@@ -12,4 +14,8 @@ public sealed record BinanceOrderStatusSnapshot(
     decimal LastExecutedQuantity,
     decimal LastExecutedPrice,
     DateTime EventTimeUtc,
-    string Source);
+    string Source,
+    long? TradeId = null,
+    string? FeeAsset = null,
+    decimal? FeeAmount = null,
+    ExchangeDataPlane Plane = ExchangeDataPlane.Futures);

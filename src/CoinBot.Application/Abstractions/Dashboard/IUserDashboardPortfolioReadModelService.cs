@@ -1,3 +1,5 @@
+using CoinBot.Domain.Enums;
+
 namespace CoinBot.Application.Abstractions.Dashboard;
 
 public interface IUserDashboardPortfolioReadModelService
@@ -27,7 +29,9 @@ public sealed record UserDashboardBalanceSnapshot(
     decimal? AvailableBalance,
     decimal? MaxWithdrawAmount,
     DateTime ExchangeUpdatedAtUtc,
-    DateTime SyncedAtUtc);
+    DateTime SyncedAtUtc,
+    decimal? LockedBalance = null,
+    ExchangeDataPlane Plane = ExchangeDataPlane.Futures);
 
 public sealed record UserDashboardPositionSnapshot(
     string Symbol,
@@ -39,7 +43,8 @@ public sealed record UserDashboardPositionSnapshot(
     string MarginType,
     decimal IsolatedWallet,
     DateTime ExchangeUpdatedAtUtc,
-    DateTime SyncedAtUtc);
+    DateTime SyncedAtUtc,
+    ExchangeDataPlane Plane = ExchangeDataPlane.Futures);
 
 public sealed record UserDashboardTradeHistoryRowSnapshot(
     Guid OrderId,

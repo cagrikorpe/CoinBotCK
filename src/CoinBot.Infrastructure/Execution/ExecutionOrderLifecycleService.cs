@@ -426,10 +426,23 @@ public sealed class ExecutionOrderLifecycleService(
         var parts = new List<string>
         {
             $"Source={snapshot.Source}",
+            $"Plane={snapshot.Plane}",
+            $"ExchangeOrderId={snapshot.ExchangeOrderId}",
+            $"ClientOrderId={snapshot.ClientOrderId}",
             $"ExchangeStatus={snapshot.Status}",
             $"ExecutedQuantity={FormatDecimal(snapshot.ExecutedQuantity)}",
             $"AveragePrice={FormatDecimal(snapshot.AveragePrice)}"
         };
+
+        if (snapshot.TradeId.HasValue)
+        {
+            parts.Add($"TradeId={snapshot.TradeId.Value.ToString(CultureInfo.InvariantCulture)}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(snapshot.FeeAsset) && snapshot.FeeAmount.HasValue)
+        {
+            parts.Add($"Fee={snapshot.FeeAsset}:{FormatDecimal(snapshot.FeeAmount.Value)}");
+        }
 
         if (reconciliationStatus.HasValue)
         {
@@ -455,12 +468,25 @@ public sealed class ExecutionOrderLifecycleService(
         var parts = new List<string>
         {
             $"Source={snapshot.Source}",
+            $"Plane={snapshot.Plane}",
+            $"ExchangeOrderId={snapshot.ExchangeOrderId}",
+            $"ClientOrderId={snapshot.ClientOrderId}",
             $"ExchangeStatus={snapshot.Status}",
             $"PreviousState={previousState}",
             $"CurrentState={order.State}",
             $"FilledQuantity={FormatDecimal(order.FilledQuantity)}",
             $"FillProgressAdvanced={fillProgressAdvanced}"
         };
+
+        if (snapshot.TradeId.HasValue)
+        {
+            parts.Add($"TradeId={snapshot.TradeId.Value.ToString(CultureInfo.InvariantCulture)}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(snapshot.FeeAsset) && snapshot.FeeAmount.HasValue)
+        {
+            parts.Add($"Fee={snapshot.FeeAsset}:{FormatDecimal(snapshot.FeeAmount.Value)}");
+        }
 
         if (order.StopLossPrice.HasValue || order.TakeProfitPrice.HasValue)
         {

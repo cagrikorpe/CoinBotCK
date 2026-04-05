@@ -169,6 +169,12 @@ public static class DependencyInjection
                 options => Uri.IsWellFormedUriString(options.WebSocketBaseUrl, UriKind.Absolute),
                 "WebSocketBaseUrl must be an absolute URI.")
             .Validate(
+                options => Uri.IsWellFormedUriString(options.SpotRestBaseUrl, UriKind.Absolute),
+                "SpotRestBaseUrl must be an absolute URI.")
+            .Validate(
+                options => Uri.IsWellFormedUriString(options.SpotWebSocketBaseUrl, UriKind.Absolute),
+                "SpotWebSocketBaseUrl must be an absolute URI.")
+            .Validate(
                 options => options.ListenKeyRenewalIntervalMinutes < 60,
                 "ListenKeyRenewalIntervalMinutes must be less than 60.");
         services.AddOptions<BotExecutionPilotOptions>()
@@ -275,11 +281,13 @@ public static class DependencyInjection
         services.AddSingleton<IBinanceCandleStreamClient, BinanceCandleStreamClient>();
         services.AddSingleton<IBinanceDepthStreamClient, BinanceDepthStreamClient>();
         services.AddSingleton<IBinancePrivateStreamClient, BinancePrivateStreamClient>();
+        services.AddSingleton<IBinanceSpotPrivateStreamClient, BinanceSpotPrivateStreamClient>();
         services.AddScoped<HistoricalGapFillerService>();
         services.AddScoped<ExchangeAccountSyncStateService>();
         services.AddScoped<ExchangeBalanceSyncService>();
         services.AddScoped<ExchangePositionSyncService>();
         services.AddScoped<ExchangeAppStateSyncService>();
+        services.AddScoped<SpotExchangeAppStateSyncService>();
         services.AddScoped<IBinanceCredentialProbeClient, BinanceCredentialProbeClient>();
         services.AddHttpClient<SlackAlertProvider>();
         services.AddHttpClient<TelegramAlertProvider>();
@@ -306,6 +314,12 @@ public static class DependencyInjection
             client.BaseAddress = new Uri(privateDataOptions.RestBaseUrl, UriKind.Absolute);
             client.Timeout = TimeSpan.FromSeconds(10);
         });
+        services.AddHttpClient<IBinanceSpotTimeSyncService, BinanceSpotTimeSyncService>((serviceProvider, client) =>
+        {
+            var privateDataOptions = serviceProvider.GetRequiredService<IOptions<BinancePrivateDataOptions>>().Value;
+            client.BaseAddress = new Uri(privateDataOptions.SpotRestBaseUrl, UriKind.Absolute);
+            client.Timeout = TimeSpan.FromSeconds(10);
+        });
         services.AddHttpClient<IBinanceExchangeInfoClient, BinanceExchangeInfoClient>((serviceProvider, client) =>
         {
             var marketDataOptions = serviceProvider.GetRequiredService<IOptions<BinanceMarketDataOptions>>().Value;
@@ -324,14 +338,22 @@ public static class DependencyInjection
             client.BaseAddress = new Uri(privateDataOptions.RestBaseUrl, UriKind.Absolute);
             client.Timeout = TimeSpan.FromSeconds(30);
         });
+        services.AddHttpClient<IBinanceSpotPrivateRestClient, BinanceSpotPrivateRestClient>((serviceProvider, client) =>
+        {
+            var privateDataOptions = serviceProvider.GetRequiredService<IOptions<BinancePrivateDataOptions>>().Value;
+            client.BaseAddress = new Uri(privateDataOptions.SpotRestBaseUrl, UriKind.Absolute);
+            client.Timeout = TimeSpan.FromSeconds(30);
+        });
         services.AddScoped<IAlertProvider>(serviceProvider => serviceProvider.GetRequiredService<SlackAlertProvider>());
         services.AddScoped<IAlertProvider>(serviceProvider => serviceProvider.GetRequiredService<TelegramAlertProvider>());
         services.AddHostedService<BinanceWebSocketManager>();
         services.AddHostedService<HistoricalGapFillerWorker>();
         services.AddHostedService<BinancePrivateStreamManager>();
+        services.AddHostedService<BinanceSpotPrivateStreamManager>();
         services.AddHostedService<ExchangeBalanceSyncWorker>();
         services.AddHostedService<ExchangePositionSyncWorker>();
         services.AddHostedService<ExchangeAppStateSyncWorker>();
+        services.AddHostedService<SpotExchangeAppStateSyncWorker>();
         services.AddHostedService<ExecutionReconciliationWorker>();
         services.AddHostedService<MonitoringSnapshotWorker>();
         services.AddHostedService<LogCenterRetentionWorker>();

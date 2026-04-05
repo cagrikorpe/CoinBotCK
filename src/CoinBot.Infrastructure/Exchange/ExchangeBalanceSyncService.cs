@@ -17,7 +17,9 @@ public sealed class ExchangeBalanceSyncService(
         ArgumentNullException.ThrowIfNull(snapshot);
 
         var existingBalances = await dbContext.ExchangeBalances
-            .Where(entity => entity.ExchangeAccountId == snapshot.ExchangeAccountId)
+            .Where(entity =>
+                entity.ExchangeAccountId == snapshot.ExchangeAccountId &&
+                entity.Plane == snapshot.Plane)
             .ToListAsync(cancellationToken);
         var balancesByAsset = existingBalances.ToDictionary(
             entity => NormalizeCode(entity.Asset),
@@ -35,6 +37,7 @@ public sealed class ExchangeBalanceSyncService(
                 {
                     OwnerUserId = snapshot.OwnerUserId.Trim(),
                     ExchangeAccountId = snapshot.ExchangeAccountId,
+                    Plane = snapshot.Plane,
                     Asset = asset
                 };
                 dbContext.ExchangeBalances.Add(entity);
@@ -43,11 +46,13 @@ public sealed class ExchangeBalanceSyncService(
 
             entity.Asset = asset;
             entity.OwnerUserId = snapshot.OwnerUserId.Trim();
+            entity.Plane = snapshot.Plane;
             entity.IsDeleted = false;
             entity.WalletBalance = balanceSnapshot.WalletBalance;
             entity.CrossWalletBalance = balanceSnapshot.CrossWalletBalance;
             entity.AvailableBalance = balanceSnapshot.AvailableBalance;
             entity.MaxWithdrawAmount = balanceSnapshot.MaxWithdrawAmount;
+            entity.LockedBalance = balanceSnapshot.LockedBalance;
             entity.ExchangeUpdatedAtUtc = NormalizeTimestamp(balanceSnapshot.ExchangeUpdatedAtUtc);
             entity.SyncedAtUtc = NormalizeTimestamp(snapshot.ReceivedAtUtc);
         }
@@ -66,8 +71,9 @@ public sealed class ExchangeBalanceSyncService(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         logger.LogDebug(
-            "Exchange balances synchronized for account {ExchangeAccountId}. OwnerKey={OwnerKey}. Count={BalanceCount}.",
+            "Exchange balances synchronized for account {ExchangeAccountId}. Plane={Plane}. OwnerKey={OwnerKey}. Count={BalanceCount}.",
             snapshot.ExchangeAccountId,
+            snapshot.Plane,
             CreateOwnerKey(snapshot.OwnerUserId),
             snapshot.Balances.Count);
     }

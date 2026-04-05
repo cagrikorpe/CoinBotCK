@@ -1,3 +1,5 @@
+using CoinBot.Domain.Enums;
+
 namespace CoinBot.Application.Abstractions.Exchange;
 
 public sealed record ExchangePositionSnapshot(
@@ -9,4 +11,5 @@ public sealed record ExchangePositionSnapshot(
     decimal UnrealizedProfit,
     string MarginType,
     decimal IsolatedWallet,
-    DateTime ExchangeUpdatedAtUtc);
+    DateTime ExchangeUpdatedAtUtc,
+    ExchangeDataPlane Plane = ExchangeDataPlane.Futures);

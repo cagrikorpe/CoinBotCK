@@ -285,31 +285,36 @@ public sealed class MonitoringSnapshotWorker(
             cancellationToken: cancellationToken);
         await TrySendWorkerHeartbeatAlertAsync(jobOrchestrationHeartbeat, "WorkerNotHealthy", cancellationToken);
 
-        var latestExchangeHeartbeat = await dbContext.ExchangeAccountSyncStates
+        var exchangeHeartbeats = await dbContext.ExchangeAccountSyncStates
             .AsNoTracking()
             .IgnoreQueryFilters()
             .Where(entity => entity.LastPrivateStreamEventAtUtc.HasValue || entity.LastListenKeyRenewedAtUtc.HasValue)
-            .OrderByDescending(entity => entity.LastPrivateStreamEventAtUtc ?? entity.LastListenKeyRenewedAtUtc ?? utcNow)
-            .Select(entity => new
-            {
+            .Select(entity => new ExchangePrivateStreamHeartbeatProjection(
                 entity.ExchangeAccountId,
+                entity.Plane,
                 entity.PrivateStreamConnectionState,
-                HeartbeatAtUtc = entity.LastPrivateStreamEventAtUtc ?? entity.LastListenKeyRenewedAtUtc ?? entity.LastStateReconciledAtUtc ?? utcNow,
+                entity.LastPrivateStreamEventAtUtc ?? entity.LastListenKeyRenewedAtUtc ?? entity.LastStateReconciledAtUtc ?? utcNow,
                 entity.ConsecutiveStreamFailureCount,
-                entity.LastErrorCode
-            })
-            .FirstOrDefaultAsync(cancellationToken);
+                entity.LastErrorCode))
+            .ToListAsync(cancellationToken);
+        var latestExchangeHeartbeat = exchangeHeartbeats
+            .OrderByDescending(entity => GetExchangeStreamSeverity(entity.PrivateStreamConnectionState, utcNow, entity.HeartbeatAtUtc))
+            .ThenBy(entity => entity.HeartbeatAtUtc)
+            .FirstOrDefault();
+        var exchangeStreamHeartbeatAtUtc = exchangeHeartbeats.Count == 0
+            ? utcNow
+            : exchangeHeartbeats.Min(entity => entity.HeartbeatAtUtc);
 
         var exchangePrivateStreamHeartbeat = await UpsertWorkerHeartbeatAsync(
             dbContext,
             key: "exchange-private-stream",
             workerName: "Exchange Private Stream",
-            healthState: ResolveExchangeStreamState(latestExchangeHeartbeat, utcNow),
+            healthState: ResolveExchangeStreamState(exchangeHeartbeats, utcNow),
             circuitBreakerState: MapCircuitBreakerState(dataLatencySnapshot),
-            lastHeartbeatAtUtc: latestExchangeHeartbeat?.HeartbeatAtUtc ?? utcNow,
+            lastHeartbeatAtUtc: exchangeStreamHeartbeatAtUtc,
             consecutiveFailureCount: latestExchangeHeartbeat?.ConsecutiveStreamFailureCount ?? 0,
             lastErrorCode: latestExchangeHeartbeat?.LastErrorCode,
-            lastErrorMessage: latestExchangeHeartbeat is null ? "No private stream heartbeat available." : $"Connection state {latestExchangeHeartbeat.PrivateStreamConnectionState}.",
+            lastErrorMessage: BuildExchangeStreamHeartbeatDetail(exchangeHeartbeats),
             utcNow: utcNow,
             cancellationToken: cancellationToken);
         await TrySendWorkerHeartbeatAlertAsync(exchangePrivateStreamHeartbeat, "PrivateStreamDisconnected", cancellationToken);
@@ -560,32 +565,18 @@ public sealed class MonitoringSnapshotWorker(
                 : MonitoringHealthState.Healthy;
     }
 
-    private static MonitoringHealthState ResolveExchangeStreamState(object? heartbeat, DateTime utcNow)
+    private static MonitoringHealthState ResolveExchangeStreamState(
+        IReadOnlyCollection<ExchangePrivateStreamHeartbeatProjection> heartbeats,
+        DateTime utcNow)
     {
-        if (heartbeat is null)
+        if (heartbeats.Count == 0)
         {
             return MonitoringHealthState.Unknown;
         }
 
-        var connectionState = (ExchangePrivateStreamConnectionState)heartbeat.GetType().GetProperty("PrivateStreamConnectionState")!.GetValue(heartbeat)!;
-        var heartbeatAtUtc = (DateTime)heartbeat.GetType().GetProperty("HeartbeatAtUtc")!.GetValue(heartbeat)!;
-        var ageSeconds = Math.Max(0, (int)Math.Round((utcNow - heartbeatAtUtc).TotalSeconds, MidpointRounding.AwayFromZero));
-
-        if (connectionState is ExchangePrivateStreamConnectionState.Disconnected or ExchangePrivateStreamConnectionState.ListenKeyExpired)
-        {
-            return MonitoringHealthState.Critical;
-        }
-
-        if (connectionState is ExchangePrivateStreamConnectionState.Reconnecting or ExchangePrivateStreamConnectionState.Connecting)
-        {
-            return MonitoringHealthState.Degraded;
-        }
-
-        return ageSeconds >= 300
-            ? MonitoringHealthState.Critical
-            : ageSeconds >= 60
-                ? MonitoringHealthState.Warning
-                : MonitoringHealthState.Healthy;
+        return heartbeats
+            .Select(heartbeat => GetExchangeStreamSeverity(heartbeat.PrivateStreamConnectionState, utcNow, heartbeat.HeartbeatAtUtc))
+            .Max();
     }
 
     private static CircuitBreakerStateCode MapCircuitBreakerState(DegradedModeSnapshot snapshot)
@@ -736,6 +727,45 @@ public sealed class MonitoringSnapshotWorker(
         return $"{runtimeLabel}/{planeLabel}";
     }
 
+    private static MonitoringHealthState GetExchangeStreamSeverity(
+        ExchangePrivateStreamConnectionState connectionState,
+        DateTime utcNow,
+        DateTime heartbeatAtUtc)
+    {
+        var ageSeconds = Math.Max(0, (int)Math.Round((utcNow - heartbeatAtUtc).TotalSeconds, MidpointRounding.AwayFromZero));
+
+        if (connectionState is ExchangePrivateStreamConnectionState.Disconnected or ExchangePrivateStreamConnectionState.ListenKeyExpired)
+        {
+            return MonitoringHealthState.Critical;
+        }
+
+        if (connectionState is ExchangePrivateStreamConnectionState.Reconnecting or ExchangePrivateStreamConnectionState.Connecting)
+        {
+            return MonitoringHealthState.Degraded;
+        }
+
+        return ageSeconds >= 300
+            ? MonitoringHealthState.Critical
+            : ageSeconds >= 60
+                ? MonitoringHealthState.Warning
+                : MonitoringHealthState.Healthy;
+    }
+
+    private static string BuildExchangeStreamHeartbeatDetail(IReadOnlyCollection<ExchangePrivateStreamHeartbeatProjection> heartbeats)
+    {
+        if (heartbeats.Count == 0)
+        {
+            return "No private stream heartbeat available.";
+        }
+
+        return string.Join(
+            "; ",
+            heartbeats
+                .OrderBy(entity => entity.Plane)
+                .Select(entity =>
+                    $"{entity.Plane}:{entity.PrivateStreamConnectionState}@{entity.HeartbeatAtUtc:O}{(string.IsNullOrWhiteSpace(entity.LastErrorCode) ? string.Empty : $"/{entity.LastErrorCode}")}"));
+    }
+
     private sealed record WorkerHeartbeatUpdateResult(
         string WorkerKey,
         string WorkerName,
@@ -744,4 +774,12 @@ public sealed class MonitoringSnapshotWorker(
         MonitoringHealthState CurrentHealthState,
         string? CurrentErrorCode,
         string? LastErrorMessage);
+
+    private sealed record ExchangePrivateStreamHeartbeatProjection(
+        Guid ExchangeAccountId,
+        ExchangeDataPlane Plane,
+        ExchangePrivateStreamConnectionState PrivateStreamConnectionState,
+        DateTime HeartbeatAtUtc,
+        int ConsecutiveStreamFailureCount,
+        string? LastErrorCode);
 }

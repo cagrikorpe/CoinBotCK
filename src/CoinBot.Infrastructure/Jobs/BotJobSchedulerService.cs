@@ -136,6 +136,7 @@ public sealed class BotJobSchedulerService(
                         .IgnoreQueryFilters()
                         on syncState.ExchangeAccountId equals exchangeAccount.Id
                     where !syncState.IsDeleted &&
+                          syncState.Plane == ExchangeDataPlane.Futures &&
                           !exchangeAccount.IsDeleted &&
                           exchangeAccount.ExchangeName == "Binance" &&
                           exchangeAccount.CredentialStatus == ExchangeCredentialStatus.Active &&

@@ -1491,6 +1491,11 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
     {
         ConfigureUserOwnedEntity(builder, "ExchangeAccountSyncStates");
 
+        builder.Property(entity => entity.Plane)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .IsRequired();
+
         builder.Property(entity => entity.PrivateStreamConnectionState)
             .HasConversion<string>()
             .HasMaxLength(32)
@@ -1507,7 +1512,7 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         builder.Property(entity => entity.LastErrorCode)
             .HasMaxLength(64);
 
-        builder.HasIndex(entity => entity.ExchangeAccountId)
+        builder.HasIndex(entity => new { entity.ExchangeAccountId, entity.Plane })
             .IsUnique();
 
         builder.HasOne<ExchangeAccount>()
@@ -1519,6 +1524,11 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
     private void ConfigureExchangeBalances(EntityTypeBuilder<ExchangeBalance> builder)
     {
         ConfigureUserOwnedEntity(builder, "ExchangeBalances");
+
+        builder.Property(entity => entity.Plane)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .IsRequired();
 
         builder.Property(entity => entity.Asset)
             .HasMaxLength(32)
@@ -1536,7 +1546,10 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         builder.Property(entity => entity.MaxWithdrawAmount)
             .HasPrecision(38, 18);
 
-        builder.HasIndex(entity => new { entity.ExchangeAccountId, entity.Asset })
+        builder.Property(entity => entity.LockedBalance)
+            .HasPrecision(38, 18);
+
+        builder.HasIndex(entity => new { entity.ExchangeAccountId, entity.Plane, entity.Asset })
             .IsUnique();
 
         builder.HasOne<ExchangeAccount>()
@@ -1548,6 +1561,11 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
     private void ConfigureExchangePositions(EntityTypeBuilder<ExchangePosition> builder)
     {
         ConfigureUserOwnedEntity(builder, "ExchangePositions");
+
+        builder.Property(entity => entity.Plane)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .IsRequired();
 
         builder.Property(entity => entity.Symbol)
             .HasMaxLength(32)
@@ -1576,7 +1594,7 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         builder.Property(entity => entity.IsolatedWallet)
             .HasPrecision(38, 18);
 
-        builder.HasIndex(entity => new { entity.ExchangeAccountId, entity.Symbol, entity.PositionSide })
+        builder.HasIndex(entity => new { entity.ExchangeAccountId, entity.Plane, entity.Symbol, entity.PositionSide })
             .IsUnique();
 
         builder.HasOne<ExchangeAccount>()

@@ -1,8 +1,12 @@
+using CoinBot.Domain.Enums;
+
 namespace CoinBot.Domain.Entities;
 
 public sealed class ExchangePosition : UserOwnedEntity
 {
     public Guid ExchangeAccountId { get; set; }
+
+    public ExchangeDataPlane Plane { get; set; } = ExchangeDataPlane.Futures;
 
     public string Symbol { get; set; } = string.Empty;
 

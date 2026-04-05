@@ -4,7 +4,6 @@ using CoinBot.Application.Abstractions.ExchangeCredentials;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Persistence;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -12,28 +11,28 @@ using Microsoft.Extensions.Options;
 
 namespace CoinBot.Infrastructure.Exchange;
 
-public sealed class BinancePrivateStreamManager(
+public sealed class BinanceSpotPrivateStreamManager(
     IServiceScopeFactory serviceScopeFactory,
-    IBinancePrivateRestClient privateRestClient,
-    IBinancePrivateStreamClient privateStreamClient,
+    IBinanceSpotPrivateRestClient privateRestClient,
+    IBinanceSpotPrivateStreamClient privateStreamClient,
     ExchangeAccountSnapshotHub snapshotHub,
     IOptions<BinancePrivateDataOptions> options,
     TimeProvider timeProvider,
-    ILogger<BinancePrivateStreamManager> logger) : BackgroundService
+    ILogger<BinanceSpotPrivateStreamManager> logger) : BackgroundService
 {
-    private const string SystemActor = "system:private-stream-manager";
+    private const string SystemActor = "system:spot-private-stream-manager";
     private readonly BinancePrivateDataOptions optionsValue = options.Value;
     private readonly Dictionary<Guid, SessionRegistration> sessions = [];
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         logger.LogInformation(
-            "Binance private stream manager starting. Enabled={Enabled}.",
+            "Binance spot private stream manager starting. Enabled={Enabled}.",
             optionsValue.Enabled);
 
         if (!optionsValue.Enabled)
         {
-            logger.LogInformation("Binance private stream manager is disabled by configuration.");
+            logger.LogInformation("Binance spot private stream manager is disabled by configuration.");
             return;
         }
 
@@ -50,7 +49,7 @@ public sealed class BinancePrivateStreamManager(
             }
             catch
             {
-                logger.LogWarning("Binance private stream manager refresh failed.");
+                logger.LogWarning("Binance spot private stream manager refresh failed.");
                 await Task.Delay(TimeSpan.FromSeconds(optionsValue.ReconnectDelaySeconds), stoppingToken);
             }
         }
@@ -63,7 +62,7 @@ public sealed class BinancePrivateStreamManager(
         await Task.WhenAll(sessions.Values.Select(registration => registration.RunTask));
     }
 
-    internal async Task<SessionCycleResult?> RunSessionCycleAsync(
+    internal async Task<BinancePrivateStreamManager.SessionCycleResult?> RunSessionCycleAsync(
         ExchangeSyncAccountDescriptor account,
         CancellationToken cancellationToken = default)
     {
@@ -110,23 +109,37 @@ public sealed class BinancePrivateStreamManager(
             {
                 if (string.Equals(streamEvent.EventType, "listenKeyExpired", StringComparison.Ordinal))
                 {
-                    return new SessionCycleResult(
+                    return new BinancePrivateStreamManager.SessionCycleResult(
                         ShouldReconnect: true,
                         ConnectionState: ExchangePrivateStreamConnectionState.ListenKeyExpired,
                         ErrorCode: "ListenKeyExpired");
                 }
 
-                currentState.Apply(streamEvent);
                 await ApplyExecutionOrderUpdatesAsync(streamEvent.OrderUpdates, cancellationToken);
 
-                var snapshot = currentState.CreateSnapshot(
-                    account.ExchangeAccountId,
-                    account.OwnerUserId,
-                    account.ExchangeName,
-                    timeProvider.GetUtcNow().UtcDateTime,
-                    "Binance.PrivateStream.AccountUpdate");
-
-                snapshotHub.Publish(snapshot);
+                if (streamEvent.RequiresAccountRefresh)
+                {
+                    var refreshedSnapshot = await privateRestClient.GetAccountSnapshotAsync(
+                        account.ExchangeAccountId,
+                        account.OwnerUserId,
+                        account.ExchangeName,
+                        bootstrap.ApiKey,
+                        bootstrap.ApiSecret,
+                        cancellationToken);
+                    currentState = new ExchangeAccountSnapshotState(refreshedSnapshot);
+                    snapshotHub.Publish(refreshedSnapshot);
+                }
+                else
+                {
+                    currentState.Apply(streamEvent);
+                    var snapshot = currentState.CreateSnapshot(
+                        account.ExchangeAccountId,
+                        account.OwnerUserId,
+                        account.ExchangeName,
+                        timeProvider.GetUtcNow().UtcDateTime,
+                        "Binance.SpotPrivateStream.AccountUpdate");
+                    snapshotHub.Publish(snapshot);
+                }
 
                 await UpdateConnectionStateAsync(
                     account,
@@ -139,13 +152,13 @@ public sealed class BinancePrivateStreamManager(
 
             if (keepAliveFailure.Task.IsCompletedSuccessfully && !string.IsNullOrWhiteSpace(keepAliveFailure.Task.Result))
             {
-                return new SessionCycleResult(
+                return new BinancePrivateStreamManager.SessionCycleResult(
                     ShouldReconnect: true,
                     ConnectionState: ExchangePrivateStreamConnectionState.Reconnecting,
                     ErrorCode: keepAliveFailure.Task.Result);
             }
 
-            return new SessionCycleResult(
+            return new BinancePrivateStreamManager.SessionCycleResult(
                 ShouldReconnect: true,
                 ConnectionState: ExchangePrivateStreamConnectionState.Reconnecting,
                 ErrorCode: "StreamDisconnected");
@@ -219,7 +232,7 @@ public sealed class BinancePrivateStreamManager(
 
         while (!cancellationToken.IsCancellationRequested)
         {
-            SessionCycleResult? cycleResult = null;
+            BinancePrivateStreamManager.SessionCycleResult? cycleResult = null;
 
             try
             {
@@ -247,7 +260,7 @@ public sealed class BinancePrivateStreamManager(
             }
             catch
             {
-                cycleResult = new SessionCycleResult(
+                cycleResult = new BinancePrivateStreamManager.SessionCycleResult(
                     ShouldReconnect: true,
                     ConnectionState: ExchangePrivateStreamConnectionState.Reconnecting,
                     ErrorCode: "StreamCycleFailed");
@@ -267,7 +280,7 @@ public sealed class BinancePrivateStreamManager(
             }
 
             logger.LogInformation(
-                "Binance private stream reconnect scheduled for account {ExchangeAccountId}. Reason={ReasonCode}.",
+                "Binance spot private stream reconnect scheduled for account {ExchangeAccountId}. Reason={ReasonCode}.",
                 account.ExchangeAccountId,
                 cycleResult.ErrorCode);
 
@@ -313,7 +326,7 @@ public sealed class BinancePrivateStreamManager(
                     cancellationToken: cancellationToken);
 
             logger.LogInformation(
-                "Binance private stream skipped for account {ExchangeAccountId} because synchronization access is blocked.",
+                "Binance spot private stream skipped for account {ExchangeAccountId} because synchronization access is blocked.",
                 account.ExchangeAccountId);
 
             return null;
@@ -364,7 +377,7 @@ public sealed class BinancePrivateStreamManager(
 
         return await ExchangeSyncAccountSelection.ListAsync(
             dbContext,
-            ExchangeDataPlane.Futures,
+            ExchangeDataPlane.Spot,
             cancellationToken);
     }
 
@@ -422,9 +435,6 @@ public sealed class BinancePrivateStreamManager(
         private readonly Dictionary<string, ExchangeBalanceSnapshot> balances = snapshot.Balances.ToDictionary(
             balance => NormalizeCode(balance.Asset),
             StringComparer.Ordinal);
-        private readonly Dictionary<string, ExchangePositionSnapshot> positions = snapshot.Positions.ToDictionary(
-            position => CreatePositionKey(position.Symbol, position.PositionSide),
-            StringComparer.Ordinal);
         private DateTime observedAtUtc = NormalizeTimestamp(snapshot.ObservedAtUtc);
 
         public void Apply(BinancePrivateStreamEvent streamEvent)
@@ -447,26 +457,9 @@ public sealed class BinancePrivateStreamManager(
                     Asset = asset,
                     AvailableBalance = balanceUpdate.AvailableBalance ?? existingBalance?.AvailableBalance,
                     MaxWithdrawAmount = balanceUpdate.MaxWithdrawAmount ?? existingBalance?.MaxWithdrawAmount,
-                    ExchangeUpdatedAtUtc = NormalizeTimestamp(balanceUpdate.ExchangeUpdatedAtUtc)
-                };
-            }
-
-            foreach (var positionUpdate in streamEvent.PositionUpdates)
-            {
-                var key = CreatePositionKey(positionUpdate.Symbol, positionUpdate.PositionSide);
-
-                if (IsFlatPosition(positionUpdate))
-                {
-                    positions.Remove(key);
-                    continue;
-                }
-
-                positions[key] = positionUpdate with
-                {
-                    Symbol = NormalizeCode(positionUpdate.Symbol),
-                    PositionSide = NormalizeCode(positionUpdate.PositionSide),
-                    MarginType = NormalizeMarginType(positionUpdate.MarginType),
-                    ExchangeUpdatedAtUtc = NormalizeTimestamp(positionUpdate.ExchangeUpdatedAtUtc)
+                    LockedBalance = balanceUpdate.LockedBalance ?? existingBalance?.LockedBalance,
+                    ExchangeUpdatedAtUtc = NormalizeTimestamp(balanceUpdate.ExchangeUpdatedAtUtc),
+                    Plane = ExchangeDataPlane.Spot
                 };
             }
         }
@@ -485,14 +478,11 @@ public sealed class BinancePrivateStreamManager(
                 balances.Values
                     .OrderBy(balance => balance.Asset, StringComparer.Ordinal)
                     .ToArray(),
-                positions.Values
-                    .OrderBy(position => position.Symbol, StringComparer.Ordinal)
-                    .ThenBy(position => position.PositionSide, StringComparer.Ordinal)
-                    .ToArray(),
+                [],
                 observedAtUtc,
                 NormalizeTimestamp(receivedAtUtc),
                 source,
-                ExchangeDataPlane.Futures);
+                ExchangeDataPlane.Spot);
         }
 
         private static bool IsEmptyBalance(ExchangeBalanceSnapshot snapshot)
@@ -500,33 +490,13 @@ public sealed class BinancePrivateStreamManager(
             return snapshot.WalletBalance == 0m &&
                    snapshot.CrossWalletBalance == 0m &&
                    (snapshot.AvailableBalance ?? 0m) == 0m &&
-                   (snapshot.MaxWithdrawAmount ?? 0m) == 0m;
-        }
-
-        private static bool IsFlatPosition(ExchangePositionSnapshot snapshot)
-        {
-            return snapshot.Quantity == 0m &&
-                   snapshot.EntryPrice == 0m &&
-                   snapshot.BreakEvenPrice == 0m &&
-                   snapshot.UnrealizedProfit == 0m &&
-                   snapshot.IsolatedWallet == 0m;
-        }
-
-        private static string CreatePositionKey(string symbol, string positionSide)
-        {
-            return $"{NormalizeCode(symbol)}:{NormalizeCode(positionSide)}";
+                   (snapshot.MaxWithdrawAmount ?? 0m) == 0m &&
+                   (snapshot.LockedBalance ?? 0m) == 0m;
         }
 
         private static string NormalizeCode(string value)
         {
             return value.Trim().ToUpperInvariant();
-        }
-
-        private static string NormalizeMarginType(string value)
-        {
-            return string.IsNullOrWhiteSpace(value)
-                ? "cross"
-                : value.Trim().ToLowerInvariant();
         }
 
         private static DateTime NormalizeTimestamp(DateTime value)
@@ -539,11 +509,6 @@ public sealed class BinancePrivateStreamManager(
             };
         }
     }
-
-    internal sealed record SessionCycleResult(
-        bool ShouldReconnect,
-        ExchangePrivateStreamConnectionState ConnectionState,
-        string ErrorCode);
 
     private sealed record BootstrapResult(string ApiKey, string ApiSecret);
 

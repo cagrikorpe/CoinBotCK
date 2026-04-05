@@ -312,6 +312,7 @@ public sealed class UserExecutionOverrideGuard(
                 .IgnoreQueryFilters()
                 .CountAsync(
                     entity => entity.OwnerUserId == userId &&
+                              entity.Plane == ExchangeDataPlane.Futures &&
                               entity.Quantity != 0m &&
                               !entity.IsDeleted,
                     cancellationToken);
@@ -354,6 +355,7 @@ public sealed class UserExecutionOverrideGuard(
                 .IgnoreQueryFilters()
                 .Where(entity =>
                     entity.OwnerUserId == userId &&
+                    entity.Plane == ExchangeDataPlane.Futures &&
                     entity.Symbol == symbol &&
                     !entity.IsDeleted)
                 .SumAsync(entity => entity.Quantity, cancellationToken);

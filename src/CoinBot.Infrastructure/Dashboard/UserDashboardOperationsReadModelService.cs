@@ -92,13 +92,17 @@ public sealed class UserDashboardOperationsReadModelService(
         var balances = await dbContext.ExchangeBalances
             .AsNoTracking()
             .IgnoreQueryFilters()
-            .Where(entity => entity.OwnerUserId == normalizedUserId && !entity.IsDeleted)
+            .Where(entity =>
+                entity.OwnerUserId == normalizedUserId &&
+                entity.Plane == ExchangeDataPlane.Futures &&
+                !entity.IsDeleted)
             .ToListAsync(cancellationToken);
         var positions = await dbContext.ExchangePositions
             .AsNoTracking()
             .IgnoreQueryFilters()
             .Where(entity =>
                 entity.OwnerUserId == normalizedUserId &&
+                entity.Plane == ExchangeDataPlane.Futures &&
                 !entity.IsDeleted &&
                 entity.Quantity != 0m)
             .ToListAsync(cancellationToken);

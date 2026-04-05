@@ -6,6 +6,8 @@ public sealed class ExchangeAccountSyncState : UserOwnedEntity
 {
     public Guid ExchangeAccountId { get; set; }
 
+    public ExchangeDataPlane Plane { get; set; } = ExchangeDataPlane.Futures;
+
     public ExchangePrivateStreamConnectionState PrivateStreamConnectionState { get; set; } = ExchangePrivateStreamConnectionState.Disconnected;
 
     public DateTime? LastListenKeyStartedAtUtc { get; set; }

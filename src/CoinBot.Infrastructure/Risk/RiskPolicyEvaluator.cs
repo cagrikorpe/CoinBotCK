@@ -235,12 +235,16 @@ public sealed class RiskPolicyEvaluator(
         CancellationToken cancellationToken)
     {
         var balances = await dbContext.ExchangeBalances
-            .Where(entity => entity.OwnerUserId == ownerUserId && !entity.IsDeleted)
+            .Where(entity =>
+                entity.OwnerUserId == ownerUserId &&
+                entity.Plane == ExchangeDataPlane.Futures &&
+                !entity.IsDeleted)
             .ToListAsync(cancellationToken);
 
         var positions = await dbContext.ExchangePositions
             .Where(entity =>
                 entity.OwnerUserId == ownerUserId &&
+                entity.Plane == ExchangeDataPlane.Futures &&
                 !entity.IsDeleted &&
                 entity.Quantity != 0m)
             .ToListAsync(cancellationToken);

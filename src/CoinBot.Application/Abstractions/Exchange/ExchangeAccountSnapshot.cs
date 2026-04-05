@@ -1,3 +1,5 @@
+using CoinBot.Domain.Enums;
+
 namespace CoinBot.Application.Abstractions.Exchange;
 
 public sealed record ExchangeAccountSnapshot(
@@ -8,4 +10,5 @@ public sealed record ExchangeAccountSnapshot(
     IReadOnlyCollection<ExchangePositionSnapshot> Positions,
     DateTime ObservedAtUtc,
     DateTime ReceivedAtUtc,
-    string Source);
+    string Source,
+    ExchangeDataPlane Plane = ExchangeDataPlane.Futures);

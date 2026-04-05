@@ -403,6 +403,7 @@ public sealed class GlobalPolicyEngine(
                 .IgnoreQueryFilters()
                 .Where(entity =>
                     entity.OwnerUserId == request.UserId &&
+                    entity.Plane == ExchangeDataPlane.Futures &&
                     entity.Symbol == normalizedSymbol &&
                     !entity.IsDeleted)
                 .SumAsync(entity => entity.Quantity, cancellationToken);

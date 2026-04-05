@@ -738,6 +738,7 @@ public sealed class ExecutionEngine(
                 .IgnoreQueryFilters()
                 .Where(entity =>
                     entity.OwnerUserId == ownerUserId &&
+                    entity.Plane == ExchangeDataPlane.Futures &&
                     entity.Symbol == symbol &&
                     !entity.IsDeleted)
                 .SumAsync(entity => entity.Quantity, cancellationToken);

@@ -313,7 +313,10 @@ public sealed class AutonomyService(
         var exchangePositions = dbContext.ExchangePositions
             .IgnoreQueryFilters()
             .AsNoTracking()
-            .Where(entity => !entity.IsDeleted && entity.Quantity != 0m);
+            .Where(entity =>
+                !entity.IsDeleted &&
+                entity.Plane == ExchangeDataPlane.Futures &&
+                entity.Quantity != 0m);
         var openOrders = dbContext.ExecutionOrders
             .IgnoreQueryFilters()
             .AsNoTracking()
