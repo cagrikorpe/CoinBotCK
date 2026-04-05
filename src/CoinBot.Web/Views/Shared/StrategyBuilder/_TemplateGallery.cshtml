@@ -15,6 +15,11 @@
         Tag = template.Category,
         Validation = template.Validation.StatusCode,
         SchemaVersion = template.SchemaVersion,
+        Source = template.TemplateSource,
+        ActiveRevisionLabel = template.IsActive ? $"r{template.ActiveRevisionNumber}" : "inactive",
+        ActiveRevision = template.ActiveRevisionNumber,
+        LatestRevision = template.LatestRevisionNumber,
+        Lifecycle = template.IsActive ? "Active" : "Archived",
         Selected = index == 0
     }).ToArray();
 }
@@ -45,6 +50,10 @@
                         data-cb-template-tag="@template.Tag"
                         data-cb-template-validation="@template.Validation"
                         data-cb-template-schema="@template.SchemaVersion"
+                        data-cb-template-source="@template.Source"
+                        data-cb-template-active-revision="@template.ActiveRevision"
+                        data-cb-template-latest-revision="@template.LatestRevision"
+                        data-cb-template-lifecycle="@template.Lifecycle"
                         data-cb-template-description="@template.Description">
                     <span class="cb-template-tag">@template.Tag</span>
                     <div class="cb-template-title-row">
@@ -53,8 +62,8 @@
                     </div>
                     <p>@template.Description</p>
                     <div class="cb-template-meta">
-                        <span>Schema v@template.SchemaVersion · @template.Validation</span>
-                        <span>Uygula</span>
+                        <span data-cb-template-card-revision>Schema v@template.SchemaVersion · @template.Validation · @template.Source · @template.ActiveRevisionLabel/r@template.LatestRevision</span>
+                        <span data-cb-template-card-lifecycle>@template.Lifecycle</span>
                     </div>
                 </button>
             }

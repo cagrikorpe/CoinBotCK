@@ -68,6 +68,8 @@ public sealed class StrategyTemplateCatalogServiceTests
         Assert.False(created.IsBuiltIn);
         Assert.True(created.IsActive);
         Assert.Equal("Custom", created.TemplateSource);
+        Assert.Equal(1, created.ActiveRevisionNumber);
+        Assert.Equal(1, created.LatestRevisionNumber);
         Assert.Equal("Valid", created.Validation.StatusCode);
         Assert.Contains("\"templateKey\": \"custom-rsi-live\"", created.DefinitionJson, StringComparison.Ordinal);
         Assert.Contains(listedTemplates, template => template.TemplateKey == "custom-rsi-live" && !template.IsBuiltIn && template.TemplateSource == "Custom");
@@ -90,6 +92,7 @@ public sealed class StrategyTemplateCatalogServiceTests
         Assert.Equal("rsi-reversal-clone", cloned.TemplateKey);
         Assert.Equal("RSI Reversal Clone", cloned.TemplateName);
         Assert.Equal("rsi-reversal", cloned.SourceTemplateKey);
+        Assert.Equal(1, cloned.SourceRevisionNumber);
         Assert.False(cloned.IsBuiltIn);
         Assert.Contains("\"templateKey\": \"rsi-reversal-clone\"", cloned.DefinitionJson, StringComparison.Ordinal);
     }
@@ -112,6 +115,78 @@ public sealed class StrategyTemplateCatalogServiceTests
 
         Assert.False(archived.IsActive);
         Assert.DoesNotContain(listedTemplates, template => template.TemplateKey == "archivable-template");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.GetAsync("archivable-template"));
+    }
+
+    [Fact]
+    public async Task ReviseAsync_CreatesImmutableRevisionHistory_AndUpdatesActiveRevision()
+    {
+        await using var dbContext = CreateDbContext();
+        var service = CreateService(dbContext);
+
+        _ = await service.CreateCustomAsync(
+            "template-owner",
+            "revisioned-template",
+            "Revisioned Template",
+            "Initial revision.",
+            "Custom",
+            CreateTemplateDefinitionJson());
+
+        var revised = await service.ReviseAsync(
+            "revisioned-template",
+            "Revisioned Template v2",
+            "Updated revision.",
+            "Custom",
+            CreateTemplateDefinitionJson(timeframe: "30m", latencyRule: true));
+        var revisions = await service.ListRevisionsAsync("revisioned-template");
+
+        Assert.Equal("Revisioned Template v2", revised.TemplateName);
+        Assert.Equal(2, revised.ActiveRevisionNumber);
+        Assert.Equal(2, revised.LatestRevisionNumber);
+        Assert.Equal(2, revisions.Count);
+        Assert.Contains(revisions, revision => revision.RevisionNumber == 1 && revision.IsActive is false && revision.SourceTemplateKey is null);
+        Assert.Contains(revisions, revision => revision.RevisionNumber == 2 && revision.IsActive && revision.SourceTemplateKey == "revisioned-template" && revision.SourceRevisionNumber == 1);
+    }
+
+    [Fact]
+    public async Task ReviseAsync_RejectsInvalidRevision_FailClosed()
+    {
+        await using var dbContext = CreateDbContext();
+        var service = CreateService(dbContext);
+
+        _ = await service.CreateCustomAsync(
+            "template-owner",
+            "invalid-revision-template",
+            "Invalid Revision Template",
+            "Initial revision.",
+            "Custom",
+            CreateTemplateDefinitionJson());
+
+        var exception = await Assert.ThrowsAsync<StrategyDefinitionValidationException>(() => service.ReviseAsync(
+            "invalid-revision-template",
+            "Invalid Revision Template",
+            "Broken revision.",
+            "Custom",
+            """
+            {
+              "schemaVersion": 2,
+              "entry": {
+                "path": "indicator.source",
+                "comparison": "greaterThan",
+                "value": "stream",
+                "ruleId": "invalid-source-op",
+                "ruleType": "data-quality",
+                "timeframe": "30m",
+                "weight": 10,
+                "enabled": true
+              }
+            }
+            """));
+
+        var revisions = await service.ListRevisionsAsync("invalid-revision-template");
+
+        Assert.Equal("UnsupportedComparisonForPath:entry:indicator.source:GreaterThan", exception.StatusCode);
+        Assert.Single(revisions);
     }
 
     [Fact]
@@ -162,17 +237,33 @@ public sealed class StrategyTemplateCatalogServiceTests
         return new ApplicationDbContext(options, new TestDataScopeContext());
     }
 
-    private static string CreateTemplateDefinitionJson()
+    private static string CreateTemplateDefinitionJson(string timeframe = "1m", bool latencyRule = false)
     {
+        var latencyClause = latencyRule
+            ? $$"""
+                  ,
+                  {
+                    "ruleId": "entry-latency",
+                    "ruleType": "data-quality",
+                    "path": "indicator.latencySeconds",
+                    "comparison": "between",
+                    "value": "0..5",
+                    "timeframe": "{{timeframe}}",
+                    "weight": 15,
+                    "enabled": true
+                  }
+               """
+            : string.Empty;
+
         return
-            """
+            $$"""
             {
               "schemaVersion": 2,
               "entry": {
                 "operator": "all",
                 "ruleId": "entry-root",
                 "ruleType": "group",
-                "timeframe": "1m",
+                "timeframe": "{{timeframe}}",
                 "weight": 1,
                 "enabled": true,
                 "rules": [
@@ -182,7 +273,7 @@ public sealed class StrategyTemplateCatalogServiceTests
                     "path": "context.mode",
                     "comparison": "equals",
                     "value": "Live",
-                    "timeframe": "1m",
+                    "timeframe": "{{timeframe}}",
                     "weight": 20,
                     "enabled": true
                   },
@@ -192,10 +283,10 @@ public sealed class StrategyTemplateCatalogServiceTests
                     "path": "indicator.rsi.value",
                     "comparison": "lessThanOrEqual",
                     "value": 30,
-                    "timeframe": "1m",
+                    "timeframe": "{{timeframe}}",
                     "weight": 80,
                     "enabled": true
-                  }
+                  }{{latencyClause}}
                 ]
               }
             }

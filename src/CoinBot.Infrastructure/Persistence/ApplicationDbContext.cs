@@ -111,6 +111,8 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
     public DbSet<TradingStrategyTemplate> TradingStrategyTemplates => Set<TradingStrategyTemplate>();
 
+    public DbSet<TradingStrategyTemplateRevision> TradingStrategyTemplateRevisions => Set<TradingStrategyTemplateRevision>();
+
     public DbSet<TradingStrategySignal> TradingStrategySignals => Set<TradingStrategySignal>();
 
     public DbSet<TradingStrategySignalVeto> TradingStrategySignalVetoes => Set<TradingStrategySignalVeto>();
@@ -186,6 +188,7 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         ConfigureTradingBots(builder.Entity<TradingBot>());
         ConfigureTradingStrategies(builder.Entity<TradingStrategy>());
         ConfigureTradingStrategyTemplates(builder.Entity<TradingStrategyTemplate>());
+        ConfigureTradingStrategyTemplateRevisions(builder.Entity<TradingStrategyTemplateRevision>());
         ConfigureTradingStrategySignals(builder.Entity<TradingStrategySignal>());
         ConfigureTradingStrategySignalVetoes(builder.Entity<TradingStrategySignalVeto>());
         ConfigureTradingStrategyVersions(builder.Entity<TradingStrategyVersion>());
@@ -2001,6 +2004,10 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             .HasMaxLength(128)
             .IsRequired();
 
+        builder.Property(entity => entity.ActivationConcurrencyToken)
+            .IsRowVersion()
+            .IsConcurrencyToken();
+
         builder.Property(entity => entity.UsesExplicitVersionLifecycle)
             .HasDefaultValue(false)
             .IsRequired();
@@ -2061,10 +2068,61 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             .HasDefaultValue(true)
             .IsRequired();
 
+        builder.HasIndex(entity => entity.ActiveTradingStrategyTemplateRevisionId);
+
+        builder.HasIndex(entity => entity.LatestTradingStrategyTemplateRevisionId);
+
         builder.HasIndex(entity => entity.TemplateKey)
             .IsUnique();
 
         builder.HasIndex(entity => new { entity.IsActive, entity.CreatedDate });
+
+        builder.HasOne<TradingStrategyTemplateRevision>()
+            .WithMany()
+            .HasForeignKey(entity => entity.ActiveTradingStrategyTemplateRevisionId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<TradingStrategyTemplateRevision>()
+            .WithMany()
+            .HasForeignKey(entity => entity.LatestTradingStrategyTemplateRevisionId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private void ConfigureTradingStrategyTemplateRevisions(EntityTypeBuilder<TradingStrategyTemplateRevision> builder)
+    {
+        ConfigureUserOwnedEntity(builder, "TradingStrategyTemplateRevisions");
+
+        builder.Property(entity => entity.RevisionNumber)
+            .IsRequired();
+
+        builder.Property(entity => entity.SchemaVersion)
+            .IsRequired();
+
+        builder.Property(entity => entity.DefinitionJson)
+            .IsRequired();
+
+        builder.Property(entity => entity.ValidationStatusCode)
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.ValidationSummary)
+            .HasMaxLength(1024)
+            .IsRequired();
+
+        builder.Property(entity => entity.SourceTemplateKey)
+            .HasMaxLength(128);
+
+        builder.HasIndex(entity => new { entity.TradingStrategyTemplateId, entity.RevisionNumber })
+            .IsUnique();
+
+        builder.HasIndex(entity => entity.TradingStrategyTemplateId);
+
+        builder.HasIndex(entity => new { entity.SourceTemplateKey, entity.SourceRevisionNumber });
+
+        builder.HasOne<TradingStrategyTemplate>()
+            .WithMany()
+            .HasForeignKey(entity => entity.TradingStrategyTemplateId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 
     private void ConfigureTradingStrategySignals(EntityTypeBuilder<TradingStrategySignal> builder)

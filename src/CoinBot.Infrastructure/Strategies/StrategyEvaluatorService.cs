@@ -84,7 +84,9 @@ public sealed class StrategyEvaluatorService(
             evaluationResult,
             passedRules,
             failedRules,
-            summary);
+            summary,
+            document.Metadata?.TemplateRevisionNumber,
+            document.Metadata?.TemplateSource);
     }
 
     private StrategyEvaluationResult EvaluateDocument(StrategyRuleDocument document, StrategyEvaluationContext context)
@@ -273,8 +275,11 @@ public sealed class StrategyEvaluatorService(
         var right = condition.Operand.Kind == StrategyRuleOperandKind.Path
             ? ResolvePathValue(condition.Operand.Value, context)
             : ResolveLiteralValue(condition.Operand);
+        var allowsNumericRangeLiteral = left.Kind == StrategyRuleOperandKind.Number &&
+                                        condition.Comparison is StrategyRuleComparisonOperator.Between or StrategyRuleComparisonOperator.NotBetween &&
+                                        condition.Operand.Kind == StrategyRuleOperandKind.String;
 
-        if (left.Kind != right.Kind)
+        if (!allowsNumericRangeLiteral && left.Kind != right.Kind)
         {
             throw new StrategyRuleEvaluationException(
                 $"Strategy rule path '{condition.Path}' resolved to '{left.Kind}' but operand resolved to '{right.Kind}'.");
@@ -372,11 +377,14 @@ public sealed class StrategyEvaluatorService(
         var templateLabel = string.IsNullOrWhiteSpace(metadata?.TemplateName)
             ? "custom"
             : metadata.TemplateName!.Trim();
+        var templateRevisionLabel = metadata?.TemplateRevisionNumber is > 0
+            ? $"r{metadata.TemplateRevisionNumber.Value}"
+            : "r?";
         var failedText = failedRules.Count == 0 ? "none" : string.Join(" | ", failedRules.Take(2));
         var passedText = passedRules.Count == 0 ? "none" : string.Join(" | ", passedRules.Take(2));
 
         return FormattableString.Invariant(
-            $"Strategy={request.StrategyKey}; Template={templateLabel}; Symbol={request.EvaluationContext.IndicatorSnapshot.Symbol}; Timeframe={request.EvaluationContext.IndicatorSnapshot.Timeframe}; Outcome={outcome}; Score={aggregateScore}; Passed={passedRules.Count}; Failed={failedRules.Count}; TopPassed={passedText}; TopFailed={failedText}");
+            $"Strategy={request.StrategyKey}; Template={templateLabel}/{templateRevisionLabel}; Symbol={request.EvaluationContext.IndicatorSnapshot.Symbol}; Timeframe={request.EvaluationContext.IndicatorSnapshot.Timeframe}; Outcome={outcome}; Score={aggregateScore}; Passed={passedRules.Count}; Failed={failedRules.Count}; TopPassed={passedText}; TopFailed={failedText}");
     }
 
     private static ResolvedValue ResolvePathValue(string path, StrategyEvaluationContext context)
@@ -388,6 +396,8 @@ public sealed class StrategyEvaluatorService(
             "indicator.timeframe" => ResolvedValue.String(context.IndicatorSnapshot.Timeframe),
             "indicator.samplecount" => ResolvedValue.Number(context.IndicatorSnapshot.SampleCount),
             "indicator.requiredsamplecount" => ResolvedValue.Number(context.IndicatorSnapshot.RequiredSampleCount),
+            "indicator.samplecoveragepercent" => ResolvedValue.Number(ResolveSampleCoveragePercent(context)),
+            "indicator.latencyseconds" => ResolvedValue.Number(ResolveLatencySeconds(context)),
             "indicator.state" => ResolvedValue.String(context.IndicatorSnapshot.State.ToString()),
             "indicator.dataqualityreasoncode" => ResolvedValue.String(context.IndicatorSnapshot.DataQualityReasonCode.ToString()),
             "indicator.source" => ResolvedValue.String(context.IndicatorSnapshot.Source),
@@ -409,6 +419,7 @@ public sealed class StrategyEvaluatorService(
             "indicator.macd.histogram" => ResolvedValue.Number(
                 context.IndicatorSnapshot.Macd.Histogram
                 ?? throw new StrategyRuleEvaluationException("Strategy rule path 'indicator.macd.histogram' resolved to null.")),
+            "indicator.macd.spread" => ResolvedValue.Number(ResolveMacdSpread(context)),
             "indicator.bollinger.period" => ResolvedValue.Number(context.IndicatorSnapshot.Bollinger.Period),
             "indicator.bollinger.standarddeviationmultiplier" => ResolvedValue.Number(context.IndicatorSnapshot.Bollinger.StandardDeviationMultiplier),
             "indicator.bollinger.isready" => ResolvedValue.Boolean(context.IndicatorSnapshot.Bollinger.IsReady),
@@ -424,6 +435,7 @@ public sealed class StrategyEvaluatorService(
             "indicator.bollinger.standarddeviation" => ResolvedValue.Number(
                 context.IndicatorSnapshot.Bollinger.StandardDeviation
                 ?? throw new StrategyRuleEvaluationException("Strategy rule path 'indicator.bollinger.standardDeviation' resolved to null.")),
+            "indicator.bollinger.bandwidth" => ResolvedValue.Number(ResolveBollingerBandWidth(context)),
             _ => throw new StrategyRuleEvaluationException($"Strategy rule path '{path}' is not supported.")
         };
     }
@@ -446,7 +458,9 @@ public sealed class StrategyEvaluatorService(
     private static bool CompareNumbers(string left, string right, StrategyRuleComparisonOperator comparison)
     {
         var leftValue = decimal.Parse(left, CultureInfo.InvariantCulture);
-        var rightValue = decimal.Parse(right, CultureInfo.InvariantCulture);
+        var rightValue = decimal.TryParse(right, NumberStyles.Number, CultureInfo.InvariantCulture, out var singleRightValue)
+            ? singleRightValue
+            : 0m;
 
         return comparison switch
         {
@@ -456,6 +470,8 @@ public sealed class StrategyEvaluatorService(
             StrategyRuleComparisonOperator.GreaterThanOrEqual => leftValue >= rightValue,
             StrategyRuleComparisonOperator.LessThan => leftValue < rightValue,
             StrategyRuleComparisonOperator.LessThanOrEqual => leftValue <= rightValue,
+            StrategyRuleComparisonOperator.Between => IsBetween(leftValue, right),
+            StrategyRuleComparisonOperator.NotBetween => !IsBetween(leftValue, right),
             _ => throw new StrategyRuleEvaluationException($"Unsupported numeric strategy comparison '{comparison}'.")
         };
     }
@@ -466,6 +482,9 @@ public sealed class StrategyEvaluatorService(
         {
             StrategyRuleComparisonOperator.Equals => string.Equals(left, right, StringComparison.OrdinalIgnoreCase),
             StrategyRuleComparisonOperator.NotEquals => !string.Equals(left, right, StringComparison.OrdinalIgnoreCase),
+            StrategyRuleComparisonOperator.Contains => left.Contains(right, StringComparison.OrdinalIgnoreCase),
+            StrategyRuleComparisonOperator.StartsWith => left.StartsWith(right, StringComparison.OrdinalIgnoreCase),
+            StrategyRuleComparisonOperator.EndsWith => left.EndsWith(right, StringComparison.OrdinalIgnoreCase),
             _ => throw new StrategyRuleEvaluationException($"Unsupported string strategy comparison '{comparison}'.")
         };
     }
@@ -491,6 +510,60 @@ public sealed class StrategyEvaluatorService(
         }
 
         return path.Trim().ToLowerInvariant();
+    }
+
+    private static decimal ResolveLatencySeconds(StrategyEvaluationContext context)
+    {
+        return decimal.Round(
+            (decimal)(context.IndicatorSnapshot.ReceivedAtUtc - context.IndicatorSnapshot.CloseTimeUtc).TotalSeconds,
+            6,
+            MidpointRounding.AwayFromZero);
+    }
+
+    private static decimal ResolveSampleCoveragePercent(StrategyEvaluationContext context)
+    {
+        if (context.IndicatorSnapshot.RequiredSampleCount <= 0)
+        {
+            throw new StrategyRuleEvaluationException("Strategy rule path 'indicator.sampleCoveragePercent' requires a positive requiredSampleCount.");
+        }
+
+        return decimal.Round(
+            context.IndicatorSnapshot.SampleCount / (decimal)context.IndicatorSnapshot.RequiredSampleCount * 100m,
+            6,
+            MidpointRounding.AwayFromZero);
+    }
+
+    private static decimal ResolveMacdSpread(StrategyEvaluationContext context)
+    {
+        if (context.IndicatorSnapshot.Macd.MacdLine is null || context.IndicatorSnapshot.Macd.SignalLine is null)
+        {
+            throw new StrategyRuleEvaluationException("Strategy rule path 'indicator.macd.spread' resolved to null.");
+        }
+
+        return context.IndicatorSnapshot.Macd.MacdLine.Value - context.IndicatorSnapshot.Macd.SignalLine.Value;
+    }
+
+    private static decimal ResolveBollingerBandWidth(StrategyEvaluationContext context)
+    {
+        if (context.IndicatorSnapshot.Bollinger.UpperBand is null || context.IndicatorSnapshot.Bollinger.LowerBand is null)
+        {
+            throw new StrategyRuleEvaluationException("Strategy rule path 'indicator.bollinger.bandWidth' resolved to null.");
+        }
+
+        return context.IndicatorSnapshot.Bollinger.UpperBand.Value - context.IndicatorSnapshot.Bollinger.LowerBand.Value;
+    }
+
+    private static bool IsBetween(decimal leftValue, string rangeValue)
+    {
+        var parts = rangeValue.Split("..", StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 2 ||
+            !decimal.TryParse(parts[0], NumberStyles.Number, CultureInfo.InvariantCulture, out var lowerBound) ||
+            !decimal.TryParse(parts[1], NumberStyles.Number, CultureInfo.InvariantCulture, out var upperBound))
+        {
+            throw new StrategyRuleEvaluationException($"Strategy rule numeric range '{rangeValue}' is invalid.");
+        }
+
+        return leftValue >= lowerBound && leftValue <= upperBound;
     }
 
     private static DateTime NormalizeUtc(DateTime value)

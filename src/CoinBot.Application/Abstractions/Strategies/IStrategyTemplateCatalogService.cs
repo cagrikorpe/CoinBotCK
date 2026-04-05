@@ -24,6 +24,18 @@ public interface IStrategyTemplateCatalogService
         string category,
         CancellationToken cancellationToken = default);
 
+    Task<StrategyTemplateSnapshot> ReviseAsync(
+        string templateKey,
+        string templateName,
+        string description,
+        string category,
+        string definitionJson,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyCollection<StrategyTemplateRevisionSnapshot>> ListRevisionsAsync(
+        string templateKey,
+        CancellationToken cancellationToken = default);
+
     Task<StrategyTemplateSnapshot> ArchiveAsync(
         string templateKey,
         CancellationToken cancellationToken = default);

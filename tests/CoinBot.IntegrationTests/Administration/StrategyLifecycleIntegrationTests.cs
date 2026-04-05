@@ -83,12 +83,18 @@ public sealed class StrategyLifecycleIntegrationTests
                 "Custom demo template.",
                 "Custom",
                 CreateDefinitionJson("Demo", 35m, 100));
-            var draft = await versionService.CreateDraftFromTemplateAsync(strategyId, template.TemplateKey);
+            var revisedTemplate = await templateCatalog.ReviseAsync(
+                "demo-rsi-template",
+                "Demo RSI Template",
+                "Custom demo template revised.",
+                "Custom",
+                CreateDefinitionJson("Demo", 32m, 100, timeframe: "30m", includeLatencyRule: true));
+            var draft = await versionService.CreateDraftFromTemplateAsync(strategyId, revisedTemplate.TemplateKey);
             var published = await versionService.PublishAsync(draft.StrategyVersionId);
             var result = await signalService.GenerateAsync(
                 new GenerateStrategySignalsRequest(
                     published.StrategyVersionId,
-                    CreateContext(ExecutionEnvironment.Demo, nowUtc.UtcDateTime, sampleCount: 120, rsiValue: 28m)));
+                    CreateContext(ExecutionEnvironment.Demo, nowUtc.UtcDateTime, sampleCount: 120, rsiValue: 28m, timeframe: "30m")));
             var readModelService = new AdminWorkspaceReadModelService(
                 dbContext,
                 new FakeAdminMonitoringReadModelService(nowUtc.UtcDateTime),
@@ -112,13 +118,16 @@ public sealed class StrategyLifecycleIntegrationTests
             Assert.Single(result.Signals);
             Assert.Empty(result.Vetoes);
             Assert.Contains("\"templateKey\":\"demo-rsi-template\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
+            Assert.Contains("\"templateRevisionNumber\":2", decisionTrace.SnapshotJson, StringComparison.Ordinal);
+            Assert.Equal(2, published.TemplateRevisionNumber);
             Assert.Contains("\"outcome\":\"EntryMatched\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
             Assert.Contains("Strategy.Version.Published", auditActions);
             Assert.Contains("Strategy.Version.Activated", auditActions);
             var usageRow = Assert.Single(snapshot.UsageRows);
             Assert.Equal("demo-rsi-template", usageRow.TemplateKey);
+            Assert.Equal("r2", usageRow.RuntimeTemplateRevisionLabel);
             Assert.Contains("Runtime=v1", usageRow.Note, StringComparison.Ordinal);
-            Assert.Contains(snapshot.TemplateCatalog, item => item.TemplateKey == "demo-rsi-template");
+            Assert.Contains(snapshot.TemplateCatalog, item => item.TemplateKey == "demo-rsi-template" && item.ActiveRevisionNumber == 2 && item.LatestRevisionNumber == 2 && item.TemplateSource == "Custom");
         }
         finally
         {
@@ -242,6 +251,111 @@ public sealed class StrategyLifecycleIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task ConcurrentActivate_AllowsSingleWinner_AndRejectsStaleRequest_OnSqlServer()
+    {
+        var databaseName = $"CoinBotStrategyLifecycleConcurrencyInt_{Guid.NewGuid():N}";
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString(databaseName);
+        var nowUtc = new DateTimeOffset(2026, 4, 5, 12, 0, 0, TimeSpan.Zero);
+        await using var setupContext = CreateDbContext(connectionString);
+        await setupContext.Database.EnsureDeletedAsync();
+        await setupContext.Database.EnsureCreatedAsync();
+
+        try
+        {
+            var strategyId = Guid.NewGuid();
+            var version1Id = Guid.NewGuid();
+            var version2Id = Guid.NewGuid();
+            setupContext.Users.Add(CreateUser("strategy-concurrency-user"));
+            setupContext.TradingStrategies.Add(new TradingStrategy
+            {
+                Id = strategyId,
+                OwnerUserId = "strategy-concurrency-user",
+                StrategyKey = "strategy-concurrency",
+                DisplayName = "Strategy Concurrency",
+                PromotionState = StrategyPromotionState.DemoPublished,
+                PublishedMode = ExecutionEnvironment.Demo,
+                PublishedAtUtc = nowUtc.UtcDateTime.AddMinutes(-5)
+            });
+            setupContext.TradingStrategyVersions.AddRange(
+                new TradingStrategyVersion
+                {
+                    Id = version1Id,
+                    OwnerUserId = "strategy-concurrency-user",
+                    TradingStrategyId = strategyId,
+                    SchemaVersion = 2,
+                    VersionNumber = 1,
+                    Status = StrategyVersionStatus.Published,
+                    DefinitionJson = CreateDefinitionJson("Demo", 35m, 100),
+                    PublishedAtUtc = nowUtc.UtcDateTime.AddMinutes(-4)
+                },
+                new TradingStrategyVersion
+                {
+                    Id = version2Id,
+                    OwnerUserId = "strategy-concurrency-user",
+                    TradingStrategyId = strategyId,
+                    SchemaVersion = 2,
+                    VersionNumber = 2,
+                    Status = StrategyVersionStatus.Published,
+                    DefinitionJson = CreateDefinitionJson("Demo", 20m, 100),
+                    PublishedAtUtc = nowUtc.UtcDateTime.AddMinutes(-3)
+                });
+            await setupContext.SaveChangesAsync();
+
+            var activationToken = Convert.ToBase64String((await setupContext.TradingStrategies.AsNoTracking().SingleAsync(entity => entity.Id == strategyId)).ActivationConcurrencyToken);
+            var startSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            async Task<(bool Succeeded, Guid? ActiveVersionId, string? Error)> RunActivationAsync(Guid targetVersionId)
+            {
+                await using var dbContext = CreateDbContext(connectionString);
+                var parser = new StrategyRuleParser();
+                var validator = new StrategyDefinitionValidator();
+                var auditLogService = new AuditLogService(dbContext, new CorrelationContextAccessor());
+                var service = new StrategyVersionService(
+                    dbContext,
+                    parser,
+                    new FixedTimeProvider(nowUtc),
+                    validator,
+                    new StrategyTemplateCatalogService(parser, validator, dbContext, auditLogService),
+                    auditLogService);
+
+                await startSignal.Task;
+
+                try
+                {
+                    var snapshot = await service.ActivateAsync(targetVersionId, activationToken);
+                    return (true, snapshot.StrategyVersionId, null);
+                }
+                catch (Exception exception)
+                {
+                    return (false, null, exception.Message);
+                }
+            }
+
+            var activateV1Task = RunActivationAsync(version1Id);
+            var activateV2Task = RunActivationAsync(version2Id);
+            startSignal.SetResult();
+
+            var results = await Task.WhenAll(activateV1Task, activateV2Task);
+            await using var assertContext = CreateDbContext(connectionString);
+            var persistedStrategy = await assertContext.TradingStrategies.AsNoTracking().SingleAsync(entity => entity.Id == strategyId);
+            var activationAudits = await assertContext.AuditLogs
+                .AsNoTracking()
+                .Where(entity => entity.Target == "strategy-concurrency" && entity.Action == "Strategy.Version.Activated")
+                .ToListAsync();
+
+            Assert.Equal(1, results.Count(result => result.Succeeded));
+            Assert.Equal(1, results.Count(result => !result.Succeeded && result.Error is not null && result.Error.Contains("stale", StringComparison.OrdinalIgnoreCase)));
+            Assert.NotNull(persistedStrategy.ActiveTradingStrategyVersionId);
+            Assert.Contains(persistedStrategy.ActiveTradingStrategyVersionId!.Value, new[] { version1Id, version2Id });
+            Assert.Single(activationAudits);
+        }
+        finally
+        {
+            await setupContext.Database.EnsureDeletedAsync();
+        }
+    }
+
     private static StrategySignalService CreateSignalService(ApplicationDbContext dbContext, DateTimeOffset nowUtc)
     {
         var correlationContextAccessor = new CorrelationContextAccessor();
@@ -266,13 +380,14 @@ public sealed class StrategyLifecycleIntegrationTests
         ExecutionEnvironment mode,
         DateTime closeTimeUtc,
         int sampleCount,
-        decimal rsiValue)
+        decimal rsiValue,
+        string timeframe = "1m")
     {
         return new StrategyEvaluationContext(
             mode,
             new StrategyIndicatorSnapshot(
                 Symbol: "BTCUSDT",
-                Timeframe: "1m",
+                Timeframe: timeframe,
                 OpenTimeUtc: closeTimeUtc.AddMinutes(-1),
                 CloseTimeUtc: closeTimeUtc,
                 ReceivedAtUtc: closeTimeUtc.AddSeconds(1),
@@ -286,8 +401,54 @@ public sealed class StrategyLifecycleIntegrationTests
                 Source: "integration-test"));
     }
 
-    private static string CreateDefinitionJson(string mode, decimal rsiThreshold, int minimumSampleCount)
+    private static string CreateDefinitionJson(string mode, decimal rsiThreshold, int minimumSampleCount, string timeframe = "1m", bool includeLatencyRule = false)
     {
+        var riskBlock = includeLatencyRule
+            ? $$"""
+              "risk": {
+                "operator": "all",
+                "ruleId": "risk-root",
+                "ruleType": "group",
+                "timeframe": "{{timeframe}}",
+                "weight": 1,
+                "enabled": true,
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": {{minimumSampleCount}},
+                    "ruleId": "risk-sample-count",
+                    "ruleType": "data-quality",
+                    "timeframe": "{{timeframe}}",
+                    "weight": 10,
+                    "enabled": true
+                  },
+                  {
+                    "ruleId": "risk-latency-window",
+                    "ruleType": "data-quality",
+                    "path": "indicator.latencySeconds",
+                    "comparison": "between",
+                    "value": "0..5",
+                    "timeframe": "{{timeframe}}",
+                    "weight": 5,
+                    "enabled": true
+                  }
+                ]
+              }
+              """
+            : $$"""
+              "risk": {
+                "path": "indicator.sampleCount",
+                "comparison": "greaterThanOrEqual",
+                "value": {{minimumSampleCount}},
+                "ruleId": "risk-sample-count",
+                "ruleType": "data-quality",
+                "timeframe": "{{timeframe}}",
+                "weight": 10,
+                "enabled": true
+              }
+              """;
+
         return
             $$"""
             {
@@ -300,7 +461,7 @@ public sealed class StrategyLifecycleIntegrationTests
                 "operator": "all",
                 "ruleId": "entry-root",
                 "ruleType": "group",
-                "timeframe": "1m",
+                "timeframe": "{{timeframe}}",
                 "weight": 1,
                 "enabled": true,
                 "rules": [
@@ -310,7 +471,7 @@ public sealed class StrategyLifecycleIntegrationTests
                     "path": "context.mode",
                     "comparison": "equals",
                     "value": "{{mode}}",
-                    "timeframe": "1m",
+                    "timeframe": "{{timeframe}}",
                     "weight": 10,
                     "enabled": true
                   },
@@ -320,22 +481,13 @@ public sealed class StrategyLifecycleIntegrationTests
                     "path": "indicator.rsi.value",
                     "comparison": "lessThanOrEqual",
                     "value": {{rsiThreshold}},
-                    "timeframe": "1m",
+                    "timeframe": "{{timeframe}}",
                     "weight": 20,
                     "enabled": true
                   }
                 ]
               },
-              "risk": {
-                "path": "indicator.sampleCount",
-                "comparison": "greaterThanOrEqual",
-                "value": {{minimumSampleCount}},
-                "ruleId": "risk-sample-count",
-                "ruleType": "data-quality",
-                "timeframe": "1m",
-                "weight": 10,
-                "enabled": true
-              }
+              {{riskBlock}}
             }
             """;
     }

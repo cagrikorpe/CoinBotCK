@@ -7,6 +7,7 @@ using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
 using CoinBot.Infrastructure.Identity;
 using CoinBot.Infrastructure.Persistence;
+using CoinBot.Infrastructure.Strategies;
 using Microsoft.EntityFrameworkCore;
 
 namespace CoinBot.UnitTests.Infrastructure.Administration;
@@ -238,6 +239,102 @@ public sealed class AdminWorkspaceReadModelServiceTests
         Assert.Contains("RiskVeto=AccountEquityUnavailable", snapshot.LatestExplainability.RuleSummary, StringComparison.Ordinal);
         Assert.Equal("RSI Reversal", snapshot.LatestExplainability.TemplateName);
     }
+
+    [Fact]
+    public async Task GetStrategyAiMonitoringAsync_ProjectsTemplateRevisionRuntimeVersion_AndLifecycleToken()
+    {
+        var now = new DateTime(2026, 4, 5, 12, 0, 0, DateTimeKind.Utc);
+        await using var dbContext = CreateDbContext();
+        var parser = new StrategyRuleParser();
+        var validator = new StrategyDefinitionValidator();
+        var templateCatalog = new StrategyTemplateCatalogService(parser, validator, dbContext);
+
+        var template = await templateCatalog.CreateCustomAsync(
+            "strategy-owner-002",
+            "ops-template",
+            "Ops Template",
+            "Ops lifecycle template.",
+            "Custom",
+            CreateStrategyDefinition("ops-template", "Ops Template", revision: 1, timeframe: "30m"));
+        var revisedTemplate = await templateCatalog.ReviseAsync(
+            "ops-template",
+            "Ops Template",
+            "Ops lifecycle template revised.",
+            "Custom",
+            CreateStrategyDefinition("ops-template", "Ops Template", revision: 2, timeframe: "30m"));
+
+        var strategyId = Guid.NewGuid();
+        var version1Id = Guid.NewGuid();
+        var version2Id = Guid.NewGuid();
+        dbContext.TradingStrategies.Add(new TradingStrategy
+        {
+            Id = strategyId,
+            OwnerUserId = "strategy-owner-002",
+            StrategyKey = "ops-lifecycle",
+            DisplayName = "Ops Lifecycle",
+            UsesExplicitVersionLifecycle = true,
+            ActiveTradingStrategyVersionId = version1Id,
+            ActiveVersionActivatedAtUtc = now.AddMinutes(-2),
+            ActivationConcurrencyToken = [(byte)1, (byte)2, (byte)3, (byte)4],
+            PublishedMode = ExecutionEnvironment.Live,
+            PublishedAtUtc = now.AddMinutes(-5),
+            CreatedDate = now.AddHours(-1),
+            UpdatedDate = now.AddMinutes(-1)
+        });
+        dbContext.TradingStrategyVersions.AddRange(
+            new TradingStrategyVersion
+            {
+                Id = version1Id,
+                OwnerUserId = "strategy-owner-002",
+                TradingStrategyId = strategyId,
+                SchemaVersion = 2,
+                VersionNumber = 1,
+                Status = StrategyVersionStatus.Published,
+                DefinitionJson = CreateStrategyDefinition("ops-template", "Ops Template", revision: 1, timeframe: "30m"),
+                PublishedAtUtc = now.AddMinutes(-4),
+                CreatedDate = now.AddHours(-1),
+                UpdatedDate = now.AddMinutes(-4)
+            },
+            new TradingStrategyVersion
+            {
+                Id = version2Id,
+                OwnerUserId = "strategy-owner-002",
+                TradingStrategyId = strategyId,
+                SchemaVersion = 2,
+                VersionNumber = 2,
+                Status = StrategyVersionStatus.Published,
+                DefinitionJson = CreateStrategyDefinition("ops-template", "Ops Template", revision: 2, timeframe: "30m"),
+                PublishedAtUtc = now.AddMinutes(-1),
+                CreatedDate = now.AddMinutes(-2),
+                UpdatedDate = now.AddMinutes(-1)
+            });
+
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminWorkspaceReadModelService(
+            dbContext,
+            new FakeAdminMonitoringReadModelService(now),
+            new FakeTradingModeResolver(),
+            new FixedTimeProvider(now),
+            parser,
+            validator,
+            templateCatalog);
+
+        var snapshot = await service.GetStrategyAiMonitoringAsync("ops-lifecycle");
+
+        var usageRow = Assert.Single(snapshot.UsageRows);
+        Assert.Equal("v1", usageRow.RuntimeVersionLabel);
+        Assert.Equal("v2", usageRow.LatestVersionLabel);
+        Assert.Equal("r1", usageRow.RuntimeTemplateRevisionLabel);
+        Assert.Equal("r2", usageRow.LatestTemplateRevisionLabel);
+        Assert.NotEqual("n/a", usageRow.LifecycleTokenLabel);
+        Assert.Contains("Runtime=v1; Latest=v2", usageRow.Note, StringComparison.Ordinal);
+        Assert.Contains(snapshot.TemplateCatalog, templateRow =>
+            templateRow.TemplateKey == template.TemplateKey &&
+            templateRow.ActiveRevisionNumber == revisedTemplate.ActiveRevisionNumber &&
+            templateRow.LatestRevisionNumber == revisedTemplate.LatestRevisionNumber &&
+            templateRow.TemplateSource == "Custom");
+    }
     private static ApplicationDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -284,6 +381,32 @@ public sealed class AdminWorkspaceReadModelServiceTests
         public string? UserId => null;
 
         public bool HasIsolationBypass => true;
+    }
+
+    private static string CreateStrategyDefinition(string templateKey, string templateName, int revision, string timeframe)
+    {
+        return
+            $$"""
+            {
+              "schemaVersion": 2,
+              "metadata": {
+                "templateKey": "{{templateKey}}",
+                "templateName": "{{templateName}}",
+                "templateRevisionNumber": {{revision}},
+                "templateSource": "Custom"
+              },
+              "entry": {
+                "path": "context.mode",
+                "comparison": "equals",
+                "value": "Live",
+                "ruleId": "entry-mode",
+                "ruleType": "context",
+                "timeframe": "{{timeframe}}",
+                "weight": 20,
+                "enabled": true
+              }
+            }
+            """;
     }
 }
 

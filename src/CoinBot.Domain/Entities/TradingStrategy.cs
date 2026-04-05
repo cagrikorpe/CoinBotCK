@@ -8,6 +8,8 @@ public sealed class TradingStrategy : UserOwnedEntity
 
     public string DisplayName { get; set; } = string.Empty;
 
+    public byte[] ActivationConcurrencyToken { get; set; } = Array.Empty<byte>();
+
     public bool UsesExplicitVersionLifecycle { get; set; }
 
     public Guid? ActiveTradingStrategyVersionId { get; set; }

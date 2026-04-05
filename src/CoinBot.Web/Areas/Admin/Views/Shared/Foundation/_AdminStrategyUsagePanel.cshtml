@@ -45,7 +45,7 @@
                             <div class="cb-admin-summary-card">
                                 <span class="cb-admin-summary-label">Template</span>
                                 <strong data-cb-strategy-usage-template>@row.TemplateName</strong>
-                                <small data-cb-strategy-usage-validation>@row.TemplateKey · @row.ValidationStatusCode</small>
+                                <small data-cb-strategy-usage-validation>@row.TemplateKey · @row.ValidationStatusCode · <span data-cb-strategy-usage-runtime-template-revision>@row.RuntimeTemplateRevisionLabel</span></small>
                             </div>
                             <div class="cb-admin-summary-card">
                                 <span class="cb-admin-summary-label">Score</span>
@@ -62,6 +62,11 @@
                                 <strong class="cb-mono">@row.VetoCount</strong>
                                 <small>Oran @($"{row.VetoRate:P0}")</small>
                             </div>
+                            <div class="cb-admin-summary-card">
+                                <span class="cb-admin-summary-label">Lifecycle</span>
+                                <strong class="cb-mono" data-cb-strategy-usage-runtime-version>@row.RuntimeVersionLabel</strong>
+                                <small data-cb-strategy-usage-latest-version>Latest @row.LatestVersionLabel · Template @row.LatestTemplateRevisionLabel</small>
+                            </div>
                         </div>
                         <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4">
                             <div>
@@ -69,7 +74,7 @@
                                 <div class="cb-admin-info-strip-text" data-cb-strategy-usage-explainability>@row.LatestExplainabilitySummary</div>
                                 <div class="cb-admin-info-strip-text mt-2" data-cb-strategy-usage-rule-summary>@row.LatestRuleSummary</div>
                             </div>
-                            <span class="cb-admin-info-strip-meta">@row.LatestSignalType · @row.LatestSignalAtLabel · Veto=@(string.IsNullOrWhiteSpace(row.LatestVetoReason) ? "Yok" : row.LatestVetoReason)</span>
+                            <span class="cb-admin-info-strip-meta">@row.LatestSignalType · @row.LatestSignalAtLabel · Veto=@(string.IsNullOrWhiteSpace(row.LatestVetoReason) ? "Yok" : row.LatestVetoReason) · Token=<span data-cb-strategy-usage-lifecycle-token>@row.LifecycleTokenLabel</span></span>
                         </div>
                     </div>
                 }

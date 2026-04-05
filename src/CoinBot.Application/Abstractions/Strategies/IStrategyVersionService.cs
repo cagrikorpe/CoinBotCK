@@ -22,10 +22,12 @@ public interface IStrategyVersionService
 
     Task<StrategyVersionSnapshot> ActivateAsync(
         Guid strategyVersionId,
+        string? expectedActivationToken = null,
         CancellationToken cancellationToken = default);
 
     Task<StrategyVersionSnapshot?> DeactivateAsync(
         Guid strategyId,
+        string? expectedActivationToken = null,
         CancellationToken cancellationToken = default);
 
     Task<StrategyVersionSnapshot> ArchiveAsync(

@@ -65,7 +65,7 @@ public sealed class StrategyVersionService(
             strategy.OwnerUserId,
             "Strategy.Version.DraftCreated",
             strategy.StrategyKey,
-            $"StrategyKey={strategy.StrategyKey}; Version={version.VersionNumber}; Template={parsedDefinition.Document.Metadata?.TemplateKey ?? "custom"}; Validation={parsedDefinition.Validation.StatusCode}",
+            $"StrategyKey={strategy.StrategyKey}; Version={version.VersionNumber}; Template={parsedDefinition.Document.Metadata?.TemplateKey ?? "custom"}; TemplateRevision={(parsedDefinition.Document.Metadata?.TemplateRevisionNumber?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "n/a")}; Validation={parsedDefinition.Validation.StatusCode}",
             cancellationToken);
 
         return ToSnapshot(strategy, version, parsedDefinition.Document, parsedDefinition.Validation);
@@ -92,148 +92,172 @@ public sealed class StrategyVersionService(
         Guid strategyVersionId,
         CancellationToken cancellationToken = default)
     {
-        var version = await GetVersionAsync(strategyVersionId, cancellationToken);
-        var strategy = await GetStrategyAsync(version.TradingStrategyId, cancellationToken);
+        return await ExecuteLifecycleMutationAsync(
+            async ct =>
+            {
+                var version = await GetVersionAsync(strategyVersionId, ct);
+                var strategy = await GetStrategyAsync(version.TradingStrategyId, ct);
 
-        if (version.Status == StrategyVersionStatus.Published)
-        {
-            return ToSnapshot(strategy, version);
-        }
+                if (version.Status == StrategyVersionStatus.Published)
+                {
+                    return ToSnapshot(strategy, version);
+                }
 
-        if (version.Status != StrategyVersionStatus.Draft)
-        {
-            throw new InvalidOperationException("Only draft strategy versions can be published.");
-        }
+                if (version.Status != StrategyVersionStatus.Draft)
+                {
+                    throw new InvalidOperationException("Only draft strategy versions can be published.");
+                }
 
-        var parsedDefinition = ParseAndValidate(version.DefinitionJson);
-        var utcNow = GetUtcNow();
+                var parsedDefinition = ParseAndValidate(version.DefinitionJson);
+                var utcNow = GetUtcNow();
 
-        version.Status = StrategyVersionStatus.Published;
-        version.PublishedAtUtc = utcNow;
-        version.ArchivedAtUtc = null;
-        strategy.UsesExplicitVersionLifecycle = true;
-        strategy.ActiveTradingStrategyVersionId = version.Id;
-        strategy.ActiveVersionActivatedAtUtc = utcNow;
+                version.Status = StrategyVersionStatus.Published;
+                version.PublishedAtUtc = utcNow;
+                version.ArchivedAtUtc = null;
+                strategy.UsesExplicitVersionLifecycle = true;
+                strategy.ActiveTradingStrategyVersionId = version.Id;
+                strategy.ActiveVersionActivatedAtUtc = utcNow;
 
-        await dbContext.SaveChangesAsync(cancellationToken);
-        await WriteAuditAsync(
-            strategy.OwnerUserId,
-            "Strategy.Version.Published",
-            strategy.StrategyKey,
-            $"StrategyKey={strategy.StrategyKey}; Version={version.VersionNumber}; Template={parsedDefinition.Document.Metadata?.TemplateKey ?? "custom"}; Validation={parsedDefinition.Validation.StatusCode}",
+                await dbContext.SaveChangesAsync(ct);
+                await WriteAuditAsync(
+                    strategy.OwnerUserId,
+                    "Strategy.Version.Published",
+                    strategy.StrategyKey,
+                    $"StrategyKey={strategy.StrategyKey}; Version={version.VersionNumber}; Template={parsedDefinition.Document.Metadata?.TemplateKey ?? "custom"}; TemplateRevision={(parsedDefinition.Document.Metadata?.TemplateRevisionNumber?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "n/a")}; Validation={parsedDefinition.Validation.StatusCode}",
+                    ct);
+                await WriteAuditAsync(
+                    strategy.OwnerUserId,
+                    "Strategy.Version.Activated",
+                    strategy.StrategyKey,
+                    $"StrategyKey={strategy.StrategyKey}; Version={version.VersionNumber}; Source=Publish; ActivationToken={ResolveActivationToken(strategy) ?? "n/a"}",
+                    ct);
+
+                return ToSnapshot(strategy, version, parsedDefinition.Document, parsedDefinition.Validation);
+            },
             cancellationToken);
-        await WriteAuditAsync(
-            strategy.OwnerUserId,
-            "Strategy.Version.Activated",
-            strategy.StrategyKey,
-            $"StrategyKey={strategy.StrategyKey}; Version={version.VersionNumber}; Source=Publish",
-            cancellationToken);
-
-        return ToSnapshot(strategy, version, parsedDefinition.Document, parsedDefinition.Validation);
     }
 
     public async Task<StrategyVersionSnapshot> ActivateAsync(
         Guid strategyVersionId,
+        string? expectedActivationToken = null,
         CancellationToken cancellationToken = default)
     {
-        var version = await GetVersionAsync(strategyVersionId, cancellationToken);
-        var strategy = await GetStrategyAsync(version.TradingStrategyId, cancellationToken);
+        return await ExecuteLifecycleMutationAsync(
+            async ct =>
+            {
+                var version = await GetVersionAsync(strategyVersionId, ct);
+                var strategy = await GetStrategyAsync(version.TradingStrategyId, ct);
 
-        if (version.Status != StrategyVersionStatus.Published)
-        {
-            throw new InvalidOperationException("Only published strategy versions can be activated.");
-        }
+                if (version.Status != StrategyVersionStatus.Published)
+                {
+                    throw new InvalidOperationException("Only published strategy versions can be activated.");
+                }
 
-        var parsedDefinition = ParseAndValidate(version.DefinitionJson);
-        if (strategy.UsesExplicitVersionLifecycle && strategy.ActiveTradingStrategyVersionId == version.Id)
-        {
-            return ToSnapshot(strategy, version, parsedDefinition.Document, parsedDefinition.Validation);
-        }
+                var parsedDefinition = ParseAndValidate(version.DefinitionJson);
+                EnsureActivationTokenMatches(strategy, expectedActivationToken);
+                if (strategy.UsesExplicitVersionLifecycle && strategy.ActiveTradingStrategyVersionId == version.Id)
+                {
+                    return ToSnapshot(strategy, version, parsedDefinition.Document, parsedDefinition.Validation);
+                }
 
-        var previousActiveVersionId = strategy.ActiveTradingStrategyVersionId;
-        strategy.UsesExplicitVersionLifecycle = true;
-        strategy.ActiveTradingStrategyVersionId = version.Id;
-        strategy.ActiveVersionActivatedAtUtc = GetUtcNow();
+                var previousActiveVersionId = strategy.ActiveTradingStrategyVersionId;
+                strategy.UsesExplicitVersionLifecycle = true;
+                strategy.ActiveTradingStrategyVersionId = version.Id;
+                strategy.ActiveVersionActivatedAtUtc = GetUtcNow();
 
-        await dbContext.SaveChangesAsync(cancellationToken);
-        await WriteAuditAsync(
-            strategy.OwnerUserId,
-            "Strategy.Version.Activated",
-            strategy.StrategyKey,
-            $"StrategyKey={strategy.StrategyKey}; Version={version.VersionNumber}; PreviousActiveVersionId={(previousActiveVersionId?.ToString("N") ?? "none")}",
+                await dbContext.SaveChangesAsync(ct);
+                await WriteAuditAsync(
+                    strategy.OwnerUserId,
+                    "Strategy.Version.Activated",
+                    strategy.StrategyKey,
+                    $"StrategyKey={strategy.StrategyKey}; Version={version.VersionNumber}; PreviousActiveVersionId={(previousActiveVersionId?.ToString("N") ?? "none")}; ActivationToken={ResolveActivationToken(strategy) ?? "n/a"}",
+                    ct);
+
+                return ToSnapshot(strategy, version, parsedDefinition.Document, parsedDefinition.Validation);
+            },
             cancellationToken);
-
-        return ToSnapshot(strategy, version, parsedDefinition.Document, parsedDefinition.Validation);
     }
 
     public async Task<StrategyVersionSnapshot?> DeactivateAsync(
         Guid strategyId,
+        string? expectedActivationToken = null,
         CancellationToken cancellationToken = default)
     {
-        var strategy = await GetStrategyAsync(strategyId, cancellationToken);
-        var runtimeVersion = await StrategyRuntimeVersionSelection.ResolveAsync(dbContext, strategy.Id, cancellationToken);
-        if (runtimeVersion is null)
-        {
-            return null;
-        }
+        return await ExecuteLifecycleMutationAsync(
+            async ct =>
+            {
+                var strategy = await GetStrategyAsync(strategyId, ct);
+                EnsureActivationTokenMatches(strategy, expectedActivationToken);
+                var runtimeVersion = await StrategyRuntimeVersionSelection.ResolveAsync(dbContext, strategy.Id, ct);
+                if (runtimeVersion is null)
+                {
+                    return null;
+                }
 
-        strategy.UsesExplicitVersionLifecycle = true;
-        strategy.ActiveTradingStrategyVersionId = null;
-        strategy.ActiveVersionActivatedAtUtc = null;
+                strategy.UsesExplicitVersionLifecycle = true;
+                strategy.ActiveTradingStrategyVersionId = null;
+                strategy.ActiveVersionActivatedAtUtc = null;
 
-        await dbContext.SaveChangesAsync(cancellationToken);
-        await WriteAuditAsync(
-            strategy.OwnerUserId,
-            "Strategy.Version.Deactivated",
-            strategy.StrategyKey,
-            $"StrategyKey={strategy.StrategyKey}; Version={runtimeVersion.VersionNumber}; PreviousActiveVersionId={runtimeVersion.Id:N}",
+                await dbContext.SaveChangesAsync(ct);
+                await WriteAuditAsync(
+                    strategy.OwnerUserId,
+                    "Strategy.Version.Deactivated",
+                    strategy.StrategyKey,
+                    $"StrategyKey={strategy.StrategyKey}; Version={runtimeVersion.VersionNumber}; PreviousActiveVersionId={runtimeVersion.Id:N}; ActivationToken={ResolveActivationToken(strategy) ?? "n/a"}",
+                    ct);
+
+                return ToSnapshot(strategy, runtimeVersion);
+            },
             cancellationToken);
-
-        return ToSnapshot(strategy, runtimeVersion);
     }
 
     public async Task<StrategyVersionSnapshot> ArchiveAsync(
         Guid strategyVersionId,
         CancellationToken cancellationToken = default)
     {
-        var version = await GetVersionAsync(strategyVersionId, cancellationToken);
-        var strategy = await GetStrategyAsync(version.TradingStrategyId, cancellationToken);
+        return await ExecuteLifecycleMutationAsync(
+            async ct =>
+            {
+                var version = await GetVersionAsync(strategyVersionId, ct);
+                var strategy = await GetStrategyAsync(version.TradingStrategyId, ct);
 
-        if (version.Status == StrategyVersionStatus.Archived)
-        {
-            return ToSnapshot(strategy, version);
-        }
+                if (version.Status == StrategyVersionStatus.Archived)
+                {
+                    return ToSnapshot(strategy, version);
+                }
 
-        var wasActive = strategy.ActiveTradingStrategyVersionId == version.Id;
-        version.Status = StrategyVersionStatus.Archived;
-        version.ArchivedAtUtc = GetUtcNow();
+                var wasActive = strategy.ActiveTradingStrategyVersionId == version.Id;
+                version.Status = StrategyVersionStatus.Archived;
+                version.ArchivedAtUtc = GetUtcNow();
 
-        if (wasActive)
-        {
-            strategy.UsesExplicitVersionLifecycle = true;
-            strategy.ActiveTradingStrategyVersionId = null;
-            strategy.ActiveVersionActivatedAtUtc = null;
-        }
+                if (wasActive)
+                {
+                    strategy.UsesExplicitVersionLifecycle = true;
+                    strategy.ActiveTradingStrategyVersionId = null;
+                    strategy.ActiveVersionActivatedAtUtc = null;
+                }
 
-        await dbContext.SaveChangesAsync(cancellationToken);
-        if (wasActive)
-        {
-            await WriteAuditAsync(
-                strategy.OwnerUserId,
-                "Strategy.Version.Deactivated",
-                strategy.StrategyKey,
-                $"StrategyKey={strategy.StrategyKey}; Version={version.VersionNumber}; Source=Archive",
-                cancellationToken);
-        }
+                await dbContext.SaveChangesAsync(ct);
+                if (wasActive)
+                {
+                    await WriteAuditAsync(
+                        strategy.OwnerUserId,
+                        "Strategy.Version.Deactivated",
+                        strategy.StrategyKey,
+                        $"StrategyKey={strategy.StrategyKey}; Version={version.VersionNumber}; Source=Archive; ActivationToken={ResolveActivationToken(strategy) ?? "n/a"}",
+                        ct);
+                }
 
-        await WriteAuditAsync(
-            strategy.OwnerUserId,
-            "Strategy.Version.Archived",
-            strategy.StrategyKey,
-            $"StrategyKey={strategy.StrategyKey}; Version={version.VersionNumber}; Status=Archived",
+                await WriteAuditAsync(
+                    strategy.OwnerUserId,
+                    "Strategy.Version.Archived",
+                    strategy.StrategyKey,
+                    $"StrategyKey={strategy.StrategyKey}; Version={version.VersionNumber}; Status=Archived",
+                    ct);
+
+                return ToSnapshot(strategy, version);
+            },
             cancellationToken);
-
-        return ToSnapshot(strategy, version);
     }
 
     private (StrategyRuleDocument Document, StrategyDefinitionValidationSnapshot Validation) ParseAndValidate(string definitionJson)
@@ -246,6 +270,41 @@ public sealed class StrategyVersionService(
         }
 
         return (document, validation);
+    }
+
+    private async Task<T> ExecuteLifecycleMutationAsync<T>(
+        Func<CancellationToken, Task<T>> action,
+        CancellationToken cancellationToken)
+    {
+        if (!dbContext.Database.IsRelational())
+        {
+            try
+            {
+                return await action(cancellationToken);
+            }
+            catch (DbUpdateConcurrencyException exception)
+            {
+                throw CreateStaleLifecycleException(exception);
+            }
+        }
+
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            var result = await action(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return result;
+        }
+        catch (DbUpdateConcurrencyException exception)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw CreateStaleLifecycleException(exception);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
     }
 
     private async Task<TradingStrategy> GetStrategyAsync(Guid strategyId, CancellationToken cancellationToken)
@@ -314,7 +373,10 @@ public sealed class StrategyVersionService(
                 ValidationSummary: exception.Message,
                 IsActive: IsActive(strategy, version.Id),
                 IsImmutable: version.Status != StrategyVersionStatus.Draft,
-                ActivatedAtUtc: ResolveActivatedAtUtc(strategy, version.Id));
+                ActivatedAtUtc: ResolveActivatedAtUtc(strategy, version.Id),
+                TemplateRevisionNumber: null,
+                TemplateSource: null,
+                ActivationToken: ResolveActivationToken(strategy));
         }
         catch (StrategyRuleParseException exception)
         {
@@ -332,7 +394,10 @@ public sealed class StrategyVersionService(
                 ValidationSummary: exception.Message,
                 IsActive: IsActive(strategy, version.Id),
                 IsImmutable: version.Status != StrategyVersionStatus.Draft,
-                ActivatedAtUtc: ResolveActivatedAtUtc(strategy, version.Id));
+                ActivatedAtUtc: ResolveActivatedAtUtc(strategy, version.Id),
+                TemplateRevisionNumber: null,
+                TemplateSource: null,
+                ActivationToken: ResolveActivationToken(strategy));
         }
     }
 
@@ -356,7 +421,10 @@ public sealed class StrategyVersionService(
             validation.Summary,
             IsActive: IsActive(strategy, version.Id),
             IsImmutable: version.Status != StrategyVersionStatus.Draft,
-            ActivatedAtUtc: ResolveActivatedAtUtc(strategy, version.Id));
+            ActivatedAtUtc: ResolveActivatedAtUtc(strategy, version.Id),
+            TemplateRevisionNumber: document.Metadata?.TemplateRevisionNumber,
+            TemplateSource: document.Metadata?.TemplateSource,
+            ActivationToken: ResolveActivationToken(strategy));
     }
 
     private static bool IsActive(TradingStrategy strategy, Guid strategyVersionId)
@@ -370,6 +438,34 @@ public sealed class StrategyVersionService(
         return IsActive(strategy, strategyVersionId)
             ? strategy.ActiveVersionActivatedAtUtc
             : null;
+    }
+
+    private static string? ResolveActivationToken(TradingStrategy strategy)
+    {
+        return strategy.ActivationConcurrencyToken.Length == 0
+            ? null
+            : Convert.ToBase64String(strategy.ActivationConcurrencyToken);
+    }
+
+    private static void EnsureActivationTokenMatches(TradingStrategy strategy, string? expectedActivationToken)
+    {
+        if (string.IsNullOrWhiteSpace(expectedActivationToken))
+        {
+            return;
+        }
+
+        var actualToken = ResolveActivationToken(strategy);
+        if (!string.Equals(actualToken, expectedActivationToken.Trim(), StringComparison.Ordinal))
+        {
+            throw CreateStaleLifecycleException();
+        }
+    }
+
+    private static InvalidOperationException CreateStaleLifecycleException(Exception? innerException = null)
+    {
+        return new InvalidOperationException(
+            "Strategy lifecycle request became stale. Refresh lifecycle state and retry with the latest activation token.",
+            innerException);
     }
 
     private static string NormalizeDefinitionJson(string definitionJson)

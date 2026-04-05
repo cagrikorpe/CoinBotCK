@@ -56,9 +56,12 @@ public sealed class StrategyVersionServiceTests
 
         Assert.Equal("rsi-reversal", draft.TemplateKey);
         Assert.Equal("RSI Reversal", draft.TemplateName);
+        Assert.Equal(1, draft.TemplateRevisionNumber);
+        Assert.Equal("BuiltIn", draft.TemplateSource);
         Assert.Equal("Valid", draft.ValidationStatusCode);
         Assert.Equal(2, persistedVersion.SchemaVersion);
         Assert.Contains("\"templateKey\": \"rsi-reversal\"", persistedVersion.DefinitionJson, StringComparison.Ordinal);
+        Assert.Contains("\"templateRevisionNumber\": 1", persistedVersion.DefinitionJson, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -207,6 +210,29 @@ public sealed class StrategyVersionServiceTests
         Assert.True(secondActivation.IsActive);
         Assert.Equal(firstActivatedAtUtc, secondActivation.ActivatedAtUtc);
         Assert.Equal(firstActivatedAtUtc, persistedStrategy.ActiveVersionActivatedAtUtc);
+    }
+
+    [Fact]
+    public async Task ActivateAsync_RejectsStaleActivationToken_FailClosed()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-activate-stale", "stale-token-core");
+        strategy.ActivationConcurrencyToken = [(byte)1, (byte)2, (byte)3, (byte)4];
+        dbContext.TradingStrategies.Add(strategy);
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext, timeProvider);
+        var published = await service.PublishAsync((await service.CreateDraftAsync(strategy.Id, CreateDefinitionJson("Live", 30m))).StrategyVersionId);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => service.ActivateAsync(
+            published.StrategyVersionId,
+            expectedActivationToken: Convert.ToBase64String([(byte)9, (byte)9, (byte)9, (byte)9])));
+
+        var persistedStrategy = await dbContext.TradingStrategies.SingleAsync(entity => entity.Id == strategy.Id);
+
+        Assert.Contains("stale", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(published.StrategyVersionId, persistedStrategy.ActiveTradingStrategyVersionId);
     }
 
     [Fact]

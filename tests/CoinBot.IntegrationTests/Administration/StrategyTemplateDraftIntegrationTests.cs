@@ -78,14 +78,94 @@ public sealed class StrategyTemplateDraftIntegrationTests
             Assert.Equal(2, persistedVersion.SchemaVersion);
             Assert.Equal("rsi-reversal", draft.TemplateKey);
             Assert.Equal("RSI Reversal", draft.TemplateName);
+            Assert.Equal(1, draft.TemplateRevisionNumber);
             Assert.Equal("Valid", draft.ValidationStatusCode);
 
             var usageRow = Assert.Single(snapshot.UsageRows);
             Assert.Equal("template-draft-int", usageRow.StrategyKey);
             Assert.Equal("rsi-reversal", usageRow.TemplateKey);
             Assert.Equal("RSI Reversal", usageRow.TemplateName);
+            Assert.Equal("r1", usageRow.RuntimeTemplateRevisionLabel);
             Assert.Equal("Valid", usageRow.ValidationStatusCode);
-            Assert.Contains(snapshot.TemplateCatalog, template => template.TemplateKey == "rsi-reversal" && template.ValidationStatusCode == "Valid");
+            Assert.Contains(snapshot.TemplateCatalog, template => template.TemplateKey == "rsi-reversal" && template.ValidationStatusCode == "Valid" && template.ActiveRevisionNumber == 1);
+        }
+        finally
+        {
+            await dbContext.Database.EnsureDeletedAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ArchivedCustomTemplateRevision_CannotCreateRuntimeDraft_OnSqlServer()
+    {
+        var databaseName = $"CoinBotStrategyTemplateArchiveInt_{Guid.NewGuid():N}";
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString(databaseName);
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        await using var dbContext = CreateDbContext(connectionString);
+        await dbContext.Database.EnsureDeletedAsync();
+        await dbContext.Database.EnsureCreatedAsync();
+
+        try
+        {
+            var strategyId = Guid.NewGuid();
+            dbContext.Users.Add(new ApplicationUser
+            {
+                Id = "template-archive-user",
+                UserName = "template-archive-user",
+                NormalizedUserName = "TEMPLATE-ARCHIVE-USER",
+                Email = "template-archive-user@coinbot.test",
+                NormalizedEmail = "TEMPLATE-ARCHIVE-USER@COINBOT.TEST",
+                FullName = "Template Archive User",
+                EmailConfirmed = true
+            });
+            dbContext.TradingStrategies.Add(new TradingStrategy
+            {
+                Id = strategyId,
+                OwnerUserId = "template-archive-user",
+                StrategyKey = "template-archive-int",
+                DisplayName = "Template Archive Integration",
+                PromotionState = StrategyPromotionState.Draft
+            });
+            await dbContext.SaveChangesAsync();
+
+            var parser = new StrategyRuleParser();
+            var validator = new StrategyDefinitionValidator();
+            var templateCatalog = new StrategyTemplateCatalogService(parser, validator, dbContext);
+            var strategyVersionService = new StrategyVersionService(
+                dbContext,
+                parser,
+                new FixedTimeProvider(nowUtc),
+                validator,
+                templateCatalog);
+
+            _ = await templateCatalog.CreateCustomAsync(
+                "template-archive-user",
+                "archived-runtime-template",
+                "Archived Runtime Template",
+                "Custom archived template.",
+                "Custom",
+                CreateCustomDefinitionJson(revision: 1));
+            _ = await templateCatalog.ReviseAsync(
+                "archived-runtime-template",
+                "Archived Runtime Template",
+                "Custom archived template revised.",
+                "Custom",
+                CreateCustomDefinitionJson(revision: 2));
+            _ = await templateCatalog.ArchiveAsync("archived-runtime-template");
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => strategyVersionService.CreateDraftFromTemplateAsync(strategyId, "archived-runtime-template"));
+            var templateId = await dbContext.TradingStrategyTemplates
+                .AsNoTracking()
+                .Where(entity => entity.TemplateKey == "archived-runtime-template")
+                .Select(entity => entity.Id)
+                .SingleAsync();
+            var revisions = await dbContext.TradingStrategyTemplateRevisions
+                .AsNoTracking()
+                .Where(entity => entity.TradingStrategyTemplateId == templateId)
+                .ToListAsync();
+
+            Assert.Contains("not found", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.All(revisions, revision => Assert.True(revision.ArchivedAtUtc.HasValue));
         }
         finally
         {
@@ -138,5 +218,31 @@ public sealed class StrategyTemplateDraftIntegrationTests
     private sealed class FixedTimeProvider(DateTimeOffset nowUtc) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => nowUtc;
+    }
+
+    private static string CreateCustomDefinitionJson(int revision)
+    {
+        return
+            $$"""
+            {
+              "schemaVersion": 2,
+              "metadata": {
+                "templateKey": "archived-runtime-template",
+                "templateName": "Archived Runtime Template",
+                "templateRevisionNumber": {{revision}},
+                "templateSource": "Custom"
+              },
+              "entry": {
+                "path": "context.mode",
+                "comparison": "equals",
+                "value": "Demo",
+                "ruleId": "entry-mode",
+                "ruleType": "context",
+                "timeframe": "30m",
+                "weight": 20,
+                "enabled": true
+              }
+            }
+            """;
     }
 }

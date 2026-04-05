@@ -1,0 +1,44 @@
+@using CoinBot.Application.Abstractions.Administration
+@{
+    var snapshot = ViewData["AdminStrategyAiMonitoringPageSnapshot"] as AdminStrategyAiMonitoringPageSnapshot;
+    var templates = snapshot?.TemplateCatalog ?? Array.Empty<AdminStrategyTemplateSnapshot>();
+}
+
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-panel-card" data-cb-strategy-template-catalog>
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Template Lifecycle</div>
+                <div class="cb-admin-section-title">Template revision katalogu</div>
+                <p class="cb-admin-section-description mb-0">Built-in ve custom template lineage, active/latest revision ve archived durumu aynı admin hakikatinden okunur.</p>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = snapshot is null ? "Veri yok" : $"{templates.Count} template", Tone = "info", IconText = "TP" })
+        </div>
+
+        @if (templates.Count == 0)
+        {
+            @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+            {
+                Title = "Template verisi yok",
+                Message = "Template lifecycle snapshot bulunamadı.",
+                IconText = "TP"
+            })
+        }
+        else
+        {
+            <div class="cb-admin-profile-list mt-6">
+                @foreach (var template in templates)
+                {
+                    <div class="cb-admin-profile-row">
+                        <span data-cb-strategy-template-key>@template.TemplateKey</span>
+                        <strong data-cb-strategy-template-revisions>@template.TemplateName · @template.TemplateSource · Active=r@template.ActiveRevisionNumber · Latest=r@template.LatestRevisionNumber · @template.LifecycleStatusLabel</strong>
+                    </div>
+                    <div class="cb-admin-profile-row">
+                        <span>Lineage</span>
+                        <strong data-cb-strategy-template-lineage>@template.SourceLineageLabel</strong>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>

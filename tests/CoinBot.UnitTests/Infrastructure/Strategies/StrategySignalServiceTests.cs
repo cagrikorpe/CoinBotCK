@@ -80,6 +80,8 @@ public sealed class StrategySignalServiceTests
         Assert.Equal("Persisted", decisionTrace.DecisionOutcome);
         Assert.Equal("BTCUSDT", decisionTrace.Symbol);
         Assert.Contains("\"templateKey\":\"rsi-reversal\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
+        Assert.Contains("\"templateRevisionNumber\":1", decisionTrace.SnapshotJson, StringComparison.Ordinal);
+        Assert.Contains("\"templateSource\":\"BuiltIn\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
         Assert.Contains("\"aggregateScore\":100", decisionTrace.SnapshotJson, StringComparison.Ordinal);
         Assert.Contains("\"passedRules\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
     }
@@ -415,7 +417,9 @@ public sealed class StrategySignalServiceTests
               "schemaVersion": 2,
               "metadata": {
                 "templateKey": "rsi-reversal",
-                "templateName": "RSI Reversal"
+                "templateName": "RSI Reversal",
+                "templateRevisionNumber": 1,
+                "templateSource": "BuiltIn"
               },
               "entry": {
                 "operator": "all",
@@ -454,7 +458,9 @@ public sealed class StrategySignalServiceTests
               "schemaVersion": 2,
               "metadata": {
                 "templateKey": "indicator-ready",
-                "templateName": "Indicator Ready"
+                "templateName": "Indicator Ready",
+                "templateRevisionNumber": 1,
+                "templateSource": "BuiltIn"
               },
               "entry": {
                 "operator": "all",

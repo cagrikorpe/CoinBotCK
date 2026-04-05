@@ -18,4 +18,6 @@ public sealed record StrategyEvaluationReportSnapshot(
     StrategyEvaluationResult RuleEvaluation,
     IReadOnlyCollection<string> PassedRules,
     IReadOnlyCollection<string> FailedRules,
-    string ExplainabilitySummary);
+    string ExplainabilitySummary,
+    int? TemplateRevisionNumber = null,
+    string? TemplateSource = null);

@@ -63,7 +63,9 @@ public sealed class StrategyRuleParserTests
               "schemaVersion": 2,
               "metadata": {
                 "templateKey": "rsi-reversal",
-                "templateName": "RSI Reversal"
+                "templateName": "RSI Reversal",
+                "templateRevisionNumber": 3,
+                "templateSource": "Custom"
               },
               "entry": {
                 "operator": "all",
@@ -96,6 +98,8 @@ public sealed class StrategyRuleParserTests
         Assert.Equal(2, document.SchemaVersion);
         Assert.Equal("rsi-reversal", document.Metadata?.TemplateKey);
         Assert.Equal("RSI Reversal", document.Metadata?.TemplateName);
+        Assert.Equal(3, document.Metadata?.TemplateRevisionNumber);
+        Assert.Equal("Custom", document.Metadata?.TemplateSource);
         Assert.Equal("entry-root", entryGroup.Metadata?.RuleId);
         Assert.Equal("group", entryGroup.Metadata?.RuleType);
         Assert.Equal("1m", entryGroup.Metadata?.Timeframe);
@@ -158,5 +162,43 @@ public sealed class StrategyRuleParserTests
             """));
 
         Assert.Contains("operator", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Parse_SupportsExpandedComparisonOperators_WithoutChangingShape()
+    {
+        var parser = new StrategyRuleParser();
+
+        var document = parser.Parse(
+            """
+            {
+              "schemaVersion": 2,
+              "entry": {
+                "operator": "any",
+                "timeframe": "30m",
+                "rules": [
+                  {
+                    "path": "indicator.latencySeconds",
+                    "comparison": "between",
+                    "value": "0..5"
+                  },
+                  {
+                    "path": "indicator.source",
+                    "comparison": "contains",
+                    "value": "stream"
+                  }
+                ]
+              }
+            }
+            """);
+
+        var entryGroup = Assert.IsType<StrategyRuleGroup>(document.Entry);
+        var latencyCondition = Assert.IsType<StrategyRuleCondition>(entryGroup.Rules[0]);
+        var sourceCondition = Assert.IsType<StrategyRuleCondition>(entryGroup.Rules[1]);
+
+        Assert.Equal(StrategyRuleGroupOperator.Any, entryGroup.Operator);
+        Assert.Equal(StrategyRuleComparisonOperator.Between, latencyCondition.Comparison);
+        Assert.Equal("0..5", latencyCondition.Operand.Value);
+        Assert.Equal(StrategyRuleComparisonOperator.Contains, sourceCondition.Comparison);
     }
 }

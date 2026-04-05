@@ -82,11 +82,13 @@ public sealed class StrategyRuleParser : IStrategyRuleParser
             throw new StrategyRuleParseException("Strategy definition property 'metadata' must be a JSON object.");
         }
 
-        ValidateAllowedProperties(metadataElement, ["templateKey", "templateName"], "strategy definition.metadata");
+        ValidateAllowedProperties(metadataElement, ["templateKey", "templateName", "templateRevisionNumber", "templateSource"], "strategy definition.metadata");
 
         return new StrategyDefinitionMetadata(
             TryGetOptionalString(metadataElement, "templateKey", "strategy definition.metadata.templateKey"),
-            TryGetOptionalString(metadataElement, "templateName", "strategy definition.metadata.templateName"));
+            TryGetOptionalString(metadataElement, "templateName", "strategy definition.metadata.templateName"),
+            TryGetOptionalInt32(metadataElement, "templateRevisionNumber", "strategy definition.metadata.templateRevisionNumber"),
+            TryGetOptionalString(metadataElement, "templateSource", "strategy definition.metadata.templateSource"));
     }
 
     private static StrategyRuleNode ParseNode(JsonElement element, string location)
@@ -215,6 +217,11 @@ public sealed class StrategyRuleParser : IStrategyRuleParser
             "greaterthanorequal" => StrategyRuleComparisonOperator.GreaterThanOrEqual,
             "lessthan" => StrategyRuleComparisonOperator.LessThan,
             "lessthanorequal" => StrategyRuleComparisonOperator.LessThanOrEqual,
+            "between" => StrategyRuleComparisonOperator.Between,
+            "notbetween" => StrategyRuleComparisonOperator.NotBetween,
+            "contains" => StrategyRuleComparisonOperator.Contains,
+            "startswith" => StrategyRuleComparisonOperator.StartsWith,
+            "endswith" => StrategyRuleComparisonOperator.EndsWith,
             _ => throw new StrategyRuleParseException($"Strategy rule comparison '{value}' is not supported.")
         };
     }
@@ -252,6 +259,21 @@ public sealed class StrategyRuleParser : IStrategyRuleParser
         }
 
         if (propertyValue.ValueKind != JsonValueKind.Number || !propertyValue.TryGetDecimal(out var value))
+        {
+            throw new StrategyRuleParseException($"Strategy rule property '{location}' must be numeric.");
+        }
+
+        return value;
+    }
+
+    private static int? TryGetOptionalInt32(JsonElement element, string propertyName, string location)
+    {
+        if (!TryGetProperty(element, propertyName, out var propertyValue))
+        {
+            return null;
+        }
+
+        if (propertyValue.ValueKind != JsonValueKind.Number || !propertyValue.TryGetInt32(out var value))
         {
             throw new StrategyRuleParseException($"Strategy rule property '{location}' must be numeric.");
         }

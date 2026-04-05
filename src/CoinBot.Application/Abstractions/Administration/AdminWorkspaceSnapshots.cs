@@ -193,7 +193,12 @@ public sealed record AdminStrategyUsageSnapshot(
     string ValidationSummary,
     string LatestScoreLabel,
     string LatestExplainabilitySummary,
-    string LatestRuleSummary);
+    string LatestRuleSummary,
+    string RuntimeVersionLabel = "n/a",
+    string LatestVersionLabel = "n/a",
+    string RuntimeTemplateRevisionLabel = "n/a",
+    string LatestTemplateRevisionLabel = "n/a",
+    string LifecycleTokenLabel = "n/a");
 
 public sealed record AdminStrategyTemplateSnapshot(
     string TemplateKey,
@@ -202,7 +207,12 @@ public sealed record AdminStrategyTemplateSnapshot(
     string ValidationStatusCode,
     string ValidationSummary,
     int SchemaVersion,
-    string Description);
+    string Description,
+    int ActiveRevisionNumber = 1,
+    int LatestRevisionNumber = 1,
+    string TemplateSource = "BuiltIn",
+    string LifecycleStatusLabel = "Active",
+    string SourceLineageLabel = "self");
 
 public sealed record AdminStrategyExplainabilitySnapshot(
     string StrategyKey,
@@ -213,7 +223,9 @@ public sealed record AdminStrategyExplainabilitySnapshot(
     string Summary,
     string RuleSummary,
     string TemplateName,
-    DateTime? EvaluatedAtUtc);
+    DateTime? EvaluatedAtUtc,
+    string? TemplateRevisionLabel = null,
+    string? VersionLabel = null);
 
 public sealed record AdminStrategyAiMonitoringPageSnapshot(
     string? Query,

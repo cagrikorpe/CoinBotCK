@@ -172,4 +172,79 @@ public sealed class StrategyDefinitionValidatorTests
         Assert.False(snapshot.IsValid);
         Assert.Contains(snapshot.FailureReasons, reason => reason.StartsWith("UnsupportedTimeframe:entry:2m", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void Validate_Passes_ForExpandedBreadth_PathsOperators_AndTimeframes()
+    {
+        var parser = new StrategyRuleParser();
+        var validator = new StrategyDefinitionValidator();
+
+        var snapshot = validator.Validate(parser.Parse(
+            """
+            {
+              "schemaVersion": 2,
+              "entry": {
+                "operator": "all",
+                "ruleId": "entry-root",
+                "ruleType": "group",
+                "timeframe": "30m",
+                "weight": 1,
+                "enabled": true,
+                "rules": [
+                  {
+                    "ruleId": "entry-latency",
+                    "ruleType": "data-quality",
+                    "path": "indicator.latencySeconds",
+                    "comparison": "between",
+                    "value": "0..5",
+                    "timeframe": "30m",
+                    "weight": 10,
+                    "enabled": true
+                  },
+                  {
+                    "ruleId": "entry-source",
+                    "ruleType": "data-quality",
+                    "path": "indicator.source",
+                    "comparison": "contains",
+                    "value": "stream",
+                    "timeframe": "30m",
+                    "weight": 10,
+                    "enabled": true
+                  }
+                ]
+              }
+            }
+            """));
+
+        Assert.True(snapshot.IsValid);
+        Assert.Equal("Valid", snapshot.StatusCode);
+        Assert.Equal(2, snapshot.EnabledRuleCount);
+    }
+
+    [Fact]
+    public void Validate_FailsClosed_ForInvalidRangeShape()
+    {
+        var parser = new StrategyRuleParser();
+        var validator = new StrategyDefinitionValidator();
+
+        var snapshot = validator.Validate(parser.Parse(
+            """
+            {
+              "schemaVersion": 2,
+              "entry": {
+                "path": "indicator.latencySeconds",
+                "comparison": "between",
+                "value": "fast",
+                "ruleId": "entry-latency",
+                "ruleType": "data-quality",
+                "timeframe": "30m",
+                "weight": 10,
+                "enabled": true
+              }
+            }
+            """));
+
+        Assert.False(snapshot.IsValid);
+        Assert.Contains(snapshot.FailureReasons, reason => reason.StartsWith("InvalidRangeOperand:entry:fast", StringComparison.Ordinal));
+    }
 }

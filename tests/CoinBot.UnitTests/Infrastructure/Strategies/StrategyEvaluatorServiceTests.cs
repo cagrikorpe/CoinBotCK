@@ -304,6 +304,85 @@ public sealed class StrategyEvaluatorServiceTests
             secondResult.EntryRuleResult?.Children.Select(child => child.Reason).ToArray());
     }
 
+    [Fact]
+    public void Evaluate_SupportsExpandedBreadth_ForLatencyRange_StringContains_AndDerivedIndicatorPaths()
+    {
+        var parser = new StrategyRuleParser();
+        var service = new StrategyEvaluatorService(parser, new StrategyDefinitionValidator());
+        var context = CreateContext(ExecutionEnvironment.Live) with
+        {
+            IndicatorSnapshot = CreateIndicatorSnapshot(rsiValue: 28m) with
+            {
+                Timeframe = "30m",
+                ReceivedAtUtc = new DateTime(2026, 3, 22, 12, 1, 3, DateTimeKind.Utc),
+                Source = "scanner-stream"
+            }
+        };
+
+        var result = service.Evaluate(
+            """
+            {
+              "schemaVersion": 2,
+              "entry": {
+                "operator": "all",
+                "ruleId": "entry-root",
+                "ruleType": "group",
+                "timeframe": "30m",
+                "weight": 1,
+                "enabled": true,
+                "rules": [
+                  {
+                    "ruleId": "latency-window",
+                    "ruleType": "data-quality",
+                    "path": "indicator.latencySeconds",
+                    "comparison": "between",
+                    "value": "0..5",
+                    "timeframe": "30m",
+                    "weight": 10,
+                    "enabled": true
+                  },
+                  {
+                    "ruleId": "source-contains-stream",
+                    "ruleType": "data-quality",
+                    "path": "indicator.source",
+                    "comparison": "contains",
+                    "value": "stream",
+                    "timeframe": "30m",
+                    "weight": 10,
+                    "enabled": true
+                  },
+                  {
+                    "ruleId": "macd-spread-positive",
+                    "ruleType": "macd",
+                    "path": "indicator.macd.spread",
+                    "comparison": "greaterThan",
+                    "value": 0,
+                    "timeframe": "30m",
+                    "weight": 10,
+                    "enabled": true
+                  },
+                  {
+                    "ruleId": "bandwidth-positive",
+                    "ruleType": "bollinger",
+                    "path": "indicator.bollinger.bandWidth",
+                    "comparison": "greaterThan",
+                    "value": 0,
+                    "timeframe": "30m",
+                    "weight": 10,
+                    "enabled": true
+                  }
+                ]
+              }
+            }
+            """,
+            context);
+
+        Assert.True(result.EntryMatched);
+        Assert.All(result.EntryRuleResult!.Children, child => Assert.True(child.Matched));
+        Assert.Contains(result.EntryRuleResult.Children, child => child.Path == "indicator.latencySeconds" && child.LeftValue == "3");
+        Assert.Contains(result.EntryRuleResult.Children, child => child.Path == "indicator.macd.spread" && child.LeftValue == "0.3");
+    }
+
     private static StrategyEvaluationContext CreateContext(ExecutionEnvironment mode)
     {
         return new StrategyEvaluationContext(mode, CreateIndicatorSnapshot(rsiValue: 28m));

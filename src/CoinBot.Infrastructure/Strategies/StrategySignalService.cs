@@ -960,6 +960,8 @@ public sealed class StrategySignalService(
                 IsActiveVersion = strategy.ActiveTradingStrategyVersionId == version.Id || !strategy.UsesExplicitVersionLifecycle,
                 report.TemplateKey,
                 report.TemplateName,
+                report.TemplateRevisionNumber,
+                report.TemplateSource,
                 report.Outcome,
                 report.AggregateScore,
                 report.PassedRuleCount,

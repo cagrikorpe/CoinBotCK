@@ -115,7 +115,12 @@ public sealed partial class AdminWorkspaceReadModelService
                 template.Validation.StatusCode,
                 template.Validation.Summary,
                 template.SchemaVersion,
-                template.Description))
+                template.Description,
+                template.ActiveRevisionNumber,
+                template.LatestRevisionNumber,
+                template.TemplateSource,
+                template.IsActive ? "Active" : "Archived",
+                BuildTemplateLineageLabel(template)))
             .ToArray();
 
         var rows = strategies.Select(strategy =>
@@ -153,7 +158,12 @@ public sealed partial class AdminWorkspaceReadModelService
                 definitionSummary.ValidationSummary,
                 explainabilitySummary.ScoreLabel,
                 explainabilitySummary.Summary,
-                explainabilitySummary.RuleSummary);
+                explainabilitySummary.RuleSummary,
+                FormatVersionLabel(runtimeVersion),
+                FormatVersionLabel(latestVersion),
+                definitionSummary.TemplateRevisionLabel,
+                latestVersion is null ? definitionSummary.TemplateRevisionLabel : BuildStrategyDefinitionSummary(latestVersion).TemplateRevisionLabel,
+                BuildLifecycleTokenLabel(strategy));
         }).ToArray();
 
         rows = rows
@@ -471,7 +481,9 @@ public sealed partial class AdminWorkspaceReadModelService
                 confidence.Summary,
                 BuildRuleSummary(evaluationResult),
                 definitionSummary.TemplateName,
-                NormalizeUtc(latestSignal.GeneratedAtUtc));
+                NormalizeUtc(latestSignal.GeneratedAtUtc),
+                definitionSummary.TemplateRevisionLabel,
+                FormatVersionLabel(version));
         }
 
         var vetoStrategy = strategies.FirstOrDefault(item => item.Id == latestVeto.TradingStrategyId);
@@ -489,14 +501,16 @@ public sealed partial class AdminWorkspaceReadModelService
             vetoConfidence.Summary,
             $"RiskVeto={latestVeto.ReasonCode}; {vetoConfidence.Summary}",
             vetoDefinitionSummary.TemplateName,
-            NormalizeUtc(latestVeto.EvaluatedAtUtc));
+            NormalizeUtc(latestVeto.EvaluatedAtUtc),
+            vetoDefinitionSummary.TemplateRevisionLabel,
+            FormatVersionLabel(vetoVersion));
     }
 
     private StrategyDefinitionSummary BuildStrategyDefinitionSummary(TradingStrategyVersion? version)
     {
         if (version is null)
         {
-            return new StrategyDefinitionSummary("custom", "Custom strategy", "MissingVersion", "Published strategy version was not found.");
+            return new StrategyDefinitionSummary("custom", "Custom strategy", "MissingVersion", "Published strategy version was not found.", "n/a", null);
         }
 
         try
@@ -514,15 +528,17 @@ public sealed partial class AdminWorkspaceReadModelService
                 templateKey,
                 templateName,
                 validation.StatusCode,
-                validation.Summary);
+                validation.Summary,
+                BuildTemplateRevisionLabel(document.Metadata?.TemplateRevisionNumber),
+                document.Metadata?.TemplateSource);
         }
         catch (StrategyDefinitionValidationException exception)
         {
-            return new StrategyDefinitionSummary("custom", "Custom strategy", exception.StatusCode, exception.Message);
+            return new StrategyDefinitionSummary("custom", "Custom strategy", exception.StatusCode, exception.Message, "n/a", null);
         }
         catch (StrategyRuleParseException exception)
         {
-            return new StrategyDefinitionSummary("custom", "Custom strategy", "ParseFailed", exception.Message);
+            return new StrategyDefinitionSummary("custom", "Custom strategy", "ParseFailed", exception.Message, "n/a", null);
         }
     }
 
@@ -648,11 +664,53 @@ public sealed partial class AdminWorkspaceReadModelService
     private static string BuildTradingModeTone(ExecutionEnvironment mode) =>
         mode == ExecutionEnvironment.Live ? "critical" : "neutral";
 
+    private static string BuildTemplateRevisionLabel(int? revisionNumber)
+    {
+        return revisionNumber is > 0
+            ? $"r{revisionNumber.Value}"
+            : "n/a";
+    }
+
+    private static string FormatVersionLabel(TradingStrategyVersion? version)
+    {
+        return version is null
+            ? "Inactive"
+            : $"v{version.VersionNumber}";
+    }
+
+    private static string BuildLifecycleTokenLabel(TradingStrategy strategy)
+    {
+        if (strategy.ActivationConcurrencyToken.Length == 0)
+        {
+            return "n/a";
+        }
+
+        var encoded = Convert.ToBase64String(strategy.ActivationConcurrencyToken);
+        return encoded.Length <= 12
+            ? encoded
+            : $"{encoded[..6]}...{encoded[^4..]}";
+    }
+
+    private static string BuildTemplateLineageLabel(StrategyTemplateSnapshot template)
+    {
+        var sourceLabel = string.IsNullOrWhiteSpace(template.SourceTemplateKey)
+            ? template.TemplateSource
+            : $"{template.SourceTemplateKey}/r{template.SourceRevisionNumber ?? 1}";
+
+        var activeLabel = template.IsActive
+            ? $"r{template.ActiveRevisionNumber}"
+            : "inactive";
+
+        return $"{sourceLabel}; Active={activeLabel}; Latest=r{template.LatestRevisionNumber}";
+    }
+
     private sealed record StrategyDefinitionSummary(
         string TemplateKey,
         string TemplateName,
         string ValidationStatusCode,
-        string ValidationSummary);
+        string ValidationSummary,
+        string TemplateRevisionLabel,
+        string? TemplateSource);
 
     private sealed record StrategyExplainabilitySummaryResult(
         string ScoreLabel,

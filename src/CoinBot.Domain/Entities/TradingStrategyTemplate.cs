@@ -16,6 +16,10 @@ public sealed class TradingStrategyTemplate : UserOwnedEntity
 
     public bool IsActive { get; set; } = true;
 
+    public Guid? ActiveTradingStrategyTemplateRevisionId { get; set; }
+
+    public Guid? LatestTradingStrategyTemplateRevisionId { get; set; }
+
     public string? SourceTemplateKey { get; set; }
 
     public DateTime? ArchivedAtUtc { get; set; }

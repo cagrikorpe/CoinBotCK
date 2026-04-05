@@ -263,9 +263,10 @@ public sealed class StrategyTemplateCatalogService(
             .OrderBy(entity => entity.TemplateName)
             .ThenBy(entity => entity.TemplateKey)
             .ToListAsync(cancellationToken);
+        var revisions = await LoadRevisionsAsync(customTemplates.Select(entity => entity.Id).ToArray(), cancellationToken);
 
         return builtInSnapshots
-            .Concat(customTemplates.Select(BuildCustomSnapshot))
+            .Concat(customTemplates.Select(template => BuildCustomSnapshot(template, revisions)))
             .OrderBy(template => template.TemplateName, StringComparer.Ordinal)
             .ThenBy(template => template.TemplateKey, StringComparer.Ordinal)
             .ToArray();
@@ -292,13 +293,16 @@ public sealed class StrategyTemplateCatalogService(
             .AsNoTracking()
             .SingleOrDefaultAsync(
                 entity => entity.TemplateKey == normalizedTemplateKey &&
-                          entity.IsActive &&
                           !entity.IsDeleted,
                 cancellationToken);
 
-        return template is not null
-            ? BuildCustomSnapshot(template)
-            : throw new InvalidOperationException($"Strategy template '{normalizedTemplateKey}' was not found.");
+        if (template is null || !template.IsActive)
+        {
+            throw new InvalidOperationException($"Strategy template '{normalizedTemplateKey}' was not found.");
+        }
+
+        var revisions = await LoadRevisionsAsync([template.Id], cancellationToken);
+        return BuildCustomSnapshot(template, revisions);
     }
 
     public async Task<StrategyTemplateSnapshot> CreateCustomAsync(
@@ -318,6 +322,7 @@ public sealed class StrategyTemplateCatalogService(
             category,
             definitionJson,
             sourceTemplateKey: null,
+            sourceRevisionNumber: null,
             cancellationToken);
     }
 
@@ -340,7 +345,153 @@ public sealed class StrategyTemplateCatalogService(
             category,
             source.DefinitionJson,
             source.TemplateKey,
+            source.ActiveRevisionNumber,
             cancellationToken);
+    }
+
+    public async Task<StrategyTemplateSnapshot> ReviseAsync(
+        string templateKey,
+        string templateName,
+        string description,
+        string category,
+        string definitionJson,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        EnsurePersistenceAvailable();
+
+        var normalizedTemplateKey = NormalizeTemplateKey(templateKey, nameof(templateKey));
+        if (TryGetBuiltInTemplate(normalizedTemplateKey).Key is not null)
+        {
+            throw new InvalidOperationException("Built-in strategy templates cannot be revised.");
+        }
+
+        var template = await dbContext!.TradingStrategyTemplates
+            .SingleOrDefaultAsync(
+                entity => entity.TemplateKey == normalizedTemplateKey &&
+                          !entity.IsDeleted,
+                cancellationToken)
+            ?? throw new InvalidOperationException($"Strategy template '{normalizedTemplateKey}' was not found.");
+
+        if (!template.IsActive)
+        {
+            throw new InvalidOperationException("Archived strategy templates cannot be revised.");
+        }
+
+        var revisions = await dbContext.TradingStrategyTemplateRevisions
+            .Where(entity => entity.TradingStrategyTemplateId == template.Id && !entity.IsDeleted)
+            .OrderBy(entity => entity.RevisionNumber)
+            .ToListAsync(cancellationToken);
+        var previousActiveRevision = revisions.SingleOrDefault(entity => entity.Id == template.ActiveTradingStrategyTemplateRevisionId)
+            ?? revisions.OrderByDescending(entity => entity.RevisionNumber).FirstOrDefault();
+        var nextRevisionNumber = revisions.Select(entity => entity.RevisionNumber).DefaultIfEmpty(0).Max() + 1;
+        var normalizedTemplateName = NormalizeRequired(templateName, 128, nameof(templateName));
+        var normalizedDescription = NormalizeRequired(description, 512, nameof(description));
+        var normalizedCategory = NormalizeRequired(category, 64, nameof(category));
+        var normalizedDefinition = NormalizeDefinitionJson(definitionJson, normalizedTemplateKey, normalizedTemplateName, nextRevisionNumber, "Custom");
+        var document = parser.Parse(normalizedDefinition);
+        var validation = validator.Validate(document);
+        if (!validation.IsValid)
+        {
+            throw new StrategyDefinitionValidationException(validation.StatusCode, validation.Summary, validation.FailureReasons);
+        }
+
+        var revision = new TradingStrategyTemplateRevision
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = template.OwnerUserId,
+            TradingStrategyTemplateId = template.Id,
+            RevisionNumber = nextRevisionNumber,
+            SchemaVersion = document.SchemaVersion,
+            DefinitionJson = normalizedDefinition,
+            ValidationStatusCode = validation.StatusCode,
+            ValidationSummary = validation.Summary,
+            SourceTemplateKey = template.TemplateKey,
+            SourceRevisionNumber = previousActiveRevision?.RevisionNumber
+        };
+
+        template.TemplateName = normalizedTemplateName;
+        template.Description = normalizedDescription;
+        template.Category = normalizedCategory;
+        template.SchemaVersion = document.SchemaVersion;
+        template.DefinitionJson = normalizedDefinition;
+        template.ActiveTradingStrategyTemplateRevisionId = revision.Id;
+        template.LatestTradingStrategyTemplateRevisionId = revision.Id;
+        template.ArchivedAtUtc = null;
+
+        dbContext.TradingStrategyTemplateRevisions.Add(revision);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await WriteAuditAsync(
+            template.OwnerUserId,
+            "Strategy.Template.Revised",
+            normalizedTemplateKey,
+            $"TemplateKey={normalizedTemplateKey}; Revision={nextRevisionNumber}; PreviousRevision={(previousActiveRevision?.RevisionNumber.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "none")}; Validation={validation.StatusCode}",
+            cancellationToken);
+
+        revisions.Add(revision);
+        return BuildCustomSnapshot(template, revisions);
+    }
+
+    public async Task<IReadOnlyCollection<StrategyTemplateRevisionSnapshot>> ListRevisionsAsync(
+        string templateKey,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var normalizedTemplateKey = NormalizeTemplateKey(templateKey, nameof(templateKey));
+        var builtIn = TryGetBuiltInTemplate(normalizedTemplateKey);
+        if (builtIn.Key is not null)
+        {
+            var builtInSnapshot = BuildBuiltInSnapshot(builtIn);
+            return
+            [
+                new StrategyTemplateRevisionSnapshot(
+                    Guid.Empty,
+                    null,
+                    builtInSnapshot.TemplateKey,
+                    builtInSnapshot.ActiveRevisionNumber,
+                    builtInSnapshot.SchemaVersion,
+                    builtInSnapshot.Validation.StatusCode,
+                    builtInSnapshot.Validation.Summary,
+                    IsActive: true,
+                    IsLatest: true,
+                    IsArchived: false,
+                    SourceTemplateKey: null,
+                    SourceRevisionNumber: null,
+                    ArchivedAtUtc: null)
+            ];
+        }
+
+        EnsurePersistenceAvailable();
+        var template = await dbContext!.TradingStrategyTemplates
+            .AsNoTracking()
+            .SingleOrDefaultAsync(
+                entity => entity.TemplateKey == normalizedTemplateKey &&
+                          !entity.IsDeleted,
+                cancellationToken)
+            ?? throw new InvalidOperationException($"Strategy template '{normalizedTemplateKey}' was not found.");
+        var revisions = await dbContext.TradingStrategyTemplateRevisions
+            .AsNoTracking()
+            .Where(entity => entity.TradingStrategyTemplateId == template.Id && !entity.IsDeleted)
+            .OrderByDescending(entity => entity.RevisionNumber)
+            .ToListAsync(cancellationToken);
+
+        return revisions
+            .Select(revision => new StrategyTemplateRevisionSnapshot(
+                revision.Id,
+                template.Id,
+                template.TemplateKey,
+                revision.RevisionNumber,
+                revision.SchemaVersion,
+                revision.ValidationStatusCode,
+                revision.ValidationSummary,
+                IsActive: template.ActiveTradingStrategyTemplateRevisionId == revision.Id,
+                IsLatest: template.LatestTradingStrategyTemplateRevisionId == revision.Id,
+                IsArchived: revision.ArchivedAtUtc.HasValue || !template.IsActive,
+                revision.SourceTemplateKey,
+                revision.SourceRevisionNumber,
+                revision.ArchivedAtUtc))
+            .ToArray();
     }
 
     public async Task<StrategyTemplateSnapshot> ArchiveAsync(
@@ -363,14 +514,24 @@ public sealed class StrategyTemplateCatalogService(
                           !entity.IsDeleted,
                 cancellationToken)
             ?? throw new InvalidOperationException($"Strategy template '{normalizedTemplateKey}' was not found.");
+        var revisions = await dbContext.TradingStrategyTemplateRevisions
+            .Where(entity => entity.TradingStrategyTemplateId == template.Id && !entity.IsDeleted)
+            .ToListAsync(cancellationToken);
 
         if (!template.IsActive)
         {
-            return BuildCustomSnapshot(template);
+            return BuildCustomSnapshot(template, revisions);
         }
 
+        var archivedAtUtc = DateTime.UtcNow;
         template.IsActive = false;
-        template.ArchivedAtUtc = DateTime.UtcNow;
+        template.ArchivedAtUtc = archivedAtUtc;
+        template.ActiveTradingStrategyTemplateRevisionId = null;
+        foreach (var revision in revisions.Where(entity => !entity.ArchivedAtUtc.HasValue))
+        {
+            revision.ArchivedAtUtc = archivedAtUtc;
+        }
+
         await dbContext.SaveChangesAsync(cancellationToken);
         await WriteAuditAsync(
             template.OwnerUserId,
@@ -379,7 +540,7 @@ public sealed class StrategyTemplateCatalogService(
             $"TemplateKey={normalizedTemplateKey}; Source={template.SourceTemplateKey ?? "custom"}; State=Archived",
             cancellationToken);
 
-        return BuildCustomSnapshot(template);
+        return BuildCustomSnapshot(template, revisions);
     }
 
     private async Task<StrategyTemplateSnapshot> CreateCustomInternalAsync(
@@ -390,6 +551,7 @@ public sealed class StrategyTemplateCatalogService(
         string category,
         string definitionJson,
         string? sourceTemplateKey,
+        int? sourceRevisionNumber,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -403,7 +565,7 @@ public sealed class StrategyTemplateCatalogService(
 
         await EnsureTemplateKeyAvailableAsync(normalizedTemplateKey, cancellationToken);
 
-        var normalizedDefinition = NormalizeDefinitionJson(definitionJson, normalizedTemplateKey, normalizedTemplateName);
+        var normalizedDefinition = NormalizeDefinitionJson(definitionJson, normalizedTemplateKey, normalizedTemplateName, 1, "Custom");
         var document = parser.Parse(normalizedDefinition);
         var validation = validator.Validate(document);
         if (!validation.IsValid)
@@ -413,6 +575,7 @@ public sealed class StrategyTemplateCatalogService(
 
         var template = new TradingStrategyTemplate
         {
+            Id = Guid.NewGuid(),
             OwnerUserId = normalizedOwnerUserId,
             TemplateKey = normalizedTemplateKey,
             TemplateName = normalizedTemplateName,
@@ -424,17 +587,42 @@ public sealed class StrategyTemplateCatalogService(
             SourceTemplateKey = NormalizeOptional(sourceTemplateKey, 128),
             ArchivedAtUtc = null
         };
+        var revision = new TradingStrategyTemplateRevision
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = normalizedOwnerUserId,
+            TradingStrategyTemplateId = template.Id,
+            RevisionNumber = 1,
+            SchemaVersion = document.SchemaVersion,
+            DefinitionJson = normalizedDefinition,
+            ValidationStatusCode = validation.StatusCode,
+            ValidationSummary = validation.Summary,
+            SourceTemplateKey = template.SourceTemplateKey,
+            SourceRevisionNumber = sourceRevisionNumber
+        };
 
         dbContext!.TradingStrategyTemplates.Add(template);
         await dbContext.SaveChangesAsync(cancellationToken);
+        dbContext.Entry(template).State = EntityState.Detached;
+
+        var persistedTemplate = await dbContext.TradingStrategyTemplates
+            .SingleAsync(entity => entity.Id == template.Id, cancellationToken);
+
+        dbContext.TradingStrategyTemplateRevisions.Add(revision);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        persistedTemplate.ActiveTradingStrategyTemplateRevisionId = revision.Id;
+        persistedTemplate.LatestTradingStrategyTemplateRevisionId = revision.Id;
+        await dbContext.SaveChangesAsync(cancellationToken);
+
         await WriteAuditAsync(
             normalizedOwnerUserId,
             "Strategy.Template.Created",
             normalizedTemplateKey,
-            $"TemplateKey={normalizedTemplateKey}; Source={template.SourceTemplateKey ?? "custom"}; SchemaVersion={template.SchemaVersion}; Validation={validation.StatusCode}",
+            $"TemplateKey={normalizedTemplateKey}; Source={persistedTemplate.SourceTemplateKey ?? "custom"}; SchemaVersion={persistedTemplate.SchemaVersion}; Revision=1; Validation={validation.StatusCode}",
             cancellationToken);
 
-        return BuildCustomSnapshot(template);
+        return BuildCustomSnapshot(persistedTemplate, [revision]);
     }
 
     private async Task EnsureTemplateKeyAvailableAsync(string templateKey, CancellationToken cancellationToken)
@@ -456,7 +644,8 @@ public sealed class StrategyTemplateCatalogService(
 
     private StrategyTemplateSnapshot BuildBuiltInSnapshot((string Key, string Name, string Description, string Category, string DefinitionJson) template)
     {
-        var document = parser.Parse(template.DefinitionJson);
+        var normalizedDefinition = NormalizeDefinitionJson(template.DefinitionJson, template.Key, template.Name, 1, "BuiltIn");
+        var document = parser.Parse(normalizedDefinition);
         var validation = validator.Validate(document);
         if (!validation.IsValid)
         {
@@ -469,17 +658,28 @@ public sealed class StrategyTemplateCatalogService(
             template.Description,
             template.Category,
             document.SchemaVersion,
-            template.DefinitionJson.Trim(),
+            normalizedDefinition,
             validation,
             IsBuiltIn: true,
             IsActive: true,
             TemplateSource: "BuiltIn",
-            SourceTemplateKey: null);
+            SourceTemplateKey: null,
+            ActiveRevisionNumber: 1,
+            LatestRevisionNumber: 1);
     }
 
-    private StrategyTemplateSnapshot BuildCustomSnapshot(TradingStrategyTemplate template)
+    private StrategyTemplateSnapshot BuildCustomSnapshot(
+        TradingStrategyTemplate template,
+        IReadOnlyCollection<TradingStrategyTemplateRevision> revisions)
     {
-        var document = parser.Parse(template.DefinitionJson);
+        var activeRevision = template.ActiveTradingStrategyTemplateRevisionId.HasValue
+            ? revisions.SingleOrDefault(entity => entity.Id == template.ActiveTradingStrategyTemplateRevisionId.Value)
+            : revisions.OrderByDescending(entity => entity.RevisionNumber).FirstOrDefault();
+        var latestRevision = template.LatestTradingStrategyTemplateRevisionId.HasValue
+            ? revisions.SingleOrDefault(entity => entity.Id == template.LatestTradingStrategyTemplateRevisionId.Value)
+            : revisions.OrderByDescending(entity => entity.RevisionNumber).FirstOrDefault();
+        var definitionJson = activeRevision?.DefinitionJson ?? latestRevision?.DefinitionJson ?? template.DefinitionJson;
+        var document = parser.Parse(definitionJson);
         var validation = validator.Validate(document);
         if (!validation.IsValid)
         {
@@ -492,12 +692,19 @@ public sealed class StrategyTemplateCatalogService(
             template.Description,
             template.Category,
             document.SchemaVersion,
-            template.DefinitionJson.Trim(),
+            definitionJson.Trim(),
             validation,
             IsBuiltIn: false,
             IsActive: template.IsActive,
             TemplateSource: "Custom",
-            SourceTemplateKey: template.SourceTemplateKey);
+            SourceTemplateKey: template.SourceTemplateKey,
+            ActiveRevisionNumber: activeRevision?.RevisionNumber ?? 0,
+            LatestRevisionNumber: latestRevision?.RevisionNumber ?? 0,
+            SourceRevisionNumber: activeRevision?.SourceRevisionNumber,
+            TemplateId: template.Id,
+            ActiveRevisionId: activeRevision?.Id,
+            LatestRevisionId: latestRevision?.Id,
+            ArchivedAtUtc: template.ArchivedAtUtc);
     }
 
     private static (string Key, string Name, string Description, string Category, string DefinitionJson) TryGetBuiltInTemplate(string templateKey)
@@ -505,7 +712,12 @@ public sealed class StrategyTemplateCatalogService(
         return BuiltInTemplates.SingleOrDefault(item => string.Equals(item.Key, templateKey, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static string NormalizeDefinitionJson(string definitionJson, string templateKey, string templateName)
+    private static string NormalizeDefinitionJson(
+        string definitionJson,
+        string templateKey,
+        string templateName,
+        int templateRevisionNumber,
+        string templateSource)
     {
         if (string.IsNullOrWhiteSpace(definitionJson))
         {
@@ -531,10 +743,27 @@ public sealed class StrategyTemplateCatalogService(
         rootObject["metadata"] = new JsonObject
         {
             ["templateKey"] = templateKey,
-            ["templateName"] = templateName
+            ["templateName"] = templateName,
+            ["templateRevisionNumber"] = templateRevisionNumber,
+            ["templateSource"] = templateSource
         };
 
         return rootObject.ToJsonString(JsonSerializerOptions);
+    }
+
+    private async Task<IReadOnlyCollection<TradingStrategyTemplateRevision>> LoadRevisionsAsync(
+        IReadOnlyCollection<Guid> templateIds,
+        CancellationToken cancellationToken)
+    {
+        if (dbContext is null || templateIds.Count == 0)
+        {
+            return Array.Empty<TradingStrategyTemplateRevision>();
+        }
+
+        return await dbContext.TradingStrategyTemplateRevisions
+            .AsNoTracking()
+            .Where(entity => templateIds.Contains(entity.TradingStrategyTemplateId) && !entity.IsDeleted)
+            .ToListAsync(cancellationToken);
     }
 
     private void EnsurePersistenceAvailable()

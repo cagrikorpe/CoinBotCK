@@ -17,7 +17,8 @@
 
         <div class="cb-admin-profile-list mt-6">
             <div class="cb-admin-profile-row"><span>Recommendation summary</span><strong data-cb-strategy-explainability-summary>@explainability.Symbol · @explainability.Timeframe · @explainability.ScoreLabel</strong></div>
-            <div class="cb-admin-profile-row"><span>Strategy / Template</span><strong data-cb-strategy-explainability-template>@explainability.StrategyKey · @explainability.TemplateName</strong></div>
+            <div class="cb-admin-profile-row"><span>Strategy / Template</span><strong data-cb-strategy-explainability-template>@explainability.StrategyKey · @explainability.TemplateName · @(explainability.TemplateRevisionLabel ?? "r?")</strong></div>
+            <div class="cb-admin-profile-row"><span>Runtime version</span><strong data-cb-strategy-explainability-version>@(explainability.VersionLabel ?? "Inactive")</strong></div>
             <div class="cb-admin-profile-row"><span>Neden geçti / kalmadı</span><strong data-cb-strategy-explainability-reason>@explainability.Summary</strong></div>
         </div>
 
