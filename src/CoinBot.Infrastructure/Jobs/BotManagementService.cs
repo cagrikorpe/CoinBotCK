@@ -3,6 +3,7 @@ using CoinBot.Application.Abstractions.Bots;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Dashboard;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Mfa;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.Infrastructure.Strategies;
@@ -17,11 +18,13 @@ public sealed class BotManagementService(
     ICriticalUserOperationAuthorizer criticalUserOperationAuthorizer,
     TimeProvider timeProvider,
     IOptions<BotExecutionPilotOptions> options,
+    IOptions<DataLatencyGuardOptions> dataLatencyGuardOptions,
     UserOperationsStreamHub? userOperationsStreamHub = null) : IBotManagementService
 {
     private const string FrozenPilotMarginType = "ISOLATED";
     private const int LastExecutionBlockDetailMaxLength = 240;
     private readonly BotExecutionPilotOptions optionsValue = options.Value;
+    private readonly int staleThresholdMilliseconds = checked(dataLatencyGuardOptions.Value.StaleDataThresholdSeconds * 1000);
 
     public async Task<BotManagementPageSnapshot> GetPageAsync(string ownerUserId, CancellationToken cancellationToken = default)
     {
@@ -118,6 +121,23 @@ public sealed class BotManagementService(
             .ToDictionary(
                 group => group.Key,
                 group => CreateLastExecutionTransitionSnapshot(group));
+        var degradedModeStateIds = ordersByBotId
+            .Select(pair =>
+            {
+                latestTransitionSnapshotsByOrderId.TryGetValue(pair.Value.Id, out var transitionSnapshot);
+                return ResolveDegradedModeStateId(pair.Value, transitionSnapshot);
+            })
+            .Where(stateId => stateId.HasValue)
+            .Select(stateId => stateId!.Value)
+            .Distinct()
+            .ToArray();
+        var degradedModeStatesById = degradedModeStateIds.Length == 0
+            ? new Dictionary<Guid, DegradedModeState>()
+            : await dbContext.DegradedModeStates
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity => degradedModeStateIds.Contains(entity.Id))
+                .ToDictionaryAsync(entity => entity.Id, cancellationToken);
         var utcNow = timeProvider.GetUtcNow().UtcDateTime;
 
         var snapshots = bots
@@ -145,6 +165,49 @@ public sealed class BotManagementService(
                 {
                     latestTransitionSnapshotsByOrderId.TryGetValue(order.Id, out lastExecutionTransition);
                 }
+
+                var degradedModeStateId = ResolveDegradedModeStateId(order, lastExecutionTransition);
+                var degradedModeState = degradedModeStateId.HasValue &&
+                    degradedModeStatesById.TryGetValue(degradedModeStateId.Value, out var resolvedDegradedModeState)
+                    ? resolvedDegradedModeState
+                    : null;
+                var latencyReasonCode = lastExecutionTransition?.Diagnostics.LatencyReasonCode ??
+                    degradedModeState?.ReasonCode.ToString();
+                var decisionAtUtc = lastExecutionTransition?.OccurredAtUtc ?? order?.UpdatedDate;
+                var isBlockedDecision = order?.State is ExecutionOrderState.Rejected or ExecutionOrderState.Failed;
+                var decisionReasonCode = order is null
+                    ? null
+                    : ExecutionDecisionDiagnostics.ResolveDecisionReasonCode(
+                        isBlockedDecision,
+                        order.FailureCode ?? lastExecutionTransition?.EventCode,
+                        latencyReasonCode);
+                var decisionReasonType = decisionReasonCode is null
+                    ? null
+                    : ExecutionDecisionDiagnostics.ResolveDecisionReasonType(decisionReasonCode, latencyReasonCode);
+                var decisionSummary = decisionReasonCode is null
+                    ? null
+                    : ExecutionDecisionDiagnostics.ResolveDecisionSummary(
+                        isBlockedDecision,
+                        decisionReasonType ?? "Other",
+                        decisionReasonCode,
+                        lastExecutionTransition?.Diagnostics.BlockDetail ?? order?.FailureDetail);
+                var lastExecutionLastCandleAtUtc = lastExecutionTransition?.Diagnostics.LastCandleAtUtc ??
+                    NormalizeUtcNullable(degradedModeState?.LatestDataTimestampAtUtc);
+                var lastExecutionDataAgeMilliseconds = lastExecutionTransition?.Diagnostics.DataAgeMilliseconds ??
+                    ExecutionDecisionDiagnostics.ResolveDecisionDataAgeMilliseconds(
+                        degradedModeState,
+                        decisionAtUtc,
+                        order?.FailureDetail);
+                var lastExecutionContinuityGapCount = lastExecutionTransition?.Diagnostics.ContinuityGapCount ??
+                    degradedModeState?.LatestContinuityGapCount;
+                var lastExecutionContinuityRecoveredAtUtc = NormalizeUtcNullable(degradedModeState?.LatestContinuityRecoveredAtUtc);
+                var lastExecutionContinuityState = lastExecutionTransition?.Diagnostics.ContinuityState ??
+                    ExecutionDecisionDiagnostics.ResolveContinuityState(
+                        latencyReasonCode,
+                        lastExecutionContinuityGapCount,
+                        lastExecutionContinuityRecoveredAtUtc);
+                var lastExecutionStaleReason = lastExecutionTransition?.Diagnostics.StaleReason ??
+                    ExecutionDecisionDiagnostics.ResolveStaleReason(latencyReasonCode);
 
                 return new BotManagementBotSnapshot(
                     bot.Id,
@@ -187,13 +250,22 @@ public sealed class BotManagementService(
                     cooldownRemainingSeconds,
                     order?.UpdatedDate,
                     bot.UpdatedDate,
-                    lastExecutionTransition?.Diagnostics.LastCandleAtUtc,
-                    lastExecutionTransition?.Diagnostics.DataAgeMilliseconds,
-                    lastExecutionTransition?.Diagnostics.ContinuityState,
-                    lastExecutionTransition?.Diagnostics.ContinuityGapCount,
-                    lastExecutionTransition?.Diagnostics.StaleReason,
+                    lastExecutionLastCandleAtUtc,
+                    lastExecutionDataAgeMilliseconds,
+                    lastExecutionContinuityState,
+                    lastExecutionContinuityGapCount,
+                    lastExecutionStaleReason,
                     lastExecutionTransition?.Diagnostics.AffectedSymbol,
-                    lastExecutionTransition?.Diagnostics.AffectedTimeframe);
+                    lastExecutionTransition?.Diagnostics.AffectedTimeframe,
+                    order is null ? null : ExecutionDecisionDiagnostics.ResolveDecisionOutcome(isBlockedDecision),
+                    decisionAtUtc,
+                    decisionReasonType,
+                    decisionReasonCode,
+                    decisionSummary,
+                    staleThresholdMilliseconds,
+                    NormalizeUtcNullable(degradedModeState?.LatestContinuityGapStartedAtUtc),
+                    NormalizeUtcNullable(degradedModeState?.LatestContinuityGapLastSeenAtUtc),
+                    lastExecutionContinuityRecoveredAtUtc);
             })
             .ToArray();
 
@@ -773,9 +845,10 @@ public sealed class BotManagementService(
 
         return new LastExecutionDiagnosticSnapshot(
             sanitizedDetail,
+            latencyReasonCode,
             lastCandleAtUtc,
             dataAgeMilliseconds,
-            ResolveContinuityState(latencyReasonCode, continuityGapCount),
+            ResolveContinuityState(latencyReasonCode, continuityGapCount, continuityRecoveredAtUtc: null),
             continuityGapCount,
             ResolveStaleReason(latencyReasonCode),
             affectedSymbol,
@@ -793,33 +866,21 @@ public sealed class BotManagementService(
             transitions
                 .Select(item => ExtractClientOrderId(item.Detail))
                 .FirstOrDefault(item => !string.IsNullOrWhiteSpace(item)),
+            transition.OccurredAtUtc,
             CreateLastExecutionDiagnosticSnapshot(transition.Detail));
     }
 
-    private static string? ResolveContinuityState(string? latencyReasonCode, int? continuityGapCount)
+    private static string? ResolveContinuityState(string? latencyReasonCode, int? continuityGapCount, DateTime? continuityRecoveredAtUtc)
     {
-        return latencyReasonCode switch
-        {
-            "CandleDataGapDetected" => "Continuity guard active",
-            "CandleDataDuplicateDetected" => "Continuity guard active",
-            "CandleDataOutOfOrderDetected" => "Continuity guard active",
-            "MarketDataLatencyBreached" or "MarketDataLatencyCritical" or "ClockDriftExceeded" or "MarketDataUnavailable" => continuityGapCount.GetValueOrDefault() > 0 ? "Continuity gap detected" : "Continuity OK",
-            _ => null
-        };
+        return ExecutionDecisionDiagnostics.ResolveContinuityState(
+            latencyReasonCode,
+            continuityGapCount,
+            continuityRecoveredAtUtc);
     }
 
     private static string? ResolveStaleReason(string? latencyReasonCode)
     {
-        return latencyReasonCode switch
-        {
-            "MarketDataLatencyBreached" or "MarketDataLatencyCritical" => "Market data stale",
-            "ClockDriftExceeded" => "Clock drift exceeded",
-            "MarketDataUnavailable" => "Market data unavailable",
-            "CandleDataGapDetected" => "Continuity gap detected",
-            "CandleDataDuplicateDetected" => "Duplicate candle detected",
-            "CandleDataOutOfOrderDetected" => "Out-of-order candle detected",
-            _ => null
-        };
+        return ExecutionDecisionDiagnostics.ResolveStaleReason(latencyReasonCode);
     }
 
     private static bool TryExtractExecutionDiagnosticToken(string? detail, string key, out string? value)
@@ -861,18 +922,42 @@ public sealed class BotManagementService(
             ? normalizedValue.ToUpperInvariant()
             : normalizedValue;
     }
+
+    private static Guid? ResolveDegradedModeStateId(
+        ExecutionOrder? order,
+        LastExecutionTransitionSnapshot? transitionSnapshot)
+    {
+        var symbol = transitionSnapshot?.Diagnostics.AffectedSymbol ??
+            NormalizeOptionalExecutionDiagnosticValue(order?.Symbol, toUpperInvariant: true);
+        var timeframe = transitionSnapshot?.Diagnostics.AffectedTimeframe ??
+            NormalizeOptionalExecutionDiagnosticValue(order?.Timeframe, toUpperInvariant: false);
+
+        if (string.IsNullOrWhiteSpace(symbol) || string.IsNullOrWhiteSpace(timeframe))
+        {
+            return null;
+        }
+
+        return DegradedModeDefaults.ResolveStateId(symbol, timeframe);
+    }
+
+    private static DateTime? NormalizeUtcNullable(DateTime? value)
+    {
+        if (!value.HasValue)
+        {
+            return null;
+        }
+
+        return value.Value.Kind switch
+        {
+            DateTimeKind.Utc => value.Value,
+            DateTimeKind.Local => value.Value.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(value.Value, DateTimeKind.Utc)
+        };
+    }
+
     private static string? SanitizeExecutionBlockDetail(string? detail)
     {
-        var normalizedDetail = detail?.ReplaceLineEndings(" ").Trim();
-
-        if (!string.IsNullOrWhiteSpace(normalizedDetail))
-        {
-            var metadataStartIndex = normalizedDetail.IndexOf(" LatencyReason=", StringComparison.Ordinal);
-            if (metadataStartIndex > 0)
-            {
-                normalizedDetail = normalizedDetail[..metadataStartIndex].TrimEnd();
-            }
-        }
+        var normalizedDetail = ExecutionDecisionDiagnostics.ExtractHumanSummary(detail);
 
         if (string.IsNullOrWhiteSpace(normalizedDetail))
         {
@@ -910,6 +995,7 @@ public sealed class BotManagementService(
 
     private sealed record LastExecutionDiagnosticSnapshot(
         string? BlockDetail,
+        string? LatencyReasonCode,
         DateTime? LastCandleAtUtc,
         int? DataAgeMilliseconds,
         string? ContinuityState,
@@ -922,6 +1008,7 @@ public sealed class BotManagementService(
         string EventCode,
         string? CorrelationId,
         string? ClientOrderId,
+        DateTime OccurredAtUtc,
         LastExecutionDiagnosticSnapshot Diagnostics);
     private string[] ResolveSymbolOptions(string? currentSymbol = null)
     {

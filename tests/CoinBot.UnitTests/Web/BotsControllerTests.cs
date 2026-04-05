@@ -64,7 +64,16 @@ public sealed class BotsControllerTests
                         LastExecutionContinuityGapCount: 0,
                         LastExecutionStaleReason: "Clock drift exceeded",
                         LastExecutionAffectedSymbol: "BTCUSDT",
-                        LastExecutionAffectedTimeframe: "1m")
+                        LastExecutionAffectedTimeframe: "1m",
+                        LastExecutionDecisionOutcome: "Block",
+                        LastExecutionDecisionAtUtc: new DateTime(2026, 4, 2, 12, 1, 5, DateTimeKind.Utc),
+                        LastExecutionDecisionReasonType: "StaleData",
+                        LastExecutionDecisionReasonCode: "ClockDriftExceeded",
+                        LastExecutionDecisionSummary: "Execution blocked because clock drift exceeded the safety threshold.",
+                        LastExecutionStaleThresholdMilliseconds: 3000,
+                        LastExecutionContinuityGapStartedAtUtc: new DateTime(2026, 4, 2, 11, 58, 0, DateTimeKind.Utc),
+                        LastExecutionContinuityGapLastSeenAtUtc: new DateTime(2026, 4, 2, 11, 59, 0, DateTimeKind.Utc),
+                        LastExecutionContinuityRecoveredAtUtc: new DateTime(2026, 4, 2, 11, 59, 30, DateTimeKind.Utc))
                 ])
         };
         var controller = CreateController(managementService, new FakeBotPilotControlService(), new FakeUserSettingsService(), "user-bot-01", "trace-bot-001");
@@ -93,6 +102,13 @@ public sealed class BotsControllerTests
         Assert.Equal("0", row.ContinuityGapText);
         Assert.Equal("BTCUSDT / 1m", row.AffectedMarketText);
         Assert.Equal("Clock drift exceeded", row.StaleReasonText);
+        Assert.Equal("Decision: Block / StaleData", row.DecisionText);
+        Assert.Equal("ReasonCode: ClockDriftExceeded", row.DecisionReasonCodeText);
+        Assert.Equal("Execution blocked because clock drift exceeded the safety threshold.", row.DecisionSummaryText);
+        Assert.Equal("3000 ms", row.MarketStaleThresholdText);
+        Assert.Equal("2026-04-02 11:58:00 Coordinated Universal Time", row.ContinuityGapStartedText);
+        Assert.Equal("2026-04-02 11:59:00 Coordinated Universal Time", row.ContinuityGapLastSeenText);
+        Assert.Equal("2026-04-02 11:59:30 Coordinated Universal Time", row.ContinuityRecoveryText);
     }
 
     [Fact]

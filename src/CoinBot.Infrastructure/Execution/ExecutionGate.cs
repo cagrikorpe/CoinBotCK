@@ -365,9 +365,9 @@ public sealed class ExecutionGate(
             DegradedModeReasonCode.ClockDriftExceeded => ExecutionGateBlockedReason.ClockDriftExceeded,
             DegradedModeReasonCode.MarketDataLatencyBreached => ExecutionGateBlockedReason.StaleMarketData,
             DegradedModeReasonCode.MarketDataLatencyCritical => ExecutionGateBlockedReason.StaleMarketData,
-            DegradedModeReasonCode.CandleDataGapDetected => ExecutionGateBlockedReason.StaleMarketData,
-            DegradedModeReasonCode.CandleDataDuplicateDetected => ExecutionGateBlockedReason.StaleMarketData,
-            DegradedModeReasonCode.CandleDataOutOfOrderDetected => ExecutionGateBlockedReason.StaleMarketData,
+            DegradedModeReasonCode.CandleDataGapDetected => ExecutionGateBlockedReason.ContinuityGap,
+            DegradedModeReasonCode.CandleDataDuplicateDetected => ExecutionGateBlockedReason.ContinuityGap,
+            DegradedModeReasonCode.CandleDataOutOfOrderDetected => ExecutionGateBlockedReason.ContinuityGap,
             _ => ExecutionGateBlockedReason.StaleMarketData
         };
     }
@@ -414,6 +414,7 @@ public sealed class ExecutionGate(
             ExecutionGateBlockedReason.RequestedEnvironmentDoesNotMatchResolvedMode => "Blocked:RequestedEnvironmentDoesNotMatchResolvedMode",
             ExecutionGateBlockedReason.MarketDataUnavailable => "Blocked:MarketDataUnavailable",
             ExecutionGateBlockedReason.StaleMarketData => "Blocked:StaleMarketData",
+            ExecutionGateBlockedReason.ContinuityGap => "Blocked:ContinuityGap",
             ExecutionGateBlockedReason.ClockDriftExceeded => "Blocked:ClockDriftExceeded",
             ExecutionGateBlockedReason.DataLatencyGuardUnavailable => "Blocked:DataLatencyGuardUnavailable",
             ExecutionGateBlockedReason.DemoSessionDriftDetected => "Blocked:DemoSessionDriftDetected",
@@ -442,9 +443,11 @@ public sealed class ExecutionGate(
                     latencySnapshot),
             ExecutionGateBlockedReason.StaleMarketData =>
                 CreateLatencyDecisionMessage(
-                    IsContinuityGuardReason(latencySnapshot?.ReasonCode ?? DegradedModeReasonCode.None)
-                        ? "Execution blocked because the candle continuity guard is active."
-                        : "Execution blocked because market data is stale.",
+                    "Execution blocked because market data is stale.",
+                    latencySnapshot),
+            ExecutionGateBlockedReason.ContinuityGap =>
+                CreateLatencyDecisionMessage(
+                    "Execution blocked because the candle continuity guard is active.",
                     latencySnapshot),
             ExecutionGateBlockedReason.ClockDriftExceeded =>
                 CreateLatencyDecisionMessage(

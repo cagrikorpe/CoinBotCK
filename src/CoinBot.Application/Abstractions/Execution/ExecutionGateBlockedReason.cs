@@ -10,5 +10,6 @@ public enum ExecutionGateBlockedReason
     StaleMarketData = 5,
     ClockDriftExceeded = 6,
     DataLatencyGuardUnavailable = 7,
-    DemoSessionDriftDetected = 8
+    DemoSessionDriftDetected = 8,
+    ContinuityGap = 9
 }

@@ -5,6 +5,7 @@ using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Identity;
 using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.MarketData;
@@ -70,7 +71,8 @@ public sealed class MarketScannerIntegrationTests
             var readModelService = new AdminMonitoringReadModelService(
                 dbContext,
                 new MemoryCache(new MemoryCacheOptions()),
-                new FixedTimeProvider(nowUtc));
+                new FixedTimeProvider(nowUtc),
+                Options.Create(new DataLatencyGuardOptions()));
             var dashboardSnapshot = await readModelService.GetSnapshotAsync();
 
             Assert.Equal(2, persistedCycle.ScannedSymbolCount);
@@ -156,7 +158,8 @@ public sealed class MarketScannerIntegrationTests
             var readModelService = new AdminMonitoringReadModelService(
                 dbContext,
                 new MemoryCache(new MemoryCacheOptions()),
-                new FixedTimeProvider(nowUtc));
+                new FixedTimeProvider(nowUtc),
+                Options.Create(new DataLatencyGuardOptions()));
             var dashboardSnapshot = await readModelService.GetSnapshotAsync();
 
             Assert.Equal("BTCUSDT", cycle.BestCandidateSymbol);

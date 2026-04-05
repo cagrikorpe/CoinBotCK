@@ -720,6 +720,12 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
         builder.Property(entity => entity.LatestTimeframe)
             .HasMaxLength(16);
+
+        builder.Property(entity => entity.LatestContinuityGapStartedAtUtc);
+
+        builder.Property(entity => entity.LatestContinuityGapLastSeenAtUtc);
+
+        builder.Property(entity => entity.LatestContinuityRecoveredAtUtc);
     }
 
     private static void ConfigureDependencyCircuitBreakerStates(EntityTypeBuilder<DependencyCircuitBreakerState> builder)

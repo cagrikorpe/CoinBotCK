@@ -2,6 +2,7 @@ using CoinBot.Application.Abstractions.Bots;
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.Mfa;
 using CoinBot.Infrastructure.Persistence;
@@ -255,6 +256,22 @@ public sealed class BotManagementServiceTests
             CreatedDate = orderCreatedAtUtc.AddSeconds(1),
             UpdatedDate = orderCreatedAtUtc.AddSeconds(1)
         });
+        context.DegradedModeStates.Add(new DegradedModeState
+        {
+            Id = DegradedModeDefaults.ResolveStateId("BTCUSDT", "1m"),
+            StateCode = DegradedModeStateCode.Normal,
+            ReasonCode = DegradedModeReasonCode.None,
+            SignalFlowBlocked = false,
+            ExecutionFlowBlocked = false,
+            LatestSymbol = "BTCUSDT",
+            LatestTimeframe = "1m",
+            LatestDataTimestampAtUtc = new DateTime(2026, 4, 2, 23, 51, 59, 999, DateTimeKind.Utc),
+            LatestExpectedOpenTimeUtc = new DateTime(2026, 4, 2, 23, 52, 0, DateTimeKind.Utc),
+            LatestContinuityGapCount = 0,
+            LatestContinuityGapStartedAtUtc = new DateTime(2026, 4, 2, 23, 45, 0, DateTimeKind.Utc),
+            LatestContinuityGapLastSeenAtUtc = new DateTime(2026, 4, 2, 23, 50, 0, DateTimeKind.Utc),
+            LatestContinuityRecoveredAtUtc = new DateTime(2026, 4, 2, 23, 50, 30, DateTimeKind.Utc)
+        });
         await context.SaveChangesAsync();
         var service = CreateService(context, new FakeTimeProvider(new DateTimeOffset(orderCreatedAtUtc.AddMinutes(5))));
 
@@ -269,6 +286,14 @@ public sealed class BotManagementServiceTests
         Assert.Equal("Clock drift exceeded", row.LastExecutionStaleReason);
         Assert.Equal("BTCUSDT", row.LastExecutionAffectedSymbol);
         Assert.Equal("1m", row.LastExecutionAffectedTimeframe);
+        Assert.Equal("Block", row.LastExecutionDecisionOutcome);
+        Assert.Equal("StaleData", row.LastExecutionDecisionReasonType);
+        Assert.Equal("ClockDriftExceeded", row.LastExecutionDecisionReasonCode);
+        Assert.Equal("Execution blocked because clock drift exceeded the safety threshold.", row.LastExecutionDecisionSummary);
+        Assert.Equal(3000, row.LastExecutionStaleThresholdMilliseconds);
+        Assert.Equal(new DateTime(2026, 4, 2, 23, 45, 0, DateTimeKind.Utc), row.LastExecutionContinuityGapStartedAtUtc);
+        Assert.Equal(new DateTime(2026, 4, 2, 23, 50, 0, DateTimeKind.Utc), row.LastExecutionContinuityGapLastSeenAtUtc);
+        Assert.Equal(new DateTime(2026, 4, 2, 23, 50, 30, DateTimeKind.Utc), row.LastExecutionContinuityRecoveredAtUtc);
     }
 
     [Fact]
@@ -330,7 +355,8 @@ public sealed class BotManagementServiceTests
                 Options.Create(CreatePilotOptions())),
             criticalUserOperationAuthorizer ?? new FakeCriticalUserOperationAuthorizer(),
             timeProvider ?? new FakeTimeProvider(),
-            Options.Create(CreatePilotOptions()));
+            Options.Create(CreatePilotOptions()),
+            Options.Create(new DataLatencyGuardOptions()));
     }
 
     private static async Task<Guid> SeedStrategyAndExchangeAccountAsync(ApplicationDbContext context, string ownerUserId, string strategyKey)

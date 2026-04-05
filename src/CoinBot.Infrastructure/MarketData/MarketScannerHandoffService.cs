@@ -8,6 +8,7 @@ using CoinBot.Application.Abstractions.Risk;
 using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.Infrastructure.Strategies;
@@ -228,6 +229,11 @@ public sealed class MarketScannerHandoffService(
                         Symbol: symbol,
                         Timeframe: klineInterval),
                     cancellationToken);
+                var latencySnapshot = await dataLatencyCircuitBreaker.GetSnapshotAsync(
+                    correlationId,
+                    symbol,
+                    klineInterval,
+                    cancellationToken);
 
                 var overrideEvaluation = await userExecutionOverrideGuard.EvaluateAsync(
                     new UserExecutionOverrideEvaluationRequest(
@@ -256,12 +262,12 @@ public sealed class MarketScannerHandoffService(
                         executionContext,
                         strategySignal,
                         strategyVeto: null,
-                        strategyDecisionOutcome: "Persisted",
+                    strategyDecisionOutcome: "Persisted",
                     executionStatus: "Blocked",
                     blockerCode: overrideEvaluation.BlockCode ?? "UserExecutionOverrideBlocked",
                     blockerDetail: overrideEvaluation.Message ?? "Scanner handoff was blocked by user execution override guard.",
                     guardSummary: Truncate(
-                        $"UserExecutionOverrideGuard={overrideEvaluation.BlockCode ?? "Blocked"}; Symbol={symbol}; Timeframe={klineInterval}; RiskSummary={overrideEvaluation.RiskEvaluation?.ReasonSummary ?? "n/a"}",
+                        $"UserExecutionOverrideGuard={overrideEvaluation.BlockCode ?? "Blocked"}; Symbol={symbol}; Timeframe={klineInterval}; {BuildLatencyGuardSummarySnippet(latencySnapshot)}; RiskSummary={overrideEvaluation.RiskEvaluation?.ReasonSummary ?? "n/a"}",
                         512) ?? $"UserExecutionOverrideGuard={overrideEvaluation.BlockCode ?? "Blocked"}; Symbol={symbol}; Timeframe={klineInterval}",
                     cancellationToken: cancellationToken,
                     riskEvaluation: overrideEvaluation.RiskEvaluation);
@@ -275,6 +281,7 @@ public sealed class MarketScannerHandoffService(
                     ownerBotMatch,
                     symbolMetadata,
                     executionContext,
+                    latencySnapshot,
                     strategySignal,
                     strategyResult,
                     cancellationToken);
@@ -567,6 +574,7 @@ public sealed class MarketScannerHandoffService(
         BotStrategyMatch botMatch,
         SymbolMetadataSnapshot? symbolMetadata,
         PreparedExecutionContext executionContext,
+        DegradedModeSnapshot latencySnapshot,
         StrategySignalSnapshot strategySignal,
         StrategySignalGenerationResult strategyResult,
         CancellationToken cancellationToken)
@@ -584,7 +592,7 @@ public sealed class MarketScannerHandoffService(
             executionStatus: "Prepared",
             blockerCode: null,
             blockerDetail: null,
-            guardSummary: BuildPreparedGuardSummary(candidate.Symbol, strategyResult, strategySignal));
+            guardSummary: BuildPreparedGuardSummary(candidate.Symbol, strategyResult, strategySignal, latencySnapshot));
 
         dbContext.MarketScannerHandoffAttempts.Add(attempt);
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -730,7 +738,8 @@ public sealed class MarketScannerHandoffService(
     private string BuildPreparedGuardSummary(
         string symbol,
         StrategySignalGenerationResult strategyResult,
-        StrategySignalSnapshot strategySignal)
+        StrategySignalSnapshot strategySignal,
+        DegradedModeSnapshot latencySnapshot)
     {
         var explainabilitySummary = BuildStrategyExplainabilitySummary(strategyResult.EvaluationReport);
         var signalSummary = string.IsNullOrWhiteSpace(strategySignal.ExplainabilityPayload.UiLog.Summary)
@@ -738,9 +747,14 @@ public sealed class MarketScannerHandoffService(
             : strategySignal.ExplainabilityPayload.UiLog.Summary;
 
         return Truncate(
-            $"ExecutionGate=Allowed; UserExecutionOverride=Allowed; Symbol={symbol}; Timeframe={klineInterval}; StrategySignalSummary={signalSummary}; {explainabilitySummary}",
+            $"ExecutionGate=Allowed; UserExecutionOverride=Allowed; Symbol={symbol}; Timeframe={klineInterval}; {BuildLatencyGuardSummarySnippet(latencySnapshot)}; StrategySignalSummary={signalSummary}; {explainabilitySummary}",
             512)
             ?? $"ExecutionGate=Allowed; UserExecutionOverride=Allowed; Symbol={symbol}; Timeframe={klineInterval}";
+    }
+
+    private static string BuildLatencyGuardSummarySnippet(DegradedModeSnapshot latencySnapshot)
+    {
+        return $"LatencyReason={latencySnapshot.ReasonCode}; LastCandleAtUtc={latencySnapshot.LatestDataTimestampAtUtc?.ToString("O") ?? "missing"}; DataAgeMs={latencySnapshot.LatestDataAgeMilliseconds?.ToString(CultureInfo.InvariantCulture) ?? "missing"}; ContinuityGapCount={latencySnapshot.LatestContinuityGapCount?.ToString(CultureInfo.InvariantCulture) ?? "missing"}; DecisionSourceLayer={(ExecutionDecisionDiagnostics.IsContinuityGuardReason(latencySnapshot.ReasonCode.ToString()) ? "continuity-validator" : "heartbeat-watchdog")}";
     }
 
     private static string BuildStrategyExplainabilitySummary(StrategyEvaluationReportSnapshot? report)
@@ -977,14 +991,7 @@ public sealed class MarketScannerHandoffService(
             return null;
         }
 
-        var normalized = blockerDetail.Trim();
-        var latencyIndex = normalized.IndexOf(" LatencyReason=", StringComparison.Ordinal);
-        if (latencyIndex > 0)
-        {
-            normalized = normalized[..latencyIndex].Trim();
-        }
-
-        return Truncate(normalized, 512);
+        return Truncate(blockerDetail.Trim(), 512);
     }
 
     private static string? Truncate(string? value, int maxLength)

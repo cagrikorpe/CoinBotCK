@@ -407,8 +407,8 @@ public sealed class ExecutionGateTests
         var auditLog = await harness.DbContext.AuditLogs
             .SingleAsync(entity => entity.Action == "TradeExecution.Dispatch");
 
-        Assert.Equal(ExecutionGateBlockedReason.StaleMarketData, exception.Reason);
-        Assert.Equal("Blocked:StaleMarketData", auditLog.Outcome);
+        Assert.Equal(ExecutionGateBlockedReason.ContinuityGap, exception.Reason);
+        Assert.Equal("Blocked:ContinuityGap", auditLog.Outcome);
         Assert.Contains("Execution blocked because the candle continuity guard is active.", exception.Message, StringComparison.Ordinal);
         Assert.Contains("LatencyReason=CandleDataGapDetected", exception.Message, StringComparison.Ordinal);
         Assert.Contains("Symbol=BTCUSDT", exception.Message, StringComparison.Ordinal);

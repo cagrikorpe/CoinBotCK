@@ -114,6 +114,9 @@ public sealed class DataLatencyCircuitBreakerTests
         Assert.Equal(DegradedModeReasonCode.CandleDataDuplicateDetected, persistedSnapshot.ReasonCode);
         Assert.True(persistedSnapshot.SignalFlowBlocked);
         Assert.True(persistedSnapshot.ExecutionFlowBlocked);
+        Assert.Equal(nowUtc, persistedSnapshot.LatestContinuityGapStartedAtUtc);
+        Assert.Equal(nowUtc.AddSeconds(1), persistedSnapshot.LatestContinuityGapLastSeenAtUtc);
+        Assert.Null(persistedSnapshot.LatestContinuityRecoveredAtUtc);
 
         var recoveredSnapshot = await harness.CircuitBreaker.RecordHeartbeatAsync(
             new DataLatencyHeartbeat(
@@ -127,6 +130,9 @@ public sealed class DataLatencyCircuitBreakerTests
         Assert.Equal(DegradedModeReasonCode.None, recoveredSnapshot.ReasonCode);
         Assert.False(recoveredSnapshot.SignalFlowBlocked);
         Assert.False(recoveredSnapshot.ExecutionFlowBlocked);
+        Assert.Equal(nowUtc, recoveredSnapshot.LatestContinuityGapStartedAtUtc);
+        Assert.Equal(nowUtc.AddSeconds(1), recoveredSnapshot.LatestContinuityGapLastSeenAtUtc);
+        Assert.Equal(nowUtc.AddSeconds(1), recoveredSnapshot.LatestContinuityRecoveredAtUtc);
     }
 
     [Fact]
@@ -283,6 +289,9 @@ public sealed class DataLatencyCircuitBreakerTests
         Assert.Equal("1m", snapshot.LatestTimeframe);
         Assert.Equal(expectedOpenTimeUtc, snapshot.LatestExpectedOpenTimeUtc);
         Assert.Equal(2, snapshot.LatestContinuityGapCount);
+        Assert.Equal(expectedOpenTimeUtc, snapshot.LatestContinuityGapStartedAtUtc);
+        Assert.Equal(nowUtc, snapshot.LatestContinuityGapLastSeenAtUtc);
+        Assert.Null(snapshot.LatestContinuityRecoveredAtUtc);
         Assert.Equal(60000, snapshot.LatestDataAgeMilliseconds);
         Assert.Equal(nowUtc, snapshot.LatestHeartbeatReceivedAtUtc);
         Assert.Equal("binance:kline", state.LatestHeartbeatSource);
@@ -290,6 +299,9 @@ public sealed class DataLatencyCircuitBreakerTests
         Assert.Equal("1m", state.LatestTimeframe);
         Assert.Equal(expectedOpenTimeUtc, state.LatestExpectedOpenTimeUtc);
         Assert.Equal(2, state.LatestContinuityGapCount);
+        Assert.Equal(expectedOpenTimeUtc, state.LatestContinuityGapStartedAtUtc);
+        Assert.Equal(nowUtc, state.LatestContinuityGapLastSeenAtUtc);
+        Assert.Null(state.LatestContinuityRecoveredAtUtc);
     }
 
     private static TestHarness CreateHarness(IMarketDataService? marketDataService = null)

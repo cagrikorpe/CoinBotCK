@@ -50,5 +50,13 @@ public sealed record BotManagementRowViewModel(
     string? ContinuityStateText = null,
     string? ContinuityGapText = null,
     string? AffectedMarketText = null,
-    string? StaleReasonText = null);
+    string? StaleReasonText = null,
+    string? DecisionText = null,
+    string? DecisionReasonCodeText = null,
+    string? DecisionSummaryText = null,
+    string? DecisionAtText = null,
+    string? MarketStaleThresholdText = null,
+    string? ContinuityGapStartedText = null,
+    string? ContinuityGapLastSeenText = null,
+    string? ContinuityRecoveryText = null);
 

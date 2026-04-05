@@ -1,9 +1,12 @@
 using System.Globalization;
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Monitoring;
+using CoinBot.Domain.Entities;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Options;
 
 using HealthSnapshotEntity = CoinBot.Domain.Entities.HealthSnapshot;
 using MarketScannerCandidateEntity = CoinBot.Domain.Entities.MarketScannerCandidate;
@@ -16,12 +19,14 @@ public sealed class AdminMonitoringReadModelService(
     ApplicationDbContext dbContext,
     IMemoryCache memoryCache,
     TimeProvider timeProvider,
+    IOptions<DataLatencyGuardOptions> dataLatencyGuardOptions,
     ISharedMarketDataCacheObservabilityCollector? sharedMarketDataCacheObservabilityCollector = null) : IAdminMonitoringReadModelService
 {
     private static readonly object CacheKey = new();
     private static readonly MemoryCacheEntryOptions SnapshotCacheOptions = new MemoryCacheEntryOptions()
         .SetSize(1)
         .SetAbsoluteExpiration(TimeSpan.FromSeconds(3));
+    private readonly int staleThresholdMilliseconds = checked(dataLatencyGuardOptions.Value.StaleDataThresholdSeconds * 1000);
 
     public Task<MonitoringDashboardSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
     {
@@ -101,6 +106,9 @@ public sealed class AdminMonitoringReadModelService(
             .OrderByDescending(entity => entity.CompletedAtUtc)
             .ThenByDescending(entity => entity.CreatedDate)
             .FirstOrDefaultAsync(cancellationToken);
+        var degradedModeStates = await LoadDegradedModeStatesAsync(
+            [latestHandoffEntity, lastSuccessfulHandoffEntity, lastBlockedHandoffEntity],
+            cancellationToken);
 
         return new MarketScannerDashboardSnapshot(
             latestCycle.Id,
@@ -112,16 +120,91 @@ public sealed class AdminMonitoringReadModelService(
             latestCycle.BestCandidateScore,
             topCandidateEntities.Select(MapMarketScannerCandidate).ToArray(),
             rejectedSampleEntities.Select(MapMarketScannerCandidate).ToArray(),
-            MapMarketScannerHandoffAttempt(latestHandoffEntity),
-            MapMarketScannerHandoffAttempt(lastSuccessfulHandoffEntity),
-            MapMarketScannerHandoffAttempt(lastBlockedHandoffEntity));
+            MapMarketScannerHandoffAttempt(latestHandoffEntity, ResolveDegradedModeState(latestHandoffEntity, degradedModeStates)),
+            MapMarketScannerHandoffAttempt(lastSuccessfulHandoffEntity, ResolveDegradedModeState(lastSuccessfulHandoffEntity, degradedModeStates)),
+            MapMarketScannerHandoffAttempt(lastBlockedHandoffEntity, ResolveDegradedModeState(lastBlockedHandoffEntity, degradedModeStates)));
     }
-    private static MarketScannerHandoffSnapshot MapMarketScannerHandoffAttempt(MarketScannerHandoffAttemptEntity? entity)
+
+    private async Task<Dictionary<Guid, DegradedModeState>> LoadDegradedModeStatesAsync(
+        IEnumerable<MarketScannerHandoffAttemptEntity?> handoffAttempts,
+        CancellationToken cancellationToken)
+    {
+        var stateIds = handoffAttempts
+            .Where(entity => entity is not null &&
+                !string.IsNullOrWhiteSpace(entity.SelectedSymbol) &&
+                !string.IsNullOrWhiteSpace(entity.SelectedTimeframe))
+            .Select(entity => DegradedModeDefaults.ResolveStateId(entity!.SelectedSymbol, entity.SelectedTimeframe))
+            .Distinct()
+            .ToArray();
+
+        if (stateIds.Length == 0)
+        {
+            return [];
+        }
+
+        return await dbContext.DegradedModeStates
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity => stateIds.Contains(entity.Id))
+            .ToDictionaryAsync(entity => entity.Id, cancellationToken);
+    }
+
+    private static DegradedModeState? ResolveDegradedModeState(
+        MarketScannerHandoffAttemptEntity? entity,
+        IReadOnlyDictionary<Guid, DegradedModeState> degradedModeStates)
+    {
+        if (entity is null ||
+            string.IsNullOrWhiteSpace(entity.SelectedSymbol) ||
+            string.IsNullOrWhiteSpace(entity.SelectedTimeframe))
+        {
+            return null;
+        }
+
+        return degradedModeStates.TryGetValue(
+            DegradedModeDefaults.ResolveStateId(entity.SelectedSymbol, entity.SelectedTimeframe),
+            out var degradedModeState)
+            ? degradedModeState
+            : null;
+    }
+
+    private MarketScannerHandoffSnapshot MapMarketScannerHandoffAttempt(
+        MarketScannerHandoffAttemptEntity? entity,
+        DegradedModeState? degradedModeState)
     {
         if (entity is null)
         {
             return MarketScannerHandoffSnapshot.Empty();
         }
+
+        var isBlocked = !string.Equals(entity.ExecutionRequestStatus, "Prepared", StringComparison.Ordinal);
+        var decisionAtUtc = NormalizeUtc(entity.CompletedAtUtc);
+        var latencyReasonCode = ExecutionDecisionDiagnostics.ExtractToken("LatencyReason", entity.BlockerDetail, entity.GuardSummary)
+            ?? degradedModeState?.ReasonCode.ToString();
+        var continuityGapCount = ExecutionDecisionDiagnostics.ExtractIntToken("ContinuityGapCount", entity.BlockerDetail, entity.GuardSummary)
+            ?? degradedModeState?.LatestContinuityGapCount;
+        var decisionReasonCode = ExecutionDecisionDiagnostics.ResolveDecisionReasonCode(
+            isBlocked,
+            entity.BlockerCode,
+            latencyReasonCode);
+        var decisionReasonType = ExecutionDecisionDiagnostics.ResolveDecisionReasonType(
+            decisionReasonCode,
+            latencyReasonCode,
+            entity.RiskOutcome,
+            entity.StrategyDecisionOutcome);
+        var marketDataLastCandleAtUtc = ExecutionDecisionDiagnostics.ExtractUtcToken("LastCandleAtUtc", entity.BlockerDetail, entity.GuardSummary)
+            ?? NormalizeUtcNullable(degradedModeState?.LatestDataTimestampAtUtc);
+        var continuityGapStartedAtUtc = NormalizeUtcNullable(degradedModeState?.LatestContinuityGapStartedAtUtc);
+        var continuityGapLastSeenAtUtc = NormalizeUtcNullable(degradedModeState?.LatestContinuityGapLastSeenAtUtc);
+        var continuityRecoveredAtUtc = NormalizeUtcNullable(degradedModeState?.LatestContinuityRecoveredAtUtc);
+        var continuityState = ExecutionDecisionDiagnostics.ResolveContinuityState(
+            latencyReasonCode,
+            continuityGapCount,
+            continuityRecoveredAtUtc);
+        var decisionSummary = ExecutionDecisionDiagnostics.ResolveDecisionSummary(
+            isBlocked,
+            decisionReasonType,
+            decisionReasonCode,
+            entity.BlockerDetail);
 
         return new MarketScannerHandoffSnapshot(
             entity.Id,
@@ -174,11 +257,29 @@ public sealed class AdminMonitoringReadModelService(
             entity.BlockerDetail,
             entity.GuardSummary,
             entity.CorrelationId,
-            NormalizeUtc(entity.CompletedAtUtc));
+            decisionAtUtc,
+            ExecutionDecisionDiagnostics.ResolveDecisionOutcome(isBlocked),
+            decisionAtUtc,
+            decisionReasonType,
+            decisionReasonCode,
+            decisionSummary,
+            marketDataLastCandleAtUtc,
+            ExecutionDecisionDiagnostics.ResolveDecisionDataAgeMilliseconds(
+                degradedModeState,
+                decisionAtUtc,
+                entity.BlockerDetail,
+                entity.GuardSummary),
+            staleThresholdMilliseconds,
+            ExecutionDecisionDiagnostics.ResolveStaleReason(latencyReasonCode),
+            continuityState,
+            continuityGapCount,
+            continuityGapStartedAtUtc,
+            continuityGapLastSeenAtUtc,
+            continuityRecoveredAtUtc);
     }
-    private static HealthSnapshot MapHealthSnapshot(HealthSnapshotEntity entity)
+    private static CoinBot.Application.Abstractions.Monitoring.HealthSnapshot MapHealthSnapshot(HealthSnapshotEntity entity)
     {
-        return new HealthSnapshot(
+        return new CoinBot.Application.Abstractions.Monitoring.HealthSnapshot(
             entity.SnapshotKey,
             entity.SentinelName,
             entity.DisplayName,
@@ -266,9 +367,16 @@ public sealed class AdminMonitoringReadModelService(
         };
     }
 
-    private static WorkerHeartbeat MapWorkerHeartbeat(WorkerHeartbeatEntity entity)
+    private static DateTime? NormalizeUtcNullable(DateTime? value)
     {
-        return new WorkerHeartbeat(
+        return value.HasValue
+            ? NormalizeUtc(value.Value)
+            : null;
+    }
+
+    private static CoinBot.Application.Abstractions.Monitoring.WorkerHeartbeat MapWorkerHeartbeat(WorkerHeartbeatEntity entity)
+    {
+        return new CoinBot.Application.Abstractions.Monitoring.WorkerHeartbeat(
             entity.WorkerKey,
             entity.WorkerName,
             entity.HealthState,

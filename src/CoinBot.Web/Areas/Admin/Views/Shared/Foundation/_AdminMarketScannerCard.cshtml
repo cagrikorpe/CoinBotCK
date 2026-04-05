@@ -75,6 +75,43 @@
             <span class="cb-admin-info-strip-meta cb-mono" data-cb-scanner-handoff-at>@(latestHandoff.CompletedAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "No handoff")</span>
         </div>
 
+        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4" data-cb-scanner-decision-strip>
+            <div>
+                <div class="cb-admin-info-strip-title">
+                    Decision:
+                    <span data-cb-scanner-decision>@latestHandoff.DecisionOutcome</span>
+                    <span> / </span>
+                    <span data-cb-scanner-decision-reason-type>@(latestHandoff.DecisionReasonType ?? "n/a")</span>
+                    <span> / </span>
+                    <span data-cb-scanner-decision-reason-code>@(latestHandoff.DecisionReasonCode ?? "n/a")</span>
+                </div>
+                <div class="cb-admin-info-strip-text" data-cb-scanner-decision-summary>@(latestHandoff.DecisionSummary ?? "Decision summary unavailable.")</div>
+                <div class="cb-admin-info-strip-text mt-2">
+                    <span>Last candle </span>
+                    <span data-cb-scanner-market-last-candle>@(latestHandoff.MarketDataLastCandleAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "n/a")</span>
+                    <span> · Data age </span>
+                    <span data-cb-scanner-market-age>@(latestHandoff.MarketDataAgeMilliseconds?.ToString() ?? "n/a")</span>
+                    <span> · Threshold </span>
+                    <span data-cb-scanner-market-threshold>@(latestHandoff.MarketDataStaleThresholdMilliseconds?.ToString() ?? "n/a")</span>
+                    <span> · Market reason </span>
+                    <span data-cb-scanner-market-stale-reason>@(latestHandoff.MarketDataStaleReason ?? "n/a")</span>
+                </div>
+                <div class="cb-admin-info-strip-text mt-2">
+                    <span>Continuity </span>
+                    <span data-cb-scanner-continuity-state>@(latestHandoff.ContinuityState ?? "n/a")</span>
+                    <span> · Gap count </span>
+                    <span data-cb-scanner-continuity-gap-count>@(latestHandoff.ContinuityGapCount?.ToString() ?? "n/a")</span>
+                    <span> · Gap start </span>
+                    <span data-cb-scanner-continuity-gap-start>@(latestHandoff.ContinuityGapStartedAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "n/a")</span>
+                    <span> · Gap last seen </span>
+                    <span data-cb-scanner-continuity-gap-last-seen>@(latestHandoff.ContinuityGapLastSeenAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "n/a")</span>
+                    <span> · Recovery </span>
+                    <span data-cb-scanner-continuity-recovery>@(latestHandoff.ContinuityRecoveredAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "n/a")</span>
+                </div>
+            </div>
+            <span class="cb-admin-info-strip-meta cb-mono" data-cb-scanner-decision-at>@(latestHandoff.DecisionAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "n/a")</span>
+        </div>
+
         <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4" data-cb-scanner-risk-strip>
             <div>
                 <div class="cb-admin-info-strip-title">

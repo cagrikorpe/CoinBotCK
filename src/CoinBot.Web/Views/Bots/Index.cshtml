@@ -115,6 +115,8 @@
                                                 <div class="small text-dark">@bot.LastExecutionBlockDetail</div>
                                             }
                                             @if (!string.IsNullOrWhiteSpace(bot.MarketDataBadgeText) ||
+                                                 !string.IsNullOrWhiteSpace(bot.DecisionText) ||
+                                                 !string.IsNullOrWhiteSpace(bot.DecisionSummaryText) ||
                                                  !string.IsNullOrWhiteSpace(bot.LastCandleAtLabel) ||
                                                  !string.IsNullOrWhiteSpace(bot.DataAgeText) ||
                                                  !string.IsNullOrWhiteSpace(bot.ContinuityStateText) ||
@@ -133,6 +135,22 @@
                                                     {
                                                         <div class="small text-dark" data-cb-bot-market-reason>Reason: @bot.StaleReasonText</div>
                                                     }
+                                                    @if (!string.IsNullOrWhiteSpace(bot.DecisionText))
+                                                    {
+                                                        <div class="small text-dark" data-cb-bot-decision>@bot.DecisionText</div>
+                                                    }
+                                                    @if (!string.IsNullOrWhiteSpace(bot.DecisionReasonCodeText))
+                                                    {
+                                                        <div class="text-muted small" data-cb-bot-decision-reason-code>@bot.DecisionReasonCodeText</div>
+                                                    }
+                                                    @if (!string.IsNullOrWhiteSpace(bot.DecisionSummaryText))
+                                                    {
+                                                        <div class="text-muted small" data-cb-bot-decision-summary>@bot.DecisionSummaryText</div>
+                                                    }
+                                                    @if (!string.IsNullOrWhiteSpace(bot.DecisionAtText))
+                                                    {
+                                                        <div class="text-muted small" data-cb-bot-decision-at>Decision at: @bot.DecisionAtText</div>
+                                                    }
                                                     @if (!string.IsNullOrWhiteSpace(bot.AffectedMarketText))
                                                     {
                                                         <div class="text-muted small" data-cb-bot-market-affected>Affected: @bot.AffectedMarketText</div>
@@ -145,6 +163,10 @@
                                                     {
                                                         <div class="text-muted small" data-cb-bot-market-age>Data age: @bot.DataAgeText</div>
                                                     }
+                                                    @if (!string.IsNullOrWhiteSpace(bot.MarketStaleThresholdText))
+                                                    {
+                                                        <div class="text-muted small" data-cb-bot-market-threshold>Stale threshold: @bot.MarketStaleThresholdText</div>
+                                                    }
                                                     @if (!string.IsNullOrWhiteSpace(bot.ContinuityStateText) || !string.IsNullOrWhiteSpace(bot.ContinuityGapText))
                                                     {
                                                         <div class="text-muted small" data-cb-bot-market-continuity>
@@ -154,6 +176,18 @@
                                                                 <text> | Gap: @bot.ContinuityGapText</text>
                                                             }
                                                         </div>
+                                                    }
+                                                    @if (!string.IsNullOrWhiteSpace(bot.ContinuityGapStartedText))
+                                                    {
+                                                        <div class="text-muted small" data-cb-bot-market-gap-start>Gap start: @bot.ContinuityGapStartedText</div>
+                                                    }
+                                                    @if (!string.IsNullOrWhiteSpace(bot.ContinuityGapLastSeenText))
+                                                    {
+                                                        <div class="text-muted small" data-cb-bot-market-gap-last-seen>Gap last seen: @bot.ContinuityGapLastSeenText</div>
+                                                    }
+                                                    @if (!string.IsNullOrWhiteSpace(bot.ContinuityRecoveryText))
+                                                    {
+                                                        <div class="text-muted small" data-cb-bot-market-recovery>Recovered: @bot.ContinuityRecoveryText</div>
                                                     }
                                                 </div>
                                             }

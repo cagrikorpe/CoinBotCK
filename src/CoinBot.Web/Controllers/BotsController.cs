@@ -253,7 +253,27 @@ public class BotsController(
                     ? item.LastExecutionContinuityGapCount.Value.ToString()
                     : null,
                 ResolveAffectedMarketText(item.LastExecutionAffectedSymbol, item.LastExecutionAffectedTimeframe),
-                item.LastExecutionStaleReason))
+                item.LastExecutionStaleReason,
+                ResolveDecisionText(item.LastExecutionDecisionOutcome, item.LastExecutionDecisionReasonType),
+                string.IsNullOrWhiteSpace(item.LastExecutionDecisionReasonCode)
+                    ? null
+                    : $"ReasonCode: {item.LastExecutionDecisionReasonCode}",
+                item.LastExecutionDecisionSummary,
+                item.LastExecutionDecisionAtUtc.HasValue
+                    ? FormatTimestamp(item.LastExecutionDecisionAtUtc, timeZoneInfo)
+                    : null,
+                item.LastExecutionStaleThresholdMilliseconds.HasValue
+                    ? $"{item.LastExecutionStaleThresholdMilliseconds.Value} ms"
+                    : null,
+                item.LastExecutionContinuityGapStartedAtUtc.HasValue
+                    ? FormatTimestamp(item.LastExecutionContinuityGapStartedAtUtc, timeZoneInfo)
+                    : null,
+                item.LastExecutionContinuityGapLastSeenAtUtc.HasValue
+                    ? FormatTimestamp(item.LastExecutionContinuityGapLastSeenAtUtc, timeZoneInfo)
+                    : null,
+                item.LastExecutionContinuityRecoveredAtUtc.HasValue
+                    ? FormatTimestamp(item.LastExecutionContinuityRecoveredAtUtc, timeZoneInfo)
+                    : null))
             .ToArray();
 
         return new BotManagementIndexViewModel(rows);
@@ -321,6 +341,18 @@ public class BotsController(
             : string.IsNullOrWhiteSpace(timeframe)
                 ? symbol
                 : $"{symbol} / {timeframe}";
+    }
+
+    private static string? ResolveDecisionText(string? decisionOutcome, string? decisionReasonType)
+    {
+        if (string.IsNullOrWhiteSpace(decisionOutcome))
+        {
+            return null;
+        }
+
+        return string.IsNullOrWhiteSpace(decisionReasonType) || string.Equals(decisionReasonType, "Allow", StringComparison.Ordinal)
+            ? $"Decision: {decisionOutcome.Trim()}"
+            : $"Decision: {decisionOutcome.Trim()} / {decisionReasonType.Trim()}";
     }
 
     private static string? ResolveExecutionStageText(string? rejectionStage)

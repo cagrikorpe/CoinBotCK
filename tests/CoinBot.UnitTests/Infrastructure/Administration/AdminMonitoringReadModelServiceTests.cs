@@ -4,10 +4,12 @@ using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Options;
 
 using HealthSnapshotEntity = CoinBot.Domain.Entities.HealthSnapshot;
 
@@ -56,7 +58,8 @@ public sealed class AdminMonitoringReadModelServiceTests
         var service = new AdminMonitoringReadModelService(
             dbContext,
             new MemoryCache(new MemoryCacheOptions()),
-            TimeProvider.System);
+            TimeProvider.System,
+            Options.Create(new DataLatencyGuardOptions()));
 
         var snapshot = await service.GetSnapshotAsync();
 
@@ -126,7 +129,8 @@ public sealed class AdminMonitoringReadModelServiceTests
         var service = new AdminMonitoringReadModelService(
             dbContext,
             new MemoryCache(new MemoryCacheOptions()),
-            TimeProvider.System);
+            TimeProvider.System,
+            Options.Create(new DataLatencyGuardOptions()));
 
         var snapshot = await service.GetSnapshotAsync();
 
@@ -232,7 +236,8 @@ public sealed class AdminMonitoringReadModelServiceTests
         var service = new AdminMonitoringReadModelService(
             dbContext,
             new MemoryCache(new MemoryCacheOptions()),
-            TimeProvider.System);
+            TimeProvider.System,
+            Options.Create(new DataLatencyGuardOptions()));
 
         var snapshot = await service.GetSnapshotAsync();
 
@@ -240,11 +245,95 @@ public sealed class AdminMonitoringReadModelServiceTests
         Assert.Equal("Blocked", snapshot.MarketScanner.LatestHandoff.ExecutionRequestStatus);
         Assert.Equal("StrategyVetoed", snapshot.MarketScanner.LatestHandoff.BlockerCode);
         Assert.Equal("Vetoed", snapshot.MarketScanner.LatestHandoff.StrategyDecisionOutcome);
+        Assert.Equal("Block", snapshot.MarketScanner.LatestHandoff.DecisionOutcome);
+        Assert.Equal("RiskVeto", snapshot.MarketScanner.LatestHandoff.DecisionReasonType);
+        Assert.Equal("StrategyVetoed", snapshot.MarketScanner.LatestHandoff.DecisionReasonCode);
+        Assert.Equal("Exposure limit breached.", snapshot.MarketScanner.LatestHandoff.DecisionSummary);
         Assert.Equal("BTCUSDT", snapshot.MarketScanner.LastSuccessfulHandoff.SelectedSymbol);
         Assert.Equal("Prepared", snapshot.MarketScanner.LastSuccessfulHandoff.ExecutionRequestStatus);
+        Assert.Equal("Allow", snapshot.MarketScanner.LastSuccessfulHandoff.DecisionOutcome);
+        Assert.Equal("Allowed", snapshot.MarketScanner.LastSuccessfulHandoff.DecisionReasonCode);
         Assert.Equal("SOLUSDT", snapshot.MarketScanner.LastBlockedHandoff.SelectedSymbol);
         Assert.Equal("StrategyVetoed", snapshot.MarketScanner.LastBlockedHandoff.BlockerCode);
         Assert.Equal(DateTimeKind.Utc, snapshot.MarketScanner.LatestHandoff.CompletedAtUtc!.Value.Kind);
+    }
+
+    [Fact]
+    public async Task GetSnapshotAsync_ProjectsContinuityDecisionSurface_FromHandoffAndDegradedModeState()
+    {
+        var now = new DateTime(2026, 4, 3, 12, 0, 0, DateTimeKind.Utc);
+        var cycleId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext();
+
+        dbContext.MarketScannerCycles.Add(new MarketScannerCycle
+        {
+            Id = cycleId,
+            StartedAtUtc = now.AddSeconds(-30),
+            CompletedAtUtc = now,
+            UniverseSource = "config",
+            ScannedSymbolCount = 1,
+            EligibleCandidateCount = 1,
+            TopCandidateCount = 1,
+            BestCandidateSymbol = "BTCUSDT",
+            BestCandidateScore = 10_000m,
+            Summary = "continuity"
+        });
+        dbContext.MarketScannerHandoffAttempts.Add(new MarketScannerHandoffAttempt
+        {
+            Id = Guid.NewGuid(),
+            ScanCycleId = cycleId,
+            SelectedSymbol = "BTCUSDT",
+            SelectedTimeframe = "1m",
+            SelectedAtUtc = now,
+            SelectionReason = "Top-ranked eligible candidate selected.",
+            StrategyDecisionOutcome = "Persisted",
+            ExecutionRequestStatus = "Blocked",
+            BlockerCode = "ContinuityGap",
+            BlockerDetail = "Execution blocked because the candle continuity guard is active. LatencyReason=CandleDataGapDetected; Symbol=BTCUSDT; Timeframe=1m; LastCandleAtUtc=2026-04-03T11:59:00.0000000Z; DataAgeMs=60000; ContinuityGapCount=2",
+            GuardSummary = "ExecutionGate=ContinuityGap; Symbol=BTCUSDT; Timeframe=1m",
+            CorrelationId = "corr-continuity",
+            CompletedAtUtc = now
+        });
+        dbContext.DegradedModeStates.Add(new DegradedModeState
+        {
+            Id = DegradedModeDefaults.ResolveStateId("BTCUSDT", "1m"),
+            StateCode = DegradedModeStateCode.Normal,
+            ReasonCode = DegradedModeReasonCode.None,
+            SignalFlowBlocked = false,
+            ExecutionFlowBlocked = false,
+            LatestSymbol = "BTCUSDT",
+            LatestTimeframe = "1m",
+            LatestDataTimestampAtUtc = now.AddMinutes(-1),
+            LatestExpectedOpenTimeUtc = now,
+            LatestContinuityGapCount = 2,
+            LatestContinuityGapStartedAtUtc = now.AddMinutes(-3),
+            LatestContinuityGapLastSeenAtUtc = now.AddMinutes(-1),
+            LatestContinuityRecoveredAtUtc = now.AddSeconds(-10)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            TimeProvider.System,
+            Options.Create(new DataLatencyGuardOptions()));
+
+        var snapshot = await service.GetSnapshotAsync();
+        var handoff = snapshot.MarketScanner.LatestHandoff;
+
+        Assert.Equal("Block", handoff.DecisionOutcome);
+        Assert.Equal("ContinuityGap", handoff.DecisionReasonType);
+        Assert.Equal("ContinuityGap", handoff.DecisionReasonCode);
+        Assert.Equal("Execution blocked because the candle continuity guard is active.", handoff.DecisionSummary);
+        Assert.Equal(new DateTime(2026, 4, 3, 11, 59, 0, DateTimeKind.Utc), handoff.MarketDataLastCandleAtUtc);
+        Assert.Equal(60000, handoff.MarketDataAgeMilliseconds);
+        Assert.Equal(3000, handoff.MarketDataStaleThresholdMilliseconds);
+        Assert.Equal("Continuity gap detected", handoff.MarketDataStaleReason);
+        Assert.Equal("Recovered after backfill", handoff.ContinuityState);
+        Assert.Equal(2, handoff.ContinuityGapCount);
+        Assert.Equal(now.AddMinutes(-3), handoff.ContinuityGapStartedAtUtc);
+        Assert.Equal(now.AddMinutes(-1), handoff.ContinuityGapLastSeenAtUtc);
+        Assert.Equal(now.AddSeconds(-10), handoff.ContinuityRecoveredAtUtc);
     }
     [Fact]
     public async Task GetSnapshotAsync_ProjectsSharedMarketDataCacheHealthSnapshot_FromCollector()
@@ -286,6 +375,7 @@ public sealed class AdminMonitoringReadModelServiceTests
             dbContext,
             new MemoryCache(new MemoryCacheOptions()),
             new FixedTimeProvider(now),
+            Options.Create(new DataLatencyGuardOptions()),
             cacheCollector);
 
         var snapshot = await service.GetSnapshotAsync();

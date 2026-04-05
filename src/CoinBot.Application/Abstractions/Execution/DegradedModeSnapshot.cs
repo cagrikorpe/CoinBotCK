@@ -17,7 +17,10 @@ public sealed record DegradedModeSnapshot(
     string? LatestSymbol = null,
     string? LatestTimeframe = null,
     DateTime? LatestExpectedOpenTimeUtc = null,
-    int? LatestContinuityGapCount = null)
+    int? LatestContinuityGapCount = null,
+    DateTime? LatestContinuityGapStartedAtUtc = null,
+    DateTime? LatestContinuityGapLastSeenAtUtc = null,
+    DateTime? LatestContinuityRecoveredAtUtc = null)
 {
     public bool IsNormal => StateCode == DegradedModeStateCode.Normal &&
                             !SignalFlowBlocked &&

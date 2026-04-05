@@ -53,7 +53,21 @@ public sealed record MarketScannerHandoffSnapshot(
     string? BlockerDetail,
     string? GuardSummary,
     string? CorrelationId,
-    DateTime? CompletedAtUtc)
+    DateTime? CompletedAtUtc,
+    string DecisionOutcome = "Unknown",
+    DateTime? DecisionAtUtc = null,
+    string? DecisionReasonType = null,
+    string? DecisionReasonCode = null,
+    string? DecisionSummary = null,
+    DateTime? MarketDataLastCandleAtUtc = null,
+    int? MarketDataAgeMilliseconds = null,
+    int? MarketDataStaleThresholdMilliseconds = null,
+    string? MarketDataStaleReason = null,
+    string? ContinuityState = null,
+    int? ContinuityGapCount = null,
+    DateTime? ContinuityGapStartedAtUtc = null,
+    DateTime? ContinuityGapLastSeenAtUtc = null,
+    DateTime? ContinuityRecoveredAtUtc = null)
 {
     public static MarketScannerHandoffSnapshot Empty()
     {
@@ -108,6 +122,20 @@ public sealed record MarketScannerHandoffSnapshot(
             BlockerDetail: null,
             GuardSummary: null,
             CorrelationId: null,
-            CompletedAtUtc: null);
+            CompletedAtUtc: null,
+            DecisionOutcome: "Unknown",
+            DecisionAtUtc: null,
+            DecisionReasonType: null,
+            DecisionReasonCode: null,
+            DecisionSummary: null,
+            MarketDataLastCandleAtUtc: null,
+            MarketDataAgeMilliseconds: null,
+            MarketDataStaleThresholdMilliseconds: null,
+            MarketDataStaleReason: null,
+            ContinuityState: null,
+            ContinuityGapCount: null,
+            ContinuityGapStartedAtUtc: null,
+            ContinuityGapLastSeenAtUtc: null,
+            ContinuityRecoveredAtUtc: null);
     }
 }

@@ -46,7 +46,16 @@ public sealed record BotManagementBotSnapshot(
     int? LastExecutionContinuityGapCount = null,
     string? LastExecutionStaleReason = null,
     string? LastExecutionAffectedSymbol = null,
-    string? LastExecutionAffectedTimeframe = null);
+    string? LastExecutionAffectedTimeframe = null,
+    string? LastExecutionDecisionOutcome = null,
+    DateTime? LastExecutionDecisionAtUtc = null,
+    string? LastExecutionDecisionReasonType = null,
+    string? LastExecutionDecisionReasonCode = null,
+    string? LastExecutionDecisionSummary = null,
+    int? LastExecutionStaleThresholdMilliseconds = null,
+    DateTime? LastExecutionContinuityGapStartedAtUtc = null,
+    DateTime? LastExecutionContinuityGapLastSeenAtUtc = null,
+    DateTime? LastExecutionContinuityRecoveredAtUtc = null);
 
 public sealed record BotManagementEditorSnapshot(
     Guid? BotId,

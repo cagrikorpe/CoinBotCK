@@ -41,7 +41,9 @@ public sealed class DataLatencyCircuitBreaker(
             cancellationToken);
         var previousSnapshot = MapSnapshot(state, evaluationTimeUtc, isPersisted: true);
         var desiredState = EvaluateState(state, evaluationTimeUtc);
+        var previousReasonCode = state.ReasonCode;
         var hasStateChanged = ApplyState(state, desiredState, evaluationTimeUtc);
+        UpdateContinuityHistory(state, previousReasonCode, desiredState.ReasonCode, evaluationTimeUtc);
         var wasCreated = dbContext.Entry(state).State == EntityState.Added;
 
         if (wasCreated || hasSharedSnapshotRefresh || hasStateChanged)
@@ -222,12 +224,14 @@ public sealed class DataLatencyCircuitBreaker(
             ? null
             : Math.Max(0, continuityGapCount.Value);
 
+        var previousReasonCode = state.ReasonCode;
         var desiredState = EvaluateState(
             state,
             evaluationTimeUtc,
             guardStateCode,
             guardReasonCode);
         var hasStateChanged = ApplyState(state, desiredState, evaluationTimeUtc);
+        UpdateContinuityHistory(state, previousReasonCode, desiredState.ReasonCode, evaluationTimeUtc);
 
         state = await SaveStateAsync(state, cancellationToken);
 
@@ -329,6 +333,9 @@ public sealed class DataLatencyCircuitBreaker(
         target.LatestTimeframe = source.LatestTimeframe;
         target.LatestExpectedOpenTimeUtc = source.LatestExpectedOpenTimeUtc;
         target.LatestContinuityGapCount = source.LatestContinuityGapCount;
+        target.LatestContinuityGapStartedAtUtc = source.LatestContinuityGapStartedAtUtc;
+        target.LatestContinuityGapLastSeenAtUtc = source.LatestContinuityGapLastSeenAtUtc;
+        target.LatestContinuityRecoveredAtUtc = source.LatestContinuityRecoveredAtUtc;
         target.LastStateChangedAtUtc = source.LastStateChangedAtUtc;
         target.StateCode = source.StateCode;
         target.ReasonCode = source.ReasonCode;
@@ -439,6 +446,31 @@ public sealed class DataLatencyCircuitBreaker(
         return hasStateChanged;
     }
 
+    private static void UpdateContinuityHistory(
+        DegradedModeState state,
+        DegradedModeReasonCode previousReasonCode,
+        DegradedModeReasonCode desiredReasonCode,
+        DateTime evaluationTimeUtc)
+    {
+        if (IsContinuityGuardReason(desiredReasonCode))
+        {
+            if (!state.LatestContinuityGapStartedAtUtc.HasValue ||
+                !IsContinuityGuardReason(previousReasonCode))
+            {
+                state.LatestContinuityGapStartedAtUtc = state.LatestExpectedOpenTimeUtc ?? evaluationTimeUtc;
+            }
+
+            state.LatestContinuityGapLastSeenAtUtc = evaluationTimeUtc;
+            state.LatestContinuityRecoveredAtUtc = null;
+            return;
+        }
+
+        if (IsContinuityGuardReason(previousReasonCode))
+        {
+            state.LatestContinuityRecoveredAtUtc = evaluationTimeUtc;
+        }
+    }
+
     private async Task SendAlertIfStateChangedAsync(
         DegradedModeSnapshot previousSnapshot,
         DesiredState desiredState,
@@ -519,7 +551,10 @@ public sealed class DataLatencyCircuitBreaker(
             state.LatestSymbol,
             state.LatestTimeframe,
             state.LatestExpectedOpenTimeUtc,
-            state.LatestContinuityGapCount);
+            state.LatestContinuityGapCount,
+            state.LatestContinuityGapStartedAtUtc,
+            state.LatestContinuityGapLastSeenAtUtc,
+            state.LatestContinuityRecoveredAtUtc);
     }
 
     private int StaleDataThresholdMilliseconds => checked(optionsValue.StaleDataThresholdSeconds * 1000);

@@ -49,6 +49,11 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal(ExecutionOrderType.Market, persistedAttempt.ExecutionOrderType);
         Assert.Null(persistedAttempt.BlockerCode);
         Assert.Contains("Top-ranked eligible candidate selected", persistedAttempt.SelectionReason, StringComparison.Ordinal);
+        Assert.Contains("ExecutionGate=Allowed", persistedAttempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("LatencyReason=None", persistedAttempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("LastCandleAtUtc=", persistedAttempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("DataAgeMs=", persistedAttempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ContinuityGapCount=0", persistedAttempt.GuardSummary, StringComparison.Ordinal);
         Assert.Equal("BTCUSDT", harness.StrategySignalService.LastRequest?.EvaluationContext.IndicatorSnapshot.Symbol);
         Assert.Equal("BTCUSDT", harness.ExecutionGate.LastRequest?.Symbol);
         Assert.Equal("1m", harness.ExecutionGate.LastRequest?.Timeframe);
@@ -129,10 +134,34 @@ public sealed class MarketScannerHandoffServiceTests
 
         Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
         Assert.Equal("StaleMarketData", attempt.BlockerCode);
-        Assert.Equal("Execution blocked because market data is stale.", attempt.BlockerDetail);
+        Assert.Contains("Execution blocked because market data is stale.", attempt.BlockerDetail, StringComparison.Ordinal);
+        Assert.Contains("LatencyReason=MarketDataLatencyBreached", attempt.BlockerDetail, StringComparison.Ordinal);
         Assert.Equal("Persisted", attempt.StrategyDecisionOutcome);
         Assert.Contains("ExecutionGate=StaleMarketData; Symbol=BTCUSDT; Timeframe=1m", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Equal("BTCUSDT", harness.ExecutionGate.LastRequest?.Symbol);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_PersistsContinuityGapBlocker_DistinctFromStaleMarketData()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-btc", "BTCUSDT", "pilot-btc");
+        SeedScanCycle(harness.DbContext, scanCycleId);
+        SeedCandidate(harness.DbContext, scanCycleId, "BTCUSDT", rank: 1, score: 9_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("BTCUSDT", "BTC", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "BTCUSDT", "1m", harness.NowUtc));
+        harness.ExecutionGate.BlockSymbol("BTCUSDT", ExecutionGateBlockedReason.ContinuityGap, "Execution blocked because the candle continuity guard is active. LatencyReason=CandleDataGapDetected; Symbol=BTCUSDT; Timeframe=1m; LastCandleAtUtc=2026-04-03T11:59:00.0000000Z; DataAgeMs=60000; ContinuityGapCount=2");
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("ContinuityGap", attempt.BlockerCode);
+        Assert.Contains("Execution blocked because the candle continuity guard is active.", attempt.BlockerDetail, StringComparison.Ordinal);
+        Assert.Contains("LatencyReason=CandleDataGapDetected", attempt.BlockerDetail, StringComparison.Ordinal);
+        Assert.DoesNotContain("StaleMarketData", attempt.BlockerCode, StringComparison.Ordinal);
     }
 
     [Fact]

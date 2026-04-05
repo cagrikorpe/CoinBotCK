@@ -7,6 +7,7 @@ using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Identity;
 using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.MarketData;
@@ -132,7 +133,7 @@ public sealed class MarketScannerHandoffIntegrationTests
             var attempt = await handoffService.RunOnceAsync(scanCycleId);
 
             var persistedAttempt = await dbContext.MarketScannerHandoffAttempts.AsNoTracking().SingleAsync(entity => entity.Id == attempt.Id);
-            var readModelService = new AdminMonitoringReadModelService(dbContext, new MemoryCache(new MemoryCacheOptions()), new FixedTimeProvider(nowUtc));
+            var readModelService = new AdminMonitoringReadModelService(dbContext, new MemoryCache(new MemoryCacheOptions()), new FixedTimeProvider(nowUtc), Options.Create(new DataLatencyGuardOptions()));
             var dashboardSnapshot = await readModelService.GetSnapshotAsync();
 
             Assert.Equal("BTCUSDT", persistedAttempt.SelectedSymbol);
@@ -147,6 +148,14 @@ public sealed class MarketScannerHandoffIntegrationTests
             Assert.Equal("BTCUSDT", dashboardSnapshot.MarketScanner.LatestHandoff.SelectedSymbol);
             Assert.Equal("Prepared", dashboardSnapshot.MarketScanner.LatestHandoff.ExecutionRequestStatus);
             Assert.Equal("Persisted", dashboardSnapshot.MarketScanner.LatestHandoff.StrategyDecisionOutcome);
+            Assert.Equal("Allow", dashboardSnapshot.MarketScanner.LatestHandoff.DecisionOutcome);
+            Assert.Equal("Allow", dashboardSnapshot.MarketScanner.LatestHandoff.DecisionReasonType);
+            Assert.Equal("Allowed", dashboardSnapshot.MarketScanner.LatestHandoff.DecisionReasonCode);
+            Assert.Equal("Execution decision allowed the request.", dashboardSnapshot.MarketScanner.LatestHandoff.DecisionSummary);
+            Assert.Equal(nowUtc.UtcDateTime, dashboardSnapshot.MarketScanner.LatestHandoff.MarketDataLastCandleAtUtc);
+            Assert.Equal(0, dashboardSnapshot.MarketScanner.LatestHandoff.MarketDataAgeMilliseconds);
+            Assert.Equal(3000, dashboardSnapshot.MarketScanner.LatestHandoff.MarketDataStaleThresholdMilliseconds);
+            Assert.Equal("Continuity OK", dashboardSnapshot.MarketScanner.LatestHandoff.ContinuityState);
             Assert.Equal("BTCUSDT", dashboardSnapshot.MarketScanner.LastSuccessfulHandoff.SelectedSymbol);
         }
         finally
@@ -320,7 +329,7 @@ public sealed class MarketScannerHandoffIntegrationTests
             var attempt = await handoffService.RunOnceAsync(scanCycleId);
 
             var persistedAttempt = await dbContext.MarketScannerHandoffAttempts.AsNoTracking().SingleAsync(entity => entity.Id == attempt.Id);
-            var readModelService = new AdminMonitoringReadModelService(dbContext, new MemoryCache(new MemoryCacheOptions()), new FixedTimeProvider(nowUtc));
+            var readModelService = new AdminMonitoringReadModelService(dbContext, new MemoryCache(new MemoryCacheOptions()), new FixedTimeProvider(nowUtc), Options.Create(new DataLatencyGuardOptions()));
             var dashboardSnapshot = await readModelService.GetSnapshotAsync();
 
             Assert.Equal("Blocked", persistedAttempt.ExecutionRequestStatus);
@@ -350,6 +359,9 @@ public sealed class MarketScannerHandoffIntegrationTests
             Assert.Equal("UserExecutionRiskSymbolExposureLimitBreached", dashboardSnapshot.MarketScanner.LatestHandoff.BlockerCode);
             Assert.Equal("Vetoed", dashboardSnapshot.MarketScanner.LatestHandoff.RiskOutcome);
             Assert.Equal("SymbolExposureLimitBreached", dashboardSnapshot.MarketScanner.LatestHandoff.RiskVetoReasonCode);
+            Assert.Equal("Block", dashboardSnapshot.MarketScanner.LatestHandoff.DecisionOutcome);
+            Assert.Equal("RiskVeto", dashboardSnapshot.MarketScanner.LatestHandoff.DecisionReasonType);
+            Assert.Equal("UserExecutionRiskSymbolExposureLimitBreached", dashboardSnapshot.MarketScanner.LatestHandoff.DecisionReasonCode);
             Assert.Equal(6m, dashboardSnapshot.MarketScanner.LatestHandoff.RiskCurrentDailyLossPercentage);
             Assert.Equal(20m, dashboardSnapshot.MarketScanner.LatestHandoff.RiskProjectedSymbolExposurePercentage);
             Assert.Equal("BTC", dashboardSnapshot.MarketScanner.LatestHandoff.RiskBaseAsset);
@@ -360,6 +372,96 @@ public sealed class MarketScannerHandoffIntegrationTests
         {
             await dbContext.Database.EnsureDeletedAsync();
         }
+    }
+
+    [Fact]
+    public async Task MarketScannerHandoffService_ProjectsStaleAndContinuityBlocks_Separately_OnSqlServer()
+    {
+        await using var staleHarness = await CreateDecisionHarnessAsync(
+            $"CoinBotMarketScannerStaleInt_{Guid.NewGuid():N}",
+            "user-stale",
+            "scanner-handoff-stale",
+            "BTCUSDT",
+            new FakeExecutionGate(
+                new DateTime(2026, 4, 3, 12, 0, 0, DateTimeKind.Utc),
+                blockedSymbol: "BTCUSDT",
+                blockedReason: ExecutionGateBlockedReason.StaleMarketData,
+                blockedMessage: "Execution blocked because market data is stale. LatencyReason=MarketDataLatencyBreached; Symbol=BTCUSDT; Timeframe=1m; LastCandleAtUtc=2026-04-03T11:59:00.0000000Z; DataAgeMs=60000; ContinuityGapCount=0"));
+
+        var staleAttempt = await staleHarness.Service.RunOnceAsync(staleHarness.ScanCycleId);
+        var staleDashboard = await staleHarness.ReadModelService.GetSnapshotAsync();
+
+        Assert.Equal("StaleMarketData", staleAttempt.BlockerCode);
+        Assert.Equal("Block", staleDashboard.MarketScanner.LatestHandoff.DecisionOutcome);
+        Assert.Equal("StaleData", staleDashboard.MarketScanner.LatestHandoff.DecisionReasonType);
+        Assert.Equal("StaleMarketData", staleDashboard.MarketScanner.LatestHandoff.DecisionReasonCode);
+        Assert.Equal("Execution blocked because market data is stale.", staleDashboard.MarketScanner.LatestHandoff.DecisionSummary);
+
+        await staleHarness.DisposeAsync();
+
+        await using var continuityHarness = await CreateDecisionHarnessAsync(
+            $"CoinBotMarketScannerContinuityInt_{Guid.NewGuid():N}",
+            "user-continuity",
+            "scanner-handoff-continuity",
+            "BTCUSDT",
+            new FakeExecutionGate(
+                new DateTime(2026, 4, 3, 12, 0, 0, DateTimeKind.Utc),
+                blockedSymbol: "BTCUSDT",
+                blockedReason: ExecutionGateBlockedReason.ContinuityGap,
+                blockedMessage: "Execution blocked because the candle continuity guard is active. LatencyReason=CandleDataGapDetected; Symbol=BTCUSDT; Timeframe=1m; LastCandleAtUtc=2026-04-03T11:59:00.0000000Z; DataAgeMs=60000; ContinuityGapCount=2"));
+        continuityHarness.DbContext.DegradedModeStates.Add(new DegradedModeState
+        {
+            Id = DegradedModeDefaults.ResolveStateId("BTCUSDT", "1m"),
+            StateCode = DegradedModeStateCode.Normal,
+            ReasonCode = DegradedModeReasonCode.None,
+            SignalFlowBlocked = false,
+            ExecutionFlowBlocked = false,
+            LatestSymbol = "BTCUSDT",
+            LatestTimeframe = "1m",
+            LatestDataTimestampAtUtc = new DateTime(2026, 4, 3, 11, 59, 0, DateTimeKind.Utc),
+            LatestExpectedOpenTimeUtc = new DateTime(2026, 4, 3, 12, 0, 0, DateTimeKind.Utc),
+            LatestContinuityGapCount = 2,
+            LatestContinuityGapStartedAtUtc = new DateTime(2026, 4, 3, 11, 57, 0, DateTimeKind.Utc),
+            LatestContinuityGapLastSeenAtUtc = new DateTime(2026, 4, 3, 11, 59, 30, DateTimeKind.Utc),
+            LatestContinuityRecoveredAtUtc = new DateTime(2026, 4, 3, 11, 59, 45, DateTimeKind.Utc)
+        });
+        await continuityHarness.DbContext.SaveChangesAsync();
+
+        var continuityAttempt = await continuityHarness.Service.RunOnceAsync(continuityHarness.ScanCycleId);
+        var continuityDashboard = await continuityHarness.ReadModelService.GetSnapshotAsync();
+
+        Assert.Equal("ContinuityGap", continuityAttempt.BlockerCode);
+        Assert.Equal("Block", continuityDashboard.MarketScanner.LatestHandoff.DecisionOutcome);
+        Assert.Equal("ContinuityGap", continuityDashboard.MarketScanner.LatestHandoff.DecisionReasonType);
+        Assert.Equal("ContinuityGap", continuityDashboard.MarketScanner.LatestHandoff.DecisionReasonCode);
+        Assert.Equal("Recovered after backfill", continuityDashboard.MarketScanner.LatestHandoff.ContinuityState);
+        Assert.Equal(2, continuityDashboard.MarketScanner.LatestHandoff.ContinuityGapCount);
+        Assert.Equal(new DateTime(2026, 4, 3, 11, 57, 0, DateTimeKind.Utc), continuityDashboard.MarketScanner.LatestHandoff.ContinuityGapStartedAtUtc);
+        Assert.Equal(new DateTime(2026, 4, 3, 11, 59, 30, DateTimeKind.Utc), continuityDashboard.MarketScanner.LatestHandoff.ContinuityGapLastSeenAtUtc);
+        Assert.Equal(new DateTime(2026, 4, 3, 11, 59, 45, DateTimeKind.Utc), continuityDashboard.MarketScanner.LatestHandoff.ContinuityRecoveredAtUtc);
+    }
+
+    [Fact]
+    public async Task MarketScannerHandoffService_SeparatesGlobalExecutionOff_FromRiskVeto_OnSqlServer()
+    {
+        await using var harness = await CreateDecisionHarnessAsync(
+            $"CoinBotMarketScannerGlobalOffInt_{Guid.NewGuid():N}",
+            "user-global-off",
+            "scanner-handoff-global-off",
+            "BTCUSDT",
+            new FakeExecutionGate(
+                new DateTime(2026, 4, 3, 12, 0, 0, DateTimeKind.Utc),
+                blockedSymbol: "BTCUSDT",
+                blockedReason: ExecutionGateBlockedReason.TradeMasterDisarmed,
+                blockedMessage: "Execution blocked because TradeMaster is disarmed."));
+
+        await harness.Service.RunOnceAsync(harness.ScanCycleId);
+        var dashboardSnapshot = await harness.ReadModelService.GetSnapshotAsync();
+
+        Assert.Equal("Block", dashboardSnapshot.MarketScanner.LatestHandoff.DecisionOutcome);
+        Assert.Equal("GlobalExecutionOff", dashboardSnapshot.MarketScanner.LatestHandoff.DecisionReasonType);
+        Assert.Equal("TradeMasterDisarmed", dashboardSnapshot.MarketScanner.LatestHandoff.DecisionReasonCode);
+        Assert.NotEqual("RiskVeto", dashboardSnapshot.MarketScanner.LatestHandoff.DecisionReasonType);
     }
 
     private static StrategyIndicatorSnapshot CreateIndicatorSnapshot(string symbol, string timeframe, DateTime closeTimeUtc)
@@ -430,10 +532,23 @@ public sealed class MarketScannerHandoffIntegrationTests
         public Task<StrategySignalVetoSnapshot?> GetVetoAsync(Guid strategySignalVetoId, CancellationToken cancellationToken = default) => Task.FromResult<StrategySignalVetoSnapshot?>(null);
     }
 
-    private sealed class FakeExecutionGate(DateTime nowUtc) : IExecutionGate
+    private sealed class FakeExecutionGate(
+        DateTime nowUtc,
+        string? blockedSymbol = null,
+        ExecutionGateBlockedReason? blockedReason = null,
+        string? blockedMessage = null) : IExecutionGate
     {
         public Task<GlobalExecutionSwitchSnapshot> EnsureExecutionAllowedAsync(ExecutionGateRequest request, CancellationToken cancellationToken = default)
         {
+            if (blockedReason.HasValue &&
+                string.Equals(request.Symbol, blockedSymbol, StringComparison.Ordinal))
+            {
+                throw new ExecutionGateRejectedException(
+                    blockedReason.Value,
+                    request.Environment,
+                    blockedMessage ?? $"Execution blocked because {blockedReason.Value}.");
+            }
+
             return Task.FromResult(new GlobalExecutionSwitchSnapshot(TradeMasterSwitchState.Armed, false, true, nowUtc));
         }
     }
@@ -536,6 +651,161 @@ public sealed class MarketScannerHandoffIntegrationTests
             {
                 accessor.UserId = null;
                 accessor.HasIsolationBypass = true;
+            }
+        }
+    }
+
+    private static async Task<DecisionHarness> CreateDecisionHarnessAsync(
+        string databaseName,
+        string ownerUserId,
+        string strategyKey,
+        string symbol,
+        IExecutionGate executionGate)
+    {
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString(databaseName);
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlServer(connectionString).Options;
+        var dbContext = new ApplicationDbContext(options, new TestDataScopeContextAccessor());
+        await dbContext.Database.EnsureDeletedAsync();
+        await dbContext.Database.EnsureCreatedAsync();
+
+        var scanCycleId = Guid.NewGuid();
+        var strategyId = Guid.NewGuid();
+        var strategyVersionId = Guid.NewGuid();
+        var botId = Guid.NewGuid();
+        dbContext.Users.Add(new ApplicationUser
+        {
+            Id = ownerUserId,
+            UserName = ownerUserId,
+            NormalizedUserName = ownerUserId.ToUpperInvariant(),
+            Email = $"{ownerUserId}@coinbot.test",
+            NormalizedEmail = $"{ownerUserId}@coinbot.test".ToUpperInvariant(),
+            FullName = ownerUserId
+        });
+        dbContext.MarketScannerCycles.Add(new MarketScannerCycle
+        {
+            Id = scanCycleId,
+            StartedAtUtc = nowUtc.UtcDateTime.AddSeconds(-2),
+            CompletedAtUtc = nowUtc.UtcDateTime,
+            UniverseSource = "integration-test",
+            ScannedSymbolCount = 1,
+            EligibleCandidateCount = 1,
+            TopCandidateCount = 1,
+            BestCandidateSymbol = symbol,
+            BestCandidateScore = 250_000m,
+            Summary = "integration-test"
+        });
+        dbContext.MarketScannerCandidates.Add(new MarketScannerCandidate
+        {
+            Id = Guid.NewGuid(),
+            ScanCycleId = scanCycleId,
+            Symbol = symbol,
+            UniverseSource = "integration-test",
+            ObservedAtUtc = nowUtc.UtcDateTime,
+            LastCandleAtUtc = nowUtc.UtcDateTime,
+            LastPrice = 100m,
+            QuoteVolume24h = 250_000m,
+            IsEligible = true,
+            Score = 250_000m,
+            Rank = 1,
+            IsTopCandidate = true
+        });
+        dbContext.TradingStrategies.Add(new TradingStrategy
+        {
+            Id = strategyId,
+            OwnerUserId = ownerUserId,
+            StrategyKey = strategyKey,
+            DisplayName = strategyKey,
+            PromotionState = StrategyPromotionState.LivePublished,
+            PublishedMode = ExecutionEnvironment.Live,
+            PublishedAtUtc = nowUtc.UtcDateTime.AddMinutes(-1)
+        });
+        dbContext.TradingStrategyVersions.Add(new TradingStrategyVersion
+        {
+            Id = strategyVersionId,
+            OwnerUserId = ownerUserId,
+            TradingStrategyId = strategyId,
+            SchemaVersion = 1,
+            VersionNumber = 1,
+            Status = StrategyVersionStatus.Published,
+            DefinitionJson = "{}",
+            PublishedAtUtc = nowUtc.UtcDateTime.AddMinutes(-1)
+        });
+        dbContext.TradingBots.Add(new TradingBot
+        {
+            Id = botId,
+            OwnerUserId = ownerUserId,
+            Name = $"{strategyKey}-bot",
+            StrategyKey = strategyKey,
+            Symbol = symbol,
+            IsEnabled = true
+        });
+        await dbContext.SaveChangesAsync();
+
+        var strategySignalService = new FakeStrategySignalService(CreateSignal(strategyId, strategyVersionId, symbol, "1m", nowUtc.UtcDateTime));
+        var services = new ServiceCollection();
+        services.AddScoped<IDataScopeContextAccessor, TestDataScopeContextAccessor>();
+        services.AddScoped(provider => new ApplicationDbContext(options, provider.GetRequiredService<IDataScopeContextAccessor>()));
+        services.AddSingleton<IStrategySignalService>(strategySignalService);
+        services.AddSingleton(executionGate);
+        services.AddSingleton<IUserExecutionOverrideGuard>(new FakeUserExecutionOverrideGuard());
+        var serviceProvider = services.BuildServiceProvider();
+        var handoffService = new MarketScannerHandoffService(
+            dbContext,
+            serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            new FakeMarketDataService(nowUtc.UtcDateTime),
+            new FakeIndicatorDataService(CreateIndicatorSnapshot(symbol, "1m", nowUtc.UtcDateTime)),
+            new FakeSharedSymbolRegistry(),
+            new FakeDataLatencyCircuitBreaker(nowUtc.UtcDateTime),
+            Options.Create(new MarketScannerOptions { HandoffEnabled = true, AllowedQuoteAssets = ["USDT"] }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m" }),
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live, PrimeHistoricalCandleCount = 34 }),
+            new FixedTimeProvider(nowUtc),
+            NullLogger<MarketScannerHandoffService>.Instance);
+        var readModelService = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            new FixedTimeProvider(nowUtc),
+            Options.Create(new DataLatencyGuardOptions()));
+
+        return new DecisionHarness(dbContext, handoffService, readModelService, serviceProvider, scanCycleId);
+    }
+
+    private sealed class DecisionHarness(
+        ApplicationDbContext dbContext,
+        MarketScannerHandoffService service,
+        AdminMonitoringReadModelService readModelService,
+        ServiceProvider serviceProvider,
+        Guid scanCycleId) : IAsyncDisposable
+    {
+        public ApplicationDbContext DbContext { get; } = dbContext;
+
+        public MarketScannerHandoffService Service { get; } = service;
+
+        public AdminMonitoringReadModelService ReadModelService { get; } = readModelService;
+
+        public Guid ScanCycleId { get; } = scanCycleId;
+
+        public async ValueTask DisposeAsync()
+        {
+            try
+            {
+                await DbContext.Database.EnsureDeletedAsync();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            finally
+            {
+                try
+                {
+                    await DbContext.DisposeAsync();
+                }
+                catch (ObjectDisposedException)
+                {
+                }
+
+                await serviceProvider.DisposeAsync();
             }
         }
     }

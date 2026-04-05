@@ -29,4 +29,10 @@ public sealed class DegradedModeState : BaseEntity
     public DateTime? LatestExpectedOpenTimeUtc { get; set; }
 
     public int? LatestContinuityGapCount { get; set; }
+
+    public DateTime? LatestContinuityGapStartedAtUtc { get; set; }
+
+    public DateTime? LatestContinuityGapLastSeenAtUtc { get; set; }
+
+    public DateTime? LatestContinuityRecoveredAtUtc { get; set; }
 }
