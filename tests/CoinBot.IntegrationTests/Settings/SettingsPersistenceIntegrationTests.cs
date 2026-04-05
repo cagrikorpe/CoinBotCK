@@ -107,14 +107,6 @@ public sealed class SettingsPersistenceIntegrationTests
     private static async Task<SettingsController> CreateControllerAsync(IServiceProvider provider, string userId, string traceIdentifier)
     {
         var scope = provider.CreateAsyncScope();
-        var controller = new SettingsController(
-            new FakeMfaManagementService(),
-            scope.ServiceProvider.GetRequiredService<CoinBot.Application.Abstractions.Settings.IUserSettingsService>(),
-            scope.ServiceProvider.GetRequiredService<IBinanceTimeSyncService>(),
-            scope.ServiceProvider.GetRequiredService<CoinBot.Application.Abstractions.Execution.IDataLatencyCircuitBreaker>(),
-            scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<CoinBot.Infrastructure.Execution.DataLatencyGuardOptions>>(),
-            scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<CoinBot.Infrastructure.Exchange.BinancePrivateDataOptions>>());
-
         var httpContext = new DefaultHttpContext
         {
             TraceIdentifier = traceIdentifier,
@@ -124,6 +116,15 @@ public sealed class SettingsPersistenceIntegrationTests
             new ClaimsIdentity(
                 [new Claim(ClaimTypes.NameIdentifier, userId)],
                 "IntegrationAuth"));
+
+        scope.ServiceProvider.GetRequiredService<IHttpContextAccessor>().HttpContext = httpContext;
+        var controller = new SettingsController(
+            new FakeMfaManagementService(),
+            scope.ServiceProvider.GetRequiredService<CoinBot.Application.Abstractions.Settings.IUserSettingsService>(),
+            scope.ServiceProvider.GetRequiredService<IBinanceTimeSyncService>(),
+            scope.ServiceProvider.GetRequiredService<CoinBot.Application.Abstractions.Execution.IDataLatencyCircuitBreaker>(),
+            scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<CoinBot.Infrastructure.Execution.DataLatencyGuardOptions>>(),
+            scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<CoinBot.Infrastructure.Exchange.BinancePrivateDataOptions>>());
 
         controller.ControllerContext = new ControllerContext
         {
