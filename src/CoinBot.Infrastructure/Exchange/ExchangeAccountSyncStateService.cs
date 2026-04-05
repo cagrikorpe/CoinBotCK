@@ -40,7 +40,11 @@ public sealed class ExchangeAccountSyncStateService(ApplicationDbContext dbConte
 
         if (lastPrivateStreamEventAtUtc.HasValue)
         {
-            state.LastPrivateStreamEventAtUtc = NormalizeTimestamp(lastPrivateStreamEventAtUtc.Value);
+            var normalizedLastPrivateStreamEventAtUtc = NormalizeTimestamp(lastPrivateStreamEventAtUtc.Value);
+            state.LastPrivateStreamEventAtUtc = state.LastPrivateStreamEventAtUtc.HasValue &&
+                                                state.LastPrivateStreamEventAtUtc.Value > normalizedLastPrivateStreamEventAtUtc
+                ? state.LastPrivateStreamEventAtUtc.Value
+                : normalizedLastPrivateStreamEventAtUtc;
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -158,3 +162,4 @@ public sealed class ExchangeAccountSyncStateService(ApplicationDbContext dbConte
         };
     }
 }
+

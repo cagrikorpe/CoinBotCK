@@ -126,6 +126,137 @@ public sealed class BinancePrivateStreamManagerTests
     }
 
     [Fact]
+    public async Task RunSessionCycleAsync_PreservesNewestAccountState_WhenDuplicateAndOutOfOrderUpdatesArrive()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        var databaseName = Guid.NewGuid().ToString("N");
+        var exchangeAccountId = Guid.NewGuid();
+        var now = new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(now);
+        var seedSnapshot = CreateSnapshot(
+            exchangeAccountId,
+            walletBalance: 100m,
+            quantity: 1m,
+            observedAtUtc: now.UtcDateTime);
+        var latestEventTimeUtc = now.UtcDateTime.AddSeconds(10);
+        var staleEventTimeUtc = now.UtcDateTime.AddSeconds(5);
+        var latestBalanceUpdate = new ExchangeBalanceSnapshot(
+            "USDT",
+            120m,
+            120m,
+            AvailableBalance: null,
+            MaxWithdrawAmount: null,
+            latestEventTimeUtc);
+        var latestPositionUpdate = new ExchangePositionSnapshot(
+            "BTCUSDT",
+            "LONG",
+            2m,
+            51000m,
+            51000m,
+            15m,
+            "cross",
+            0m,
+            latestEventTimeUtc);
+        var streamClient = new FakePrivateStreamClient(
+        [
+            new BinancePrivateStreamEvent(
+                "ACCOUNT_UPDATE",
+                latestEventTimeUtc,
+                [latestBalanceUpdate],
+                [latestPositionUpdate],
+                []),
+            new BinancePrivateStreamEvent(
+                "ACCOUNT_UPDATE",
+                latestEventTimeUtc,
+                [latestBalanceUpdate],
+                [latestPositionUpdate],
+                []),
+            new BinancePrivateStreamEvent(
+                "ACCOUNT_UPDATE",
+                staleEventTimeUtc,
+                [
+                    new ExchangeBalanceSnapshot(
+                        "USDT",
+                        90m,
+                        90m,
+                        AvailableBalance: null,
+                        MaxWithdrawAmount: null,
+                        staleEventTimeUtc)
+                ],
+                [
+                    new ExchangePositionSnapshot(
+                        "BTCUSDT",
+                        "LONG",
+                        0.5m,
+                        48000m,
+                        48000m,
+                        -5m,
+                        "cross",
+                        0m,
+                        staleEventTimeUtc)
+                ],
+                []),
+            new BinancePrivateStreamEvent("listenKeyExpired", latestEventTimeUtc.AddSeconds(1), [], [], [])
+        ]);
+        var snapshotHub = new ExchangeAccountSnapshotHub();
+        using var provider = BuildProvider(databaseName, databaseRoot, new FakeExchangeCredentialService(exchangeAccountId), timeProvider);
+        var manager = new BinancePrivateStreamManager(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            new FakePrivateRestClient(seedSnapshot),
+            streamClient,
+            snapshotHub,
+            Options.Create(new BinancePrivateDataOptions
+            {
+                Enabled = true,
+                RestBaseUrl = "https://fapi.binance.com",
+                WebSocketBaseUrl = "wss://fstream.binance.com",
+                SessionScanIntervalSeconds = 15,
+                ReconnectDelaySeconds = 1,
+                ListenKeyRenewalIntervalMinutes = 30,
+                ReconciliationIntervalMinutes = 5,
+                RecvWindowMilliseconds = 5000
+            }),
+            timeProvider,
+            NullLogger<BinancePrivateStreamManager>.Instance);
+
+        await using var enumerator = snapshotHub
+            .SubscribeAsync()
+            .GetAsyncEnumerator();
+        var firstMoveNext = enumerator.MoveNextAsync().AsTask();
+        var runTask = manager.RunSessionCycleAsync(new ExchangeSyncAccountDescriptor(exchangeAccountId, "user-private", "Binance"));
+
+        Assert.True(await firstMoveNext);
+        var seedPublished = enumerator.Current;
+        Assert.True(await enumerator.MoveNextAsync().AsTask());
+        var latestSnapshot = enumerator.Current;
+        Assert.True(await enumerator.MoveNextAsync().AsTask());
+        var duplicateSnapshot = enumerator.Current;
+        Assert.True(await enumerator.MoveNextAsync().AsTask());
+        var staleSnapshot = enumerator.Current;
+        var cycleResult = await runTask;
+
+        Assert.NotNull(cycleResult);
+        Assert.True(cycleResult!.ShouldReconnect);
+        Assert.Equal(ExchangePrivateStreamConnectionState.ListenKeyExpired, cycleResult.ConnectionState);
+        Assert.Equal(100m, Assert.Single(seedPublished.Balances).WalletBalance);
+        Assert.Equal(120m, Assert.Single(latestSnapshot.Balances).WalletBalance);
+        Assert.Equal(120m, Assert.Single(duplicateSnapshot.Balances).WalletBalance);
+        Assert.Equal(120m, Assert.Single(staleSnapshot.Balances).WalletBalance);
+        Assert.Equal(2m, Assert.Single(staleSnapshot.Positions).Quantity);
+        Assert.Equal(latestEventTimeUtc, latestSnapshot.ObservedAtUtc);
+        Assert.Equal(latestEventTimeUtc, duplicateSnapshot.ObservedAtUtc);
+        Assert.Equal(latestEventTimeUtc, staleSnapshot.ObservedAtUtc);
+
+        await using var scope = provider.CreateAsyncScope();
+        using var bypass = scope.ServiceProvider
+            .GetRequiredService<IDataScopeContextAccessor>()
+            .BeginScope(hasIsolationBypass: true);
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var state = await dbContext.ExchangeAccountSyncStates.SingleAsync(entity => entity.ExchangeAccountId == exchangeAccountId);
+
+        Assert.Equal(latestEventTimeUtc, state.LastPrivateStreamEventAtUtc);
+    }
+    [Fact]
     public async Task RunSessionCycleAsync_AppliesOrderTradeUpdate_AsPartialFill()
     {
         var databaseRoot = new InMemoryDatabaseRoot();
@@ -424,3 +555,4 @@ public sealed class BinancePrivateStreamManagerTests
         }
     }
 }
+

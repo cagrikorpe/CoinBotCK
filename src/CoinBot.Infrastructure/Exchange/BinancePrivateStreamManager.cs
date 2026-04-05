@@ -429,11 +429,21 @@ public sealed class BinancePrivateStreamManager(
 
         public void Apply(BinancePrivateStreamEvent streamEvent)
         {
-            observedAtUtc = NormalizeTimestamp(streamEvent.EventTimeUtc);
+            var normalizedEventTimeUtc = NormalizeTimestamp(streamEvent.EventTimeUtc);
+            observedAtUtc = normalizedEventTimeUtc > observedAtUtc
+                ? normalizedEventTimeUtc
+                : observedAtUtc;
 
             foreach (var balanceUpdate in streamEvent.BalanceUpdates)
             {
                 var asset = NormalizeCode(balanceUpdate.Asset);
+                balances.TryGetValue(asset, out var existingBalance);
+                var normalizedExchangeUpdatedAtUtc = NormalizeTimestamp(balanceUpdate.ExchangeUpdatedAtUtc);
+
+                if (IsStaleBalanceUpdate(existingBalance, normalizedExchangeUpdatedAtUtc))
+                {
+                    continue;
+                }
 
                 if (IsEmptyBalance(balanceUpdate))
                 {
@@ -441,19 +451,25 @@ public sealed class BinancePrivateStreamManager(
                     continue;
                 }
 
-                balances.TryGetValue(asset, out var existingBalance);
                 balances[asset] = balanceUpdate with
                 {
                     Asset = asset,
                     AvailableBalance = balanceUpdate.AvailableBalance ?? existingBalance?.AvailableBalance,
                     MaxWithdrawAmount = balanceUpdate.MaxWithdrawAmount ?? existingBalance?.MaxWithdrawAmount,
-                    ExchangeUpdatedAtUtc = NormalizeTimestamp(balanceUpdate.ExchangeUpdatedAtUtc)
+                    ExchangeUpdatedAtUtc = normalizedExchangeUpdatedAtUtc
                 };
             }
 
             foreach (var positionUpdate in streamEvent.PositionUpdates)
             {
                 var key = CreatePositionKey(positionUpdate.Symbol, positionUpdate.PositionSide);
+                positions.TryGetValue(key, out var existingPosition);
+                var normalizedExchangeUpdatedAtUtc = NormalizeTimestamp(positionUpdate.ExchangeUpdatedAtUtc);
+
+                if (IsStalePositionUpdate(existingPosition, normalizedExchangeUpdatedAtUtc))
+                {
+                    continue;
+                }
 
                 if (IsFlatPosition(positionUpdate))
                 {
@@ -466,7 +482,7 @@ public sealed class BinancePrivateStreamManager(
                     Symbol = NormalizeCode(positionUpdate.Symbol),
                     PositionSide = NormalizeCode(positionUpdate.PositionSide),
                     MarginType = NormalizeMarginType(positionUpdate.MarginType),
-                    ExchangeUpdatedAtUtc = NormalizeTimestamp(positionUpdate.ExchangeUpdatedAtUtc)
+                    ExchangeUpdatedAtUtc = normalizedExchangeUpdatedAtUtc
                 };
             }
         }
@@ -512,6 +528,18 @@ public sealed class BinancePrivateStreamManager(
                    snapshot.IsolatedWallet == 0m;
         }
 
+        private static bool IsStaleBalanceUpdate(ExchangeBalanceSnapshot? existingBalance, DateTime normalizedExchangeUpdatedAtUtc)
+        {
+            return existingBalance is not null &&
+                   NormalizeTimestamp(existingBalance.ExchangeUpdatedAtUtc) > normalizedExchangeUpdatedAtUtc;
+        }
+
+        private static bool IsStalePositionUpdate(ExchangePositionSnapshot? existingPosition, DateTime normalizedExchangeUpdatedAtUtc)
+        {
+            return existingPosition is not null &&
+                   NormalizeTimestamp(existingPosition.ExchangeUpdatedAtUtc) > normalizedExchangeUpdatedAtUtc;
+        }
+
         private static string CreatePositionKey(string symbol, string positionSide)
         {
             return $"{NormalizeCode(symbol)}:{NormalizeCode(positionSide)}";
@@ -551,3 +579,4 @@ public sealed class BinancePrivateStreamManager(
         CancellationTokenSource CancellationTokenSource,
         Task RunTask);
 }
+

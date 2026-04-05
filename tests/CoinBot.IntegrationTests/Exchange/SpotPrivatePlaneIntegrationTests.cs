@@ -362,6 +362,355 @@ public sealed class SpotPrivatePlaneIntegrationTests
     }
 
     [Fact]
+    public async Task FuturesPrivateStreamManager_PreservesLatestState_AcrossDuplicateAndOutOfOrderAccountUpdates_EndToEnd()
+    {
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString($"CoinBotFuturesStreamInt_{Guid.NewGuid():N}");
+        var exchangeAccountId = Guid.NewGuid();
+        var now = new DateTimeOffset(2026, 4, 5, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new FixedTimeProvider(now);
+        var latestEventTimeUtc = now.UtcDateTime.AddSeconds(10);
+        var staleEventTimeUtc = now.UtcDateTime.AddSeconds(5);
+        var seedSnapshot = CreateFuturesSnapshot(exchangeAccountId, 100m, 1m, now.UtcDateTime, "user-futures-stream");
+        var latestBalanceUpdate = new ExchangeBalanceSnapshot(
+            "USDT",
+            120m,
+            120m,
+            120m,
+            120m,
+            latestEventTimeUtc,
+            0m,
+            ExchangeDataPlane.Futures);
+        var latestPositionUpdate = new ExchangePositionSnapshot(
+            "BTCUSDT",
+            "LONG",
+            2m,
+            51000m,
+            51000m,
+            15m,
+            "cross",
+            0m,
+            latestEventTimeUtc);
+        var restClient = new FakeFuturesPrivateRestClient(seedSnapshot);
+        var streamClient = new FakeFuturesPrivateStreamClient(
+        [
+            new BinancePrivateStreamEvent(
+                "ACCOUNT_UPDATE",
+                latestEventTimeUtc,
+                [latestBalanceUpdate],
+                [latestPositionUpdate],
+                []),
+            new BinancePrivateStreamEvent(
+                "ACCOUNT_UPDATE",
+                latestEventTimeUtc,
+                [latestBalanceUpdate],
+                [latestPositionUpdate],
+                []),
+            new BinancePrivateStreamEvent(
+                "ACCOUNT_UPDATE",
+                staleEventTimeUtc,
+                [
+                    new ExchangeBalanceSnapshot(
+                        "USDT",
+                        90m,
+                        90m,
+                        90m,
+                        90m,
+                        staleEventTimeUtc,
+                        0m,
+                        ExchangeDataPlane.Futures)
+                ],
+                [
+                    new ExchangePositionSnapshot(
+                        "BTCUSDT",
+                        "LONG",
+                        0.5m,
+                        48000m,
+                        48000m,
+                        -5m,
+                        "cross",
+                        0m,
+                        staleEventTimeUtc)
+                ],
+                []),
+            new BinancePrivateStreamEvent("listenKeyExpired", latestEventTimeUtc.AddSeconds(1), [], [], [])
+        ]);
+        await using (var setupContext = CreateContext(connectionString))
+        {
+            await setupContext.Database.EnsureDeletedAsync();
+            await setupContext.Database.EnsureCreatedAsync();
+            setupContext.Users.Add(CreateUser("user-futures-stream"));
+            setupContext.ExchangeAccounts.Add(CreateExchangeAccount(exchangeAccountId, "user-futures-stream"));
+            await setupContext.SaveChangesAsync();
+        }
+
+        using var provider = BuildProvider(connectionString, new FakeExchangeCredentialService(exchangeAccountId), timeProvider);
+        var snapshotHub = new ExchangeAccountSnapshotHub();
+        var options = Options.Create(new BinancePrivateDataOptions
+        {
+            Enabled = true,
+            RestBaseUrl = "https://fapi.binance.com",
+            WebSocketBaseUrl = "wss://fstream.binance.com",
+            SessionScanIntervalSeconds = 15,
+            ReconnectDelaySeconds = 1,
+            ListenKeyRenewalIntervalMinutes = 30,
+            ReconciliationIntervalMinutes = 5,
+            RecvWindowMilliseconds = 5000
+        });
+        var balanceWorker = new ExchangeBalanceSyncWorker(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            snapshotHub,
+            options,
+            NullLogger<ExchangeBalanceSyncWorker>.Instance);
+        var positionWorker = new ExchangePositionSyncWorker(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            snapshotHub,
+            options,
+            NullLogger<ExchangePositionSyncWorker>.Instance);
+        var manager = new BinancePrivateStreamManager(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            restClient,
+            streamClient,
+            snapshotHub,
+            options,
+            timeProvider,
+            NullLogger<BinancePrivateStreamManager>.Instance);
+
+        await balanceWorker.StartAsync(CancellationToken.None);
+        await positionWorker.StartAsync(CancellationToken.None);
+
+        try
+        {
+            var cycleResult = await manager.RunSessionCycleAsync(new ExchangeSyncAccountDescriptor(exchangeAccountId, "user-futures-stream", "Binance"));
+
+            Assert.NotNull(cycleResult);
+            Assert.True(cycleResult!.ShouldReconnect);
+            Assert.Equal(ExchangePrivateStreamConnectionState.ListenKeyExpired, cycleResult.ConnectionState);
+
+            await WaitForConditionAsync(
+                connectionString,
+                async dbContext =>
+                {
+                    var syncedBalance = await dbContext.ExchangeBalances.SingleOrDefaultAsync(entity =>
+                        entity.ExchangeAccountId == exchangeAccountId &&
+                        entity.Plane == ExchangeDataPlane.Futures &&
+                        entity.Asset == "USDT" &&
+                        !entity.IsDeleted);
+                    var syncedPosition = await dbContext.ExchangePositions.SingleOrDefaultAsync(entity =>
+                        entity.ExchangeAccountId == exchangeAccountId &&
+                        entity.Plane == ExchangeDataPlane.Futures &&
+                        entity.Symbol == "BTCUSDT" &&
+                        entity.PositionSide == "LONG" &&
+                        !entity.IsDeleted);
+                    var state = await dbContext.ExchangeAccountSyncStates.SingleOrDefaultAsync(entity =>
+                        entity.ExchangeAccountId == exchangeAccountId &&
+                        entity.Plane == ExchangeDataPlane.Futures &&
+                        !entity.IsDeleted);
+
+                    return syncedBalance?.WalletBalance == 120m &&
+                           syncedPosition?.Quantity == 2m &&
+                           state?.LastPrivateStreamEventAtUtc == latestEventTimeUtc;
+                });
+
+            await using var verifyContext = CreateContext(connectionString);
+            var balance = await verifyContext.ExchangeBalances.SingleAsync(entity =>
+                entity.ExchangeAccountId == exchangeAccountId &&
+                entity.Plane == ExchangeDataPlane.Futures &&
+                entity.Asset == "USDT" &&
+                !entity.IsDeleted);
+            var position = await verifyContext.ExchangePositions.SingleAsync(entity =>
+                entity.ExchangeAccountId == exchangeAccountId &&
+                entity.Plane == ExchangeDataPlane.Futures &&
+                entity.Symbol == "BTCUSDT" &&
+                entity.PositionSide == "LONG" &&
+                !entity.IsDeleted);
+            var state = await verifyContext.ExchangeAccountSyncStates.SingleAsync(entity =>
+                entity.ExchangeAccountId == exchangeAccountId &&
+                entity.Plane == ExchangeDataPlane.Futures &&
+                !entity.IsDeleted);
+
+            Assert.Equal(120m, balance.WalletBalance);
+            Assert.Equal(2m, position.Quantity);
+            Assert.Equal(latestEventTimeUtc, balance.ExchangeUpdatedAtUtc);
+            Assert.Equal(latestEventTimeUtc, position.ExchangeUpdatedAtUtc);
+            Assert.Equal(latestEventTimeUtc, state.LastPrivateStreamEventAtUtc);
+            Assert.Equal(ExchangePrivateStreamConnectionState.Connected, state.PrivateStreamConnectionState);
+        }
+        finally
+        {
+            await balanceWorker.StopAsync(CancellationToken.None);
+            await positionWorker.StopAsync(CancellationToken.None);
+            await SqlServerIntegrationDatabase.CleanupDatabaseAsync(connectionString);
+        }
+    }
+
+    [Fact]
+    public async Task FuturesSnapshotSync_UpdatesOnlyTargetAccount_ForSameUserAndOtherUsers()
+    {
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString($"CoinBotFuturesIsolationInt_{Guid.NewGuid():N}");
+        var targetAccountId = Guid.NewGuid();
+        var sameUserOtherAccountId = Guid.NewGuid();
+        var otherUserAccountId = Guid.NewGuid();
+        var observedAtUtc = new DateTime(2026, 4, 5, 12, 0, 0, DateTimeKind.Utc);
+        await using var context = CreateContext(connectionString);
+        await context.Database.EnsureDeletedAsync();
+        await context.Database.EnsureCreatedAsync();
+
+        try
+        {
+            context.Users.AddRange(
+                CreateUser("user-futures-shared"),
+                CreateUser("user-futures-other"));
+            context.ExchangeAccounts.AddRange(
+                CreateExchangeAccount(targetAccountId, "user-futures-shared"),
+                CreateExchangeAccount(sameUserOtherAccountId, "user-futures-shared"),
+                CreateExchangeAccount(otherUserAccountId, "user-futures-other"));
+            context.ExchangeBalances.AddRange(
+                new ExchangeBalance
+                {
+                    OwnerUserId = "user-futures-shared",
+                    ExchangeAccountId = targetAccountId,
+                    Plane = ExchangeDataPlane.Futures,
+                    Asset = "BNB",
+                    WalletBalance = 10m,
+                    CrossWalletBalance = 10m,
+                    ExchangeUpdatedAtUtc = observedAtUtc,
+                    SyncedAtUtc = observedAtUtc
+                },
+                new ExchangeBalance
+                {
+                    OwnerUserId = "user-futures-shared",
+                    ExchangeAccountId = sameUserOtherAccountId,
+                    Plane = ExchangeDataPlane.Futures,
+                    Asset = "USDT",
+                    WalletBalance = 30m,
+                    CrossWalletBalance = 30m,
+                    ExchangeUpdatedAtUtc = observedAtUtc,
+                    SyncedAtUtc = observedAtUtc
+                },
+                new ExchangeBalance
+                {
+                    OwnerUserId = "user-futures-other",
+                    ExchangeAccountId = otherUserAccountId,
+                    Plane = ExchangeDataPlane.Futures,
+                    Asset = "USDT",
+                    WalletBalance = 45m,
+                    CrossWalletBalance = 45m,
+                    ExchangeUpdatedAtUtc = observedAtUtc,
+                    SyncedAtUtc = observedAtUtc
+                });
+            context.ExchangePositions.AddRange(
+                new ExchangePosition
+                {
+                    OwnerUserId = "user-futures-shared",
+                    ExchangeAccountId = targetAccountId,
+                    Plane = ExchangeDataPlane.Futures,
+                    Symbol = "ETHUSDT",
+                    PositionSide = "SHORT",
+                    Quantity = 1m,
+                    EntryPrice = 3000m,
+                    BreakEvenPrice = 3000m,
+                    UnrealizedProfit = 5m,
+                    MarginType = "cross",
+                    IsolatedWallet = 0m,
+                    ExchangeUpdatedAtUtc = observedAtUtc,
+                    SyncedAtUtc = observedAtUtc
+                },
+                new ExchangePosition
+                {
+                    OwnerUserId = "user-futures-shared",
+                    ExchangeAccountId = sameUserOtherAccountId,
+                    Plane = ExchangeDataPlane.Futures,
+                    Symbol = "ETHUSDT",
+                    PositionSide = "LONG",
+                    Quantity = 0.5m,
+                    EntryPrice = 3100m,
+                    BreakEvenPrice = 3100m,
+                    UnrealizedProfit = 2m,
+                    MarginType = "cross",
+                    IsolatedWallet = 0m,
+                    ExchangeUpdatedAtUtc = observedAtUtc,
+                    SyncedAtUtc = observedAtUtc
+                },
+                new ExchangePosition
+                {
+                    OwnerUserId = "user-futures-other",
+                    ExchangeAccountId = otherUserAccountId,
+                    Plane = ExchangeDataPlane.Futures,
+                    Symbol = "SOLUSDT",
+                    PositionSide = "LONG",
+                    Quantity = 3m,
+                    EntryPrice = 120m,
+                    BreakEvenPrice = 120m,
+                    UnrealizedProfit = 9m,
+                    MarginType = "cross",
+                    IsolatedWallet = 0m,
+                    ExchangeUpdatedAtUtc = observedAtUtc,
+                    SyncedAtUtc = observedAtUtc
+                });
+            await context.SaveChangesAsync();
+
+            var snapshot = CreateFuturesSnapshot(
+                targetAccountId,
+                150m,
+                2m,
+                observedAtUtc.AddSeconds(10),
+                "user-futures-shared");
+            var balanceSyncService = new ExchangeBalanceSyncService(context, NullLogger<ExchangeBalanceSyncService>.Instance);
+            var positionSyncService = new ExchangePositionSyncService(context, NullLogger<ExchangePositionSyncService>.Instance);
+            var syncStateService = new ExchangeAccountSyncStateService(context);
+
+            await balanceSyncService.ApplyAsync(snapshot);
+            await positionSyncService.ApplyAsync(snapshot);
+            await syncStateService.RecordBalanceSyncAsync(snapshot);
+            await syncStateService.RecordPositionSyncAsync(snapshot);
+
+            var targetBalance = await context.ExchangeBalances.SingleAsync(entity =>
+                entity.ExchangeAccountId == targetAccountId &&
+                entity.Plane == ExchangeDataPlane.Futures &&
+                entity.Asset == "USDT" &&
+                !entity.IsDeleted);
+            var targetPosition = await context.ExchangePositions.SingleAsync(entity =>
+                entity.ExchangeAccountId == targetAccountId &&
+                entity.Plane == ExchangeDataPlane.Futures &&
+                entity.Symbol == "BTCUSDT" &&
+                entity.PositionSide == "LONG" &&
+                !entity.IsDeleted);
+            var sameUserOtherBalance = await context.ExchangeBalances.SingleAsync(entity =>
+                entity.ExchangeAccountId == sameUserOtherAccountId &&
+                entity.Asset == "USDT" &&
+                !entity.IsDeleted);
+            var otherUserBalance = await context.ExchangeBalances.SingleAsync(entity =>
+                entity.ExchangeAccountId == otherUserAccountId &&
+                entity.Asset == "USDT" &&
+                !entity.IsDeleted);
+            var sameUserOtherPosition = await context.ExchangePositions.SingleAsync(entity =>
+                entity.ExchangeAccountId == sameUserOtherAccountId &&
+                entity.Symbol == "ETHUSDT" &&
+                entity.PositionSide == "LONG" &&
+                !entity.IsDeleted);
+            var otherUserPosition = await context.ExchangePositions.SingleAsync(entity =>
+                entity.ExchangeAccountId == otherUserAccountId &&
+                entity.Symbol == "SOLUSDT" &&
+                entity.PositionSide == "LONG" &&
+                !entity.IsDeleted);
+
+            Assert.Equal(150m, targetBalance.WalletBalance);
+            Assert.Equal(2m, targetPosition.Quantity);
+            Assert.Equal(30m, sameUserOtherBalance.WalletBalance);
+            Assert.Equal(45m, otherUserBalance.WalletBalance);
+            Assert.Equal(0.5m, sameUserOtherPosition.Quantity);
+            Assert.Equal(3m, otherUserPosition.Quantity);
+            Assert.False(sameUserOtherBalance.IsDeleted);
+            Assert.False(otherUserBalance.IsDeleted);
+            Assert.False(sameUserOtherPosition.IsDeleted);
+            Assert.False(otherUserPosition.IsDeleted);
+        }
+        finally
+        {
+            await SqlServerIntegrationDatabase.CleanupDatabaseAsync(connectionString);
+        }
+    }
+    [Fact]
     public async Task SpotExecutionSubmitPath_UsesSpotEndpoint_AndPersistsLifecycle()
     {
         var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString($"CoinBotSpotExecSubmitInt_{Guid.NewGuid():N}");
@@ -1174,6 +1523,66 @@ public sealed class SpotPrivatePlaneIntegrationTests
             ExchangeDataPlane.Spot);
     }
 
+    private static ExchangeAccountSnapshot CreateFuturesSnapshot(
+        Guid exchangeAccountId,
+        decimal walletBalance,
+        decimal quantity,
+        DateTime observedAtUtc,
+        string ownerUserId)
+    {
+        return new ExchangeAccountSnapshot(
+            exchangeAccountId,
+            ownerUserId,
+            "Binance",
+            [
+                new ExchangeBalanceSnapshot(
+                    "USDT",
+                    walletBalance,
+                    walletBalance,
+                    walletBalance,
+                    walletBalance,
+                    observedAtUtc,
+                    0m,
+                    ExchangeDataPlane.Futures)
+            ],
+            [
+                new ExchangePositionSnapshot(
+                    "BTCUSDT",
+                    "LONG",
+                    quantity,
+                    50000m,
+                    50000m,
+                    10m,
+                    "cross",
+                    0m,
+                    observedAtUtc)
+            ],
+            observedAtUtc,
+            observedAtUtc,
+            "Binance.PrivateRest.Account",
+            ExchangeDataPlane.Futures);
+    }
+
+    private static async Task WaitForConditionAsync(
+        string connectionString,
+        Func<ApplicationDbContext, Task<bool>> predicate,
+        int maxAttempts = 40,
+        int delayMilliseconds = 50)
+    {
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            await using var context = CreateContext(connectionString);
+            if (await predicate(context))
+            {
+                return;
+            }
+
+            await Task.Delay(delayMilliseconds);
+        }
+
+        await using var finalContext = CreateContext(connectionString);
+        Assert.True(await predicate(finalContext), "The futures private plane state did not converge within the expected time window.");
+    }
     private static SymbolMetadataSnapshot CreateSpotSymbolMetadata(DateTime observedAtUtc)
     {
         return new SymbolMetadataSnapshot(
@@ -1210,6 +1619,8 @@ public sealed class SpotPrivatePlaneIntegrationTests
         services.AddScoped(_ => exchangeCredentialService);
         services.AddScoped<IAuditLogService, AuditLogService>();
         services.AddScoped<ExchangeAccountSyncStateService>();
+        services.AddScoped<ExchangeBalanceSyncService>();
+        services.AddScoped<ExchangePositionSyncService>();
         services.AddScoped<ExecutionOrderLifecycleService>();
 
         return services.BuildServiceProvider();
@@ -1503,6 +1914,92 @@ public sealed class SpotPrivatePlaneIntegrationTests
         }
     }
 
+    private sealed class FakeFuturesPrivateRestClient(ExchangeAccountSnapshot snapshot) : IBinancePrivateRestClient
+    {
+        public Task EnsureMarginTypeAsync(
+            Guid exchangeAccountId,
+            string symbol,
+            string marginType,
+            string apiKey,
+            string apiSecret,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task EnsureLeverageAsync(
+            Guid exchangeAccountId,
+            string symbol,
+            decimal leverage,
+            string apiKey,
+            string apiSecret,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<BinanceOrderPlacementResult> PlaceOrderAsync(
+            BinanceOrderPlacementRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<BinanceOrderStatusSnapshot> GetOrderAsync(
+            BinanceOrderQueryRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<BinanceOrderStatusSnapshot> CancelOrderAsync(
+            BinanceOrderCancelRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<string> StartListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult("listen-key");
+        }
+
+        public Task KeepAliveListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task CloseListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task<ExchangeAccountSnapshot> GetAccountSnapshotAsync(
+            Guid exchangeAccountId,
+            string ownerUserId,
+            string exchangeName,
+            string apiKey,
+            string apiSecret,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(snapshot);
+        }
+    }
+
+    private sealed class FakeFuturesPrivateStreamClient(IReadOnlyCollection<BinancePrivateStreamEvent> events) : IBinancePrivateStreamClient
+    {
+        public async IAsyncEnumerable<BinancePrivateStreamEvent> StreamAsync(
+            string listenKey,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            foreach (var streamEvent in events)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return streamEvent;
+                await Task.Yield();
+            }
+        }
+    }
     private sealed class RecordingMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) : HttpMessageHandler
     {
         public Uri? LastRequestUri { get; private set; }
@@ -1514,3 +2011,4 @@ public sealed class SpotPrivatePlaneIntegrationTests
         }
     }
 }
+

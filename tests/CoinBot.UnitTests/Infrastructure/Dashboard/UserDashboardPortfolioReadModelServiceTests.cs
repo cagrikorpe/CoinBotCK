@@ -861,7 +861,9 @@ public sealed class UserDashboardPortfolioReadModelServiceTests
             RootCorrelationId = "root-futures-portfolio",
             ExternalOrderId = "futures-portfolio-order-1",
             SubmittedToBroker = true,
-            LastStateChangedAtUtc = filledAtUtc
+            LastStateChangedAtUtc = filledAtUtc,
+            ReconciliationStatus = ExchangeStateDriftStatus.InSync,
+            ReconciliationSummary = "Order-level reconciliation won."
         });
         context.ExecutionOrderTransitions.Add(new ExecutionOrderTransition
         {
@@ -870,7 +872,7 @@ public sealed class UserDashboardPortfolioReadModelServiceTests
             SequenceNumber = 1,
             State = ExecutionOrderState.Filled,
             EventCode = "ExchangeFilled",
-            Detail = "ClientOrderId=cb_futures_portfolio_01; Plane=Futures; ExchangeStatus=FILLED; ExecutedQuantity=0.5; CumulativeQuoteQuantity=30100; TradeId=77; Fee=USDT:3.5; ReconciliationStatus=InSync; ReconciliationSummary=Exchange state aligned.",
+            Detail = "ClientOrderId=cb_futures_portfolio_01; Plane=Futures; ExchangeStatus=FILLED; ExecutedQuantity=0.5; CumulativeQuoteQuantity=30100; TradeId=77; Fee=USDT:3.5; ReconciliationStatus=DriftDetected; ReconciliationSummary=Transition drift detail.",
             CorrelationId = "transition-futures-portfolio",
             ParentCorrelationId = "root-futures-portfolio",
             OccurredAtUtc = filledAtUtc
@@ -938,7 +940,9 @@ public sealed class UserDashboardPortfolioReadModelServiceTests
         Assert.Contains("Plane=Futures", historyRow.ReasonChainSummary, StringComparison.Ordinal);
         Assert.Contains("ExecutedQuantity=0.5", historyRow.ReasonChainSummary, StringComparison.Ordinal);
         Assert.Contains("ReconciliationStatus=InSync", historyRow.ReasonChainSummary, StringComparison.Ordinal);
-        Assert.Contains("ReconciliationSummary=Exchange state aligned.", historyRow.ExecutionResultSummary, StringComparison.Ordinal);
+        Assert.Contains("ReconciliationSummary=Order-level reconciliation won.", historyRow.ExecutionResultSummary, StringComparison.Ordinal);
+        Assert.DoesNotContain("ReconciliationStatus=DriftDetected", historyRow.ExecutionResultSummary, StringComparison.Ordinal);
+        Assert.DoesNotContain("ReconciliationSummary=Transition drift detail.", historyRow.ReasonChainSummary, StringComparison.Ordinal);
     }
     private static ApplicationDbContext CreateContext(InMemoryDatabaseRoot databaseRoot)
     {
@@ -989,5 +993,9 @@ public sealed class UserDashboardPortfolioReadModelServiceTests
         }
     }
 }
+
+
+
+
 
 

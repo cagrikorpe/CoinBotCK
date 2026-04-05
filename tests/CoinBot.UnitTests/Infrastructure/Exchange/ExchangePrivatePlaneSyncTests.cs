@@ -211,6 +211,141 @@ public sealed class ExchangePrivatePlaneSyncTests
         Assert.Contains("FailureCode=CredentialAccessBlocked", alert.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task BalanceAndPositionSyncServices_KeepOtherAccountsUntouched_ForSameUserAndDifferentUser()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        await using var context = CreateContext(databaseRoot);
+        var targetAccountId = Guid.NewGuid();
+        var sameUserOtherAccountId = Guid.NewGuid();
+        var otherUserAccountId = Guid.NewGuid();
+        var observedAtUtc = new DateTime(2026, 4, 5, 12, 0, 0, DateTimeKind.Utc);
+        var snapshot = new ExchangeAccountSnapshot(
+            targetAccountId,
+            "user-shared",
+            "Binance",
+            [
+                new ExchangeBalanceSnapshot("USDT", 150m, 145m, 140m, 140m, observedAtUtc)
+            ],
+            [
+                new ExchangePositionSnapshot("BTCUSDT", "LONG", 2m, 52000m, 52000m, 25m, "cross", 0m, observedAtUtc)
+            ],
+            observedAtUtc,
+            observedAtUtc,
+            "Binance.PrivateRest.Account");
+
+        context.ExchangeBalances.AddRange(
+            new ExchangeBalance
+            {
+                OwnerUserId = "user-shared",
+                ExchangeAccountId = targetAccountId,
+                Plane = ExchangeDataPlane.Futures,
+                Asset = "BNB",
+                WalletBalance = 10m,
+                CrossWalletBalance = 10m
+            },
+            new ExchangeBalance
+            {
+                OwnerUserId = "user-shared",
+                ExchangeAccountId = sameUserOtherAccountId,
+                Plane = ExchangeDataPlane.Futures,
+                Asset = "USDT",
+                WalletBalance = 30m,
+                CrossWalletBalance = 30m
+            },
+            new ExchangeBalance
+            {
+                OwnerUserId = "user-other",
+                ExchangeAccountId = otherUserAccountId,
+                Plane = ExchangeDataPlane.Futures,
+                Asset = "USDT",
+                WalletBalance = 45m,
+                CrossWalletBalance = 45m
+            });
+        context.ExchangePositions.AddRange(
+            new ExchangePosition
+            {
+                OwnerUserId = "user-shared",
+                ExchangeAccountId = targetAccountId,
+                Plane = ExchangeDataPlane.Futures,
+                Symbol = "ETHUSDT",
+                PositionSide = "SHORT",
+                Quantity = 1m,
+                EntryPrice = 3000m,
+                BreakEvenPrice = 3000m,
+                UnrealizedProfit = 5m,
+                MarginType = "cross",
+                IsolatedWallet = 0m
+            },
+            new ExchangePosition
+            {
+                OwnerUserId = "user-shared",
+                ExchangeAccountId = sameUserOtherAccountId,
+                Plane = ExchangeDataPlane.Futures,
+                Symbol = "ETHUSDT",
+                PositionSide = "LONG",
+                Quantity = 0.5m,
+                EntryPrice = 3100m,
+                BreakEvenPrice = 3100m,
+                UnrealizedProfit = 2m,
+                MarginType = "cross",
+                IsolatedWallet = 0m
+            },
+            new ExchangePosition
+            {
+                OwnerUserId = "user-other",
+                ExchangeAccountId = otherUserAccountId,
+                Plane = ExchangeDataPlane.Futures,
+                Symbol = "SOLUSDT",
+                PositionSide = "LONG",
+                Quantity = 3m,
+                EntryPrice = 120m,
+                BreakEvenPrice = 120m,
+                UnrealizedProfit = 9m,
+                MarginType = "cross",
+                IsolatedWallet = 0m
+            });
+        await context.SaveChangesAsync();
+
+        var balanceSyncService = new ExchangeBalanceSyncService(context, NullLogger<ExchangeBalanceSyncService>.Instance);
+        var positionSyncService = new ExchangePositionSyncService(context, NullLogger<ExchangePositionSyncService>.Instance);
+
+        await balanceSyncService.ApplyAsync(snapshot);
+        await positionSyncService.ApplyAsync(snapshot);
+
+        var targetBalance = await context.ExchangeBalances.SingleAsync(entity =>
+            entity.ExchangeAccountId == targetAccountId &&
+            entity.Asset == "USDT");
+        var targetPosition = await context.ExchangePositions.SingleAsync(entity =>
+            entity.ExchangeAccountId == targetAccountId &&
+            entity.Symbol == "BTCUSDT");
+        var sameUserOtherBalance = await context.ExchangeBalances.SingleAsync(entity =>
+            entity.ExchangeAccountId == sameUserOtherAccountId &&
+            entity.Asset == "USDT");
+        var otherUserBalance = await context.ExchangeBalances.SingleAsync(entity =>
+            entity.ExchangeAccountId == otherUserAccountId &&
+            entity.Asset == "USDT");
+        var sameUserOtherPosition = await context.ExchangePositions.SingleAsync(entity =>
+            entity.ExchangeAccountId == sameUserOtherAccountId &&
+            entity.Symbol == "ETHUSDT");
+        var otherUserPosition = await context.ExchangePositions.SingleAsync(entity =>
+            entity.ExchangeAccountId == otherUserAccountId &&
+            entity.Symbol == "SOLUSDT");
+
+        Assert.Equal("user-shared", targetBalance.OwnerUserId);
+        Assert.Equal(150m, targetBalance.WalletBalance);
+        Assert.Equal(2m, targetPosition.Quantity);
+        Assert.False(targetBalance.IsDeleted);
+        Assert.False(targetPosition.IsDeleted);
+        Assert.Equal(30m, sameUserOtherBalance.WalletBalance);
+        Assert.Equal(45m, otherUserBalance.WalletBalance);
+        Assert.Equal(0.5m, sameUserOtherPosition.Quantity);
+        Assert.Equal(3m, otherUserPosition.Quantity);
+        Assert.False(sameUserOtherBalance.IsDeleted);
+        Assert.False(otherUserBalance.IsDeleted);
+        Assert.False(sameUserOtherPosition.IsDeleted);
+        Assert.False(otherUserPosition.IsDeleted);
+    }
     private static ApplicationDbContext CreateContext(InMemoryDatabaseRoot databaseRoot)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -370,3 +505,4 @@ public sealed class ExchangePrivatePlaneSyncTests
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 }
+

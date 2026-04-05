@@ -535,6 +535,11 @@ public sealed class UserDashboardPortfolioReadModelService(
         ExecutionOrder order,
         ExecutionOrderTransition? latestTransition)
     {
+        if (order.Plane == ExchangeDataPlane.Futures)
+        {
+            return BuildFuturesExecutionResultSummary(order, latestTransition);
+        }
+
         var summary = SanitizeDetail(order.FailureDetail)
             ?? SanitizeDetail(latestTransition?.Detail);
 
@@ -828,6 +833,91 @@ public sealed class UserDashboardPortfolioReadModelService(
         return NormalizeDecimal(entryPrice + (unrealizedProfit / quantity));
     }
 
+    private static string BuildFuturesExecutionResultSummary(
+        ExecutionOrder order,
+        ExecutionOrderTransition? latestTransition)
+    {
+        var failureDetail = SanitizeDetail(order.FailureDetail);
+        var transitionDetail = SanitizeDetail(latestTransition?.Detail);
+        var exchangeStatus = ResolveFuturesExchangeStatus(order, latestTransition);
+        var executedQuantity = ExtractDetailDecimal(latestTransition?.Detail, "ExecutedQuantity") ?? order.FilledQuantity;
+        var cumulativeQuoteQuantity = ExtractDetailDecimal(latestTransition?.Detail, "CumulativeQuoteQuantity");
+        var tradeId = ExtractDetailToken(latestTransition?.Detail, "TradeId");
+        var fee = ExtractDetailToken(latestTransition?.Detail, "Fee");
+        var reconciliationStatus = ResolveFuturesReconciliationStatus(order, latestTransition);
+        var reconciliationSummary = ResolveFuturesReconciliationSummary(order, latestTransition);
+
+        if (string.IsNullOrWhiteSpace(failureDetail) &&
+            !string.IsNullOrWhiteSpace(transitionDetail) &&
+            string.IsNullOrWhiteSpace(ExtractDetailToken(latestTransition?.Detail, "ExchangeStatus")) &&
+            string.IsNullOrWhiteSpace(ExtractDetailToken(latestTransition?.Detail, "ExecutedQuantity")) &&
+            string.IsNullOrWhiteSpace(tradeId) &&
+            string.IsNullOrWhiteSpace(ExtractDetailToken(latestTransition?.Detail, "ReconciliationStatus")) &&
+            string.IsNullOrWhiteSpace(ExtractDetailToken(latestTransition?.Detail, "ReconciliationSummary")))
+        {
+            return transitionDetail;
+        }
+
+        var summary = string.IsNullOrWhiteSpace(failureDetail)
+            ? $"Plane={order.Plane}; ExchangeStatus={exchangeStatus}"
+            : failureDetail;
+        if (executedQuantity > 0m)
+        {
+            summary += $"; ExecutedQuantity={executedQuantity.ToString("0.####", CultureInfo.InvariantCulture)}";
+        }
+        if (cumulativeQuoteQuantity.HasValue)
+        {
+            summary += $"; CumulativeQuoteQuantity={cumulativeQuoteQuantity.Value.ToString("0.####", CultureInfo.InvariantCulture)}";
+        }
+        if (!string.IsNullOrWhiteSpace(tradeId))
+        {
+            summary += $"; TradeId={tradeId}";
+        }
+        if (!string.IsNullOrWhiteSpace(fee))
+        {
+            summary += $"; Fee={fee}";
+        }
+        if (!string.IsNullOrWhiteSpace(reconciliationStatus))
+        {
+            summary += $"; ReconciliationStatus={reconciliationStatus}";
+        }
+        if (!string.IsNullOrWhiteSpace(reconciliationSummary))
+        {
+            summary += $"; ReconciliationSummary={reconciliationSummary}";
+        }
+        return Truncate(summary, 512) ?? summary;
+    }
+    private static string ResolveFuturesExchangeStatus(
+        ExecutionOrder order,
+        ExecutionOrderTransition? latestTransition)
+    {
+        return ExtractDetailToken(latestTransition?.Detail, "ExchangeStatus") ?? order.State switch
+        {
+            ExecutionOrderState.Filled => "FILLED",
+            ExecutionOrderState.PartiallyFilled => "PARTIALLY_FILLED",
+            ExecutionOrderState.CancelRequested => "PENDING_CANCEL",
+            ExecutionOrderState.Cancelled => "CANCELED",
+            ExecutionOrderState.Rejected => "REJECTED",
+            ExecutionOrderState.Failed => "FAILED",
+            ExecutionOrderState.Submitted => "NEW",
+            _ => order.State.ToString().ToUpperInvariant()
+        };
+    }
+    private static string? ResolveFuturesReconciliationStatus(
+        ExecutionOrder order,
+        ExecutionOrderTransition? latestTransition)
+    {
+        return order.ReconciliationStatus != ExchangeStateDriftStatus.Unknown
+            ? order.ReconciliationStatus.ToString()
+            : ExtractDetailToken(latestTransition?.Detail, "ReconciliationStatus");
+    }
+    private static string? ResolveFuturesReconciliationSummary(
+        ExecutionOrder order,
+        ExecutionOrderTransition? latestTransition)
+    {
+        return NormalizeOptional(order.ReconciliationSummary)
+            ?? ExtractDetailToken(latestTransition?.Detail, "ReconciliationSummary");
+    }
     private static decimal? ResolveFuturesFeeAmountInQuote(
         ExecutionOrder order,
         ExecutionOrderTransition? latestTransition)
@@ -872,8 +962,8 @@ public sealed class UserDashboardPortfolioReadModelService(
         var executedQuantity = ExtractDetailDecimal(latestTransition?.Detail, "ExecutedQuantity");
         var cumulativeQuoteQuantity = ExtractDetailDecimal(latestTransition?.Detail, "CumulativeQuoteQuantity");
         var fee = ExtractDetailToken(latestTransition?.Detail, "Fee");
-        var reconciliationStatus = ExtractDetailToken(latestTransition?.Detail, "ReconciliationStatus");
-        var reconciliationSummary = ExtractDetailToken(latestTransition?.Detail, "ReconciliationSummary");
+        var reconciliationStatus = ResolveFuturesReconciliationStatus(order, latestTransition);
+        var reconciliationSummary = ResolveFuturesReconciliationSummary(order, latestTransition);
 
         var summary = $"Plane={order.Plane}";
 
@@ -985,6 +1075,9 @@ public sealed class UserDashboardPortfolioReadModelService(
         return normalized.Length <= maxLength ? normalized : normalized[..maxLength];
     }
 }
+
+
+
 
 
 
