@@ -22,11 +22,11 @@ public sealed class StrategyVersionServiceTests
         await dbContext.SaveChangesAsync();
 
         var service = CreateService(dbContext, timeProvider);
-        var firstDraft = await service.CreateDraftAsync(strategy.Id, CreateDefinitionJson("Demo"));
+        var firstDraft = await service.CreateDraftAsync(strategy.Id, CreateDefinitionJson("Demo", 30m));
 
         timeProvider.Advance(TimeSpan.FromMinutes(5));
 
-        var secondDraft = await service.CreateDraftAsync(strategy.Id, CreateDefinitionJson("Live"));
+        var secondDraft = await service.CreateDraftAsync(strategy.Id, CreateDefinitionJson("Live", 28m));
         var persistedVersions = await dbContext.TradingStrategyVersions
             .OrderBy(entity => entity.VersionNumber)
             .ToListAsync();
@@ -62,6 +62,35 @@ public sealed class StrategyVersionServiceTests
     }
 
     [Fact]
+    public async Task CreateDraftFromVersionAsync_LeavesPublishedVersionImmutable_AndCreatesNewDraft()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-version-clone-1", "clone-core");
+        dbContext.TradingStrategies.Add(strategy);
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext, timeProvider);
+        var draft = await service.CreateDraftAsync(strategy.Id, CreateDefinitionJson("Live", 30m));
+        var published = await service.PublishAsync(draft.StrategyVersionId);
+
+        timeProvider.Advance(TimeSpan.FromMinutes(5));
+        var clonedDraft = await service.CreateDraftFromVersionAsync(published.StrategyVersionId);
+
+        var persistedVersions = await dbContext.TradingStrategyVersions
+            .OrderBy(entity => entity.VersionNumber)
+            .ToListAsync();
+
+        Assert.Equal(StrategyVersionStatus.Published, persistedVersions[0].Status);
+        Assert.Equal(StrategyVersionStatus.Draft, persistedVersions[1].Status);
+        Assert.Equal(persistedVersions[0].DefinitionJson, persistedVersions[1].DefinitionJson);
+        Assert.Equal(2, clonedDraft.VersionNumber);
+        Assert.False(clonedDraft.IsImmutable);
+        Assert.True(published.IsImmutable);
+        Assert.NotEqual(published.StrategyVersionId, clonedDraft.StrategyVersionId);
+    }
+
+    [Fact]
     public async Task CreateDraftAsync_RejectsInvalidStrategyDefinition_WithExactValidationReason()
     {
         await using var dbContext = CreateDbContext();
@@ -94,7 +123,7 @@ public sealed class StrategyVersionServiceTests
     }
 
     [Fact]
-    public async Task PublishAsync_ArchivesPreviousPublishedVersion_AndDoesNotChangeExecutionPromotionState()
+    public async Task PublishAsync_PublishesDraft_ActivatesVersion_AndPreservesPreviousPublishedHistory()
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
         await using var dbContext = CreateDbContext();
@@ -107,12 +136,12 @@ public sealed class StrategyVersionServiceTests
         await dbContext.SaveChangesAsync();
 
         var service = CreateService(dbContext, timeProvider);
-        var firstDraft = await service.CreateDraftAsync(strategy.Id, CreateDefinitionJson("Demo"));
+        var firstDraft = await service.CreateDraftAsync(strategy.Id, CreateDefinitionJson("Demo", 30m));
         var firstPublished = await service.PublishAsync(firstDraft.StrategyVersionId);
 
         timeProvider.Advance(TimeSpan.FromMinutes(5));
 
-        var secondDraft = await service.CreateDraftAsync(strategy.Id, CreateDefinitionJson("Demo"));
+        var secondDraft = await service.CreateDraftAsync(strategy.Id, CreateDefinitionJson("Demo", 28m));
         var secondPublished = await service.PublishAsync(secondDraft.StrategyVersionId);
         var persistedStrategy = await dbContext.TradingStrategies.SingleAsync(entity => entity.Id == strategy.Id);
         var persistedVersions = await dbContext.TradingStrategyVersions
@@ -121,12 +150,125 @@ public sealed class StrategyVersionServiceTests
 
         Assert.Equal(StrategyVersionStatus.Published, firstPublished.Status);
         Assert.Equal(StrategyVersionStatus.Published, secondPublished.Status);
-        Assert.Equal(StrategyVersionStatus.Archived, persistedVersions[0].Status);
-        Assert.Equal(timeProvider.GetUtcNow().UtcDateTime, persistedVersions[0].ArchivedAtUtc);
-        Assert.Equal(StrategyVersionStatus.Published, persistedVersions[1].Status);
-        Assert.Equal(timeProvider.GetUtcNow().UtcDateTime, persistedVersions[1].PublishedAtUtc);
+        Assert.All(persistedVersions, version => Assert.Equal(StrategyVersionStatus.Published, version.Status));
+        Assert.True(persistedStrategy.UsesExplicitVersionLifecycle);
+        Assert.Equal(secondPublished.StrategyVersionId, persistedStrategy.ActiveTradingStrategyVersionId);
+        Assert.Equal(timeProvider.GetUtcNow().UtcDateTime, persistedStrategy.ActiveVersionActivatedAtUtc);
         Assert.Equal(StrategyPromotionState.DemoPublished, persistedStrategy.PromotionState);
         Assert.Equal(ExecutionEnvironment.Demo, persistedStrategy.PublishedMode);
+        Assert.NotEqual(firstPublished.StrategyVersionId, persistedStrategy.ActiveTradingStrategyVersionId);
+        Assert.True(secondPublished.IsActive);
+    }
+
+    [Fact]
+    public async Task ActivateAsync_EnforcesSingleActiveVersion_AndAllowsRollback()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-activate-1", "activation-core");
+        dbContext.TradingStrategies.Add(strategy);
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext, timeProvider);
+        var publishedV1 = await service.PublishAsync((await service.CreateDraftAsync(strategy.Id, CreateDefinitionJson("Live", 35m))).StrategyVersionId);
+
+        timeProvider.Advance(TimeSpan.FromMinutes(5));
+
+        var publishedV2 = await service.PublishAsync((await service.CreateDraftAsync(strategy.Id, CreateDefinitionJson("Live", 20m))).StrategyVersionId);
+        timeProvider.Advance(TimeSpan.FromMinutes(5));
+        var reactivated = await service.ActivateAsync(publishedV1.StrategyVersionId);
+
+        var persistedStrategy = await dbContext.TradingStrategies.SingleAsync(entity => entity.Id == strategy.Id);
+
+        Assert.Equal(publishedV1.StrategyVersionId, persistedStrategy.ActiveTradingStrategyVersionId);
+        Assert.Equal(publishedV1.StrategyVersionId, reactivated.StrategyVersionId);
+        Assert.True(reactivated.IsActive);
+        Assert.Equal(timeProvider.GetUtcNow().UtcDateTime, reactivated.ActivatedAtUtc);
+        Assert.NotEqual(publishedV2.StrategyVersionId, persistedStrategy.ActiveTradingStrategyVersionId);
+    }
+
+    [Fact]
+    public async Task ActivateAsync_IsIdempotent_ForDuplicateActivationRequest()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-activate-2", "idempotent-core");
+        dbContext.TradingStrategies.Add(strategy);
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext, timeProvider);
+        var published = await service.PublishAsync((await service.CreateDraftAsync(strategy.Id, CreateDefinitionJson("Live", 30m))).StrategyVersionId);
+        var firstActivatedAtUtc = published.ActivatedAtUtc;
+
+        timeProvider.Advance(TimeSpan.FromMinutes(5));
+        var secondActivation = await service.ActivateAsync(published.StrategyVersionId);
+        var persistedStrategy = await dbContext.TradingStrategies.SingleAsync(entity => entity.Id == strategy.Id);
+
+        Assert.True(secondActivation.IsActive);
+        Assert.Equal(firstActivatedAtUtc, secondActivation.ActivatedAtUtc);
+        Assert.Equal(firstActivatedAtUtc, persistedStrategy.ActiveVersionActivatedAtUtc);
+    }
+
+    [Fact]
+    public async Task DeactivateAsync_ClearsActiveVersion_AndMarksLifecycleExplicit()
+    {
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-deactivate-1", "deactivate-core");
+        dbContext.TradingStrategies.Add(strategy);
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext, new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero)));
+        var published = await service.PublishAsync((await service.CreateDraftAsync(strategy.Id, CreateDefinitionJson("Live", 30m))).StrategyVersionId);
+        var deactivated = await service.DeactivateAsync(strategy.Id);
+        var persistedStrategy = await dbContext.TradingStrategies.SingleAsync(entity => entity.Id == strategy.Id);
+
+        Assert.NotNull(deactivated);
+        Assert.Equal(published.StrategyVersionId, deactivated!.StrategyVersionId);
+        Assert.False(deactivated.IsActive);
+        Assert.True(persistedStrategy.UsesExplicitVersionLifecycle);
+        Assert.Null(persistedStrategy.ActiveTradingStrategyVersionId);
+        Assert.Null(persistedStrategy.ActiveVersionActivatedAtUtc);
+    }
+
+    [Fact]
+    public async Task ActivateAsync_RejectsInvalidPublishedVersion_FailClosed()
+    {
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-invalid-activate-1", "invalid-activate-core");
+        strategy.Id = Guid.NewGuid();
+        var invalidPublishedVersion = new TradingStrategyVersion
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = strategy.OwnerUserId,
+            TradingStrategyId = strategy.Id,
+            SchemaVersion = 2,
+            VersionNumber = 1,
+            Status = StrategyVersionStatus.Published,
+            DefinitionJson = """
+                             {
+                               "schemaVersion": 2,
+                               "entry": {
+                                 "path": "indicator.rsi.value",
+                                 "comparison": "lessThanOrEqual",
+                                 "value": 101,
+                                 "ruleId": "entry-rsi",
+                                 "ruleType": "rsi",
+                                 "weight": 10,
+                                 "enabled": true
+                               }
+                             }
+                             """
+        };
+
+        dbContext.TradingStrategies.Add(strategy);
+        dbContext.TradingStrategyVersions.Add(invalidPublishedVersion);
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext, new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero)));
+
+        var exception = await Assert.ThrowsAsync<StrategyDefinitionValidationException>(() => service.ActivateAsync(invalidPublishedVersion.Id));
+
+        Assert.Equal("InvalidRsiThreshold:entry:101", exception.StatusCode);
     }
 
     private static StrategyVersionService CreateService(ApplicationDbContext dbContext, TimeProvider timeProvider)
@@ -138,7 +280,7 @@ public sealed class StrategyVersionServiceTests
             parser,
             timeProvider,
             validator,
-            new StrategyTemplateCatalogService(parser, validator));
+            new StrategyTemplateCatalogService(parser, validator, dbContext));
     }
 
     private static ApplicationDbContext CreateDbContext()
@@ -160,7 +302,7 @@ public sealed class StrategyVersionServiceTests
         };
     }
 
-    private static string CreateDefinitionJson(string mode)
+    private static string CreateDefinitionJson(string mode, decimal rsiThreshold)
     {
         return
             $$"""
@@ -189,6 +331,16 @@ public sealed class StrategyVersionServiceTests
                     "enabled": true
                   },
                   {
+                    "ruleId": "entry-rsi",
+                    "ruleType": "rsi",
+                    "path": "indicator.rsi.value",
+                    "comparison": "lessThanOrEqual",
+                    "value": {{rsiThreshold}},
+                    "timeframe": "1m",
+                    "weight": 10,
+                    "enabled": true
+                  },
+                  {
                     "ruleId": "risk-rsi-ready",
                     "ruleType": "rsi",
                     "path": "indicator.rsi.isReady",
@@ -211,4 +363,3 @@ public sealed class StrategyVersionServiceTests
         public bool HasIsolationBypass => true;
     }
 }
-

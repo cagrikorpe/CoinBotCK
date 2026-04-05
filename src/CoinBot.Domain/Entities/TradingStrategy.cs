@@ -8,6 +8,12 @@ public sealed class TradingStrategy : UserOwnedEntity
 
     public string DisplayName { get; set; } = string.Empty;
 
+    public bool UsesExplicitVersionLifecycle { get; set; }
+
+    public Guid? ActiveTradingStrategyVersionId { get; set; }
+
+    public DateTime? ActiveVersionActivatedAtUtc { get; set; }
+
     public StrategyPromotionState PromotionState { get; set; } = StrategyPromotionState.Draft;
 
     public ExecutionEnvironment? PublishedMode { get; set; }

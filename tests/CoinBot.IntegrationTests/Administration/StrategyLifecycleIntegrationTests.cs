@@ -1,0 +1,403 @@
+using CoinBot.Application.Abstractions.Administration;
+using CoinBot.Application.Abstractions.DataScope;
+using CoinBot.Application.Abstractions.Execution;
+using CoinBot.Application.Abstractions.Indicators;
+using CoinBot.Application.Abstractions.Monitoring;
+using CoinBot.Application.Abstractions.Strategies;
+using CoinBot.Domain.Entities;
+using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Administration;
+using CoinBot.Infrastructure.Auditing;
+using CoinBot.Infrastructure.Identity;
+using CoinBot.Infrastructure.Observability;
+using CoinBot.Infrastructure.Persistence;
+using CoinBot.Infrastructure.Risk;
+using CoinBot.Infrastructure.Strategies;
+using CoinBot.IntegrationTests.Infrastructure;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+
+namespace CoinBot.IntegrationTests.Administration;
+
+public sealed class StrategyLifecycleIntegrationTests
+{
+    [Fact]
+    public async Task CustomTemplate_PublishActivate_RuntimeSignal_AndAdminProjection_OnSqlServer()
+    {
+        var databaseName = $"CoinBotStrategyLifecycleInt_{Guid.NewGuid():N}";
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString(databaseName);
+        var nowUtc = new DateTimeOffset(2026, 4, 5, 12, 0, 0, TimeSpan.Zero);
+        await using var dbContext = CreateDbContext(connectionString);
+        await dbContext.Database.EnsureDeletedAsync();
+        await dbContext.Database.EnsureCreatedAsync();
+
+        try
+        {
+            var strategyId = Guid.NewGuid();
+            dbContext.Users.Add(CreateUser("strategy-user"));
+            dbContext.TradingStrategies.Add(new TradingStrategy
+            {
+                Id = strategyId,
+                OwnerUserId = "strategy-user",
+                StrategyKey = "strategy-lifecycle",
+                DisplayName = "Strategy Lifecycle",
+                PromotionState = StrategyPromotionState.DemoPublished,
+                PublishedMode = ExecutionEnvironment.Demo,
+                PublishedAtUtc = nowUtc.UtcDateTime.AddMinutes(-5)
+            });
+            dbContext.RiskProfiles.Add(new RiskProfile
+            {
+                OwnerUserId = "strategy-user",
+                ProfileName = "Balanced",
+                MaxDailyLossPercentage = 5m,
+                MaxPositionSizePercentage = 80m,
+                MaxLeverage = 2m
+            });
+            dbContext.DemoWallets.Add(new DemoWallet
+            {
+                OwnerUserId = "strategy-user",
+                Asset = "USDT",
+                AvailableBalance = 10000m,
+                ReservedBalance = 0m,
+                LastActivityAtUtc = nowUtc.UtcDateTime
+            });
+            await dbContext.SaveChangesAsync();
+
+            var parser = new StrategyRuleParser();
+            var validator = new StrategyDefinitionValidator();
+            var auditLogService = new AuditLogService(dbContext, new CorrelationContextAccessor());
+            var templateCatalog = new StrategyTemplateCatalogService(parser, validator, dbContext, auditLogService);
+            var versionService = new StrategyVersionService(
+                dbContext,
+                parser,
+                new FixedTimeProvider(nowUtc),
+                validator,
+                templateCatalog,
+                auditLogService);
+            var signalService = CreateSignalService(dbContext, nowUtc);
+
+            var template = await templateCatalog.CreateCustomAsync(
+                "strategy-user",
+                "demo-rsi-template",
+                "Demo RSI Template",
+                "Custom demo template.",
+                "Custom",
+                CreateDefinitionJson("Demo", 35m, 100));
+            var draft = await versionService.CreateDraftFromTemplateAsync(strategyId, template.TemplateKey);
+            var published = await versionService.PublishAsync(draft.StrategyVersionId);
+            var result = await signalService.GenerateAsync(
+                new GenerateStrategySignalsRequest(
+                    published.StrategyVersionId,
+                    CreateContext(ExecutionEnvironment.Demo, nowUtc.UtcDateTime, sampleCount: 120, rsiValue: 28m)));
+            var readModelService = new AdminWorkspaceReadModelService(
+                dbContext,
+                new FakeAdminMonitoringReadModelService(nowUtc.UtcDateTime),
+                new FakeTradingModeResolver(),
+                new FixedTimeProvider(nowUtc),
+                parser,
+                validator,
+                templateCatalog);
+            var snapshot = await readModelService.GetStrategyAiMonitoringAsync("strategy-lifecycle");
+            var persistedStrategy = await dbContext.TradingStrategies.AsNoTracking().SingleAsync(entity => entity.Id == strategyId);
+            var decisionTrace = await dbContext.DecisionTraces.AsNoTracking().SingleAsync();
+            var auditActions = await dbContext.AuditLogs
+                .AsNoTracking()
+                .Where(entity => entity.Target == "strategy-lifecycle")
+                .Select(entity => entity.Action)
+                .ToListAsync();
+
+            Assert.True(published.IsActive);
+            Assert.Equal(published.StrategyVersionId, persistedStrategy.ActiveTradingStrategyVersionId);
+            Assert.True(persistedStrategy.UsesExplicitVersionLifecycle);
+            Assert.Single(result.Signals);
+            Assert.Empty(result.Vetoes);
+            Assert.Contains("\"templateKey\":\"demo-rsi-template\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
+            Assert.Contains("\"outcome\":\"EntryMatched\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
+            Assert.Contains("Strategy.Version.Published", auditActions);
+            Assert.Contains("Strategy.Version.Activated", auditActions);
+            var usageRow = Assert.Single(snapshot.UsageRows);
+            Assert.Equal("demo-rsi-template", usageRow.TemplateKey);
+            Assert.Contains("Runtime=v1", usageRow.Note, StringComparison.Ordinal);
+            Assert.Contains(snapshot.TemplateCatalog, item => item.TemplateKey == "demo-rsi-template");
+        }
+        finally
+        {
+            await dbContext.Database.EnsureDeletedAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ActiveVersionSwap_SeparatesPersistedNoSignalAndRiskVeto_Outcomes_OnSqlServer()
+    {
+        var databaseName = $"CoinBotStrategyLifecycleSwapInt_{Guid.NewGuid():N}";
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString(databaseName);
+        var nowUtc = new DateTimeOffset(2026, 4, 5, 12, 0, 0, TimeSpan.Zero);
+        await using var dbContext = CreateDbContext(connectionString);
+        await dbContext.Database.EnsureDeletedAsync();
+        await dbContext.Database.EnsureCreatedAsync();
+
+        try
+        {
+            var strategyId = Guid.NewGuid();
+            dbContext.Users.Add(CreateUser("strategy-swap-user"));
+            dbContext.TradingStrategies.Add(new TradingStrategy
+            {
+                Id = strategyId,
+                OwnerUserId = "strategy-swap-user",
+                StrategyKey = "strategy-swap",
+                DisplayName = "Strategy Swap",
+                PromotionState = StrategyPromotionState.DemoPublished,
+                PublishedMode = ExecutionEnvironment.Demo,
+                PublishedAtUtc = nowUtc.UtcDateTime.AddMinutes(-5)
+            });
+            dbContext.RiskProfiles.Add(new RiskProfile
+            {
+                OwnerUserId = "strategy-swap-user",
+                ProfileName = "Balanced",
+                MaxDailyLossPercentage = 5m,
+                MaxPositionSizePercentage = 80m,
+                MaxLeverage = 2m
+            });
+            dbContext.DemoWallets.Add(new DemoWallet
+            {
+                OwnerUserId = "strategy-swap-user",
+                Asset = "USDT",
+                AvailableBalance = 10000m,
+                ReservedBalance = 0m,
+                LastActivityAtUtc = nowUtc.UtcDateTime
+            });
+            await dbContext.SaveChangesAsync();
+
+            var parser = new StrategyRuleParser();
+            var validator = new StrategyDefinitionValidator();
+            var auditLogService = new AuditLogService(dbContext, new CorrelationContextAccessor());
+            var versionService = new StrategyVersionService(
+                dbContext,
+                parser,
+                new FixedTimeProvider(nowUtc),
+                validator,
+                new StrategyTemplateCatalogService(parser, validator, dbContext, auditLogService),
+                auditLogService);
+            var signalService = CreateSignalService(dbContext, nowUtc);
+
+            var version1 = await versionService.PublishAsync(
+                (await versionService.CreateDraftAsync(strategyId, CreateDefinitionJson("Demo", 35m, 100))).StrategyVersionId);
+            var version2 = await versionService.PublishAsync(
+                (await versionService.CreateDraftAsync(strategyId, CreateDefinitionJson("Demo", 10m, 100))).StrategyVersionId);
+
+            await versionService.ActivateAsync(version1.StrategyVersionId);
+            var persistedResult = await signalService.GenerateAsync(
+                new GenerateStrategySignalsRequest(
+                    version1.StrategyVersionId,
+                    CreateContext(ExecutionEnvironment.Demo, nowUtc.UtcDateTime, sampleCount: 120, rsiValue: 28m)));
+
+            await versionService.ActivateAsync(version2.StrategyVersionId);
+            var inactiveVersionException = await Assert.ThrowsAsync<InvalidOperationException>(() => signalService.GenerateAsync(
+                new GenerateStrategySignalsRequest(
+                    version1.StrategyVersionId,
+                    CreateContext(ExecutionEnvironment.Demo, nowUtc.UtcDateTime.AddMinutes(1), sampleCount: 120, rsiValue: 28m))));
+            var noSignalResult = await signalService.GenerateAsync(
+                new GenerateStrategySignalsRequest(
+                    version2.StrategyVersionId,
+                    CreateContext(ExecutionEnvironment.Demo, nowUtc.UtcDateTime.AddMinutes(1), sampleCount: 120, rsiValue: 28m)));
+
+            dbContext.DemoLedgerTransactions.Add(new DemoLedgerTransaction
+            {
+                OwnerUserId = "strategy-swap-user",
+                OperationId = Guid.NewGuid().ToString("N"),
+                TransactionType = DemoLedgerTransactionType.FillApplied,
+                PositionScopeKey = "risk-position",
+                Symbol = "BTCUSDT",
+                QuoteAsset = "USDT",
+                RealizedPnlDelta = -750m,
+                OccurredAtUtc = nowUtc.UtcDateTime.AddMinutes(1)
+            });
+            await dbContext.SaveChangesAsync();
+            await versionService.ActivateAsync(version1.StrategyVersionId);
+            var vetoResult = await signalService.GenerateAsync(
+                new GenerateStrategySignalsRequest(
+                    version1.StrategyVersionId,
+                    CreateContext(ExecutionEnvironment.Demo, nowUtc.UtcDateTime.AddMinutes(2), sampleCount: 120, rsiValue: 28m)));
+
+            var decisionOutcomes = await dbContext.DecisionTraces
+                .AsNoTracking()
+                .OrderBy(entity => entity.CreatedAtUtc)
+                .Select(entity => entity.DecisionOutcome)
+                .ToListAsync();
+
+            Assert.Single(persistedResult.Signals);
+            Assert.Empty(noSignalResult.Signals);
+            Assert.Empty(noSignalResult.Vetoes);
+            Assert.Contains("active", inactiveVersionException.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Single(vetoResult.Vetoes);
+            Assert.Contains("Persisted", decisionOutcomes);
+            Assert.Contains("NoSignalCandidate", decisionOutcomes);
+            Assert.Contains("Vetoed", decisionOutcomes);
+            Assert.Equal(1, await dbContext.TradingStrategySignals.CountAsync());
+            Assert.Equal(1, await dbContext.TradingStrategySignalVetoes.CountAsync());
+        }
+        finally
+        {
+            await dbContext.Database.EnsureDeletedAsync();
+        }
+    }
+
+    private static StrategySignalService CreateSignalService(ApplicationDbContext dbContext, DateTimeOffset nowUtc)
+    {
+        var correlationContextAccessor = new CorrelationContextAccessor();
+
+        return new StrategySignalService(
+            dbContext,
+            new StrategyEvaluatorService(new StrategyRuleParser(), new StrategyDefinitionValidator()),
+            new RiskPolicyEvaluator(
+                dbContext,
+                new FixedTimeProvider(nowUtc),
+                NullLogger<RiskPolicyEvaluator>.Instance),
+            new TraceService(
+                dbContext,
+                correlationContextAccessor,
+                new FixedTimeProvider(nowUtc)),
+            correlationContextAccessor,
+            new FixedTimeProvider(nowUtc),
+            NullLogger<StrategySignalService>.Instance);
+    }
+
+    private static StrategyEvaluationContext CreateContext(
+        ExecutionEnvironment mode,
+        DateTime closeTimeUtc,
+        int sampleCount,
+        decimal rsiValue)
+    {
+        return new StrategyEvaluationContext(
+            mode,
+            new StrategyIndicatorSnapshot(
+                Symbol: "BTCUSDT",
+                Timeframe: "1m",
+                OpenTimeUtc: closeTimeUtc.AddMinutes(-1),
+                CloseTimeUtc: closeTimeUtc,
+                ReceivedAtUtc: closeTimeUtc.AddSeconds(1),
+                SampleCount: sampleCount,
+                RequiredSampleCount: 120,
+                State: IndicatorDataState.Ready,
+                DataQualityReasonCode: DegradedModeReasonCode.None,
+                Rsi: new RelativeStrengthIndexSnapshot(14, IsReady: true, Value: rsiValue),
+                Macd: new MovingAverageConvergenceDivergenceSnapshot(12, 26, 9, true, 1.4m, 1.1m, 0.3m),
+                Bollinger: new BollingerBandsSnapshot(20, 2m, true, 62000m, 62500m, 61500m, 250m),
+                Source: "integration-test"));
+    }
+
+    private static string CreateDefinitionJson(string mode, decimal rsiThreshold, int minimumSampleCount)
+    {
+        return
+            $$"""
+            {
+              "schemaVersion": 2,
+              "metadata": {
+                "templateKey": "custom-runtime",
+                "templateName": "Custom Runtime"
+              },
+              "entry": {
+                "operator": "all",
+                "ruleId": "entry-root",
+                "ruleType": "group",
+                "timeframe": "1m",
+                "weight": 1,
+                "enabled": true,
+                "rules": [
+                  {
+                    "ruleId": "entry-mode",
+                    "ruleType": "context",
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "{{mode}}",
+                    "timeframe": "1m",
+                    "weight": 10,
+                    "enabled": true
+                  },
+                  {
+                    "ruleId": "entry-rsi",
+                    "ruleType": "rsi",
+                    "path": "indicator.rsi.value",
+                    "comparison": "lessThanOrEqual",
+                    "value": {{rsiThreshold}},
+                    "timeframe": "1m",
+                    "weight": 20,
+                    "enabled": true
+                  }
+                ]
+              },
+              "risk": {
+                "path": "indicator.sampleCount",
+                "comparison": "greaterThanOrEqual",
+                "value": {{minimumSampleCount}},
+                "ruleId": "risk-sample-count",
+                "ruleType": "data-quality",
+                "timeframe": "1m",
+                "weight": 10,
+                "enabled": true
+              }
+            }
+            """;
+    }
+
+    private static ApplicationUser CreateUser(string userId)
+    {
+        return new ApplicationUser
+        {
+            Id = userId,
+            UserName = userId,
+            NormalizedUserName = userId.ToUpperInvariant(),
+            Email = $"{userId}@coinbot.test",
+            NormalizedEmail = $"{userId.ToUpperInvariant()}@COINBOT.TEST",
+            FullName = userId,
+            EmailConfirmed = true
+        };
+    }
+
+    private static ApplicationDbContext CreateDbContext(string connectionString)
+    {
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseSqlServer(connectionString)
+            .Options;
+
+        return new ApplicationDbContext(options, new TestDataScopeContext());
+    }
+
+    private sealed class FakeAdminMonitoringReadModelService(DateTime nowUtc) : IAdminMonitoringReadModelService
+    {
+        public Task<MonitoringDashboardSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(MonitoringDashboardSnapshot.Empty(nowUtc));
+        }
+    }
+
+    private sealed class FakeTradingModeResolver : ITradingModeResolver
+    {
+        public Task<TradingModeResolution> ResolveAsync(
+            TradingModeResolutionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new TradingModeResolution(
+                ExecutionEnvironment.Demo,
+                null,
+                null,
+                null,
+                ExecutionEnvironment.Demo,
+                TradingModeResolutionSource.GlobalDefault,
+                "integration-test",
+                false));
+        }
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset nowUtc) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => nowUtc;
+    }
+
+    private sealed class TestDataScopeContext : IDataScopeContext
+    {
+        public string? UserId => null;
+
+        public bool HasIsolationBypass => true;
+    }
+}

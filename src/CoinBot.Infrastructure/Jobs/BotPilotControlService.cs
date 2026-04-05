@@ -3,6 +3,7 @@ using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Dashboard;
 using CoinBot.Infrastructure.Persistence;
+using CoinBot.Infrastructure.Strategies;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -173,13 +174,10 @@ public sealed class BotPilotControlService(
             return false;
         }
 
-        return await dbContext.TradingStrategyVersions
-            .IgnoreQueryFilters()
-            .AnyAsync(
-                entity => entity.TradingStrategyId == strategy.Id &&
-                          entity.Status == StrategyVersionStatus.Published &&
-                          !entity.IsDeleted,
-                cancellationToken);
+        return await StrategyRuntimeVersionSelection.ResolveAsync(
+            dbContext,
+            strategy.Id,
+            cancellationToken) is not null;
     }
 
     private static BotPilotToggleResult Failure(Guid botId, bool isEnabled, string failureCode, string failureReason)

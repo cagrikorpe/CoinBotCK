@@ -122,13 +122,14 @@ public sealed partial class AdminWorkspaceReadModelService
         {
             var strategySignals = signals.Where(signal => signal.TradingStrategyId == strategy.Id).ToArray();
             var strategyVetoes = vetoes.Where(veto => veto.TradingStrategyId == strategy.Id).ToArray();
+            var strategyVersions = versions.Where(version => version.TradingStrategyId == strategy.Id).ToArray();
             var latestSignal = strategySignals.OrderByDescending(signal => signal.GeneratedAtUtc).FirstOrDefault();
             var latestVeto = strategyVetoes.OrderByDescending(veto => veto.EvaluatedAtUtc).FirstOrDefault();
-            var latestVersion = versions
-                .Where(version => version.TradingStrategyId == strategy.Id)
+            var runtimeVersion = ResolveRuntimeStrategyVersion(strategy, strategyVersions);
+            var latestVersion = strategyVersions
                 .OrderByDescending(version => version.VersionNumber)
                 .FirstOrDefault();
-            var definitionSummary = BuildStrategyDefinitionSummary(latestVersion);
+            var definitionSummary = BuildStrategyDefinitionSummary(runtimeVersion ?? latestVersion);
             var explainabilitySummary = BuildStrategyExplainabilitySummary(latestSignal, latestVeto);
             var signalCount = strategySignals.Length;
             var vetoCount = strategyVetoes.Length;
@@ -145,7 +146,7 @@ public sealed partial class AdminWorkspaceReadModelService
                 latestSignal is null ? "-" : latestSignal.SignalType.ToString(),
                 latestSignal is null ? "-" : BuildRelativeTimeLabel(now, latestSignal.GeneratedAtUtc),
                 latestVeto is null ? null : latestVeto.ReasonCode.ToString(),
-                strategy.PublishedMode is null ? "Draft / shadow" : $"Published {strategy.PublishedMode}",
+                BuildStrategyLifecycleNote(strategy, runtimeVersion, latestVersion),
                 definitionSummary.TemplateKey,
                 definitionSummary.TemplateName,
                 definitionSummary.ValidationStatusCode,
@@ -660,6 +661,11 @@ public sealed partial class AdminWorkspaceReadModelService
 
     private static string BuildStrategyHealthLabel(TradingStrategy strategy, int signalCount, int vetoCount)
     {
+        if (strategy.UsesExplicitVersionLifecycle && !strategy.ActiveTradingStrategyVersionId.HasValue)
+        {
+            return "Inactive";
+        }
+
         if (strategy.PublishedMode.HasValue)
         {
             return vetoCount > signalCount / 3 ? "Guarded" : "Live";
@@ -670,12 +676,54 @@ public sealed partial class AdminWorkspaceReadModelService
 
     private static string BuildStrategyHealthTone(TradingStrategy strategy, int signalCount, int vetoCount)
     {
+        if (strategy.UsesExplicitVersionLifecycle && !strategy.ActiveTradingStrategyVersionId.HasValue)
+        {
+            return "warning";
+        }
+
         if (strategy.PublishedMode.HasValue)
         {
             return vetoCount > signalCount / 3 ? "warning" : "healthy";
         }
 
         return signalCount == 0 ? "neutral" : "info";
+    }
+
+    private static TradingStrategyVersion? ResolveRuntimeStrategyVersion(
+        TradingStrategy strategy,
+        IReadOnlyCollection<TradingStrategyVersion> versions)
+    {
+        var publishedVersions = versions
+            .Where(version => version.Status == StrategyVersionStatus.Published)
+            .OrderByDescending(version => version.VersionNumber)
+            .ToArray();
+
+        if (strategy.UsesExplicitVersionLifecycle)
+        {
+            return strategy.ActiveTradingStrategyVersionId.HasValue
+                ? publishedVersions.FirstOrDefault(version => version.Id == strategy.ActiveTradingStrategyVersionId.Value)
+                : null;
+        }
+
+        return publishedVersions.FirstOrDefault();
+    }
+
+    private static string BuildStrategyLifecycleNote(
+        TradingStrategy strategy,
+        TradingStrategyVersion? runtimeVersion,
+        TradingStrategyVersion? latestVersion)
+    {
+        var promotionLabel = strategy.PublishedMode is null ? "Draft / shadow" : $"Published {strategy.PublishedMode}";
+
+        if (runtimeVersion is null)
+        {
+            return strategy.UsesExplicitVersionLifecycle
+                ? $"{promotionLabel}; Runtime=Inactive"
+                : promotionLabel;
+        }
+
+        var latestVersionLabel = latestVersion is null ? "n/a" : $"v{latestVersion.VersionNumber}";
+        return $"{promotionLabel}; Runtime=v{runtimeVersion.VersionNumber}; Latest={latestVersionLabel}";
     }
 
     private static string BuildEventTone(string? value)

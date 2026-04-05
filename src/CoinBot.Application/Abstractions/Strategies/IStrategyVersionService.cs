@@ -12,8 +12,20 @@ public interface IStrategyVersionService
         string templateKey,
         CancellationToken cancellationToken = default);
 
+    Task<StrategyVersionSnapshot> CreateDraftFromVersionAsync(
+        Guid strategyVersionId,
+        CancellationToken cancellationToken = default);
+
     Task<StrategyVersionSnapshot> PublishAsync(
         Guid strategyVersionId,
+        CancellationToken cancellationToken = default);
+
+    Task<StrategyVersionSnapshot> ActivateAsync(
+        Guid strategyVersionId,
+        CancellationToken cancellationToken = default);
+
+    Task<StrategyVersionSnapshot?> DeactivateAsync(
+        Guid strategyId,
         CancellationToken cancellationToken = default);
 
     Task<StrategyVersionSnapshot> ArchiveAsync(

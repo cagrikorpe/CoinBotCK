@@ -134,4 +134,29 @@ public sealed class StrategyRuleParserTests
 
         Assert.Contains("could not be parsed", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void Parse_RejectsUnsupportedGroupOperator_FailClosed()
+    {
+        var parser = new StrategyRuleParser();
+
+        var exception = Assert.Throws<StrategyRuleParseException>(() => parser.Parse(
+            """
+            {
+              "schemaVersion": 2,
+              "entry": {
+                "operator": "xor",
+                "rules": [
+                  {
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Live"
+                  }
+                ]
+              }
+            }
+            """));
+
+        Assert.Contains("operator", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
 }

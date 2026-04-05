@@ -79,6 +79,9 @@ public sealed class StrategySignalServiceTests
         Assert.Equal(signal.StrategySignalId, decisionTrace.StrategySignalId);
         Assert.Equal("Persisted", decisionTrace.DecisionOutcome);
         Assert.Equal("BTCUSDT", decisionTrace.Symbol);
+        Assert.Contains("\"templateKey\":\"rsi-reversal\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
+        Assert.Contains("\"aggregateScore\":100", decisionTrace.SnapshotJson, StringComparison.Ordinal);
+        Assert.Contains("\"passedRules\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -192,6 +195,82 @@ public sealed class StrategySignalServiceTests
         Assert.Equal("1m", signal.Timeframe);
     }
 
+    [Fact]
+    public async Task GenerateAsync_FailsClosed_WhenDraftVersionIsRequested()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-signal-draft", "draft-core");
+        var draftVersion = CreateVersion(strategy, 1, CreateDefinitionJson(minimumSampleCount: 100), StrategyVersionStatus.Draft);
+
+        dbContext.TradingStrategies.Add(strategy);
+        dbContext.TradingStrategyVersions.Add(draftVersion);
+        dbContext.RiskProfiles.Add(CreateRiskProfile(strategy.OwnerUserId, "Balanced", 5m, 80m, 2m));
+        dbContext.DemoWallets.Add(CreateDemoWallet(strategy.OwnerUserId, "USDT", 10000m));
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext, timeProvider);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => service.GenerateAsync(
+            new GenerateStrategySignalsRequest(draftVersion.Id, CreateContext(ExecutionEnvironment.Demo, sampleCount: 120, rsiValue: 28m))));
+
+        Assert.Contains("published", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task GenerateAsync_FailsClosed_WhenExplicitActiveVersionDoesNotMatchRequestedVersion()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-signal-active", "active-core");
+        var activeVersion = CreateVersion(strategy, 1, CreateDefinitionJson(minimumSampleCount: 100));
+        var inactiveVersion = CreateVersion(strategy, 2, CreateDefinitionJson(minimumSampleCount: 100));
+        strategy.UsesExplicitVersionLifecycle = true;
+        strategy.ActiveTradingStrategyVersionId = activeVersion.Id;
+        strategy.ActiveVersionActivatedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+
+        dbContext.TradingStrategies.Add(strategy);
+        dbContext.TradingStrategyVersions.AddRange(activeVersion, inactiveVersion);
+        dbContext.RiskProfiles.Add(CreateRiskProfile(strategy.OwnerUserId, "Balanced", 5m, 80m, 2m));
+        dbContext.DemoWallets.Add(CreateDemoWallet(strategy.OwnerUserId, "USDT", 10000m));
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext, timeProvider);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => service.GenerateAsync(
+            new GenerateStrategySignalsRequest(inactiveVersion.Id, CreateContext(ExecutionEnvironment.Demo, sampleCount: 120, rsiValue: 28m))));
+
+        Assert.Contains("active", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task GenerateAsync_PersistsNoSignalCandidateTrace_WithoutConfusingItWithRiskVeto()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-signal-none", "no-signal-core");
+        var version = CreateVersion(strategy, 1, CreateDefinitionJson(minimumSampleCount: 100, rsiThreshold: 10m));
+
+        dbContext.TradingStrategies.Add(strategy);
+        dbContext.TradingStrategyVersions.Add(version);
+        dbContext.RiskProfiles.Add(CreateRiskProfile(strategy.OwnerUserId, "Balanced", 5m, 80m, 2m));
+        dbContext.DemoWallets.Add(CreateDemoWallet(strategy.OwnerUserId, "USDT", 10000m));
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext, timeProvider);
+        var result = await service.GenerateAsync(
+            new GenerateStrategySignalsRequest(version.Id, CreateContext(ExecutionEnvironment.Demo, sampleCount: 120, rsiValue: 28m)));
+        var decisionTrace = await dbContext.DecisionTraces.SingleAsync();
+
+        Assert.Empty(result.Signals);
+        Assert.Empty(result.Vetoes);
+        Assert.False(result.EvaluationResult.EntryMatched);
+        Assert.Equal(0, await dbContext.TradingStrategySignals.CountAsync());
+        Assert.Equal(0, await dbContext.TradingStrategySignalVetoes.CountAsync());
+        Assert.Equal("NoSignalCandidate", decisionTrace.DecisionOutcome);
+        Assert.Contains("\"decisionOutcome\":\"NoSignalCandidate\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
+    }
+
     private static StrategySignalService CreateService(ApplicationDbContext dbContext, TimeProvider timeProvider)
     {
         var correlationContextAccessor = new CorrelationContextAccessor();
@@ -232,16 +311,16 @@ public sealed class StrategySignalServiceTests
         };
     }
 
-    private static TradingStrategyVersion CreateVersion(TradingStrategy strategy, int versionNumber, string definitionJson)
+    private static TradingStrategyVersion CreateVersion(TradingStrategy strategy, int versionNumber, string definitionJson, StrategyVersionStatus status = StrategyVersionStatus.Published)
     {
         return new TradingStrategyVersion
         {
             Id = Guid.NewGuid(),
             OwnerUserId = strategy.OwnerUserId,
             TradingStrategyId = strategy.Id,
-            SchemaVersion = 1,
+            SchemaVersion = 2,
             VersionNumber = versionNumber,
-            Status = StrategyVersionStatus.Published,
+            Status = status,
             DefinitionJson = definitionJson,
             PublishedAtUtc = new DateTime(2026, 3, 22, 11, 55, 0, DateTimeKind.Utc)
         };
@@ -328,12 +407,16 @@ public sealed class StrategySignalServiceTests
             Source: "UnitTest");
     }
 
-    private static string CreateDefinitionJson(int minimumSampleCount)
+    private static string CreateDefinitionJson(int minimumSampleCount, decimal rsiThreshold = 30m)
     {
         return
             $$"""
             {
-              "schemaVersion": 1,
+              "schemaVersion": 2,
+              "metadata": {
+                "templateKey": "rsi-reversal",
+                "templateName": "RSI Reversal"
+              },
               "entry": {
                 "operator": "all",
                 "rules": [
@@ -345,7 +428,7 @@ public sealed class StrategySignalServiceTests
                   {
                     "path": "indicator.rsi.value",
                     "comparison": "lessThanOrEqual",
-                    "value": 30
+                    "value": {{rsiThreshold}}
                   }
                 ]
               },
@@ -368,7 +451,11 @@ public sealed class StrategySignalServiceTests
         return
             """
             {
-              "schemaVersion": 1,
+              "schemaVersion": 2,
+              "metadata": {
+                "templateKey": "indicator-ready",
+                "templateName": "Indicator Ready"
+              },
               "entry": {
                 "operator": "all",
                 "rules": [

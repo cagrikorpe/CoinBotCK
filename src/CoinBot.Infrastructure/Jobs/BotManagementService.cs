@@ -4,6 +4,7 @@ using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Dashboard;
 using CoinBot.Infrastructure.Persistence;
+using CoinBot.Infrastructure.Strategies;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -53,18 +54,6 @@ public sealed class BotManagementService(
                 strategyKeys.Contains(entity.StrategyKey))
             .ToListAsync(cancellationToken);
 
-        var strategyIds = strategies.Select(entity => entity.Id).ToArray();
-        var publishedStrategyIds = await dbContext.TradingStrategyVersions
-            .AsNoTracking()
-            .IgnoreQueryFilters()
-            .Where(entity =>
-                strategyIds.Contains(entity.TradingStrategyId) &&
-                entity.Status == StrategyVersionStatus.Published &&
-                !entity.IsDeleted)
-            .Select(entity => entity.TradingStrategyId)
-            .Distinct()
-            .ToListAsync(cancellationToken);
-
         var accounts = await dbContext.ExchangeAccounts
             .AsNoTracking()
             .IgnoreQueryFilters()
@@ -95,7 +84,7 @@ public sealed class BotManagementService(
             .ToListAsync(cancellationToken);
 
         var strategiesByKey = strategies.ToDictionary(entity => entity.StrategyKey, StringComparer.Ordinal);
-        var publishedStrategyIdSet = publishedStrategyIds.ToHashSet();
+        var publishedStrategyIdSet = await LoadRuntimeReadyStrategyIdSetAsync(strategies, cancellationToken);
         var accountsById = accounts.ToDictionary(entity => entity.Id);
         var statesByBotId = states
             .Where(entity => entity.BotId.HasValue)
@@ -509,18 +498,7 @@ public sealed class BotManagementService(
             .ThenBy(entity => entity.StrategyKey)
             .ToListAsync(cancellationToken);
 
-        var strategyIds = strategies.Select(entity => entity.Id).ToArray();
-        var publishedStrategyIds = await dbContext.TradingStrategyVersions
-            .AsNoTracking()
-            .IgnoreQueryFilters()
-            .Where(entity =>
-                strategyIds.Contains(entity.TradingStrategyId) &&
-                entity.Status == StrategyVersionStatus.Published &&
-                !entity.IsDeleted)
-            .Select(entity => entity.TradingStrategyId)
-            .Distinct()
-            .ToListAsync(cancellationToken);
-        var publishedStrategyIdSet = publishedStrategyIds.ToHashSet();
+        var publishedStrategyIdSet = await LoadRuntimeReadyStrategyIdSetAsync(strategies, cancellationToken);
 
         var strategyOptions = strategies
             .Select(entity => new BotStrategyOptionSnapshot(
@@ -599,6 +577,56 @@ public sealed class BotManagementService(
         state.NextRunAtUtc = DateTime.MaxValue;
         state.LastErrorCode = "BotDisabled";
         state.IdempotencyKey = null;
+    }
+
+    private async Task<HashSet<Guid>> LoadRuntimeReadyStrategyIdSetAsync(
+        IReadOnlyCollection<TradingStrategy> strategies,
+        CancellationToken cancellationToken)
+    {
+        var readyIds = new HashSet<Guid>();
+        var legacyStrategyIds = strategies
+            .Where(entity => !entity.UsesExplicitVersionLifecycle)
+            .Select(entity => entity.Id)
+            .ToArray();
+        var explicitActiveVersionIds = strategies
+            .Where(entity => entity.UsesExplicitVersionLifecycle && entity.ActiveTradingStrategyVersionId.HasValue)
+            .Select(entity => entity.ActiveTradingStrategyVersionId!.Value)
+            .Distinct()
+            .ToArray();
+
+        if (legacyStrategyIds.Length > 0)
+        {
+            var legacyReadyIds = await dbContext.TradingStrategyVersions
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    legacyStrategyIds.Contains(entity.TradingStrategyId) &&
+                    entity.Status == StrategyVersionStatus.Published &&
+                    !entity.IsDeleted)
+                .Select(entity => entity.TradingStrategyId)
+                .Distinct()
+                .ToListAsync(cancellationToken);
+
+            readyIds.UnionWith(legacyReadyIds);
+        }
+
+        if (explicitActiveVersionIds.Length > 0)
+        {
+            var explicitReadyIds = await dbContext.TradingStrategyVersions
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    explicitActiveVersionIds.Contains(entity.Id) &&
+                    entity.Status == StrategyVersionStatus.Published &&
+                    !entity.IsDeleted)
+                .Select(entity => entity.TradingStrategyId)
+                .Distinct()
+                .ToListAsync(cancellationToken);
+
+            readyIds.UnionWith(explicitReadyIds);
+        }
+
+        return readyIds;
     }
 
     private static decimal? NormalizeQuantity(decimal? quantity)

@@ -10,6 +10,7 @@ using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.Persistence;
+using CoinBot.Infrastructure.Strategies;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -374,16 +375,10 @@ public sealed class MarketScannerHandoffService(
                 continue;
             }
 
-            var strategyVersionId = await dbContext.TradingStrategyVersions
-                .AsNoTracking()
-                .IgnoreQueryFilters()
-                .Where(entity =>
-                    entity.TradingStrategyId == strategy.Id &&
-                    entity.Status == StrategyVersionStatus.Published &&
-                    !entity.IsDeleted)
-                .OrderByDescending(entity => entity.VersionNumber)
-                .Select(entity => (Guid?)entity.Id)
-                .FirstOrDefaultAsync(cancellationToken);
+            var strategyVersionId = (await StrategyRuntimeVersionSelection.ResolveAsync(
+                dbContext,
+                strategy.Id,
+                cancellationToken))?.Id;
 
             if (!strategyVersionId.HasValue)
             {

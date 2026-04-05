@@ -108,4 +108,68 @@ public sealed class StrategyDefinitionValidatorTests
         Assert.Contains(snapshot.FailureReasons, reason => reason.StartsWith("DuplicateRuleId:", StringComparison.Ordinal));
         Assert.Contains(snapshot.FailureReasons, reason => reason.StartsWith("ConflictingRule:", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void Validate_FailsClosed_ForUnsupportedPath()
+    {
+        var parser = new StrategyRuleParser();
+        var validator = new StrategyDefinitionValidator();
+
+        var snapshot = validator.Validate(parser.Parse(
+            """
+            {
+              "schemaVersion": 2,
+              "entry": {
+                "operator": "all",
+                "ruleId": "entry-root",
+                "ruleType": "group",
+                "timeframe": "5m",
+                "weight": 1,
+                "enabled": true,
+                "rules": [
+                  {
+                    "ruleId": "entry-invalid-path",
+                    "ruleType": "context",
+                    "path": "indicator.closePrice",
+                    "comparison": "equals",
+                    "value": 100,
+                    "timeframe": "5m",
+                    "weight": 10,
+                    "enabled": true
+                  }
+                ]
+              }
+            }
+            """));
+
+        Assert.False(snapshot.IsValid);
+        Assert.Contains(snapshot.FailureReasons, reason => reason.StartsWith("UnsupportedRulePath:entry.rules[0]:indicator.closePrice", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Validate_FailsClosed_ForUnsupportedTimeframe()
+    {
+        var parser = new StrategyRuleParser();
+        var validator = new StrategyDefinitionValidator();
+
+        var snapshot = validator.Validate(parser.Parse(
+            """
+            {
+              "schemaVersion": 2,
+              "entry": {
+                "path": "context.mode",
+                "comparison": "equals",
+                "value": "Live",
+                "ruleId": "entry-mode",
+                "ruleType": "context",
+                "timeframe": "2m",
+                "weight": 10,
+                "enabled": true
+              }
+            }
+            """));
+
+        Assert.False(snapshot.IsValid);
+        Assert.Contains(snapshot.FailureReasons, reason => reason.StartsWith("UnsupportedTimeframe:entry:2m", StringComparison.Ordinal));
+    }
 }

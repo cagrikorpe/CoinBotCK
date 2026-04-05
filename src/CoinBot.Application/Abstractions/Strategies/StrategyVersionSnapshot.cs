@@ -13,4 +13,7 @@ public sealed record StrategyVersionSnapshot(
     string? TemplateKey = null,
     string? TemplateName = null,
     string ValidationStatusCode = "Unknown",
-    string ValidationSummary = "Not validated");
+    string ValidationSummary = "Not validated",
+    bool IsActive = false,
+    bool IsImmutable = false,
+    DateTime? ActivatedAtUtc = null);

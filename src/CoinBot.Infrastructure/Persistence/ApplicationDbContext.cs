@@ -109,6 +109,8 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
     public DbSet<TradingStrategy> TradingStrategies => Set<TradingStrategy>();
 
+    public DbSet<TradingStrategyTemplate> TradingStrategyTemplates => Set<TradingStrategyTemplate>();
+
     public DbSet<TradingStrategySignal> TradingStrategySignals => Set<TradingStrategySignal>();
 
     public DbSet<TradingStrategySignalVeto> TradingStrategySignalVetoes => Set<TradingStrategySignalVeto>();
@@ -183,6 +185,7 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         ConfigureRiskProfiles(builder.Entity<RiskProfile>());
         ConfigureTradingBots(builder.Entity<TradingBot>());
         ConfigureTradingStrategies(builder.Entity<TradingStrategy>());
+        ConfigureTradingStrategyTemplates(builder.Entity<TradingStrategyTemplate>());
         ConfigureTradingStrategySignals(builder.Entity<TradingStrategySignal>());
         ConfigureTradingStrategySignalVetoes(builder.Entity<TradingStrategySignalVeto>());
         ConfigureTradingStrategyVersions(builder.Entity<TradingStrategyVersion>());
@@ -1998,6 +2001,10 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             .HasMaxLength(128)
             .IsRequired();
 
+        builder.Property(entity => entity.UsesExplicitVersionLifecycle)
+            .HasDefaultValue(false)
+            .IsRequired();
+
         builder.Property(entity => entity.PromotionState)
             .HasConversion<string>()
             .HasMaxLength(32)
@@ -2010,8 +2017,54 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         builder.Property(entity => entity.LivePromotionApprovalReference)
             .HasMaxLength(128);
 
+        builder.HasIndex(entity => entity.ActiveTradingStrategyVersionId);
+
         builder.HasIndex(entity => new { entity.OwnerUserId, entity.StrategyKey })
             .IsUnique();
+
+        builder.HasOne<TradingStrategyVersion>()
+            .WithMany()
+            .HasForeignKey(entity => entity.ActiveTradingStrategyVersionId)
+            .OnDelete(DeleteBehavior.SetNull);
+    }
+
+    private void ConfigureTradingStrategyTemplates(EntityTypeBuilder<TradingStrategyTemplate> builder)
+    {
+        ConfigureUserOwnedEntity(builder, "TradingStrategyTemplates");
+
+        builder.Property(entity => entity.TemplateKey)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.TemplateName)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.Description)
+            .HasMaxLength(512)
+            .IsRequired();
+
+        builder.Property(entity => entity.Category)
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.SchemaVersion)
+            .IsRequired();
+
+        builder.Property(entity => entity.DefinitionJson)
+            .IsRequired();
+
+        builder.Property(entity => entity.SourceTemplateKey)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.IsActive)
+            .HasDefaultValue(true)
+            .IsRequired();
+
+        builder.HasIndex(entity => entity.TemplateKey)
+            .IsUnique();
+
+        builder.HasIndex(entity => new { entity.IsActive, entity.CreatedDate });
     }
 
     private void ConfigureTradingStrategySignals(EntityTypeBuilder<TradingStrategySignal> builder)
@@ -2170,16 +2223,6 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             .IsUnique();
 
         builder.HasIndex(entity => new { entity.TradingStrategyId, entity.Status });
-
-        builder.HasIndex(entity => entity.TradingStrategyId)
-            .HasDatabaseName("IX_TradingStrategyVersions_TradingStrategyId_Draft")
-            .HasFilter("[Status] = N'Draft'")
-            .IsUnique();
-
-        builder.HasIndex(entity => entity.TradingStrategyId)
-            .HasDatabaseName("IX_TradingStrategyVersions_TradingStrategyId_Published")
-            .HasFilter("[Status] = N'Published'")
-            .IsUnique();
 
         builder.HasOne<TradingStrategy>()
             .WithMany()

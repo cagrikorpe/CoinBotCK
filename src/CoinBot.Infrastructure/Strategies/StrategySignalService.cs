@@ -45,6 +45,11 @@ public sealed class StrategySignalService(
             ?? throw new InvalidOperationException(
                 $"Trading strategy version '{request.TradingStrategyVersionId}' was not found.");
 
+        if (version.Status != StrategyVersionStatus.Published)
+        {
+            throw new InvalidOperationException("Only published strategy versions can generate runtime signals.");
+        }
+
         var strategy = await dbContext.TradingStrategies
             .SingleOrDefaultAsync(
                 entity => entity.Id == version.TradingStrategyId && !entity.IsDeleted,
@@ -52,12 +57,19 @@ public sealed class StrategySignalService(
             ?? throw new InvalidOperationException(
                 $"Trading strategy '{version.TradingStrategyId}' was not found.");
 
+        if (strategy.UsesExplicitVersionLifecycle &&
+            strategy.ActiveTradingStrategyVersionId != version.Id)
+        {
+            throw new InvalidOperationException("Only the active strategy version can generate runtime signals.");
+        }
+
         var normalizedContext = NormalizeContext(request.EvaluationContext);
         var now = timeProvider.GetUtcNow().UtcDateTime;
         signalActivity.SetTag("coinbot.signal.strategy_id", strategy.Id.ToString());
         signalActivity.SetTag("coinbot.signal.environment", normalizedContext.Mode.ToString());
         signalActivity.SetTag("coinbot.signal.symbol", normalizedContext.IndicatorSnapshot.Symbol);
         signalActivity.SetTag("coinbot.signal.timeframe", normalizedContext.IndicatorSnapshot.Timeframe);
+        signalActivity.SetTag("coinbot.signal.version_is_active", strategy.ActiveTradingStrategyVersionId == version.Id || !strategy.UsesExplicitVersionLifecycle);
         var evaluationReport = evaluator.EvaluateReport(new StrategyEvaluationReportRequest(
             version.TradingStrategyId,
             version.Id,
@@ -80,18 +92,20 @@ public sealed class StrategySignalService(
 
             await traceService.WriteDecisionTraceAsync(
                 new DecisionTraceWriteRequest(
-                    version.OwnerUserId,
-                    normalizedContext.IndicatorSnapshot.Symbol,
-                    normalizedContext.IndicatorSnapshot.Timeframe,
-                    BuildStrategyVersionLabel(version),
-                    "None",
-                    "NoSignalCandidate",
-                    BuildDecisionSnapshotJson(
-                        version,
-                        normalizedContext,
-                        evaluationResult,
-                        signalType: null,
-                        decisionOutcome: "NoSignalCandidate",
+                        version.OwnerUserId,
+                        normalizedContext.IndicatorSnapshot.Symbol,
+                        normalizedContext.IndicatorSnapshot.Timeframe,
+                        BuildStrategyVersionLabel(version),
+                        "None",
+                        "NoSignalCandidate",
+                        BuildDecisionSnapshotJson(
+                            strategy,
+                            version,
+                            evaluationReport,
+                            normalizedContext,
+                            evaluationResult,
+                            signalType: null,
+                            decisionOutcome: "NoSignalCandidate",
                         vetoReasonCode: null,
                         riskScore: null,
                         relatedEntityId: null),
@@ -146,7 +160,9 @@ public sealed class StrategySignalService(
                         signalType.ToString(),
                         "SuppressedDuplicate",
                         BuildDecisionSnapshotJson(
+                            strategy,
                             version,
+                            evaluationReport,
                             normalizedContext,
                             evaluationResult,
                             signalType,
@@ -215,7 +231,9 @@ public sealed class StrategySignalService(
                         signalType.ToString(),
                         "Vetoed",
                         BuildDecisionSnapshotJson(
+                            strategy,
                             version,
+                            evaluationReport,
                             normalizedContext,
                             evaluationResult,
                             signalType,
@@ -253,7 +271,9 @@ public sealed class StrategySignalService(
                     signalType.ToString(),
                     "Persisted",
                     BuildDecisionSnapshotJson(
+                        strategy,
                         version,
+                        evaluationReport,
                         normalizedContext,
                         evaluationResult,
                         signalType,
@@ -914,7 +934,9 @@ public sealed class StrategySignalService(
     }
 
     private string BuildDecisionSnapshotJson(
+        TradingStrategy strategy,
         TradingStrategyVersion version,
+        StrategyEvaluationReportSnapshot report,
         StrategyEvaluationContext context,
         StrategyEvaluationResult evaluationResult,
         StrategySignalType? signalType,
@@ -926,9 +948,25 @@ public sealed class StrategySignalService(
         return JsonSerializer.Serialize(
             new
             {
+                TradingStrategyId = strategy.Id,
+                strategy.StrategyKey,
+                strategy.DisplayName,
                 TradingStrategyVersionId = version.Id,
                 StrategyVersionNumber = version.VersionNumber,
                 StrategySchemaVersion = version.SchemaVersion,
+                StrategyVersionStatus = version.Status.ToString(),
+                strategy.UsesExplicitVersionLifecycle,
+                strategy.ActiveTradingStrategyVersionId,
+                IsActiveVersion = strategy.ActiveTradingStrategyVersionId == version.Id || !strategy.UsesExplicitVersionLifecycle,
+                report.TemplateKey,
+                report.TemplateName,
+                report.Outcome,
+                report.AggregateScore,
+                report.PassedRuleCount,
+                report.FailedRuleCount,
+                report.ExplainabilitySummary,
+                PassedRules = report.PassedRules.Take(3).ToArray(),
+                FailedRules = report.FailedRules.Take(3).ToArray(),
                 ExecutionEnvironment = context.Mode.ToString(),
                 context.IndicatorSnapshot.Symbol,
                 context.IndicatorSnapshot.Timeframe,

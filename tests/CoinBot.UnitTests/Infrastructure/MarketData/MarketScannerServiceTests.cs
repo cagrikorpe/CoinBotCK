@@ -253,6 +253,105 @@ public sealed class MarketScannerServiceTests
         Assert.Equal(["BTCUSDT", "ETHUSDT"], rankedSymbols);
     }
 
+    [Fact]
+    public async Task RunOnceAsync_UsesExplicitActiveStrategyVersion_WhenLifecycleIsManaged()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        var strategyId = Guid.NewGuid();
+        var activeVersionId = Guid.NewGuid();
+        var inactiveVersionId = Guid.NewGuid();
+        var marketDataService = new FakeMarketDataService();
+        marketDataService.SetLatestPrice("BTCUSDT", 100m, nowUtc.UtcDateTime);
+
+        dbContext.TradingStrategies.Add(new TradingStrategy
+        {
+            Id = strategyId,
+            OwnerUserId = "user-active",
+            StrategyKey = "scanner-active",
+            DisplayName = "scanner-active",
+            PublishedMode = ExecutionEnvironment.Live,
+            PublishedAtUtc = nowUtc.UtcDateTime.AddMinutes(-5),
+            UsesExplicitVersionLifecycle = true,
+            ActiveTradingStrategyVersionId = activeVersionId,
+            ActiveVersionActivatedAtUtc = nowUtc.UtcDateTime.AddMinutes(-5)
+        });
+        dbContext.TradingStrategyVersions.AddRange(
+            new TradingStrategyVersion
+            {
+                Id = activeVersionId,
+                OwnerUserId = "user-active",
+                TradingStrategyId = strategyId,
+                SchemaVersion = 2,
+                VersionNumber = 1,
+                Status = StrategyVersionStatus.Published,
+                DefinitionJson = "{\"schemaVersion\":2,\"metadata\":{\"templateKey\":\"active-v1\",\"templateName\":\"Active V1\"},\"entry\":{\"path\":\"context.mode\",\"comparison\":\"equals\",\"value\":\"Live\"}}",
+                PublishedAtUtc = nowUtc.UtcDateTime.AddMinutes(-5)
+            },
+            new TradingStrategyVersion
+            {
+                Id = inactiveVersionId,
+                OwnerUserId = "user-active",
+                TradingStrategyId = strategyId,
+                SchemaVersion = 2,
+                VersionNumber = 2,
+                Status = StrategyVersionStatus.Published,
+                DefinitionJson = "{\"schemaVersion\":2,\"metadata\":{\"templateKey\":\"active-v2\",\"templateName\":\"Active V2\"},\"entry\":{\"path\":\"context.mode\",\"comparison\":\"equals\",\"value\":\"Live\"}}",
+                PublishedAtUtc = nowUtc.UtcDateTime.AddMinutes(-1)
+            });
+        dbContext.TradingBots.Add(new TradingBot
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "user-active",
+            Name = "scanner-active bot",
+            StrategyKey = "scanner-active",
+            Symbol = "BTCUSDT",
+            IsEnabled = true
+        });
+        SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        await dbContext.SaveChangesAsync();
+
+        var indicatorDataService = new FakeIndicatorDataService();
+        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", nowUtc.UtcDateTime));
+
+        var strategyEvaluatorService = new FakeStrategyEvaluatorService();
+        strategyEvaluatorService.SetReport("BTCUSDT", CreateEvaluationReport(strategyId, activeVersionId, "scanner-active", "BTCUSDT", "1m", nowUtc.UtcDateTime, 95, "Active strategy accepted."));
+
+        var service = new MarketScannerService(
+            dbContext,
+            marketDataService,
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("BTCUSDT", "Binance", "BTC", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 20,
+                Min24hQuoteVolume = 1_000m,
+                MaxDataAgeSeconds = 120,
+                StrategyScoreWeight = 20_000m,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = true
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["BTCUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance,
+            handoffService: null,
+            indicatorDataService,
+            strategyEvaluatorService,
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }));
+
+        _ = await service.RunOnceAsync();
+        var strategy = await dbContext.TradingStrategies.SingleAsync(entity => entity.Id == strategyId);
+        strategy.ActiveTradingStrategyVersionId = inactiveVersionId;
+        strategy.ActiveVersionActivatedAtUtc = nowUtc.UtcDateTime;
+        await dbContext.SaveChangesAsync();
+        _ = await service.RunOnceAsync();
+
+        Assert.Equal([activeVersionId, inactiveVersionId], strategyEvaluatorService.RequestedVersionIds);
+    }
+
     private static ApplicationDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -506,6 +605,8 @@ public sealed class MarketScannerServiceTests
 
         public List<string> RequestedSymbols { get; } = [];
 
+        public List<Guid> RequestedVersionIds { get; } = [];
+
         public void SetReport(string symbol, StrategyEvaluationReportSnapshot report)
         {
             reports[symbol] = report;
@@ -524,6 +625,7 @@ public sealed class MarketScannerServiceTests
         public StrategyEvaluationReportSnapshot EvaluateReport(StrategyEvaluationReportRequest request)
         {
             RequestedSymbols.Add(request.EvaluationContext.IndicatorSnapshot.Symbol);
+            RequestedVersionIds.Add(request.TradingStrategyVersionId);
             return reports[request.EvaluationContext.IndicatorSnapshot.Symbol];
         }
     }

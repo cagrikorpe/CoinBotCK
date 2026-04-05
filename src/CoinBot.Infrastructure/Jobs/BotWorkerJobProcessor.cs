@@ -9,6 +9,7 @@ using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
+using CoinBot.Infrastructure.Strategies;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -370,14 +371,10 @@ public sealed class BotWorkerJobProcessor(
             return null;
         }
 
-        return await dbContext.TradingStrategyVersions
-            .IgnoreQueryFilters()
-            .Where(entity =>
-                entity.TradingStrategyId == strategy.Id &&
-                entity.Status == StrategyVersionStatus.Published &&
-                !entity.IsDeleted)
-            .OrderByDescending(entity => entity.VersionNumber)
-            .FirstOrDefaultAsync(cancellationToken);
+        return await StrategyRuntimeVersionSelection.ResolveAsync(
+            dbContext,
+            strategy.Id,
+            cancellationToken);
     }
 
     private async Task<SymbolMetadataSnapshot?> ResolveSymbolMetadataAsync(

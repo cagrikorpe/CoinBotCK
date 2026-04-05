@@ -7,4 +7,8 @@ public sealed record StrategyTemplateSnapshot(
     string Category,
     int SchemaVersion,
     string DefinitionJson,
-    StrategyDefinitionValidationSnapshot Validation);
+    StrategyDefinitionValidationSnapshot Validation,
+    bool IsBuiltIn = false,
+    bool IsActive = true,
+    string TemplateSource = "Custom",
+    string? SourceTemplateKey = null);

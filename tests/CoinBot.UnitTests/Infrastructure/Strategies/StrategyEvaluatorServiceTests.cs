@@ -229,6 +229,81 @@ public sealed class StrategyEvaluatorServiceTests
         Assert.Equal("DuplicateRuleId:entry.rules[1]:dup", exception.StatusCode);
     }
 
+    [Fact]
+    public void Evaluate_NestedAnyAllGroups_RemainsDeterministic_AcrossRuns()
+    {
+        var parser = new StrategyRuleParser();
+        var service = new StrategyEvaluatorService(parser, new StrategyDefinitionValidator());
+        var context = CreateContext(ExecutionEnvironment.Live);
+        const string definitionJson =
+            """
+            {
+              "schemaVersion": 2,
+              "entry": {
+                "operator": "all",
+                "ruleId": "entry-root",
+                "ruleType": "group",
+                "timeframe": "1m",
+                "weight": 1,
+                "enabled": true,
+                "rules": [
+                  {
+                    "operator": "any",
+                    "ruleId": "entry-any",
+                    "ruleType": "group",
+                    "timeframe": "1m",
+                    "weight": 1,
+                    "enabled": true,
+                    "rules": [
+                      {
+                        "ruleId": "entry-rsi",
+                        "ruleType": "rsi",
+                        "path": "indicator.rsi.value",
+                        "comparison": "lessThanOrEqual",
+                        "value": 30,
+                        "timeframe": "1m",
+                        "weight": 30,
+                        "enabled": true
+                      },
+                      {
+                        "ruleId": "entry-macd",
+                        "ruleType": "macd",
+                        "path": "indicator.macd.macdLine",
+                        "comparison": "greaterThan",
+                        "valuePath": "indicator.macd.signalLine",
+                        "timeframe": "1m",
+                        "weight": 70,
+                        "enabled": true
+                      }
+                    ]
+                  },
+                  {
+                    "ruleId": "entry-mode",
+                    "ruleType": "context",
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Live",
+                    "timeframe": "1m",
+                    "weight": 10,
+                    "enabled": true
+                  }
+                ]
+              }
+            }
+            """;
+
+        var firstResult = service.Evaluate(definitionJson, context);
+        var secondResult = service.Evaluate(definitionJson, context);
+
+        Assert.True(firstResult.EntryMatched);
+        Assert.True(secondResult.EntryMatched);
+        Assert.Equal(firstResult.EntryRuleResult?.Reason, secondResult.EntryRuleResult?.Reason);
+        Assert.Equal(firstResult.EntryRuleResult?.Children.Count, secondResult.EntryRuleResult?.Children.Count);
+        Assert.Equal(
+            firstResult.EntryRuleResult?.Children.Select(child => child.Reason).ToArray(),
+            secondResult.EntryRuleResult?.Children.Select(child => child.Reason).ToArray());
+    }
+
     private static StrategyEvaluationContext CreateContext(ExecutionEnvironment mode)
     {
         return new StrategyEvaluationContext(mode, CreateIndicatorSnapshot(rsiValue: 28m));
