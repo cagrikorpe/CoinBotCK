@@ -118,15 +118,52 @@ public sealed class ExecutionOrderLifecycleServiceTests
         Assert.Contains("Plane=Spot", transitions[0].Detail, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task ApplyExchangeUpdateAsync_WritesSpotPortfolioAudit_WithRootCorrelation()
+    {
+        await using var dbContext = CreateContext();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 5, 12, 0, 0, TimeSpan.Zero));
+        var accountingService = new FakeSpotPortfolioAccountingService(
+            new SpotPortfolioApplyResult(
+                AppliedTradeCount: 2,
+                DuplicateTradeCount: 1,
+                RealizedPnlDelta: 42.5m,
+                FeesInQuoteApplied: 1.5m,
+                HoldingQuantityAfter: 0.5m,
+                HoldingCostBasisAfter: 32000m,
+                HoldingAverageCostAfter: 64000m,
+                TradeIdsSummary: "77,78",
+                LastTradeAtUtc: timeProvider.GetUtcNow().UtcDateTime));
+        var lifecycleService = CreateService(dbContext, timeProvider, accountingService);
+        var orderId = await SeedOrderAsync(dbContext, ExecutionOrderState.PartiallyFilled, filledQuantity: 0.02m, plane: ExchangeDataPlane.Spot);
+
+        var applied = await lifecycleService.ApplyExchangeUpdateAsync(
+            CreateSnapshot(orderId, "FILLED", executedQuantity: 0.05m, timeProvider.GetUtcNow().UtcDateTime, plane: ExchangeDataPlane.Spot));
+        var auditLogs = await dbContext.AuditLogs
+            .OrderBy(entity => entity.CreatedDate)
+            .ToListAsync();
+
+        Assert.True(applied);
+        Assert.Equal(2, auditLogs.Count);
+        Assert.Contains(auditLogs, entity => entity.Action == "ExecutionOrder.ExchangeUpdate" && entity.CorrelationId == "corr-lifecycle-root");
+        Assert.Contains(auditLogs, entity =>
+            entity.Action == "SpotPortfolio.FillApplied" &&
+            entity.CorrelationId == "corr-lifecycle-root" &&
+            entity.Context!.Contains("AppliedTrades=2", StringComparison.Ordinal) &&
+            entity.Context.Contains("TradeIds=77,78", StringComparison.Ordinal));
+    }
+
     private static ExecutionOrderLifecycleService CreateService(
         ApplicationDbContext dbContext,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        ISpotPortfolioAccountingService? spotPortfolioAccountingService = null)
     {
         return new ExecutionOrderLifecycleService(
             dbContext,
             new AuditLogService(dbContext, new CorrelationContextAccessor()),
             timeProvider,
-            NullLogger<ExecutionOrderLifecycleService>.Instance);
+            NullLogger<ExecutionOrderLifecycleService>.Instance,
+            spotPortfolioAccountingService: spotPortfolioAccountingService);
     }
 
     private static ApplicationDbContext CreateContext()
@@ -208,5 +245,16 @@ public sealed class ExecutionOrderLifecycleServiceTests
         public string? UserId => null;
 
         public bool HasIsolationBypass => true;
+    }
+
+    private sealed class FakeSpotPortfolioAccountingService(SpotPortfolioApplyResult? result) : ISpotPortfolioAccountingService
+    {
+        public Task<SpotPortfolioApplyResult?> ApplyAsync(
+            ExecutionOrder order,
+            BinanceOrderStatusSnapshot snapshot,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(result);
+        }
     }
 }

@@ -66,6 +66,7 @@ public sealed class DependencyInjectionTests
         var apiCredentialValidationService = provider.GetRequiredService<IApiCredentialValidationService>();
         var dataLatencyCircuitBreaker = provider.GetRequiredService<IDataLatencyCircuitBreaker>();
         var demoPortfolioAccountingService = provider.GetRequiredService<IDemoPortfolioAccountingService>();
+        var spotPortfolioAccountingService = provider.GetRequiredService<ISpotPortfolioAccountingService>();
         var demoSessionService = provider.GetRequiredService<IDemoSessionService>();
         var demoWalletValuationService = provider.GetRequiredService<DemoWalletValuationService>();
         var demoConsistencyWatchdogService = provider.GetRequiredService<DemoConsistencyWatchdogService>();
@@ -223,6 +224,7 @@ public sealed class DependencyInjectionTests
         Assert.NotNull(apiCredentialValidationService);
         Assert.NotNull(dataLatencyCircuitBreaker);
         Assert.NotNull(demoPortfolioAccountingService);
+        Assert.NotNull(spotPortfolioAccountingService);
         Assert.NotNull(demoSessionService);
         Assert.NotNull(demoWalletValuationService);
         Assert.NotNull(demoConsistencyWatchdogService);

@@ -1,4 +1,5 @@
 using CoinBot.Application.Abstractions.Dashboard;
+using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Persistence;
@@ -8,10 +9,12 @@ using System.Globalization;
 namespace CoinBot.Infrastructure.Dashboard;
 
 public sealed class UserDashboardPortfolioReadModelService(
-    ApplicationDbContext dbContext) : IUserDashboardPortfolioReadModelService
+    ApplicationDbContext dbContext,
+    IMarketDataService? marketDataService = null) : IUserDashboardPortfolioReadModelService
 {
     private const int TradeHistoryRowLimit = 50;
     private const decimal PnlConsistencyTolerance = 0.0001m;
+    private const decimal PrecisionEpsilon = 0.000000000000000001m;
 
     public async Task<UserDashboardPortfolioSnapshot> GetSnapshotAsync(
         string userId,
@@ -51,7 +54,8 @@ public sealed class UserDashboardPortfolioReadModelService(
                 entity.ExchangeUpdatedAtUtc,
                 entity.SyncedAtUtc,
                 entity.LockedBalance,
-                entity.Plane))
+                entity.Plane,
+                entity.ExchangeAccountId))
             .ToListAsync(cancellationToken);
 
         var positions = activeAccounts.Count == 0
@@ -114,18 +118,61 @@ public sealed class UserDashboardPortfolioReadModelService(
                 demoPosition.MarginMode?.ToString() ?? "cross",
                 demoPosition.IsolatedMargin ?? 0m,
                 demoPosition.LastValuationAtUtc ?? demoPosition.UpdatedDate,
-                demoPosition.LastFilledAtUtc ?? demoPosition.UpdatedDate));
+                demoPosition.LastFilledAtUtc ?? demoPosition.UpdatedDate,
+                ExchangeDataPlane.Futures,
+                demoPosition.RealizedPnl,
+                demoPosition.CostBasis,
+                demoPosition.LastMarkPrice ?? demoPosition.LastPrice,
+                null,
+                null));
         }
 
-        var tradeHistory = await BuildTradeHistoryAsync(normalizedUserId, demoPositions, cancellationToken);
+        var spotFillRows = activeAccounts.Count == 0
+            ? []
+            : await dbContext.SpotPortfolioFills
+                .AsNoTracking()
+                .Where(entity =>
+                    entity.OwnerUserId == normalizedUserId &&
+                    activeAccounts.Contains(entity.ExchangeAccountId) &&
+                    entity.Plane == ExchangeDataPlane.Spot &&
+                    !entity.IsDeleted)
+                .OrderBy(entity => entity.OccurredAtUtc)
+                .ThenBy(entity => entity.TradeId)
+                .ToListAsync(cancellationToken);
+        var spotHoldings = await BuildSpotHoldingsAsync(spotFillRows, balances, cancellationToken);
+
+        foreach (var holding in spotHoldings)
+        {
+            positions.Add(new UserDashboardPositionSnapshot(
+                holding.Symbol,
+                "LONG",
+                holding.Quantity,
+                holding.AverageCost,
+                holding.MarkPrice ?? holding.AverageCost,
+                holding.UnrealizedPnl,
+                "spot",
+                0m,
+                holding.LastMarkPriceAtUtc ?? holding.LastTradeAtUtc,
+                holding.LastTradeAtUtc,
+                holding.Plane,
+                holding.RealizedPnl,
+                holding.CostBasis,
+                holding.MarkPrice,
+                holding.AvailableQuantity,
+                holding.LockedQuantity));
+        }
+
+        var tradeHistory = await BuildTradeHistoryAsync(normalizedUserId, demoPositions, spotHoldings, cancellationToken);
         var liveUnrealizedPnl = positions.Sum(entity => entity.UnrealizedProfit);
         var demoRealizedPnl = demoPositions.Sum(entity => entity.RealizedPnl);
-        var ledgerRealizedPnl = await dbContext.DemoLedgerTransactions
+        var spotRealizedPnl = spotFillRows.Sum(entity => entity.RealizedPnlDelta);
+        var demoLedgerRealizedPnl = await dbContext.DemoLedgerTransactions
             .AsNoTracking()
             .IgnoreQueryFilters()
             .Where(entity => entity.OwnerUserId == normalizedUserId && !entity.IsDeleted)
             .SumAsync(entity => entity.RealizedPnlDelta ?? 0m, cancellationToken);
-        var totalRealizedPnl = demoRealizedPnl;
+        var ledgerRealizedPnl = demoLedgerRealizedPnl + spotRealizedPnl;
+        var totalRealizedPnl = demoRealizedPnl + spotRealizedPnl;
         var totalUnrealizedPnl = liveUnrealizedPnl;
         var totalPnl = totalRealizedPnl + totalUnrealizedPnl;
         var pnlConsistencySummary = BuildPnlConsistencySummary(totalRealizedPnl, ledgerRealizedPnl, totalUnrealizedPnl, totalPnl);
@@ -156,12 +203,14 @@ public sealed class UserDashboardPortfolioReadModelService(
             pnlConsistencySummary,
             balances,
             positions,
-            tradeHistory);
+            tradeHistory,
+            spotHoldings);
     }
 
     private async Task<IReadOnlyCollection<UserDashboardTradeHistoryRowSnapshot>> BuildTradeHistoryAsync(
         string ownerUserId,
         IReadOnlyCollection<DemoPosition> demoPositions,
+        IReadOnlyCollection<UserDashboardSpotHoldingSnapshot> spotHoldings,
         CancellationToken cancellationToken)
     {
         var orders = await dbContext.ExecutionOrders
@@ -223,6 +272,23 @@ public sealed class UserDashboardPortfolioReadModelService(
         var ledgerByOrderId = ledgerRows
             .GroupBy(entity => entity.OrderId!, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.Ordinal);
+        var spotLedgerRows = await dbContext.SpotPortfolioFills
+            .AsNoTracking()
+            .Where(entity =>
+                entity.OwnerUserId == ownerUserId &&
+                orderIds.Contains(entity.ExecutionOrderId) &&
+                entity.Plane == ExchangeDataPlane.Spot &&
+                !entity.IsDeleted)
+            .OrderBy(entity => entity.OccurredAtUtc)
+            .ThenBy(entity => entity.TradeId)
+            .ToListAsync(cancellationToken);
+        var spotLedgerByOrderId = spotLedgerRows
+            .GroupBy(entity => entity.ExecutionOrderId)
+            .ToDictionary(group => group.Key, group => (IReadOnlyCollection<SpotPortfolioFill>)group.ToList());
+        var spotHoldingByKey = spotHoldings.ToDictionary(
+            holding => CreateSpotHoldingKey(holding.ExchangeAccountId, holding.Symbol),
+            holding => holding,
+            StringComparer.Ordinal);
 
         var handoffAttempts = signalIds.Length == 0
             ? []
@@ -308,9 +374,14 @@ public sealed class UserDashboardPortfolioReadModelService(
             botNames.TryGetValue(order.BotId ?? Guid.Empty, out var botName);
 
             ledgerByOrderId.TryGetValue(order.Id.ToString("N"), out var orderLedgerRows);
-            var realizedPnl = orderLedgerRows?.Sum(entity => entity.RealizedPnlDelta ?? 0m) ?? 0m;
-            var feeAmountInQuote = orderLedgerRows?.Sum(entity => entity.FeeAmountInQuote ?? 0m);
-            var costImpact = orderLedgerRows?.Sum(entity =>
+            spotLedgerByOrderId.TryGetValue(order.Id, out var orderSpotRows);
+            var realizedPnl = orderSpotRows?.Sum(entity => entity.RealizedPnlDelta) ??
+                orderLedgerRows?.Sum(entity => entity.RealizedPnlDelta ?? 0m) ??
+                0m;
+            var feeAmountInQuote = orderSpotRows?.Sum(entity => entity.FeeAmountInQuote) ??
+                orderLedgerRows?.Sum(entity => entity.FeeAmountInQuote ?? 0m);
+            var costImpact = orderSpotRows?.Sum(entity => Math.Abs(entity.QuoteQuantity)) ??
+                orderLedgerRows?.Sum(entity =>
                 entity.Quantity.HasValue && entity.Price.HasValue
                     ? Math.Abs(entity.Quantity.Value * entity.Price.Value)
                     : 0m);
@@ -318,18 +389,27 @@ public sealed class UserDashboardPortfolioReadModelService(
                 entity.BotId == order.BotId &&
                 string.Equals(entity.Symbol, order.Symbol, StringComparison.Ordinal) &&
                 entity.Quantity != 0m);
+            var matchingSpotHolding = order.ExchangeAccountId.HasValue &&
+                                      spotHoldingByKey.TryGetValue(CreateSpotHoldingKey(order.ExchangeAccountId.Value, order.Symbol), out var resolvedSpotHolding)
+                ? resolvedSpotHolding
+                : null;
+            var weightedAverageFillPrice = ResolveAverageFillPrice(order, orderSpotRows);
+            var tradeIdsSummary = BuildTradeIdsSummary(orderSpotRows);
+            var filledQuantity = orderSpotRows?.Sum(entity => entity.Quantity) ?? order.FilledQuantity;
+            var cumulativeQuoteQuantity = orderSpotRows?.Sum(entity => entity.QuoteQuantity);
+            var clientOrderId = orderSpotRows?.FirstOrDefault()?.ClientOrderId ?? ResolveClientOrderId(order, latestTransition);
 
             tradeRows.Add(new UserDashboardTradeHistoryRowSnapshot(
                 order.Id,
-                SanitizeToken(ResolveClientOrderId(order, latestTransition)),
+                SanitizeToken(clientOrderId),
                 SanitizeToken(order.RootCorrelationId) ?? "n/a",
                 order.Symbol,
                 order.Timeframe,
                 order.Side.ToString(),
                 order.Quantity,
-                order.AverageFillPrice,
+                weightedAverageFillPrice,
                 realizedPnl,
-                matchingOpenPosition?.UnrealizedPnl,
+                matchingSpotHolding?.UnrealizedPnl ?? matchingOpenPosition?.UnrealizedPnl,
                 feeAmountInQuote,
                 costImpact,
                 order.CreatedDate,
@@ -338,19 +418,24 @@ public sealed class UserDashboardPortfolioReadModelService(
                 order.State.ToString(),
                 ResolveExecutionResultCategory(order.State),
                 ResolveExecutionResultCode(order, latestTransition),
-                ResolveExecutionResultSummary(order, latestTransition),
+                BuildExecutionResultSummary(order, latestTransition, orderSpotRows),
                 order.RejectionStage.ToString(),
                 order.SubmittedToBroker,
                 order.RetryEligible,
                 order.CooldownApplied,
-                BuildReasonChainSummary(handoffAttempt, order, latestTransition, decisionTraceCount, executionTraceCount, auditCount, botName),
+                BuildReasonChainSummary(handoffAttempt, order, latestTransition, decisionTraceCount, executionTraceCount, auditCount, botName, orderSpotRows),
                 AiScoreAvailable: false,
                 AiScoreValue: null,
                 AiScoreLabel: "AI score placeholder",
                 AiScoreSummary: "AI score snapshot placeholder contract is present; no model score has been generated for this order.",
                 AiScoreSource: "portfolio-history-placeholder",
                 AiScoreGeneratedAtUtc: order.LastStateChangedAtUtc,
-                AiScoreIsPlaceholder: true));
+                AiScoreIsPlaceholder: true,
+                Plane: order.Plane,
+                FilledQuantity: filledQuantity,
+                CumulativeQuoteQuantity: cumulativeQuoteQuantity,
+                FillCount: orderSpotRows?.Count ?? 0,
+                TradeIdsSummary: tradeIdsSummary));
         }
 
         return tradeRows;
@@ -474,6 +559,29 @@ public sealed class UserDashboardPortfolioReadModelService(
         };
     }
 
+    private static string BuildExecutionResultSummary(
+        ExecutionOrder order,
+        ExecutionOrderTransition? latestTransition,
+        IReadOnlyCollection<SpotPortfolioFill>? spotLedgerRows)
+    {
+        var baseSummary = ResolveExecutionResultSummary(order, latestTransition);
+
+        if (spotLedgerRows is not { Count: > 0 })
+        {
+            return baseSummary;
+        }
+
+        var realizedPnl = spotLedgerRows.Sum(entity => entity.RealizedPnlDelta);
+        var feeAmountInQuote = spotLedgerRows.Sum(entity => entity.FeeAmountInQuote);
+        var fillCount = spotLedgerRows.Count;
+        var tradeIdsSummary = BuildTradeIdsSummary(spotLedgerRows);
+
+        return Truncate(
+            $"{baseSummary} | Plane=Spot; FillCount={fillCount.ToString(CultureInfo.InvariantCulture)}; TradeIds={tradeIdsSummary ?? "n/a"}; RealizedPnl={realizedPnl.ToString("0.####", CultureInfo.InvariantCulture)}; FeeInQuote={feeAmountInQuote.ToString("0.####", CultureInfo.InvariantCulture)}",
+            512)
+            ?? baseSummary;
+    }
+
     private static string BuildReasonChainSummary(
         MarketScannerHandoffAttempt? handoffAttempt,
         ExecutionOrder order,
@@ -481,7 +589,8 @@ public sealed class UserDashboardPortfolioReadModelService(
         int decisionTraceCount,
         int executionTraceCount,
         int auditCount,
-        string? botName)
+        string? botName,
+        IReadOnlyCollection<SpotPortfolioFill>? spotLedgerRows = null)
     {
         var scannerSummary = handoffAttempt?.SelectionReason ?? "ScannerLink=Missing";
         var strategySummary = handoffAttempt is null
@@ -492,9 +601,12 @@ public sealed class UserDashboardPortfolioReadModelService(
             : $"RiskOutcome={NormalizeOptional(handoffAttempt.RiskOutcome) ?? "n/a"}; RiskVeto={NormalizeOptional(handoffAttempt.RiskVetoReasonCode) ?? "None"}; RiskSummary={SanitizeDetail(handoffAttempt.RiskSummary) ?? "n/a"}";
         var executionSummary = $"ExecutionState={order.State}; ResultCode={ResolveExecutionResultCode(order, latestTransition)}; Stage={order.RejectionStage}; Submitted={order.SubmittedToBroker}; Retry={order.RetryEligible}; Cooldown={order.CooldownApplied}";
         var auditSummary = $"AuditTrail=DecisionTrace:{decisionTraceCount}; ExecutionTrace:{executionTraceCount}; AuditLog:{auditCount}; Bot={NormalizeOptional(botName) ?? "n/a"}";
+        var spotSummary = order.Plane == ExchangeDataPlane.Spot
+            ? $"Plane=Spot; FillCount={spotLedgerRows?.Count.ToString(CultureInfo.InvariantCulture) ?? "0"}; TradeIds={BuildTradeIdsSummary(spotLedgerRows) ?? "n/a"}"
+            : $"Plane={order.Plane}";
 
         return Truncate(
-            $"{scannerSummary} | {strategySummary} | {riskSummary} | {executionSummary} | {auditSummary}",
+            $"{scannerSummary} | {strategySummary} | {riskSummary} | {executionSummary} | {auditSummary} | {spotSummary}",
             1024)
             ?? executionSummary;
     }
@@ -571,6 +683,128 @@ public sealed class UserDashboardPortfolioReadModelService(
             ExecutionOrderState.Cancelled or
             ExecutionOrderState.Rejected or
             ExecutionOrderState.Failed;
+    }
+
+    private async Task<IReadOnlyCollection<UserDashboardSpotHoldingSnapshot>> BuildSpotHoldingsAsync(
+        IReadOnlyCollection<SpotPortfolioFill> spotFillRows,
+        IReadOnlyCollection<UserDashboardBalanceSnapshot> balances,
+        CancellationToken cancellationToken)
+    {
+        if (spotFillRows.Count == 0)
+        {
+            return Array.Empty<UserDashboardSpotHoldingSnapshot>();
+        }
+
+        var balanceLookup = balances
+            .Where(entity => entity.Plane == ExchangeDataPlane.Spot && entity.ExchangeAccountId.HasValue)
+            .ToDictionary(
+                entity => $"{entity.ExchangeAccountId!.Value:N}:{entity.Asset}",
+                entity => entity,
+                StringComparer.Ordinal);
+        var latestHoldings = spotFillRows
+            .GroupBy(entity => CreateSpotHoldingKey(entity.ExchangeAccountId, entity.Symbol), StringComparer.Ordinal)
+            .Select(group => group
+                .OrderByDescending(entity => entity.OccurredAtUtc)
+                .ThenByDescending(entity => entity.TradeId)
+                .First())
+            .Where(entity => entity.HoldingQuantityAfter > 0m)
+            .OrderByDescending(entity => Math.Abs(entity.HoldingQuantityAfter))
+            .ThenBy(entity => entity.Symbol, StringComparer.Ordinal)
+            .ToArray();
+        var holdings = new List<UserDashboardSpotHoldingSnapshot>(latestHoldings.Length);
+
+        foreach (var holding in latestHoldings)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            balanceLookup.TryGetValue($"{holding.ExchangeAccountId:N}:{holding.BaseAsset}", out var baseBalance);
+            var lockedQuantity = ResolveLockedQuantity(baseBalance, holding.HoldingQuantityAfter);
+            var availableQuantity = NormalizeDecimal(holding.HoldingQuantityAfter - lockedQuantity);
+            var markPriceSnapshot = marketDataService is null
+                ? null
+                : await marketDataService.GetLatestPriceAsync(holding.Symbol, cancellationToken);
+            var markPrice = markPriceSnapshot?.Price;
+            var unrealizedPnl = markPrice.HasValue
+                ? NormalizeDecimal((markPrice.Value - holding.HoldingAverageCostAfter) * holding.HoldingQuantityAfter)
+                : 0m;
+
+            holdings.Add(new UserDashboardSpotHoldingSnapshot(
+                holding.ExchangeAccountId,
+                holding.Symbol,
+                holding.BaseAsset,
+                holding.QuoteAsset,
+                holding.HoldingQuantityAfter,
+                availableQuantity,
+                lockedQuantity,
+                holding.HoldingAverageCostAfter,
+                holding.HoldingCostBasisAfter,
+                holding.CumulativeRealizedPnlAfter,
+                unrealizedPnl,
+                holding.CumulativeFeesInQuoteAfter,
+                markPrice,
+                holding.OccurredAtUtc,
+                markPriceSnapshot?.ObservedAtUtc));
+        }
+
+        return holdings;
+    }
+
+    private static decimal? ResolveAverageFillPrice(
+        ExecutionOrder order,
+        IReadOnlyCollection<SpotPortfolioFill>? spotLedgerRows)
+    {
+        if (spotLedgerRows is not { Count: > 0 })
+        {
+            return order.AverageFillPrice;
+        }
+
+        var filledQuantity = spotLedgerRows.Sum(entity => entity.Quantity);
+        if (filledQuantity <= 0m)
+        {
+            return order.AverageFillPrice;
+        }
+
+        return NormalizeDecimal(spotLedgerRows.Sum(entity => entity.QuoteQuantity) / filledQuantity);
+    }
+
+    private static string? BuildTradeIdsSummary(IEnumerable<SpotPortfolioFill>? rows)
+    {
+        if (rows is null)
+        {
+            return null;
+        }
+
+        var tradeIds = rows
+            .Select(entity => entity.TradeId.ToString(CultureInfo.InvariantCulture))
+            .ToArray();
+
+        return tradeIds.Length == 0
+            ? null
+            : Truncate(string.Join(",", tradeIds), 128);
+    }
+
+    private static string CreateSpotHoldingKey(Guid exchangeAccountId, string symbol)
+    {
+        return $"{exchangeAccountId:N}:{symbol.Trim().ToUpperInvariant()}";
+    }
+
+    private static decimal ResolveLockedQuantity(
+        UserDashboardBalanceSnapshot? balance,
+        decimal holdingQuantity)
+    {
+        if (balance?.LockedBalance is not decimal lockedBalance || lockedBalance <= 0m)
+        {
+            return 0m;
+        }
+
+        return NormalizeDecimal(Math.Min(holdingQuantity, Math.Max(0m, lockedBalance)));
+    }
+
+    private static decimal NormalizeDecimal(decimal value)
+    {
+        return Math.Abs(value) <= PrecisionEpsilon
+            ? 0m
+            : value;
     }
 
     private static string? NormalizeOptional(string? value)

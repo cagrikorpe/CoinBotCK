@@ -73,6 +73,8 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
     public DbSet<ExchangePosition> ExchangePositions => Set<ExchangePosition>();
 
+    public DbSet<SpotPortfolioFill> SpotPortfolioFills => Set<SpotPortfolioFill>();
+
     public DbSet<HealthSnapshot> HealthSnapshots => Set<HealthSnapshot>();
 
     public DbSet<GlobalExecutionSwitch> GlobalExecutionSwitches => Set<GlobalExecutionSwitch>();
@@ -163,6 +165,7 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         ConfigureExchangeAccountSyncStates(builder.Entity<ExchangeAccountSyncState>());
         ConfigureExchangeBalances(builder.Entity<ExchangeBalance>());
         ConfigureExchangePositions(builder.Entity<ExchangePosition>());
+        ConfigureSpotPortfolioFills(builder.Entity<SpotPortfolioFill>());
         ConfigureHealthSnapshots(builder.Entity<HealthSnapshot>());
         ConfigureIncidentEvents(builder.Entity<IncidentEvent>());
         ConfigureIncidents(builder.Entity<Incident>());
@@ -1397,6 +1400,100 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             .IsUnique();
 
         builder.HasIndex(entity => new { entity.ExecutionOrderId, entity.OccurredAtUtc });
+
+        builder.HasOne<ExecutionOrder>()
+            .WithMany()
+            .HasForeignKey(entity => entity.ExecutionOrderId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private void ConfigureSpotPortfolioFills(EntityTypeBuilder<SpotPortfolioFill> builder)
+    {
+        ConfigureUserOwnedEntity(builder, "SpotPortfolioFills");
+
+        builder.Property(entity => entity.ExchangeOrderId)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.ClientOrderId)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.Plane)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .HasDefaultValue(ExchangeDataPlane.Spot)
+            .IsRequired();
+
+        builder.Property(entity => entity.Symbol)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.BaseAsset)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.QuoteAsset)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.Side)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.Quantity)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.QuoteQuantity)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.Price)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.FeeAsset)
+            .HasMaxLength(32);
+
+        builder.Property(entity => entity.FeeAmount)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.FeeAmountInQuote)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.RealizedPnlDelta)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.HoldingQuantityAfter)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.HoldingCostBasisAfter)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.HoldingAverageCostAfter)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.CumulativeRealizedPnlAfter)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.CumulativeFeesInQuoteAfter)
+            .HasPrecision(38, 18);
+
+        builder.Property(entity => entity.Source)
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.RootCorrelationId)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.HasIndex(entity => new { entity.ExchangeAccountId, entity.Symbol, entity.TradeId })
+            .IsUnique();
+
+        builder.HasIndex(entity => new { entity.ExchangeAccountId, entity.Symbol, entity.OccurredAtUtc });
+
+        builder.HasIndex(entity => entity.ExecutionOrderId);
+
+        builder.HasIndex(entity => entity.RootCorrelationId);
 
         builder.HasOne<ExecutionOrder>()
             .WithMany()

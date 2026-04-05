@@ -1,4 +1,5 @@
 using CoinBot.Application.Abstractions.DataScope;
+using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Dashboard;
@@ -389,6 +390,304 @@ public sealed class UserDashboardPortfolioReadModelServiceTests
         Assert.True(historyRow.AiScoreIsPlaceholder);
     }
 
+    [Fact]
+    public async Task GetSnapshotAsync_ProjectsSpotHoldingsHistoryAndPnlParity()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        await using var context = CreateContext(databaseRoot);
+        var ownerUserId = "user-spot-portfolio-01";
+        var strategyId = Guid.NewGuid();
+        var strategyVersionId = Guid.NewGuid();
+        var strategySignalId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var createdAtUtc = new DateTime(2026, 4, 5, 12, 0, 0, DateTimeKind.Utc);
+        var filledAtUtc = createdAtUtc.AddMinutes(2);
+
+        context.ExchangeAccounts.Add(new ExchangeAccount
+        {
+            Id = exchangeAccountId,
+            OwnerUserId = ownerUserId,
+            ExchangeName = "Binance",
+            DisplayName = "Spot Primary",
+            CredentialStatus = ExchangeCredentialStatus.Active
+        });
+        context.ExchangeBalances.Add(new ExchangeBalance
+        {
+            OwnerUserId = ownerUserId,
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Spot,
+            Asset = "BTC",
+            WalletBalance = 1.25m,
+            CrossWalletBalance = 1.25m,
+            AvailableBalance = 1m,
+            MaxWithdrawAmount = 1m,
+            LockedBalance = 0.25m,
+            ExchangeUpdatedAtUtc = filledAtUtc,
+            SyncedAtUtc = filledAtUtc
+        });
+        context.ExchangeAccountSyncStates.Add(new ExchangeAccountSyncState
+        {
+            OwnerUserId = ownerUserId,
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Spot,
+            PrivateStreamConnectionState = ExchangePrivateStreamConnectionState.Connected,
+            DriftStatus = ExchangeStateDriftStatus.InSync,
+            LastPrivateStreamEventAtUtc = filledAtUtc,
+            LastBalanceSyncedAtUtc = filledAtUtc,
+            LastStateReconciledAtUtc = filledAtUtc
+        });
+        context.MarketScannerHandoffAttempts.Add(new MarketScannerHandoffAttempt
+        {
+            Id = Guid.NewGuid(),
+            ScanCycleId = Guid.NewGuid(),
+            SelectedCandidateId = Guid.NewGuid(),
+            SelectedSymbol = "BTCUSDT",
+            SelectedTimeframe = "1m",
+            SelectedAtUtc = createdAtUtc,
+            CandidateRank = 1,
+            CandidateMarketScore = 100m,
+            CandidateScore = 180m,
+            SelectionReason = "Top-ranked eligible candidate selected. Symbol=BTCUSDT; Rank=1.",
+            OwnerUserId = ownerUserId,
+            StrategyKey = "spot-portfolio",
+            TradingStrategyId = strategyId,
+            TradingStrategyVersionId = strategyVersionId,
+            StrategySignalId = strategySignalId,
+            StrategyDecisionOutcome = "Persisted",
+            StrategyScore = 80,
+            RiskOutcome = "Allowed",
+            RiskVetoReasonCode = "None",
+            RiskSummary = "Reason=None; Scope=User:user-spot-portfolio-01/Bot:n/a/Symbol:BTCUSDT/Coin:BTC/Timeframe:1m.",
+            ExecutionRequestStatus = "Prepared",
+            ExecutionSide = ExecutionOrderSide.Buy,
+            ExecutionOrderType = ExecutionOrderType.Market,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutionQuantity = 2m,
+            ExecutionPrice = 150m,
+            GuardSummary = "ExecutionGate=Allowed; UserExecutionOverride=Allowed;",
+            CorrelationId = "root-spot-portfolio",
+            CompletedAtUtc = createdAtUtc
+        });
+        context.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = orderId,
+            OwnerUserId = ownerUserId,
+            TradingStrategyId = strategyId,
+            TradingStrategyVersionId = strategyVersionId,
+            StrategySignalId = strategySignalId,
+            SignalType = StrategySignalType.Entry,
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Spot,
+            StrategyKey = "spot-portfolio",
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 2m,
+            Price = 150m,
+            FilledQuantity = 2m,
+            AverageFillPrice = 150m,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            State = ExecutionOrderState.Filled,
+            IdempotencyKey = "spot-portfolio-idem",
+            RootCorrelationId = "root-spot-portfolio",
+            ExternalOrderId = "spot-order-portfolio-1",
+            SubmittedToBroker = true,
+            LastStateChangedAtUtc = filledAtUtc
+        });
+        context.ExecutionOrderTransitions.Add(new ExecutionOrderTransition
+        {
+            OwnerUserId = ownerUserId,
+            ExecutionOrderId = orderId,
+            SequenceNumber = 1,
+            State = ExecutionOrderState.Filled,
+            EventCode = "ExchangeFilled",
+            Detail = "ClientOrderId=cb_spot_portfolio_01; Plane=Spot; ExchangeStatus=FILLED",
+            CorrelationId = "transition-spot-portfolio",
+            ParentCorrelationId = "root-spot-portfolio",
+            OccurredAtUtc = filledAtUtc
+        });
+        context.DecisionTraces.Add(new DecisionTrace
+        {
+            Id = Guid.NewGuid(),
+            StrategySignalId = strategySignalId,
+            CorrelationId = "root-spot-portfolio",
+            DecisionId = "decision-spot-portfolio",
+            UserId = ownerUserId,
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            StrategyVersion = "1",
+            SignalType = "Entry",
+            RiskScore = 80,
+            DecisionOutcome = "Allowed",
+            LatencyMs = 12,
+            SnapshotJson = "{}",
+            CreatedAtUtc = createdAtUtc
+        });
+        context.ExecutionTraces.Add(new ExecutionTrace
+        {
+            Id = Guid.NewGuid(),
+            ExecutionOrderId = orderId,
+            CorrelationId = "root-spot-portfolio",
+            ExecutionAttemptId = "exec-attempt-spot-portfolio",
+            CommandId = "cmd-spot-portfolio",
+            UserId = ownerUserId,
+            Provider = "Binance.SpotPrivateRest",
+            Endpoint = "/api/v3/order",
+            ResponseMasked = "Accepted",
+            CreatedAtUtc = filledAtUtc
+        });
+        context.AuditLogs.AddRange(
+            new AuditLog
+            {
+                Id = Guid.NewGuid(),
+                Actor = "system",
+                Action = "ExecutionOrder.ExchangeUpdate",
+                Target = $"ExecutionOrder/{orderId}",
+                Context = "Plane=Spot",
+                CorrelationId = "root-spot-portfolio",
+                Outcome = "Applied:StateChanged",
+                Environment = "Live"
+            },
+            new AuditLog
+            {
+                Id = Guid.NewGuid(),
+                Actor = "system",
+                Action = "SpotPortfolio.FillApplied",
+                Target = $"ExecutionOrder/{orderId}",
+                Context = "Plane=Spot | AppliedTrades=3",
+                CorrelationId = "root-spot-portfolio",
+                Outcome = "Applied",
+                Environment = "Live"
+            });
+        context.SpotPortfolioFills.AddRange(
+            new SpotPortfolioFill
+            {
+                OwnerUserId = ownerUserId,
+                ExchangeAccountId = exchangeAccountId,
+                ExecutionOrderId = orderId,
+                Plane = ExchangeDataPlane.Spot,
+                Symbol = "BTCUSDT",
+                BaseAsset = "BTC",
+                QuoteAsset = "USDT",
+                Side = ExecutionOrderSide.Buy,
+                ExchangeOrderId = "spot-order-portfolio-1",
+                ClientOrderId = "cb_spot_portfolio_01",
+                TradeId = 1,
+                Quantity = 1m,
+                QuoteQuantity = 100m,
+                Price = 100m,
+                FeeAmountInQuote = 0m,
+                RealizedPnlDelta = 0m,
+                HoldingQuantityAfter = 1m,
+                HoldingCostBasisAfter = 100m,
+                HoldingAverageCostAfter = 100m,
+                CumulativeRealizedPnlAfter = 0m,
+                CumulativeFeesInQuoteAfter = 0m,
+                Source = "Binance.SpotPrivateRest.MyTrades",
+                RootCorrelationId = "root-spot-portfolio",
+                OccurredAtUtc = createdAtUtc
+            },
+            new SpotPortfolioFill
+            {
+                OwnerUserId = ownerUserId,
+                ExchangeAccountId = exchangeAccountId,
+                ExecutionOrderId = orderId,
+                Plane = ExchangeDataPlane.Spot,
+                Symbol = "BTCUSDT",
+                BaseAsset = "BTC",
+                QuoteAsset = "USDT",
+                Side = ExecutionOrderSide.Buy,
+                ExchangeOrderId = "spot-order-portfolio-1",
+                ClientOrderId = "cb_spot_portfolio_01",
+                TradeId = 2,
+                Quantity = 1m,
+                QuoteQuantity = 200m,
+                Price = 200m,
+                FeeAmountInQuote = 0m,
+                RealizedPnlDelta = 0m,
+                HoldingQuantityAfter = 2m,
+                HoldingCostBasisAfter = 300m,
+                HoldingAverageCostAfter = 150m,
+                CumulativeRealizedPnlAfter = 0m,
+                CumulativeFeesInQuoteAfter = 0m,
+                Source = "Binance.SpotPrivateRest.MyTrades",
+                RootCorrelationId = "root-spot-portfolio",
+                OccurredAtUtc = createdAtUtc.AddSeconds(1)
+            },
+            new SpotPortfolioFill
+            {
+                OwnerUserId = ownerUserId,
+                ExchangeAccountId = exchangeAccountId,
+                ExecutionOrderId = orderId,
+                Plane = ExchangeDataPlane.Spot,
+                Symbol = "BTCUSDT",
+                BaseAsset = "BTC",
+                QuoteAsset = "USDT",
+                Side = ExecutionOrderSide.Sell,
+                ExchangeOrderId = "spot-order-portfolio-1",
+                ClientOrderId = "cb_spot_portfolio_01",
+                TradeId = 3,
+                Quantity = 1m,
+                QuoteQuantity = 250m,
+                Price = 250m,
+                FeeAsset = "USDT",
+                FeeAmount = 10m,
+                FeeAmountInQuote = 10m,
+                RealizedPnlDelta = 90m,
+                HoldingQuantityAfter = 1m,
+                HoldingCostBasisAfter = 150m,
+                HoldingAverageCostAfter = 150m,
+                CumulativeRealizedPnlAfter = 90m,
+                CumulativeFeesInQuoteAfter = 10m,
+                Source = "Binance.SpotPrivateRest.MyTrades",
+                RootCorrelationId = "root-spot-portfolio",
+                OccurredAtUtc = filledAtUtc
+            });
+        await context.SaveChangesAsync();
+
+        var service = new UserDashboardPortfolioReadModelService(
+            context,
+            new FakeMarketDataService(
+                new Dictionary<string, decimal>(StringComparer.Ordinal)
+                {
+                    ["BTCUSDT"] = 300m
+                }));
+
+        var snapshot = await service.GetSnapshotAsync(ownerUserId);
+        var holding = Assert.Single(snapshot.SpotHoldings!);
+        var position = Assert.Single(snapshot.Positions, entity => entity.Plane == ExchangeDataPlane.Spot);
+        var historyRow = Assert.Single(snapshot.TradeHistory, entity => entity.Plane == ExchangeDataPlane.Spot);
+
+        Assert.Equal(90m, snapshot.RealizedPnl);
+        Assert.Equal(150m, snapshot.UnrealizedPnl);
+        Assert.Equal(240m, snapshot.TotalPnl);
+        Assert.Equal(1m, holding.Quantity);
+        Assert.Equal(0.75m, holding.AvailableQuantity);
+        Assert.Equal(0.25m, holding.LockedQuantity);
+        Assert.Equal(150m, holding.AverageCost);
+        Assert.Equal(150m, holding.CostBasis);
+        Assert.Equal(90m, holding.RealizedPnl);
+        Assert.Equal(150m, holding.UnrealizedPnl);
+        Assert.Equal(10m, holding.TotalFeesInQuote);
+        Assert.Equal(150m, position.UnrealizedProfit);
+        Assert.Equal(150m, position.EntryPrice);
+        Assert.Equal(0.75m, position.AvailableQuantity);
+        Assert.Equal(0.25m, position.LockedQuantity);
+        Assert.Equal(90m, historyRow.RealizedPnl);
+        Assert.Equal(150m, historyRow.UnrealizedPnlContribution);
+        Assert.Equal(10m, historyRow.FeeAmountInQuote);
+        Assert.Equal(3, historyRow.FillCount);
+        Assert.Equal("1,2,3", historyRow.TradeIdsSummary);
+        Assert.Contains("Plane=Spot", historyRow.ReasonChainSummary, StringComparison.Ordinal);
+        Assert.Contains("FillCount=3", historyRow.ExecutionResultSummary, StringComparison.Ordinal);
+        Assert.Contains("FeeInQuote=10", historyRow.ExecutionResultSummary, StringComparison.Ordinal);
+    }
+
     private static ApplicationDbContext CreateContext(InMemoryDatabaseRoot databaseRoot)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -403,5 +702,38 @@ public sealed class UserDashboardPortfolioReadModelServiceTests
         public string? UserId => null;
 
         public bool HasIsolationBypass => true;
+    }
+
+    private sealed class FakeMarketDataService(IReadOnlyDictionary<string, decimal> prices) : IMarketDataService
+    {
+        public ValueTask TrackSymbolAsync(string symbol, CancellationToken cancellationToken = default)
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask TrackSymbolsAsync(IEnumerable<string> symbols, CancellationToken cancellationToken = default)
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask<MarketPriceSnapshot?> GetLatestPriceAsync(string symbol, CancellationToken cancellationToken = default)
+        {
+            return ValueTask.FromResult<MarketPriceSnapshot?>(
+                prices.TryGetValue(symbol, out var price)
+                    ? new MarketPriceSnapshot(symbol, price, DateTime.UtcNow, DateTime.UtcNow, "SpotPortfolioReadModelTest")
+                    : null);
+        }
+
+        public ValueTask<SymbolMetadataSnapshot?> GetSymbolMetadataAsync(string symbol, CancellationToken cancellationToken = default)
+        {
+            return ValueTask.FromResult<SymbolMetadataSnapshot?>(null);
+        }
+
+        public async IAsyncEnumerable<MarketPriceSnapshot> WatchAsync(
+            IEnumerable<string> symbols,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            yield break;
+        }
     }
 }

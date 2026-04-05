@@ -20,7 +20,8 @@ public sealed record UserDashboardPortfolioSnapshot(
     string PnlConsistencySummary,
     IReadOnlyCollection<UserDashboardBalanceSnapshot> Balances,
     IReadOnlyCollection<UserDashboardPositionSnapshot> Positions,
-    IReadOnlyCollection<UserDashboardTradeHistoryRowSnapshot> TradeHistory);
+    IReadOnlyCollection<UserDashboardTradeHistoryRowSnapshot> TradeHistory,
+    IReadOnlyCollection<UserDashboardSpotHoldingSnapshot>? SpotHoldings = null);
 
 public sealed record UserDashboardBalanceSnapshot(
     string Asset,
@@ -31,7 +32,8 @@ public sealed record UserDashboardBalanceSnapshot(
     DateTime ExchangeUpdatedAtUtc,
     DateTime SyncedAtUtc,
     decimal? LockedBalance = null,
-    ExchangeDataPlane Plane = ExchangeDataPlane.Futures);
+    ExchangeDataPlane Plane = ExchangeDataPlane.Futures,
+    Guid? ExchangeAccountId = null);
 
 public sealed record UserDashboardPositionSnapshot(
     string Symbol,
@@ -44,7 +46,12 @@ public sealed record UserDashboardPositionSnapshot(
     decimal IsolatedWallet,
     DateTime ExchangeUpdatedAtUtc,
     DateTime SyncedAtUtc,
-    ExchangeDataPlane Plane = ExchangeDataPlane.Futures);
+    ExchangeDataPlane Plane = ExchangeDataPlane.Futures,
+    decimal? RealizedPnl = null,
+    decimal? CostBasis = null,
+    decimal? MarkPrice = null,
+    decimal? AvailableQuantity = null,
+    decimal? LockedQuantity = null);
 
 public sealed record UserDashboardTradeHistoryRowSnapshot(
     Guid OrderId,
@@ -77,4 +84,27 @@ public sealed record UserDashboardTradeHistoryRowSnapshot(
     string AiScoreSummary,
     string AiScoreSource,
     DateTime? AiScoreGeneratedAtUtc,
-    bool AiScoreIsPlaceholder);
+    bool AiScoreIsPlaceholder,
+    ExchangeDataPlane Plane = ExchangeDataPlane.Futures,
+    decimal? FilledQuantity = null,
+    decimal? CumulativeQuoteQuantity = null,
+    int FillCount = 0,
+    string? TradeIdsSummary = null);
+
+public sealed record UserDashboardSpotHoldingSnapshot(
+    Guid ExchangeAccountId,
+    string Symbol,
+    string BaseAsset,
+    string QuoteAsset,
+    decimal Quantity,
+    decimal AvailableQuantity,
+    decimal LockedQuantity,
+    decimal AverageCost,
+    decimal CostBasis,
+    decimal RealizedPnl,
+    decimal UnrealizedPnl,
+    decimal TotalFeesInQuote,
+    decimal? MarkPrice,
+    DateTime LastTradeAtUtc,
+    DateTime? LastMarkPriceAtUtc,
+    ExchangeDataPlane Plane = ExchangeDataPlane.Spot);

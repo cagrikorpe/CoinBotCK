@@ -234,6 +234,7 @@ public static class DependencyInjection
         services.AddScoped<DemoConsistencyWatchdogService>();
         services.AddScoped<IDemoSessionService, DemoSessionService>();
         services.AddScoped<DemoFillSimulator>();
+        services.AddScoped<ISpotPortfolioAccountingService, SpotPortfolioAccountingService>();
         services.AddScoped<ExecutionOrderLifecycleService>();
         services.AddScoped<ExecutionReconciliationService>();
         services.AddScoped<VirtualExecutionWatchdogService>();

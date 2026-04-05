@@ -19,7 +19,8 @@ public sealed class ExecutionOrderLifecycleService(
     ILogger<ExecutionOrderLifecycleService> logger,
     IAlertDispatchCoordinator? alertDispatchCoordinator = null,
     IHostEnvironment? hostEnvironment = null,
-    UserOperationsStreamHub? userOperationsStreamHub = null)
+    UserOperationsStreamHub? userOperationsStreamHub = null,
+    ISpotPortfolioAccountingService? spotPortfolioAccountingService = null)
 {
     private const string SystemActor = "system:execution-order-lifecycle";
     private static readonly ExecutionOrderState[] OpenStates =
@@ -130,6 +131,7 @@ public sealed class ExecutionOrderLifecycleService(
         var stateChanged = false;
         var fillProgressAdvanced = false;
         ExecutionOrderTransition? transition = null;
+        SpotPortfolioApplyResult? spotPortfolioResult = null;
 
         if (string.IsNullOrWhiteSpace(order.ExternalOrderId))
         {
@@ -176,6 +178,35 @@ public sealed class ExecutionOrderLifecycleService(
             }
         }
 
+        if (spotPortfolioAccountingService is not null)
+        {
+            try
+            {
+                spotPortfolioResult = await spotPortfolioAccountingService.ApplyAsync(
+                    order,
+                    normalizedSnapshot,
+                    cancellationToken);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                logger.LogWarning(
+                    exception,
+                    "Spot portfolio accounting failed for execution order {ExecutionOrderId}.",
+                    order.Id);
+
+                await auditLogService.WriteAsync(
+                    new AuditLogWriteRequest(
+                        SystemActor,
+                        "SpotPortfolio.FillApplyFailed",
+                        $"ExecutionOrder/{order.Id}",
+                        BuildSpotPortfolioFailureAuditContext(normalizedSnapshot, exception),
+                        order.RootCorrelationId,
+                        "FailedClosed",
+                        order.ExecutionEnvironment.ToString()),
+                    cancellationToken);
+            }
+        }
+
         await auditLogService.WriteAsync(
             new AuditLogWriteRequest(
                 SystemActor,
@@ -200,6 +231,21 @@ public sealed class ExecutionOrderLifecycleService(
                     order),
                 order.ExecutionEnvironment.ToString()),
             cancellationToken);
+
+        if (spotPortfolioResult is not null &&
+            (spotPortfolioResult.AppliedTradeCount > 0 || spotPortfolioResult.DuplicateTradeCount > 0))
+        {
+            await auditLogService.WriteAsync(
+                new AuditLogWriteRequest(
+                    SystemActor,
+                    "SpotPortfolio.FillApplied",
+                    $"ExecutionOrder/{order.Id}",
+                    BuildSpotPortfolioAuditContext(order, normalizedSnapshot, spotPortfolioResult),
+                    order.RootCorrelationId,
+                    spotPortfolioResult.AppliedTradeCount > 0 ? "Applied" : "DuplicateIgnored",
+                    order.ExecutionEnvironment.ToString()),
+                cancellationToken);
+        }
 
         await UpdateBotOpenOrderCountAsync(order.BotId, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -432,6 +478,7 @@ public sealed class ExecutionOrderLifecycleService(
             $"ClientOrderId={snapshot.ClientOrderId}",
             $"ExchangeStatus={snapshot.Status}",
             $"ExecutedQuantity={FormatDecimal(snapshot.ExecutedQuantity)}",
+            $"CumulativeQuoteQuantity={FormatDecimal(snapshot.CumulativeQuoteQuantity)}",
             $"AveragePrice={FormatDecimal(snapshot.AveragePrice)}"
         };
 
@@ -476,6 +523,7 @@ public sealed class ExecutionOrderLifecycleService(
             $"PreviousState={previousState}",
             $"CurrentState={order.State}",
             $"FilledQuantity={FormatDecimal(order.FilledQuantity)}",
+            $"CumulativeQuoteQuantity={FormatDecimal(snapshot.CumulativeQuoteQuantity)}",
             $"FillProgressAdvanced={fillProgressAdvanced}"
         };
 
@@ -545,6 +593,48 @@ public sealed class ExecutionOrderLifecycleService(
         }
 
         return "Observed";
+    }
+
+    private static string BuildSpotPortfolioAuditContext(
+        ExecutionOrder order,
+        BinanceOrderStatusSnapshot snapshot,
+        SpotPortfolioApplyResult result)
+    {
+        var parts = new List<string>
+        {
+            $"Plane={order.Plane}",
+            $"ExchangeOrderId={snapshot.ExchangeOrderId}",
+            $"ClientOrderId={snapshot.ClientOrderId}",
+            $"AppliedTrades={result.AppliedTradeCount}",
+            $"DuplicateTrades={result.DuplicateTradeCount}",
+            $"RealizedPnlDelta={FormatDecimal(result.RealizedPnlDelta)}",
+            $"FeesInQuote={FormatDecimal(result.FeesInQuoteApplied)}",
+            $"HoldingQuantityAfter={FormatDecimal(result.HoldingQuantityAfter)}",
+            $"HoldingAverageCostAfter={FormatDecimal(result.HoldingAverageCostAfter)}"
+        };
+
+        if (!string.IsNullOrWhiteSpace(result.TradeIdsSummary))
+        {
+            parts.Add($"TradeIds={TrimToLength(result.TradeIdsSummary, 128)}");
+        }
+
+        return TrimToLength(string.Join(" | ", parts), 2048) ?? "Spot portfolio fill accounting applied.";
+    }
+
+    private static string BuildSpotPortfolioFailureAuditContext(
+        BinanceOrderStatusSnapshot snapshot,
+        Exception exception)
+    {
+        var parts = new List<string>
+        {
+            $"Plane={snapshot.Plane}",
+            $"ExchangeOrderId={snapshot.ExchangeOrderId}",
+            $"ClientOrderId={snapshot.ClientOrderId}",
+            $"ExchangeStatus={snapshot.Status}",
+            $"Reason={TrimToLength(exception.Message, 256) ?? exception.GetType().Name}"
+        };
+
+        return TrimToLength(string.Join(" | ", parts), 2048) ?? "Spot portfolio fill accounting failed.";
     }
 
     private static string MapReconciliationOutcome(ExchangeStateDriftStatus reconciliationStatus)
