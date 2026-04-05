@@ -181,7 +181,7 @@ public sealed class VirtualExecutionWatchdogService(
                 order.Id);
 
             await TryReleaseOutstandingReservationAsync(order, cancellationToken);
-            order.FailureCode = exception.GetType().Name;
+            order.FailureCode = ResolveFailureCode(exception);
             order.FailureDetail = Truncate(exception.Message, 512);
 
             var lastTransition = await GetLastTransitionAsync(order.Id, cancellationToken);
@@ -613,6 +613,16 @@ public sealed class VirtualExecutionWatchdogService(
             : value[..maxLength];
     }
 
+    private static string ResolveFailureCode(Exception exception)
+    {
+        return exception switch
+        {
+            ExecutionValidationException validationException => validationException.ReasonCode,
+            ExecutionGateRejectedException gateRejectedException => gateRejectedException.Reason.ToString(),
+            _ => "VirtualWatchdogFailedClosed"
+        };
+    }
+
     private static DateTime NormalizeTimestamp(DateTime value)
     {
         return value.Kind switch
@@ -628,3 +638,7 @@ public sealed class VirtualExecutionWatchdogService(
         return Guid.NewGuid().ToString("N");
     }
 }
+
+
+
+

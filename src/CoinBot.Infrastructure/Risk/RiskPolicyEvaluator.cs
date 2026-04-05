@@ -56,6 +56,7 @@ public sealed class RiskPolicyEvaluator(
                 .Where(entity => entity.OwnerUserId == normalizedUserId && !entity.IsDeleted)
                 .OrderByDescending(entity => entity.UpdatedDate)
                 .ThenByDescending(entity => entity.CreatedDate)
+                .ThenByDescending(entity => entity.Id)
                 .FirstOrDefaultAsync(cancellationToken);
 
             if (riskProfile is null)
@@ -660,3 +661,4 @@ public sealed class RiskPolicyEvaluator(
         };
     }
 }
+

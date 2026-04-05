@@ -152,7 +152,7 @@ public sealed class BotManagementServiceTests
             Quantity = 0.001m,
             Price = 60000m,
             State = ExecutionOrderState.Rejected,
-            FailureCode = "InvalidOperationException",
+            FailureCode = "UserExecutionBotCooldownActive",
             FailureDetail = "Cache entry must specify a value for Size when SizeLimit is set.",
             RejectionStage = ExecutionRejectionStage.PreSubmit,
             SubmittedToBroker = false,
@@ -195,7 +195,7 @@ public sealed class BotManagementServiceTests
         Assert.Equal("RetryPending", row.LastJobStatus);
         Assert.Equal("ReferencePriceUnavailable", row.LastJobErrorCode);
         Assert.Equal("Rejected", row.LastExecutionState);
-        Assert.Equal("InvalidOperationException", row.LastExecutionFailureCode);
+        Assert.Equal("UserExecutionBotCooldownActive", row.LastExecutionFailureCode);
         Assert.Equal("Execution blocked because the bot cooldown is still active.", row.LastExecutionBlockDetail);
         Assert.Equal("PreSubmit", row.LastExecutionRejectionStage);
         Assert.False(row.LastExecutionSubmittedToBroker);
@@ -468,4 +468,5 @@ public sealed class BotManagementServiceTests
         }
     }
 }
+
 

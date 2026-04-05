@@ -42,6 +42,14 @@ public sealed class ExecutionDecisionViewSelectorTests
         Assert.Contains("data-cb-scanner-continuity-gap-start", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-scanner-continuity-gap-last-seen", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-scanner-continuity-recovery", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-risk-outcome", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-risk-reason", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-risk-summary", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-risk-daily", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-risk-weekly", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-risk-symbol-exposure", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-risk-concurrent", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-risk-coin", content, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -119,3 +127,4 @@ public sealed class ExecutionDecisionViewSelectorTests
         return directory.FullName;
     }
 }
+

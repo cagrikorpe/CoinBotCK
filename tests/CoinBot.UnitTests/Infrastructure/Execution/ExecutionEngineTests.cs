@@ -322,7 +322,7 @@ public sealed class ExecutionEngineTests
               CancellationToken.None);
 
         Assert.Equal(ExecutionOrderState.Rejected, result.Order.State);
-        Assert.Equal(nameof(ExecutionValidationException), result.Order.FailureCode);
+        Assert.Equal("OrderNotionalBelowMinimum", result.Order.FailureCode);
         Assert.Contains("minimum notional", result.Order.FailureDetail, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(ExecutionRejectionStage.PreSubmit, result.Order.RejectionStage);
         Assert.False(result.Order.SubmittedToBroker);
@@ -794,7 +794,7 @@ public sealed class ExecutionEngineTests
             CancellationToken.None);
 
         Assert.Equal(ExecutionOrderState.Failed, result.Order.State);
-        Assert.Equal(nameof(InvalidOperationException), result.Order.FailureCode);
+        Assert.Equal("DispatchFailed", result.Order.FailureCode);
         Assert.Equal(ExecutionRejectionStage.PostSubmit, result.Order.RejectionStage);
         Assert.True(result.Order.SubmittedToBroker);
         Assert.True(result.Order.RetryEligible);

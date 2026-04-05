@@ -117,6 +117,7 @@ public sealed class BinanceSpotExecutorTests
             },
             CancellationToken.None));
 
+        Assert.Equal("OrderQuantityBelowMinimum", exception.ReasonCode);
         Assert.Contains("minimum quantity", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
     }
@@ -136,6 +137,7 @@ public sealed class BinanceSpotExecutorTests
             },
             CancellationToken.None));
 
+        Assert.Equal("LimitPriceTickSizeMismatch", exception.ReasonCode);
         Assert.Contains("tick size", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
     }

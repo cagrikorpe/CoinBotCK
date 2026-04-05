@@ -154,7 +154,10 @@ public sealed class StrategySignalServiceTests
         Assert.DoesNotContain("CurrentDailyLossAmount", persistedVeto.RiskEvaluationJson, StringComparison.Ordinal);
         Assert.Equal("RiskVeto", decisionTrace.DecisionReasonType);
         Assert.Equal(RiskVetoReasonCode.DailyLossLimitBreached.ToString(), decisionTrace.DecisionReasonCode);
-        Assert.Equal("Risk veto blocked execution.", decisionTrace.DecisionSummary);
+        Assert.Contains("Reason=DailyLossLimitBreached", decisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("\"riskReasonCode\":\"DailyLossLimitBreached\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
+        Assert.Contains("\"riskOutcome\":\"Vetoed\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
+        Assert.Contains("\"riskSummary\":\"Reason=DailyLossLimitBreached", decisionTrace.SnapshotJson, StringComparison.Ordinal);
         Assert.NotNull(decisionTrace.DecisionAtUtc);
 
         var loadedVeto = await service.GetVetoAsync(veto.StrategySignalVetoId);
@@ -558,3 +561,7 @@ public sealed class StrategySignalServiceTests
         }
     }
 }
+
+
+
+

@@ -23,7 +23,7 @@ public sealed class NotificationIntegrationTests
             "ORDER_REJECTED",
             AlertSeverity.Warning,
             "OrderRejected",
-            "EventType=OrderRejected; Symbol=BTCUSDT; Result=Rejected; FailureCode=ExecutionValidationException; TimestampUtc=2026-04-02T10:00:00.0000000Z; Environment=Development/Testnet");
+            "EventType=OrderRejected; Symbol=BTCUSDT; Result=Rejected; FailureCode=OrderNotionalBelowMinimum; TimestampUtc=2026-04-02T10:00:00.0000000Z; Environment=Development/Testnet");
 
         await coordinator.SendAsync(notification, "integration-order-transition-1", TimeSpan.FromMinutes(5));
         await coordinator.SendAsync(notification, "integration-order-transition-1", TimeSpan.FromMinutes(5));

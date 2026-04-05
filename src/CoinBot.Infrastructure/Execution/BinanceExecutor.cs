@@ -137,7 +137,7 @@ public sealed class BinanceExecutor(
                     new DependencyCircuitBreakerFailureRequest(
                         DependencyCircuitBreakerKind.OrderExecution,
                         BreakerActor,
-                        exception.GetType().Name,
+                        ResolveFailureCode(exception),
                         Truncate(exception.Message, 512) ?? "Order execution failed.",
                         order.RootCorrelationId),
                     cancellationToken);
@@ -162,32 +162,40 @@ public sealed class BinanceExecutor(
 
         if (exchangeInfoClient is null)
         {
-            throw new ExecutionValidationException($"Symbol metadata for '{symbol}' is unavailable.");
+            throw new ExecutionValidationException(
+                "SymbolMetadataUnavailable",
+                $"Symbol metadata for '{symbol}' is unavailable.");
         }
 
         var snapshots = await exchangeInfoClient.GetSymbolMetadataAsync([symbol], cancellationToken);
         var resolvedSnapshot = snapshots.SingleOrDefault();
 
         return resolvedSnapshot
-            ?? throw new ExecutionValidationException($"Symbol metadata for '{symbol}' is unavailable.");
+            ?? throw new ExecutionValidationException(
+                "SymbolMetadataUnavailable",
+                $"Symbol metadata for '{symbol}' is unavailable.");
     }
 
     private static void ValidateOrderPreflight(ExecutionCommand command, SymbolMetadataSnapshot metadata)
     {
         if (!metadata.IsTradingEnabled)
         {
-            throw new ExecutionValidationException($"Symbol '{command.Symbol}' is not trading-enabled.");
+            throw new ExecutionValidationException(
+                "SymbolTradingDisabled",
+                $"Symbol '{command.Symbol}' is not trading-enabled.");
         }
 
         if (metadata.MinQuantity is decimal minQuantity && command.Quantity < minQuantity)
         {
             throw new ExecutionValidationException(
+                "OrderQuantityBelowMinimum",
                 $"Order quantity {command.Quantity} is below the minimum quantity {minQuantity} for '{command.Symbol}'.");
         }
 
         if (!IsAligned(command.Quantity, metadata.StepSize))
         {
             throw new ExecutionValidationException(
+                "OrderQuantityStepSizeMismatch",
                 $"Order quantity {command.Quantity} does not align with step size {metadata.StepSize} for '{command.Symbol}'.");
         }
 
@@ -195,6 +203,7 @@ public sealed class BinanceExecutor(
             CountFractionalDigits(command.Quantity) > quantityPrecision)
         {
             throw new ExecutionValidationException(
+                "OrderQuantityPrecisionExceeded",
                 $"Order quantity {command.Quantity} exceeds quantity precision {quantityPrecision} for '{command.Symbol}'.");
         }
 
@@ -202,6 +211,7 @@ public sealed class BinanceExecutor(
             (command.Quantity * command.Price) < minNotional)
         {
             throw new ExecutionValidationException(
+                "OrderNotionalBelowMinimum",
                 $"Order notional {(command.Quantity * command.Price)} is below the minimum notional {minNotional} for '{command.Symbol}'.");
         }
 
@@ -213,6 +223,7 @@ public sealed class BinanceExecutor(
         if (!IsAligned(command.Price, metadata.TickSize))
         {
             throw new ExecutionValidationException(
+                "LimitPriceTickSizeMismatch",
                 $"Limit price {command.Price} does not align with tick size {metadata.TickSize} for '{command.Symbol}'.");
         }
 
@@ -220,6 +231,7 @@ public sealed class BinanceExecutor(
             CountFractionalDigits(command.Price) > pricePrecision)
         {
             throw new ExecutionValidationException(
+                "LimitPricePrecisionExceeded",
                 $"Limit price {command.Price} exceeds price precision {pricePrecision} for '{command.Symbol}'.");
         }
     }
@@ -327,8 +339,21 @@ public sealed class BinanceExecutor(
             : value[..maxLength];
     }
 
+    private static string ResolveFailureCode(Exception exception)
+    {
+        return exception switch
+        {
+            ExecutionValidationException validationException => validationException.ReasonCode,
+            ExecutionGateRejectedException gateRejectedException => gateRejectedException.Reason.ToString(),
+            BinanceClockDriftException => nameof(ExecutionGateBlockedReason.ClockDriftExceeded),
+            _ => "DispatchFailed"
+        };
+    }
+
     private static string FormatDecimal(decimal value)
     {
         return value.ToString("0.##################", CultureInfo.InvariantCulture);
     }
 }
+
+

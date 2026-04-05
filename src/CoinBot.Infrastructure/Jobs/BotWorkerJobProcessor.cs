@@ -309,7 +309,8 @@ public sealed class BotWorkerJobProcessor(
                 "Bot execution pilot rejected BotId {BotId} because execution validation failed for {Symbol}.",
                 bot.Id,
                 normalizedSymbol);
-            return BackgroundJobProcessResult.PermanentFailure(nameof(ExecutionValidationException));
+            return BackgroundJobProcessResult.PermanentFailure(
+                ResolveStableFailureCode(exception.ReasonCode, submittedToBroker: false));
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -669,13 +670,28 @@ public sealed class BotWorkerJobProcessor(
                 dispatchResult.Order.FailureCode ?? "ExecutionRejected"),
             ExecutionOrderState.Failed when string.Equals(
                 dispatchResult.Order.FailureCode,
-                nameof(ExecutionValidationException),
+                "ExecutionValidationException",
                 StringComparison.Ordinal) => BackgroundJobProcessResult.PermanentFailure(
-                    dispatchResult.Order.FailureCode ?? nameof(ExecutionValidationException)),
+                    ResolveStableFailureCode(dispatchResult.Order.FailureCode, submittedToBroker: false)),
             ExecutionOrderState.Failed => BackgroundJobProcessResult.RetryableFailure(
                 dispatchResult.Order.FailureCode ?? "ExecutionFailed"),
             _ => BackgroundJobProcessResult.RetryableFailure("UnexpectedExecutionState")
         };
+    }
+
+    private static string ResolveStableFailureCode(string? failureCode, bool submittedToBroker)
+    {
+        var normalizedFailureCode = failureCode?.Trim();
+
+        if (string.IsNullOrWhiteSpace(normalizedFailureCode) ||
+            string.Equals(normalizedFailureCode, "ExecutionValidationException", StringComparison.Ordinal))
+        {
+            return submittedToBroker
+                ? "DispatchFailed"
+                : "PreSubmitFailed";
+        }
+
+        return normalizedFailureCode;
     }
 
     private static string BuildPilotExecutionContext(string marginType, decimal leverage)
@@ -767,5 +783,6 @@ public sealed class BotWorkerJobProcessor(
         return allowedSymbols.Contains(symbol);
     }
 }
+
 
 

@@ -319,7 +319,7 @@ public sealed class ExecutionEngine(
         }
         catch (Exception exception)
         {
-            order.FailureCode = exception.GetType().Name;
+            order.FailureCode = ResolveFailureCode(exception, order.SubmittedToBroker);
             order.FailureDetail = Truncate(exception.Message, 512);
             var transitionState = order.SubmittedToBroker
                 ? ExecutionOrderState.Failed
@@ -447,7 +447,7 @@ public sealed class ExecutionEngine(
                 await TryReleaseDemoReservationAsync(order, simulation.Reservation, cancellationToken);
             }
 
-            order.FailureCode = exception.GetType().Name;
+            order.FailureCode = ResolveFailureCode(exception, submittedToBroker: true, fallbackFailureCode: "DemoSimulationFailed");
             order.FailureDetail = Truncate(exception.Message, 512);
             ApplyPostSubmitFailureMetadata(order);
 
@@ -808,6 +808,17 @@ public sealed class ExecutionEngine(
         order.CooldownApplied = true;
     }
 
+    private static string ResolveFailureCode(Exception exception, bool submittedToBroker, string? fallbackFailureCode = null)
+    {
+        return exception switch
+        {
+            ExecutionValidationException validationException => validationException.ReasonCode,
+            ExecutionGateRejectedException gateRejectedException => gateRejectedException.Reason.ToString(),
+            BinanceClockDriftException => nameof(ExecutionGateBlockedReason.ClockDriftExceeded),
+            _ when !string.IsNullOrWhiteSpace(fallbackFailureCode) => fallbackFailureCode!,
+            _ => submittedToBroker ? "DispatchFailed" : "PreSubmitFailed"
+        };
+    }
     private IExecutionTargetExecutor ResolveExecutor(
         ExecutionEnvironment requestedEnvironment,
         ExchangeDataPlane plane)

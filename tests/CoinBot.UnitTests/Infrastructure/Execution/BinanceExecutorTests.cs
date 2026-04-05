@@ -30,6 +30,7 @@ public sealed class BinanceExecutorTests
             },
             CancellationToken.None));
 
+        Assert.Equal("OrderQuantityBelowMinimum", exception.ReasonCode);
         Assert.Contains("minimum quantity", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
     }
@@ -48,6 +49,7 @@ public sealed class BinanceExecutorTests
             },
             CancellationToken.None));
 
+        Assert.Equal("OrderQuantityStepSizeMismatch", exception.ReasonCode);
         Assert.Contains("step size", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
     }
@@ -67,6 +69,7 @@ public sealed class BinanceExecutorTests
             },
             CancellationToken.None));
 
+        Assert.Equal("OrderQuantityPrecisionExceeded", exception.ReasonCode);
         Assert.Contains("quantity precision", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
     }
@@ -85,6 +88,7 @@ public sealed class BinanceExecutorTests
             },
             CancellationToken.None));
 
+        Assert.Equal("OrderNotionalBelowMinimum", exception.ReasonCode);
         Assert.Contains("minimum notional", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
     }
@@ -104,6 +108,7 @@ public sealed class BinanceExecutorTests
             },
             CancellationToken.None));
 
+        Assert.Equal("LimitPriceTickSizeMismatch", exception.ReasonCode);
         Assert.Contains("tick size", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
     }
@@ -124,6 +129,7 @@ public sealed class BinanceExecutorTests
             },
             CancellationToken.None));
 
+        Assert.Equal("LimitPricePrecisionExceeded", exception.ReasonCode);
         Assert.Contains("price precision", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
     }
@@ -143,6 +149,7 @@ public sealed class BinanceExecutorTests
             },
             CancellationToken.None));
 
+        Assert.Equal("SymbolTradingDisabled", exception.ReasonCode);
         Assert.Contains("not trading-enabled", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
     }
@@ -163,6 +170,7 @@ public sealed class BinanceExecutorTests
             },
             CancellationToken.None));
 
+        Assert.Equal("SymbolMetadataUnavailable", exception.ReasonCode);
         Assert.Contains("metadata", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, harness.ExchangeInfoClient.CallCount);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);

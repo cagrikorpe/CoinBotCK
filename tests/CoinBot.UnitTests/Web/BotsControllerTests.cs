@@ -41,7 +41,7 @@ public sealed class BotsControllerTests
                         "Pending",
                         null,
                         "Rejected",
-                        "InvalidOperationException",
+                        "UserExecutionBotCooldownActive",
                         "Execution blocked because the bot cooldown is still active.",
                         "PreSubmit",
                         false,

@@ -3,6 +3,10 @@
   "WorkspaceRootPath": "D:\\CkBot\\Code\\CoinBot\\",
   "Documents": [
     {
+      "AbsoluteMoniker": "D:0:0:{8B07A41D-B075-4157-B6F5-2773A88A9C3C}|src\\CoinBot.Infrastructure\\CoinBot.Infrastructure.csproj|d:\\ckbot\\code\\coinbot\\src\\coinbot.infrastructure\\jobs\\botworkerjobprocessor.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{8B07A41D-B075-4157-B6F5-2773A88A9C3C}|src\\CoinBot.Infrastructure\\CoinBot.Infrastructure.csproj|solutionrelative:src\\coinbot.infrastructure\\jobs\\botworkerjobprocessor.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
       "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\cagri\\AppData\\Local\\Temp\\.vsdbgsrc\\65f75fcf76e4e30841c1d8dab8d924be80b2082f1bf79c227cd4229b3eefb190\\AsyncTaskMethodBuilder.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     },
     {
@@ -68,6 +72,19 @@
             {
               "$type": "Document",
               "DocumentIndex": 0,
+              "Title": "BotWorkerJobProcessor.cs",
+              "DocumentMoniker": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Infrastructure\\Jobs\\BotWorkerJobProcessor.cs",
+              "RelativeDocumentMoniker": "src\\CoinBot.Infrastructure\\Jobs\\BotWorkerJobProcessor.cs",
+              "ToolTip": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Infrastructure\\Jobs\\BotWorkerJobProcessor.cs",
+              "RelativeToolTip": "src\\CoinBot.Infrastructure\\Jobs\\BotWorkerJobProcessor.cs",
+              "ViewState": "AgIAABIBAAAAAAAAAAAgwDcBAABkAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-04-05T18:43:24.987Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
               "Title": "AsyncTaskMethodBuilder.cs",
               "DocumentMoniker": "C:\\Users\\cagri\\AppData\\Local\\Temp\\.vsdbgsrc\\65f75fcf76e4e30841c1d8dab8d924be80b2082f1bf79c227cd4229b3eefb190\\AsyncTaskMethodBuilder.cs",
               "ToolTip": "C:\\Users\\cagri\\AppData\\Local\\Temp\\.vsdbgsrc\\65f75fcf76e4e30841c1d8dab8d924be80b2082f1bf79c227cd4229b3eefb190\\AsyncTaskMethodBuilder.cs",
@@ -78,7 +95,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 2,
+              "DocumentIndex": 3,
               "Title": "appsettings.json",
               "DocumentMoniker": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\appsettings.json",
               "RelativeDocumentMoniker": "src\\CoinBot.Web\\appsettings.json",
@@ -90,7 +107,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 1,
+              "DocumentIndex": 2,
               "Title": "manifest.spdx.json",
               "DocumentMoniker": "D:\\p\\WSP\\PassPulse\\_dist\\supply-chain\\sbom\\Portal.Web\\_manifest\\spdx_2.2\\manifest.spdx.json",
               "RelativeDocumentMoniker": "..\\..\\..\\p\\WSP\\PassPulse\\_dist\\supply-chain\\sbom\\Portal.Web\\_manifest\\spdx_2.2\\manifest.spdx.json",
@@ -102,7 +119,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 3,
+              "DocumentIndex": 4,
               "Title": "sbom-metadata.json",
               "DocumentMoniker": "D:\\p\\WSP\\PassPulse\\_dist\\supply-chain\\sbom\\Portal.Web\\sbom-metadata.json",
               "RelativeDocumentMoniker": "..\\..\\..\\p\\WSP\\PassPulse\\_dist\\supply-chain\\sbom\\Portal.Web\\sbom-metadata.json",
@@ -114,7 +131,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 5,
+              "DocumentIndex": 6,
               "Title": "DashboardViewModel.cs",
               "DocumentMoniker": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\ViewModels\\Home\\DashboardViewModel.cs",
               "RelativeDocumentMoniker": "src\\CoinBot.Web\\ViewModels\\Home\\DashboardViewModel.cs",
@@ -126,7 +143,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 6,
+              "DocumentIndex": 7,
               "Title": "_AiFeedCard.cshtml",
               "DocumentMoniker": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\Views\\Shared\\Dashboard\\_AiFeedCard.cshtml",
               "RelativeDocumentMoniker": "src\\CoinBot.Web\\Views\\Shared\\Dashboard\\_AiFeedCard.cshtml",
@@ -138,7 +155,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 4,
+              "DocumentIndex": 5,
               "Title": "HomeController.cs",
               "DocumentMoniker": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\Controllers\\HomeController.cs",
               "RelativeDocumentMoniker": "src\\CoinBot.Web\\Controllers\\HomeController.cs",
@@ -150,7 +167,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 7,
+              "DocumentIndex": 8,
               "Title": "_KpiCards.cshtml",
               "DocumentMoniker": "D:\\CkBot\\Code\\CoinBot\\src\\CoinBot.Web\\Views\\Shared\\Dashboard\\_KpiCards.cshtml",
               "RelativeDocumentMoniker": "src\\CoinBot.Web\\Views\\Shared\\Dashboard\\_KpiCards.cshtml",

@@ -228,11 +228,14 @@ public sealed class StrategyLifecycleIntegrationTests
                     version1.StrategyVersionId,
                     CreateContext(ExecutionEnvironment.Demo, nowUtc.UtcDateTime.AddMinutes(2), sampleCount: 120, rsiValue: 28m)));
 
-            var decisionOutcomes = await dbContext.DecisionTraces
+            var decisionTraces = await dbContext.DecisionTraces
                 .AsNoTracking()
                 .OrderBy(entity => entity.CreatedAtUtc)
-                .Select(entity => entity.DecisionOutcome)
                 .ToListAsync();
+            var decisionOutcomes = decisionTraces
+                .Select(entity => entity.DecisionOutcome)
+                .ToList();
+            var vetoTrace = Assert.Single(decisionTraces.Where(entity => entity.DecisionOutcome == "Vetoed"));
 
             Assert.Single(persistedResult.Signals);
             Assert.Empty(noSignalResult.Signals);
@@ -242,6 +245,10 @@ public sealed class StrategyLifecycleIntegrationTests
             Assert.Contains("Persisted", decisionOutcomes);
             Assert.Contains("NoSignalCandidate", decisionOutcomes);
             Assert.Contains("Vetoed", decisionOutcomes);
+            Assert.Equal("RiskVeto", vetoTrace.DecisionReasonType);
+            Assert.Equal("DailyLossLimitBreached", vetoTrace.DecisionReasonCode);
+            Assert.Contains("Reason=DailyLossLimitBreached", vetoTrace.DecisionSummary, StringComparison.Ordinal);
+            Assert.Equal(nowUtc.UtcDateTime, vetoTrace.DecisionAtUtc);
             Assert.Equal(1, await dbContext.TradingStrategySignals.CountAsync());
             Assert.Equal(1, await dbContext.TradingStrategySignalVetoes.CountAsync());
         }
@@ -553,3 +560,5 @@ public sealed class StrategyLifecycleIntegrationTests
         public bool HasIsolationBypass => true;
     }
 }
+
+

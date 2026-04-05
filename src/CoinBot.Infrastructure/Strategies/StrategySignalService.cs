@@ -249,14 +249,15 @@ public sealed class StrategySignalService(
                             "Vetoed",
                             riskEvaluation.ReasonCode.ToString(),
                             confidenceSnapshot.ScorePercentage,
-                            veto.Id),
+                            veto.Id,
+                            riskEvaluation),
                         (int)decisionStopwatch.ElapsedMilliseconds,
                         CorrelationId: ResolveCorrelationId(),
                         RiskScore: confidenceSnapshot.ScorePercentage,
                         VetoReasonCode: riskEvaluation.ReasonCode.ToString(),
                         DecisionReasonType: "RiskVeto",
                         DecisionReasonCode: riskEvaluation.ReasonCode.ToString(),
-                        DecisionSummary: "Risk veto blocked execution.",
+                        DecisionSummary: ResolveRiskDecisionSummary(riskEvaluation),
                         DecisionAtUtc: now),
                     cancellationToken);
 
@@ -293,7 +294,8 @@ public sealed class StrategySignalService(
                         "Persisted",
                         vetoReasonCode: null,
                         riskScore: confidenceSnapshot.ScorePercentage,
-                        relatedEntityId: signal.Id),
+                        relatedEntityId: signal.Id,
+                        riskEvaluation),
                     (int)decisionStopwatch.ElapsedMilliseconds,
                     CorrelationId: ResolveCorrelationId(),
                     RiskScore: confidenceSnapshot.ScorePercentage,
@@ -936,6 +938,13 @@ public sealed class StrategySignalService(
         return options;
     }
 
+    private static string ResolveRiskDecisionSummary(RiskVetoResult riskEvaluation)
+    {
+        var normalizedSummary = riskEvaluation.ReasonSummary?.Trim();
+        return string.IsNullOrWhiteSpace(normalizedSummary)
+            ? "Risk veto blocked execution."
+            : normalizedSummary;
+    }
     private string ResolveCorrelationId()
     {
         var scopedCorrelationId = correlationContextAccessor.Current?.CorrelationId;
@@ -960,7 +969,8 @@ public sealed class StrategySignalService(
         string decisionOutcome,
         string? vetoReasonCode,
         int? riskScore,
-        Guid? relatedEntityId)
+        Guid? relatedEntityId,
+        RiskVetoResult? riskEvaluation = null)
     {
         return JsonSerializer.Serialize(
             new
@@ -995,6 +1005,14 @@ public sealed class StrategySignalService(
                 evaluationResult.EntryMatched,
                 evaluationResult.ExitMatched,
                 evaluationResult.RiskPassed,
+                RiskOutcome = riskEvaluation is null
+                    ? null
+                    : riskEvaluation.IsVetoed
+                        ? "Vetoed"
+                        : "Allowed",
+                RiskReasonCode = riskEvaluation?.ReasonCode.ToString(),
+                RiskSummary = riskEvaluation?.ReasonSummary,
+                RiskEvaluatedAtUtc = riskEvaluation?.Snapshot.EvaluatedAtUtc,
                 DecisionOutcome = decisionOutcome,
                 VetoReasonCode = vetoReasonCode,
                 RiskScore = riskScore,
@@ -1004,6 +1022,7 @@ public sealed class StrategySignalService(
             SerializerOptions);
     }
 }
+
 
 
 
