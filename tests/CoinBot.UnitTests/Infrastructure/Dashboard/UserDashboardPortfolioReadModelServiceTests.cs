@@ -688,6 +688,258 @@ public sealed class UserDashboardPortfolioReadModelServiceTests
         Assert.Contains("FeeInQuote=10", historyRow.ExecutionResultSummary, StringComparison.Ordinal);
     }
 
+
+    [Fact]
+    public async Task GetSnapshotAsync_ProjectsLiveFuturesPortfolioHistoryAndReconciliationParity()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        await using var context = CreateContext(databaseRoot);
+        var ownerUserId = "user-futures-portfolio-01";
+        var exchangeAccountId = Guid.NewGuid();
+        var strategyId = Guid.NewGuid();
+        var strategyVersionId = Guid.NewGuid();
+        var strategySignalId = Guid.NewGuid();
+        var botId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var scanCycleId = Guid.NewGuid();
+        var candidateId = Guid.NewGuid();
+        var createdAtUtc = new DateTime(2026, 4, 5, 14, 0, 0, DateTimeKind.Utc);
+        var filledAtUtc = createdAtUtc.AddMinutes(1);
+
+        context.ExchangeAccounts.Add(new ExchangeAccount
+        {
+            Id = exchangeAccountId,
+            OwnerUserId = ownerUserId,
+            ExchangeName = "Binance",
+            DisplayName = "Futures Primary",
+            CredentialStatus = ExchangeCredentialStatus.Active,
+            ApiKeyCiphertext = "cipher-api-key",
+            ApiSecretCiphertext = "cipher-api-secret"
+        });
+        context.ExchangeAccountSyncStates.Add(new ExchangeAccountSyncState
+        {
+            OwnerUserId = ownerUserId,
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            PrivateStreamConnectionState = ExchangePrivateStreamConnectionState.Connected,
+            DriftStatus = ExchangeStateDriftStatus.InSync,
+            LastPrivateStreamEventAtUtc = filledAtUtc,
+            LastPositionSyncedAtUtc = filledAtUtc,
+            LastStateReconciledAtUtc = filledAtUtc
+        });
+        context.ExchangePositions.Add(new ExchangePosition
+        {
+            OwnerUserId = ownerUserId,
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "BTCUSDT",
+            PositionSide = "LONG",
+            Quantity = 0.5m,
+            EntryPrice = 60000m,
+            BreakEvenPrice = 60010m,
+            UnrealizedProfit = 250m,
+            MarginType = "cross",
+            IsolatedWallet = 0m,
+            ExchangeUpdatedAtUtc = filledAtUtc,
+            SyncedAtUtc = filledAtUtc
+        });
+        context.TradingBots.Add(new TradingBot
+        {
+            Id = botId,
+            OwnerUserId = ownerUserId,
+            Name = "Futures History Bot",
+            StrategyKey = "futures-portfolio",
+            Symbol = "BTCUSDT",
+            IsEnabled = true
+        });
+        context.TradingStrategySignals.Add(new TradingStrategySignal
+        {
+            Id = strategySignalId,
+            OwnerUserId = ownerUserId,
+            TradingStrategyId = strategyId,
+            TradingStrategyVersionId = strategyVersionId,
+            StrategyVersionNumber = 1,
+            StrategySchemaVersion = 1,
+            SignalType = StrategySignalType.Entry,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            Symbol = "BTCUSDT",
+            Timeframe = "5m",
+            IndicatorOpenTimeUtc = createdAtUtc.AddMinutes(-5),
+            IndicatorCloseTimeUtc = createdAtUtc,
+            IndicatorReceivedAtUtc = createdAtUtc,
+            GeneratedAtUtc = createdAtUtc,
+            IndicatorSnapshotJson = "{}",
+            RuleResultSnapshotJson = "{}",
+            RiskEvaluationJson = "{}"
+        });
+        context.MarketScannerCycles.Add(new MarketScannerCycle
+        {
+            Id = scanCycleId,
+            StartedAtUtc = createdAtUtc.AddSeconds(-3),
+            CompletedAtUtc = createdAtUtc,
+            UniverseSource = "unit-test",
+            ScannedSymbolCount = 1,
+            EligibleCandidateCount = 1,
+            TopCandidateCount = 1,
+            BestCandidateSymbol = "BTCUSDT",
+            BestCandidateScore = 240m,
+            Summary = "unit-test"
+        });
+        context.MarketScannerCandidates.Add(new MarketScannerCandidate
+        {
+            Id = candidateId,
+            ScanCycleId = scanCycleId,
+            Symbol = "BTCUSDT",
+            UniverseSource = "unit-test",
+            ObservedAtUtc = createdAtUtc,
+            IsEligible = true,
+            Rank = 1,
+            MarketScore = 140m,
+            StrategyScore = 100,
+            Score = 240m,
+            ScoringSummary = "MarketScore=140; StrategyScore=100; CompositeScore=240"
+        });
+        context.MarketScannerHandoffAttempts.Add(new MarketScannerHandoffAttempt
+        {
+            Id = Guid.NewGuid(),
+            ScanCycleId = scanCycleId,
+            SelectedCandidateId = candidateId,
+            SelectedSymbol = "BTCUSDT",
+            SelectedTimeframe = "5m",
+            SelectedAtUtc = createdAtUtc,
+            CandidateRank = 1,
+            CandidateMarketScore = 140m,
+            CandidateScore = 240m,
+            SelectionReason = "Top-ranked eligible candidate selected. Symbol=BTCUSDT; Rank=1.",
+            OwnerUserId = ownerUserId,
+            BotId = botId,
+            StrategyKey = "futures-portfolio",
+            TradingStrategyId = strategyId,
+            TradingStrategyVersionId = strategyVersionId,
+            StrategySignalId = strategySignalId,
+            StrategyDecisionOutcome = "Persisted",
+            StrategyScore = 100,
+            RiskOutcome = "Allowed",
+            RiskVetoReasonCode = "None",
+            RiskSummary = "Reason=None; Scope=User:user-futures-portfolio-01/Bot:" + botId.ToString("N") + "/Symbol:BTCUSDT/Coin:BTC/Timeframe:5m.",
+            ExecutionRequestStatus = "Prepared",
+            ExecutionSide = ExecutionOrderSide.Buy,
+            ExecutionOrderType = ExecutionOrderType.Market,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutionQuantity = 0.5m,
+            ExecutionPrice = 60200m,
+            GuardSummary = "ExecutionGate=Allowed; UserExecutionOverride=Allowed;",
+            CorrelationId = "root-futures-portfolio",
+            CompletedAtUtc = createdAtUtc
+        });
+        context.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = orderId,
+            OwnerUserId = ownerUserId,
+            TradingStrategyId = strategyId,
+            TradingStrategyVersionId = strategyVersionId,
+            StrategySignalId = strategySignalId,
+            SignalType = StrategySignalType.Entry,
+            BotId = botId,
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            StrategyKey = "futures-portfolio",
+            Symbol = "BTCUSDT",
+            Timeframe = "5m",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.5m,
+            Price = 60200m,
+            FilledQuantity = 0.5m,
+            AverageFillPrice = 60200m,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            State = ExecutionOrderState.Filled,
+            IdempotencyKey = "futures-portfolio-idem",
+            RootCorrelationId = "root-futures-portfolio",
+            ExternalOrderId = "futures-portfolio-order-1",
+            SubmittedToBroker = true,
+            LastStateChangedAtUtc = filledAtUtc
+        });
+        context.ExecutionOrderTransitions.Add(new ExecutionOrderTransition
+        {
+            OwnerUserId = ownerUserId,
+            ExecutionOrderId = orderId,
+            SequenceNumber = 1,
+            State = ExecutionOrderState.Filled,
+            EventCode = "ExchangeFilled",
+            Detail = "ClientOrderId=cb_futures_portfolio_01; Plane=Futures; ExchangeStatus=FILLED; ExecutedQuantity=0.5; CumulativeQuoteQuantity=30100; TradeId=77; Fee=USDT:3.5; ReconciliationStatus=InSync; ReconciliationSummary=Exchange state aligned.",
+            CorrelationId = "transition-futures-portfolio",
+            ParentCorrelationId = "root-futures-portfolio",
+            OccurredAtUtc = filledAtUtc
+        });
+        context.DecisionTraces.Add(new DecisionTrace
+        {
+            Id = Guid.NewGuid(),
+            StrategySignalId = strategySignalId,
+            CorrelationId = "root-futures-portfolio",
+            DecisionId = "decision-futures-portfolio",
+            UserId = ownerUserId,
+            Symbol = "BTCUSDT",
+            Timeframe = "5m",
+            StrategyVersion = "1",
+            SignalType = "Entry",
+            RiskScore = 100,
+            DecisionOutcome = "Allowed",
+            LatencyMs = 9,
+            SnapshotJson = "{}",
+            CreatedAtUtc = createdAtUtc
+        });
+        context.ExecutionTraces.Add(new ExecutionTrace
+        {
+            Id = Guid.NewGuid(),
+            ExecutionOrderId = orderId,
+            CorrelationId = "root-futures-portfolio",
+            ExecutionAttemptId = "exec-futures-portfolio",
+            CommandId = "cmd-futures-portfolio",
+            UserId = ownerUserId,
+            Provider = "Binance.FuturesPrivateRest",
+            Endpoint = "/fapi/v1/order",
+            ResponseMasked = "Accepted",
+            CreatedAtUtc = filledAtUtc
+        });
+        context.AuditLogs.Add(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            Actor = "system",
+            Action = "ExecutionOrder.ExchangeUpdate",
+            Target = $"ExecutionOrder/{orderId}",
+            Context = "Plane=Futures",
+            CorrelationId = "root-futures-portfolio",
+            Outcome = "Applied:StateChanged",
+            Environment = "Live"
+        });
+        await context.SaveChangesAsync();
+
+        var service = new UserDashboardPortfolioReadModelService(context);
+
+        var snapshot = await service.GetSnapshotAsync(ownerUserId);
+        var position = Assert.Single(snapshot.Positions, entity => entity.Plane == ExchangeDataPlane.Futures && entity.Symbol == "BTCUSDT");
+        var historyRow = Assert.Single(snapshot.TradeHistory, entity => entity.Plane == ExchangeDataPlane.Futures);
+
+        Assert.Equal(0m, snapshot.RealizedPnl);
+        Assert.Equal(250m, snapshot.UnrealizedPnl);
+        Assert.Equal(250m, snapshot.TotalPnl);
+        Assert.Equal(30000m, position.CostBasis);
+        Assert.Equal(60500m, position.MarkPrice);
+        Assert.Equal(250m, historyRow.UnrealizedPnlContribution);
+        Assert.Equal(3.5m, historyRow.FeeAmountInQuote);
+        Assert.Equal(30100m, historyRow.CumulativeQuoteQuantity);
+        Assert.Equal("77", historyRow.TradeIdsSummary);
+        Assert.Contains("TradeId=77", historyRow.ExecutionResultSummary, StringComparison.Ordinal);
+        Assert.Contains("Fee=USDT:3.5", historyRow.ExecutionResultSummary, StringComparison.Ordinal);
+        Assert.Contains("Plane=Futures", historyRow.ReasonChainSummary, StringComparison.Ordinal);
+        Assert.Contains("ExecutedQuantity=0.5", historyRow.ReasonChainSummary, StringComparison.Ordinal);
+        Assert.Contains("ReconciliationStatus=InSync", historyRow.ReasonChainSummary, StringComparison.Ordinal);
+        Assert.Contains("ReconciliationSummary=Exchange state aligned.", historyRow.ExecutionResultSummary, StringComparison.Ordinal);
+    }
     private static ApplicationDbContext CreateContext(InMemoryDatabaseRoot databaseRoot)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -737,3 +989,5 @@ public sealed class UserDashboardPortfolioReadModelServiceTests
         }
     }
 }
+
+

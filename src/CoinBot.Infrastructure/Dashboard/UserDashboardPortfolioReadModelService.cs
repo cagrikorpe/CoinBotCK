@@ -2,6 +2,7 @@ using CoinBot.Application.Abstractions.Dashboard;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using System.Globalization;
@@ -58,8 +59,8 @@ public sealed class UserDashboardPortfolioReadModelService(
                 entity.ExchangeAccountId))
             .ToListAsync(cancellationToken);
 
-        var positions = activeAccounts.Count == 0
-            ? new List<UserDashboardPositionSnapshot>()
+        var livePositions = activeAccounts.Count == 0
+            ? new List<ExchangePosition>()
             : await dbContext.ExchangePositions
             .AsNoTracking()
             .Where(entity =>
@@ -68,19 +69,10 @@ public sealed class UserDashboardPortfolioReadModelService(
                 !entity.IsDeleted)
             .OrderByDescending(entity => Math.Abs(entity.UnrealizedProfit))
             .ThenBy(entity => entity.Symbol)
-            .Select(entity => new UserDashboardPositionSnapshot(
-                entity.Symbol,
-                entity.PositionSide,
-                entity.Quantity,
-                entity.EntryPrice,
-                entity.BreakEvenPrice,
-                entity.UnrealizedProfit,
-                entity.MarginType,
-                entity.IsolatedWallet,
-                entity.ExchangeUpdatedAtUtc,
-                entity.SyncedAtUtc,
-                entity.Plane))
             .ToListAsync(cancellationToken);
+        var positions = livePositions
+            .Select(MapLivePositionSnapshot)
+            .ToList();
 
         var syncStates = activeAccounts.Count == 0
             ? new List<ExchangeAccountSyncState>()
@@ -162,7 +154,7 @@ public sealed class UserDashboardPortfolioReadModelService(
                 holding.LockedQuantity));
         }
 
-        var tradeHistory = await BuildTradeHistoryAsync(normalizedUserId, demoPositions, spotHoldings, cancellationToken);
+        var tradeHistory = await BuildTradeHistoryAsync(normalizedUserId, livePositions, demoPositions, spotHoldings, cancellationToken);
         var liveUnrealizedPnl = positions.Sum(entity => entity.UnrealizedProfit);
         var demoRealizedPnl = demoPositions.Sum(entity => entity.RealizedPnl);
         var spotRealizedPnl = spotFillRows.Sum(entity => entity.RealizedPnlDelta);
@@ -209,6 +201,7 @@ public sealed class UserDashboardPortfolioReadModelService(
 
     private async Task<IReadOnlyCollection<UserDashboardTradeHistoryRowSnapshot>> BuildTradeHistoryAsync(
         string ownerUserId,
+        IReadOnlyCollection<ExchangePosition> livePositions,
         IReadOnlyCollection<DemoPosition> demoPositions,
         IReadOnlyCollection<UserDashboardSpotHoldingSnapshot> spotHoldings,
         CancellationToken cancellationToken)
@@ -389,15 +382,19 @@ public sealed class UserDashboardPortfolioReadModelService(
                 entity.BotId == order.BotId &&
                 string.Equals(entity.Symbol, order.Symbol, StringComparison.Ordinal) &&
                 entity.Quantity != 0m);
+            var matchingLivePosition = ResolveMatchingLivePosition(order, livePositions);
             var matchingSpotHolding = order.ExchangeAccountId.HasValue &&
                                       spotHoldingByKey.TryGetValue(CreateSpotHoldingKey(order.ExchangeAccountId.Value, order.Symbol), out var resolvedSpotHolding)
                 ? resolvedSpotHolding
                 : null;
             var weightedAverageFillPrice = ResolveAverageFillPrice(order, orderSpotRows);
-            var tradeIdsSummary = BuildTradeIdsSummary(orderSpotRows);
+            var transitionTradeId = ExtractDetailToken(latestTransition?.Detail, "TradeId");
+            var tradeIdsSummary = BuildTradeIdsSummary(orderSpotRows) ?? transitionTradeId;
             var filledQuantity = orderSpotRows?.Sum(entity => entity.Quantity) ?? order.FilledQuantity;
-            var cumulativeQuoteQuantity = orderSpotRows?.Sum(entity => entity.QuoteQuantity);
+            var cumulativeQuoteQuantity = orderSpotRows?.Sum(entity => entity.QuoteQuantity) ??
+                                          ExtractDetailDecimal(latestTransition?.Detail, "CumulativeQuoteQuantity");
             var clientOrderId = orderSpotRows?.FirstOrDefault()?.ClientOrderId ?? ResolveClientOrderId(order, latestTransition);
+            feeAmountInQuote ??= ResolveFuturesFeeAmountInQuote(order, latestTransition);
 
             tradeRows.Add(new UserDashboardTradeHistoryRowSnapshot(
                 order.Id,
@@ -409,7 +406,7 @@ public sealed class UserDashboardPortfolioReadModelService(
                 order.Quantity,
                 weightedAverageFillPrice,
                 realizedPnl,
-                matchingSpotHolding?.UnrealizedPnl ?? matchingOpenPosition?.UnrealizedPnl,
+                matchingSpotHolding?.UnrealizedPnl ?? matchingOpenPosition?.UnrealizedPnl ?? matchingLivePosition?.UnrealizedProfit,
                 feeAmountInQuote,
                 costImpact,
                 order.CreatedDate,
@@ -592,18 +589,18 @@ public sealed class UserDashboardPortfolioReadModelService(
         string? botName,
         IReadOnlyCollection<SpotPortfolioFill>? spotLedgerRows = null)
     {
-        var scannerSummary = handoffAttempt?.SelectionReason ?? "ScannerLink=Missing";
+        var scannerSummary = Truncate(handoffAttempt?.SelectionReason ?? "ScannerLink=Missing", 192) ?? "ScannerLink=Missing";
         var strategySummary = handoffAttempt is null
             ? "StrategyLink=Missing"
             : $"StrategyOutcome={NormalizeOptional(handoffAttempt.StrategyDecisionOutcome) ?? "n/a"}; StrategyScore={handoffAttempt.StrategyScore?.ToString(CultureInfo.InvariantCulture) ?? "n/a"}; StrategyVeto={NormalizeOptional(handoffAttempt.StrategyVetoReasonCode) ?? "None"}";
         var riskSummary = handoffAttempt is null
             ? "RiskLink=Missing"
-            : $"RiskOutcome={NormalizeOptional(handoffAttempt.RiskOutcome) ?? "n/a"}; RiskVeto={NormalizeOptional(handoffAttempt.RiskVetoReasonCode) ?? "None"}; RiskSummary={SanitizeDetail(handoffAttempt.RiskSummary) ?? "n/a"}";
+            : $"RiskOutcome={NormalizeOptional(handoffAttempt.RiskOutcome) ?? "n/a"}; RiskVeto={NormalizeOptional(handoffAttempt.RiskVetoReasonCode) ?? "None"}; RiskSummary={Truncate(SanitizeDetail(handoffAttempt.RiskSummary), 160) ?? "n/a"}";
         var executionSummary = $"ExecutionState={order.State}; ResultCode={ResolveExecutionResultCode(order, latestTransition)}; Stage={order.RejectionStage}; Submitted={order.SubmittedToBroker}; Retry={order.RetryEligible}; Cooldown={order.CooldownApplied}";
         var auditSummary = $"AuditTrail=DecisionTrace:{decisionTraceCount}; ExecutionTrace:{executionTraceCount}; AuditLog:{auditCount}; Bot={NormalizeOptional(botName) ?? "n/a"}";
         var spotSummary = order.Plane == ExchangeDataPlane.Spot
             ? $"Plane=Spot; FillCount={spotLedgerRows?.Count.ToString(CultureInfo.InvariantCulture) ?? "0"}; TradeIds={BuildTradeIdsSummary(spotLedgerRows) ?? "n/a"}"
-            : $"Plane={order.Plane}";
+            : BuildFuturesPlaneSummary(order, latestTransition);
 
         return Truncate(
             $"{scannerSummary} | {strategySummary} | {riskSummary} | {executionSummary} | {auditSummary} | {spotSummary}",
@@ -767,6 +764,170 @@ public sealed class UserDashboardPortfolioReadModelService(
         return NormalizeDecimal(spotLedgerRows.Sum(entity => entity.QuoteQuantity) / filledQuantity);
     }
 
+    private static UserDashboardPositionSnapshot MapLivePositionSnapshot(ExchangePosition entity)
+    {
+        var normalizedQuantity = NormalizeDecimal(entity.Quantity);
+
+        return new UserDashboardPositionSnapshot(
+            entity.Symbol,
+            entity.PositionSide,
+            entity.Quantity,
+            entity.EntryPrice,
+            entity.BreakEvenPrice,
+            entity.UnrealizedProfit,
+            entity.MarginType,
+            entity.IsolatedWallet,
+            entity.ExchangeUpdatedAtUtc,
+            entity.SyncedAtUtc,
+            entity.Plane,
+            null,
+            ResolvePositionCostBasis(normalizedQuantity, entity.EntryPrice),
+            ResolveLivePositionMarkPrice(normalizedQuantity, entity.EntryPrice, entity.UnrealizedProfit),
+            null,
+            null);
+    }
+
+    private static ExchangePosition? ResolveMatchingLivePosition(
+        ExecutionOrder order,
+        IReadOnlyCollection<ExchangePosition> livePositions)
+    {
+        if (order.Plane == ExchangeDataPlane.Spot || livePositions.Count == 0)
+        {
+            return null;
+        }
+
+        var preferredPositionSide = order.Side == ExecutionOrderSide.Sell ? "SHORT" : "LONG";
+
+        return livePositions
+            .Where(entity =>
+                entity.Plane == order.Plane &&
+                string.Equals(entity.Symbol, order.Symbol, StringComparison.Ordinal) &&
+                entity.Quantity != 0m &&
+                (!order.ExchangeAccountId.HasValue || entity.ExchangeAccountId == order.ExchangeAccountId.Value))
+            .OrderByDescending(entity => string.Equals(entity.PositionSide, preferredPositionSide, StringComparison.OrdinalIgnoreCase))
+            .ThenByDescending(entity => Math.Abs(entity.Quantity))
+            .ThenByDescending(entity => entity.ExchangeUpdatedAtUtc)
+            .ThenByDescending(entity => entity.Id)
+            .FirstOrDefault();
+    }
+
+    private static decimal? ResolvePositionCostBasis(decimal quantity, decimal entryPrice)
+    {
+        return quantity == 0m
+            ? 0m
+            : NormalizeDecimal(Math.Abs(quantity * entryPrice));
+    }
+
+    private static decimal? ResolveLivePositionMarkPrice(decimal quantity, decimal entryPrice, decimal unrealizedProfit)
+    {
+        if (quantity == 0m)
+        {
+            return null;
+        }
+
+        return NormalizeDecimal(entryPrice + (unrealizedProfit / quantity));
+    }
+
+    private static decimal? ResolveFuturesFeeAmountInQuote(
+        ExecutionOrder order,
+        ExecutionOrderTransition? latestTransition)
+    {
+        if (order.Plane == ExchangeDataPlane.Spot)
+        {
+            return null;
+        }
+
+        var feeToken = ExtractDetailToken(latestTransition?.Detail, "Fee");
+        if (string.IsNullOrWhiteSpace(feeToken))
+        {
+            return null;
+        }
+
+        var separatorIndex = feeToken.IndexOf(':');
+        if (separatorIndex <= 0)
+        {
+            return null;
+        }
+
+        var feeAsset = NormalizeOptional(feeToken[..separatorIndex]);
+        if (!string.Equals(feeAsset, NormalizeOptional(order.QuoteAsset), StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return decimal.TryParse(
+            feeToken[(separatorIndex + 1)..],
+            NumberStyles.Number,
+            CultureInfo.InvariantCulture,
+            out var parsedValue)
+            ? NormalizeDecimal(parsedValue)
+            : null;
+    }
+
+    private static string BuildFuturesPlaneSummary(
+        ExecutionOrder order,
+        ExecutionOrderTransition? latestTransition)
+    {
+        var tradeId = ExtractDetailToken(latestTransition?.Detail, "TradeId");
+        var executedQuantity = ExtractDetailDecimal(latestTransition?.Detail, "ExecutedQuantity");
+        var cumulativeQuoteQuantity = ExtractDetailDecimal(latestTransition?.Detail, "CumulativeQuoteQuantity");
+        var fee = ExtractDetailToken(latestTransition?.Detail, "Fee");
+        var reconciliationStatus = ExtractDetailToken(latestTransition?.Detail, "ReconciliationStatus");
+        var reconciliationSummary = ExtractDetailToken(latestTransition?.Detail, "ReconciliationSummary");
+
+        var summary = $"Plane={order.Plane}";
+
+        if (executedQuantity.HasValue)
+        {
+            summary += $"; ExecutedQuantity={executedQuantity.Value.ToString("0.####", CultureInfo.InvariantCulture)}";
+        }
+
+        if (cumulativeQuoteQuantity.HasValue)
+        {
+            summary += $"; CumulativeQuoteQuantity={cumulativeQuoteQuantity.Value.ToString("0.####", CultureInfo.InvariantCulture)}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(tradeId))
+        {
+            summary += $"; TradeIds={tradeId}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(fee))
+        {
+            summary += $"; Fee={fee}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(reconciliationStatus))
+        {
+            summary += $"; ReconciliationStatus={reconciliationStatus}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(reconciliationSummary))
+        {
+            summary += $"; ReconciliationSummary={reconciliationSummary}";
+        }
+
+        return summary;
+    }
+
+    private static decimal? ExtractDetailDecimal(string? detail, string key)
+    {
+        var token = ExtractDetailToken(detail, key);
+        if (token is null)
+        {
+            return null;
+        }
+
+        return decimal.TryParse(token, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsedValue)
+            ? NormalizeDecimal(parsedValue)
+            : null;
+    }
+
+    private static string? ExtractDetailToken(string? detail, string key)
+    {
+        return ExecutionDecisionDiagnostics.ExtractToken(key, detail);
+    }
+
     private static string? BuildTradeIdsSummary(IEnumerable<SpotPortfolioFill>? rows)
     {
         if (rows is null)
@@ -824,3 +985,7 @@ public sealed class UserDashboardPortfolioReadModelService(
         return normalized.Length <= maxLength ? normalized : normalized[..maxLength];
     }
 }
+
+
+
+
