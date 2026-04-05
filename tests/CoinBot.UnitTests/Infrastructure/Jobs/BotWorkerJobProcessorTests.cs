@@ -248,6 +248,11 @@ public sealed class BotWorkerJobProcessorTests
             dbContext,
             correlationContextAccessor,
             timeProvider);
+        var lifecycleService = new ExecutionOrderLifecycleService(
+            dbContext,
+            auditLogService,
+            timeProvider,
+            NullLogger<ExecutionOrderLifecycleService>.Instance);
         var demoPortfolioAccountingService = new DemoPortfolioAccountingService(
             dbContext,
             demoSessionService,
@@ -261,6 +266,7 @@ public sealed class BotWorkerJobProcessorTests
             NullLogger<DemoFillSimulator>.Instance);
         var credentialService = new FakeExchangeCredentialService();
         var privateRestClient = new FakePrivateRestClient(timeProvider);
+        var spotPrivateRestClient = new FakeSpotPrivateRestClient(timeProvider);
         var strategySignalService = new StrategySignalService(
             dbContext,
             new StrategyEvaluatorService(new StrategyRuleParser()),
@@ -288,6 +294,13 @@ public sealed class BotWorkerJobProcessorTests
                 privateRestClient,
                 NullLogger<BinanceExecutor>.Instance,
                 marketDataService: marketDataService),
+            new BinanceSpotExecutor(
+                dbContext,
+                credentialService,
+                spotPrivateRestClient,
+                NullLogger<BinanceSpotExecutor>.Instance,
+                marketDataService: marketDataService),
+            lifecycleService,
             timeProvider,
             NullLogger<ExecutionEngine>.Instance);
         var processor = new BotWorkerJobProcessor(
@@ -697,6 +710,71 @@ public sealed class BotWorkerJobProcessorTests
             string apiKey,
             string apiSecret,
             CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+    }
+
+    private sealed class FakeSpotPrivateRestClient(TimeProvider timeProvider) : IBinanceSpotPrivateRestClient
+    {
+        public Task<BinanceOrderPlacementResult> PlaceOrderAsync(
+            BinanceOrderPlacementRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            var snapshot = new BinanceOrderStatusSnapshot(
+                request.Symbol,
+                "spot-order-1",
+                request.ClientOrderId,
+                "NEW",
+                request.Quantity,
+                0m,
+                0m,
+                0m,
+                0m,
+                0m,
+                timeProvider.GetUtcNow().UtcDateTime,
+                "Binance.SpotPrivateRest.OrderPlacement",
+                Plane: ExchangeDataPlane.Spot);
+
+            return Task.FromResult(new BinanceOrderPlacementResult("spot-order-1", request.ClientOrderId, timeProvider.GetUtcNow().UtcDateTime, snapshot));
+        }
+
+        public Task<ExchangeAccountSnapshot> GetAccountSnapshotAsync(
+            Guid exchangeAccountId,
+            string ownerUserId,
+            string exchangeName,
+            string apiKey,
+            string apiSecret,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<BinanceOrderStatusSnapshot> GetOrderAsync(
+            BinanceOrderQueryRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<IReadOnlyCollection<BinanceSpotTradeFillSnapshot>> GetTradeFillsAsync(
+            BinanceOrderQueryRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<string> StartListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task KeepAliveListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task CloseListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
         }

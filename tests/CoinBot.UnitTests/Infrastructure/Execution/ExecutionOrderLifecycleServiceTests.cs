@@ -90,6 +90,34 @@ public sealed class ExecutionOrderLifecycleServiceTests
         Assert.Equal(0, transitionCount);
     }
 
+    [Fact]
+    public async Task ApplyExchangeUpdateAsync_TransitionsSpotPartialFillToFilled_AndIgnoresDuplicateFill()
+    {
+        await using var dbContext = CreateContext();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 5, 12, 0, 0, TimeSpan.Zero));
+        var lifecycleService = CreateService(dbContext, timeProvider);
+        var orderId = await SeedOrderAsync(dbContext, ExecutionOrderState.PartiallyFilled, filledQuantity: 0.02m, plane: ExchangeDataPlane.Spot);
+
+        var filled = await lifecycleService.ApplyExchangeUpdateAsync(
+            CreateSnapshot(orderId, "FILLED", executedQuantity: 0.05m, timeProvider.GetUtcNow().UtcDateTime, plane: ExchangeDataPlane.Spot));
+        var duplicateFilled = await lifecycleService.ApplyExchangeUpdateAsync(
+            CreateSnapshot(orderId, "FILLED", executedQuantity: 0.05m, timeProvider.GetUtcNow().UtcDateTime.AddSeconds(1), plane: ExchangeDataPlane.Spot));
+
+        var order = await dbContext.ExecutionOrders.SingleAsync(entity => entity.Id == orderId);
+        var transitions = await dbContext.ExecutionOrderTransitions
+            .Where(entity => entity.ExecutionOrderId == orderId)
+            .OrderBy(entity => entity.SequenceNumber)
+            .ToListAsync();
+
+        Assert.True(filled);
+        Assert.True(duplicateFilled);
+        Assert.Equal(ExecutionOrderState.Filled, order.State);
+        Assert.Equal(0.05m, order.FilledQuantity);
+        Assert.Single(transitions);
+        Assert.Equal(ExecutionOrderState.Filled, transitions[0].State);
+        Assert.Contains("Plane=Spot", transitions[0].Detail, StringComparison.Ordinal);
+    }
+
     private static ExecutionOrderLifecycleService CreateService(
         ApplicationDbContext dbContext,
         TimeProvider timeProvider)
@@ -113,7 +141,8 @@ public sealed class ExecutionOrderLifecycleServiceTests
     private static async Task<Guid> SeedOrderAsync(
         ApplicationDbContext dbContext,
         ExecutionOrderState state,
-        decimal filledQuantity)
+        decimal filledQuantity,
+        ExchangeDataPlane plane = ExchangeDataPlane.Futures)
     {
         var orderId = Guid.NewGuid();
         dbContext.ExecutionOrders.Add(new ExecutionOrder
@@ -125,6 +154,7 @@ public sealed class ExecutionOrderLifecycleServiceTests
             StrategySignalId = Guid.NewGuid(),
             SignalType = StrategySignalType.Entry,
             ExchangeAccountId = Guid.NewGuid(),
+            Plane = plane,
             StrategyKey = "lifecycle-core",
             Symbol = "BTCUSDT",
             Timeframe = "1m",
@@ -154,7 +184,8 @@ public sealed class ExecutionOrderLifecycleServiceTests
         Guid orderId,
         string status,
         decimal executedQuantity,
-        DateTime eventTimeUtc)
+        DateTime eventTimeUtc,
+        ExchangeDataPlane plane = ExchangeDataPlane.Futures)
     {
         return new BinanceOrderStatusSnapshot(
             "BTCUSDT",
@@ -168,7 +199,8 @@ public sealed class ExecutionOrderLifecycleServiceTests
             0m,
             0m,
             eventTimeUtc,
-            "Binance.PrivateStream.ExecutionReport");
+            "Binance.PrivateStream.ExecutionReport",
+            Plane: plane);
     }
 
     private sealed class TestDataScopeContext : IDataScopeContext

@@ -13,11 +13,11 @@ using Microsoft.Extensions.Logging;
 
 namespace CoinBot.Infrastructure.Execution;
 
-public sealed class BinanceExecutor(
+public sealed class BinanceSpotExecutor(
     ApplicationDbContext dbContext,
     IExchangeCredentialService exchangeCredentialService,
-    IBinancePrivateRestClient privateRestClient,
-    ILogger<BinanceExecutor> logger,
+    IBinanceSpotPrivateRestClient privateRestClient,
+    ILogger<BinanceSpotExecutor> logger,
     IDependencyCircuitBreakerStateManager? dependencyCircuitBreakerStateManager = null,
     IMarketDataService? marketDataService = null,
     IBinanceExchangeInfoClient? exchangeInfoClient = null) : IExecutionTargetExecutor
@@ -61,6 +61,8 @@ public sealed class BinanceExecutor(
 
         try
         {
+            await EnsureSpotTradingCapabilityAsync(exchangeAccountId, command.OwnerUserId, cancellationToken);
+
             var credentialAccess = await exchangeCredentialService.GetAsync(
                 new ExchangeCredentialAccessRequest(
                     exchangeAccountId,
@@ -70,24 +72,7 @@ public sealed class BinanceExecutor(
                 cancellationToken);
             var symbolMetadata = await ResolveSymbolMetadataAsync(command.Symbol, cancellationToken);
             ValidateOrderPreflight(command, symbolMetadata);
-
-            if (TryResolveDevelopmentFuturesPilot(command.Context, out var marginType, out var leverage))
-            {
-                await privateRestClient.EnsureMarginTypeAsync(
-                    exchangeAccountId,
-                    command.Symbol,
-                    marginType!,
-                    credentialAccess.ApiKey,
-                    credentialAccess.ApiSecret,
-                    cancellationToken);
-                await privateRestClient.EnsureLeverageAsync(
-                    exchangeAccountId,
-                    command.Symbol,
-                    leverage!.Value,
-                    credentialAccess.ApiKey,
-                    credentialAccess.ApiSecret,
-                    cancellationToken);
-            }
+            await ValidateBalanceAvailabilityAsync(exchangeAccountId, command, symbolMetadata, cancellationToken);
 
             var placementResult = await privateRestClient.PlaceOrderAsync(
                 new BinanceOrderPlacementRequest(
@@ -97,7 +82,7 @@ public sealed class BinanceExecutor(
                     command.OrderType,
                     command.Quantity,
                     command.Price,
-                    BuildClientOrderId(order.Id, command.Context),
+                    ExecutionClientOrderId.Create(order.Id),
                     credentialAccess.ApiKey,
                     credentialAccess.ApiSecret,
                     order.IdempotencyKey,
@@ -105,7 +90,9 @@ public sealed class BinanceExecutor(
                     ExecutionAttemptId: null,
                     order.Id,
                     command.OwnerUserId,
-                    command.ReduceOnly),
+                    ReduceOnly: false,
+                    QuoteOrderQuantity: null,
+                    TimeInForce: ResolveTimeInForce(command)),
                 cancellationToken);
 
             if (dependencyCircuitBreakerStateManager is not null)
@@ -119,7 +106,7 @@ public sealed class BinanceExecutor(
             }
 
             logger.LogInformation(
-                "Binance executor submitted order {ExecutionOrderId} for {Symbol}.",
+                "Binance spot executor submitted order {ExecutionOrderId} for {Symbol}.",
                 order.Id,
                 command.Symbol);
 
@@ -144,6 +131,33 @@ public sealed class BinanceExecutor(
             }
 
             throw;
+        }
+    }
+
+    private async Task EnsureSpotTradingCapabilityAsync(
+        Guid exchangeAccountId,
+        string ownerUserId,
+        CancellationToken cancellationToken)
+    {
+        var latestValidation = await dbContext.ApiCredentialValidations
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.ExchangeAccountId == exchangeAccountId &&
+                entity.OwnerUserId == ownerUserId &&
+                !entity.IsDeleted)
+            .OrderByDescending(entity => entity.ValidatedAtUtc)
+            .ThenByDescending(entity => entity.CreatedDate)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (latestValidation is null ||
+            !latestValidation.IsKeyValid ||
+            !latestValidation.CanTrade ||
+            !latestValidation.SupportsSpot)
+        {
+            throw new ExecutionValidationException(
+                "SpotTradingCapabilityUnavailable",
+                "Execution blocked because spot trading capability is unavailable for the selected Binance account.");
         }
     }
 
@@ -172,11 +186,60 @@ public sealed class BinanceExecutor(
             ?? throw new ExecutionValidationException($"Symbol metadata for '{symbol}' is unavailable.");
     }
 
+    private async Task ValidateBalanceAvailabilityAsync(
+        Guid exchangeAccountId,
+        ExecutionCommand command,
+        SymbolMetadataSnapshot metadata,
+        CancellationToken cancellationToken)
+    {
+        var balance = await dbContext.ExchangeBalances
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .SingleOrDefaultAsync(
+                entity => entity.ExchangeAccountId == exchangeAccountId &&
+                          entity.Plane == ExchangeDataPlane.Spot &&
+                          entity.Asset == ResolveGuardAsset(command, metadata) &&
+                          !entity.IsDeleted,
+                cancellationToken);
+
+        var availableBalance = ResolveAvailableBalance(balance);
+        var requiredBalance = ResolveRequiredBalance(command);
+
+        if (availableBalance + 0.000000000000000001m >= requiredBalance)
+        {
+            return;
+        }
+
+        var asset = ResolveGuardAsset(command, metadata);
+        var reasonCode = command.Side == ExecutionOrderSide.Buy
+            ? "SpotInsufficientQuoteBalance"
+            : "SpotInsufficientBaseAsset";
+
+        throw new ExecutionValidationException(
+            reasonCode,
+            $"Execution blocked because available {asset} balance {FormatDecimal(availableBalance)} is below required {FormatDecimal(requiredBalance)} for {command.Symbol}.");
+    }
+
     private static void ValidateOrderPreflight(ExecutionCommand command, SymbolMetadataSnapshot metadata)
     {
+        if (command.ReduceOnly)
+        {
+            throw new ExecutionValidationException(
+                "SpotReduceOnlyUnsupported",
+                $"Execution blocked because reduce-only is not supported for spot order flow on {command.Symbol}.");
+        }
+
         if (!metadata.IsTradingEnabled)
         {
             throw new ExecutionValidationException($"Symbol '{command.Symbol}' is not trading-enabled.");
+        }
+
+        if (!string.Equals(metadata.BaseAsset, command.BaseAsset, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(metadata.QuoteAsset, command.QuoteAsset, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ExecutionValidationException(
+                "SpotSymbolAssetMismatch",
+                $"Execution blocked because {command.Symbol} metadata does not match requested base/quote assets.");
         }
 
         if (metadata.MinQuantity is decimal minQuantity && command.Quantity < minQuantity)
@@ -198,15 +261,23 @@ public sealed class BinanceExecutor(
                 $"Order quantity {command.Quantity} exceeds quantity precision {quantityPrecision} for '{command.Symbol}'.");
         }
 
+        var notional = ResolveReferenceNotional(command);
         if (metadata.MinNotional is decimal minNotional &&
-            (command.Quantity * command.Price) < minNotional)
+            notional < minNotional)
         {
             throw new ExecutionValidationException(
-                $"Order notional {(command.Quantity * command.Price)} is below the minimum notional {minNotional} for '{command.Symbol}'.");
+                $"Order notional {notional} is below the minimum notional {minNotional} for '{command.Symbol}'.");
         }
 
         if (command.OrderType != ExecutionOrderType.Limit)
         {
+            if (!string.IsNullOrWhiteSpace(command.TimeInForce))
+            {
+                throw new ExecutionValidationException(
+                    "SpotTimeInForceUnsupported",
+                    $"Execution blocked because time-in-force is only supported for limit spot orders on {command.Symbol}.");
+            }
+
             return;
         }
 
@@ -222,37 +293,58 @@ public sealed class BinanceExecutor(
             throw new ExecutionValidationException(
                 $"Limit price {command.Price} exceeds price precision {pricePrecision} for '{command.Symbol}'.");
         }
+
+        var timeInForce = ResolveTimeInForce(command);
+        if (timeInForce is not "GTC" and not "IOC" and not "FOK")
+        {
+            throw new ExecutionValidationException(
+                "SpotTimeInForceInvalid",
+                $"Execution blocked because time-in-force '{command.TimeInForce}' is invalid for spot limit order flow.");
+        }
     }
 
-    private static bool TryResolveDevelopmentFuturesPilot(
-        string? context,
-        out string? marginType,
-        out decimal? leverage)
+    private static string ResolveGuardAsset(ExecutionCommand command, SymbolMetadataSnapshot metadata)
     {
-        marginType = null;
-        leverage = null;
+        return command.Side == ExecutionOrderSide.Buy
+            ? metadata.QuoteAsset
+            : metadata.BaseAsset;
+    }
 
-        if (!TryReadBooleanFlag(context, "DevelopmentFuturesTestnetPilot"))
+    private static decimal ResolveRequiredBalance(ExecutionCommand command)
+    {
+        return command.Side == ExecutionOrderSide.Buy
+            ? command.QuoteQuantity ?? ResolveReferenceNotional(command)
+            : command.Quantity;
+    }
+
+    private static decimal ResolveReferenceNotional(ExecutionCommand command)
+    {
+        return command.QuoteQuantity ?? (command.Quantity * command.Price);
+    }
+
+    private static decimal ResolveAvailableBalance(ExchangeBalance? balance)
+    {
+        if (balance is null)
         {
-            return false;
+            return 0m;
         }
 
-        marginType = ReadContextValue(context, "PilotMarginType");
-        leverage = decimal.TryParse(
-            ReadContextValue(context, "PilotLeverage"),
-            CultureInfo.InvariantCulture,
-            out var parsedLeverage)
-            ? parsedLeverage
-            : null;
+        if (balance.AvailableBalance.HasValue)
+        {
+            return Math.Max(0m, balance.AvailableBalance.Value);
+        }
 
-        return !string.IsNullOrWhiteSpace(marginType) && leverage.HasValue;
+        var lockedBalance = balance.LockedBalance ?? 0m;
+        return Math.Max(0m, balance.WalletBalance - lockedBalance);
     }
 
-    private static string BuildClientOrderId(Guid executionOrderId, string? context)
+    private static string? ResolveTimeInForce(ExecutionCommand command)
     {
-        return TryReadBooleanFlag(context, "DevelopmentFuturesTestnetPilot")
-            ? ExecutionClientOrderId.CreateDevelopmentFuturesPilot(executionOrderId)
-            : ExecutionClientOrderId.Create(executionOrderId);
+        return command.OrderType == ExecutionOrderType.Limit
+            ? string.IsNullOrWhiteSpace(command.TimeInForce)
+                ? "GTC"
+                : command.TimeInForce.Trim().ToUpperInvariant()
+            : null;
     }
 
     private static string BuildDispatchDetail(BinanceOrderPlacementResult placementResult)
@@ -262,42 +354,28 @@ public sealed class BinanceExecutor(
             return $"ClientOrderId={placementResult.ClientOrderId}";
         }
 
-        return string.Join(
-            "; ",
-            [
-                $"ClientOrderId={placementResult.ClientOrderId}",
-                $"Plane={placementResult.Snapshot.Plane}",
-                $"ExchangeStatus={placementResult.Snapshot.Status}",
-                $"ExecutedQuantity={FormatDecimal(placementResult.Snapshot.ExecutedQuantity)}",
-                $"CumulativeQuoteQuantity={FormatDecimal(placementResult.Snapshot.CumulativeQuoteQuantity)}",
-                $"AveragePrice={FormatDecimal(placementResult.Snapshot.AveragePrice)}"
-            ]);
-    }
-
-    private static bool TryReadBooleanFlag(string? context, string key)
-    {
-        return bool.TryParse(ReadContextValue(context, key), out var value) && value;
-    }
-
-    private static string? ReadContextValue(string? context, string key)
-    {
-        if (string.IsNullOrWhiteSpace(context))
+        var parts = new List<string>
         {
-            return null;
+            $"ClientOrderId={placementResult.ClientOrderId}",
+            $"Plane={placementResult.Snapshot.Plane}",
+            $"ExchangeStatus={placementResult.Snapshot.Status}",
+            $"ExecutedQuantity={FormatDecimal(placementResult.Snapshot.ExecutedQuantity)}",
+            $"CumulativeQuoteQuantity={FormatDecimal(placementResult.Snapshot.CumulativeQuoteQuantity)}",
+            $"AveragePrice={FormatDecimal(placementResult.Snapshot.AveragePrice)}"
+        };
+
+        if (placementResult.Snapshot.TradeId.HasValue)
+        {
+            parts.Add($"TradeId={placementResult.Snapshot.TradeId.Value.ToString(CultureInfo.InvariantCulture)}");
         }
 
-        var prefix = $"{key}=";
-        var segments = context.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-        foreach (var segment in segments)
+        if (!string.IsNullOrWhiteSpace(placementResult.Snapshot.FeeAsset) &&
+            placementResult.Snapshot.FeeAmount.HasValue)
         {
-            if (segment.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            {
-                return segment[prefix.Length..].Trim();
-            }
+            parts.Add($"Fee={placementResult.Snapshot.FeeAsset}:{FormatDecimal(placementResult.Snapshot.FeeAmount.Value)}");
         }
 
-        return null;
+        return string.Join("; ", parts);
     }
 
     private static bool IsAligned(decimal value, decimal increment)
@@ -315,6 +393,11 @@ public sealed class BinanceExecutor(
         return (decimal.GetBits(value)[3] >> 16) & 0x7F;
     }
 
+    private static string FormatDecimal(decimal value)
+    {
+        return value.ToString("0.##################", CultureInfo.InvariantCulture);
+    }
+
     private static string? Truncate(string? value, int maxLength)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -325,10 +408,5 @@ public sealed class BinanceExecutor(
         return value.Length <= maxLength
             ? value
             : value[..maxLength];
-    }
-
-    private static string FormatDecimal(decimal value)
-    {
-        return value.ToString("0.##################", CultureInfo.InvariantCulture);
     }
 }

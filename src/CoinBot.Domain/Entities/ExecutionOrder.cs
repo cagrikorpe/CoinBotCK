@@ -16,6 +16,8 @@ public sealed class ExecutionOrder : UserOwnedEntity
 
     public Guid? ExchangeAccountId { get; set; }
 
+    public ExchangeDataPlane Plane { get; set; } = ExchangeDataPlane.Futures;
+
     public string StrategyKey { get; set; } = string.Empty;
 
     public string Symbol { get; set; } = string.Empty;

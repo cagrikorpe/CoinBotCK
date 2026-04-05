@@ -379,6 +379,28 @@ public sealed class BinanceSpotPrivateStreamManagerTests
 
         public int CloseListenKeyCalls { get; private set; }
 
+        public Task<BinanceOrderPlacementResult> PlaceOrderAsync(
+            BinanceOrderPlacementRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            var snapshot = new BinanceOrderStatusSnapshot(
+                request.Symbol,
+                "spot-order-1",
+                request.ClientOrderId,
+                "NEW",
+                request.Quantity,
+                0m,
+                0m,
+                0m,
+                0m,
+                0m,
+                DateTime.UtcNow,
+                "Binance.SpotPrivateRest.OrderPlacement",
+                Plane: ExchangeDataPlane.Spot);
+
+            return Task.FromResult(new BinanceOrderPlacementResult("spot-order-1", request.ClientOrderId, DateTime.UtcNow, snapshot));
+        }
+
         public Task<ExchangeAccountSnapshot> GetAccountSnapshotAsync(
             Guid exchangeAccountId,
             string ownerUserId,

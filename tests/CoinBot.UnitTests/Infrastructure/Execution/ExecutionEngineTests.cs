@@ -181,6 +181,57 @@ public sealed class ExecutionEngineTests
     }
 
     [Fact]
+    public async Task DispatchAsync_RoutesToSpotExecutor_WhenSpotPlaneIsRequested()
+    {
+        await using var harness = CreateHarness();
+        var strategyId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        await SeedUserAsync(harness.DbContext, "user-live-spot");
+        await SeedLiveStrategyAsync(harness.DbContext, "user-live-spot", strategyId, "live-spot-core");
+        await SeedExchangeAccountAsync(harness.DbContext, "user-live-spot", exchangeAccountId);
+        await SeedSpotValidationAsync(harness.DbContext, "user-live-spot", exchangeAccountId);
+        await SeedSpotBalanceAsync(harness.DbContext, "user-live-spot", exchangeAccountId, "USDT", 1000m, 50m);
+        await SeedSpotBalanceAsync(harness.DbContext, "user-live-spot", exchangeAccountId, "BTC", 1m, 0.1m);
+        await PrimeFreshMarketDataAsync(harness, "corr-live-spot-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-live-spot",
+            context: "Open live execution",
+            correlationId: "corr-live-spot-2");
+        await harness.SwitchService.SetDemoModeAsync(
+            isEnabled: false,
+            actor: "admin-live-spot",
+            liveApproval: new TradingModeLiveApproval("live-approval-spot-1"),
+            context: "Switch to live",
+            correlationId: "corr-live-spot-3");
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-live-spot",
+                strategyId: strategyId,
+                strategyKey: "live-spot-core",
+                exchangeAccountId: exchangeAccountId,
+                isDemo: null) with
+            {
+                Plane = ExchangeDataPlane.Spot,
+                Quantity = 0.01m,
+                Price = 65000m
+            },
+            CancellationToken.None);
+
+        Assert.False(result.IsDuplicate);
+        Assert.Equal(ExecutionEnvironment.Live, result.Order.ExecutionEnvironment);
+        Assert.Equal(ExecutionOrderExecutorKind.Binance, result.Order.ExecutorKind);
+        Assert.Equal(ExecutionOrderState.Submitted, result.Order.State);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal(1, harness.SpotPrivateRestClient.PlaceOrderCalls);
+        Assert.Equal(ExchangeDataPlane.Spot, await harness.DbContext.ExecutionOrders
+            .Where(entity => entity.Id == result.Order.ExecutionOrderId)
+            .Select(entity => entity.Plane)
+            .SingleAsync());
+    }
+
+    [Fact]
     public async Task DispatchAsync_RoutesToBinanceExecutor_WhenDevelopmentPilotOverridesDemoMode()
     {
         await using var harness = CreateHarness(environmentName: Environments.Development);
@@ -980,12 +1031,18 @@ public sealed class ExecutionEngineTests
             dbContext,
             correlationContextAccessor,
             timeProvider);
+        var lifecycleService = new ExecutionOrderLifecycleService(
+            dbContext,
+            auditLogService,
+            timeProvider,
+            NullLogger<ExecutionOrderLifecycleService>.Instance);
         var userExecutionOverrideGuard = new UserExecutionOverrideGuard(
             dbContext,
             tradingModeService,
             hostEnvironment: runtimeEnvironment);
         var credentialService = new FakeExchangeCredentialService();
         var privateRestClient = new FakePrivateRestClient(timeProvider);
+        var spotPrivateRestClient = new FakeSpotPrivateRestClient(timeProvider);
         var engine = new ExecutionEngine(
             dbContext,
             executionGate,
@@ -1002,6 +1059,13 @@ public sealed class ExecutionEngineTests
                 privateRestClient,
                 NullLogger<BinanceExecutor>.Instance,
                 marketDataService: marketDataService),
+            new BinanceSpotExecutor(
+                dbContext,
+                credentialService,
+                spotPrivateRestClient,
+                NullLogger<BinanceSpotExecutor>.Instance,
+                marketDataService: marketDataService),
+            lifecycleService,
             timeProvider,
             NullLogger<ExecutionEngine>.Instance,
             alertDispatchCoordinator,
@@ -1020,6 +1084,7 @@ public sealed class ExecutionEngineTests
             marketDataService,
             credentialService,
             privateRestClient,
+            spotPrivateRestClient,
             alertDispatchCoordinator);
     }
 
@@ -1107,6 +1172,54 @@ public sealed class ExecutionEngineTests
             ExchangeName = "Binance",
             DisplayName = "Main Binance",
             IsReadOnly = false
+        });
+
+        await dbContext.SaveChangesAsync();
+    }
+
+    private static async Task SeedSpotValidationAsync(
+        ApplicationDbContext dbContext,
+        string ownerUserId,
+        Guid exchangeAccountId)
+    {
+        dbContext.ApiCredentialValidations.Add(new ApiCredentialValidation
+        {
+            Id = Guid.NewGuid(),
+            ExchangeAccountId = exchangeAccountId,
+            OwnerUserId = ownerUserId,
+            IsKeyValid = true,
+            CanTrade = true,
+            SupportsSpot = true,
+            SupportsFutures = false,
+            ValidationStatus = "Valid",
+            PermissionSummary = "Trade=Y; Spot=Y",
+            ValidatedAtUtc = new DateTime(2026, 3, 22, 11, 50, 0, DateTimeKind.Utc)
+        });
+
+        await dbContext.SaveChangesAsync();
+    }
+
+    private static async Task SeedSpotBalanceAsync(
+        ApplicationDbContext dbContext,
+        string ownerUserId,
+        Guid exchangeAccountId,
+        string asset,
+        decimal availableBalance,
+        decimal lockedBalance)
+    {
+        dbContext.ExchangeBalances.Add(new ExchangeBalance
+        {
+            OwnerUserId = ownerUserId,
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Spot,
+            Asset = asset,
+            WalletBalance = availableBalance + lockedBalance,
+            CrossWalletBalance = availableBalance + lockedBalance,
+            AvailableBalance = availableBalance,
+            MaxWithdrawAmount = availableBalance,
+            LockedBalance = lockedBalance,
+            ExchangeUpdatedAtUtc = new DateTime(2026, 3, 22, 11, 55, 0, DateTimeKind.Utc),
+            SyncedAtUtc = new DateTime(2026, 3, 22, 11, 55, 0, DateTimeKind.Utc)
         });
 
         await dbContext.SaveChangesAsync();
@@ -1428,6 +1541,92 @@ public sealed class ExecutionEngineTests
         }
     }
 
+    private sealed class FakeSpotPrivateRestClient(TimeProvider timeProvider) : IBinanceSpotPrivateRestClient
+    {
+        public int PlaceOrderCalls { get; private set; }
+
+        public BinanceOrderPlacementRequest? LastPlacementRequest { get; private set; }
+
+        public Exception? PlaceOrderException { get; set; }
+
+        public BinanceOrderStatusSnapshot? PlacementSnapshot { get; set; }
+
+        public Task<BinanceOrderPlacementResult> PlaceOrderAsync(
+            BinanceOrderPlacementRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            PlaceOrderCalls++;
+            LastPlacementRequest = request;
+
+            if (PlaceOrderException is not null)
+            {
+                throw PlaceOrderException;
+            }
+
+            var snapshot = PlacementSnapshot ?? new BinanceOrderStatusSnapshot(
+                request.Symbol,
+                $"spot-order-{PlaceOrderCalls}",
+                request.ClientOrderId,
+                "NEW",
+                request.Quantity,
+                0m,
+                0m,
+                0m,
+                0m,
+                0m,
+                timeProvider.GetUtcNow().UtcDateTime,
+                "Binance.SpotPrivateRest.OrderPlacement",
+                Plane: ExchangeDataPlane.Spot);
+
+            return Task.FromResult(
+                new BinanceOrderPlacementResult(
+                    snapshot.ExchangeOrderId,
+                    snapshot.ClientOrderId,
+                    timeProvider.GetUtcNow().UtcDateTime,
+                    snapshot));
+        }
+
+        public Task<ExchangeAccountSnapshot> GetAccountSnapshotAsync(
+            Guid exchangeAccountId,
+            string ownerUserId,
+            string exchangeName,
+            string apiKey,
+            string apiSecret,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<BinanceOrderStatusSnapshot> GetOrderAsync(
+            BinanceOrderQueryRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<IReadOnlyCollection<BinanceSpotTradeFillSnapshot>> GetTradeFillsAsync(
+            BinanceOrderQueryRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<string> StartListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task KeepAliveListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task CloseListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+    }
+
     private sealed class FakeMarketDataService : IMarketDataService
     {
         private readonly Dictionary<string, MarketPriceSnapshot> prices = new(StringComparer.Ordinal);
@@ -1516,6 +1715,7 @@ public sealed class ExecutionEngineTests
         FakeMarketDataService marketDataService,
         FakeExchangeCredentialService credentialService,
         FakePrivateRestClient privateRestClient,
+        FakeSpotPrivateRestClient spotPrivateRestClient,
         RecordingAlertDispatchCoordinator alertCoordinator) : IAsyncDisposable
     {
         public ApplicationDbContext DbContext { get; } = dbContext;
@@ -1541,6 +1741,8 @@ public sealed class ExecutionEngineTests
         public FakeExchangeCredentialService CredentialService { get; } = credentialService;
 
         public FakePrivateRestClient PrivateRestClient { get; } = privateRestClient;
+
+        public FakeSpotPrivateRestClient SpotPrivateRestClient { get; } = spotPrivateRestClient;
 
         public RecordingAlertDispatchCoordinator AlertCoordinator { get; } = alertCoordinator;
 

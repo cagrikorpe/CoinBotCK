@@ -239,6 +239,7 @@ public static class DependencyInjection
         services.AddScoped<VirtualExecutionWatchdogService>();
         services.AddScoped<VirtualExecutor>();
         services.AddScoped<BinanceExecutor>();
+        services.AddScoped<BinanceSpotExecutor>();
         services.AddScoped<IExecutionGate, ExecutionGate>();
         services.AddScoped<IExecutionEngine, ExecutionEngine>();
         services.AddScoped<IUserExecutionOverrideGuard, UserExecutionOverrideGuard>();

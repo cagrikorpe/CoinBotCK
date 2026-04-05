@@ -16,4 +16,5 @@ public sealed record UserExecutionOverrideEvaluationRequest(
     Guid? TradingStrategyVersionId = null,
     string? Timeframe = null,
     Guid? CurrentExecutionOrderId = null,
-    Guid? ReplacesExecutionOrderId = null);
+    Guid? ReplacesExecutionOrderId = null,
+    ExchangeDataPlane Plane = ExchangeDataPlane.Futures);

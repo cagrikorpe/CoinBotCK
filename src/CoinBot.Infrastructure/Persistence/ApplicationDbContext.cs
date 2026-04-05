@@ -1249,6 +1249,12 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             .HasMaxLength(32)
             .IsRequired();
 
+        builder.Property(entity => entity.Plane)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .HasDefaultValue(ExchangeDataPlane.Futures)
+            .IsRequired();
+
         builder.Property(entity => entity.Side)
             .HasConversion<string>()
             .HasMaxLength(16)
@@ -1361,7 +1367,7 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
         builder.HasIndex(entity => new { entity.OwnerUserId, entity.State, entity.LastStateChangedAtUtc });
 
-        builder.HasIndex(entity => new { entity.ExecutorKind, entity.State, entity.LastReconciledAtUtc });
+        builder.HasIndex(entity => new { entity.ExecutorKind, entity.Plane, entity.State, entity.LastReconciledAtUtc });
     }
 
     private void ConfigureExecutionOrderTransitions(EntityTypeBuilder<ExecutionOrderTransition> builder)

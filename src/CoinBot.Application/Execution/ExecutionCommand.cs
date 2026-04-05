@@ -30,4 +30,7 @@ public sealed record ExecutionCommand(
     bool ReduceOnly = false,
     Guid? ReplacesExecutionOrderId = null,
     bool AdministrativeOverride = false,
-    string? AdministrativeOverrideReason = null);
+    string? AdministrativeOverrideReason = null,
+    ExchangeDataPlane Plane = ExchangeDataPlane.Futures,
+    decimal? QuoteQuantity = null,
+    string? TimeInForce = null);

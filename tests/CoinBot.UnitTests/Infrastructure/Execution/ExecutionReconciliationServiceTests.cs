@@ -48,6 +48,7 @@ public sealed class ExecutionReconciliationServiceTests
                     0m,
                     timeProvider.GetUtcNow().UtcDateTime,
                     "Binance.PrivateRest.Order")),
+            new FakeSpotPrivateRestClient(),
             lifecycleService,
             NullLogger<ExecutionReconciliationService>.Instance);
         var executionOrderId = new Guid("11111111-1111-1111-1111-111111111111");
@@ -99,6 +100,97 @@ public sealed class ExecutionReconciliationServiceTests
         Assert.Equal("ExecutionOrder.Reconciliation", auditLog.Action);
         Assert.Equal("Reconciled:DriftDetected", auditLog.Outcome);
         Assert.Equal("root-reconcile-correlation-1", auditLog.CorrelationId);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_UsesSpotRestClient_WhenExecutionOrderPlaneIsSpot()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 5, 12, 0, 0, TimeSpan.Zero));
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+            .Options;
+        await using var dbContext = new ApplicationDbContext(options, new TestDataScopeContext());
+        var auditLogService = new AuditLogService(dbContext, new CorrelationContextAccessor());
+        var lifecycleService = new ExecutionOrderLifecycleService(
+            dbContext,
+            auditLogService,
+            timeProvider,
+            NullLogger<ExecutionOrderLifecycleService>.Instance);
+        var futuresClient = new FakePrivateRestClient(
+            new BinanceOrderStatusSnapshot(
+                "BTCUSDT",
+                "futures-order-1",
+                ExecutionClientOrderId.Create(new Guid("22222222-2222-2222-2222-222222222222")),
+                "NEW",
+                0.05m,
+                0m,
+                0m,
+                0m,
+                0m,
+                0m,
+                timeProvider.GetUtcNow().UtcDateTime,
+                "Binance.PrivateRest.Order"));
+        var spotClient = new FakeSpotPrivateRestClient(
+            new BinanceOrderStatusSnapshot(
+                "BTCUSDT",
+                "spot-order-1",
+                ExecutionClientOrderId.Create(new Guid("33333333-3333-3333-3333-333333333333")),
+                "FILLED",
+                0.05m,
+                0.05m,
+                3200m,
+                64000m,
+                0m,
+                0m,
+                timeProvider.GetUtcNow().UtcDateTime,
+                "Binance.SpotPrivateRest.Order",
+                Plane: ExchangeDataPlane.Spot));
+        var service = new ExecutionReconciliationService(
+            dbContext,
+            new FakeExchangeCredentialService(),
+            futuresClient,
+            spotClient,
+            lifecycleService,
+            NullLogger<ExecutionReconciliationService>.Instance);
+        var executionOrderId = new Guid("33333333-3333-3333-3333-333333333333");
+
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = executionOrderId,
+            OwnerUserId = "user-reconcile-spot",
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            ExchangeAccountId = Guid.NewGuid(),
+            Plane = ExchangeDataPlane.Spot,
+            StrategyKey = "reconcile-spot-core",
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.05m,
+            Price = 65000m,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            State = ExecutionOrderState.Submitted,
+            IdempotencyKey = $"reconcile_spot_{executionOrderId:N}",
+            RootCorrelationId = "root-reconcile-spot-correlation-1",
+            ExternalOrderId = "spot-order-1",
+            SubmittedAtUtc = new DateTime(2026, 4, 5, 11, 55, 0, DateTimeKind.Utc),
+            LastStateChangedAtUtc = new DateTime(2026, 4, 5, 11, 55, 0, DateTimeKind.Utc)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var reconciledCount = await service.RunOnceAsync();
+        var order = await dbContext.ExecutionOrders.SingleAsync(entity => entity.Id == executionOrderId);
+
+        Assert.Equal(1, reconciledCount);
+        Assert.Equal(0, futuresClient.GetOrderCalls);
+        Assert.Equal(1, spotClient.GetOrderCalls);
+        Assert.Equal(ExecutionOrderState.Filled, order.State);
     }
 
     private sealed class TestDataScopeContext : IDataScopeContext
@@ -157,6 +249,8 @@ public sealed class ExecutionReconciliationServiceTests
 
     private sealed class FakePrivateRestClient(BinanceOrderStatusSnapshot snapshot) : IBinancePrivateRestClient
     {
+        public int GetOrderCalls { get; private set; }
+
         public Task<BinanceOrderPlacementResult> PlaceOrderAsync(
             BinanceOrderPlacementRequest request,
             CancellationToken cancellationToken = default)
@@ -168,6 +262,7 @@ public sealed class ExecutionReconciliationServiceTests
             BinanceOrderQueryRequest request,
             CancellationToken cancellationToken = default)
         {
+            GetOrderCalls++;
             return Task.FromResult(snapshot);
         }
 
@@ -200,6 +295,59 @@ public sealed class ExecutionReconciliationServiceTests
             string apiKey,
             string apiSecret,
             CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+    }
+
+    private sealed class FakeSpotPrivateRestClient(BinanceOrderStatusSnapshot? snapshot = null) : IBinanceSpotPrivateRestClient
+    {
+        public int GetOrderCalls { get; private set; }
+
+        public Task<BinanceOrderPlacementResult> PlaceOrderAsync(
+            BinanceOrderPlacementRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<ExchangeAccountSnapshot> GetAccountSnapshotAsync(
+            Guid exchangeAccountId,
+            string ownerUserId,
+            string exchangeName,
+            string apiKey,
+            string apiSecret,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<BinanceOrderStatusSnapshot> GetOrderAsync(
+            BinanceOrderQueryRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            GetOrderCalls++;
+            return Task.FromResult(snapshot ?? throw new NotSupportedException());
+        }
+
+        public Task<IReadOnlyCollection<BinanceSpotTradeFillSnapshot>> GetTradeFillsAsync(
+            BinanceOrderQueryRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<string> StartListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task KeepAliveListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task CloseListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
         }

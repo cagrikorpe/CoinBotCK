@@ -73,6 +73,7 @@ public sealed class DependencyInjectionTests
         var executionOrderLifecycleService = provider.GetRequiredService<ExecutionOrderLifecycleService>();
         var executionReconciliationService = provider.GetRequiredService<ExecutionReconciliationService>();
         var virtualExecutionWatchdogService = provider.GetRequiredService<VirtualExecutionWatchdogService>();
+        var binanceSpotExecutor = provider.GetRequiredService<BinanceSpotExecutor>();
         var hostedServices = provider.GetServices<IHostedService>().ToArray();
         var healthCheckService = provider.GetRequiredService<HealthCheckService>();
         var healthCheckOptions = provider.GetRequiredService<IOptions<HealthCheckServiceOptions>>().Value;
@@ -229,6 +230,7 @@ public sealed class DependencyInjectionTests
         Assert.NotNull(executionOrderLifecycleService);
         Assert.NotNull(executionReconciliationService);
         Assert.NotNull(virtualExecutionWatchdogService);
+        Assert.NotNull(binanceSpotExecutor);
         Assert.NotNull(healthCheckService);
         Assert.Contains(healthCheckOptions.Registrations, registration => registration.Name == "data-latency");
         Assert.NotNull(tradingModeResolver);

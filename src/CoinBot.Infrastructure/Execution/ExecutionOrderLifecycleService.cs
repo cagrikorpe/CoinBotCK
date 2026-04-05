@@ -242,6 +242,7 @@ public sealed class ExecutionOrderLifecycleService(
             .IgnoreQueryFilters()
             .SingleOrDefaultAsync(
                 entity => entity.ExternalOrderId == snapshot.ExchangeOrderId &&
+                          entity.Plane == snapshot.Plane &&
                           !entity.IsDeleted,
                 cancellationToken);
     }

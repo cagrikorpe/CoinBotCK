@@ -11,6 +11,7 @@ public sealed class ExecutionReconciliationService(
     ApplicationDbContext dbContext,
     IExchangeCredentialService exchangeCredentialService,
     IBinancePrivateRestClient privateRestClient,
+    IBinanceSpotPrivateRestClient spotPrivateRestClient,
     ExecutionOrderLifecycleService executionOrderLifecycleService,
     ILogger<ExecutionReconciliationService> logger)
 {
@@ -36,6 +37,7 @@ public sealed class ExecutionReconciliationService(
             .Select(entity => new ExecutionOrderDescriptor(
                 entity.Id,
                 entity.ExchangeAccountId!.Value,
+                entity.Plane,
                 entity.Symbol,
                 entity.State,
                 entity.Quantity,
@@ -45,7 +47,7 @@ public sealed class ExecutionReconciliationService(
 
         var reconciledCount = 0;
 
-        foreach (var accountOrders in orders.GroupBy(order => order.ExchangeAccountId))
+        foreach (var accountOrders in orders.GroupBy(order => new { order.ExchangeAccountId, order.Plane }))
         {
             ExchangeCredentialAccessResult credentialAccess;
 
@@ -53,7 +55,7 @@ public sealed class ExecutionReconciliationService(
             {
                 credentialAccess = await exchangeCredentialService.GetAsync(
                     new ExchangeCredentialAccessRequest(
-                        accountOrders.Key,
+                        accountOrders.Key.ExchangeAccountId,
                         SystemActor,
                         ExchangeCredentialAccessPurpose.Synchronization),
                     cancellationToken);
@@ -70,8 +72,9 @@ public sealed class ExecutionReconciliationService(
                 }
 
                 logger.LogInformation(
-                    "Execution reconciliation skipped for account {ExchangeAccountId} because synchronization access is blocked.",
-                    accountOrders.Key);
+                    "Execution reconciliation skipped for account {ExchangeAccountId} on plane {Plane} because synchronization access is blocked.",
+                    accountOrders.Key.ExchangeAccountId,
+                    accountOrders.Key.Plane);
 
                 continue;
             }
@@ -82,7 +85,7 @@ public sealed class ExecutionReconciliationService(
 
                 try
                 {
-                    var snapshot = await privateRestClient.GetOrderAsync(
+                    var snapshot = await ResolveRestClient(order.Plane).GetOrderAsync(
                         new BinanceOrderQueryRequest(
                             order.ExchangeAccountId,
                             order.Symbol,
@@ -171,9 +174,44 @@ public sealed class ExecutionReconciliationService(
     private sealed record ExecutionOrderDescriptor(
         Guid ExecutionOrderId,
         Guid ExchangeAccountId,
+        ExchangeDataPlane Plane,
         string Symbol,
         ExecutionOrderState State,
         decimal Quantity,
         decimal FilledQuantity,
         string? ExternalOrderId);
+
+    private IBinanceOrderQueryClient ResolveRestClient(ExchangeDataPlane plane)
+    {
+        return plane == ExchangeDataPlane.Spot
+            ? new SpotOrderQueryClientAdapter(spotPrivateRestClient)
+            : new FuturesOrderQueryClientAdapter(privateRestClient);
+    }
+
+    private interface IBinanceOrderQueryClient
+    {
+        Task<BinanceOrderStatusSnapshot> GetOrderAsync(
+            BinanceOrderQueryRequest request,
+            CancellationToken cancellationToken = default);
+    }
+
+    private sealed class FuturesOrderQueryClientAdapter(IBinancePrivateRestClient inner) : IBinanceOrderQueryClient
+    {
+        public Task<BinanceOrderStatusSnapshot> GetOrderAsync(
+            BinanceOrderQueryRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            return inner.GetOrderAsync(request, cancellationToken);
+        }
+    }
+
+    private sealed class SpotOrderQueryClientAdapter(IBinanceSpotPrivateRestClient inner) : IBinanceOrderQueryClient
+    {
+        public Task<BinanceOrderStatusSnapshot> GetOrderAsync(
+            BinanceOrderQueryRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            return inner.GetOrderAsync(request, cancellationToken);
+        }
+    }
 }

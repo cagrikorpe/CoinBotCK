@@ -4,6 +4,10 @@ namespace CoinBot.Infrastructure.Exchange;
 
 public interface IBinanceSpotPrivateRestClient
 {
+    Task<BinanceOrderPlacementResult> PlaceOrderAsync(
+        BinanceOrderPlacementRequest request,
+        CancellationToken cancellationToken = default);
+
     Task<ExchangeAccountSnapshot> GetAccountSnapshotAsync(
         Guid exchangeAccountId,
         string ownerUserId,

@@ -10,6 +10,7 @@ using CoinBot.Infrastructure.Alerts;
 using CoinBot.Infrastructure.Dashboard;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
+using CoinBot.Infrastructure.Exchange;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -27,6 +28,8 @@ public sealed class ExecutionEngine(
     DemoFillSimulator demoFillSimulator,
     VirtualExecutor virtualExecutor,
     BinanceExecutor binanceExecutor,
+    BinanceSpotExecutor binanceSpotExecutor,
+    ExecutionOrderLifecycleService executionOrderLifecycleService,
     TimeProvider timeProvider,
     ILogger<ExecutionEngine> logger,
     IAlertDispatchCoordinator? alertDispatchCoordinator = null,
@@ -80,7 +83,8 @@ public sealed class ExecutionEngine(
         }
 
         var requestedEnvironment = await ResolveRequestedEnvironmentAsync(normalizedCommand, cancellationToken);
-        var executor = ResolveExecutor(requestedEnvironment);
+        var executionPlane = ResolveExecutionPlane(requestedEnvironment, normalizedCommand.Plane);
+        var executor = ResolveExecutor(requestedEnvironment, executionPlane);
         var utcNow = timeProvider.GetUtcNow().UtcDateTime;
         var order = new ExecutionOrder
         {
@@ -91,6 +95,7 @@ public sealed class ExecutionEngine(
             SignalType = normalizedCommand.SignalType,
             BotId = normalizedCommand.BotId,
             ExchangeAccountId = normalizedCommand.ExchangeAccountId,
+            Plane = executionPlane,
             StrategyKey = normalizedCommand.StrategyKey,
             Symbol = normalizedCommand.Symbol,
             Timeframe = normalizedCommand.Timeframe,
@@ -193,7 +198,8 @@ public sealed class ExecutionEngine(
                         normalizedCommand.TradingStrategyVersionId,
                         normalizedCommand.Timeframe,
                         order.Id,
-                        normalizedCommand.ReplacesExecutionOrderId),
+                        normalizedCommand.ReplacesExecutionOrderId,
+                        executionPlane),
                     cancellationToken);
 
                 if (overrideEvaluation.IsBlocked)
@@ -258,6 +264,10 @@ public sealed class ExecutionEngine(
                     transitions,
                     lastTransition,
                     cancellationToken);
+            }
+            else
+            {
+                await ApplyInitialBrokerSnapshotAsync(dispatchResult.InitialSnapshot, cancellationToken);
             }
         }
         catch (ExecutionValidationException exception)
@@ -594,6 +604,18 @@ public sealed class ExecutionEngine(
                 .ToArray());
     }
 
+    private async Task ApplyInitialBrokerSnapshotAsync(
+        BinanceOrderStatusSnapshot? initialSnapshot,
+        CancellationToken cancellationToken)
+    {
+        if (initialSnapshot is null)
+        {
+            return;
+        }
+
+        await executionOrderLifecycleService.ApplyExchangeUpdateAsync(initialSnapshot, cancellationToken);
+    }
+
     private async Task UpdateBotOpenOrderCountAsync(Guid? botId, CancellationToken cancellationToken)
     {
         if (!botId.HasValue)
@@ -672,12 +694,13 @@ public sealed class ExecutionEngine(
         CancellationToken cancellationToken)
     {
         ValidateProtectiveTargets(command);
-        await ValidateReduceOnlyOrderAsync(command, requestedEnvironment, cancellationToken);
+        await ValidateReduceOnlyOrderAsync(command, requestedEnvironment, command.Plane, cancellationToken);
     }
 
     private async Task ValidateReduceOnlyOrderAsync(
         ExecutionCommand command,
         ExecutionEnvironment requestedEnvironment,
+        ExchangeDataPlane plane,
         CancellationToken cancellationToken)
     {
         if (!command.ReduceOnly)
@@ -685,10 +708,19 @@ public sealed class ExecutionEngine(
             return;
         }
 
+        if (requestedEnvironment == ExecutionEnvironment.Live &&
+            plane == ExchangeDataPlane.Spot)
+        {
+            throw new ExecutionValidationException(
+                "SpotReduceOnlyUnsupported",
+                $"Execution blocked because reduce-only is not supported for spot order flow on {command.Symbol}.");
+        }
+
         var netQuantity = await ResolveNetPositionQuantityAsync(
             command.OwnerUserId,
             command.Symbol,
             requestedEnvironment,
+            plane,
             cancellationToken);
 
         if (netQuantity == 0m)
@@ -722,6 +754,7 @@ public sealed class ExecutionEngine(
         string ownerUserId,
         string symbol,
         ExecutionEnvironment requestedEnvironment,
+        ExchangeDataPlane plane,
         CancellationToken cancellationToken)
     {
         return requestedEnvironment == ExecutionEnvironment.Demo
@@ -738,7 +771,7 @@ public sealed class ExecutionEngine(
                 .IgnoreQueryFilters()
                 .Where(entity =>
                     entity.OwnerUserId == ownerUserId &&
-                    entity.Plane == ExchangeDataPlane.Futures &&
+                    entity.Plane == plane &&
                     entity.Symbol == symbol &&
                     !entity.IsDeleted)
                 .SumAsync(entity => entity.Quantity, cancellationToken);
@@ -775,11 +808,15 @@ public sealed class ExecutionEngine(
         order.CooldownApplied = true;
     }
 
-    private IExecutionTargetExecutor ResolveExecutor(ExecutionEnvironment requestedEnvironment)
+    private IExecutionTargetExecutor ResolveExecutor(
+        ExecutionEnvironment requestedEnvironment,
+        ExchangeDataPlane plane)
     {
         return requestedEnvironment == ExecutionEnvironment.Demo
             ? virtualExecutor
-            : binanceExecutor;
+            : plane == ExchangeDataPlane.Spot
+                ? binanceSpotExecutor
+                : binanceExecutor;
     }
 
     private static DemoTradeSide MapTradeSide(ExecutionOrderSide side)
@@ -912,6 +949,8 @@ public sealed class ExecutionEngine(
             CorrelationId = NormalizeOptional(command.CorrelationId),
             ParentCorrelationId = NormalizeOptional(command.ParentCorrelationId),
             Context = NormalizeOptional(command.Context),
+            QuoteQuantity = ValidateOptionalPositive(command.QuoteQuantity, nameof(command.QuoteQuantity)),
+            TimeInForce = NormalizeOptional(command.TimeInForce)?.ToUpperInvariant(),
             StopLossPrice = ValidateOptionalPositive(command.StopLossPrice, nameof(command.StopLossPrice)),
             TakeProfitPrice = ValidateOptionalPositive(command.TakeProfitPrice, nameof(command.TakeProfitPrice)),
             AdministrativeOverrideReason = NormalizeOptional(command.AdministrativeOverrideReason)
@@ -948,6 +987,9 @@ public sealed class ExecutionEngine(
             command.OrderType,
             command.Quantity.ToString("0.##################", CultureInfo.InvariantCulture),
             command.Price.ToString("0.##################", CultureInfo.InvariantCulture),
+            command.Plane.ToString(),
+            command.QuoteQuantity?.ToString("0.##################", CultureInfo.InvariantCulture) ?? "none",
+            command.TimeInForce ?? "default",
             command.StopLossPrice?.ToString("0.##################", CultureInfo.InvariantCulture) ?? "none",
             command.TakeProfitPrice?.ToString("0.##################", CultureInfo.InvariantCulture) ?? "none",
             command.ReduceOnly ? "true" : "false",
@@ -978,6 +1020,15 @@ public sealed class ExecutionEngine(
         }
 
         return string.Join(" | ", contextParts);
+    }
+
+    private static ExchangeDataPlane ResolveExecutionPlane(
+        ExecutionEnvironment requestedEnvironment,
+        ExchangeDataPlane requestedPlane)
+    {
+        return requestedEnvironment == ExecutionEnvironment.Demo
+            ? requestedPlane
+            : requestedPlane;
     }
 
     private static void ValidateAdministrativeOverride(ExecutionCommand command)
@@ -1116,7 +1167,8 @@ public sealed class ExecutionEngine(
         if (order.SubmittedToBroker &&
             order.ExecutionEnvironment == ExecutionEnvironment.Live)
         {
-            return hostEnvironment?.IsDevelopment() == true
+            return hostEnvironment?.IsDevelopment() == true &&
+                order.Plane == ExchangeDataPlane.Futures
                 ? ExecutionClientOrderId.CreateDevelopmentFuturesPilot(order.Id)
                 : ExecutionClientOrderId.Create(order.Id);
         }

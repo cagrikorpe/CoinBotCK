@@ -93,6 +93,7 @@ public sealed class UserExecutionOverrideGuard(
             normalizedUserId,
             normalizedSymbol,
             request.Environment,
+            request.Plane,
             request.Side,
             cancellationToken);
 
@@ -338,9 +339,16 @@ public sealed class UserExecutionOverrideGuard(
         string userId,
         string symbol,
         ExecutionEnvironment environment,
+        ExchangeDataPlane plane,
         ExecutionOrderSide side,
         CancellationToken cancellationToken)
     {
+        if (environment == ExecutionEnvironment.Live &&
+            plane == ExchangeDataPlane.Spot)
+        {
+            return false;
+        }
+
         var netQuantity = environment == ExecutionEnvironment.Demo
             ? await dbContext.DemoPositions
                 .AsNoTracking()
@@ -355,7 +363,7 @@ public sealed class UserExecutionOverrideGuard(
                 .IgnoreQueryFilters()
                 .Where(entity =>
                     entity.OwnerUserId == userId &&
-                    entity.Plane == ExchangeDataPlane.Futures &&
+                    entity.Plane == plane &&
                     entity.Symbol == symbol &&
                     !entity.IsDeleted)
                 .SumAsync(entity => entity.Quantity, cancellationToken);

@@ -3,6 +3,7 @@ using System.Text;
 using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Exchange;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.UnitTests.Infrastructure.Mfa;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -131,6 +132,133 @@ public sealed class BinanceSpotPrivateRestClientTests
         Assert.Equal("BNB", firstFill.FeeAsset);
         Assert.Equal(0.0001m, firstFill.FeeAmount);
         Assert.Equal(ExchangeDataPlane.Spot, firstFill.Plane);
+    }
+
+    [Fact]
+    public async Task PlaceOrderAsync_MapsBrokerResponse_AndSupportsQuoteOrderQty()
+    {
+        using var handler = new RecordingMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                """{"symbol":"BTCUSDT","orderId":1001,"clientOrderId":"cbs_order","status":"FILLED","origQty":"0.01","executedQty":"0.01","cummulativeQuoteQty":"650.00","transactTime":1710000000123,"fills":[{"tradeId":77,"price":"65000","qty":"0.006","commission":"0.00006","commissionAsset":"BNB"},{"tradeId":78,"price":"65000","qty":"0.004","commission":"0.00004","commissionAsset":"BNB"}]}""",
+                Encoding.UTF8,
+                "application/json")
+        });
+        using var client = new HttpClient(handler) { BaseAddress = new Uri("https://api.binance.com") };
+        var sut = CreateClient(client, new FakeSpotTimeSyncService());
+
+        var result = await sut.PlaceOrderAsync(
+            new BinanceOrderPlacementRequest(
+                Guid.NewGuid(),
+                "BTCUSDT",
+                ExecutionOrderSide.Buy,
+                ExecutionOrderType.Market,
+                0.01m,
+                65000m,
+                "cbs_order",
+                "api-key",
+                "api-secret",
+                QuoteOrderQuantity: 650m));
+
+        Assert.NotNull(handler.LastRequestUri);
+        Assert.Contains("/api/v3/order", handler.LastRequestUri!, StringComparison.Ordinal);
+        Assert.DoesNotContain("/fapi/", handler.LastRequestUri!, StringComparison.Ordinal);
+        Assert.Contains("quoteOrderQty=650", handler.LastRequestUri!, StringComparison.Ordinal);
+        Assert.DoesNotContain("quantity=", handler.LastRequestUri!, StringComparison.Ordinal);
+        Assert.NotNull(result.Snapshot);
+        Assert.Equal("FILLED", result.Snapshot!.Status);
+        Assert.Equal(0.01m, result.Snapshot.ExecutedQuantity);
+        Assert.Equal(650m, result.Snapshot.CumulativeQuoteQuantity);
+        Assert.Equal(65000m, result.Snapshot.AveragePrice);
+        Assert.Equal(78L, result.Snapshot.TradeId);
+        Assert.Equal("BNB", result.Snapshot.FeeAsset);
+        Assert.Equal(0.00010m, result.Snapshot.FeeAmount);
+        Assert.Equal(ExchangeDataPlane.Spot, result.Snapshot.Plane);
+    }
+
+    [Fact]
+    public async Task PlaceOrderAsync_RetriesTransportFailure_AndResolvesDuplicateClientOrderId()
+    {
+        var postAttempts = 0;
+        using var handler = new RecordingMessageHandler(request =>
+        {
+            if (request.Method == HttpMethod.Post)
+            {
+                postAttempts++;
+
+                if (postAttempts == 1)
+                {
+                    throw new TaskCanceledException("simulated-timeout");
+                }
+
+                return new HttpResponseMessage(HttpStatusCode.BadRequest)
+                {
+                    Content = new StringContent(
+                        """{"code":-2010,"msg":"Duplicate order sent."}""",
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """{"symbol":"BTCUSDT","orderId":1002,"clientOrderId":"cbs_retry","status":"NEW","origQty":"0.01","executedQty":"0.00","cummulativeQuoteQty":"0.00","updateTime":1710000000123}""",
+                    Encoding.UTF8,
+                    "application/json")
+            };
+        });
+        using var client = new HttpClient(handler) { BaseAddress = new Uri("https://api.binance.com") };
+        var sut = CreateClient(client, new FakeSpotTimeSyncService());
+
+        var result = await sut.PlaceOrderAsync(
+            new BinanceOrderPlacementRequest(
+                Guid.NewGuid(),
+                "BTCUSDT",
+                ExecutionOrderSide.Buy,
+                ExecutionOrderType.Market,
+                0.01m,
+                65000m,
+                "cbs_retry",
+                "api-key",
+                "api-secret"));
+
+        Assert.Equal(3, handler.Requests.Count);
+        Assert.Equal(["POST", "POST", "GET"], handler.Requests.Select(request => request.Method.Method).ToArray());
+        Assert.All(handler.Requests, request => Assert.DoesNotContain("/fapi/", request.RequestUri!.ToString(), StringComparison.Ordinal));
+        Assert.Contains("origClientOrderId=cbs_retry", handler.Requests[2].RequestUri!.ToString(), StringComparison.Ordinal);
+        Assert.Equal("1002", result.OrderId);
+        Assert.NotNull(result.Snapshot);
+        Assert.Equal("NEW", result.Snapshot!.Status);
+    }
+
+    [Fact]
+    public async Task PlaceOrderAsync_DoesNotRetryValidationFailures()
+    {
+        using var handler = new RecordingMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent(
+                """{"code":-1013,"msg":"Filter failure: LOT_SIZE"}""",
+                Encoding.UTF8,
+                "application/json")
+        });
+        using var client = new HttpClient(handler) { BaseAddress = new Uri("https://api.binance.com") };
+        var sut = CreateClient(client, new FakeSpotTimeSyncService());
+
+        var exception = await Assert.ThrowsAsync<ExecutionValidationException>(() => sut.PlaceOrderAsync(
+            new BinanceOrderPlacementRequest(
+                Guid.NewGuid(),
+                "BTCUSDT",
+                ExecutionOrderSide.Buy,
+                ExecutionOrderType.Market,
+                0.01m,
+                65000m,
+                "cbs_invalid",
+                "api-key",
+                "api-secret")));
+
+        Assert.Equal("SpotSymbolFilterViolation", exception.ReasonCode);
+        Assert.Single(handler.Requests);
     }
 
     [Fact]

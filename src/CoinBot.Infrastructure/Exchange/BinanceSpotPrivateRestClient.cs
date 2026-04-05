@@ -1,10 +1,15 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Exchange;
+using CoinBot.Infrastructure.Administration;
+using CoinBot.Infrastructure.Execution;
+using Microsoft.Extensions.DependencyInjection;
 using CoinBot.Domain.Enums;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -16,9 +21,177 @@ public sealed class BinanceSpotPrivateRestClient(
     IOptions<BinancePrivateDataOptions> options,
     TimeProvider timeProvider,
     IBinanceSpotTimeSyncService timeSyncService,
-    ILogger<BinanceSpotPrivateRestClient> logger) : IBinanceSpotPrivateRestClient
+    ILogger<BinanceSpotPrivateRestClient> logger,
+    IServiceScopeFactory? serviceScopeFactory = null) : IBinanceSpotPrivateRestClient
 {
+    private const int MaxPlacementAttempts = 2;
     private readonly BinancePrivateDataOptions optionsValue = options.Value;
+
+    public async Task<BinanceOrderPlacementResult> PlaceOrderAsync(
+        BinanceOrderPlacementRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var stopwatch = Stopwatch.StartNew();
+        var submittedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+        string? lastMaskedRequest = null;
+        string? lastMaskedResponse = null;
+        string? lastExchangeCode = null;
+        int? lastHttpStatusCode = null;
+        var traceWritten = false;
+
+        for (var attempt = 1; attempt <= MaxPlacementAttempts; attempt++)
+        {
+            try
+            {
+                var (path, maskedRequest) = await BuildPlacementPathAsync(request, cancellationToken);
+                lastMaskedRequest = maskedRequest;
+
+                using var httpRequest = CreateApiKeyRequest(HttpMethod.Post, path, request.ApiKey);
+                using var response = await SendAsync(httpRequest, cancellationToken);
+                lastHttpStatusCode = (int)response.StatusCode;
+                var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+                lastMaskedResponse = SensitivePayloadMasker.Mask(responseBody);
+                lastExchangeCode = TryReadExchangeCode(responseBody);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    using var document = JsonDocument.Parse(responseBody);
+                    var root = document.RootElement;
+                    var snapshot = BuildPlacementSnapshot(root, request.Symbol, submittedAtUtc);
+                    var result = new BinanceOrderPlacementResult(
+                        snapshot.ExchangeOrderId,
+                        snapshot.ClientOrderId,
+                        submittedAtUtc,
+                        snapshot);
+
+                    await WriteExecutionTraceAsync(
+                        request,
+                        lastMaskedRequest,
+                        lastMaskedResponse,
+                        lastHttpStatusCode,
+                        lastExchangeCode,
+                        stopwatch.ElapsedMilliseconds,
+                        cancellationToken);
+                    traceWritten = true;
+
+                    logger.LogInformation(
+                        "Binance spot order placed for account {ExchangeAccountId} on {Symbol}.",
+                        request.ExchangeAccountId,
+                        request.Symbol);
+
+                    return result;
+                }
+
+                if (IsDuplicateOrderResponse(lastExchangeCode, responseBody))
+                {
+                    var existingOrder = await TryResolveExistingOrderAsync(request, submittedAtUtc, cancellationToken);
+                    if (existingOrder is not null)
+                    {
+                        await WriteExecutionTraceAsync(
+                            request,
+                            lastMaskedRequest,
+                            lastMaskedResponse,
+                            lastHttpStatusCode,
+                            lastExchangeCode,
+                            stopwatch.ElapsedMilliseconds,
+                            cancellationToken);
+                        traceWritten = true;
+
+                        return existingOrder;
+                    }
+                }
+
+                if (TryCreateValidationException(lastHttpStatusCode.Value, lastExchangeCode, responseBody, out var validationException))
+                {
+                    await WriteExecutionTraceAsync(
+                        request,
+                        lastMaskedRequest,
+                        lastMaskedResponse,
+                        lastHttpStatusCode,
+                        lastExchangeCode,
+                        stopwatch.ElapsedMilliseconds,
+                        cancellationToken);
+                    traceWritten = true;
+
+                    throw validationException;
+                }
+
+                if (IsRetryableHttpStatus(response.StatusCode) &&
+                    attempt < MaxPlacementAttempts)
+                {
+                    continue;
+                }
+
+                await WriteExecutionTraceAsync(
+                    request,
+                    lastMaskedRequest,
+                    lastMaskedResponse,
+                    lastHttpStatusCode,
+                    lastExchangeCode,
+                    stopwatch.ElapsedMilliseconds,
+                    cancellationToken);
+                traceWritten = true;
+
+                await ThrowClockDriftAwareFailureAsync(
+                    $"Binance spot order placement request failed with status {(int)response.StatusCode}.",
+                    lastExchangeCode,
+                    responseBody,
+                    cancellationToken);
+            }
+            catch (Exception exception) when ((exception is HttpRequestException || exception is TaskCanceledException) && !cancellationToken.IsCancellationRequested)
+            {
+                if (attempt < MaxPlacementAttempts)
+                {
+                    continue;
+                }
+
+                var existingOrder = await TryResolveExistingOrderAsync(request, submittedAtUtc, cancellationToken);
+                if (existingOrder is not null)
+                {
+                    await WriteExecutionTraceAsync(
+                        request,
+                        lastMaskedRequest,
+                        lastMaskedResponse ?? SensitivePayloadMasker.Mask(exception.Message),
+                        lastHttpStatusCode,
+                        lastExchangeCode,
+                        stopwatch.ElapsedMilliseconds,
+                        cancellationToken);
+                    traceWritten = true;
+
+                    return existingOrder;
+                }
+
+                await WriteExecutionTraceAsync(
+                    request,
+                    lastMaskedRequest,
+                    lastMaskedResponse ?? SensitivePayloadMasker.Mask(exception.Message),
+                    lastHttpStatusCode,
+                    lastExchangeCode,
+                    stopwatch.ElapsedMilliseconds,
+                    cancellationToken);
+                traceWritten = true;
+
+                throw new InvalidOperationException("Binance spot order placement failed before a deterministic broker acknowledgement was received.");
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException && !traceWritten)
+            {
+                await WriteExecutionTraceAsync(
+                    request,
+                    lastMaskedRequest,
+                    lastMaskedResponse ?? SensitivePayloadMasker.Mask(exception.Message),
+                    lastHttpStatusCode,
+                    lastExchangeCode,
+                    stopwatch.ElapsedMilliseconds,
+                    cancellationToken);
+
+                throw;
+            }
+        }
+
+        throw new InvalidOperationException("Binance spot order placement failed before a deterministic broker acknowledgement was received.");
+    }
 
     public async Task<ExchangeAccountSnapshot> GetAccountSnapshotAsync(
         Guid exchangeAccountId,
@@ -238,6 +411,57 @@ public sealed class BinanceSpotPrivateRestClient(
         }
     }
 
+    private async Task<(string Path, string MaskedRequest)> BuildPlacementPathAsync(
+        BinanceOrderPlacementRequest request,
+        CancellationToken cancellationToken)
+    {
+        var timestamp = await GetTimestampAsync(cancellationToken);
+        var parameters = new List<KeyValuePair<string, string>>
+        {
+            new("symbol", NormalizeCode(request.Symbol) ?? string.Empty),
+            new("side", request.Side == ExecutionOrderSide.Buy ? "BUY" : "SELL"),
+            new("type", request.OrderType == ExecutionOrderType.Market ? "MARKET" : "LIMIT"),
+            new("newClientOrderId", request.ClientOrderId.Trim()),
+            new("newOrderRespType", "FULL"),
+            new("timestamp", timestamp),
+            new("recvWindow", optionsValue.RecvWindowMilliseconds.ToString(CultureInfo.InvariantCulture))
+        };
+
+        if (request.QuoteOrderQuantity.HasValue)
+        {
+            parameters.Add(new("quoteOrderQty", FormatDecimal(request.QuoteOrderQuantity.Value)));
+        }
+        else
+        {
+            parameters.Add(new("quantity", FormatDecimal(request.Quantity)));
+        }
+
+        if (request.OrderType == ExecutionOrderType.Limit)
+        {
+            parameters.Add(new("timeInForce", string.IsNullOrWhiteSpace(request.TimeInForce) ? "GTC" : request.TimeInForce.Trim().ToUpperInvariant()));
+            parameters.Add(new("price", FormatDecimal(request.Price)));
+        }
+
+        var unsignedQuery = string.Join(
+            "&",
+            parameters.Select(parameter =>
+                $"{parameter.Key}={Uri.EscapeDataString(parameter.Value)}"));
+        var signature = ComputeSignature(unsignedQuery, request.ApiSecret);
+        var path = $"/api/v3/order?{unsignedQuery}&signature={signature}";
+        var maskedRequest = SensitivePayloadMasker.Mask(
+            JsonSerializer.Serialize(new
+            {
+                Endpoint = path,
+                Headers = new Dictionary<string, string?>
+                {
+                    ["X-MBX-APIKEY"] = request.ApiKey,
+                    ["Authorization"] = "BinanceApiKey"
+                }
+            })) ?? "request=missing";
+
+        return (path, maskedRequest);
+    }
+
     private static HttpRequestMessage CreateApiKeyRequest(HttpMethod method, string path, string apiKey)
     {
         var request = new HttpRequestMessage(method, path);
@@ -273,6 +497,40 @@ public sealed class BinanceSpotPrivateRestClient(
         }
 
         throw new InvalidOperationException(defaultMessage);
+    }
+
+    private async Task<BinanceOrderPlacementResult?> TryResolveExistingOrderAsync(
+        BinanceOrderPlacementRequest request,
+        DateTime submittedAtUtc,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var snapshot = await GetOrderAsync(
+                new BinanceOrderQueryRequest(
+                    request.ExchangeAccountId,
+                    request.Symbol,
+                    ExchangeOrderId: null,
+                    ClientOrderId: request.ClientOrderId,
+                    ApiKey: request.ApiKey,
+                    ApiSecret: request.ApiSecret),
+                cancellationToken);
+
+            return new BinanceOrderPlacementResult(
+                snapshot.ExchangeOrderId,
+                snapshot.ClientOrderId,
+                submittedAtUtc,
+                snapshot);
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or BinanceClockDriftException)
+        {
+            logger.LogWarning(
+                exception,
+                "Binance spot existing-order resolution failed for client order id {ClientOrderId}.",
+                request.ClientOrderId);
+
+            return null;
+        }
     }
 
     private static string ComputeSignature(string payload, string secret)
@@ -340,6 +598,61 @@ public sealed class BinanceSpotPrivateRestClient(
             .ToArray();
     }
 
+    private static BinanceOrderStatusSnapshot BuildPlacementSnapshot(
+        JsonElement root,
+        string requestedSymbol,
+        DateTime observedAtUtc)
+    {
+        var baseSnapshot = BuildOrderStatusSnapshot(
+            root,
+            requestedSymbol,
+            observedAtUtc,
+            "Binance.SpotPrivateRest.OrderPlacement");
+
+        if (!root.TryGetProperty("fills", out var fillsElement) ||
+            fillsElement.ValueKind != JsonValueKind.Array)
+        {
+            return baseSnapshot;
+        }
+
+        var fillSnapshots = fillsElement
+            .EnumerateArray()
+            .Select(element => BuildTradeFillSnapshot(
+                element,
+                requestedSymbol,
+                baseSnapshot.ExchangeOrderId,
+                baseSnapshot.ClientOrderId,
+                observedAtUtc,
+                "Binance.SpotPrivateRest.OrderPlacement.Fill"))
+            .Where(snapshot => snapshot is not null)
+            .Cast<BinanceSpotTradeFillSnapshot>()
+            .ToArray();
+
+        if (fillSnapshots.Length == 0)
+        {
+            return baseSnapshot;
+        }
+
+        var lastFill = fillSnapshots[^1];
+        var feeAsset = fillSnapshots
+            .Select(fill => fill.FeeAsset)
+            .Where(asset => !string.IsNullOrWhiteSpace(asset))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var feeAmount = feeAsset.Length == 1
+            ? fillSnapshots.Where(fill => fill.FeeAmount.HasValue).Sum(fill => fill.FeeAmount!.Value)
+            : (decimal?)null;
+
+        return baseSnapshot with
+        {
+            LastExecutedQuantity = lastFill.Quantity,
+            LastExecutedPrice = lastFill.Price,
+            TradeId = lastFill.TradeId,
+            FeeAsset = feeAsset.Length == 1 ? feeAsset[0] : null,
+            FeeAmount = feeAmount
+        };
+    }
+
     private static BinanceOrderStatusSnapshot BuildOrderStatusSnapshot(
         JsonElement root,
         string requestedSymbol,
@@ -402,9 +715,7 @@ public sealed class BinanceSpotPrivateRestClient(
         DateTime fallbackTimestampUtc,
         string source)
     {
-        var tradeId = root.TryGetProperty("id", out var tradeIdElement) && tradeIdElement.TryGetInt64(out var parsedTradeId)
-            ? parsedTradeId
-            : (long?)null;
+        var tradeId = TryReadTradeId(root);
         var quantity = TryReadDecimal(root, "qty");
         var quoteQuantity = TryReadDecimal(root, "quoteQty");
         var price = TryReadDecimal(root, "price");
@@ -416,11 +727,12 @@ public sealed class BinanceSpotPrivateRestClient(
 
         if (!tradeId.HasValue ||
             quantity is null ||
-            quoteQuantity is null ||
             price is null)
         {
             return null;
         }
+
+        var resolvedQuoteQuantity = quoteQuantity ?? (quantity.Value * price.Value);
 
         return new BinanceSpotTradeFillSnapshot(
             NormalizeCode(requestedSymbol) ?? requestedSymbol.Trim(),
@@ -428,7 +740,7 @@ public sealed class BinanceSpotPrivateRestClient(
             clientOrderId,
             tradeId.Value,
             quantity.Value,
-            quoteQuantity.Value,
+            resolvedQuoteQuantity,
             price.Value,
             feeAsset,
             feeAmount,
@@ -542,5 +854,132 @@ public sealed class BinanceSpotPrivateRestClient(
         return string.Equals(exchangeCode, "-1021", StringComparison.Ordinal) ||
                exchangeMessage?.Contains("timestamp", StringComparison.OrdinalIgnoreCase) == true ||
                exchangeMessage?.Contains("recvWindow", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    private static bool IsRetryableHttpStatus(HttpStatusCode statusCode)
+    {
+        return (int)statusCode >= 500;
+    }
+
+    private static bool IsDuplicateOrderResponse(string? exchangeCode, string? responseBody)
+    {
+        var exchangeMessage = TryReadExchangeMessage(responseBody);
+
+        return string.Equals(exchangeCode, "-2010", StringComparison.Ordinal) &&
+               (exchangeMessage?.Contains("duplicate", StringComparison.OrdinalIgnoreCase) == true ||
+                exchangeMessage?.Contains("client order id", StringComparison.OrdinalIgnoreCase) == true);
+    }
+
+    private static bool TryCreateValidationException(
+        int httpStatusCode,
+        string? exchangeCode,
+        string? responseBody,
+        out ExecutionValidationException exception)
+    {
+        var exchangeMessage = TryReadExchangeMessage(responseBody) ?? "Binance spot order was rejected.";
+
+        if ((httpStatusCode == 400 || httpStatusCode == 409) &&
+            (exchangeMessage.Contains("insufficient balance", StringComparison.OrdinalIgnoreCase) ||
+             exchangeMessage.Contains("account has insufficient balance", StringComparison.OrdinalIgnoreCase)))
+        {
+            exception = new ExecutionValidationException(
+                "SpotInsufficientBalance",
+                "Execution blocked because Binance reported insufficient spot balance for the order.");
+            return true;
+        }
+
+        if ((httpStatusCode == 400 || httpStatusCode == 409) &&
+            (string.Equals(exchangeCode, "-1013", StringComparison.Ordinal) ||
+             exchangeMessage.Contains("filter failure", StringComparison.OrdinalIgnoreCase) ||
+             exchangeMessage.Contains("min notional", StringComparison.OrdinalIgnoreCase) ||
+             exchangeMessage.Contains("lot size", StringComparison.OrdinalIgnoreCase) ||
+             exchangeMessage.Contains("price filter", StringComparison.OrdinalIgnoreCase) ||
+             exchangeMessage.Contains("precision", StringComparison.OrdinalIgnoreCase)))
+        {
+            exception = new ExecutionValidationException(
+                "SpotSymbolFilterViolation",
+                "Execution blocked because Binance rejected the spot order against symbol filters.");
+            return true;
+        }
+
+        if ((httpStatusCode == 400 || httpStatusCode == 409) &&
+            !string.IsNullOrWhiteSpace(exchangeCode))
+        {
+            exception = new ExecutionValidationException(
+                "SpotBrokerValidationRejected",
+                "Execution blocked because Binance rejected the spot order request.");
+            return true;
+        }
+
+        exception = new ExecutionValidationException("unreachable");
+        return false;
+    }
+
+    private Task WriteExecutionTraceAsync(
+        BinanceOrderPlacementRequest request,
+        string? maskedRequest,
+        string? maskedResponse,
+        int? httpStatusCode,
+        string? exchangeCode,
+        long latencyMs,
+        CancellationToken cancellationToken)
+    {
+        return WriteExecutionTraceAsync(
+            new ExecutionTraceWriteRequest(
+                request.CommandId ?? request.ClientOrderId,
+                request.UserId ?? "system:unknown",
+                "Binance.SpotPrivateRest",
+                "/api/v3/order",
+                maskedRequest,
+                maskedResponse,
+                request.CorrelationId,
+                request.ExecutionAttemptId,
+                request.ExecutionOrderId,
+                httpStatusCode,
+                exchangeCode,
+                latencyMs > int.MaxValue ? int.MaxValue : (int)latencyMs),
+            cancellationToken);
+    }
+
+    private async Task WriteExecutionTraceAsync(
+        ExecutionTraceWriteRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (serviceScopeFactory is null)
+        {
+            return;
+        }
+
+        await using var scope = serviceScopeFactory.CreateAsyncScope();
+        var traceService = scope.ServiceProvider.GetService<ITraceService>();
+
+        if (traceService is null)
+        {
+            return;
+        }
+
+        await traceService.WriteExecutionTraceAsync(request, cancellationToken);
+    }
+
+    private static string FormatDecimal(decimal value)
+    {
+        return value.ToString("0.##################", CultureInfo.InvariantCulture);
+    }
+
+    private static long? TryReadTradeId(JsonElement element)
+    {
+        if (element.TryGetProperty("tradeId", out var tradeIdElement) &&
+            tradeIdElement.TryGetInt64(out var tradeId))
+        {
+            return tradeId;
+        }
+
+        if (element.TryGetProperty("id", out var idElement) &&
+            idElement.TryGetInt64(out var id))
+        {
+            return id;
+        }
+
+        return null;
     }
 }

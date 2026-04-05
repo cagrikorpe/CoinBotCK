@@ -17,10 +17,12 @@ public sealed record BinanceOrderPlacementRequest(
     string? ExecutionAttemptId = null,
     Guid? ExecutionOrderId = null,
     string? UserId = null,
-    bool ReduceOnly = false)
+    bool ReduceOnly = false,
+    decimal? QuoteOrderQuantity = null,
+    string? TimeInForce = null)
 {
     public override string ToString()
     {
-        return $"{nameof(BinanceOrderPlacementRequest)} {{ ExchangeAccountId = {ExchangeAccountId}, Symbol = {Symbol}, Side = {Side}, OrderType = {OrderType}, Quantity = {Quantity}, Price = {Price}, ClientOrderId = {ClientOrderId}, CommandId = {CommandId ?? "missing"}, CorrelationId = {CorrelationId ?? "missing"}, ExecutionAttemptId = {ExecutionAttemptId ?? "missing"}, ExecutionOrderId = {ExecutionOrderId?.ToString() ?? "missing"}, UserId = {UserId ?? "missing"}, ReduceOnly = {ReduceOnly}, ApiKey = ***REDACTED***, ApiSecret = ***REDACTED*** }}";
+        return $"{nameof(BinanceOrderPlacementRequest)} {{ ExchangeAccountId = {ExchangeAccountId}, Symbol = {Symbol}, Side = {Side}, OrderType = {OrderType}, Quantity = {Quantity}, Price = {Price}, ClientOrderId = {ClientOrderId}, CommandId = {CommandId ?? "missing"}, CorrelationId = {CorrelationId ?? "missing"}, ExecutionAttemptId = {ExecutionAttemptId ?? "missing"}, ExecutionOrderId = {ExecutionOrderId?.ToString() ?? "missing"}, UserId = {UserId ?? "missing"}, ReduceOnly = {ReduceOnly}, QuoteOrderQuantity = {QuoteOrderQuantity?.ToString() ?? "missing"}, TimeInForce = {TimeInForce ?? "missing"}, ApiKey = ***REDACTED***, ApiSecret = ***REDACTED*** }}";
     }
 }

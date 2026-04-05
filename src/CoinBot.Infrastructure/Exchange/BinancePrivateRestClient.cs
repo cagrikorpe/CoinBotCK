@@ -192,6 +192,7 @@ public sealed class BinancePrivateRestClient(
             var clientOrderId = root.TryGetProperty("clientOrderId", out var clientOrderIdElement)
                 ? clientOrderIdElement.GetString()?.Trim()
                 : request.ClientOrderId;
+            var snapshot = TryBuildPlacementSnapshot(root, request.Symbol, submittedAtUtc);
 
             await WriteExecutionTraceAsync(
                 request,
@@ -211,7 +212,8 @@ public sealed class BinancePrivateRestClient(
             return new BinanceOrderPlacementResult(
                 string.IsNullOrWhiteSpace(orderId) ? request.ClientOrderId : orderId,
                 string.IsNullOrWhiteSpace(clientOrderId) ? request.ClientOrderId : clientOrderId,
-                submittedAtUtc);
+                submittedAtUtc,
+                snapshot);
         }
         catch (Exception exception) when (exception is not OperationCanceledException && !traceWritten)
         {
@@ -911,6 +913,18 @@ public sealed class BinancePrivateRestClient(
             LastExecutedPrice: 0m,
             updatedAtUtc,
             source);
+    }
+
+    private static BinanceOrderStatusSnapshot? TryBuildPlacementSnapshot(
+        JsonElement root,
+        string requestedSymbol,
+        DateTime observedAtUtc)
+    {
+        return root.TryGetProperty("status", out _) &&
+               root.TryGetProperty("orderId", out _) &&
+               root.TryGetProperty("clientOrderId", out _)
+            ? BuildOrderStatusSnapshot(root, requestedSymbol, observedAtUtc, "Binance.PrivateRest.OrderPlacement")
+            : null;
     }
 
     private static string? TryReadExchangeCode(string? responseBody)
