@@ -3,6 +3,7 @@ using CoinBot.Application.Abstractions.Bots;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Dashboard;
+using CoinBot.Infrastructure.Mfa;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.Infrastructure.Strategies;
 using Microsoft.EntityFrameworkCore;
@@ -13,6 +14,7 @@ namespace CoinBot.Infrastructure.Jobs;
 public sealed class BotManagementService(
     ApplicationDbContext dbContext,
     IBotPilotControlService botPilotControlService,
+    ICriticalUserOperationAuthorizer criticalUserOperationAuthorizer,
     TimeProvider timeProvider,
     IOptions<BotExecutionPilotOptions> options,
     UserOperationsStreamHub? userOperationsStreamHub = null) : IBotManagementService
@@ -23,7 +25,7 @@ public sealed class BotManagementService(
 
     public async Task<BotManagementPageSnapshot> GetPageAsync(string ownerUserId, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(ownerUserId);
+        ownerUserId = dbContext.EnsureCurrentUserScope(ownerUserId);
 
         var bots = await dbContext.TradingBots
             .AsNoTracking()
@@ -200,7 +202,7 @@ public sealed class BotManagementService(
 
     public async Task<BotManagementEditorSnapshot> GetCreateEditorAsync(string ownerUserId, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(ownerUserId);
+        ownerUserId = dbContext.EnsureCurrentUserScope(ownerUserId);
 
         var draft = new BotManagementDraftSnapshot(
             Name: string.Empty,
@@ -217,7 +219,7 @@ public sealed class BotManagementService(
 
     public async Task<BotManagementEditorSnapshot?> GetEditEditorAsync(string ownerUserId, Guid botId, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(ownerUserId);
+        ownerUserId = dbContext.EnsureCurrentUserScope(ownerUserId);
 
         var bot = await dbContext.TradingBots
             .AsNoTracking()
@@ -253,7 +255,7 @@ public sealed class BotManagementService(
         string? correlationId = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(ownerUserId);
+        ownerUserId = dbContext.EnsureCurrentUserScope(ownerUserId);
         ArgumentException.ThrowIfNullOrWhiteSpace(actor);
 
         var validationError = await ValidateCommandAsync(ownerUserId, null, command, cancellationToken);
@@ -261,6 +263,26 @@ public sealed class BotManagementService(
         if (validationError is not null)
         {
             return validationError;
+        }
+
+        var authorization = await criticalUserOperationAuthorizer.AuthorizeAsync(
+            new CriticalUserOperationAuthorizationRequest(
+                ownerUserId,
+                actor,
+                "Bots.Create",
+                $"User/{ownerUserId}/Bots",
+                correlationId),
+            cancellationToken);
+
+        if (!authorization.IsAuthorized)
+        {
+            return new BotManagementSaveResult(
+                null,
+                false,
+                false,
+                false,
+                authorization.FailureCode,
+                authorization.FailureReason);
         }
 
         var bot = new TradingBot
@@ -300,7 +322,7 @@ public sealed class BotManagementService(
         string? correlationId = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(ownerUserId);
+        ownerUserId = dbContext.EnsureCurrentUserScope(ownerUserId);
         ArgumentException.ThrowIfNullOrWhiteSpace(actor);
 
         var bot = await dbContext.TradingBots
@@ -314,6 +336,26 @@ public sealed class BotManagementService(
         if (bot is null)
         {
             return new BotManagementSaveResult(null, false, false, false, "BotNotFound", "Bot bulunamadı.");
+        }
+
+        var authorization = await criticalUserOperationAuthorizer.AuthorizeAsync(
+            new CriticalUserOperationAuthorizationRequest(
+                ownerUserId,
+                actor,
+                "Bots.Update",
+                $"TradingBot/{bot.Id:D}",
+                correlationId),
+            cancellationToken);
+
+        if (!authorization.IsAuthorized)
+        {
+            return new BotManagementSaveResult(
+                bot.Id,
+                false,
+                false,
+                bot.IsEnabled,
+                authorization.FailureCode,
+                authorization.FailureReason);
         }
 
         var validationError = await ValidateCommandAsync(ownerUserId, botId, command, cancellationToken);

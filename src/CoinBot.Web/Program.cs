@@ -2,6 +2,7 @@ using System.Diagnostics;
 using CoinBot.Infrastructure;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
+using CoinBot.Contracts.Common;
 using CoinBot.Web.Hubs;
 using Microsoft.Data.SqlClient;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -112,12 +113,17 @@ try
     app.UseAuthentication();
     app.UseAuthorization();
 
-    app.MapHealthChecks("/health", CreateHealthCheckOptions(static _ => true));
+    app.MapHealthChecks("/health", CreateHealthCheckOptions(static _ => true))
+        .RequireAuthorization(ApplicationPolicies.AdminPortalAccess);
     app.MapHealthChecks("/health/live", CreateHealthCheckOptions(static registration => registration.Tags.Contains("live")));
-    app.MapHealthChecks("/health/ready", CreateHealthCheckOptions(static registration => registration.Tags.Contains("ready")));
-    app.MapHealthChecks("/health/market", CreateHealthCheckOptions(static registration => registration.Tags.Contains("market")));
-    app.MapHealthChecks("/health/data-latency", CreateHealthCheckOptions(static registration => registration.Tags.Contains("data-latency")));
-    app.MapHealthChecks("/health/demo-engine", CreateHealthCheckOptions(static registration => registration.Tags.Contains("demo-engine")));
+    app.MapHealthChecks("/health/ready", CreateHealthCheckOptions(static registration => registration.Tags.Contains("ready")))
+        .RequireAuthorization(ApplicationPolicies.AdminPortalAccess);
+    app.MapHealthChecks("/health/market", CreateHealthCheckOptions(static registration => registration.Tags.Contains("market")))
+        .RequireAuthorization(ApplicationPolicies.AdminPortalAccess);
+    app.MapHealthChecks("/health/data-latency", CreateHealthCheckOptions(static registration => registration.Tags.Contains("data-latency")))
+        .RequireAuthorization(ApplicationPolicies.AdminPortalAccess);
+    app.MapHealthChecks("/health/demo-engine", CreateHealthCheckOptions(static registration => registration.Tags.Contains("demo-engine")))
+        .RequireAuthorization(ApplicationPolicies.AdminPortalAccess);
 
     app.MapStaticAssets();
 

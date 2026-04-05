@@ -557,7 +557,7 @@ public sealed class StrategyTemplateCatalogService(
         cancellationToken.ThrowIfCancellationRequested();
         EnsurePersistenceAvailable();
 
-        var normalizedOwnerUserId = NormalizeRequired(ownerUserId, 450, nameof(ownerUserId));
+        var normalizedOwnerUserId = dbContext!.EnsureCurrentUserScope(ownerUserId);
         var normalizedTemplateKey = NormalizeTemplateKey(templateKey, nameof(templateKey));
         var normalizedTemplateName = NormalizeRequired(templateName, 128, nameof(templateName));
         var normalizedDescription = NormalizeRequired(description, 512, nameof(description));

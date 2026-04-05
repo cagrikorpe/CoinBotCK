@@ -3,6 +3,7 @@ using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.Infrastructure.Strategies;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace CoinBot.UnitTests.Infrastructure.Strategies;
 
@@ -220,6 +221,50 @@ public sealed class StrategyTemplateCatalogServiceTests
         Assert.Empty(await dbContext.TradingStrategyTemplates.ToListAsync());
     }
 
+    [Fact]
+    public async Task ListAsync_AndGetAsync_DoNotLeakCustomTemplatesAcrossUserScope()
+    {
+        var databaseName = Guid.NewGuid().ToString("N");
+        var databaseRoot = new InMemoryDatabaseRoot();
+
+        await using (var ownerContext = CreateDbContext("template-owner-a", hasIsolationBypass: false, databaseName: databaseName, databaseRoot: databaseRoot))
+        {
+            var ownerService = CreateService(ownerContext);
+            _ = await ownerService.CreateCustomAsync(
+                "template-owner-a",
+                "isolated-template",
+                "Isolated Template",
+                "Owner A only.",
+                "Custom",
+                CreateTemplateDefinitionJson());
+        }
+
+        await using var foreignContext = CreateDbContext("template-owner-b", hasIsolationBypass: false, databaseName: databaseName, databaseRoot: databaseRoot);
+        var foreignService = CreateService(foreignContext);
+
+        var templates = await foreignService.ListAsync();
+
+        Assert.DoesNotContain(templates, template => template.TemplateKey == "isolated-template");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => foreignService.GetAsync("isolated-template"));
+    }
+
+    [Fact]
+    public async Task CreateCustomAsync_RejectsRequestedOwnerOutsideCurrentScope()
+    {
+        await using var dbContext = CreateDbContext("template-owner-a", hasIsolationBypass: false);
+        var service = CreateService(dbContext);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => service.CreateCustomAsync(
+            "template-owner-b",
+            "cross-scope-template",
+            "Cross Scope Template",
+            "Should fail.",
+            "Custom",
+            CreateTemplateDefinitionJson()));
+
+        Assert.Contains("outside the authenticated isolation boundary", exception.Message, StringComparison.Ordinal);
+    }
+
     private static StrategyTemplateCatalogService CreateService(ApplicationDbContext dbContext)
     {
         return new StrategyTemplateCatalogService(
@@ -228,13 +273,17 @@ public sealed class StrategyTemplateCatalogServiceTests
             dbContext);
     }
 
-    private static ApplicationDbContext CreateDbContext()
+    private static ApplicationDbContext CreateDbContext(
+        string? userId = null,
+        bool hasIsolationBypass = true,
+        string? databaseName = null,
+        InMemoryDatabaseRoot? databaseRoot = null)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+            .UseInMemoryDatabase(databaseName ?? Guid.NewGuid().ToString("N"), databaseRoot)
             .Options;
 
-        return new ApplicationDbContext(options, new TestDataScopeContext());
+        return new ApplicationDbContext(options, new TestDataScopeContext(userId, hasIsolationBypass));
     }
 
     private static string CreateTemplateDefinitionJson(string timeframe = "1m", bool latencyRule = false)
@@ -293,10 +342,10 @@ public sealed class StrategyTemplateCatalogServiceTests
             """;
     }
 
-    private sealed class TestDataScopeContext : IDataScopeContext
+    private sealed class TestDataScopeContext(string? userId, bool hasIsolationBypass) : IDataScopeContext
     {
-        public string? UserId => null;
+        public string? UserId => userId;
 
-        public bool HasIsolationBypass => true;
+        public bool HasIsolationBypass => hasIsolationBypass;
     }
 }

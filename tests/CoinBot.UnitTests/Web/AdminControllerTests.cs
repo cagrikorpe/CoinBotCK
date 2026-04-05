@@ -5,6 +5,7 @@ using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Application.Abstractions.Policy;
 using CoinBot.Contracts.Common;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Mfa;
 using CoinBot.Web.Areas.Admin.Controllers;
 using CoinBot.Web.ViewModels.Admin;
 using Microsoft.AspNetCore.Http;
@@ -437,6 +438,44 @@ public sealed class AdminControllerTests
         Assert.Null(commandRegistry.LastStartRequest);
         Assert.Empty(auditLogService.Requests);
         Assert.Equal("Audit reason zorunludur.", controller.TempData["AdminExecutionSwitchError"]);
+    }
+
+    [Fact]
+    public async Task SetTradeMasterState_WhenAdminMfaIsRequired_FailsClosedWithoutCallingServices()
+    {
+        var switchService = new FakeGlobalExecutionSwitchService();
+        var stateService = new FakeGlobalSystemStateService();
+        var commandRegistry = new FakeAdminCommandRegistry();
+        var auditLogService = new FakeAdminAuditLogService();
+        var criticalUserOperationAuthorizer = new FakeCriticalUserOperationAuthorizer
+        {
+            Result = new CriticalUserOperationAuthorizationResult(
+                false,
+                "MfaRequired",
+                "Bu islem icin MFA zorunludur.")
+        };
+        var controller = CreateController(
+            switchService,
+            stateService,
+            commandRegistry,
+            auditLogService,
+            criticalUserOperationAuthorizer: criticalUserOperationAuthorizer,
+            roles: [ApplicationRoles.SuperAdmin]);
+
+        var result = await controller.SetTradeMasterState(
+            isArmed: true,
+            reason: "Controlled enablement",
+            commandId: "cmd-trade-mfa",
+            reauthToken: null,
+            cancellationToken: CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+
+        Assert.Equal(nameof(AdminController.Settings), redirectResult.ActionName);
+        Assert.Empty(switchService.TradeMasterCalls);
+        Assert.Null(commandRegistry.LastStartRequest);
+        Assert.Equal("Bu islem icin MFA zorunludur.", controller.TempData["AdminExecutionSwitchError"]);
+        Assert.Single(criticalUserOperationAuthorizer.Requests);
     }
 
     [Fact]
@@ -1416,6 +1455,7 @@ public sealed class AdminControllerTests
         FakeTraceService? traceService = null,
         FakeApiCredentialValidationService? apiCredentialValidationService = null,
         FakeAdminWorkspaceReadModelService? workspaceReadModelService = null,
+        FakeCriticalUserOperationAuthorizer? criticalUserOperationAuthorizer = null,
         FakeApprovalWorkflowService? approvalWorkflowService = null,
         FakeAdminGovernanceReadModelService? governanceReadModelService = null,
         FakeAdminMonitoringReadModelService? monitoringReadModelService = null,
@@ -1458,6 +1498,7 @@ public sealed class AdminControllerTests
             traceService: traceService ?? new FakeTraceService(),
             apiCredentialValidationService: apiCredentialValidationService ?? new FakeApiCredentialValidationService(),
             adminWorkspaceReadModelService: workspaceReadModelService ?? new FakeAdminWorkspaceReadModelService(),
+            criticalUserOperationAuthorizer: criticalUserOperationAuthorizer ?? new FakeCriticalUserOperationAuthorizer(),
             approvalWorkflowService: approvalWorkflowService,
             adminGovernanceReadModelService: governanceReadModelService,
             adminMonitoringReadModelService: monitoringReadModelService ?? new FakeAdminMonitoringReadModelService(),
@@ -1987,6 +2028,22 @@ public sealed class AdminControllerTests
         public Task<MonitoringDashboardSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
         {
             return Task.FromResult(Snapshot);
+        }
+    }
+
+    private sealed class FakeCriticalUserOperationAuthorizer : ICriticalUserOperationAuthorizer
+    {
+        public CriticalUserOperationAuthorizationResult Result { get; set; } =
+            new(true, null, null);
+
+        public List<CriticalUserOperationAuthorizationRequest> Requests { get; } = [];
+
+        public Task<CriticalUserOperationAuthorizationResult> AuthorizeAsync(
+            CriticalUserOperationAuthorizationRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            Requests.Add(request);
+            return Task.FromResult(Result);
         }
     }
 

@@ -5,6 +5,7 @@ using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
 using CoinBot.Infrastructure.Exchange;
 using CoinBot.Infrastructure.Identity;
+using CoinBot.Infrastructure.Mfa;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using System.Net.Http;
@@ -17,13 +18,14 @@ public sealed class UserExchangeCommandCenterService(
     IExchangeCredentialService exchangeCredentialService,
     ITradingModeResolver tradingModeResolver,
     IBinanceCredentialProbeClient binanceCredentialProbeClient,
+    ICriticalUserOperationAuthorizer criticalUserOperationAuthorizer,
     TimeProvider timeProvider) : IUserExchangeCommandCenterService
 {
     public async Task<UserExchangeCommandCenterSnapshot> GetSnapshotAsync(
         string userId,
         CancellationToken cancellationToken = default)
     {
-        var normalizedUserId = NormalizeRequired(userId, nameof(userId));
+        var normalizedUserId = dbContext.EnsureCurrentUserScope(userId);
         var user = await dbContext.Users
             .AsNoTracking()
             .SingleOrDefaultAsync(entity => entity.Id == normalizedUserId, cancellationToken)
@@ -113,6 +115,30 @@ public sealed class UserExchangeCommandCenterService(
         var normalizedApiKey = NormalizeRequired(request.ApiKey, nameof(request.ApiKey));
         var normalizedApiSecret = NormalizeRequired(request.ApiSecret, nameof(request.ApiSecret));
         var normalizedActor = NormalizeRequired(request.Actor, nameof(request.Actor));
+        var authorization = await criticalUserOperationAuthorizer.AuthorizeAsync(
+            new CriticalUserOperationAuthorizationRequest(
+                normalizedUserId,
+                normalizedActor,
+                "ExchangeCredentials.ConnectBinance",
+                request.ExchangeAccountId.HasValue
+                    ? $"ExchangeAccount/{request.ExchangeAccountId.Value:D}"
+                    : $"User/{normalizedUserId}/ExchangeCredentials",
+                request.CorrelationId),
+            cancellationToken);
+
+        if (!authorization.IsAuthorized)
+        {
+            return new ConnectUserBinanceCredentialResult(
+                request.ExchangeAccountId ?? Guid.Empty,
+                false,
+                "Reddedildi",
+                "critical",
+                authorization.FailureReason ?? "Binance API anahtari guvenlik geregi reddedildi.",
+                authorization.FailureReason ?? "Binance API anahtari guvenlik geregi reddedildi.",
+                "Trade=?; Withdraw=?; Spot=?; Futures=?; Env=Unknown",
+                request.RequestedEnvironment.ToString());
+        }
+
         var resolution = await tradingModeResolver.ResolveAsync(
             new TradingModeResolutionRequest(UserId: normalizedUserId),
             cancellationToken);

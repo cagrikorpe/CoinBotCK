@@ -2,6 +2,7 @@ using CoinBot.Application.Abstractions.Bots;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Dashboard;
+using CoinBot.Infrastructure.Mfa;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.Infrastructure.Strategies;
 using Microsoft.EntityFrameworkCore;
@@ -11,6 +12,7 @@ namespace CoinBot.Infrastructure.Jobs;
 
 public sealed class BotPilotControlService(
     ApplicationDbContext dbContext,
+    ICriticalUserOperationAuthorizer criticalUserOperationAuthorizer,
     TimeProvider timeProvider,
     IOptions<BotExecutionPilotOptions> options,
     UserOperationsStreamHub? userOperationsStreamHub = null) : IBotPilotControlService
@@ -25,7 +27,7 @@ public sealed class BotPilotControlService(
         string? correlationId = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(ownerUserId);
+        ownerUserId = dbContext.EnsureCurrentUserScope(ownerUserId);
         ArgumentException.ThrowIfNullOrWhiteSpace(actor);
 
         var bot = await dbContext.TradingBots
@@ -39,6 +41,24 @@ public sealed class BotPilotControlService(
         if (bot is null)
         {
             return Failure(botId, isEnabled, "BotNotFound", "Bot bulunamadı.");
+        }
+
+        var authorization = await criticalUserOperationAuthorizer.AuthorizeAsync(
+            new CriticalUserOperationAuthorizationRequest(
+                ownerUserId,
+                actor,
+                "Bots.SetEnabled",
+                $"TradingBot/{bot.Id:D}",
+                correlationId),
+            cancellationToken);
+
+        if (!authorization.IsAuthorized)
+        {
+            return Failure(
+                bot.Id,
+                bot.IsEnabled,
+                authorization.FailureCode ?? "MfaRequired",
+                authorization.FailureReason ?? "Bu islem icin MFA zorunludur.");
         }
 
         if (bot.IsEnabled == isEnabled)

@@ -10,6 +10,7 @@ using CoinBot.Application.Abstractions.Policy;
 using CoinBot.Contracts.Common;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
+using CoinBot.Infrastructure.Mfa;
 using CoinBot.Web.ViewModels.Admin;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -50,6 +51,7 @@ public sealed class AdminController : Controller
     private readonly IAdminMonitoringReadModelService? adminMonitoringReadModelService;
     private readonly IApprovalWorkflowService? approvalWorkflowService;
     private readonly ICrisisEscalationService? crisisEscalationService;
+    private readonly ICriticalUserOperationAuthorizer criticalUserOperationAuthorizer;
     private readonly ILogCenterRetentionService? logCenterRetentionService;
     private readonly IGlobalPolicyEngine? globalPolicyEngine;
     private readonly IGlobalExecutionSwitchService globalExecutionSwitchService;
@@ -64,6 +66,7 @@ public sealed class AdminController : Controller
         ITraceService traceService,
         IApiCredentialValidationService apiCredentialValidationService,
         IAdminWorkspaceReadModelService adminWorkspaceReadModelService,
+        ICriticalUserOperationAuthorizer criticalUserOperationAuthorizer,
         IApprovalWorkflowService? approvalWorkflowService = null,
         IAdminGovernanceReadModelService? adminGovernanceReadModelService = null,
         IAdminMonitoringReadModelService? adminMonitoringReadModelService = null,
@@ -78,6 +81,7 @@ public sealed class AdminController : Controller
         this.traceService = traceService;
         this.apiCredentialValidationService = apiCredentialValidationService;
         this.adminWorkspaceReadModelService = adminWorkspaceReadModelService;
+        this.criticalUserOperationAuthorizer = criticalUserOperationAuthorizer;
         this.approvalWorkflowService = approvalWorkflowService;
         this.adminGovernanceReadModelService = adminGovernanceReadModelService;
         this.adminMonitoringReadModelService = adminMonitoringReadModelService;
@@ -131,6 +135,19 @@ public sealed class AdminController : Controller
             return LocalRedirect(targetReturnUrl);
         }
 
+        adminAuditLogService.WriteAsync(
+                BuildAdminAuditLogWriteRequest(
+                    ResolveAdminUserId(),
+                    "Admin.Security.AccessDenied",
+                    "AdminPortal",
+                    targetReturnUrl,
+                    oldValueSummary: null,
+                    newValueSummary: null,
+                    reason: "Authenticated user lacks admin portal access.",
+                    correlationId: HttpContext.TraceIdentifier))
+            .GetAwaiter()
+            .GetResult();
+
         ApplyShellMeta(
             title: "Access Denied",
             description: "Admin alanında yetkisiz erişim durumları için yönlendirici ve profesyonel ekran.",
@@ -155,6 +172,19 @@ public sealed class AdminController : Controller
         {
             return LocalRedirect(targetReturnUrl);
         }
+
+        adminAuditLogService.WriteAsync(
+                BuildAdminAuditLogWriteRequest(
+                    ResolveAdminUserId(),
+                    "Admin.Security.PermissionDenied",
+                    "AdminPortal",
+                    targetReturnUrl,
+                    oldValueSummary: null,
+                    newValueSummary: null,
+                    reason: "Authenticated user lacks the required admin permission.",
+                    correlationId: HttpContext.TraceIdentifier))
+            .GetAwaiter()
+            .GetResult();
 
         ApplyShellMeta(
             title: "Insufficient Permission",
@@ -569,6 +599,18 @@ public sealed class AdminController : Controller
         string? reason,
         CancellationToken cancellationToken)
     {
+        var mfaResult = await EnforcePlatformAdminMfaAsync(
+            "Admin.Approvals.Approve",
+            ApprovalErrorTempDataKey,
+            nameof(ApprovalDetail),
+            new { approvalReference },
+            cancellationToken);
+
+        if (mfaResult is not null)
+        {
+            return mfaResult;
+        }
+
         if (approvalWorkflowService is null)
         {
             TempData[ApprovalErrorTempDataKey] = "Approval workflow service unavailable.";
@@ -607,6 +649,18 @@ public sealed class AdminController : Controller
         string? reason,
         CancellationToken cancellationToken)
     {
+        var mfaResult = await EnforcePlatformAdminMfaAsync(
+            "Admin.Approvals.Reject",
+            ApprovalErrorTempDataKey,
+            nameof(ApprovalDetail),
+            new { approvalReference },
+            cancellationToken);
+
+        if (mfaResult is not null)
+        {
+            return mfaResult;
+        }
+
         if (approvalWorkflowService is null)
         {
             TempData[ApprovalErrorTempDataKey] = "Approval workflow service unavailable.";
@@ -837,6 +891,18 @@ public sealed class AdminController : Controller
         string? reauthToken,
         CancellationToken cancellationToken)
     {
+        var mfaResult = await EnforcePlatformAdminMfaAsync(
+            "Admin.Settings.TradeMaster.Update",
+            ExecutionSwitchErrorTempDataKey,
+            nameof(Settings),
+            null,
+            cancellationToken);
+
+        if (mfaResult is not null)
+        {
+            return mfaResult;
+        }
+
         _ = reauthToken;
         var normalizedReason = NormalizeRequiredReason(reason);
 
@@ -954,6 +1020,18 @@ public sealed class AdminController : Controller
         string? liveApprovalReference,
         CancellationToken cancellationToken)
     {
+        var mfaResult = await EnforcePlatformAdminMfaAsync(
+            "Admin.Settings.DemoMode.Update",
+            ExecutionSwitchErrorTempDataKey,
+            nameof(Settings),
+            null,
+            cancellationToken);
+
+        if (mfaResult is not null)
+        {
+            return mfaResult;
+        }
+
         _ = reauthToken;
         var normalizedReason = NormalizeRequiredReason(reason);
 
@@ -1085,6 +1163,18 @@ public sealed class AdminController : Controller
         string? reauthToken,
         CancellationToken cancellationToken)
     {
+        var mfaResult = await EnforcePlatformAdminMfaAsync(
+            "Admin.Settings.GlobalSystemState.Update",
+            GlobalSystemStateErrorTempDataKey,
+            nameof(Settings),
+            null,
+            cancellationToken);
+
+        if (mfaResult is not null)
+        {
+            return mfaResult;
+        }
+
         _ = reauthToken;
         var normalizedReason = NormalizeRequiredReason(reason);
 
@@ -1267,6 +1357,18 @@ public sealed class AdminController : Controller
         string? message,
         CancellationToken cancellationToken)
     {
+        var mfaResult = await EnforcePlatformAdminMfaAsync(
+            "Admin.Settings.CrisisEscalation.Preview",
+            CrisisErrorTempDataKey,
+            nameof(Settings),
+            null,
+            cancellationToken);
+
+        if (mfaResult is not null)
+        {
+            return mfaResult;
+        }
+
         if (crisisEscalationService is null)
         {
             TempData[CrisisErrorTempDataKey] = "Crisis escalation service unavailable.";
@@ -1329,6 +1431,18 @@ public sealed class AdminController : Controller
         string? secondApprovalReference,
         CancellationToken cancellationToken)
     {
+        var mfaResult = await EnforcePlatformAdminMfaAsync(
+            "Admin.Settings.CrisisEscalation.Execute",
+            CrisisErrorTempDataKey,
+            nameof(Settings),
+            null,
+            cancellationToken);
+
+        if (mfaResult is not null)
+        {
+            return mfaResult;
+        }
+
         if (crisisEscalationService is null)
         {
             TempData[CrisisErrorTempDataKey] = "Crisis escalation service unavailable.";
@@ -1488,6 +1602,18 @@ public sealed class AdminController : Controller
         string? reauthToken,
         CancellationToken cancellationToken)
     {
+        var mfaResult = await EnforcePlatformAdminMfaAsync(
+            "Admin.Settings.SymbolRestrictions.Update",
+            GlobalPolicyErrorTempDataKey,
+            nameof(Settings),
+            null,
+            cancellationToken);
+
+        if (mfaResult is not null)
+        {
+            return mfaResult;
+        }
+
         _ = reauthToken;
 
         if (!CanEditGlobalPolicy())
@@ -1666,6 +1792,18 @@ public sealed class AdminController : Controller
         string? reauthToken,
         CancellationToken cancellationToken)
     {
+        var mfaResult = await EnforcePlatformAdminMfaAsync(
+            "Admin.Settings.GlobalPolicy.Update",
+            GlobalPolicyErrorTempDataKey,
+            nameof(Settings),
+            null,
+            cancellationToken);
+
+        if (mfaResult is not null)
+        {
+            return mfaResult;
+        }
+
         _ = reauthToken;
 
         if (!CanEditGlobalPolicy())
@@ -1831,6 +1969,18 @@ public sealed class AdminController : Controller
         string? reauthToken,
         CancellationToken cancellationToken)
     {
+        var mfaResult = await EnforcePlatformAdminMfaAsync(
+            "Admin.Settings.GlobalPolicy.Rollback",
+            GlobalPolicyErrorTempDataKey,
+            nameof(Settings),
+            null,
+            cancellationToken);
+
+        if (mfaResult is not null)
+        {
+            return mfaResult;
+        }
+
         _ = reauthToken;
 
         if (!CanEditGlobalPolicy())
@@ -2505,6 +2655,32 @@ public sealed class AdminController : Controller
     private bool HasAdminPortalAccess()
     {
         return User.HasClaim(ApplicationClaimTypes.Permission, ApplicationPermissions.AdminPortalAccess);
+    }
+
+    private async Task<IActionResult?> EnforcePlatformAdminMfaAsync(
+        string operationKey,
+        string errorTempDataKey,
+        string redirectAction,
+        object? routeValues,
+        CancellationToken cancellationToken)
+    {
+        var adminUserId = ResolveAdminUserId();
+        var authorization = await criticalUserOperationAuthorizer.AuthorizeAsync(
+            new CriticalUserOperationAuthorizationRequest(
+                adminUserId,
+                $"admin:{adminUserId}",
+                operationKey,
+                $"Admin/{operationKey}",
+                HttpContext.TraceIdentifier),
+            cancellationToken);
+
+        if (authorization.IsAuthorized)
+        {
+            return null;
+        }
+
+        TempData[errorTempDataKey] = authorization.FailureReason ?? "Bu yonetim islemi icin MFA zorunludur.";
+        return RedirectToAction(redirectAction, routeValues);
     }
 
     private static string NormalizeAdminReturnUrl(string? returnUrl)

@@ -107,6 +107,17 @@ public sealed class ApplicationDbContextUserIsolationTests
             allAccountNames);
     }
 
+    [Fact]
+    public async Task EnsureCurrentUserScope_RejectsCrossUserScope_WhenIsolationBypassIsOff()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        await using var harness = CreateHarness(databaseRoot, userId: "scope-user-a");
+
+        var exception = Assert.Throws<InvalidOperationException>(() => harness.Context.EnsureCurrentUserScope("scope-user-b"));
+
+        Assert.Contains("outside the authenticated isolation boundary", exception.Message, StringComparison.Ordinal);
+    }
+
     private static async Task SeedExchangeAccountsAsync(string databaseName, InMemoryDatabaseRoot databaseRoot)
     {
         await using var harness = CreateHarness(databaseRoot, databaseName: databaseName, hasIsolationBypass: true);

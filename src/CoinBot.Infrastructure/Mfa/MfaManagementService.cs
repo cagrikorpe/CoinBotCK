@@ -90,6 +90,16 @@ public sealed class MfaManagementService(
 
         if (!totpService.VerifyCode(user.TotpSecretCiphertext, code))
         {
+            await auditLogService.WriteAsync(
+                new AuditLogWriteRequest(
+                    user.Id,
+                    "Identity.MfaEnableRejected",
+                    $"User/{user.Id}/Mfa",
+                    "reason=invalid-authenticator-code",
+                    CorrelationId: null,
+                    Outcome: "Denied",
+                    Environment: AuditEnvironment),
+                cancellationToken);
             return null;
         }
 
@@ -131,6 +141,16 @@ public sealed class MfaManagementService(
 
         if (!await ValidateManagementCodeAsync(user, verificationCode, cancellationToken))
         {
+            await auditLogService.WriteAsync(
+                new AuditLogWriteRequest(
+                    user.Id,
+                    "Identity.MfaDisableRejected",
+                    $"User/{user.Id}/Mfa",
+                    "reason=invalid-management-code",
+                    CorrelationId: null,
+                    Outcome: "Denied",
+                    Environment: AuditEnvironment),
+                cancellationToken);
             return false;
         }
 
@@ -173,6 +193,16 @@ public sealed class MfaManagementService(
 
         if (!await ValidateManagementCodeAsync(user, verificationCode, cancellationToken))
         {
+            await auditLogService.WriteAsync(
+                new AuditLogWriteRequest(
+                    user.Id,
+                    "Identity.MfaRecoveryCodesRegenerationRejected",
+                    $"User/{user.Id}/Mfa",
+                    "reason=invalid-management-code",
+                    CorrelationId: null,
+                    Outcome: "Denied",
+                    Environment: AuditEnvironment),
+                cancellationToken);
             return null;
         }
 
@@ -231,7 +261,7 @@ public sealed class MfaManagementService(
 
     private async Task<ApplicationUser> ResolveUserAsync(string userId, CancellationToken cancellationToken)
     {
-        var normalizedUserId = NormalizeRequired(userId, nameof(userId));
+        var normalizedUserId = dbContext.EnsureCurrentUserScope(userId);
 
         return await dbContext.Users.SingleOrDefaultAsync(entity => entity.Id == normalizedUserId, cancellationToken)
             ?? throw new InvalidOperationException($"User '{normalizedUserId}' was not found.");

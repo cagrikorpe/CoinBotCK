@@ -3,6 +3,7 @@ using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Jobs;
+using CoinBot.Infrastructure.Mfa;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -17,7 +18,11 @@ public sealed class BotPilotControlServiceTests
         await using var context = CreateContext();
         var bot = await SeedPilotBotAsync(context, isEnabled: false);
         var timeProvider = new FakeTimeProvider();
-        var service = new BotPilotControlService(context, timeProvider, Options.Create(CreatePilotOptions()));
+        var service = new BotPilotControlService(
+            context,
+            new FakeCriticalUserOperationAuthorizer(),
+            timeProvider,
+            Options.Create(CreatePilotOptions()));
 
         var result = await service.SetEnabledAsync(
             bot.OwnerUserId,
@@ -37,7 +42,11 @@ public sealed class BotPilotControlServiceTests
         await using var context = CreateContext();
         var bot = await SeedPilotBotAsync(context, isEnabled: true);
         var timeProvider = new FakeTimeProvider();
-        var service = new BotPilotControlService(context, timeProvider, Options.Create(CreatePilotOptions()));
+        var service = new BotPilotControlService(
+            context,
+            new FakeCriticalUserOperationAuthorizer(),
+            timeProvider,
+            Options.Create(CreatePilotOptions()));
 
         var result = await service.SetEnabledAsync(
             bot.OwnerUserId,
@@ -57,7 +66,11 @@ public sealed class BotPilotControlServiceTests
         await using var context = CreateContext();
         var firstBot = await SeedPilotBotAsync(context, ownerUserId: "user-bot-1", isEnabled: true);
         var secondBot = await SeedPilotBotAsync(context, ownerUserId: "user-bot-1", isEnabled: false);
-        var service = new BotPilotControlService(context, new FakeTimeProvider(), Options.Create(CreatePilotOptions()));
+        var service = new BotPilotControlService(
+            context,
+            new FakeCriticalUserOperationAuthorizer(),
+            new FakeTimeProvider(),
+            Options.Create(CreatePilotOptions()));
 
         var result = await service.SetEnabledAsync(
             secondBot.OwnerUserId,
@@ -79,7 +92,11 @@ public sealed class BotPilotControlServiceTests
         await using var context = CreateContext();
         _ = await SeedPilotBotAsync(context, ownerUserId: "user-bot-3", isEnabled: true, symbol: "BTCUSDT");
         var secondBot = await SeedPilotBotAsync(context, ownerUserId: "user-bot-3", isEnabled: false, symbol: "ETHUSDT");
-        var service = new BotPilotControlService(context, new FakeTimeProvider(), Options.Create(CreatePilotOptions()));
+        var service = new BotPilotControlService(
+            context,
+            new FakeCriticalUserOperationAuthorizer(),
+            new FakeTimeProvider(),
+            Options.Create(CreatePilotOptions()));
 
         var result = await service.SetEnabledAsync(
             secondBot.OwnerUserId,
@@ -95,7 +112,11 @@ public sealed class BotPilotControlServiceTests
     {
         await using var context = CreateContext();
         var bot = await SeedPilotBotAsync(context, isEnabled: false, publishStrategy: false);
-        var service = new BotPilotControlService(context, new FakeTimeProvider(), Options.Create(CreatePilotOptions()));
+        var service = new BotPilotControlService(
+            context,
+            new FakeCriticalUserOperationAuthorizer(),
+            new FakeTimeProvider(),
+            Options.Create(CreatePilotOptions()));
 
         var result = await service.SetEnabledAsync(
             bot.OwnerUserId,
@@ -125,7 +146,11 @@ public sealed class BotPilotControlServiceTests
             IdempotencyKey = "retry-key"
         });
         await context.SaveChangesAsync();
-        var service = new BotPilotControlService(context, timeProvider, Options.Create(CreatePilotOptions()));
+        var service = new BotPilotControlService(
+            context,
+            new FakeCriticalUserOperationAuthorizer(),
+            timeProvider,
+            Options.Create(CreatePilotOptions()));
 
         var result = await service.SetEnabledAsync(
             bot.OwnerUserId,
@@ -140,6 +165,36 @@ public sealed class BotPilotControlServiceTests
         Assert.Equal(now.UtcDateTime, state.NextRunAtUtc);
         Assert.Null(state.LastErrorCode);
         Assert.Null(state.IdempotencyKey);
+    }
+
+    [Fact]
+    public async Task SetEnabledAsync_FailsClosed_WhenCriticalOperationAuthorizerRejectsRequest()
+    {
+        await using var context = CreateContext();
+        var bot = await SeedPilotBotAsync(context, isEnabled: false);
+        var service = new BotPilotControlService(
+            context,
+            new FakeCriticalUserOperationAuthorizer
+            {
+                Result = new CriticalUserOperationAuthorizationResult(
+                    false,
+                    "MfaRequired",
+                    "Bu islem icin MFA zorunludur.")
+            },
+            new FakeTimeProvider(),
+            Options.Create(CreatePilotOptions()));
+
+        var result = await service.SetEnabledAsync(
+            bot.OwnerUserId,
+            bot.Id,
+            isEnabled: true,
+            actor: $"user:{bot.OwnerUserId}");
+
+        var persistedBot = await context.TradingBots.SingleAsync(entity => entity.Id == bot.Id);
+
+        Assert.False(result.IsSuccessful);
+        Assert.Equal("MfaRequired", result.FailureCode);
+        Assert.False(persistedBot.IsEnabled);
     }
 
     private static async Task<TradingBot> SeedPilotBotAsync(
@@ -236,5 +291,18 @@ public sealed class BotPilotControlServiceTests
             DefaultSymbol = "BTCUSDT",
             AllowedSymbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
         };
+    }
+
+    private sealed class FakeCriticalUserOperationAuthorizer : ICriticalUserOperationAuthorizer
+    {
+        public CriticalUserOperationAuthorizationResult Result { get; set; } =
+            new(true, null, null);
+
+        public Task<CriticalUserOperationAuthorizationResult> AuthorizeAsync(
+            CriticalUserOperationAuthorizationRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(Result);
+        }
     }
 }

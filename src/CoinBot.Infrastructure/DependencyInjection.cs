@@ -253,6 +253,7 @@ public static class DependencyInjection
         services.AddScoped<ITotpService, TotpService>();
         services.AddScoped<IEmailOtpService, EmailOtpService>();
         services.AddScoped<IMfaCodeValidator, MfaCodeValidator>();
+        services.AddScoped<ICriticalUserOperationAuthorizer, CriticalUserOperationAuthorizer>();
         services.AddScoped<IMfaManagementService, MfaManagementService>();
         services.AddSingleton<ICredentialKeyResolver, CredentialKeyResolver>();
         services.AddSingleton<ICredentialCipher, Aes256CredentialCipher>();
@@ -407,7 +408,7 @@ public static class DependencyInjection
             options.Cookie.HttpOnly = true;
             options.Cookie.IsEssential = true;
             options.Cookie.SameSite = SameSiteMode.Lax;
-            options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+            options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
             options.ExpireTimeSpan = TimeSpan.FromHours(8);
             options.SlidingExpiration = true;
             options.Events = new CookieAuthenticationEvents
@@ -422,6 +423,15 @@ public static class DependencyInjection
                     return Task.CompletedTask;
                 }
             };
+        });
+
+        services.AddAntiforgery(options =>
+        {
+            options.Cookie.Name = "CoinBot.Antiforgery";
+            options.Cookie.HttpOnly = true;
+            options.Cookie.IsEssential = true;
+            options.Cookie.SameSite = SameSiteMode.Strict;
+            options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
         });
 
         services.AddAuthorization(options =>

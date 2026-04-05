@@ -121,6 +121,24 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
     public DbSet<WorkerHeartbeat> WorkerHeartbeats => Set<WorkerHeartbeat>();
 
+    public string EnsureCurrentUserScope(string userId)
+    {
+        var normalizedUserId = NormalizeOwnerUserId(userId);
+
+        if (hasIsolationBypass)
+        {
+            return normalizedUserId;
+        }
+
+        if (string.IsNullOrWhiteSpace(currentUserId) ||
+            !string.Equals(currentUserId, normalizedUserId, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Requested user scope is outside the authenticated isolation boundary.");
+        }
+
+        return normalizedUserId;
+    }
+
     public DbSet<UserExecutionOverride> UserExecutionOverrides => Set<UserExecutionOverride>();
 
     public override int SaveChanges()

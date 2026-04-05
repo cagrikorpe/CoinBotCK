@@ -12,7 +12,7 @@ public sealed class UserSettingsService(
 {
     public async Task<UserSettingsSnapshot?> GetAsync(string userId, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(userId);
+        userId = dbContext.EnsureCurrentUserScope(userId);
 
         var user = await dbContext.Users
             .AsNoTracking()
@@ -41,7 +41,7 @@ public sealed class UserSettingsService(
         string? correlationId = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(userId);
+        userId = dbContext.EnsureCurrentUserScope(userId);
         ArgumentException.ThrowIfNullOrWhiteSpace(actor);
         ArgumentNullException.ThrowIfNull(command);
 

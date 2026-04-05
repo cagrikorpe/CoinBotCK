@@ -23,7 +23,7 @@ public sealed class UserDashboardOperationsReadModelService(
         string userId,
         CancellationToken cancellationToken = default)
     {
-        var normalizedUserId = NormalizeRequired(userId, nameof(userId));
+        var normalizedUserId = dbContext.EnsureCurrentUserScope(userId);
         var enabledBots = await dbContext.TradingBots
             .AsNoTracking()
             .IgnoreQueryFilters()

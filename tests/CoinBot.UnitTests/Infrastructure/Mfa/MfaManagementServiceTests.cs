@@ -119,6 +119,38 @@ public sealed class MfaManagementServiceTests
         Assert.Null(user.TotpSecretCiphertext);
     }
 
+    [Fact]
+    public async Task DisableAsync_ReturnsFalse_AndWritesAudit_WhenVerificationCodeIsInvalid()
+    {
+        await using var harness = await TestHarness.CreateAsync();
+
+        var setup = await harness.Service.GetAuthenticatorSetupAsync(harness.User.Id, createIfMissing: true)
+            ?? throw new InvalidOperationException("Setup should exist.");
+        var code = ComputeTotp(setup.SharedKey, harness.UtcNow);
+        _ = await harness.Service.EnableAuthenticatorAsync(harness.User.Id, code)
+            ?? throw new InvalidOperationException("Enable should succeed.");
+
+        var disabled = await harness.Service.DisableAsync(harness.User.Id, "WRNG-WRNG");
+        var audit = await harness.DbContext.AuditLogs
+            .OrderByDescending(entity => entity.CreatedDate)
+            .FirstAsync();
+
+        Assert.False(disabled);
+        Assert.Equal("Identity.MfaDisableRejected", audit.Action);
+        Assert.Contains("invalid-management-code", audit.Context ?? string.Empty, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DisableAsync_RejectsCrossUserScope()
+    {
+        var actualUserId = Guid.NewGuid().ToString("N");
+        await using var harness = await TestHarness.CreateAsync(userId: actualUserId, scopedUserId: "different-user");
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => harness.Service.DisableAsync(actualUserId, "000000"));
+
+        Assert.Contains("outside the authenticated isolation boundary", exception.Message, StringComparison.Ordinal);
+    }
+
     private static string ComputeTotp(string secret, DateTimeOffset utcNow, int digits = 6, int timeStepSeconds = 30)
     {
         var secretBytes = DecodeBase32(secret);
@@ -198,14 +230,15 @@ public sealed class MfaManagementServiceTests
 
         public DateTimeOffset UtcNow => DateTimeOffset.Parse("2026-03-23T10:15:00Z");
 
-        public static async Task<TestHarness> CreateAsync()
+        public static async Task<TestHarness> CreateAsync(string? userId = null, string? scopedUserId = null)
         {
             var services = new ServiceCollection();
             services.AddLogging();
             services.AddDataProtection();
             services.AddSingleton<TimeProvider>(new AdjustableTimeProvider(DateTimeOffset.Parse("2026-03-23T10:15:00Z")));
             services.AddSingleton<ICorrelationContextAccessor, CorrelationContextAccessor>();
-            services.AddScoped<IDataScopeContext>(_ => new TestDataScopeContext());
+            var resolvedUserId = userId ?? Guid.NewGuid().ToString("N");
+            services.AddScoped<IDataScopeContext>(_ => new TestDataScopeContext(scopedUserId ?? resolvedUserId));
             services.AddDbContext<ApplicationDbContext>(options => options.UseInMemoryDatabase(Guid.NewGuid().ToString("N")));
             services.AddIdentityCore<ApplicationUser>(options =>
                 {
@@ -225,6 +258,7 @@ public sealed class MfaManagementServiceTests
             var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
             var user = new ApplicationUser
             {
+                Id = resolvedUserId,
                 UserName = "mfa.user@coinbot.test",
                 Email = "mfa.user@coinbot.test",
                 FullName = "Mfa User"
@@ -252,9 +286,9 @@ public sealed class MfaManagementServiceTests
         }
     }
 
-    private sealed class TestDataScopeContext : IDataScopeContext
+    private sealed class TestDataScopeContext(string userId) : IDataScopeContext
     {
-        public string? UserId => null;
+        public string? UserId => userId;
 
         public bool HasIsolationBypass => false;
     }

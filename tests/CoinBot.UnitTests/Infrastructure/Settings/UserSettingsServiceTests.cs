@@ -65,6 +65,16 @@ public sealed class UserSettingsServiceTests
         Assert.Equal("TimeZoneInvalid", result.FailureCode);
     }
 
+    [Fact]
+    public async Task GetAsync_RejectsRequestedUserOutsideCurrentScope()
+    {
+        await using var harness = await TestHarness.CreateAsync(scopedUserId: "scope-user-a");
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => harness.Service.GetAsync("scope-user-b"));
+
+        Assert.Contains("outside the authenticated isolation boundary", exception.Message, StringComparison.Ordinal);
+    }
+
     private static string ResolveNonUtcTimeZoneId()
     {
         return TimeZoneInfo.GetSystemTimeZones()
@@ -90,15 +100,16 @@ public sealed class UserSettingsServiceTests
 
         public UserSettingsService Service { get; }
 
-        public static async Task<TestHarness> CreateAsync(BinanceTimeSyncSnapshot? snapshot = null)
+        public static async Task<TestHarness> CreateAsync(BinanceTimeSyncSnapshot? snapshot = null, string? scopedUserId = null)
         {
             var options = new DbContextOptionsBuilder<ApplicationDbContext>()
                 .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
                 .Options;
-            var dbContext = new ApplicationDbContext(options, new TestDataScopeContext());
+            var userId = Guid.NewGuid().ToString("N");
+            var dbContext = new ApplicationDbContext(options, new TestDataScopeContext(scopedUserId ?? userId));
             var user = new ApplicationUser
             {
-                Id = Guid.NewGuid().ToString("N"),
+                Id = userId,
                 UserName = "settings.user@coinbot.test",
                 NormalizedUserName = "SETTINGS.USER@COINBOT.TEST",
                 Email = "settings.user@coinbot.test",
@@ -141,9 +152,9 @@ public sealed class UserSettingsServiceTests
         }
     }
 
-    private sealed class TestDataScopeContext : IDataScopeContext
+    private sealed class TestDataScopeContext(string userId) : IDataScopeContext
     {
-        public string? UserId => null;
+        public string? UserId => userId;
 
         public bool HasIsolationBypass => false;
     }

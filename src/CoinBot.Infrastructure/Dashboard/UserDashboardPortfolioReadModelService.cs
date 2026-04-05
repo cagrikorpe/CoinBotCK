@@ -20,7 +20,7 @@ public sealed class UserDashboardPortfolioReadModelService(
         string userId,
         CancellationToken cancellationToken = default)
     {
-        var normalizedUserId = NormalizeRequired(userId, nameof(userId));
+        var normalizedUserId = dbContext.EnsureCurrentUserScope(userId);
         var activeAccounts = await dbContext.ExchangeAccounts
             .AsNoTracking()
             .Where(entity =>

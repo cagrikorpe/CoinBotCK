@@ -3,6 +3,7 @@ using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Jobs;
+using CoinBot.Infrastructure.Mfa;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -269,14 +270,65 @@ public sealed class BotManagementServiceTests
         Assert.Equal("BTCUSDT", row.LastExecutionAffectedSymbol);
         Assert.Equal("1m", row.LastExecutionAffectedTimeframe);
     }
-    private static BotManagementService CreateService(ApplicationDbContext context, TimeProvider? timeProvider = null)
+
+    [Fact]
+    public async Task GetPageAsync_RejectsRequestedOwnerOutsideCurrentScope()
+    {
+        await using var context = CreateContext(currentUserId: "user-scope-a", hasIsolationBypass: false);
+        var service = CreateService(context);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => service.GetPageAsync("user-scope-b"));
+
+        Assert.Contains("outside the authenticated isolation boundary", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CreateAsync_FailsClosed_WhenCriticalOperationAuthorizerRejectsRequest()
+    {
+        await using var context = CreateContext();
+        var ownerUserId = "user-bot-mfa";
+        var exchangeAccountId = await SeedStrategyAndExchangeAccountAsync(context, ownerUserId, "pilot-mfa");
+        var service = CreateService(
+            context,
+            criticalUserOperationAuthorizer: new FakeCriticalUserOperationAuthorizer
+            {
+                Result = new CriticalUserOperationAuthorizationResult(
+                    false,
+                    "MfaRequired",
+                    "Bu islem icin MFA zorunludur.")
+            });
+
+        var result = await service.CreateAsync(
+            ownerUserId,
+            new BotManagementSaveCommand(
+                "Pilot Mfa",
+                "pilot-mfa",
+                "BTCUSDT",
+                0.001m,
+                exchangeAccountId,
+                1m,
+                "ISOLATED",
+                false),
+            $"user:{ownerUserId}");
+
+        Assert.False(result.IsSuccessful);
+        Assert.Equal("MfaRequired", result.FailureCode);
+        Assert.Empty(context.TradingBots.Where(entity => entity.OwnerUserId == ownerUserId));
+    }
+
+    private static BotManagementService CreateService(
+        ApplicationDbContext context,
+        TimeProvider? timeProvider = null,
+        ICriticalUserOperationAuthorizer? criticalUserOperationAuthorizer = null)
     {
         return new BotManagementService(
             context,
             new BotPilotControlService(
                 context,
+                criticalUserOperationAuthorizer ?? new FakeCriticalUserOperationAuthorizer(),
                 timeProvider ?? new FakeTimeProvider(),
                 Options.Create(CreatePilotOptions())),
+            criticalUserOperationAuthorizer ?? new FakeCriticalUserOperationAuthorizer(),
             timeProvider ?? new FakeTimeProvider(),
             Options.Create(CreatePilotOptions()));
     }
@@ -337,20 +389,20 @@ public sealed class BotManagementServiceTests
         return bot;
     }
 
-    private static ApplicationDbContext CreateContext()
+    private static ApplicationDbContext CreateContext(string? currentUserId = null, bool hasIsolationBypass = true)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
             .Options;
 
-        return new ApplicationDbContext(options, new TestDataScopeContext());
+        return new ApplicationDbContext(options, new TestDataScopeContext(currentUserId, hasIsolationBypass));
     }
 
-    private sealed class TestDataScopeContext : IDataScopeContext
+    private sealed class TestDataScopeContext(string? userId, bool hasIsolationBypass) : IDataScopeContext
     {
-        public string? UserId => null;
+        public string? UserId => userId;
 
-        public bool HasIsolationBypass => true;
+        public bool HasIsolationBypass => hasIsolationBypass;
     }
 
     private sealed class FakeTimeProvider(DateTimeOffset? utcNow = null) : TimeProvider
@@ -375,6 +427,19 @@ public sealed class BotManagementServiceTests
             PerBotCooldownSeconds = 120,
             PerSymbolCooldownSeconds = 60
         };
+    }
+
+    private sealed class FakeCriticalUserOperationAuthorizer : ICriticalUserOperationAuthorizer
+    {
+        public CriticalUserOperationAuthorizationResult Result { get; set; } =
+            new(true, null, null);
+
+        public Task<CriticalUserOperationAuthorizationResult> AuthorizeAsync(
+            CriticalUserOperationAuthorizationRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(Result);
+        }
     }
 }
 

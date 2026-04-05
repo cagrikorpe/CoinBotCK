@@ -9,6 +9,7 @@ using CoinBot.Infrastructure.Auditing;
 using CoinBot.Infrastructure.Credentials;
 using CoinBot.Infrastructure.Exchange;
 using CoinBot.Infrastructure.Identity;
+using CoinBot.Infrastructure.Mfa;
 using CoinBot.Infrastructure.Monitoring;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
@@ -47,7 +48,11 @@ public sealed class UserWorkspaceCredentialIntegrationTests
                     Email = "user.one@coinbot.local",
                     NormalizedEmail = "USER.ONE@COINBOT.LOCAL",
                     FullName = "User One",
-                    TradingModeOverride = ExecutionEnvironment.Demo
+                    TradingModeOverride = ExecutionEnvironment.Demo,
+                    MfaEnabled = true,
+                    TotpEnabled = true,
+                    TwoFactorEnabled = true,
+                    PreferredMfaProvider = "authenticator-app"
                 });
 
                 await setupContext.SaveChangesAsync();
@@ -140,7 +145,11 @@ public sealed class UserWorkspaceCredentialIntegrationTests
                     Email = "user.guard@coinbot.local",
                     NormalizedEmail = "USER.GUARD@COINBOT.LOCAL",
                     FullName = "User Guard",
-                    TradingModeOverride = ExecutionEnvironment.Demo
+                    TradingModeOverride = ExecutionEnvironment.Demo,
+                    MfaEnabled = true,
+                    TotpEnabled = true,
+                    TwoFactorEnabled = true,
+                    PreferredMfaProvider = "authenticator-app"
                 });
 
                 await setupContext.SaveChangesAsync();
@@ -223,7 +232,11 @@ public sealed class UserWorkspaceCredentialIntegrationTests
                     Email = "user.demo.unknown@coinbot.local",
                     NormalizedEmail = "USER.DEMO.UNKNOWN@COINBOT.LOCAL",
                     FullName = "User Demo Unknown",
-                    TradingModeOverride = ExecutionEnvironment.Demo
+                    TradingModeOverride = ExecutionEnvironment.Demo,
+                    MfaEnabled = true,
+                    TotpEnabled = true,
+                    TwoFactorEnabled = true,
+                    PreferredMfaProvider = "authenticator-app"
                 });
 
                 await setupContext.SaveChangesAsync();
@@ -315,7 +328,11 @@ public sealed class UserWorkspaceCredentialIntegrationTests
                     Email = "user.probe@coinbot.local",
                     NormalizedEmail = "USER.PROBE@COINBOT.LOCAL",
                     FullName = "User Probe",
-                    TradingModeOverride = ExecutionEnvironment.Demo
+                    TradingModeOverride = ExecutionEnvironment.Demo,
+                    MfaEnabled = true,
+                    TotpEnabled = true,
+                    TwoFactorEnabled = true,
+                    PreferredMfaProvider = "authenticator-app"
                 });
 
                 await setupContext.SaveChangesAsync();
@@ -356,6 +373,168 @@ public sealed class UserWorkspaceCredentialIntegrationTests
             Assert.Contains("ulaşılamadı", validation.FailureReason ?? string.Empty, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("api-key-int-probe", exchangeAccount.ApiKeyCiphertext ?? string.Empty, StringComparison.Ordinal);
             Assert.DoesNotContain("api-secret-int-probe", mirroredCredential.ApiSecretCiphertext, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await using var cleanupContext = new ApplicationDbContext(options, new TestDataScopeContext(null, hasIsolationBypass: true));
+            await cleanupContext.Database.EnsureDeletedAsync();
+            Environment.SetEnvironmentVariable(environmentVariableName, previousEnvironmentValue);
+        }
+    }
+
+    [Fact]
+    public async Task UserExchangeCommandCenterService_RejectsCriticalCredentialMutation_WhenMfaIsDisabled()
+    {
+        var databaseName = $"CoinBotUserExchangeMfaGuardInt_{Guid.NewGuid():N}";
+        var connectionString = ResolveConnectionString(databaseName);
+        var options = CreateOptions(connectionString);
+        var environmentVariableName = $"COINBOT_CREDENTIAL_INT_{Guid.NewGuid():N}";
+        var previousEnvironmentValue = Environment.GetEnvironmentVariable(environmentVariableName);
+
+        Environment.SetEnvironmentVariable(environmentVariableName, PrimaryKeyBase64);
+
+        try
+        {
+            await using (var setupContext = new ApplicationDbContext(options, new TestDataScopeContext(null, hasIsolationBypass: true)))
+            {
+                await setupContext.Database.EnsureDeletedAsync();
+                await setupContext.Database.EnsureCreatedAsync();
+
+                setupContext.Users.Add(new ApplicationUser
+                {
+                    Id = "user-mfa-guard-01",
+                    UserName = "user.mfa.guard",
+                    NormalizedUserName = "USER.MFA.GUARD",
+                    Email = "user.mfa.guard@coinbot.local",
+                    NormalizedEmail = "USER.MFA.GUARD@COINBOT.LOCAL",
+                    FullName = "User Mfa Guard",
+                    TradingModeOverride = ExecutionEnvironment.Demo
+                });
+
+                await setupContext.SaveChangesAsync();
+            }
+
+            var timeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 4, 1, 1, 15, 0, TimeSpan.Zero));
+
+            await using var context = new ApplicationDbContext(options, new TestDataScopeContext("user-mfa-guard-01", hasIsolationBypass: false));
+            var service = CreateUserExchangeCommandCenterService(
+                context,
+                timeProvider,
+                environmentVariableName,
+                new BinanceCredentialProbeSnapshot(
+                    IsKeyValid: true,
+                    CanTrade: true,
+                    CanWithdraw: false,
+                    SupportsSpot: true,
+                    SupportsFutures: false,
+                    HasTimestampSkew: false,
+                    HasIpRestrictionIssue: false,
+                    SpotEnvironmentScope: "Demo",
+                    FuturesEnvironmentScope: "Demo",
+                    PermissionSummary: "Trade=Y; Withdraw=N; Spot=Y; Futures=N; Env=Demo",
+                    SafeFailureReason: null),
+                ExecutionEnvironment.Demo);
+
+            var result = await service.ConnectBinanceAsync(
+                new ConnectUserBinanceCredentialRequest(
+                    "user-mfa-guard-01",
+                    ExchangeAccountId: null,
+                    ApiKey: "api-key-int-mfa-guard",
+                    ApiSecret: "api-secret-int-mfa-guard",
+                    RequestedEnvironment: ExecutionEnvironment.Demo,
+                    RequestedTradeMode: ExchangeTradeModeSelection.Spot,
+                    Actor: "user:user-mfa-guard-01",
+                    CorrelationId: "corr-int-user-mfa-guard-001"));
+
+            Assert.False(result.IsValid);
+            Assert.Contains("MFA", result.SafeFailureReason ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+            await using var verifyContext = new ApplicationDbContext(options, new TestDataScopeContext(null, hasIsolationBypass: true));
+            Assert.Empty(await verifyContext.ExchangeAccounts.Where(entity => entity.OwnerUserId == "user-mfa-guard-01").ToListAsync());
+            Assert.Empty(await verifyContext.ApiCredentialValidations.Where(entity => entity.OwnerUserId == "user-mfa-guard-01").ToListAsync());
+            Assert.Empty(await verifyContext.ApiCredentials.Where(entity => entity.OwnerUserId == "user-mfa-guard-01").ToListAsync());
+        }
+        finally
+        {
+            await using var cleanupContext = new ApplicationDbContext(options, new TestDataScopeContext(null, hasIsolationBypass: true));
+            await cleanupContext.Database.EnsureDeletedAsync();
+            Environment.SetEnvironmentVariable(environmentVariableName, previousEnvironmentValue);
+        }
+    }
+
+    [Fact]
+    public async Task UserExchangeCommandCenterService_GetSnapshot_RejectsCrossUserScope()
+    {
+        var databaseName = $"CoinBotUserExchangeScopeInt_{Guid.NewGuid():N}";
+        var connectionString = ResolveConnectionString(databaseName);
+        var options = CreateOptions(connectionString);
+        var environmentVariableName = $"COINBOT_CREDENTIAL_INT_{Guid.NewGuid():N}";
+        var previousEnvironmentValue = Environment.GetEnvironmentVariable(environmentVariableName);
+
+        Environment.SetEnvironmentVariable(environmentVariableName, PrimaryKeyBase64);
+
+        try
+        {
+            await using (var setupContext = new ApplicationDbContext(options, new TestDataScopeContext(null, hasIsolationBypass: true)))
+            {
+                await setupContext.Database.EnsureDeletedAsync();
+                await setupContext.Database.EnsureCreatedAsync();
+
+                setupContext.Users.AddRange(
+                    new ApplicationUser
+                    {
+                        Id = "user-scope-cred-a",
+                        UserName = "user.scope.a",
+                        NormalizedUserName = "USER.SCOPE.A",
+                        Email = "user.scope.a@coinbot.local",
+                        NormalizedEmail = "USER.SCOPE.A@COINBOT.LOCAL",
+                        FullName = "User Scope A",
+                        MfaEnabled = true,
+                        TotpEnabled = true,
+                        TwoFactorEnabled = true,
+                        PreferredMfaProvider = "authenticator-app"
+                    },
+                    new ApplicationUser
+                    {
+                        Id = "user-scope-cred-b",
+                        UserName = "user.scope.b",
+                        NormalizedUserName = "USER.SCOPE.B",
+                        Email = "user.scope.b@coinbot.local",
+                        NormalizedEmail = "USER.SCOPE.B@COINBOT.LOCAL",
+                        FullName = "User Scope B",
+                        MfaEnabled = true,
+                        TotpEnabled = true,
+                        TwoFactorEnabled = true,
+                        PreferredMfaProvider = "authenticator-app"
+                    });
+
+                await setupContext.SaveChangesAsync();
+            }
+
+            var timeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 4, 1, 1, 30, 0, TimeSpan.Zero));
+
+            await using var context = new ApplicationDbContext(options, new TestDataScopeContext("user-scope-cred-a", hasIsolationBypass: false));
+            var service = CreateUserExchangeCommandCenterService(
+                context,
+                timeProvider,
+                environmentVariableName,
+                new BinanceCredentialProbeSnapshot(
+                    IsKeyValid: true,
+                    CanTrade: true,
+                    CanWithdraw: false,
+                    SupportsSpot: true,
+                    SupportsFutures: false,
+                    HasTimestampSkew: false,
+                    HasIpRestrictionIssue: false,
+                    SpotEnvironmentScope: "Demo",
+                    FuturesEnvironmentScope: "Demo",
+                    PermissionSummary: "Trade=Y; Withdraw=N; Spot=Y; Futures=N; Env=Demo",
+                    SafeFailureReason: null),
+                ExecutionEnvironment.Demo);
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => service.GetSnapshotAsync("user-scope-cred-b"));
+
+            Assert.Contains("outside the authenticated isolation boundary", exception.Message, StringComparison.Ordinal);
         }
         finally
         {
@@ -609,12 +788,16 @@ public sealed class UserWorkspaceCredentialIntegrationTests
             auditLogService,
             credentialSecurityOptions,
             timeProvider);
+        var criticalUserOperationAuthorizer = new CriticalUserOperationAuthorizer(
+            dbContext,
+            auditLogService);
 
         return new UserExchangeCommandCenterService(
             dbContext,
             exchangeCredentialService,
             new FakeTradingModeResolver(effectiveEnvironment, hasLiveApproval: effectiveEnvironment == ExecutionEnvironment.Live),
             probeClient,
+            criticalUserOperationAuthorizer,
             timeProvider);
     }
 

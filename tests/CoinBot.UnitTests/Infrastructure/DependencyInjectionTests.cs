@@ -29,6 +29,7 @@ using CoinBot.Infrastructure.Mfa;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Policy;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.Extensions.Hosting;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
@@ -98,6 +99,7 @@ public sealed class DependencyInjectionTests
         var cookieOptions = provider
             .GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
             .Get(IdentityConstants.ApplicationScheme);
+        var antiforgeryOptions = provider.GetRequiredService<IOptions<AntiforgeryOptions>>().Value;
         var executionGate = provider.GetRequiredService<IExecutionGate>();
         var executionEngine = provider.GetRequiredService<IExecutionEngine>();
         var traceService = provider.GetRequiredService<ITraceService>();
@@ -142,6 +144,7 @@ public sealed class DependencyInjectionTests
         var emailOtpService = provider.GetRequiredService<IEmailOtpService>();
         var mfaCodeValidator = provider.GetRequiredService<IMfaCodeValidator>();
         var mfaManagementService = provider.GetRequiredService<IMfaManagementService>();
+        var criticalUserOperationAuthorizer = provider.GetRequiredService<ICriticalUserOperationAuthorizer>();
 
         Assert.Same(dataScopeContextAccessor, dataScopeContext);
         Assert.True(identityOptions.User.RequireUniqueEmail);
@@ -190,6 +193,12 @@ public sealed class DependencyInjectionTests
         Assert.Equal("/Auth/AccessDenied", cookieOptions.AccessDeniedPath);
         Assert.True(cookieOptions.Cookie.HttpOnly);
         Assert.Equal("CoinBot.Auth", cookieOptions.Cookie.Name);
+        Assert.Equal(CookieSecurePolicy.Always, cookieOptions.Cookie.SecurePolicy);
+        Assert.Equal(SameSiteMode.Lax, cookieOptions.Cookie.SameSite);
+        Assert.Equal("CoinBot.Antiforgery", antiforgeryOptions.Cookie.Name);
+        Assert.True(antiforgeryOptions.Cookie.HttpOnly);
+        Assert.Equal(CookieSecurePolicy.Always, antiforgeryOptions.Cookie.SecurePolicy);
+        Assert.Equal(SameSiteMode.Strict, antiforgeryOptions.Cookie.SameSite);
         Assert.Equal(6, mfaOptions.EmailOtpCodeLength);
         Assert.Equal(10, mfaOptions.EmailOtpLifetimeMinutes);
         Assert.Equal(30, mfaOptions.TotpTimeStepSeconds);
@@ -281,6 +290,7 @@ public sealed class DependencyInjectionTests
         Assert.NotNull(emailOtpService);
         Assert.NotNull(mfaCodeValidator);
         Assert.NotNull(mfaManagementService);
+        Assert.NotNull(criticalUserOperationAuthorizer);
         Assert.Contains(hostedServices, service => service is VirtualExecutionWatchdogWorker);
         Assert.Contains(hostedServices, service => service is MonitoringSnapshotWorker);
         Assert.Contains(hostedServices, service => service is AutonomySelfHealingWorker);
