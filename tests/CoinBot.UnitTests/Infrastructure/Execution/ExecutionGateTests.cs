@@ -131,12 +131,21 @@ public sealed class ExecutionGateTests
 
         var auditLog = await harness.DbContext.AuditLogs
             .SingleAsync(entity => entity.Action == "TradeExecution.Dispatch");
+        var decisionTrace = await harness.DbContext.DecisionTraces.SingleAsync();
 
         Assert.True(snapshot.IsPersisted);
         Assert.True(snapshot.IsTradeMasterArmed);
         Assert.True(snapshot.DemoModeEnabled);
         Assert.Equal("Allowed", auditLog.Outcome);
         Assert.Equal(nameof(ExecutionEnvironment.Demo), auditLog.Environment);
+        Assert.Contains("DecisionOutcome=Allow", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("DecisionReasonType=Allow", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("DecisionReasonCode=Allowed", auditLog.Context, StringComparison.Ordinal);
+        Assert.Equal("Allow", decisionTrace.DecisionOutcome);
+        Assert.Equal("Allow", decisionTrace.DecisionReasonType);
+        Assert.Equal("Allowed", decisionTrace.DecisionReasonCode);
+        Assert.Equal("Execution decision allowed the request.", decisionTrace.DecisionSummary);
+        Assert.NotNull(decisionTrace.DecisionAtUtc);
     }
 
     [Fact]
@@ -321,10 +330,18 @@ public sealed class ExecutionGateTests
 
         var auditLog = await harness.DbContext.AuditLogs
             .SingleAsync(entity => entity.Action == "TradeExecution.Dispatch");
+        var decisionTrace = await harness.DbContext.DecisionTraces.SingleAsync();
 
         Assert.Contains("Maintenance", exception.Message, StringComparison.Ordinal);
         Assert.Equal("Blocked:GlobalSystemMaintenance", auditLog.Outcome);
+        Assert.Contains("DecisionOutcome=Block", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("DecisionReasonType=GlobalExecutionOff", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("DecisionReasonCode=GlobalSystemMaintenance", auditLog.Context, StringComparison.Ordinal);
         Assert.Contains("GlobalSystemReason=PLANNED_MAINTENANCE", auditLog.Context, StringComparison.Ordinal);
+        Assert.Equal("Block", decisionTrace.DecisionOutcome);
+        Assert.Equal("GlobalExecutionOff", decisionTrace.DecisionReasonType);
+        Assert.Equal("GlobalSystemMaintenance", decisionTrace.DecisionReasonCode);
+        Assert.NotNull(decisionTrace.DecisionAtUtc);
     }
 
     [Fact]
@@ -351,6 +368,7 @@ public sealed class ExecutionGateTests
 
         var auditLog = await harness.DbContext.AuditLogs
             .SingleAsync(entity => entity.Action == "TradeExecution.Dispatch");
+        var decisionTrace = await harness.DbContext.DecisionTraces.SingleAsync();
 
         Assert.Equal(ExecutionGateBlockedReason.StaleMarketData, exception.Reason);
         Assert.Equal("Blocked:StaleMarketData", auditLog.Outcome);
@@ -367,9 +385,27 @@ public sealed class ExecutionGateTests
         Assert.Contains("DecisionMethodName=ExecutionGate.EvaluateDataLatencyAsync", exception.Message, StringComparison.Ordinal);
         Assert.Contains("Symbol=BTCUSDT", auditLog.Context, StringComparison.Ordinal);
         Assert.Contains("Timeframe=1m", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("DecisionOutcome=Block", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("DecisionReasonType=StaleData", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("DecisionReasonCode=StaleMarketData", auditLog.Context, StringComparison.Ordinal);
         Assert.Contains("ContinuityGapCount=0", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("ContinuityGapStartedAtUtc=missing", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("ContinuityGapLastSeenAtUtc=missing", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("ContinuityRecoveredAtUtc=missing", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("StaleThresholdMs=3000", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("StaleReason=Market data stale", auditLog.Context, StringComparison.Ordinal);
         Assert.Contains("DecisionSourceLayer=heartbeat-watchdog", auditLog.Context, StringComparison.Ordinal);
         Assert.Contains("DecisionMethodName=ExecutionGate.EvaluateDataLatencyAsync", auditLog.Context, StringComparison.Ordinal);
+        Assert.Equal("Block", decisionTrace.DecisionOutcome);
+        Assert.Equal("StaleData", decisionTrace.DecisionReasonType);
+        Assert.Equal("StaleMarketData", decisionTrace.DecisionReasonCode);
+        Assert.Equal("Execution blocked because market data is stale.", decisionTrace.DecisionSummary);
+        Assert.Equal(new DateTime(2026, 3, 22, 12, 0, 0, DateTimeKind.Utc), decisionTrace.LastCandleAtUtc);
+        Assert.Equal(3000, decisionTrace.DataAgeMs);
+        Assert.Equal(3000, decisionTrace.StaleThresholdMs);
+        Assert.Equal("Market data stale", decisionTrace.StaleReason);
+        Assert.Equal("Continuity OK", decisionTrace.ContinuityState);
+        Assert.NotNull(decisionTrace.DecisionAtUtc);
     }
 
     [Fact]
@@ -406,6 +442,7 @@ public sealed class ExecutionGateTests
 
         var auditLog = await harness.DbContext.AuditLogs
             .SingleAsync(entity => entity.Action == "TradeExecution.Dispatch");
+        var decisionTrace = await harness.DbContext.DecisionTraces.SingleAsync();
 
         Assert.Equal(ExecutionGateBlockedReason.ContinuityGap, exception.Reason);
         Assert.Equal("Blocked:ContinuityGap", auditLog.Outcome);
@@ -420,10 +457,29 @@ public sealed class ExecutionGateTests
         Assert.Contains("LatencyReason=CandleDataGapDetected", auditLog.Context, StringComparison.Ordinal);
         Assert.Contains("Symbol=BTCUSDT", auditLog.Context, StringComparison.Ordinal);
         Assert.Contains("Timeframe=1m", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("DecisionOutcome=Block", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("DecisionReasonType=ContinuityGap", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("DecisionReasonCode=ContinuityGap", auditLog.Context, StringComparison.Ordinal);
         Assert.Contains("ExpectedOpenTimeUtc=2026-03-22T12:01:00.0000000Z", auditLog.Context, StringComparison.Ordinal);
         Assert.Contains("ContinuityGapCount=3", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("ContinuityGapStartedAtUtc=", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("ContinuityGapLastSeenAtUtc=", auditLog.Context, StringComparison.Ordinal);
+        Assert.DoesNotContain("ContinuityGapStartedAtUtc=missing", auditLog.Context, StringComparison.Ordinal);
+        Assert.DoesNotContain("ContinuityGapLastSeenAtUtc=missing", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("ContinuityRecoveredAtUtc=missing", auditLog.Context, StringComparison.Ordinal);
         Assert.Contains("DecisionSourceLayer=continuity-validator", auditLog.Context, StringComparison.Ordinal);
         Assert.Contains("DecisionMethodName=ExecutionGate.EvaluateDataLatencyAsync", auditLog.Context, StringComparison.Ordinal);
+        Assert.Equal("Block", decisionTrace.DecisionOutcome);
+        Assert.Equal("ContinuityGap", decisionTrace.DecisionReasonType);
+        Assert.Equal("ContinuityGap", decisionTrace.DecisionReasonCode);
+        Assert.Equal("Execution blocked because the candle continuity guard is active.", decisionTrace.DecisionSummary);
+        Assert.Equal(3, decisionTrace.ContinuityGapCount);
+        Assert.Equal("Continuity guard active", decisionTrace.ContinuityState);
+        Assert.Equal("Continuity gap detected", decisionTrace.StaleReason);
+        Assert.Equal(new DateTime(2026, 3, 22, 12, 1, 0, DateTimeKind.Utc), decisionTrace.ContinuityGapStartedAtUtc);
+        Assert.Equal(new DateTime(2026, 3, 22, 12, 0, 0, DateTimeKind.Utc), decisionTrace.ContinuityGapLastSeenAtUtc);
+        Assert.Null(decisionTrace.ContinuityRecoveredAtUtc);
+        Assert.NotNull(decisionTrace.DecisionAtUtc);
     }
 
     [Fact]
@@ -501,10 +557,15 @@ public sealed class ExecutionGateTests
         var auditLogService = new AuditLogService(dbContext, new CorrelationContextAccessor());
         var switchService = new GlobalExecutionSwitchService(dbContext, auditLogService);
         var globalSystemStateService = new GlobalSystemStateService(dbContext, auditLogService, timeProvider);
+        var traceService = new TraceService(
+            dbContext,
+            new CorrelationContextAccessor(),
+            timeProvider);
+        var latencyOptions = Options.Create(new DataLatencyGuardOptions());
         var circuitBreaker = new DataLatencyCircuitBreaker(
             dbContext,
             new FakeAlertService(),
-            Options.Create(new DataLatencyGuardOptions()),
+            latencyOptions,
             timeProvider,
             NullLogger<DataLatencyCircuitBreaker>.Instance);
         var tradingModeService = new TradingModeService(dbContext, auditLogService);
@@ -533,7 +594,10 @@ public sealed class ExecutionGateTests
             tradingModeService,
             auditLogService,
             NullLogger<ExecutionGate>.Instance,
-            new TestHostEnvironment(environmentName));
+            new TestHostEnvironment(environmentName),
+            traceService,
+            timeProvider,
+            latencyOptions);
 
         return new TestHarness(dbContext, switchService, globalSystemStateService, circuitBreaker, executionGate, timeProvider);
     }

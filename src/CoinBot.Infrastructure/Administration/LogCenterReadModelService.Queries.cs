@@ -43,6 +43,10 @@ public sealed partial class LogCenterReadModelService
         {
             query = query.Where(entity =>
                 entity.DecisionOutcome.ToLower() == filters.StatusLower ||
+                (entity.DecisionReasonType != null && entity.DecisionReasonType.ToLower() == filters.StatusLower) ||
+                (entity.DecisionReasonCode != null && entity.DecisionReasonCode.ToLower() == filters.StatusLower) ||
+                (entity.ContinuityState != null && entity.ContinuityState.ToLower() == filters.StatusLower) ||
+                (entity.StaleReason != null && entity.StaleReason.ToLower() == filters.StatusLower) ||
                 (entity.VetoReasonCode != null && entity.VetoReasonCode.ToLower() == filters.StatusLower));
         }
 
@@ -57,6 +61,11 @@ public sealed partial class LogCenterReadModelService
                 entity.StrategyVersion.ToLower().Contains(filters.QueryLower) ||
                 entity.SignalType.ToLower().Contains(filters.QueryLower) ||
                 entity.DecisionOutcome.ToLower().Contains(filters.QueryLower) ||
+                (entity.DecisionReasonType != null && entity.DecisionReasonType.ToLower().Contains(filters.QueryLower)) ||
+                (entity.DecisionReasonCode != null && entity.DecisionReasonCode.ToLower().Contains(filters.QueryLower)) ||
+                (entity.DecisionSummary != null && entity.DecisionSummary.ToLower().Contains(filters.QueryLower)) ||
+                (entity.ContinuityState != null && entity.ContinuityState.ToLower().Contains(filters.QueryLower)) ||
+                (entity.StaleReason != null && entity.StaleReason.ToLower().Contains(filters.QueryLower)) ||
                 (entity.VetoReasonCode != null && entity.VetoReasonCode.ToLower().Contains(filters.QueryLower)));
         }
 

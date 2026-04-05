@@ -144,6 +144,103 @@ public sealed class LogCenterReadModelServiceTests
             snapshot.Entries.Select(entry => entry.Kind).OrderBy(kind => kind, StringComparer.Ordinal).ToArray());
     }
 
+    [Fact]
+    public async Task GetPageAsync_UsesDecisionReasonFieldsInSummaryAndFilters()
+    {
+        await using var dbContext = CreateDbContext();
+        var now = new DateTime(2026, 4, 5, 9, 30, 0, DateTimeKind.Utc);
+
+        dbContext.DecisionTraces.AddRange(
+            new DecisionTrace
+            {
+                Id = Guid.NewGuid(),
+                StrategySignalId = Guid.NewGuid(),
+                CorrelationId = "corr-stale",
+                DecisionId = "dec-stale",
+                UserId = "user-01",
+                Symbol = "BTCUSDT",
+                Timeframe = "1m",
+                StrategyVersion = "ExecutionGate",
+                SignalType = "ExecutionGate",
+                DecisionOutcome = "Block",
+                DecisionReasonType = "StaleData",
+                DecisionReasonCode = "StaleMarketData",
+                DecisionSummary = "Execution blocked because market data is stale.",
+                DecisionAtUtc = now,
+                LastCandleAtUtc = now.AddSeconds(-3),
+                DataAgeMs = 3000,
+                StaleThresholdMs = 3000,
+                StaleReason = "Market data stale",
+                ContinuityState = "Continuity OK",
+                ContinuityGapCount = 0,
+                LatencyMs = 0,
+                SnapshotJson = "{\"decision\":true}",
+                CreatedAtUtc = now,
+                UpdatedDate = now
+            },
+            new DecisionTrace
+            {
+                Id = Guid.NewGuid(),
+                StrategySignalId = Guid.NewGuid(),
+                CorrelationId = "corr-risk",
+                DecisionId = "dec-risk",
+                UserId = "user-01",
+                Symbol = "BTCUSDT",
+                Timeframe = "1m",
+                StrategyVersion = "StrategyVersion:test",
+                SignalType = "Entry",
+                DecisionOutcome = "Vetoed",
+                DecisionReasonType = "RiskVeto",
+                DecisionReasonCode = "UserExecutionRiskSymbolExposureLimitBreached",
+                DecisionSummary = "Risk veto blocked execution.",
+                DecisionAtUtc = now.AddSeconds(1),
+                LatencyMs = 0,
+                SnapshotJson = "{\"decision\":true}",
+                CreatedAtUtc = now.AddSeconds(1),
+                UpdatedDate = now.AddSeconds(1)
+            });
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext);
+
+        var staleSnapshot = await service.GetPageAsync(
+            new LogCenterQueryRequest(
+                Query: "Market data stale",
+                CorrelationId: null,
+                DecisionId: null,
+                ExecutionAttemptId: null,
+                UserId: null,
+                Symbol: null,
+                Status: "StaleMarketData",
+                FromUtc: null,
+                ToUtc: null,
+                Take: 20));
+
+        var staleEntry = Assert.Single(staleSnapshot.Entries);
+        Assert.Equal("StaleData", staleEntry.DecisionReasonType);
+        Assert.Equal("StaleMarketData", staleEntry.DecisionReasonCode);
+        Assert.Equal("Market data stale", staleEntry.StaleReason);
+        Assert.Contains("ReasonType=StaleData", staleEntry.Summary, StringComparison.Ordinal);
+        Assert.Contains("ContinuityState=Continuity OK", staleEntry.Summary, StringComparison.Ordinal);
+
+        var riskSnapshot = await service.GetPageAsync(
+            new LogCenterQueryRequest(
+                Query: null,
+                CorrelationId: null,
+                DecisionId: null,
+                ExecutionAttemptId: null,
+                UserId: null,
+                Symbol: null,
+                Status: "RiskVeto",
+                FromUtc: null,
+                ToUtc: null,
+                Take: 20));
+
+        var riskEntry = Assert.Single(riskSnapshot.Entries);
+        Assert.Equal("RiskVeto", riskEntry.DecisionReasonType);
+        Assert.Equal("UserExecutionRiskSymbolExposureLimitBreached", riskEntry.DecisionReasonCode);
+    }
+
     private static LogCenterReadModelService CreateService(ApplicationDbContext dbContext)
     {
         return new LogCenterReadModelService(
@@ -189,6 +286,10 @@ public sealed class LogCenterReadModelServiceTests
             SignalType = "Entry",
             RiskScore = 72,
             DecisionOutcome = "Persisted",
+            DecisionReasonType = "Allow",
+            DecisionReasonCode = "Allowed",
+            DecisionSummary = "Strategy produced an executable candidate.",
+            DecisionAtUtc = now,
             VetoReasonCode = null,
             LatencyMs = 12,
             SnapshotJson = """
@@ -359,6 +460,10 @@ public sealed class LogCenterReadModelServiceTests
             SignalType = "Entry",
             RiskScore = 72,
             DecisionOutcome = "Persisted",
+            DecisionReasonType = "Allow",
+            DecisionReasonCode = "Allowed",
+            DecisionSummary = "Strategy produced an executable candidate.",
+            DecisionAtUtc = hitDate,
             LatencyMs = 12,
             SnapshotJson = "{\"secret\":\"plain-secret\"}",
             CreatedAtUtc = hitDate,
@@ -378,6 +483,10 @@ public sealed class LogCenterReadModelServiceTests
             SignalType = "Entry",
             RiskScore = 35,
             DecisionOutcome = "Persisted",
+            DecisionReasonType = "Allow",
+            DecisionReasonCode = "Allowed",
+            DecisionSummary = "Strategy produced an executable candidate.",
+            DecisionAtUtc = oldDate,
             LatencyMs = 22,
             SnapshotJson = "{\"secret\":\"plain-secret\"}",
             CreatedAtUtc = oldDate,
@@ -486,9 +595,13 @@ public sealed class LogCenterReadModelServiceTests
                 Timeframe = "1m",
                 StrategyVersion = "StrategyVersion:test",
                 SignalType = "Entry",
-                RiskScore = 72,
-                DecisionOutcome = "Persisted",
-                LatencyMs = 12,
+            RiskScore = 72,
+            DecisionOutcome = "Persisted",
+            DecisionReasonType = "Allow",
+            DecisionReasonCode = "Allowed",
+            DecisionSummary = "Strategy produced an executable candidate.",
+            DecisionAtUtc = now,
+            LatencyMs = 12,
                 SnapshotJson = "{\"symbol\":\"BTCUSDT\",\"secret\":\"plain-secret\"}",
                 CreatedAtUtc = now,
                 UpdatedDate = now
@@ -504,9 +617,13 @@ public sealed class LogCenterReadModelServiceTests
                 Timeframe = "5m",
                 StrategyVersion = "StrategyVersion:noise",
                 SignalType = "Entry",
-                RiskScore = 22,
-                DecisionOutcome = "Persisted",
-                LatencyMs = 8,
+            RiskScore = 22,
+            DecisionOutcome = "Persisted",
+            DecisionReasonType = "Allow",
+            DecisionReasonCode = "Allowed",
+            DecisionSummary = "Strategy produced an executable candidate.",
+            DecisionAtUtc = now,
+            LatencyMs = 8,
                 SnapshotJson = "{\"symbol\":\"ETHUSDT\"}",
                 CreatedAtUtc = now,
                 UpdatedDate = now

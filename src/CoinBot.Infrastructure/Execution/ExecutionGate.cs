@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Auditing;
 using CoinBot.Application.Abstractions.DemoPortfolio;
@@ -7,6 +8,7 @@ using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Observability;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace CoinBot.Infrastructure.Execution;
 
@@ -18,8 +20,15 @@ public sealed class ExecutionGate(
     ITradingModeResolver tradingModeResolver,
     IAuditLogService auditLogService,
     ILogger<ExecutionGate> logger,
-    IHostEnvironment? hostEnvironment = null) : IExecutionGate
+    IHostEnvironment? hostEnvironment = null,
+    ITraceService? traceService = null,
+    TimeProvider? timeProvider = null,
+    IOptions<DataLatencyGuardOptions>? dataLatencyGuardOptions = null) : IExecutionGate
 {
+    private readonly ITraceService? traceWriter = traceService;
+    private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
+    private readonly int staleThresholdMilliseconds = checked((dataLatencyGuardOptions?.Value ?? new DataLatencyGuardOptions()).StaleDataThresholdSeconds * 1000);
+
     public async Task<GlobalExecutionSwitchSnapshot> EnsureExecutionAllowedAsync(
         ExecutionGateRequest request,
         CancellationToken cancellationToken = default)
@@ -27,6 +36,14 @@ public sealed class ExecutionGate(
         if (TryResolveAdministrativeOverrideReason(request.Context, out var administrativeOverrideReason))
         {
             var switchSnapshot = await globalExecutionSwitchService.GetSnapshotAsync(cancellationToken);
+            var administrativeSnapshot = CreateAdministrativeOverrideSnapshot(request);
+            var administrativeDecision = CreateDecisionDescriptor(
+                request,
+                isBlocked: false,
+                reasonCode: ExecutionDecisionDiagnostics.AllowedDecisionCode,
+                summary: "Administrative override allowed the request.",
+                administrativeSnapshot,
+                clock.GetUtcNow().UtcDateTime);
 
             await auditLogService.WriteAsync(
                 new AuditLogWriteRequest(
@@ -35,22 +52,20 @@ public sealed class ExecutionGate(
                     request.Target,
                     BuildAuditContext(
                         request.Context,
-                        new DegradedModeSnapshot(
-                            DegradedModeStateCode.Normal,
-                            DegradedModeReasonCode.None,
-                            SignalFlowBlocked: false,
-                            ExecutionFlowBlocked: false,
-                            LatestDataTimestampAtUtc: null,
-                            LatestHeartbeatReceivedAtUtc: null,
-                            LatestDataAgeMilliseconds: null,
-                            LatestClockDriftMilliseconds: null,
-                            LastStateChangedAtUtc: null,
-                            IsPersisted: false),
+                        administrativeSnapshot,
+                        administrativeDecision,
                         administrativeOverrideReason: administrativeOverrideReason),
                     request.CorrelationId,
                     "Allowed:AdministrativeOverride",
                     request.Environment.ToString()),
                 cancellationToken);
+
+            await WriteDecisionTraceAsync(
+                request,
+                administrativeDecision,
+                administrativeSnapshot,
+                cancellationToken,
+                administrativeOverrideReason: administrativeOverrideReason);
 
             logger.LogWarning(
                 "Execution gate accepted an administrative override for {Target}. Reason={AdministrativeOverrideReason}",
@@ -78,16 +93,31 @@ public sealed class ExecutionGate(
             using var executionActivity = CoinBotActivity.StartActivity("CoinBot.Execution.Gate");
             ApplyTags(executionActivity, request);
             executionActivity.SetTag("coinbot.execution.result", latencyBlockedReason.ToString());
+            var latencyDecision = CreateDecisionDescriptor(
+                request,
+                isBlocked: true,
+                reasonCode: latencyBlockedReason.Value.ToString(),
+                summary: ExecutionDecisionDiagnostics.ExtractHumanSummary(
+                    CreateMessage(latencyBlockedReason.Value, request.Environment, latencySnapshot)) ??
+                    CreateMessage(latencyBlockedReason.Value, request.Environment, latencySnapshot),
+                latencySnapshot,
+                clock.GetUtcNow().UtcDateTime);
 
             await auditLogService.WriteAsync(
                 new AuditLogWriteRequest(
                     request.Actor,
                     request.Action,
                     request.Target,
-                    BuildAuditContext(request.Context, latencySnapshot),
+                    BuildAuditContext(request.Context, latencySnapshot, latencyDecision),
                     request.CorrelationId,
                     MapOutcome(latencyBlockedReason.Value),
                     request.Environment.ToString()),
+                cancellationToken);
+
+            await WriteDecisionTraceAsync(
+                request,
+                latencyDecision,
+                latencySnapshot,
                 cancellationToken);
 
             logger.LogWarning(
@@ -111,16 +141,29 @@ public sealed class ExecutionGate(
             using var executionActivity = CoinBotActivity.StartActivity("CoinBot.Execution.Gate");
             ApplyTags(executionActivity, request);
             executionActivity.SetTag("coinbot.execution.result", "GlobalSystemStateUnavailable");
+            var unavailableDecision = CreateDecisionDescriptor(
+                request,
+                isBlocked: true,
+                reasonCode: "GlobalSystemStateUnavailable",
+                summary: "Execution blocked because global system state could not be evaluated.",
+                latencySnapshot,
+                clock.GetUtcNow().UtcDateTime);
 
             await auditLogService.WriteAsync(
                 new AuditLogWriteRequest(
                     request.Actor,
                     request.Action,
                     request.Target,
-                    BuildAuditContext(request.Context, latencySnapshot),
+                    BuildAuditContext(request.Context, latencySnapshot, unavailableDecision),
                     request.CorrelationId,
                     "Blocked:GlobalSystemStateUnavailable",
                     request.Environment.ToString()),
+                cancellationToken);
+
+            await WriteDecisionTraceAsync(
+                request,
+                unavailableDecision,
+                latencySnapshot,
                 cancellationToken);
 
             logger.LogWarning(exception, "Execution stage failed closed because global system state could not be evaluated.");
@@ -133,17 +176,35 @@ public sealed class ExecutionGate(
             using var executionActivity = CoinBotActivity.StartActivity("CoinBot.Execution.Gate");
             ApplyTags(executionActivity, request);
             executionActivity.SetTag("coinbot.execution.result", $"GlobalSystem:{globalSystemStateSnapshot.State}");
+            var globalSystemDecision = CreateDecisionDescriptor(
+                request,
+                isBlocked: true,
+                reasonCode: ResolveGlobalSystemDecisionReasonCode(globalSystemStateSnapshot.State),
+                summary: CreateGlobalSystemStateMessage(globalSystemStateSnapshot),
+                latencySnapshot,
+                clock.GetUtcNow().UtcDateTime);
 
             await auditLogService.WriteAsync(
                 new AuditLogWriteRequest(
                     request.Actor,
                     request.Action,
                     request.Target,
-                    BuildAuditContext(request.Context, latencySnapshot, globalSystemStateSnapshot: globalSystemStateSnapshot),
+                    BuildAuditContext(
+                        request.Context,
+                        latencySnapshot,
+                        globalSystemDecision,
+                        globalSystemStateSnapshot: globalSystemStateSnapshot),
                     request.CorrelationId,
                     BuildGlobalSystemOutcome(globalSystemStateSnapshot.State),
                     request.Environment.ToString()),
                 cancellationToken);
+
+            await WriteDecisionTraceAsync(
+                request,
+                globalSystemDecision,
+                latencySnapshot,
+                cancellationToken,
+                globalSystemStateSnapshot: globalSystemStateSnapshot);
 
             logger.LogWarning(
                 "Execution stage blocked because global system state is {GlobalSystemState}.",
@@ -165,17 +226,37 @@ public sealed class ExecutionGate(
                 using var executionActivity = CoinBotActivity.StartActivity("CoinBot.Execution.Gate");
                 ApplyTags(executionActivity, request);
                 executionActivity.SetTag("coinbot.execution.result", ExecutionGateBlockedReason.DemoSessionDriftDetected.ToString());
+                var demoSessionDecision = CreateDecisionDescriptor(
+                    request,
+                    isBlocked: true,
+                    reasonCode: ExecutionGateBlockedReason.DemoSessionDriftDetected.ToString(),
+                    summary: CreateMessage(ExecutionGateBlockedReason.DemoSessionDriftDetected, request.Environment, latencySnapshot),
+                    latencySnapshot,
+                    clock.GetUtcNow().UtcDateTime);
 
                 await auditLogService.WriteAsync(
                 new AuditLogWriteRequest(
                     request.Actor,
                     request.Action,
                     request.Target,
-                    BuildAuditContext(request.Context, latencySnapshot, demoSessionSnapshot: demoSessionSnapshot, globalSystemStateSnapshot: globalSystemStateSnapshot),
+                    BuildAuditContext(
+                        request.Context,
+                        latencySnapshot,
+                        demoSessionDecision,
+                        demoSessionSnapshot: demoSessionSnapshot,
+                        globalSystemStateSnapshot: globalSystemStateSnapshot),
                     request.CorrelationId,
                     MapOutcome(ExecutionGateBlockedReason.DemoSessionDriftDetected),
                     request.Environment.ToString()),
                     cancellationToken);
+
+                await WriteDecisionTraceAsync(
+                    request,
+                    demoSessionDecision,
+                    latencySnapshot,
+                    cancellationToken,
+                    demoSessionSnapshot: demoSessionSnapshot,
+                    globalSystemStateSnapshot: globalSystemStateSnapshot);
 
                 logger.LogWarning("Execution stage blocked the request because the active demo session drifted.");
 
@@ -217,17 +298,42 @@ public sealed class ExecutionGate(
             modeResolution,
             IsDevelopmentFuturesPilotOverrideAllowed(request));
         finalExecutionActivity.SetTag("coinbot.execution.result", blockedReason?.ToString() ?? "Allowed");
+        var finalDecision = CreateDecisionDescriptor(
+            request,
+            isBlocked: blockedReason is not null,
+            reasonCode: blockedReason?.ToString() ?? ExecutionDecisionDiagnostics.AllowedDecisionCode,
+            summary: blockedReason is null
+                ? "Execution decision allowed the request."
+                : ExecutionDecisionDiagnostics.ExtractHumanSummary(CreateMessage(blockedReason.Value, request.Environment, latencySnapshot)) ??
+                    CreateMessage(blockedReason.Value, request.Environment, latencySnapshot),
+            latencySnapshot,
+            clock.GetUtcNow().UtcDateTime);
 
         await auditLogService.WriteAsync(
             new AuditLogWriteRequest(
                 request.Actor,
                 request.Action,
                 request.Target,
-                BuildAuditContext(request.Context, latencySnapshot, modeResolution, demoSessionSnapshot, globalSystemStateSnapshot),
+                BuildAuditContext(
+                    request.Context,
+                    latencySnapshot,
+                    finalDecision,
+                    modeResolution,
+                    demoSessionSnapshot,
+                    globalSystemStateSnapshot),
                 request.CorrelationId,
                 blockedReason is null ? "Allowed" : MapOutcome(blockedReason.Value),
                 request.Environment.ToString()),
             cancellationToken);
+
+        await WriteDecisionTraceAsync(
+            request,
+            finalDecision,
+            latencySnapshot,
+            cancellationToken,
+            modeResolution,
+            demoSessionSnapshot,
+            globalSystemStateSnapshot);
 
         if (blockedReason is not null)
         {
@@ -473,6 +579,18 @@ public sealed class ExecutionGate(
         };
     }
 
+    private static string ResolveGlobalSystemDecisionReasonCode(GlobalSystemStateKind state)
+    {
+        return state switch
+        {
+            GlobalSystemStateKind.SoftHalt => "GlobalSystemSoftHalt",
+            GlobalSystemStateKind.FullHalt => "GlobalSystemFullHalt",
+            GlobalSystemStateKind.Maintenance => "GlobalSystemMaintenance",
+            GlobalSystemStateKind.Degraded => "GlobalSystemDegraded",
+            _ => "GlobalSystemState"
+        };
+    }
+
     private static string CreateGlobalSystemStateMessage(GlobalSystemStateSnapshot snapshot)
     {
         return string.IsNullOrWhiteSpace(snapshot.Message)
@@ -504,9 +622,259 @@ public sealed class ExecutionGate(
             DegradedModeReasonCode.CandleDataOutOfOrderDetected;
     }
 
+    private DegradedModeSnapshot CreateAdministrativeOverrideSnapshot(ExecutionGateRequest request)
+    {
+        return new DegradedModeSnapshot(
+            DegradedModeStateCode.Normal,
+            DegradedModeReasonCode.None,
+            SignalFlowBlocked: false,
+            ExecutionFlowBlocked: false,
+            LatestDataTimestampAtUtc: null,
+            LatestHeartbeatReceivedAtUtc: null,
+            LatestDataAgeMilliseconds: null,
+            LatestClockDriftMilliseconds: null,
+            LastStateChangedAtUtc: null,
+            IsPersisted: false,
+            LatestHeartbeatSource: "administrative-override",
+            LatestSymbol: request.Symbol,
+            LatestTimeframe: request.Timeframe);
+    }
+
+    private ExecutionDecisionDescriptor CreateDecisionDescriptor(
+        ExecutionGateRequest request,
+        bool isBlocked,
+        string reasonCode,
+        string summary,
+        DegradedModeSnapshot latencySnapshot,
+        DateTime decisionAtUtc)
+    {
+        var normalizedDecisionAtUtc = NormalizeUtc(decisionAtUtc);
+        var normalizedReasonCode = ExecutionDecisionDiagnostics.ResolveDecisionReasonCode(
+            isBlocked,
+            reasonCode,
+            latencySnapshot.ReasonCode == DegradedModeReasonCode.None
+                ? null
+                : latencySnapshot.ReasonCode.ToString());
+        var normalizedReasonType = ExecutionDecisionDiagnostics.ResolveDecisionReasonType(
+            normalizedReasonCode,
+            latencySnapshot.ReasonCode == DegradedModeReasonCode.None
+                ? null
+                : latencySnapshot.ReasonCode.ToString());
+        var normalizedSummary = Truncate(summary, 512) ??
+            ExecutionDecisionDiagnostics.ResolveDecisionSummary(isBlocked, normalizedReasonType, normalizedReasonCode, summary);
+        var normalizedLastCandleAtUtc = NormalizeUtcNullable(latencySnapshot.LatestDataTimestampAtUtc);
+        var normalizedContinuityRecoveredAtUtc = NormalizeUtcNullable(latencySnapshot.LatestContinuityRecoveredAtUtc);
+
+        return new ExecutionDecisionDescriptor(
+            ExecutionDecisionDiagnostics.ResolveDecisionOutcome(isBlocked),
+            normalizedReasonType,
+            normalizedReasonCode,
+            normalizedSummary,
+            normalizedDecisionAtUtc,
+            NormalizeDecisionDimension(request.Symbol, latencySnapshot.LatestSymbol, "n/a"),
+            NormalizeDecisionDimension(request.Timeframe, latencySnapshot.LatestTimeframe, "n/a"),
+            normalizedLastCandleAtUtc,
+            latencySnapshot.LatestDataAgeMilliseconds ?? ResolveDataAgeMilliseconds(normalizedDecisionAtUtc, normalizedLastCandleAtUtc),
+            staleThresholdMilliseconds,
+            ExecutionDecisionDiagnostics.ResolveStaleReason(
+                latencySnapshot.ReasonCode == DegradedModeReasonCode.None
+                    ? null
+                    : latencySnapshot.ReasonCode.ToString()),
+            ExecutionDecisionDiagnostics.ResolveContinuityState(
+                latencySnapshot.ReasonCode == DegradedModeReasonCode.None
+                    ? null
+                    : latencySnapshot.ReasonCode.ToString(),
+                latencySnapshot.LatestContinuityGapCount,
+                normalizedContinuityRecoveredAtUtc) ?? "Continuity OK",
+            latencySnapshot.LatestContinuityGapCount,
+            NormalizeUtcNullable(latencySnapshot.LatestContinuityGapStartedAtUtc),
+            NormalizeUtcNullable(latencySnapshot.LatestContinuityGapLastSeenAtUtc),
+            normalizedContinuityRecoveredAtUtc);
+    }
+
+    private async Task WriteDecisionTraceAsync(
+        ExecutionGateRequest request,
+        ExecutionDecisionDescriptor decisionDescriptor,
+        DegradedModeSnapshot latencySnapshot,
+        CancellationToken cancellationToken,
+        TradingModeResolution? modeResolution = null,
+        DemoSessionSnapshot? demoSessionSnapshot = null,
+        GlobalSystemStateSnapshot? globalSystemStateSnapshot = null,
+        string? administrativeOverrideReason = null)
+    {
+        if (traceWriter is null)
+        {
+            return;
+        }
+
+        await traceWriter.WriteDecisionTraceAsync(
+            new DecisionTraceWriteRequest(
+                UserId: ResolveDecisionUserId(request.UserId),
+                Symbol: decisionDescriptor.Symbol,
+                Timeframe: decisionDescriptor.Timeframe,
+                StrategyVersion: NormalizeDecisionDimension(request.StrategyKey, null, "ExecutionGate"),
+                SignalType: "ExecutionGate",
+                DecisionOutcome: decisionDescriptor.Outcome,
+                SnapshotJson: BuildDecisionTracePayload(
+                    request,
+                    decisionDescriptor,
+                    latencySnapshot,
+                    modeResolution,
+                    demoSessionSnapshot,
+                    globalSystemStateSnapshot,
+                    administrativeOverrideReason),
+                LatencyMs: 0,
+                CorrelationId: request.CorrelationId,
+                DecisionReasonType: decisionDescriptor.ReasonType,
+                DecisionReasonCode: decisionDescriptor.ReasonCode,
+                DecisionSummary: decisionDescriptor.Summary,
+                DecisionAtUtc: decisionDescriptor.DecisionAtUtc,
+                LastCandleAtUtc: decisionDescriptor.LastCandleAtUtc,
+                DataAgeMs: decisionDescriptor.DataAgeMs,
+                StaleThresholdMs: decisionDescriptor.StaleThresholdMs,
+                StaleReason: decisionDescriptor.StaleReason,
+                ContinuityState: decisionDescriptor.ContinuityState,
+                ContinuityGapCount: decisionDescriptor.ContinuityGapCount,
+                ContinuityGapStartedAtUtc: decisionDescriptor.ContinuityGapStartedAtUtc,
+                ContinuityGapLastSeenAtUtc: decisionDescriptor.ContinuityGapLastSeenAtUtc,
+                ContinuityRecoveredAtUtc: decisionDescriptor.ContinuityRecoveredAtUtc,
+                CreatedAtUtc: decisionDescriptor.DecisionAtUtc),
+            cancellationToken);
+    }
+
+    private static string BuildDecisionTracePayload(
+        ExecutionGateRequest request,
+        ExecutionDecisionDescriptor decisionDescriptor,
+        DegradedModeSnapshot latencySnapshot,
+        TradingModeResolution? modeResolution,
+        DemoSessionSnapshot? demoSessionSnapshot,
+        GlobalSystemStateSnapshot? globalSystemStateSnapshot,
+        string? administrativeOverrideReason)
+    {
+        return JsonSerializer.Serialize(
+            new
+            {
+                DecisionOutcome = decisionDescriptor.Outcome,
+                DecisionReasonType = decisionDescriptor.ReasonType,
+                DecisionReasonCode = decisionDescriptor.ReasonCode,
+                DecisionSummary = decisionDescriptor.Summary,
+                DecisionAtUtc = decisionDescriptor.DecisionAtUtc,
+                request.Actor,
+                request.Action,
+                request.Target,
+                Environment = request.Environment.ToString(),
+                request.CorrelationId,
+                request.UserId,
+                request.BotId,
+                request.StrategyKey,
+                Symbol = decisionDescriptor.Symbol,
+                Timeframe = decisionDescriptor.Timeframe,
+                LastCandleAtUtc = decisionDescriptor.LastCandleAtUtc,
+                DataAgeMs = decisionDescriptor.DataAgeMs,
+                StaleThresholdMs = decisionDescriptor.StaleThresholdMs,
+                StaleReason = decisionDescriptor.StaleReason,
+                ContinuityState = decisionDescriptor.ContinuityState,
+                ContinuityGapCount = decisionDescriptor.ContinuityGapCount,
+                ContinuityGapStartedAtUtc = decisionDescriptor.ContinuityGapStartedAtUtc,
+                ContinuityGapLastSeenAtUtc = decisionDescriptor.ContinuityGapLastSeenAtUtc,
+                ContinuityRecoveredAtUtc = decisionDescriptor.ContinuityRecoveredAtUtc,
+                LatencyState = latencySnapshot.StateCode.ToString(),
+                LatencyReason = latencySnapshot.ReasonCode.ToString(),
+                latencySnapshot.LatestHeartbeatSource,
+                latencySnapshot.LatestExpectedOpenTimeUtc,
+                latencySnapshot.LatestClockDriftMilliseconds,
+                DecisionSourceLayer = ResolveDecisionSourceLayer(latencySnapshot),
+                ModeResolution = modeResolution is null
+                    ? null
+                    : new
+                    {
+                        EffectiveMode = modeResolution.EffectiveMode.ToString(),
+                        Source = modeResolution.ResolutionSource.ToString(),
+                        modeResolution.Reason
+                    },
+                DemoSession = demoSessionSnapshot is null
+                    ? null
+                    : new
+                    {
+                        demoSessionSnapshot.State,
+                        demoSessionSnapshot.ConsistencyStatus,
+                        demoSessionSnapshot.SequenceNumber,
+                        demoSessionSnapshot.LastDriftSummary
+                    },
+                GlobalSystem = globalSystemStateSnapshot is null
+                    ? null
+                    : new
+                    {
+                        State = globalSystemStateSnapshot.State.ToString(),
+                        globalSystemStateSnapshot.ReasonCode,
+                        globalSystemStateSnapshot.Version,
+                        globalSystemStateSnapshot.IsManualOverride
+                    },
+                AdministrativeOverride = administrativeOverrideReason
+            },
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+    }
+
+    private static string ResolveDecisionUserId(string? userId)
+    {
+        return string.IsNullOrWhiteSpace(userId)
+            ? "system:execution-gate"
+            : userId.Trim();
+    }
+
+    private static string NormalizeDecisionDimension(string? primaryValue, string? fallbackValue, string defaultValue)
+    {
+        var normalizedValue = primaryValue?.Trim();
+        if (!string.IsNullOrWhiteSpace(normalizedValue))
+        {
+            return normalizedValue;
+        }
+
+        var normalizedFallbackValue = fallbackValue?.Trim();
+        return string.IsNullOrWhiteSpace(normalizedFallbackValue)
+            ? defaultValue
+            : normalizedFallbackValue;
+    }
+
+    private static DateTime NormalizeUtc(DateTime value)
+    {
+        return value.Kind switch
+        {
+            DateTimeKind.Utc => value,
+            DateTimeKind.Local => value.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+        };
+    }
+
+    private static DateTime? NormalizeUtcNullable(DateTime? value)
+    {
+        return value.HasValue
+            ? NormalizeUtc(value.Value)
+            : null;
+    }
+
+    private static int? ResolveDataAgeMilliseconds(DateTime decisionAtUtc, DateTime? lastCandleAtUtc)
+    {
+        if (!lastCandleAtUtc.HasValue)
+        {
+            return null;
+        }
+
+        var deltaMilliseconds = (decisionAtUtc - lastCandleAtUtc.Value).TotalMilliseconds;
+        if (deltaMilliseconds <= 0)
+        {
+            return 0;
+        }
+
+        return deltaMilliseconds >= int.MaxValue
+            ? int.MaxValue
+            : (int)Math.Round(deltaMilliseconds, MidpointRounding.AwayFromZero);
+    }
+
     private static string? BuildAuditContext(
         string? requestContext,
         DegradedModeSnapshot latencySnapshot,
+        ExecutionDecisionDescriptor decisionDescriptor,
         TradingModeResolution? modeResolution = null,
         DemoSessionSnapshot? demoSessionSnapshot = null,
         GlobalSystemStateSnapshot? globalSystemStateSnapshot = null,
@@ -520,7 +888,10 @@ public sealed class ExecutionGate(
         }
 
         contextParts.Add(
-            $"LatencyState={latencySnapshot.StateCode}; LatencyReason={latencySnapshot.ReasonCode}; HeartbeatSource={latencySnapshot.LatestHeartbeatSource ?? "missing"}; Symbol={latencySnapshot.LatestSymbol ?? "missing"}; Timeframe={latencySnapshot.LatestTimeframe ?? "missing"}; LastCandleAtUtc={latencySnapshot.LatestDataTimestampAtUtc?.ToString("O") ?? "missing"}; ExpectedOpenTimeUtc={latencySnapshot.LatestExpectedOpenTimeUtc?.ToString("O") ?? "missing"}; DataAgeMs={latencySnapshot.LatestDataAgeMilliseconds?.ToString() ?? "missing"}; ClockDriftMs={latencySnapshot.LatestClockDriftMilliseconds?.ToString() ?? "missing"}; ContinuityGapCount={latencySnapshot.LatestContinuityGapCount?.ToString() ?? "missing"}; DecisionSourceLayer={ResolveDecisionSourceLayer(latencySnapshot)}; DecisionMethodName={"ExecutionGate.EvaluateDataLatencyAsync"}");
+            $"DecisionOutcome={decisionDescriptor.Outcome}; DecisionReasonType={decisionDescriptor.ReasonType}; DecisionReasonCode={decisionDescriptor.ReasonCode}; DecisionSummary={Truncate(decisionDescriptor.Summary, 256) ?? "none"}; DecisionAtUtc={decisionDescriptor.DecisionAtUtc:O}; Symbol={decisionDescriptor.Symbol}; Timeframe={decisionDescriptor.Timeframe}; LastCandleAtUtc={decisionDescriptor.LastCandleAtUtc?.ToString("O") ?? "missing"}; DataAgeMs={decisionDescriptor.DataAgeMs?.ToString() ?? "missing"}; StaleThresholdMs={decisionDescriptor.StaleThresholdMs}; StaleReason={decisionDescriptor.StaleReason ?? "none"}; ContinuityState={decisionDescriptor.ContinuityState}; ContinuityGapCount={decisionDescriptor.ContinuityGapCount?.ToString() ?? "missing"}; ContinuityGapStartedAtUtc={decisionDescriptor.ContinuityGapStartedAtUtc?.ToString("O") ?? "missing"}; ContinuityGapLastSeenAtUtc={decisionDescriptor.ContinuityGapLastSeenAtUtc?.ToString("O") ?? "missing"}; ContinuityRecoveredAtUtc={decisionDescriptor.ContinuityRecoveredAtUtc?.ToString("O") ?? "missing"}");
+
+        contextParts.Add(
+            $"LatencyState={latencySnapshot.StateCode}; LatencyReason={latencySnapshot.ReasonCode}; HeartbeatSource={latencySnapshot.LatestHeartbeatSource ?? "missing"}; ExpectedOpenTimeUtc={latencySnapshot.LatestExpectedOpenTimeUtc?.ToString("O") ?? "missing"}; ClockDriftMs={latencySnapshot.LatestClockDriftMilliseconds?.ToString() ?? "missing"}; DecisionSourceLayer={ResolveDecisionSourceLayer(latencySnapshot)}; DecisionMethodName={"ExecutionGate.EvaluateDataLatencyAsync"}");
 
         if (modeResolution is not null)
         {
@@ -551,6 +922,24 @@ public sealed class ExecutionGate(
             ? combinedContext
             : combinedContext[..2048];
     }
+
+    private sealed record ExecutionDecisionDescriptor(
+        string Outcome,
+        string ReasonType,
+        string ReasonCode,
+        string Summary,
+        DateTime DecisionAtUtc,
+        string Symbol,
+        string Timeframe,
+        DateTime? LastCandleAtUtc,
+        int? DataAgeMs,
+        int StaleThresholdMs,
+        string? StaleReason,
+        string ContinuityState,
+        int? ContinuityGapCount,
+        DateTime? ContinuityGapStartedAtUtc,
+        DateTime? ContinuityGapLastSeenAtUtc,
+        DateTime? ContinuityRecoveredAtUtc);
 
     private static string? Truncate(string? value, int maxLength)
     {

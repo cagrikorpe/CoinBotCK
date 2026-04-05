@@ -2,18 +2,21 @@
 @using System.Linq
 @using CoinBot.Web.ViewModels.Admin
 @{
+    string FormatUtc(DateTime? value) => value.HasValue ? value.Value.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") + " UTC" : "n/a";
+    string FormatNumber(int? value, string suffix = "") => value.HasValue ? value.Value.ToString() + suffix : "n/a";
+    string FormatText(string? value) => string.IsNullOrWhiteSpace(value) ? "n/a" : value;
     var primaryDecision = Model.DecisionTraces.FirstOrDefault();
     var primaryExecution = Model.ExecutionTraces.FirstOrDefault();
     var timelineEntries = Model.DecisionTraces
         .Select(decision => new
         {
-            OccurredAtUtc = decision.CreatedAtUtc,
+            OccurredAtUtc = decision.DecisionAtUtc ?? decision.CreatedAtUtc,
             KindLabel = "Decision / Risk",
             Reference = decision.DecisionId,
             SecondaryReference = decision.StrategySignalId?.ToString(),
             Title = $"{decision.Symbol} / {decision.Timeframe}",
-            Summary = $"Outcome={decision.DecisionOutcome} · Risk={(decision.RiskScore?.ToString() ?? "-")} · Strategy={decision.StrategyVersion}",
-            Meta = $"Signal={decision.SignalType} · Latency={decision.LatencyMs}ms{(string.IsNullOrWhiteSpace(decision.VetoReasonCode) ? string.Empty : $" · Veto={decision.VetoReasonCode}")}",
+            Summary = decision.DecisionSummary ?? $"Outcome={decision.DecisionOutcome} · Risk={(decision.RiskScore?.ToString() ?? "-")} · Strategy={decision.StrategyVersion}",
+            Meta = $"ReasonType={FormatText(decision.DecisionReasonType)} · ReasonCode={FormatText(decision.DecisionReasonCode)} · DecisionAt={FormatUtc(decision.DecisionAtUtc ?? decision.CreatedAtUtc)} · LastCandle={FormatUtc(decision.LastCandleAtUtc)} · DataAge={FormatNumber(decision.DataAgeMs, "ms")} · Threshold={FormatNumber(decision.StaleThresholdMs, "ms")} · Continuity={FormatText(decision.ContinuityState)}{(string.IsNullOrWhiteSpace(decision.VetoReasonCode) ? string.Empty : $" · Veto={decision.VetoReasonCode}")}",
             RequestMasked = (string?)null,
             ResponseMasked = (string?)decision.SnapshotJson
         })
@@ -33,7 +36,7 @@
         .ToArray();
     var decisionSummary = primaryDecision is null
         ? "Decision=n/a"
-        : $"Decision={primaryDecision.DecisionId} · Signal={(primaryDecision.StrategySignalId?.ToString() ?? "-")} · Outcome={primaryDecision.DecisionOutcome} · Risk={(primaryDecision.RiskScore?.ToString() ?? "-")} · Latency={primaryDecision.LatencyMs}ms{(string.IsNullOrWhiteSpace(primaryDecision.VetoReasonCode) ? string.Empty : $" · Veto={primaryDecision.VetoReasonCode}")}";
+        : $"Decision={primaryDecision.DecisionId} · Signal={(primaryDecision.StrategySignalId?.ToString() ?? "-")} · Outcome={primaryDecision.DecisionOutcome} · Reason={FormatText(primaryDecision.DecisionReasonCode)} · DecisionAt={FormatUtc(primaryDecision.DecisionAtUtc ?? primaryDecision.CreatedAtUtc)} · Risk={(primaryDecision.RiskScore?.ToString() ?? "-")} · Latency={primaryDecision.LatencyMs}ms{(string.IsNullOrWhiteSpace(primaryDecision.VetoReasonCode) ? string.Empty : $" · Veto={primaryDecision.VetoReasonCode}")}";
     var executionSummary = primaryExecution is null
         ? "Execution=n/a"
         : $"Execution={primaryExecution.ExecutionAttemptId} · Provider={primaryExecution.Provider} · Order={(primaryExecution.ExecutionOrderId?.ToString() ?? "-")} · Status={(primaryExecution.HttpStatusCode?.ToString() ?? "-")} · Latency={(primaryExecution.LatencyMs?.ToString() ?? "-")}ms";
@@ -66,6 +69,49 @@
                     Message = Model.CorrelationId,
                     Meta = $"{decisionSummary} | {executionSummary}"
                 })
+
+                @if (primaryDecision is not null)
+                {
+                    <div class="cb-admin-summary-grid mt-4">
+                        <div class="cb-admin-summary-card" data-cb-trace-decision-outcome>
+                            <span class="cb-admin-summary-label">Decision outcome</span>
+                            <strong>@primaryDecision.DecisionOutcome</strong>
+                            <small data-cb-trace-decision-reason-type>@FormatText(primaryDecision.DecisionReasonType)</small>
+                        </div>
+                        <div class="cb-admin-summary-card" data-cb-trace-decision-reason-code>
+                            <span class="cb-admin-summary-label">Reason code</span>
+                            <strong>@FormatText(primaryDecision.DecisionReasonCode)</strong>
+                            <small data-cb-trace-decision-at>@FormatUtc(primaryDecision.DecisionAtUtc ?? primaryDecision.CreatedAtUtc)</small>
+                        </div>
+                        <div class="cb-admin-summary-card" data-cb-trace-market-last-candle>
+                            <span class="cb-admin-summary-label">Market freshness</span>
+                            <strong>@FormatUtc(primaryDecision.LastCandleAtUtc)</strong>
+                            <small data-cb-trace-market-age>@FormatNumber(primaryDecision.DataAgeMs, "ms")</small>
+                            <small data-cb-trace-market-threshold>Threshold=@FormatNumber(primaryDecision.StaleThresholdMs, "ms")</small>
+                        </div>
+                        <div class="cb-admin-summary-card" data-cb-trace-continuity-state>
+                            <span class="cb-admin-summary-label">Continuity</span>
+                            <strong>@FormatText(primaryDecision.ContinuityState)</strong>
+                            <small data-cb-trace-continuity-gap-count>@FormatNumber(primaryDecision.ContinuityGapCount)</small>
+                        </div>
+                    </div>
+
+                    <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-4" data-cb-trace-decision-summary>
+                        <div>
+                            <div class="cb-admin-info-strip-title">Execution decision summary</div>
+                            <div class="cb-admin-info-strip-text">@FormatText(primaryDecision.DecisionSummary)</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta" data-cb-trace-market-stale-reason>@FormatText(primaryDecision.StaleReason)</span>
+                    </div>
+
+                    <div class="text-muted mt-3">
+                        <span data-cb-trace-continuity-gap-start>GapStart=@FormatUtc(primaryDecision.ContinuityGapStartedAtUtc)</span>
+                        ·
+                        <span data-cb-trace-continuity-gap-last-seen>GapLastSeen=@FormatUtc(primaryDecision.ContinuityGapLastSeenAtUtc)</span>
+                        ·
+                        <span data-cb-trace-continuity-recovery>Recovered=@FormatUtc(primaryDecision.ContinuityRecoveredAtUtc)</span>
+                    </div>
+                }
 
                 <div class="d-flex flex-wrap gap-2 mt-4">
                     <a asp-area="Admin"
@@ -170,8 +216,11 @@
                     {
                         <div class="mb-5 pb-5 border-bottom">
                             <div><strong>@decision.DecisionId</strong> · @decision.DecisionOutcome · @decision.Symbol / @decision.Timeframe</div>
-                            <div class="text-muted">@decision.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC · Risk=@(decision.RiskScore?.ToString() ?? "-") · Latency=@decision.LatencyMs ms @(string.IsNullOrWhiteSpace(decision.VetoReasonCode) ? string.Empty : $"· Veto={decision.VetoReasonCode}")</div>
+                            <div class="text-muted">@decision.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC · DecisionAt=@FormatUtc(decision.DecisionAtUtc ?? decision.CreatedAtUtc) · Risk=@(decision.RiskScore?.ToString() ?? "-") · Latency=@decision.LatencyMs ms @(string.IsNullOrWhiteSpace(decision.VetoReasonCode) ? string.Empty : $"· Veto={decision.VetoReasonCode}")</div>
                             <div class="text-muted">SignalId=@(decision.StrategySignalId?.ToString() ?? "-")</div>
+                            <div class="text-muted">ReasonType=@FormatText(decision.DecisionReasonType) · ReasonCode=@FormatText(decision.DecisionReasonCode) · Summary=@FormatText(decision.DecisionSummary)</div>
+                            <div class="text-muted">LastCandleAtUtc=@FormatUtc(decision.LastCandleAtUtc) · DataAgeMs=@FormatNumber(decision.DataAgeMs) · StaleThresholdMs=@FormatNumber(decision.StaleThresholdMs) · StaleReason=@FormatText(decision.StaleReason)</div>
+                            <div class="text-muted">ContinuityState=@FormatText(decision.ContinuityState) · GapCount=@FormatNumber(decision.ContinuityGapCount) · GapStart=@FormatUtc(decision.ContinuityGapStartedAtUtc) · GapLastSeen=@FormatUtc(decision.ContinuityGapLastSeenAtUtc) · Recovered=@FormatUtc(decision.ContinuityRecoveredAtUtc)</div>
                             <div class="d-flex flex-wrap gap-2 mt-3">
                                 <a asp-area="Admin"
                                    asp-controller="Admin"

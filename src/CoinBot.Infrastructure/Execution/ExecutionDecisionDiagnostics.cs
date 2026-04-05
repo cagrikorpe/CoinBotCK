@@ -78,6 +78,11 @@ internal static class ExecutionDecisionDiagnostics
             return "GlobalExecutionOff";
         }
 
+        if (reasonCode.StartsWith("GlobalSystem", StringComparison.Ordinal))
+        {
+            return "GlobalExecutionOff";
+        }
+
         if (string.Equals(reasonCode, ExecutionGateBlockedReason.RequestedEnvironmentDoesNotMatchResolvedMode.ToString(), StringComparison.Ordinal) ||
             string.Equals(reasonCode, ExecutionGateBlockedReason.LiveExecutionBlockedByDemoMode.ToString(), StringComparison.Ordinal))
         {

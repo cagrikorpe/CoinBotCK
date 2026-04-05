@@ -14,6 +14,50 @@ namespace CoinBot.IntegrationTests.Administration;
 public sealed class LogCenterReadModelIntegrationTests
 {
     [Fact]
+    public async Task DatabaseMigrateAsync_AddsDecisionTraceDecisionColumns_OnSqlServer()
+    {
+        var databaseName = $"CoinBotLogCenterDecisionTraceMigration_{Guid.NewGuid():N}";
+        var connectionString = ResolveConnectionString(databaseName);
+
+        await using var dbContext = CreateDbContext(connectionString);
+
+        try
+        {
+            await dbContext.Database.EnsureDeletedAsync();
+            await dbContext.Database.MigrateAsync();
+
+            var historyRows = await dbContext.Database
+                .SqlQueryRaw<string>("SELECT [MigrationId] AS [Value] FROM [__EFMigrationsHistory]")
+                .ToListAsync();
+            var decisionReasonCodeColumnCount = await dbContext.Database
+                .SqlQueryRaw<int>(
+                    """
+                    SELECT COUNT(*) AS [Value]
+                    FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_NAME = 'DecisionTraces' AND COLUMN_NAME = 'DecisionReasonCode'
+                    """)
+                .SingleAsync();
+            var continuityRecoveredColumnCount = await dbContext.Database
+                .SqlQueryRaw<int>(
+                    """
+                    SELECT COUNT(*) AS [Value]
+                    FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_NAME = 'DecisionTraces' AND COLUMN_NAME = 'ContinuityRecoveredAtUtc'
+                    """)
+                .SingleAsync();
+
+            Assert.Contains(historyRows, row => string.Equals(row, "20260405152518_AddExecutionDecisionContinuityClosure", StringComparison.Ordinal));
+            Assert.Contains(historyRows, row => string.Equals(row, "20260405160702_AddDecisionTraceExecutionDecisionSurface", StringComparison.Ordinal));
+            Assert.Equal(1, decisionReasonCodeColumnCount);
+            Assert.Equal(1, continuityRecoveredColumnCount);
+        }
+        finally
+        {
+            await SqlServerIntegrationDatabase.CleanupDatabaseAsync(connectionString);
+        }
+    }
+
+    [Fact]
     public async Task GetPageAsync_ReturnsMaskedCombinedEntries_AndAppliesFilters_OnSqlServer()
     {
         var databaseName = $"CoinBotLogCenterReadModelInt_{Guid.NewGuid():N}";
@@ -91,6 +135,10 @@ public sealed class LogCenterReadModelIntegrationTests
                 SignalType = "Entry",
                 RiskScore = 72,
                 DecisionOutcome = "Persisted",
+                DecisionReasonType = "Allow",
+                DecisionReasonCode = "Allowed",
+                DecisionSummary = "Strategy produced an executable candidate.",
+                DecisionAtUtc = now,
                 LatencyMs = 12,
                 SnapshotJson = """
                 {
@@ -115,6 +163,10 @@ public sealed class LogCenterReadModelIntegrationTests
                 SignalType = "Entry",
                 RiskScore = 22,
                 DecisionOutcome = "Persisted",
+                DecisionReasonType = "RiskVeto",
+                DecisionReasonCode = "UserExecutionRiskSymbolExposureLimitBreached",
+                DecisionSummary = "Risk veto blocked execution.",
+                DecisionAtUtc = now,
                 LatencyMs = 8,
                 SnapshotJson = "{\"symbol\":\"ETHUSDT\"}",
                 CreatedAtUtc = now,
@@ -234,6 +286,7 @@ public sealed class LogCenterReadModelIntegrationTests
             Assert.DoesNotContain("abc123", entry.RawJson ?? string.Empty, StringComparison.Ordinal);
         });
         Assert.Contains(snapshot.Entries, entry => entry.RawJson?.Contains("***REDACTED***", StringComparison.Ordinal) == true);
+        Assert.Contains(snapshot.Entries, entry => entry.DecisionReasonCode == "Allowed");
     }
 
     private static ApplicationDbContext CreateDbContext(string connectionString)

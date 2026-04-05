@@ -135,6 +135,7 @@ public sealed class StrategySignalServiceTests
 
         var result = await service.GenerateAsync(
             new GenerateStrategySignalsRequest(version.Id, CreateContext(ExecutionEnvironment.Demo, sampleCount: 120, rsiValue: 28m)));
+        var decisionTrace = await dbContext.DecisionTraces.SingleAsync();
 
         Assert.Empty(result.Signals);
         var veto = Assert.Single(result.Vetoes);
@@ -151,6 +152,10 @@ public sealed class StrategySignalServiceTests
         Assert.Equal("Entry signal vetoed", veto.UiLog.Title);
         Assert.DoesNotContain("CurrentEquity", persistedVeto.RiskEvaluationJson, StringComparison.Ordinal);
         Assert.DoesNotContain("CurrentDailyLossAmount", persistedVeto.RiskEvaluationJson, StringComparison.Ordinal);
+        Assert.Equal("RiskVeto", decisionTrace.DecisionReasonType);
+        Assert.Equal(RiskVetoReasonCode.DailyLossLimitBreached.ToString(), decisionTrace.DecisionReasonCode);
+        Assert.Equal("Risk veto blocked execution.", decisionTrace.DecisionSummary);
+        Assert.NotNull(decisionTrace.DecisionAtUtc);
 
         var loadedVeto = await service.GetVetoAsync(veto.StrategySignalVetoId);
 
@@ -270,6 +275,10 @@ public sealed class StrategySignalServiceTests
         Assert.Equal(0, await dbContext.TradingStrategySignals.CountAsync());
         Assert.Equal(0, await dbContext.TradingStrategySignalVetoes.CountAsync());
         Assert.Equal("NoSignalCandidate", decisionTrace.DecisionOutcome);
+        Assert.Equal("StrategyCandidate", decisionTrace.DecisionReasonType);
+        Assert.Equal("NoSignalCandidate", decisionTrace.DecisionReasonCode);
+        Assert.Equal("Strategy did not produce an executable candidate.", decisionTrace.DecisionSummary);
+        Assert.NotNull(decisionTrace.DecisionAtUtc);
         Assert.Contains("\"decisionOutcome\":\"NoSignalCandidate\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
     }
 

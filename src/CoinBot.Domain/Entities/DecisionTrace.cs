@@ -22,9 +22,35 @@ public sealed class DecisionTrace : BaseEntity
 
     public string DecisionOutcome { get; set; } = string.Empty;
 
+    public string? DecisionReasonType { get; set; }
+
+    public string? DecisionReasonCode { get; set; }
+
+    public string? DecisionSummary { get; set; }
+
+    public DateTime? DecisionAtUtc { get; set; }
+
     public string? VetoReasonCode { get; set; }
 
     public int LatencyMs { get; set; }
+
+    public DateTime? LastCandleAtUtc { get; set; }
+
+    public int? DataAgeMs { get; set; }
+
+    public int? StaleThresholdMs { get; set; }
+
+    public string? StaleReason { get; set; }
+
+    public string? ContinuityState { get; set; }
+
+    public int? ContinuityGapCount { get; set; }
+
+    public DateTime? ContinuityGapStartedAtUtc { get; set; }
+
+    public DateTime? ContinuityGapLastSeenAtUtc { get; set; }
+
+    public DateTime? ContinuityRecoveredAtUtc { get; set; }
 
     public string SnapshotJson { get; set; } = string.Empty;
 

@@ -7,6 +7,7 @@ using CoinBot.Application.Abstractions.Risk;
 using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
@@ -109,7 +110,11 @@ public sealed class StrategySignalService(
                         vetoReasonCode: null,
                         riskScore: null,
                         relatedEntityId: null),
-                    (int)decisionStopwatch.ElapsedMilliseconds),
+                    (int)decisionStopwatch.ElapsedMilliseconds,
+                    DecisionReasonType: "StrategyCandidate",
+                    DecisionReasonCode: "NoSignalCandidate",
+                    DecisionSummary: "Strategy did not produce an executable candidate.",
+                    DecisionAtUtc: now),
                 cancellationToken);
 
             return new StrategySignalGenerationResult(
@@ -173,7 +178,11 @@ public sealed class StrategySignalService(
                         (int)decisionStopwatch.ElapsedMilliseconds,
                         CorrelationId: ResolveCorrelationId(),
                         RiskScore: null,
-                        VetoReasonCode: null),
+                        VetoReasonCode: null,
+                        DecisionReasonType: "DuplicateSuppression",
+                        DecisionReasonCode: "SuppressedDuplicate",
+                        DecisionSummary: "Duplicate execution request was suppressed.",
+                        DecisionAtUtc: now),
                     cancellationToken);
 
                 continue;
@@ -244,7 +253,11 @@ public sealed class StrategySignalService(
                         (int)decisionStopwatch.ElapsedMilliseconds,
                         CorrelationId: ResolveCorrelationId(),
                         RiskScore: confidenceSnapshot.ScorePercentage,
-                        VetoReasonCode: riskEvaluation.ReasonCode.ToString()),
+                        VetoReasonCode: riskEvaluation.ReasonCode.ToString(),
+                        DecisionReasonType: "RiskVeto",
+                        DecisionReasonCode: riskEvaluation.ReasonCode.ToString(),
+                        DecisionSummary: "Risk veto blocked execution.",
+                        DecisionAtUtc: now),
                     cancellationToken);
 
                 continue;
@@ -284,7 +297,11 @@ public sealed class StrategySignalService(
                     (int)decisionStopwatch.ElapsedMilliseconds,
                     CorrelationId: ResolveCorrelationId(),
                     RiskScore: confidenceSnapshot.ScorePercentage,
-                    StrategySignalId: signal.Id),
+                    StrategySignalId: signal.Id,
+                    DecisionReasonType: "Allow",
+                    DecisionReasonCode: ExecutionDecisionDiagnostics.AllowedDecisionCode,
+                    DecisionSummary: "Strategy produced an executable candidate.",
+                    DecisionAtUtc: now),
                 cancellationToken);
         }
 

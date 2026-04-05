@@ -15,4 +15,17 @@ public sealed record DecisionTraceSnapshot(
     string? VetoReasonCode,
     int LatencyMs,
     string SnapshotJson,
-    DateTime CreatedAtUtc);
+    DateTime CreatedAtUtc,
+    string? DecisionReasonType = null,
+    string? DecisionReasonCode = null,
+    string? DecisionSummary = null,
+    DateTime? DecisionAtUtc = null,
+    DateTime? LastCandleAtUtc = null,
+    int? DataAgeMs = null,
+    int? StaleThresholdMs = null,
+    string? StaleReason = null,
+    string? ContinuityState = null,
+    int? ContinuityGapCount = null,
+    DateTime? ContinuityGapStartedAtUtc = null,
+    DateTime? ContinuityGapLastSeenAtUtc = null,
+    DateTime? ContinuityRecoveredAtUtc = null);

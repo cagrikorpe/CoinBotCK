@@ -49,6 +49,59 @@ public sealed class TraceServiceTests
     }
 
     [Fact]
+    public async Task WriteDecisionTraceAsync_PersistsNormalizedDecisionDiagnostics()
+    {
+        await using var dbContext = CreateDbContext();
+        var service = CreateService(dbContext);
+        var createdAtUtc = new DateTime(2026, 4, 5, 9, 15, 0, DateTimeKind.Utc);
+
+        var snapshot = await service.WriteDecisionTraceAsync(
+            new DecisionTraceWriteRequest(
+                "user-02",
+                "BTCUSDT",
+                "1m",
+                "ExecutionGate",
+                "ExecutionGate",
+                "Block",
+                "{\"decision\":true}",
+                0,
+                CorrelationId: "corr-trace-2",
+                DecisionId: "dec-trace-2",
+                DecisionReasonType: "StaleData",
+                DecisionReasonCode: "StaleMarketData",
+                DecisionSummary: "Execution blocked because market data is stale.",
+                DecisionAtUtc: createdAtUtc,
+                LastCandleAtUtc: createdAtUtc.AddSeconds(-3),
+                DataAgeMs: 3000,
+                StaleThresholdMs: 3000,
+                StaleReason: "Market data stale",
+                ContinuityState: "Continuity OK",
+                ContinuityGapCount: 0,
+                ContinuityGapStartedAtUtc: createdAtUtc.AddMinutes(-2),
+                ContinuityGapLastSeenAtUtc: createdAtUtc.AddMinutes(-1),
+                ContinuityRecoveredAtUtc: createdAtUtc));
+
+        var entity = await dbContext.DecisionTraces.SingleAsync();
+
+        Assert.Equal("StaleData", entity.DecisionReasonType);
+        Assert.Equal("StaleMarketData", entity.DecisionReasonCode);
+        Assert.Equal("Execution blocked because market data is stale.", entity.DecisionSummary);
+        Assert.Equal(createdAtUtc, entity.DecisionAtUtc);
+        Assert.Equal(createdAtUtc.AddSeconds(-3), entity.LastCandleAtUtc);
+        Assert.Equal(3000, entity.DataAgeMs);
+        Assert.Equal(3000, entity.StaleThresholdMs);
+        Assert.Equal("Market data stale", entity.StaleReason);
+        Assert.Equal("Continuity OK", entity.ContinuityState);
+        Assert.Equal(0, entity.ContinuityGapCount);
+        Assert.Equal(createdAtUtc.AddMinutes(-2), entity.ContinuityGapStartedAtUtc);
+        Assert.Equal(createdAtUtc.AddMinutes(-1), entity.ContinuityGapLastSeenAtUtc);
+        Assert.Equal(createdAtUtc, entity.ContinuityRecoveredAtUtc);
+        Assert.Equal("StaleData", snapshot.DecisionReasonType);
+        Assert.Equal("StaleMarketData", snapshot.DecisionReasonCode);
+        Assert.Equal(createdAtUtc, snapshot.DecisionAtUtc);
+    }
+
+    [Fact]
     public async Task WriteExecutionTraceAsync_MasksEndpointRequestAndResponseBeforePersistence()
     {
         await using var dbContext = CreateDbContext();

@@ -44,6 +44,63 @@ public sealed class ExecutionDecisionViewSelectorTests
         Assert.Contains("data-cb-scanner-continuity-recovery", content, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void TraceDetailView_ContainsExecutionDecisionSelectors()
+    {
+        var content = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Areas",
+            "Admin",
+            "Views",
+            "Admin",
+            "TraceDetail.cshtml"));
+
+        Assert.Contains("data-cb-trace-decision-outcome", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-trace-decision-reason-type", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-trace-decision-reason-code", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-trace-decision-summary", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-trace-market-last-candle", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-trace-market-age", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-trace-market-threshold", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-trace-market-stale-reason", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-trace-continuity-state", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-trace-continuity-gap-start", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-trace-continuity-gap-last-seen", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-trace-continuity-recovery", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LogCenterViews_ContainExecutionDecisionSelectors()
+    {
+        var traceInfoContent = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Views",
+            "Shared",
+            "LogCenter",
+            "_TraceInfoCard.cshtml"));
+        var drawerContent = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Views",
+            "Shared",
+            "LogCenter",
+            "_DetailDrawer.cshtml"));
+
+        Assert.Contains("data-cb-logcenter-decision-outcome", traceInfoContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-logcenter-decision-reason-code", traceInfoContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-logcenter-market-last-candle", traceInfoContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-logcenter-continuity-state", traceInfoContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-log-drawer-decision-outcome", drawerContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-log-drawer-decision-reason-code", drawerContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-log-drawer-market-last-candle", drawerContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-log-drawer-continuity-state", drawerContent, StringComparison.Ordinal);
+    }
+
     private static string ResolveRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

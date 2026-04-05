@@ -793,8 +793,23 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             .HasMaxLength(64)
             .IsRequired();
 
+        builder.Property(entity => entity.DecisionReasonType)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.DecisionReasonCode)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.DecisionSummary)
+            .HasMaxLength(512);
+
         builder.Property(entity => entity.VetoReasonCode)
             .HasMaxLength(64);
+
+        builder.Property(entity => entity.StaleReason)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.ContinuityState)
+            .HasMaxLength(128);
 
         builder.Property(entity => entity.SnapshotJson)
             .HasMaxLength(8192)
@@ -805,6 +820,8 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             .IsUnique();
         builder.HasIndex(entity => new { entity.UserId, entity.CreatedAtUtc });
         builder.HasIndex(entity => entity.StrategySignalId);
+        builder.HasIndex(entity => new { entity.DecisionReasonCode, entity.CreatedAtUtc });
+        builder.HasIndex(entity => new { entity.DecisionReasonType, entity.CreatedAtUtc });
     }
 
     private static void ConfigureIncidentEvents(EntityTypeBuilder<IncidentEvent> builder)

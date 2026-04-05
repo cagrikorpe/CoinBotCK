@@ -32,6 +32,10 @@ public sealed partial class LogCenterReadModelService
                 entity.SignalType,
                 entity.Timeframe,
                 entity.StrategyVersion,
+                entity.DecisionReasonType,
+                entity.DecisionReasonCode,
+                entity.ContinuityState,
+                entity.StaleReason,
                 entity.VetoReasonCode,
                 entity.RiskScore is null ? null : $"Risk={entity.RiskScore}"),
             RawJson: BuildRawJson(new
@@ -46,11 +50,37 @@ public sealed partial class LogCenterReadModelService
                 entity.SignalType,
                 entity.RiskScore,
                 entity.DecisionOutcome,
+                entity.DecisionReasonType,
+                entity.DecisionReasonCode,
+                entity.DecisionSummary,
+                entity.DecisionAtUtc,
                 entity.VetoReasonCode,
                 entity.LatencyMs,
+                entity.LastCandleAtUtc,
+                entity.DataAgeMs,
+                entity.StaleThresholdMs,
+                entity.StaleReason,
+                entity.ContinuityState,
+                entity.ContinuityGapCount,
+                entity.ContinuityGapStartedAtUtc,
+                entity.ContinuityGapLastSeenAtUtc,
+                entity.ContinuityRecoveredAtUtc,
                 entity.CreatedAtUtc,
                 entity.SnapshotJson
-            }));
+            }),
+            DecisionReasonType: entity.DecisionReasonType,
+            DecisionReasonCode: entity.DecisionReasonCode,
+            DecisionSummary: entity.DecisionSummary,
+            DecisionAtUtc: entity.DecisionAtUtc,
+            LastCandleAtUtc: entity.LastCandleAtUtc,
+            DataAgeMs: entity.DataAgeMs,
+            StaleThresholdMs: entity.StaleThresholdMs,
+            StaleReason: entity.StaleReason,
+            ContinuityState: entity.ContinuityState,
+            ContinuityGapCount: entity.ContinuityGapCount,
+            ContinuityGapStartedAtUtc: entity.ContinuityGapStartedAtUtc,
+            ContinuityGapLastSeenAtUtc: entity.ContinuityGapLastSeenAtUtc,
+            ContinuityRecoveredAtUtc: entity.ContinuityRecoveredAtUtc);
     }
 
     private static LogCenterEntrySnapshot MapExecutionTrace(ExecutionTrace entity)
@@ -389,7 +419,22 @@ public sealed partial class LogCenterReadModelService
             return "critical";
         }
 
+        if (string.Equals(entity.DecisionReasonType, "RiskVeto", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(entity.DecisionReasonType, "GlobalExecutionOff", StringComparison.OrdinalIgnoreCase))
+        {
+            return "critical";
+        }
+
+        if (string.Equals(entity.DecisionReasonType, "StaleData", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(entity.DecisionReasonType, "ContinuityGap", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(entity.DecisionReasonType, "TradingModeMismatch", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(entity.DecisionReasonType, "MissingPrivatePlaneOrConfig", StringComparison.OrdinalIgnoreCase))
+        {
+            return "warning";
+        }
+
         if (entity.DecisionOutcome.Contains("reject", StringComparison.OrdinalIgnoreCase) ||
+            entity.DecisionOutcome.Contains("block", StringComparison.OrdinalIgnoreCase) ||
             entity.DecisionOutcome.Contains("veto", StringComparison.OrdinalIgnoreCase) ||
             entity.DecisionOutcome.Contains("deny", StringComparison.OrdinalIgnoreCase) ||
             entity.DecisionOutcome.Contains("fail", StringComparison.OrdinalIgnoreCase))
@@ -494,8 +539,12 @@ public sealed partial class LogCenterReadModelService
 
     private static string BuildDecisionSummary(DecisionTrace entity)
     {
+        var decisionAtLabel = entity.DecisionAtUtc.HasValue
+            ? entity.DecisionAtUtc.Value.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") + " UTC"
+            : "n/a";
+
         return
-            $"Signal={entity.SignalType}; RiskScore={entity.RiskScore?.ToString() ?? "n/a"}; Outcome={entity.DecisionOutcome}; Veto={entity.VetoReasonCode ?? "none"}; Latency={entity.LatencyMs}ms";
+            $"Outcome={entity.DecisionOutcome}; ReasonType={entity.DecisionReasonType ?? "n/a"}; ReasonCode={entity.DecisionReasonCode ?? entity.VetoReasonCode ?? "none"}; Summary={entity.DecisionSummary ?? "n/a"}; DecisionAt={decisionAtLabel}; StaleReason={entity.StaleReason ?? "none"}; ContinuityState={entity.ContinuityState ?? "n/a"}; GapCount={entity.ContinuityGapCount?.ToString() ?? "n/a"}; Latency={entity.LatencyMs}ms";
     }
 
     private static string BuildExecutionSummary(ExecutionTrace entity)

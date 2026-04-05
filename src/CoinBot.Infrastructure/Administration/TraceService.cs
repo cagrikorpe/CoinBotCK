@@ -28,8 +28,21 @@ public sealed class TraceService(
             SignalType = NormalizeRequired(request.SignalType, 32, nameof(request.SignalType)),
             RiskScore = request.RiskScore,
             DecisionOutcome = NormalizeRequired(request.DecisionOutcome, 64, nameof(request.DecisionOutcome)),
+            DecisionReasonType = NormalizeOptional(request.DecisionReasonType, 64),
+            DecisionReasonCode = NormalizeOptional(request.DecisionReasonCode, 64),
+            DecisionSummary = NormalizeOptional(request.DecisionSummary, 512),
+            DecisionAtUtc = request.DecisionAtUtc?.ToUniversalTime(),
             VetoReasonCode = NormalizeOptional(request.VetoReasonCode, 64),
             LatencyMs = Math.Max(0, request.LatencyMs),
+            LastCandleAtUtc = request.LastCandleAtUtc?.ToUniversalTime(),
+            DataAgeMs = NormalizeNonNegative(request.DataAgeMs),
+            StaleThresholdMs = NormalizeNonNegative(request.StaleThresholdMs),
+            StaleReason = NormalizeOptional(request.StaleReason, 128),
+            ContinuityState = NormalizeOptional(request.ContinuityState, 128),
+            ContinuityGapCount = NormalizeNonNegative(request.ContinuityGapCount),
+            ContinuityGapStartedAtUtc = request.ContinuityGapStartedAtUtc?.ToUniversalTime(),
+            ContinuityGapLastSeenAtUtc = request.ContinuityGapLastSeenAtUtc?.ToUniversalTime(),
+            ContinuityRecoveredAtUtc = request.ContinuityRecoveredAtUtc?.ToUniversalTime(),
             SnapshotJson = NormalizeRequired(
                 SensitivePayloadMasker.Mask(request.SnapshotJson, 8192),
                 8192,
@@ -308,7 +321,20 @@ public sealed class TraceService(
             entity.VetoReasonCode,
             entity.LatencyMs,
             entity.SnapshotJson,
-            entity.CreatedAtUtc);
+            entity.CreatedAtUtc,
+            entity.DecisionReasonType,
+            entity.DecisionReasonCode,
+            entity.DecisionSummary,
+            entity.DecisionAtUtc,
+            entity.LastCandleAtUtc,
+            entity.DataAgeMs,
+            entity.StaleThresholdMs,
+            entity.StaleReason,
+            entity.ContinuityState,
+            entity.ContinuityGapCount,
+            entity.ContinuityGapStartedAtUtc,
+            entity.ContinuityGapLastSeenAtUtc,
+            entity.ContinuityRecoveredAtUtc);
     }
 
     private static ExecutionTraceSnapshot Map(ExecutionTrace entity)
@@ -354,6 +380,13 @@ public sealed class TraceService(
         return normalizedValue.Length <= maxLength
             ? normalizedValue
             : normalizedValue[..maxLength];
+    }
+
+    private static int? NormalizeNonNegative(int? value)
+    {
+        return value.HasValue
+            ? Math.Max(0, value.Value)
+            : null;
     }
 
     private sealed class TraceListItemBuilder(string correlationId)
