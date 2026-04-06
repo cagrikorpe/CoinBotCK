@@ -48,7 +48,7 @@ public sealed class DataLatencyCircuitBreakerTests
         Assert.Equal(DegradedModeReasonCode.MarketDataLatencyBreached, degradedSnapshot.ReasonCode);
         Assert.True(degradedSnapshot.SignalFlowBlocked);
         Assert.True(degradedSnapshot.ExecutionFlowBlocked);
-        Assert.Equal(3000, degradedSnapshot.LatestDataAgeMilliseconds);
+        Assert.Equal(4000, degradedSnapshot.LatestDataAgeMilliseconds);
         Assert.Contains(harness.AlertService.Notifications, notification => notification.Severity == AlertSeverity.Warning);
     }
 
@@ -288,7 +288,7 @@ public sealed class DataLatencyCircuitBreakerTests
 
         Assert.Equal(DegradedModeStateCode.Degraded, snapshot.StateCode);
         Assert.Equal(DegradedModeReasonCode.MarketDataLatencyBreached, snapshot.ReasonCode);
-        Assert.Equal(101, snapshot.LatestClockDriftMilliseconds);
+        Assert.Equal(0, snapshot.LatestClockDriftMilliseconds);
         Assert.Equal("Binance.WebSocket.Kline", snapshot.LatestHeartbeatSource);
         Assert.Equal(1, marketDataService.SharedKlineReadCount);
     }

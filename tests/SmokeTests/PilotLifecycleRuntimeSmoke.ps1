@@ -2,6 +2,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
+# Local-only operational evidence. `.diag/` is git-ignored and must stay out of commits.
 $diagRoot = Join-Path $repoRoot '.diag\pilot-lifecycle-runtime-smoke'
 $runStamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N')
 $runRoot = Join-Path $diagRoot $runStamp
@@ -392,6 +393,7 @@ $summary = [ordered]@{
     SelectedPlane = 'Futures'
     SmokeDatabaseName = $smokeDatabaseName
     SummaryPath = $summaryPath
+    SummaryStoragePolicy = 'LocalGitIgnoredEvidence'
     SourcePreflight = [ordered]@{
         SelectedPlane = 'Futures'
         ActiveAccounts = $bootstrap.Preflight.ActiveAccounts
@@ -488,6 +490,9 @@ try {
         return $rows[0]
     }
 
+    # Freeze the bot as soon as the first order exists so the smoke run cannot open a second pilot order.
+    Set-SmokeBotEnabled -ConnectionString $connectionString -BotId $botId -IsEnabled:$false
+
     $submittedOrBlockedOrder = Wait-Until -Name 'broker submit or terminal pre-submit rejection' -TimeoutSeconds 240 -Condition {
         $row = (Get-SmokeOrders -ConnectionString $connectionString -BotId $botId | Where-Object { $_.Id -eq $firstOrder.Id } | Select-Object -First 1)
         if ($null -eq $row) { return $null }
@@ -543,6 +548,7 @@ try {
     $summary.BalanceCount = $summary.Balances.Count
     $summary.ReconciliationExpectation = if ($summary.FinalOrder.ReconciliationStatus -eq 'Unknown') { 'AcceptedInterimStateUntilAsyncReconciliationRuns' } else { 'Observed' }
     $summary.ReconciliationNote = 'Pilot runtime smoke uses futures private-stream and order telemetry for immediate closure. ReconciliationStatus=Unknown is accepted at smoke completion until asynchronous reconciliation advances in a later cycle.'
+    $summary.ReconciliationExpectationDetail = 'Async reconciliation should later populate LastReconciledAtUtc and move reconciliation status away from Unknown. If it does not, investigate reconciliation separately from smoke closure.'
     $summary.SmokePolicyMode = 'RecommendOnly'
 
     $summary | ConvertTo-Json -Depth 8 | Set-Content -Path $summaryPath -Encoding UTF8

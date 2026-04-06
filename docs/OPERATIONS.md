@@ -91,7 +91,9 @@ The following must stay out of git:
 - `*.log`, `*.diag*`, `*.binlog`
 - `*.user`, `*.csproj.user`, `*.slnLaunch.user`
 
-Runtime smoke output should be reviewed locally and then discarded or archived outside the repo.
+Runtime smoke output under `.diag/` should be reviewed locally and then discarded or archived outside the repo; it is local operational evidence, not a tracked artifact.
+
+For the pilot runtime smoke, `ReconciliationStatus=Unknown` at smoke completion is an accepted interim state when submit/fill/position/balance telemetry is already present. Async reconciliation is expected to advance `LastReconciledAtUtc` and move the reconciliation status away from `Unknown` in a later cycle. If that follow-up never happens, treat it as a reconciliation issue rather than a smoke-pass condition.
 
 ## Warning hygiene
 

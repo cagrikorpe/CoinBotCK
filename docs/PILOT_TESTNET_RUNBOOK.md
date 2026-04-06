@@ -72,6 +72,7 @@ Script akisi:
 6. market-data ve private-plane readiness olusmadan submit etmez
 7. `PilotActivationEnabled=true` ile ayni bot icin gercek testnet submit dener
 8. order / transition / trace / position / pnl / sync state ozetini `.diag\pilot-lifecycle-runtime-smoke\...` altina yazar
+9. summary json ve stdout/stderr loglari yalniz lokal operasyon kaniti icindir; `.diag/` git-ignored kalir ve commit edilmez
 
 Fail-closed davranis:
 - aktif account/bot sayisi dar scope disindaysa script durur
@@ -114,7 +115,7 @@ Pilot kapatma sirasi:
 
 ## Incident halinde toplanacak minimum veri
 
-- smoke summary json
+- `.diag\pilot-lifecycle-runtime-smoke\...` altindaki smoke summary json ve ilgili stdout/stderr loglari
 - worker stdout/stderr loglari
 - web stdout/stderr loglari
 - latest `ExecutionOrders` satiri
@@ -149,7 +150,17 @@ Blocker durumunda mutlaka kaydet:
 
 ## Reconciliation beklentisi
 
-Runtime smoke kapanisinda ReconciliationStatus=Unknown gorulebilir ve bu **beklenen ara durum** kabul edilir; cunku smoke kabulunu anlik futures private-stream/order/position/balance telemetry kapatir, async reconciliation ise sonraki cycle'da ilerler.
+Runtime smoke kapanisinda `ReconciliationStatus=Unknown` gorulebilir ve bu **beklenen ara durum** kabul edilir. Bu tek basina smoke hatasi degildir.
+
+Neden kabul edilir:
+- smoke kapanisi anlik futures private-stream/order/position/balance telemetry uzerinden verilir
+- submit/fill/position/balance zinciri goruldugunde broker path kaniti tamamlanmis sayilir
+- async reconciliation worker'i ayni anda degil, sonraki cycle'da `LastReconciledAtUtc` ve reconciliation durumunu gunceller
+
+Beklenen sonraki durum:
+- async reconciliation calistiginda `LastReconciledAtUtc` dolar
+- reconciliation durumu `Unknown` disindaki gozlenen exchange drift durumuna ilerler
+- bu ilerleme olmuyorsa artik smoke-anlik ara durum degil, ayrica incelenecek reconciliation sorunudur
 
 Kapanis icin minimum kanit:
 - SubmittedToBroker=true
