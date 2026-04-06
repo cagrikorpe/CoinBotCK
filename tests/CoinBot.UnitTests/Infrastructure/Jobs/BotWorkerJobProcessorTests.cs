@@ -1,4 +1,5 @@
 using CoinBot.Application.Abstractions.Administration;
+using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Exchange;
@@ -7,6 +8,7 @@ using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
+using CoinBot.Infrastructure.Ai;
 using CoinBot.Infrastructure.Auditing;
 using CoinBot.Infrastructure.DemoPortfolio;
 using CoinBot.Infrastructure.Execution;
@@ -328,6 +330,8 @@ public sealed class BotWorkerJobProcessorTests
             riskPolicyEvaluator,
             traceService,
             correlationContextAccessor,
+            CreateAiSignalEvaluator(timeProvider),
+            Options.Create(new AiSignalOptions()),
             timeProvider,
             NullLogger<StrategySignalService>.Instance);
         var executionEngine = new ExecutionEngine(
@@ -391,6 +395,15 @@ public sealed class BotWorkerJobProcessorTests
             timeProvider,
             privateRestClient,
             pilotOptions);
+    }
+
+    private static IAiSignalEvaluator CreateAiSignalEvaluator(TimeProvider timeProvider)
+    {
+        return new AiSignalEvaluator(
+            [new DeterministicStubAiSignalProviderAdapter(), new OfflineAiSignalProviderAdapter(), new OpenAiSignalProviderAdapter(), new GeminiAiSignalProviderAdapter()],
+            Options.Create(new AiSignalOptions()),
+            timeProvider,
+            NullLogger<AiSignalEvaluator>.Instance);
     }
 
     private static async Task<TradingBot> SeedBotGraphAsync(
@@ -932,4 +945,7 @@ public sealed class BotWorkerJobProcessorTests
         }
     }
 }
+
+
+
 

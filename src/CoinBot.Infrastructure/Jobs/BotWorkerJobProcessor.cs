@@ -162,7 +162,7 @@ public sealed class BotWorkerJobProcessor(
         }
 
         var marketState = await ResolveMarketStateAsync(normalizedSymbol, timeframe, cancellationToken);
-        await TryCaptureFeatureSnapshotAsync(bot, exchangeAccount, normalizedSymbol, timeframe, marketState, cancellationToken);
+        var featureSnapshot = await TryCaptureFeatureSnapshotAsync(bot, exchangeAccount, normalizedSymbol, timeframe, marketState, cancellationToken);
 
         if (marketState.IndicatorSnapshot is null)
         {
@@ -200,7 +200,8 @@ public sealed class BotWorkerJobProcessor(
                     publishedVersion.Id,
                     new StrategyEvaluationContext(
                         optionsValue.SignalEvaluationMode,
-                        marketState.IndicatorSnapshot)),
+                        marketState.IndicatorSnapshot),
+                    featureSnapshot),
                 cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -469,7 +470,7 @@ public sealed class BotWorkerJobProcessor(
     }
 
 
-    private async Task TryCaptureFeatureSnapshotAsync(
+    private async Task<TradingFeatureSnapshotModel?> TryCaptureFeatureSnapshotAsync(
         TradingBot bot,
         ExchangeAccount exchangeAccount,
         string symbol,
@@ -479,7 +480,7 @@ public sealed class BotWorkerJobProcessor(
     {
         try
         {
-            await featureSnapshotService.CaptureAsync(
+            return await featureSnapshotService.CaptureAsync(
                 new TradingFeatureCaptureRequest(
                     bot.OwnerUserId,
                     bot.Id,
@@ -500,6 +501,7 @@ public sealed class BotWorkerJobProcessor(
                 exception,
                 "Bot execution pilot failed while capturing a trading feature snapshot for BotId {BotId}.",
                 bot.Id);
+            return null;
         }
     }
 
@@ -827,4 +829,9 @@ public sealed class BotWorkerJobProcessor(
         return allowedSymbols.Contains(symbol);
     }
 }
+
+
+
+
+
 

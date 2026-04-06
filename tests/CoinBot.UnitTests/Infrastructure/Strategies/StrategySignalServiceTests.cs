@@ -1,9 +1,11 @@
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Administration;
+using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Infrastructure.Administration;
+using CoinBot.Infrastructure.Ai;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.MarketData;
@@ -14,6 +16,7 @@ using CoinBot.Infrastructure.Strategies;
 using CoinBot.UnitTests.Infrastructure.Mfa;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace CoinBot.UnitTests.Infrastructure.Strategies;
 
@@ -301,8 +304,19 @@ public sealed class StrategySignalServiceTests
                 correlationContextAccessor,
                 timeProvider),
             correlationContextAccessor,
+            CreateAiSignalEvaluator(timeProvider),
+            Options.Create(new AiSignalOptions()),
             timeProvider,
             NullLogger<StrategySignalService>.Instance);
+    }
+
+    private static IAiSignalEvaluator CreateAiSignalEvaluator(TimeProvider timeProvider)
+    {
+        return new AiSignalEvaluator(
+            [new DeterministicStubAiSignalProviderAdapter(), new OfflineAiSignalProviderAdapter(), new OpenAiSignalProviderAdapter(), new GeminiAiSignalProviderAdapter()],
+            Options.Create(new AiSignalOptions()),
+            timeProvider,
+            NullLogger<AiSignalEvaluator>.Instance);
     }
 
     private static ApplicationDbContext CreateDbContext()
@@ -561,6 +575,10 @@ public sealed class StrategySignalServiceTests
         }
     }
 }
+
+
+
+
 
 
 

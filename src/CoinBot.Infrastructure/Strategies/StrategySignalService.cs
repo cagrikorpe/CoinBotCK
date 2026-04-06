@@ -2,17 +2,20 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using CoinBot.Application.Abstractions.Administration;
+using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.Risk;
 using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Ai;
 using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace CoinBot.Infrastructure.Strategies;
 
@@ -22,12 +25,16 @@ public sealed class StrategySignalService(
     IRiskPolicyEvaluator riskPolicyEvaluator,
     ITraceService traceService,
     ICorrelationContextAccessor correlationContextAccessor,
+    IAiSignalEvaluator aiSignalEvaluator,
+    IOptions<AiSignalOptions> aiSignalOptions,
     TimeProvider timeProvider,
     ILogger<StrategySignalService> logger) : IStrategySignalService
 {
     private const int ExplainabilitySchemaVersion = 1;
 
     private static readonly JsonSerializerOptions SerializerOptions = CreateSerializerOptions();
+
+    private readonly AiSignalOptions aiSignalOptionsValue = aiSignalOptions.Value;
 
     public async Task<StrategySignalGenerationResult> GenerateAsync(
         GenerateStrategySignalsRequest request,
@@ -82,6 +89,7 @@ public sealed class StrategySignalService(
             now));
         var evaluationResult = evaluationReport.RuleEvaluation;
         var candidateSignalTypes = GetCandidateSignalTypes(evaluationResult);
+        var aiEvaluations = new List<AiSignalEvaluationResult>(candidateSignalTypes.Count);
         signalActivity.SetTag("coinbot.signal.candidate_count", candidateSignalTypes.Count);
 
         if (candidateSignalTypes.Count == 0)
@@ -123,7 +131,8 @@ public sealed class StrategySignalService(
                 Array.Empty<StrategySignalVetoSnapshot>(),
                 SuppressedDuplicateCount: 0)
             {
-                EvaluationReport = evaluationReport
+                EvaluationReport = evaluationReport,
+            AiEvaluations = aiEvaluations.ToArray()
             };
         }
 
@@ -188,6 +197,60 @@ public sealed class StrategySignalService(
                 continue;
             }
 
+            AiSignalEvaluationResult? aiEvaluation = null;
+
+            if (signalType == StrategySignalType.Entry && aiSignalOptionsValue.Enabled)
+            {
+                aiEvaluation = await aiSignalEvaluator.EvaluateAsync(
+                    new AiSignalEvaluationRequest(
+                        request.FeatureSnapshot,
+                        normalizedContext.IndicatorSnapshot.Symbol,
+                        normalizedContext.IndicatorSnapshot.Timeframe,
+                        normalizedContext.Mode,
+                        request.FeatureSnapshot?.TradingContext.Plane ?? ExchangeDataPlane.Futures,
+                        signalType,
+                        strategy.StrategyKey),
+                    cancellationToken);
+                aiEvaluations.Add(aiEvaluation);
+
+                var aiOverlayBlock = ResolveAiOverlayBlock(aiEvaluation, signalType, aiSignalOptionsValue);
+                if (aiOverlayBlock is not null)
+                {
+                    await traceService.WriteDecisionTraceAsync(
+                        new DecisionTraceWriteRequest(
+                            version.OwnerUserId,
+                            normalizedContext.IndicatorSnapshot.Symbol,
+                            normalizedContext.IndicatorSnapshot.Timeframe,
+                            BuildStrategyVersionLabel(version),
+                            signalType.ToString(),
+                            "SuppressedByAi",
+                            BuildDecisionSnapshotJson(
+                                strategy,
+                                version,
+                                evaluationReport,
+                                normalizedContext,
+                                evaluationResult,
+                                signalType,
+                                "SuppressedByAi",
+                                vetoReasonCode: null,
+                                riskScore: null,
+                                relatedEntityId: null,
+                                riskEvaluation: null,
+                                aiEvaluation: aiEvaluation),
+                            (int)decisionStopwatch.ElapsedMilliseconds,
+                            CorrelationId: ResolveCorrelationId(),
+                            RiskScore: null,
+                            VetoReasonCode: null,
+                            DecisionReasonType: aiOverlayBlock.ReasonType,
+                            DecisionReasonCode: aiOverlayBlock.ReasonCode,
+                            DecisionSummary: aiOverlayBlock.Summary,
+                            DecisionAtUtc: now),
+                        cancellationToken);
+
+                    continue;
+                }
+            }
+
             var riskEvaluation = await riskPolicyEvaluator.EvaluateAsync(
                 new RiskPolicyEvaluationRequest(
                     version.OwnerUserId,
@@ -198,7 +261,7 @@ public sealed class StrategySignalService(
                     normalizedContext.IndicatorSnapshot.Symbol,
                     normalizedContext.IndicatorSnapshot.Timeframe),
                 cancellationToken);
-            var confidenceSnapshot = CreateConfidenceSnapshot(signalType, evaluationResult, riskEvaluation);
+            var confidenceSnapshot = CreateConfidenceSnapshot(signalType, evaluationResult, riskEvaluation, aiEvaluation);
 
             if (riskEvaluation.IsVetoed)
             {
@@ -250,7 +313,8 @@ public sealed class StrategySignalService(
                             riskEvaluation.ReasonCode.ToString(),
                             confidenceSnapshot.ScorePercentage,
                             veto.Id,
-                            riskEvaluation),
+                            riskEvaluation,
+                            aiEvaluation),
                         (int)decisionStopwatch.ElapsedMilliseconds,
                         CorrelationId: ResolveCorrelationId(),
                         RiskScore: confidenceSnapshot.ScorePercentage,
@@ -295,7 +359,8 @@ public sealed class StrategySignalService(
                         vetoReasonCode: null,
                         riskScore: confidenceSnapshot.ScorePercentage,
                         relatedEntityId: signal.Id,
-                        riskEvaluation),
+                        riskEvaluation,
+                        aiEvaluation),
                     (int)decisionStopwatch.ElapsedMilliseconds,
                     CorrelationId: ResolveCorrelationId(),
                     RiskScore: confidenceSnapshot.ScorePercentage,
@@ -349,7 +414,8 @@ public sealed class StrategySignalService(
             vetoSnapshots,
             suppressedDuplicateCount)
         {
-            EvaluationReport = evaluationReport
+            EvaluationReport = evaluationReport,
+            AiEvaluations = aiEvaluations.ToArray()
         };
     }
 
@@ -552,7 +618,8 @@ public sealed class StrategySignalService(
     private static StrategySignalConfidenceSnapshot CreateConfidenceSnapshot(
         StrategySignalType signalType,
         StrategyEvaluationResult evaluationResult,
-        RiskVetoResult riskEvaluation)
+        RiskVetoResult riskEvaluation,
+        AiSignalEvaluationResult? aiEvaluation)
     {
         var relevantRules = GetRelevantRuleRoots(signalType, evaluationResult)
             .SelectMany(EnumerateLeafResults)
@@ -603,7 +670,8 @@ public sealed class StrategySignalService(
             CurrentCoinExposurePercentage: riskEvaluation.Snapshot.CurrentCoinExposurePercentage,
             ProjectedCoinExposurePercentage: riskEvaluation.Snapshot.ProjectedCoinExposurePercentage,
             MaxCoinExposurePercentage: riskEvaluation.Snapshot.MaxCoinExposurePercentage,
-            RiskScopeSummary: riskSummary);
+            RiskScopeSummary: riskSummary,
+            AiEvaluation: aiEvaluation);
     }
 
     private static StrategySignalConfidenceSnapshot CreateLegacyConfidenceSnapshot(RiskVetoResult riskEvaluation)
@@ -646,7 +714,8 @@ public sealed class StrategySignalService(
             CurrentCoinExposurePercentage: riskEvaluation.Snapshot.CurrentCoinExposurePercentage,
             ProjectedCoinExposurePercentage: riskEvaluation.Snapshot.ProjectedCoinExposurePercentage,
             MaxCoinExposurePercentage: riskEvaluation.Snapshot.MaxCoinExposurePercentage,
-            RiskScopeSummary: riskSummary);
+            RiskScopeSummary: riskSummary,
+            AiEvaluation: null);
     }
 
     private static StrategySignalConfidenceSnapshot CreateUnavailableConfidenceSnapshot()
@@ -661,7 +730,52 @@ public sealed class StrategySignalService(
             IsVetoed: false,
             RiskReasonCode: RiskVetoReasonCode.None,
             IsVirtualRiskCheck: false,
-            Summary: "Confidence snapshot unavailable.");
+            Summary: "Confidence snapshot unavailable.",
+            AiEvaluation: null);
+    }
+
+    private static AiOverlayBlock? ResolveAiOverlayBlock(
+        AiSignalEvaluationResult aiEvaluation,
+        StrategySignalType signalType,
+        AiSignalOptions aiSignalOptions)
+    {
+        if (aiEvaluation.IsFallback)
+        {
+            return new AiOverlayBlock(
+                ReasonType: "AiFallback",
+                ReasonCode: $"Ai{aiEvaluation.FallbackReason ?? AiSignalFallbackReason.EvaluationException}",
+                Summary: aiEvaluation.ReasonSummary);
+        }
+
+        if (aiEvaluation.SignalDirection == AiSignalDirection.Neutral)
+        {
+            return new AiOverlayBlock("AiOverlay", "AiNeutral", "AI overlay returned a neutral signal.");
+        }
+
+        if (signalType == StrategySignalType.Entry && aiEvaluation.SignalDirection == AiSignalDirection.Short)
+        {
+            return new AiOverlayBlock("AiOverlay", "AiDirectionMismatch", "AI overlay returned a short signal for a long-only entry flow.");
+        }
+
+        if (aiEvaluation.SignalDirection == AiSignalDirection.Long && !aiSignalOptions.AllowLong)
+        {
+            return new AiOverlayBlock("AiOverlay", "AiDirectionNotAllowed", "AI overlay long decisions are disabled by configuration.");
+        }
+
+        if (aiEvaluation.SignalDirection == AiSignalDirection.Short && !aiSignalOptions.AllowShort)
+        {
+            return new AiOverlayBlock("AiOverlay", "AiDirectionNotAllowed", "AI overlay short decisions are disabled by configuration.");
+        }
+
+        if (aiEvaluation.ConfidenceScore < aiSignalOptions.MinimumConfidence)
+        {
+            return new AiOverlayBlock(
+                "AiOverlay",
+                "AiLowConfidence",
+                $"AI overlay confidence {aiEvaluation.ConfidenceScore:0.##} is below the minimum {aiSignalOptions.MinimumConfidence:0.##}.");
+        }
+
+        return null;
     }
 
     private static StrategySignalConfidenceBand ResolveConfidenceBand(int scorePercentage)
@@ -688,23 +802,29 @@ public sealed class StrategySignalService(
             .Distinct(StringComparer.Ordinal)
             .Take(3)
             .ToArray();
+        var aiDrivers = CreateAiDrivers(confidenceSnapshot.AiEvaluation);
 
         var drivers = confidenceSnapshot.IsVetoed
             ? (new[] { $"Risk gate: {FormatRiskReason(confidenceSnapshot.RiskReasonCode)}" })
                 .Concat(ruleDrivers)
+                .Concat(aiDrivers)
                 .Take(3)
                 .ToArray()
-            : ruleDrivers;
+            : ruleDrivers
+                .Concat(aiDrivers)
+                .Take(3)
+                .ToArray();
         var title = confidenceSnapshot.IsVetoed
             ? $"{signalType} signal vetoed"
             : $"{signalType} signal created";
         var summary = confidenceSnapshot.IsVetoed
             ? $"{symbol} {timeframe} {signalType.ToString().ToLowerInvariant()} signal vetoed because {FormatRiskReason(confidenceSnapshot.RiskReasonCode)}."
             : $"{symbol} {timeframe} {signalType.ToString().ToLowerInvariant()} signal created from matching strategy rules.";
+        var aiSuffix = BuildAiSummarySuffix(confidenceSnapshot.AiEvaluation);
 
         return new StrategySignalLogExplainabilitySnapshot(
             title,
-            summary,
+            string.IsNullOrWhiteSpace(aiSuffix) ? summary : $"{summary} {aiSuffix}",
             drivers,
             [
                 symbol,
@@ -713,7 +833,8 @@ public sealed class StrategySignalService(
                 $"Confidence {confidenceSnapshot.ScorePercentage}%",
                 confidenceSnapshot.IsVetoed
                     ? $"Veto {confidenceSnapshot.RiskReasonCode}"
-                    : confidenceSnapshot.Band.ToString()
+                    : confidenceSnapshot.Band.ToString(),
+                ..CreateAiTags(confidenceSnapshot.AiEvaluation)
             ]);
     }
 
@@ -723,18 +844,60 @@ public sealed class StrategySignalService(
     {
         return new StrategySignalLogExplainabilitySnapshot(
             $"{veto.SignalType} signal vetoed",
-            $"{veto.Symbol} {veto.Timeframe} {veto.SignalType.ToString().ToLowerInvariant()} signal vetoed because {FormatRiskReason(confidenceSnapshot.RiskReasonCode)}.",
+            string.IsNullOrWhiteSpace(BuildAiSummarySuffix(confidenceSnapshot.AiEvaluation))
+                ? $"{veto.Symbol} {veto.Timeframe} {veto.SignalType.ToString().ToLowerInvariant()} signal vetoed because {FormatRiskReason(confidenceSnapshot.RiskReasonCode)}."
+                : $"{veto.Symbol} {veto.Timeframe} {veto.SignalType.ToString().ToLowerInvariant()} signal vetoed because {FormatRiskReason(confidenceSnapshot.RiskReasonCode)}. {BuildAiSummarySuffix(confidenceSnapshot.AiEvaluation)}",
             [
                 $"Risk gate: {FormatRiskReason(confidenceSnapshot.RiskReasonCode)}",
-                confidenceSnapshot.Summary
+                confidenceSnapshot.Summary,
+                ..CreateAiDrivers(confidenceSnapshot.AiEvaluation)
             ],
             [
                 veto.Symbol,
                 veto.Timeframe,
                 veto.SignalType.ToString(),
                 $"Confidence {confidenceSnapshot.ScorePercentage}%",
-                $"Veto {confidenceSnapshot.RiskReasonCode}"
+                $"Veto {confidenceSnapshot.RiskReasonCode}",
+                ..CreateAiTags(confidenceSnapshot.AiEvaluation)
             ]);
+    }
+
+    private static IReadOnlyCollection<string> CreateAiDrivers(AiSignalEvaluationResult? aiEvaluation)
+    {
+        if (aiEvaluation is null)
+        {
+            return Array.Empty<string>();
+        }
+
+        return
+        [
+            $"AI {aiEvaluation.ProviderName}: {aiEvaluation.SignalDirection} {aiEvaluation.ConfidenceScore:0.##}",
+            aiEvaluation.ReasonSummary
+        ];
+    }
+
+    private static IReadOnlyCollection<string> CreateAiTags(AiSignalEvaluationResult? aiEvaluation)
+    {
+        if (aiEvaluation is null)
+        {
+            return Array.Empty<string>();
+        }
+
+        return
+        [
+            $"AI {aiEvaluation.ProviderName}",
+            $"AI {aiEvaluation.SignalDirection}",
+            aiEvaluation.IsFallback
+                ? $"AI Fallback {aiEvaluation.FallbackReason}"
+                : $"AI Confidence {aiEvaluation.ConfidenceScore:0.##}"
+        ];
+    }
+
+    private static string? BuildAiSummarySuffix(AiSignalEvaluationResult? aiEvaluation)
+    {
+        return aiEvaluation is null
+            ? null
+            : $"AI overlay: {aiEvaluation.SignalDirection} from {aiEvaluation.ProviderName} at {aiEvaluation.ConfidenceScore:0.##}. {aiEvaluation.ReasonSummary}";
     }
 
     private static StrategySignalDuplicateSuppressionSnapshot CreateDuplicateSuppressionSnapshot(TradingStrategySignal signal)
@@ -945,6 +1108,9 @@ public sealed class StrategySignalService(
             ? "Risk veto blocked execution."
             : normalizedSummary;
     }
+
+    private sealed record AiOverlayBlock(string ReasonType, string ReasonCode, string Summary);
+
     private string ResolveCorrelationId()
     {
         var scopedCorrelationId = correlationContextAccessor.Current?.CorrelationId;
@@ -970,7 +1136,8 @@ public sealed class StrategySignalService(
         string? vetoReasonCode,
         int? riskScore,
         Guid? relatedEntityId,
-        RiskVetoResult? riskEvaluation = null)
+        RiskVetoResult? riskEvaluation = null,
+        AiSignalEvaluationResult? aiEvaluation = null)
     {
         return JsonSerializer.Serialize(
             new
@@ -1013,6 +1180,22 @@ public sealed class StrategySignalService(
                 RiskReasonCode = riskEvaluation?.ReasonCode.ToString(),
                 RiskSummary = riskEvaluation?.ReasonSummary,
                 RiskEvaluatedAtUtc = riskEvaluation?.Snapshot.EvaluatedAtUtc,
+                AiEvaluation = aiEvaluation is null
+                    ? null
+                    : new
+                    {
+                        Direction = aiEvaluation.SignalDirection.ToString(),
+                        aiEvaluation.ConfidenceScore,
+                        aiEvaluation.ReasonSummary,
+                        aiEvaluation.FeatureSnapshotId,
+                        aiEvaluation.ProviderName,
+                        aiEvaluation.ProviderModel,
+                        aiEvaluation.LatencyMs,
+                        aiEvaluation.IsFallback,
+                        FallbackReason = aiEvaluation.FallbackReason?.ToString(),
+                        aiEvaluation.RawResponseCaptured,
+                        aiEvaluation.EvaluatedAtUtc
+                    },
                 DecisionOutcome = decisionOutcome,
                 VetoReasonCode = vetoReasonCode,
                 RiskScore = riskScore,
@@ -1022,6 +1205,15 @@ public sealed class StrategySignalService(
             SerializerOptions);
     }
 }
+
+
+
+
+
+
+
+
+
 
 
 

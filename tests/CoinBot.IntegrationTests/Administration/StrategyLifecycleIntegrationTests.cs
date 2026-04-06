@@ -1,4 +1,5 @@
 using CoinBot.Application.Abstractions.Administration;
+using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Indicators;
@@ -7,6 +8,7 @@ using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
+using CoinBot.Infrastructure.Ai;
 using CoinBot.Infrastructure.Auditing;
 using CoinBot.Infrastructure.Identity;
 using CoinBot.Infrastructure.Observability;
@@ -16,6 +18,7 @@ using CoinBot.Infrastructure.Strategies;
 using CoinBot.IntegrationTests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace CoinBot.IntegrationTests.Administration;
 
@@ -366,21 +369,33 @@ public sealed class StrategyLifecycleIntegrationTests
     private static StrategySignalService CreateSignalService(ApplicationDbContext dbContext, DateTimeOffset nowUtc)
     {
         var correlationContextAccessor = new CorrelationContextAccessor();
+        var fixedTimeProvider = new FixedTimeProvider(nowUtc);
 
         return new StrategySignalService(
             dbContext,
             new StrategyEvaluatorService(new StrategyRuleParser(), new StrategyDefinitionValidator()),
             new RiskPolicyEvaluator(
                 dbContext,
-                new FixedTimeProvider(nowUtc),
+                fixedTimeProvider,
                 NullLogger<RiskPolicyEvaluator>.Instance),
             new TraceService(
                 dbContext,
                 correlationContextAccessor,
-                new FixedTimeProvider(nowUtc)),
+                fixedTimeProvider),
             correlationContextAccessor,
-            new FixedTimeProvider(nowUtc),
+            CreateAiSignalEvaluator(nowUtc),
+            Options.Create(new AiSignalOptions()),
+            fixedTimeProvider,
             NullLogger<StrategySignalService>.Instance);
+    }
+
+    private static IAiSignalEvaluator CreateAiSignalEvaluator(DateTimeOffset nowUtc)
+    {
+        return new AiSignalEvaluator(
+            [new DeterministicStubAiSignalProviderAdapter(), new OfflineAiSignalProviderAdapter(), new OpenAiSignalProviderAdapter(), new GeminiAiSignalProviderAdapter()],
+            Options.Create(new AiSignalOptions()),
+            new FixedTimeProvider(nowUtc),
+            NullLogger<AiSignalEvaluator>.Instance);
     }
 
     private static StrategyEvaluationContext CreateContext(
@@ -560,5 +575,9 @@ public sealed class StrategyLifecycleIntegrationTests
         public bool HasIsolationBypass => true;
     }
 }
+
+
+
+
 
 

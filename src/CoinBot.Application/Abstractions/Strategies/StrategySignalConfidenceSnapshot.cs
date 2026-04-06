@@ -1,3 +1,4 @@
+using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Domain.Enums;
 
 namespace CoinBot.Application.Abstractions.Strategies;
@@ -30,4 +31,5 @@ public sealed record StrategySignalConfidenceSnapshot(
     decimal? CurrentCoinExposurePercentage = null,
     decimal? ProjectedCoinExposurePercentage = null,
     decimal? MaxCoinExposurePercentage = null,
-    string? RiskScopeSummary = null);
+    string? RiskScopeSummary = null,
+    AiSignalEvaluationResult? AiEvaluation = null);

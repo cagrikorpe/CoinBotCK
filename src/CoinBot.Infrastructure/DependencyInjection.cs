@@ -1,3 +1,4 @@
+using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.Alerts;
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Autonomy;
@@ -21,6 +22,7 @@ using CoinBot.Application.Abstractions.Settings;
 using CoinBot.Contracts.Common;
 using CoinBot.Infrastructure.Alerts;
 using CoinBot.Infrastructure.Administration;
+using CoinBot.Infrastructure.Ai;
 using CoinBot.Infrastructure.Autonomy;
 using CoinBot.Infrastructure.Auditing;
 using CoinBot.Infrastructure.Credentials;
@@ -182,6 +184,9 @@ public static class DependencyInjection
         services.AddOptions<BotExecutionPilotOptions>()
             .Bind(configuration.GetSection("BotExecutionPilot"))
             .ValidateDataAnnotations();
+        services.AddOptions<AiSignalOptions>()
+            .Bind(configuration.GetSection("AI:Signal"))
+            .ValidateDataAnnotations();
         services.AddOptions<LogCenterRetentionOptions>()
             .Bind(configuration.GetSection("LogCenter:Retention"))
             .ValidateDataAnnotations();
@@ -247,6 +252,11 @@ public static class DependencyInjection
         services.AddScoped<IExecutionEngine, ExecutionEngine>();
         services.AddScoped<IUserExecutionOverrideGuard, UserExecutionOverrideGuard>();
         services.AddScoped<IRiskPolicyEvaluator, RiskPolicyEvaluator>();
+        services.AddScoped<IAiSignalProviderAdapter, DeterministicStubAiSignalProviderAdapter>();
+        services.AddScoped<IAiSignalProviderAdapter, OfflineAiSignalProviderAdapter>();
+        services.AddScoped<IAiSignalProviderAdapter, OpenAiSignalProviderAdapter>();
+        services.AddScoped<IAiSignalProviderAdapter, GeminiAiSignalProviderAdapter>();
+        services.AddScoped<IAiSignalEvaluator, AiSignalEvaluator>();
         services.AddScoped<IStrategySignalService, StrategySignalService>();
         services.AddScoped<ITradingFeatureSnapshotService, TradingFeatureSnapshotService>();
         services.AddScoped<IStrategyVersionService, StrategyVersionService>();
@@ -504,4 +514,5 @@ public static class DependencyInjection
         return services;
     }
 }
+
 
