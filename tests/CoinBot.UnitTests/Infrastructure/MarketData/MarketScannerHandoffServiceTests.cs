@@ -1,13 +1,19 @@
 using CoinBot.Application.Abstractions.DataScope;
+using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Administration;
+using CoinBot.Infrastructure.Ai;
 using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.MarketData;
+using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
+using CoinBot.Infrastructure.Risk;
+using CoinBot.Infrastructure.Strategies;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -203,6 +209,127 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Null(attempt.SelectedSymbol);
     }
 
+    [Fact]
+    public async Task RunOnceAsync_BlocksAndSkipsExecution_WhenAiEnabledWithoutFeatureSnapshot()
+    {
+        await using var harness = CreateAiEnabledHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        _ = await SeedBotGraphAsync(harness.DbContext, "user-ai", "BTCUSDT", "pilot-ai", CreateAiOverlayDefinitionJson());
+        SeedScanCycle(harness.DbContext, scanCycleId);
+        SeedCandidate(harness.DbContext, scanCycleId, "BTCUSDT", rank: 1, score: 9_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("BTCUSDT", "BTC", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", harness.NowUtc));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+        var decisionTrace = await harness.DbContext.DecisionTraces.SingleAsync();
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("NoActionableSignal", attempt.BlockerCode);
+        Assert.Equal("NoSignalCandidate", attempt.StrategyDecisionOutcome);
+        Assert.Null(harness.ExecutionGate.LastRequest);
+        Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal("SuppressedByAi", decisionTrace.DecisionOutcome);
+        Assert.Equal("AiFeatureSnapshotUnavailable", decisionTrace.DecisionReasonCode);
+        Assert.Contains("aiEvaluation", decisionTrace.SnapshotJson, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static AiEnabledTestHarness CreateAiEnabledHarness(DateTimeOffset nowUtc)
+    {
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+            .Options;
+        var dbContext = new ApplicationDbContext(options, new TestDataScopeContextAccessor());
+        var marketDataService = new FakeMarketDataService(nowUtc.UtcDateTime);
+        var indicatorDataService = new FakeIndicatorDataService(nowUtc.UtcDateTime);
+        var sharedSymbolRegistry = new FakeSharedSymbolRegistry();
+        var circuitBreaker = new FakeDataLatencyCircuitBreaker(nowUtc.UtcDateTime);
+        var executionGate = new FakeExecutionGate(nowUtc.UtcDateTime);
+        var userExecutionOverrideGuard = new FakeUserExecutionOverrideGuard();
+        var timeProvider = new FixedTimeProvider(nowUtc);
+        var aiOptions = new AiSignalOptions
+        {
+            Enabled = true,
+            SelectedProvider = DeterministicStubAiSignalProviderAdapter.ProviderNameValue,
+            MinimumConfidence = 0.70m
+        };
+
+        var services = new ServiceCollection();
+        services.AddScoped<IDataScopeContextAccessor, TestDataScopeContextAccessor>();
+        services.AddScoped(provider => new ApplicationDbContext(options, provider.GetRequiredService<IDataScopeContextAccessor>()));
+        services.AddSingleton<ICorrelationContextAccessor, CorrelationContextAccessor>();
+        services.AddScoped<IStrategySignalService>(provider =>
+        {
+            var scopedContext = provider.GetRequiredService<ApplicationDbContext>();
+            var correlationContextAccessor = provider.GetRequiredService<ICorrelationContextAccessor>();
+            return new StrategySignalService(
+                scopedContext,
+                new StrategyEvaluatorService(new StrategyRuleParser()),
+                new RiskPolicyEvaluator(scopedContext, timeProvider, NullLogger<RiskPolicyEvaluator>.Instance),
+                new TraceService(scopedContext, correlationContextAccessor, timeProvider),
+                correlationContextAccessor,
+                new AiSignalEvaluator(
+                    [new DeterministicStubAiSignalProviderAdapter(), new OfflineAiSignalProviderAdapter(), new OpenAiSignalProviderAdapter(), new GeminiAiSignalProviderAdapter()],
+                    Options.Create(aiOptions),
+                    timeProvider,
+                    NullLogger<AiSignalEvaluator>.Instance),
+                Options.Create(aiOptions),
+                timeProvider,
+                NullLogger<StrategySignalService>.Instance);
+        });
+        services.AddSingleton<IExecutionGate>(executionGate);
+        services.AddSingleton<IUserExecutionOverrideGuard>(userExecutionOverrideGuard);
+        var serviceProvider = services.BuildServiceProvider();
+        var service = new MarketScannerHandoffService(
+            dbContext,
+            serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            marketDataService,
+            indicatorDataService,
+            sharedSymbolRegistry,
+            circuitBreaker,
+            Options.Create(new MarketScannerOptions { HandoffEnabled = true, AllowedQuoteAssets = ["USDT"] }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m" }),
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live, PrimeHistoricalCandleCount = 34 }),
+            timeProvider,
+            NullLogger<MarketScannerHandoffService>.Instance);
+
+        return new AiEnabledTestHarness(dbContext, service, serviceProvider, marketDataService, indicatorDataService, executionGate, userExecutionOverrideGuard, nowUtc.UtcDateTime);
+    }
+
+    private static string CreateAiOverlayDefinitionJson()
+    {
+        return
+            """
+            {
+              "schemaVersion": 2,
+              "metadata": {
+                "templateKey": "handoff-ai-template",
+                "templateName": "Handoff AI Template"
+              },
+              "entry": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Live"
+                  }
+                ]
+              },
+              "risk": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 34
+                  }
+                ]
+              }
+            }
+            """;
+    }
     private static TestHarness CreateHarness(DateTimeOffset nowUtc)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -240,7 +367,7 @@ public sealed class MarketScannerHandoffServiceTests
         return new TestHarness(dbContext, service, serviceProvider, marketDataService, indicatorDataService, strategySignalService, executionGate, userExecutionOverrideGuard, nowUtc.UtcDateTime);
     }
 
-    private static async Task<BotGraph> SeedBotGraphAsync(ApplicationDbContext dbContext, string ownerUserId, string symbol, string strategyKey)
+    private static async Task<BotGraph> SeedBotGraphAsync(ApplicationDbContext dbContext, string ownerUserId, string symbol, string strategyKey, string definitionJson = "{}")
     {
         var tradingStrategyId = Guid.NewGuid();
         var tradingStrategyVersionId = Guid.NewGuid();
@@ -264,7 +391,7 @@ public sealed class MarketScannerHandoffServiceTests
             SchemaVersion = 1,
             VersionNumber = 1,
             Status = StrategyVersionStatus.Published,
-            DefinitionJson = "{}",
+            DefinitionJson = definitionJson,
             PublishedAtUtc = new DateTime(2026, 4, 3, 11, 59, 0, DateTimeKind.Utc)
         });
         dbContext.TradingBots.Add(new TradingBot
@@ -630,6 +757,37 @@ public sealed class MarketScannerHandoffServiceTests
 
     private sealed record BotGraph(Guid BotId, Guid TradingStrategyId, Guid TradingStrategyVersionId);
 
+    private sealed class AiEnabledTestHarness(
+        ApplicationDbContext dbContext,
+        MarketScannerHandoffService service,
+        ServiceProvider serviceProvider,
+        FakeMarketDataService marketDataService,
+        FakeIndicatorDataService indicatorDataService,
+        FakeExecutionGate executionGate,
+        FakeUserExecutionOverrideGuard userExecutionOverrideGuard,
+        DateTime nowUtc) : IAsyncDisposable
+    {
+        public ApplicationDbContext DbContext { get; } = dbContext;
+
+        public MarketScannerHandoffService Service { get; } = service;
+
+        public FakeMarketDataService MarketDataService { get; } = marketDataService;
+
+        public FakeIndicatorDataService IndicatorDataService { get; } = indicatorDataService;
+
+        public FakeExecutionGate ExecutionGate { get; } = executionGate;
+
+        public FakeUserExecutionOverrideGuard UserExecutionOverrideGuard { get; } = userExecutionOverrideGuard;
+
+        public DateTime NowUtc { get; } = nowUtc;
+
+        public async ValueTask DisposeAsync()
+        {
+            await DbContext.DisposeAsync();
+            await serviceProvider.DisposeAsync();
+        }
+    }
+
     private sealed class TestHarness(
         ApplicationDbContext dbContext,
         MarketScannerHandoffService service,
@@ -664,5 +822,7 @@ public sealed class MarketScannerHandoffServiceTests
         }
     }
 }
+
+
 
 

@@ -23,6 +23,8 @@ public sealed class AiSignalOptions
 
     public bool OfflineMode { get; set; } = true;
 
+    public bool ShadowModeEnabled { get; set; } = true;
+
     public bool FailSafeNeutralEnabled { get; set; } = true;
 
     [Range(64, 512)]
@@ -32,3 +34,4 @@ public sealed class AiSignalOptions
 
     public string? GeminiModel { get; set; }
 }
+

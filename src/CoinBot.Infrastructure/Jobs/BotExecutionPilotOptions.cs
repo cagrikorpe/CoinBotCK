@@ -7,6 +7,8 @@ public sealed class BotExecutionPilotOptions
 {
     public bool Enabled { get; set; }
 
+    public bool PilotActivationEnabled { get; set; } = false;
+
     public ExecutionEnvironment SignalEvaluationMode { get; set; } = ExecutionEnvironment.Live;
 
     [Required]

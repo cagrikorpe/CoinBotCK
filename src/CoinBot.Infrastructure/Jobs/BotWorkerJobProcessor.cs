@@ -1,11 +1,14 @@
 using System.Globalization;
+using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Features;
+using CoinBot.Application.Abstractions.Risk;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Ai;
 using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Observability;
@@ -26,10 +29,14 @@ public sealed class BotWorkerJobProcessor(
     IBinanceHistoricalKlineClient historicalKlineClient,
     IStrategySignalService strategySignalService,
     IExecutionEngine executionEngine,
+    IExecutionGate executionGate,
+    IUserExecutionOverrideGuard userExecutionOverrideGuard,
     IDataLatencyCircuitBreaker dataLatencyCircuitBreaker,
     ITradingFeatureSnapshotService featureSnapshotService,
+    IAiShadowDecisionService aiShadowDecisionService,
     ICorrelationContextAccessor correlationContextAccessor,
     IOptions<BotExecutionPilotOptions> options,
+    IOptions<AiSignalOptions> aiSignalOptions,
     IHostEnvironment hostEnvironment,
     TimeProvider timeProvider,
     ILogger<BotWorkerJobProcessor> logger) : IBotWorkerJobProcessor
@@ -45,6 +52,7 @@ public sealed class BotWorkerJobProcessor(
     ];
 
     private readonly BotExecutionPilotOptions optionsValue = options.Value;
+    private readonly AiSignalOptions aiSignalOptionsValue = aiSignalOptions.Value;
 
     public async Task<BackgroundJobProcessResult> ProcessAsync(
         TradingBot bot,
@@ -220,7 +228,68 @@ public sealed class BotWorkerJobProcessor(
             timeframe,
             marketState.IndicatorSnapshot.CloseTimeUtc,
             cancellationToken);
+        var strategyDecisionTrace = await ResolveLatestDecisionTraceAsync(
+            correlationId,
+            bot.OwnerUserId,
+            normalizedSymbol,
+            timeframe,
+            cancellationToken);
+        var pilotActivationEnabled = optionsValue.PilotActivationEnabled;
+        var shadowModeActive = aiSignalOptionsValue.Enabled &&
+                               aiSignalOptionsValue.ShadowModeEnabled &&
+                               !pilotActivationEnabled;
 
+        if (shadowModeActive)
+        {
+            try
+            {
+                var shadowDecision = await CaptureShadowDecisionAsync(
+                    bot,
+                    exchangeAccount,
+                    publishedVersion,
+                    normalizedSymbol,
+                    timeframe,
+                    symbolMetadata,
+                    marketState,
+                    featureSnapshot,
+                    signalGenerationResult,
+                    signal,
+                    strategyDecisionTrace,
+                    correlationId,
+                    marginType!,
+                    leverage!.Value,
+                    cancellationToken);
+
+                logger.LogInformation(
+                    "Bot execution pilot persisted AI shadow decision {ShadowDecisionId} for BotId {BotId}. FinalAction={FinalAction} HypotheticalSubmitAllowed={HypotheticalSubmitAllowed} NoSubmitReason={NoSubmitReason}.",
+                    shadowDecision.Id,
+                    bot.Id,
+                    shadowDecision.FinalAction,
+                    shadowDecision.HypotheticalSubmitAllowed,
+                    shadowDecision.NoSubmitReason);
+
+                return BackgroundJobProcessResult.Success();
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                logger.LogWarning(
+                    exception,
+                    "Bot execution pilot failed while capturing an AI shadow decision for BotId {BotId}.",
+                    bot.Id);
+                return BackgroundJobProcessResult.RetryableFailure("AiShadowDecisionCaptureFailed");
+            }
+        }
+
+        if (!pilotActivationEnabled)
+        {
+            logger.LogInformation(
+                "Bot execution pilot skipped submit for BotId {BotId} because PilotActivationEnabled is false. Symbol={Symbol} Timeframe={Timeframe} HasActionableSignal={HasActionableSignal}.",
+                bot.Id,
+                normalizedSymbol,
+                timeframe,
+                signal is not null);
+            return BackgroundJobProcessResult.Success();
+        }
         if (signal is null)
         {
             logger.LogInformation(
@@ -290,7 +359,7 @@ public sealed class BotWorkerJobProcessor(
                     IdempotencyKey: $"{idempotencyKey}:{signal.StrategySignalId:N}",
                     CorrelationId: null,
                     ParentCorrelationId: null,
-                    Context: BuildPilotExecutionContext(marginType!, leverage!.Value)),
+                    Context: BuildPilotExecutionContext(marginType!, leverage!.Value, pilotActivationEnabled)),
                 cancellationToken);
 
             logger.LogInformation(
@@ -735,10 +804,544 @@ public sealed class BotWorkerJobProcessor(
         return normalizedFailureCode;
     }
 
-    private static string BuildPilotExecutionContext(string marginType, decimal leverage)
+    private async Task<AiShadowDecisionSnapshot> CaptureShadowDecisionAsync(
+        TradingBot bot,
+        ExchangeAccount exchangeAccount,
+        TradingStrategyVersion publishedVersion,
+        string symbol,
+        string timeframe,
+        SymbolMetadataSnapshot symbolMetadata,
+        MarketStateResolution marketState,
+        TradingFeatureSnapshotModel? featureSnapshot,
+        StrategySignalGenerationResult signalGenerationResult,
+        StrategySignalSnapshot? signal,
+        DecisionTrace? strategyDecisionTrace,
+        string correlationId,
+        string marginType,
+        decimal leverage,
+        CancellationToken cancellationToken)
+    {
+        var shadowDecisionId = Guid.NewGuid();
+        var strategyDirection = ResolveStrategyDirection(signalGenerationResult.EvaluationResult);
+        var aiEvaluation = ResolvePrimaryAiEvaluation(signalGenerationResult);
+        var duplicateSuppressed = signalGenerationResult.SuppressedDuplicateCount > 0 && signalGenerationResult.Signals.Count == 0;
+        var hypotheticalEvaluation = await EvaluateHypotheticalSubmitAsync(
+            shadowDecisionId,
+            bot,
+            exchangeAccount,
+            publishedVersion,
+            symbol,
+            timeframe,
+            symbolMetadata,
+            marketState,
+            correlationId,
+            marginType,
+            leverage,
+            shouldEvaluate: string.Equals(strategyDirection, "Long", StringComparison.Ordinal) && !duplicateSuppressed,
+            cancellationToken);
+        var persistedRiskVeto = ResolvePersistedRiskVeto(signalGenerationResult);
+        var riskVetoPresent = hypotheticalEvaluation.RiskVetoPresent || persistedRiskVeto.IsPresent;
+        var riskVetoReason = hypotheticalEvaluation.RiskVetoReason ?? persistedRiskVeto.Reason;
+        var riskVetoSummary = hypotheticalEvaluation.RiskVetoSummary ?? persistedRiskVeto.Summary;
+        var finalAction = signal is not null &&
+                          !duplicateSuppressed &&
+                          hypotheticalEvaluation.SubmitAllowed
+            ? "ShadowOnly"
+            : "NoSubmit";
+        var noSubmitReason = string.Equals(finalAction, "ShadowOnly", StringComparison.Ordinal)
+            ? "ShadowModeActive"
+            : ResolveShadowNoSubmitReason(
+                strategyDecisionTrace,
+                hypotheticalEvaluation.BlockReason,
+                duplicateSuppressed,
+                strategyDirection,
+                aiEvaluation);
+
+        return await aiShadowDecisionService.CaptureAsync(
+            new AiShadowDecisionWriteRequest(
+                shadowDecisionId,
+                bot.OwnerUserId,
+                bot.Id,
+                exchangeAccount.Id,
+                publishedVersion.TradingStrategyId,
+                publishedVersion.Id,
+                signal?.StrategySignalId,
+                signalGenerationResult.Vetoes.OrderByDescending(item => item.EvaluatedAtUtc).Select(item => (Guid?)item.StrategySignalVetoId).FirstOrDefault(),
+                featureSnapshot?.Id,
+                strategyDecisionTrace?.Id,
+                hypotheticalEvaluation.DecisionTraceId,
+                correlationId,
+                bot.StrategyKey,
+                symbol,
+                timeframe,
+                timeProvider.GetUtcNow().UtcDateTime,
+                featureSnapshot?.MarketDataTimestampUtc ?? marketState.IndicatorSnapshot?.CloseTimeUtc,
+                featureSnapshot?.FeatureVersion,
+                strategyDirection,
+                ResolveStrategyConfidenceScore(signalGenerationResult, signal),
+                strategyDecisionTrace?.DecisionOutcome,
+                strategyDecisionTrace?.DecisionReasonCode ?? strategyDecisionTrace?.VetoReasonCode,
+                strategyDecisionTrace?.DecisionSummary ?? signalGenerationResult.EvaluationReport?.ExplainabilitySummary,
+                aiEvaluation?.SignalDirection.ToString() ?? "Neutral",
+                aiEvaluation?.ConfidenceScore ?? 0m,
+                ResolveAiReasonSummary(aiEvaluation, signalGenerationResult.EvaluationResult),
+                aiEvaluation?.ProviderName ?? ResolveConfiguredAiProviderName(),
+                aiEvaluation?.ProviderModel ?? ResolveConfiguredAiProviderModel(),
+                aiEvaluation?.LatencyMs ?? 0,
+                aiEvaluation?.IsFallback ?? false,
+                aiEvaluation?.FallbackReason?.ToString(),
+                riskVetoPresent,
+                riskVetoReason,
+                riskVetoSummary,
+                hypotheticalEvaluation.PilotSafetyBlocked,
+                hypotheticalEvaluation.PilotSafetyReason,
+                hypotheticalEvaluation.PilotSafetySummary,
+                featureSnapshot?.TradingContext.TradingMode ?? optionsValue.SignalEvaluationMode,
+                featureSnapshot?.TradingContext.Plane ?? ExchangeDataPlane.Futures,
+                finalAction,
+                hypotheticalEvaluation.SubmitAllowed,
+                hypotheticalEvaluation.BlockReason,
+                hypotheticalEvaluation.BlockSummary,
+                noSubmitReason,
+                featureSnapshot?.FeatureSummary,
+                ResolveAgreementState(strategyDirection, aiEvaluation)),
+            cancellationToken);
+    }
+
+    private async Task<ShadowHypotheticalEvaluation> EvaluateHypotheticalSubmitAsync(
+        Guid shadowDecisionId,
+        TradingBot bot,
+        ExchangeAccount exchangeAccount,
+        TradingStrategyVersion publishedVersion,
+        string symbol,
+        string timeframe,
+        SymbolMetadataSnapshot symbolMetadata,
+        MarketStateResolution marketState,
+        string correlationId,
+        string marginType,
+        decimal leverage,
+        bool shouldEvaluate,
+        CancellationToken cancellationToken)
+    {
+        if (!shouldEvaluate)
+        {
+            return ShadowHypotheticalEvaluation.NotEvaluated;
+        }
+
+        decimal quantity;
+
+        try
+        {
+            quantity = ResolvePilotQuantity(symbolMetadata, marketState.ReferencePrice ?? 0m);
+        }
+        catch (ExecutionValidationException exception)
+        {
+            return new ShadowHypotheticalEvaluation(
+                SubmitAllowed: false,
+                BlockReason: ResolveStableFailureCode(exception.ReasonCode, submittedToBroker: false),
+                BlockSummary: Truncate(exception.Message, 512),
+                PilotSafetyBlocked: false,
+                PilotSafetyReason: null,
+                PilotSafetySummary: null,
+                RiskVetoPresent: false,
+                RiskVetoReason: null,
+                RiskVetoSummary: null,
+                DecisionTraceId: null);
+        }
+
+        var shadowContext = BuildShadowExecutionContext(marginType, leverage);
+        DecisionTrace? hypotheticalDecisionTrace = null;
+
+        try
+        {
+            await executionGate.EnsureExecutionAllowedAsync(
+                new ExecutionGateRequest(
+                    Actor: "system:ai-shadow",
+                    Action: "AiShadow.HypotheticalSubmit",
+                    Target: $"AiShadowDecision/{shadowDecisionId:N}",
+                    Environment: optionsValue.SignalEvaluationMode,
+                    Context: shadowContext,
+                    CorrelationId: correlationId,
+                    UserId: bot.OwnerUserId,
+                    BotId: bot.Id,
+                    StrategyKey: bot.StrategyKey,
+                    Symbol: symbol,
+                    Timeframe: timeframe,
+                    ExchangeAccountId: exchangeAccount.Id,
+                    Plane: ExchangeDataPlane.Futures),
+                cancellationToken);
+
+            hypotheticalDecisionTrace = await ResolveLatestDecisionTraceAsync(
+                correlationId,
+                bot.OwnerUserId,
+                symbol,
+                timeframe,
+                cancellationToken);
+        }
+        catch (ExecutionGateRejectedException exception)
+        {
+            hypotheticalDecisionTrace = await ResolveLatestDecisionTraceAsync(
+                correlationId,
+                bot.OwnerUserId,
+                symbol,
+                timeframe,
+                cancellationToken);
+            var pilotSafetyBlocked = IsPilotSafetyBlockedReason(exception.Reason);
+            var blockedSummary = Truncate(exception.Message, 512);
+
+            return new ShadowHypotheticalEvaluation(
+                SubmitAllowed: false,
+                BlockReason: exception.Reason.ToString(),
+                BlockSummary: blockedSummary,
+                PilotSafetyBlocked: pilotSafetyBlocked,
+                PilotSafetyReason: pilotSafetyBlocked ? exception.Reason.ToString() : null,
+                PilotSafetySummary: pilotSafetyBlocked ? blockedSummary : null,
+                RiskVetoPresent: false,
+                RiskVetoReason: null,
+                RiskVetoSummary: null,
+                DecisionTraceId: hypotheticalDecisionTrace?.Id);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return new ShadowHypotheticalEvaluation(
+                SubmitAllowed: false,
+                BlockReason: "HypotheticalGateEvaluationUnavailable",
+                BlockSummary: Truncate(exception.Message, 512),
+                PilotSafetyBlocked: false,
+                PilotSafetyReason: null,
+                PilotSafetySummary: null,
+                RiskVetoPresent: false,
+                RiskVetoReason: null,
+                RiskVetoSummary: null,
+                DecisionTraceId: null);
+        }
+
+        var overrideEvaluation = await userExecutionOverrideGuard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                bot.OwnerUserId,
+                symbol,
+                optionsValue.SignalEvaluationMode,
+                ExecutionOrderSide.Buy,
+                quantity,
+                marketState.ReferencePrice ?? 0m,
+                bot.Id,
+                bot.StrategyKey,
+                shadowContext,
+                publishedVersion.TradingStrategyId,
+                publishedVersion.Id,
+                timeframe,
+                CurrentExecutionOrderId: null,
+                ReplacesExecutionOrderId: null,
+                ExchangeDataPlane.Futures),
+            cancellationToken);
+        var riskVetoReason = NormalizeRiskVetoReason(overrideEvaluation.RiskEvaluation);
+        var riskVetoSummary = NormalizeRiskVetoSummary(overrideEvaluation.RiskEvaluation);
+
+        if (overrideEvaluation.IsBlocked)
+        {
+            var pilotSafetyBlocked = IsPilotSafetyBlockedCode(overrideEvaluation.BlockCode);
+            var blockedSummary = Truncate(overrideEvaluation.Message, 512);
+
+            return new ShadowHypotheticalEvaluation(
+                SubmitAllowed: false,
+                BlockReason: overrideEvaluation.BlockCode ?? "UserExecutionOverrideBlocked",
+                BlockSummary: blockedSummary,
+                PilotSafetyBlocked: pilotSafetyBlocked,
+                PilotSafetyReason: pilotSafetyBlocked ? overrideEvaluation.BlockCode : null,
+                PilotSafetySummary: pilotSafetyBlocked ? blockedSummary : null,
+                RiskVetoPresent: overrideEvaluation.RiskEvaluation?.IsVetoed ?? false,
+                RiskVetoReason: riskVetoReason,
+                RiskVetoSummary: riskVetoSummary,
+                DecisionTraceId: hypotheticalDecisionTrace?.Id);
+        }
+
+        return new ShadowHypotheticalEvaluation(
+            SubmitAllowed: true,
+            BlockReason: null,
+            BlockSummary: null,
+            PilotSafetyBlocked: false,
+            PilotSafetyReason: null,
+            PilotSafetySummary: null,
+            RiskVetoPresent: overrideEvaluation.RiskEvaluation?.IsVetoed ?? false,
+            RiskVetoReason: riskVetoReason,
+            RiskVetoSummary: riskVetoSummary,
+            DecisionTraceId: hypotheticalDecisionTrace?.Id);
+    }
+
+    private async Task<DecisionTrace?> ResolveLatestDecisionTraceAsync(
+        string correlationId,
+        string userId,
+        string symbol,
+        string timeframe,
+        CancellationToken cancellationToken)
+    {
+        return await dbContext.DecisionTraces
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity => !entity.IsDeleted &&
+                             entity.CorrelationId == correlationId &&
+                             entity.UserId == userId &&
+                             entity.Symbol == symbol &&
+                             entity.Timeframe == timeframe)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    private static string ResolveStrategyDirection(StrategyEvaluationResult evaluationResult)
+    {
+        if (evaluationResult.HasEntryRules && evaluationResult.EntryMatched)
+        {
+            return "Long";
+        }
+
+        return "Neutral";
+    }
+
+    private static int? ResolveStrategyConfidenceScore(
+        StrategySignalGenerationResult signalGenerationResult,
+        StrategySignalSnapshot? signal)
+    {
+        if (signal is not null)
+        {
+            return signal.ExplainabilityPayload.ConfidenceSnapshot.ScorePercentage;
+        }
+
+        var vetoConfidence = signalGenerationResult.Vetoes
+            .OrderByDescending(item => item.EvaluatedAtUtc)
+            .Select(item => (int?)item.ConfidenceSnapshot.ScorePercentage)
+            .FirstOrDefault();
+
+        if (vetoConfidence.HasValue)
+        {
+            return vetoConfidence.Value;
+        }
+
+        return signalGenerationResult.EvaluationReport?.AggregateScore;
+    }
+
+    private static AiSignalEvaluationResult? ResolvePrimaryAiEvaluation(StrategySignalGenerationResult signalGenerationResult)
+    {
+        return signalGenerationResult.AiEvaluations
+            .OrderByDescending(item => item.EvaluatedAtUtc)
+            .ThenByDescending(item => item.ConfidenceScore)
+            .FirstOrDefault();
+    }
+
+    private static (bool IsPresent, string? Reason, string? Summary) ResolvePersistedRiskVeto(StrategySignalGenerationResult signalGenerationResult)
+    {
+        var veto = signalGenerationResult.Vetoes
+            .OrderByDescending(item => item.EvaluatedAtUtc)
+            .FirstOrDefault();
+
+        if (veto is null)
+        {
+            return (false, null, null);
+        }
+
+        var reason = veto.ConfidenceSnapshot.RiskReasonCode == RiskVetoReasonCode.None
+            ? null
+            : veto.ConfidenceSnapshot.RiskReasonCode.ToString();
+        var summary = string.IsNullOrWhiteSpace(veto.ConfidenceSnapshot.Summary)
+            ? veto.UiLog.Summary
+            : veto.ConfidenceSnapshot.Summary;
+
+        return (true, reason, summary);
+    }
+
+    private string ResolveConfiguredAiProviderName()
+    {
+        var configuredProvider = aiSignalOptionsValue.SelectedProvider?.Trim();
+        return string.IsNullOrWhiteSpace(configuredProvider)
+            ? "Unknown"
+            : configuredProvider;
+    }
+
+    private string? ResolveConfiguredAiProviderModel()
+    {
+        var providerName = ResolveConfiguredAiProviderName();
+
+        if (string.Equals(providerName, OpenAiSignalProviderAdapter.ProviderNameValue, StringComparison.OrdinalIgnoreCase))
+        {
+            return Truncate(aiSignalOptionsValue.OpenAiModel, 128);
+        }
+
+        if (string.Equals(providerName, GeminiAiSignalProviderAdapter.ProviderNameValue, StringComparison.OrdinalIgnoreCase))
+        {
+            return Truncate(aiSignalOptionsValue.GeminiModel, 128);
+        }
+
+        return null;
+    }
+
+    private static string ResolveAiReasonSummary(
+        AiSignalEvaluationResult? aiEvaluation,
+        StrategyEvaluationResult evaluationResult)
+    {
+        if (aiEvaluation is not null)
+        {
+            return aiEvaluation.ReasonSummary;
+        }
+
+        return evaluationResult.HasEntryRules && evaluationResult.EntryMatched
+            ? "AI evaluation was skipped because no AI overlay response was recorded."
+            : "AI evaluation was skipped because strategy produced no entry candidate.";
+    }
+
+    private static string ResolveAgreementState(
+        string strategyDirection,
+        AiSignalEvaluationResult? aiEvaluation)
+    {
+        if (aiEvaluation is null)
+        {
+            return "NotApplicable";
+        }
+
+        return string.Equals(strategyDirection, aiEvaluation.SignalDirection.ToString(), StringComparison.Ordinal)
+            ? "Agreement"
+            : "Disagreement";
+    }
+
+    private static string ResolveShadowNoSubmitReason(
+        DecisionTrace? strategyDecisionTrace,
+        string? hypotheticalBlockReason,
+        bool duplicateSuppressed,
+        string strategyDirection,
+        AiSignalEvaluationResult? aiEvaluation)
+    {
+        var normalizedHypotheticalBlockReason = hypotheticalBlockReason?.Trim();
+        if (!string.IsNullOrWhiteSpace(normalizedHypotheticalBlockReason))
+        {
+            return normalizedHypotheticalBlockReason;
+        }
+
+        if (duplicateSuppressed)
+        {
+            return "SuppressedDuplicate";
+        }
+
+        var strategyReasonCode = strategyDecisionTrace?.DecisionReasonCode?.Trim();
+        if (!string.IsNullOrWhiteSpace(strategyReasonCode))
+        {
+            return strategyReasonCode;
+        }
+
+        if (!string.Equals(strategyDirection, "Long", StringComparison.Ordinal))
+        {
+            return "NoActionableSignal";
+        }
+
+        if (aiEvaluation?.IsFallback == true)
+        {
+            return $"Ai{aiEvaluation.FallbackReason ?? AiSignalFallbackReason.EvaluationException}";
+        }
+
+        if (aiEvaluation is not null && aiEvaluation.SignalDirection == AiSignalDirection.Neutral)
+        {
+            return "AiNeutral";
+        }
+
+        return "NoSubmit";
+    }
+
+    private static string? NormalizeRiskVetoReason(RiskVetoResult? riskEvaluation)
+    {
+        if (riskEvaluation is null || riskEvaluation.ReasonCode == RiskVetoReasonCode.None)
+        {
+            return null;
+        }
+
+        return riskEvaluation.ReasonCode.ToString();
+    }
+
+    private static string? NormalizeRiskVetoSummary(RiskVetoResult? riskEvaluation)
+    {
+        if (riskEvaluation is null)
+        {
+            return null;
+        }
+
+        return Truncate(riskEvaluation.ReasonSummary, 1024);
+    }
+
+    private static bool IsPilotSafetyBlockedReason(ExecutionGateBlockedReason blockedReason)
+    {
+        return blockedReason is ExecutionGateBlockedReason.PilotConfigurationMissing or
+            ExecutionGateBlockedReason.PilotRequiresDevelopment or
+            ExecutionGateBlockedReason.PilotTestnetEndpointMismatch or
+            ExecutionGateBlockedReason.PilotCredentialValidationUnavailable or
+            ExecutionGateBlockedReason.PilotCredentialEnvironmentMismatch or
+            ExecutionGateBlockedReason.PrivatePlaneUnavailable or
+            ExecutionGateBlockedReason.PrivatePlaneStale;
+    }
+
+    private static bool IsPilotSafetyBlockedCode(string? blockCode)
+    {
+        if (string.IsNullOrWhiteSpace(blockCode))
+        {
+            return false;
+        }
+
+        return blockCode.StartsWith("UserExecutionPilot", StringComparison.Ordinal) ||
+               string.Equals(blockCode, "UserExecutionBotCooldownActive", StringComparison.Ordinal) ||
+               string.Equals(blockCode, "UserExecutionSymbolCooldownActive", StringComparison.Ordinal) ||
+               string.Equals(blockCode, "UserExecutionMaxOpenPositionsExceeded", StringComparison.Ordinal) ||
+               string.Equals(blockCode, "UserExecutionSymbolConflict", StringComparison.Ordinal) ||
+               string.Equals(blockCode, "PilotConfigurationMissing", StringComparison.Ordinal) ||
+               string.Equals(blockCode, "PilotRequiresDevelopment", StringComparison.Ordinal) ||
+               string.Equals(blockCode, "PilotTestnetEndpointMismatch", StringComparison.Ordinal) ||
+               string.Equals(blockCode, "PilotCredentialValidationUnavailable", StringComparison.Ordinal) ||
+               string.Equals(blockCode, "PilotCredentialEnvironmentMismatch", StringComparison.Ordinal) ||
+               string.Equals(blockCode, "PrivatePlaneUnavailable", StringComparison.Ordinal) ||
+               string.Equals(blockCode, "PrivatePlaneStale", StringComparison.Ordinal);
+    }
+
+    private static string BuildShadowExecutionContext(string marginType, decimal leverage)
+    {
+        return $"{BuildPilotExecutionContext(marginType, leverage, pilotActivationEnabled: false)} | AiShadowMode=True | HypotheticalSubmit=True";
+    }
+
+    private static string? Truncate(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var normalizedValue = value.Trim();
+        return normalizedValue.Length <= maxLength
+            ? normalizedValue
+            : normalizedValue[..maxLength];
+    }
+
+    private static string BuildPilotExecutionContext(string marginType, decimal leverage, bool pilotActivationEnabled)
     {
         return FormattableString.Invariant(
-            $"DevelopmentFuturesTestnetPilot=True | PilotMarginType={marginType} | PilotLeverage={leverage:0.########}");
+            $"DevelopmentFuturesTestnetPilot=True | PilotActivationEnabled={pilotActivationEnabled} | PilotMarginType={marginType} | PilotLeverage={leverage:0.########}");
+    }
+
+    private sealed record ShadowHypotheticalEvaluation(
+        bool SubmitAllowed,
+        string? BlockReason,
+        string? BlockSummary,
+        bool PilotSafetyBlocked,
+        string? PilotSafetyReason,
+        string? PilotSafetySummary,
+        bool RiskVetoPresent,
+        string? RiskVetoReason,
+        string? RiskVetoSummary,
+        Guid? DecisionTraceId)
+    {
+        public static readonly ShadowHypotheticalEvaluation NotEvaluated = new(
+            SubmitAllowed: false,
+            BlockReason: null,
+            BlockSummary: null,
+            PilotSafetyBlocked: false,
+            PilotSafetyReason: null,
+            PilotSafetySummary: null,
+            RiskVetoPresent: false,
+            RiskVetoReason: null,
+            RiskVetoSummary: null,
+            DecisionTraceId: null);
     }
 
     private static string NormalizeRequired(string? value, string parameterName)
@@ -829,6 +1432,15 @@ public sealed class BotWorkerJobProcessor(
         return allowedSymbols.Contains(symbol);
     }
 }
+
+
+
+
+
+
+
+
+
 
 
 

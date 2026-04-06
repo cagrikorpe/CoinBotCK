@@ -4,6 +4,7 @@ using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Application.Abstractions.ExchangeCredentials;
+using CoinBot.Application.Abstractions.Features;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
@@ -37,6 +38,7 @@ public sealed class BotWorkerJobProcessorTests
         await using var harness = CreateHarness();
         var bot = await SeedBotGraphAsync(harness.DbContext);
         ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
         await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-1");
         await harness.SwitchService.SetTradeMasterStateAsync(
             TradeMasterSwitchState.Armed,
@@ -66,11 +68,39 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_DoesNotSubmit_WhenPilotActivationIsDisabled()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, bot);
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-activation-off-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-activation-off-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-activation-off-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var persistedFeature = await harness.DbContext.TradingFeatureSnapshots.SingleAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Entry, persistedSignal.SignalType);
+        Assert.Equal(bot.Id, persistedFeature.BotId);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+    [Fact]
     public async Task ProcessAsync_RefreshesSymbolScopedLatencyFromHistoricalBackfill_WhenHeartbeatWasNotPrimed()
     {
         await using var harness = CreateHarness();
         var bot = await SeedBotGraphAsync(harness.DbContext);
         ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
         await harness.SwitchService.SetTradeMasterStateAsync(
             TradeMasterSwitchState.Armed,
             actor: "admin-bot",
@@ -129,6 +159,7 @@ public sealed class BotWorkerJobProcessorTests
         await using var harness = CreateHarness();
         var bot = await SeedBotGraphAsync(harness.DbContext);
         ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
         await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-disarmed-1");
         await harness.SwitchService.SetTradeMasterStateAsync(
             TradeMasterSwitchState.Armed,
@@ -161,14 +192,64 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
-    public async Task ProcessAsync_FailsClosed_WhenTradeMasterIsDisarmed_EvenWhenAiOverlayAllows()
+    public async Task ProcessAsync_Submits_WhenPilotActivationEnabled_EvenIfAiShadowModeIsEnabled()
     {
-        await using var harness = CreateHarness(new AiSignalOptions
-        {
-            Enabled = true,
-            SelectedProvider = DeterministicStubAiSignalProviderAdapter.ProviderNameValue,
-            MinimumConfidence = 0.70m
-        });
+        await using var harness = CreateHarness(CreateEnabledAiOptions(), aiSignalEvaluatorOverride: new FixedAiSignalEvaluator(AiSignalDirection.Long, 0.91m, false, null));
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-ai-live-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-ai-live-2");
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-ai-live-1",
+            CancellationToken.None);
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.Equal(ExecutionEnvironment.Live, persistedOrder.ExecutionEnvironment);
+        Assert.Empty(harness.DbContext.AiShadowDecisions);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PersistsShadowOnlyDecision_AndSkipsExecution_WhenAiShadowModeEnabled()
+    {
+        await using var harness = CreateHarness(CreateEnabledAiOptions(), aiSignalEvaluatorOverride: new FixedAiSignalEvaluator(AiSignalDirection.Long, 0.91m, false, null));
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, bot);
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-ai-shadow-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-ai-shadow-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-ai-shadow-1",
+            CancellationToken.None);
+
+        var shadowDecision = await harness.DbContext.AiShadowDecisions.SingleAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal("ShadowOnly", shadowDecision.FinalAction);
+        Assert.True(shadowDecision.HypotheticalSubmitAllowed);
+        Assert.Equal("ShadowModeActive", shadowDecision.NoSubmitReason);
+        Assert.False(shadowDecision.AiIsFallback);
+        Assert.Equal("Long", shadowDecision.AiDirection);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PersistsNoSubmitShadowDecision_WhenTradeMasterIsDisarmed_InAiShadowMode()
+    {
+        await using var harness = CreateHarness(CreateEnabledAiOptions(), aiSignalEvaluatorOverride: new FixedAiSignalEvaluator(AiSignalDirection.Long, 0.91m, false, null));
         var bot = await SeedBotGraphAsync(harness.DbContext);
         ConfigurePilotScope(harness, bot);
         await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-ai-disarmed-1");
@@ -188,16 +269,116 @@ public sealed class BotWorkerJobProcessorTests
             "job-bot-ai-disarmed-1",
             CancellationToken.None);
 
-        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
-        var decisionTrace = await harness.DbContext.DecisionTraces.SingleAsync(entity => entity.DecisionOutcome == "Persisted");
+        var shadowDecision = await harness.DbContext.AiShadowDecisions.SingleAsync();
 
-        Assert.False(result.IsSuccessful);
-        Assert.Equal("TradeMasterDisarmed", result.ErrorCode);
-        Assert.Equal(ExecutionOrderState.Rejected, persistedOrder.State);
+        Assert.True(result.IsSuccessful);
+        Assert.Equal("NoSubmit", shadowDecision.FinalAction);
+        Assert.False(shadowDecision.HypotheticalSubmitAllowed);
+        Assert.Equal("TradeMasterDisarmed", shadowDecision.HypotheticalBlockReason);
+        Assert.Equal("TradeMasterDisarmed", shadowDecision.NoSubmitReason);
+        Assert.False(shadowDecision.PilotSafetyBlocked);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
-        Assert.Contains("aiEvaluation", decisionTrace.SnapshotJson, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task ProcessAsync_PersistsNoSubmitShadowDecision_WhenFeatureSnapshotIsUnavailable_InAiShadowMode()
+    {
+        await using var harness = CreateHarness(
+            CreateEnabledAiOptions(),
+            new ThrowingFeatureSnapshotService());
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, bot);
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-ai-nosnapshot-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-ai-nosnapshot-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-ai-nosnapshot-1",
+            CancellationToken.None);
+
+        var shadowDecision = await harness.DbContext.AiShadowDecisions.SingleAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal("NoSubmit", shadowDecision.FinalAction);
+        Assert.True(shadowDecision.HypotheticalSubmitAllowed);
+        Assert.Equal("AiFeatureSnapshotUnavailable", shadowDecision.NoSubmitReason);
+        Assert.True(shadowDecision.AiIsFallback);
+        Assert.Equal(nameof(AiSignalFallbackReason.FeatureSnapshotUnavailable), shadowDecision.AiFallbackReason);
+        Assert.Null(shadowDecision.FeatureSnapshotId);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+    [Theory]
+    [InlineData(AiSignalFallbackReason.ProviderUnavailable)]
+    [InlineData(AiSignalFallbackReason.InvalidPayload)]
+    public async Task ProcessAsync_PersistsNoSubmitShadowDecision_WhenAiFallbackOccurs_InAiShadowMode(AiSignalFallbackReason fallbackReason)
+    {
+        await using var harness = CreateHarness(
+            CreateEnabledAiOptions(),
+            aiSignalEvaluatorOverride: new FixedAiSignalEvaluator(AiSignalDirection.Neutral, 0m, true, fallbackReason));
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, bot);
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, $"corr-bot-ai-fallback-{fallbackReason}-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: $"corr-bot-ai-fallback-{fallbackReason}-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            $"job-bot-ai-fallback-{fallbackReason}-1",
+            CancellationToken.None);
+
+        var shadowDecision = await harness.DbContext.AiShadowDecisions.SingleAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal("NoSubmit", shadowDecision.FinalAction);
+        Assert.Equal($"Ai{fallbackReason}", shadowDecision.NoSubmitReason);
+        Assert.True(shadowDecision.AiIsFallback);
+        Assert.Equal(fallbackReason.ToString(), shadowDecision.AiFallbackReason);
+        Assert.NotNull(shadowDecision.FeatureSnapshotId);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PersistsNoSubmitShadowDecision_WhenFeatureSnapshotIsStale_InAiShadowMode()
+    {
+        await using var harness = CreateHarness(
+            CreateEnabledAiOptions(),
+            new StaleFeatureSnapshotService());
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, bot);
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-ai-stale-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-ai-stale-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-ai-stale-1",
+            CancellationToken.None);
+
+        var shadowDecision = await harness.DbContext.AiShadowDecisions.SingleAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal("NoSubmit", shadowDecision.FinalAction);
+        Assert.True(shadowDecision.HypotheticalSubmitAllowed);
+        Assert.Equal("AiFeatureSnapshotNotReady", shadowDecision.NoSubmitReason);
+        Assert.True(shadowDecision.AiIsFallback);
+        Assert.Equal(nameof(AiSignalFallbackReason.FeatureSnapshotNotReady), shadowDecision.AiFallbackReason);
+        Assert.NotNull(shadowDecision.FeatureSnapshotId);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
     [Fact]
     public async Task ProcessAsync_FailsClosed_WhenSameOwnerHasMultipleEnabledBotsOnSameSymbol()
     {
@@ -230,6 +411,7 @@ public sealed class BotWorkerJobProcessorTests
         await using var harness = CreateHarness();
         var firstBot = await SeedBotGraphAsync(harness.DbContext, symbol: "BTCUSDT");
         ConfigurePilotScope(harness, firstBot);
+        harness.PilotOptions.PilotActivationEnabled = true;
         _ = await SeedBotGraphAsync(harness.DbContext, ownerUserId: firstBot.OwnerUserId, symbol: "ETHUSDT");
         await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-eth-ok-1", symbol: "BTCUSDT");
         await harness.SwitchService.SetTradeMasterStateAsync(
@@ -247,7 +429,10 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
     }
 
-    private static TestHarness CreateHarness(AiSignalOptions? aiSignalOptions = null)
+    private static TestHarness CreateHarness(
+        AiSignalOptions? aiSignalOptions = null,
+        ITradingFeatureSnapshotService? featureSnapshotServiceOverride = null,
+        IAiSignalEvaluator? aiSignalEvaluatorOverride = null)
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 1, 12, 0, 0, TimeSpan.Zero));
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -291,6 +476,7 @@ public sealed class BotWorkerJobProcessorTests
         var pilotOptions = new BotExecutionPilotOptions
         {
             Enabled = true,
+            PilotActivationEnabled = false,
             SignalEvaluationMode = ExecutionEnvironment.Live,
             DefaultSymbol = "BTCUSDT",
             AllowedSymbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
@@ -305,6 +491,7 @@ public sealed class BotWorkerJobProcessorTests
             PrivatePlaneFreshnessThresholdSeconds = 120,
             PrimeHistoricalCandleCount = 200
         };
+        var resolvedAiSignalOptions = aiSignalOptions ?? new AiSignalOptions();
         var privateDataOptions = Options.Create(new BinancePrivateDataOptions
         {
             RestBaseUrl = "https://testnet.binance.example/futures-rest",
@@ -368,8 +555,8 @@ public sealed class BotWorkerJobProcessorTests
             riskPolicyEvaluator,
             traceService,
             correlationContextAccessor,
-            CreateAiSignalEvaluator(timeProvider),
-            Options.Create(new AiSignalOptions()),
+            aiSignalEvaluatorOverride ?? CreateAiSignalEvaluator(timeProvider, resolvedAiSignalOptions),
+            Options.Create(resolvedAiSignalOptions),
             timeProvider,
             NullLogger<StrategySignalService>.Instance);
         var executionEngine = new ExecutionEngine(
@@ -397,7 +584,7 @@ public sealed class BotWorkerJobProcessorTests
             lifecycleService,
             timeProvider,
             NullLogger<ExecutionEngine>.Instance);
-        var featureSnapshotService = new TradingFeatureSnapshotService(
+        var featureSnapshotService = featureSnapshotServiceOverride ?? new TradingFeatureSnapshotService(
             dbContext,
             circuitBreaker,
             tradingModeService,
@@ -405,6 +592,7 @@ public sealed class BotWorkerJobProcessorTests
             Options.Create(pilotOptions),
             timeProvider,
             NullLogger<TradingFeatureSnapshotService>.Instance);
+        var aiShadowDecisionService = new AiShadowDecisionService(dbContext);
         var processor = new BotWorkerJobProcessor(
             dbContext,
             new IndicatorDataService(
@@ -417,10 +605,14 @@ public sealed class BotWorkerJobProcessorTests
             new FakeHistoricalKlineClient(timeProvider),
             strategySignalService,
             executionEngine,
+            executionGate,
+            userExecutionOverrideGuard,
             circuitBreaker,
             featureSnapshotService,
+            aiShadowDecisionService,
             correlationContextAccessor,
             Options.Create(pilotOptions),
+            Options.Create(resolvedAiSignalOptions),
             hostEnvironment,
             timeProvider,
             NullLogger<BotWorkerJobProcessor>.Instance);
@@ -435,15 +627,62 @@ public sealed class BotWorkerJobProcessorTests
             pilotOptions);
     }
 
-    private static IAiSignalEvaluator CreateAiSignalEvaluator(TimeProvider timeProvider)
+    private static IAiSignalEvaluator CreateAiSignalEvaluator(TimeProvider timeProvider, AiSignalOptions aiSignalOptions)
     {
         return new AiSignalEvaluator(
             [new DeterministicStubAiSignalProviderAdapter(), new OfflineAiSignalProviderAdapter(), new OpenAiSignalProviderAdapter(), new GeminiAiSignalProviderAdapter()],
-            Options.Create(new AiSignalOptions()),
+            Options.Create(aiSignalOptions),
             timeProvider,
             NullLogger<AiSignalEvaluator>.Instance);
     }
+    private static AiSignalOptions CreateEnabledAiOptions()
+    {
+        return new AiSignalOptions
+        {
+            Enabled = true,
+            ShadowModeEnabled = true,
+            SelectedProvider = DeterministicStubAiSignalProviderAdapter.ProviderNameValue,
+            MinimumConfidence = 0.70m
+        };
+    }
 
+    private sealed class FixedAiSignalEvaluator(
+        AiSignalDirection direction,
+        decimal confidenceScore,
+        bool isFallback,
+        AiSignalFallbackReason? fallbackReason) : IAiSignalEvaluator
+    {
+        public Task<AiSignalEvaluationResult> EvaluateAsync(
+            AiSignalEvaluationRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var nowUtc = request.FeatureSnapshot?.EvaluatedAtUtc ?? new DateTime(2026, 4, 1, 12, 0, 0, DateTimeKind.Utc);
+
+            return Task.FromResult(
+                isFallback
+                    ? AiSignalEvaluationResult.NeutralFallback(
+                        fallbackReason ?? AiSignalFallbackReason.EvaluationException,
+                        "Fixed AI fallback.",
+                        request.FeatureSnapshot?.Id,
+                        "FixedAi",
+                        "fixed-v1",
+                        5,
+                        nowUtc)
+                    : new AiSignalEvaluationResult(
+                        direction,
+                        confidenceScore,
+                        "Fixed AI evaluation.",
+                        request.FeatureSnapshot?.Id,
+                        "FixedAi",
+                        "fixed-v1",
+                        5,
+                        IsFallback: false,
+                        FallbackReason: null,
+                        RawResponseCaptured: false,
+                        nowUtc));
+        }
+    }
     private static async Task<TradingBot> SeedBotGraphAsync(
         ApplicationDbContext dbContext,
         string symbol = "BTCUSDT",
@@ -601,6 +840,107 @@ public sealed class BotWorkerJobProcessorTests
                 ExpectedOpenTimeUtc: timeProvider.GetUtcNow().UtcDateTime.AddMinutes(1),
                 ContinuityGapCount: 0),
             correlationId);
+    }
+
+    private sealed class StaleFeatureSnapshotService : ITradingFeatureSnapshotService
+    {
+        public Task<TradingFeatureSnapshotModel> CaptureAsync(TradingFeatureCaptureRequest request, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(CreateSnapshot(request));
+        }
+
+        public Task<TradingFeatureSnapshotModel?> GetLatestAsync(
+            string userId,
+            Guid botId,
+            string symbol,
+            string timeframe,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<TradingFeatureSnapshotModel?>(null);
+        }
+
+        public Task<IReadOnlyCollection<TradingFeatureSnapshotModel>> ListRecentAsync(
+            string userId,
+            Guid botId,
+            string symbol,
+            string timeframe,
+            int take = 20,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<IReadOnlyCollection<TradingFeatureSnapshotModel>>(Array.Empty<TradingFeatureSnapshotModel>());
+        }
+
+        private static TradingFeatureSnapshotModel CreateSnapshot(TradingFeatureCaptureRequest request)
+        {
+            var evaluatedAtUtc = request.EvaluatedAtUtc;
+            return new TradingFeatureSnapshotModel(
+                Guid.Parse("9b0fbf42-8d08-4f10-bdd6-92ed6404d1f8"),
+                request.UserId,
+                request.BotId,
+                request.ExchangeAccountId,
+                request.StrategyKey,
+                request.Symbol,
+                request.Timeframe,
+                evaluatedAtUtc,
+                evaluatedAtUtc.AddMinutes(-5),
+                "AI-1.v1",
+                FeatureSnapshotState.Stale,
+                DegradedModeReasonCode.MarketDataLatencyBreached,
+                200,
+                200,
+                50000m,
+                new TradingTrendFeatureSnapshot(49980m, 49950m, 49800m, 49970m, 49910m),
+                new TradingMomentumFeatureSnapshot(51m, 12m, 8m, 4m, 58m, 55m, 64m, 0.22m),
+                new TradingVolatilityFeatureSnapshot(320m, 0.64m, 0.18m, 0.31m, 49750m, 49500m),
+                new TradingVolumeFeatureSnapshot(1.2m, 1.1m, 2100m),
+                new TradingContextFeatureSnapshot(
+                    ExchangeDataPlane.Futures,
+                    ExecutionEnvironment.Live,
+                    HasOpenPosition: false,
+                    IsInCooldown: false,
+                    LastVetoReasonCode: null,
+                    LastDecisionOutcome: "NoSignalCandidate",
+                    LastDecisionCode: "NoSignalCandidate",
+                    LastExecutionState: null,
+                    LastFailureCode: null),
+                "Stale feature snapshot.",
+                "Freshness not ready.",
+                "Range",
+                "Neutral",
+                "Elevated",
+                null);
+        }
+    }
+    private sealed class ThrowingFeatureSnapshotService : ITradingFeatureSnapshotService
+    {
+        public Task<TradingFeatureSnapshotModel> CaptureAsync(TradingFeatureCaptureRequest request, CancellationToken cancellationToken = default)
+        {
+            throw new InvalidOperationException("Feature snapshot capture failed.");
+        }
+
+        public Task<TradingFeatureSnapshotModel?> GetLatestAsync(
+            string userId,
+            Guid botId,
+            string symbol,
+            string timeframe,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<TradingFeatureSnapshotModel?>(null);
+        }
+
+        public Task<IReadOnlyCollection<TradingFeatureSnapshotModel>> ListRecentAsync(
+            string userId,
+            Guid botId,
+            string symbol,
+            string timeframe,
+            int take = 20,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<IReadOnlyCollection<TradingFeatureSnapshotModel>>(Array.Empty<TradingFeatureSnapshotModel>());
+        }
     }
 
     private sealed class FakeMarketDataService(TimeProvider timeProvider) : IMarketDataService
@@ -983,6 +1323,18 @@ public sealed class BotWorkerJobProcessorTests
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

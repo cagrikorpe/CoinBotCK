@@ -109,6 +109,8 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
     public DbSet<TradingFeatureSnapshot> TradingFeatureSnapshots => Set<TradingFeatureSnapshot>();
 
+    public DbSet<AiShadowDecision> AiShadowDecisions => Set<AiShadowDecision>();
+
     public DbSet<TradingStrategy> TradingStrategies => Set<TradingStrategy>();
 
     public DbSet<TradingStrategyTemplate> TradingStrategyTemplates => Set<TradingStrategyTemplate>();
@@ -207,6 +209,7 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         ConfigureRiskProfiles(builder.Entity<RiskProfile>());
         ConfigureTradingBots(builder.Entity<TradingBot>());
         ConfigureTradingFeatureSnapshots(builder.Entity<TradingFeatureSnapshot>());
+        ConfigureAiShadowDecisions(builder.Entity<AiShadowDecision>());
         ConfigureTradingStrategies(builder.Entity<TradingStrategy>());
         ConfigureTradingStrategyTemplates(builder.Entity<TradingStrategyTemplate>());
         ConfigureTradingStrategyTemplateRevisions(builder.Entity<TradingStrategyTemplateRevision>());
@@ -2794,6 +2797,129 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             .HasForeignKey(entity => entity.ExchangeAccountId)
             .OnDelete(DeleteBehavior.Restrict);
     }
+
+    private void ConfigureAiShadowDecisions(EntityTypeBuilder<AiShadowDecision> builder)
+    {
+        ConfigureUserOwnedEntity(builder, "AiShadowDecisions");
+
+        builder.Property(entity => entity.CorrelationId)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.StrategyKey)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.Symbol)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.Timeframe)
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.FeatureVersion)
+            .HasMaxLength(32);
+
+        builder.Property(entity => entity.StrategyDirection)
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.StrategyDecisionOutcome)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.StrategyDecisionCode)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.StrategySummary)
+            .HasMaxLength(1024);
+
+        builder.Property(entity => entity.AiDirection)
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.AiConfidence)
+            .HasPrecision(18, 8);
+
+        builder.Property(entity => entity.AiReasonSummary)
+            .HasMaxLength(512)
+            .IsRequired();
+
+        builder.Property(entity => entity.AiProviderName)
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.AiProviderModel)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.AiFallbackReason)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.RiskVetoReason)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.RiskVetoSummary)
+            .HasMaxLength(1024);
+
+        builder.Property(entity => entity.PilotSafetyReason)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.PilotSafetySummary)
+            .HasMaxLength(1024);
+
+        builder.Property(entity => entity.TradingMode)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.Plane)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.FinalAction)
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.HypotheticalBlockReason)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.HypotheticalBlockSummary)
+            .HasMaxLength(1024);
+
+        builder.Property(entity => entity.NoSubmitReason)
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.FeatureSummary)
+            .HasMaxLength(1024);
+
+        builder.Property(entity => entity.AgreementState)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.HasIndex(entity => new { entity.OwnerUserId, entity.BotId, entity.Symbol, entity.Timeframe, entity.EvaluatedAtUtc });
+        builder.HasIndex(entity => new { entity.OwnerUserId, entity.Symbol, entity.Timeframe, entity.EvaluatedAtUtc });
+        builder.HasIndex(entity => entity.CorrelationId);
+        builder.HasIndex(entity => entity.FeatureSnapshotId);
+        builder.HasIndex(entity => entity.StrategySignalId);
+
+        builder.HasOne<TradingBot>()
+            .WithMany()
+            .HasForeignKey(entity => entity.BotId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<ExchangeAccount>()
+            .WithMany()
+            .HasForeignKey(entity => entity.ExchangeAccountId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<TradingFeatureSnapshot>()
+            .WithMany()
+            .HasForeignKey(entity => entity.FeatureSnapshotId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
     private static void ConfigureUserExecutionOverrides(EntityTypeBuilder<UserExecutionOverride> builder)
     {
         builder.ToTable("UserExecutionOverrides");
@@ -2938,4 +3064,6 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         }
     }
 }
+
+
 

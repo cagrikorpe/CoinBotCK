@@ -257,6 +257,7 @@ public static class DependencyInjection
         services.AddScoped<IAiSignalProviderAdapter, OpenAiSignalProviderAdapter>();
         services.AddScoped<IAiSignalProviderAdapter, GeminiAiSignalProviderAdapter>();
         services.AddScoped<IAiSignalEvaluator, AiSignalEvaluator>();
+        services.AddScoped<IAiShadowDecisionService, AiShadowDecisionService>();
         services.AddScoped<IStrategySignalService, StrategySignalService>();
         services.AddScoped<ITradingFeatureSnapshotService, TradingFeatureSnapshotService>();
         services.AddScoped<IStrategyVersionService, StrategyVersionService>();
@@ -514,5 +515,7 @@ public static class DependencyInjection
         return services;
     }
 }
+
+
 
 
