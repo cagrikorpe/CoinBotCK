@@ -21,6 +21,45 @@ namespace CoinBot.UnitTests.Infrastructure.Strategies;
 public sealed class StrategySignalAiOverlayTests
 {
     [Fact]
+    public async Task GenerateAsync_SuppressesEntrySignal_WhenAiFeatureSnapshotIsUnavailable()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 6, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("ai-overlay-user-0", "ai-overlay-core");
+        var version = CreateVersion(strategy, 1, CreateDefinitionJson());
+
+        dbContext.TradingStrategies.Add(strategy);
+        dbContext.TradingStrategyVersions.Add(version);
+        dbContext.RiskProfiles.Add(CreateRiskProfile(strategy.OwnerUserId));
+        dbContext.DemoWallets.Add(CreateDemoWallet(strategy.OwnerUserId));
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(
+            dbContext,
+            timeProvider,
+            new AiSignalOptions
+            {
+                Enabled = true,
+                SelectedProvider = DeterministicStubAiSignalProviderAdapter.ProviderNameValue,
+                MinimumConfidence = 0.70m
+            });
+
+        var result = await service.GenerateAsync(
+            new GenerateStrategySignalsRequest(
+                version.Id,
+                CreateContext()));
+        var decisionTrace = await dbContext.DecisionTraces.SingleAsync();
+
+        Assert.Empty(result.Signals);
+        Assert.Empty(result.Vetoes);
+        var aiEvaluation = Assert.Single(result.AiEvaluations);
+        Assert.True(aiEvaluation.IsFallback);
+        Assert.Equal(AiSignalFallbackReason.FeatureSnapshotUnavailable, aiEvaluation.FallbackReason);
+        Assert.Equal("SuppressedByAi", decisionTrace.DecisionOutcome);
+        Assert.Equal("AiFeatureSnapshotUnavailable", decisionTrace.DecisionReasonCode);
+    }
+
+    [Fact]
     public async Task GenerateAsync_SuppressesEntrySignal_WhenAiFeatureSnapshotIsNotReady()
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 6, 12, 0, 0, TimeSpan.Zero));
@@ -59,6 +98,47 @@ public sealed class StrategySignalAiOverlayTests
         Assert.Equal("SuppressedByAi", decisionTrace.DecisionOutcome);
         Assert.Equal("AiFallback", decisionTrace.DecisionReasonType);
         Assert.Equal("AiFeatureSnapshotNotReady", decisionTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task GenerateAsync_SuppressesEntrySignal_WhenAiReturnsNeutral()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 6, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("ai-overlay-user-neutral", "ai-overlay-core");
+        var version = CreateVersion(strategy, 1, CreateDefinitionJson());
+
+        dbContext.TradingStrategies.Add(strategy);
+        dbContext.TradingStrategyVersions.Add(version);
+        dbContext.RiskProfiles.Add(CreateRiskProfile(strategy.OwnerUserId));
+        dbContext.DemoWallets.Add(CreateDemoWallet(strategy.OwnerUserId));
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(
+            dbContext,
+            timeProvider,
+            new AiSignalOptions
+            {
+                Enabled = true,
+                SelectedProvider = OfflineAiSignalProviderAdapter.ProviderNameValue,
+                MinimumConfidence = 0.70m
+            });
+
+        var result = await service.GenerateAsync(
+            new GenerateStrategySignalsRequest(
+                version.Id,
+                CreateContext(),
+                CreateFeatureSnapshot(FeatureSnapshotState.Ready)));
+        var decisionTrace = await dbContext.DecisionTraces.SingleAsync();
+
+        Assert.Empty(result.Signals);
+        Assert.Empty(result.Vetoes);
+        var aiEvaluation = Assert.Single(result.AiEvaluations);
+        Assert.False(aiEvaluation.IsFallback);
+        Assert.Equal(AiSignalDirection.Neutral, aiEvaluation.SignalDirection);
+        Assert.Equal("SuppressedByAi", decisionTrace.DecisionOutcome);
+        Assert.Equal("AiOverlay", decisionTrace.DecisionReasonType);
+        Assert.Equal("AiNeutral", decisionTrace.DecisionReasonCode);
     }
 
     [Fact]
@@ -144,6 +224,7 @@ public sealed class StrategySignalAiOverlayTests
         Assert.Contains("\"aiEvaluation\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
         Assert.Contains(featureSnapshot.Id.ToString(), decisionTrace.SnapshotJson, StringComparison.Ordinal);
         Assert.Contains("DeterministicStub", decisionTrace.SnapshotJson, StringComparison.Ordinal);
+        Assert.Empty(dbContext.ExecutionOrders);
     }
 
     private static StrategySignalService CreateService(ApplicationDbContext dbContext, TimeProvider timeProvider, AiSignalOptions aiSignalOptions)

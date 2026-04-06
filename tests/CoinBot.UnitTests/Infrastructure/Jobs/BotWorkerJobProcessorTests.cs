@@ -161,6 +161,44 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_FailsClosed_WhenTradeMasterIsDisarmed_EvenWhenAiOverlayAllows()
+    {
+        await using var harness = CreateHarness(new AiSignalOptions
+        {
+            Enabled = true,
+            SelectedProvider = DeterministicStubAiSignalProviderAdapter.ProviderNameValue,
+            MinimumConfidence = 0.70m
+        });
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, bot);
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-ai-disarmed-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-ai-disarmed-2");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Disarmed,
+            actor: "admin-bot",
+            context: "Execution frozen",
+            correlationId: "corr-bot-ai-disarmed-3");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-ai-disarmed-1",
+            CancellationToken.None);
+
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
+        var decisionTrace = await harness.DbContext.DecisionTraces.SingleAsync(entity => entity.DecisionOutcome == "Persisted");
+
+        Assert.False(result.IsSuccessful);
+        Assert.Equal("TradeMasterDisarmed", result.ErrorCode);
+        Assert.Equal(ExecutionOrderState.Rejected, persistedOrder.State);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Contains("aiEvaluation", decisionTrace.SnapshotJson, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task ProcessAsync_FailsClosed_WhenSameOwnerHasMultipleEnabledBotsOnSameSymbol()
     {
         await using var harness = CreateHarness();
@@ -209,7 +247,7 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
     }
 
-    private static TestHarness CreateHarness()
+    private static TestHarness CreateHarness(AiSignalOptions? aiSignalOptions = null)
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 1, 12, 0, 0, TimeSpan.Zero));
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -945,6 +983,7 @@ public sealed class BotWorkerJobProcessorTests
         }
     }
 }
+
 
 
 

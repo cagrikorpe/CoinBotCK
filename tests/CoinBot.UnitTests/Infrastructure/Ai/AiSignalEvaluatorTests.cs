@@ -143,6 +143,46 @@ public sealed class AiSignalEvaluatorTests
         Assert.Equal(AiSignalFallbackReason.UnsupportedResponse, result.FallbackReason);
     }
 
+    [Fact]
+    public async Task EvaluateAsync_ReturnsNeutralFallback_WhenProviderIsUnsupported()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 6, 12, 0, 0, TimeSpan.Zero));
+        var evaluator = CreateEvaluator(
+            timeProvider,
+            new AiSignalOptions
+            {
+                Enabled = true,
+                SelectedProvider = "MissingProvider"
+            },
+            new DeterministicStubAiSignalProviderAdapter());
+
+        var result = await evaluator.EvaluateAsync(CreateRequest(CreateReadyFeatureSnapshot()));
+
+        Assert.True(result.IsFallback);
+        Assert.Equal(AiSignalDirection.Neutral, result.SignalDirection);
+        Assert.Equal(AiSignalFallbackReason.UnsupportedProvider, result.FallbackReason);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_ReturnsNeutralFallback_WhenConfidenceValueIsUnsupported()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 6, 12, 0, 0, TimeSpan.Zero));
+        var evaluator = CreateEvaluator(
+            timeProvider,
+            new AiSignalOptions
+            {
+                Enabled = true,
+                SelectedProvider = "UnsupportedConfidence"
+            },
+            new UnsupportedConfidenceAdapter());
+
+        var result = await evaluator.EvaluateAsync(CreateRequest(CreateReadyFeatureSnapshot()));
+
+        Assert.True(result.IsFallback);
+        Assert.Equal(AiSignalDirection.Neutral, result.SignalDirection);
+        Assert.Equal(AiSignalFallbackReason.UnsupportedResponse, result.FallbackReason);
+    }
+
     private static IAiSignalEvaluator CreateEvaluator(
         TimeProvider timeProvider,
         AiSignalOptions options,
@@ -241,4 +281,15 @@ public sealed class AiSignalEvaluatorTests
             return Task.FromResult(AiSignalProviderAdapterResponse.Success(Name, "unsupported-v1", "{\"direction\":\"Sideways\",\"confidenceScore\":0.91,\"reasonSummary\":\"unsupported\"}"));
         }
     }
+    private sealed class UnsupportedConfidenceAdapter : IAiSignalProviderAdapter
+    {
+        public string Name => "UnsupportedConfidence";
+
+        public Task<AiSignalProviderAdapterResponse> EvaluateAsync(AiSignalProviderAdapterRequest request, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(AiSignalProviderAdapterResponse.Success(Name, "unsupported-v1", "{\"direction\":\"Long\",\"confidenceScore\":1.5,\"reasonSummary\":\"unsupported\"}"));
+        }
+    }
+
 }
