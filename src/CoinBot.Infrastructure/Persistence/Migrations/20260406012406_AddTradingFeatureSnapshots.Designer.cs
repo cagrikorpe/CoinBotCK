@@ -12,8 +12,8 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace CoinBot.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20260406010632_SyncTradingFeatureSnapshotModel")]
-    partial class SyncTradingFeatureSnapshotModel
+    [Migration("20260406012406_AddTradingFeatureSnapshots")]
+    partial class AddTradingFeatureSnapshots
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
