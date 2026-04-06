@@ -518,6 +518,14 @@ public sealed class BotWorkerJobProcessor(
             timeframe,
             historicalCandles,
             cancellationToken);
+        if (marketDataService is MarketDataService concreteMarketDataService)
+        {
+            await PrimeHistoricalMarketDataCacheAsync(
+                concreteMarketDataService,
+                historicalCandles,
+                cancellationToken);
+        }
+
 
         await RecordHistoricalMarketDataHeartbeatAsync(
             symbol,
@@ -536,6 +544,59 @@ public sealed class BotWorkerJobProcessor(
                 : null,
             latestPrice?.Price ?? historicalReferencePrice,
             historicalCandles);
+    }
+
+
+    private async Task PrimeHistoricalMarketDataCacheAsync(
+        MarketDataService concreteMarketDataService,
+        IReadOnlyCollection<MarketCandleSnapshot> historicalCandles,
+        CancellationToken cancellationToken)
+    {
+        var latestSnapshot = historicalCandles
+            .Where(snapshot => snapshot.IsClosed)
+            .OrderByDescending(snapshot => snapshot.CloseTimeUtc)
+            .FirstOrDefault();
+
+        if (latestSnapshot is null)
+        {
+            return;
+        }
+
+        var klineProjectionResult = await concreteMarketDataService.RecordKlineAsync(
+            latestSnapshot,
+            guardResult: null,
+            cancellationToken);
+
+        if (klineProjectionResult.Status is not SharedMarketDataProjectionStatus.Accepted and not SharedMarketDataProjectionStatus.IgnoredOutOfOrder)
+        {
+            logger.LogWarning(
+                "Bot execution pilot historical kline cache projection rejected {Symbol} {Timeframe} with {Status} ({ReasonCode}).",
+                latestSnapshot.Symbol,
+                latestSnapshot.Interval,
+                klineProjectionResult.Status,
+                klineProjectionResult.ReasonCode);
+            return;
+        }
+
+        var tickerProjectionResult = await concreteMarketDataService.RecordPriceAsync(
+            new MarketPriceSnapshot(
+                latestSnapshot.Symbol,
+                latestSnapshot.ClosePrice,
+                latestSnapshot.CloseTimeUtc,
+                latestSnapshot.ReceivedAtUtc,
+                latestSnapshot.Source),
+            cancellationToken);
+
+        if (tickerProjectionResult.Status is SharedMarketDataProjectionStatus.Accepted or SharedMarketDataProjectionStatus.IgnoredOutOfOrder)
+        {
+            return;
+        }
+
+        logger.LogWarning(
+            "Bot execution pilot historical ticker cache projection rejected {Symbol} with {Status} ({ReasonCode}).",
+            latestSnapshot.Symbol,
+            tickerProjectionResult.Status,
+            tickerProjectionResult.ReasonCode);
     }
 
 
@@ -614,7 +675,8 @@ public sealed class BotWorkerJobProcessor(
                 Symbol: symbol,
                 Timeframe: timeframe,
                 ExpectedOpenTimeUtc: latestSnapshot.OpenTimeUtc + interval,
-                ContinuityGapCount: continuityGapCount),
+                ContinuityGapCount: continuityGapCount,
+                HeartbeatReceivedAtUtc: latestSnapshot.ReceivedAtUtc),
             cancellationToken: cancellationToken);
     }
 
@@ -1432,6 +1494,7 @@ public sealed class BotWorkerJobProcessor(
         return allowedSymbols.Contains(symbol);
     }
 }
+
 
 
 

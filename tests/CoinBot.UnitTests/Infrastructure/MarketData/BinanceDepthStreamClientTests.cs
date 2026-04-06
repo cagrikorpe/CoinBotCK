@@ -1,3 +1,4 @@
+using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Infrastructure.MarketData;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -67,6 +68,36 @@ public sealed class BinanceDepthStreamClientTests
         Assert.Equal(3300.10m, snapshot.Bids.Single().Price);
         Assert.Equal(3300.60m, snapshot.Asks.Single().Price);
     }
+    [Fact]
+    public void TryParseSnapshot_ClampsReceivedAtUtc_WhenExchangeEventTimeIsAheadOfLocalClock()
+    {
+        var eventTimeUtc = DateTimeOffset.FromUnixTimeMilliseconds(1775477279635);
+        var client = CreateClient(eventTimeUtc.AddMilliseconds(-750));
+        const string payload = """
+        {
+          "stream": "btcusdt@depth5@100ms",
+          "data": {
+            "e": "depthUpdate",
+            "E": 1775477279635,
+            "T": 1775477279601,
+            "s": "BTCUSDT",
+            "u": 191590818739,
+            "b": [["69537.70", "345.1603"]],
+            "a": [["69542.20", "1.0500"]]
+          }
+        }
+        """;
+
+        var snapshot = client.TryParseSnapshot(payload);
+        var projectionResult = SharedMarketDataProjectionPolicy.NormalizeDepth(snapshot!, out var normalizedSnapshot);
+
+        Assert.NotNull(snapshot);
+        Assert.Equal(eventTimeUtc.UtcDateTime, snapshot!.EventTimeUtc);
+        Assert.Equal(eventTimeUtc.UtcDateTime, snapshot.ReceivedAtUtc);
+        Assert.Equal(SharedMarketDataProjectionStatus.Accepted, projectionResult.Status);
+        Assert.Equal(eventTimeUtc.UtcDateTime, normalizedSnapshot.ReceivedAtUtc);
+    }
+
 
     [Theory]
     [InlineData("""{"stream":"btcusdt@depth5@100ms","data":{"b":[["64000","1"]],"a":[]}}""")]

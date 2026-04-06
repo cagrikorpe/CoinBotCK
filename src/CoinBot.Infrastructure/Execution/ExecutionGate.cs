@@ -750,8 +750,22 @@ public sealed class ExecutionGate(
         }
 
         var normalizedValue = baseUrl.Trim();
+
+        if (Uri.TryCreate(normalizedValue, UriKind.Absolute, out var uri))
+        {
+            var host = uri.Host.Trim();
+            if (host.Contains("testnet", StringComparison.OrdinalIgnoreCase) ||
+                host.Contains("demo", StringComparison.OrdinalIgnoreCase) ||
+                host.EndsWith(".binancefuture.com", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(host, "binancefuture.com", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Demo";
+            }
+        }
+
         return normalizedValue.Contains("testnet", StringComparison.OrdinalIgnoreCase) ||
-               normalizedValue.Contains("demo", StringComparison.OrdinalIgnoreCase)
+               normalizedValue.Contains("demo", StringComparison.OrdinalIgnoreCase) ||
+               normalizedValue.Contains("binancefuture.com", StringComparison.OrdinalIgnoreCase)
             ? "Demo"
             : "Live";
     }
@@ -1389,6 +1403,7 @@ public sealed class ExecutionGate(
         return false;
     }
 }
+
 
 
 

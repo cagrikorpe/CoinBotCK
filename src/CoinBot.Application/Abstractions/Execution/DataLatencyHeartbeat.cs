@@ -10,4 +10,5 @@ public sealed record DataLatencyHeartbeat(
     string? Symbol = null,
     string? Timeframe = null,
     DateTime? ExpectedOpenTimeUtc = null,
-    int? ContinuityGapCount = null);
+    int? ContinuityGapCount = null,
+    DateTime? HeartbeatReceivedAtUtc = null);

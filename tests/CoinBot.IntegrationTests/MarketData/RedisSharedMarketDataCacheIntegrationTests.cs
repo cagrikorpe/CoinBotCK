@@ -611,7 +611,8 @@ public sealed class RedisSharedMarketDataCacheIntegrationTests
             configuration,
             new FixedTimeProvider(nowUtc),
             NullLogger<RedisSharedMarketDataCache>.Instance,
-            cacheCollector);
+            hostEnvironment: null,
+            cacheObservabilityCollector: cacheCollector);
     }
 
     private static ApplicationDbContext CreateDbContext(string connectionString)
@@ -967,5 +968,6 @@ public sealed class RedisSharedMarketDataCacheIntegrationTests
         }
     }
 }
+
 
 

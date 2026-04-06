@@ -8,6 +8,7 @@ using CoinBot.Infrastructure.MarketData;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 
 namespace CoinBot.UnitTests.Infrastructure.MarketData;
@@ -77,6 +78,40 @@ public sealed class RedisSharedMarketDataCacheTests
         Assert.Equal("unit-test", readResult.Entry?.Source);
         Assert.Equal(64123.45m, readResult.Entry?.Payload.Price);
     }
+    [Fact]
+    public async Task WriteAsync_AndReadAsync_UseDevelopmentProcessFallback_WhenRedisConnectionStringIsMissing()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 16, 5, 0, TimeSpan.Zero);
+        var timeProvider = new FixedTimeProvider(nowUtc);
+        var cache = CreateCache(null, timeProvider, Environments.Development);
+
+        var writeResult = await cache.WriteAsync(new SharedMarketDataCacheEntry<MarketPriceSnapshot>(
+            SharedMarketDataCacheDataType.Ticker,
+            "BTCUSDT",
+            null,
+            UpdatedAtUtc: nowUtc.UtcDateTime,
+            CachedAtUtc: nowUtc.UtcDateTime,
+            FreshUntilUtc: nowUtc.UtcDateTime.AddSeconds(15),
+            ExpiresAtUtc: nowUtc.UtcDateTime.AddSeconds(60),
+            Source: "unit-test",
+            Payload: new MarketPriceSnapshot(
+                "BTCUSDT",
+                64200m,
+                nowUtc.UtcDateTime.AddSeconds(-1),
+                nowUtc.UtcDateTime,
+                "unit-test")));
+
+        var readResult = await cache.ReadAsync<MarketPriceSnapshot>(
+            SharedMarketDataCacheDataType.Ticker,
+            "BTCUSDT",
+            null);
+
+        Assert.Equal(SharedMarketDataCacheWriteStatus.Written, writeResult.Status);
+        Assert.Equal(SharedMarketDataCacheReadStatus.HitFresh, readResult.Status);
+        Assert.Equal("BTCUSDT", readResult.Entry?.Symbol);
+        Assert.Equal(64200m, readResult.Entry?.Payload.Price);
+    }
+
 
     [Fact]
     public async Task ReadAsync_ReturnsHitStaleMissProviderUnavailableDeserializeFailedAndInvalidPayload_Deterministically()
@@ -170,7 +205,7 @@ public sealed class RedisSharedMarketDataCacheTests
         Assert.Null(latestPrice);
     }
 
-    private static RedisSharedMarketDataCache CreateCache(string? redisConnectionString, TimeProvider timeProvider)
+    private static RedisSharedMarketDataCache CreateCache(string? redisConnectionString, TimeProvider timeProvider, string? environmentName = null)
     {
         var configurationValues = new Dictionary<string, string?>();
 
@@ -186,9 +221,23 @@ public sealed class RedisSharedMarketDataCacheTests
         return new RedisSharedMarketDataCache(
             configuration,
             timeProvider,
-            NullLogger<RedisSharedMarketDataCache>.Instance);
+            NullLogger<RedisSharedMarketDataCache>.Instance,
+            environmentName is null ? null : new TestHostEnvironment(environmentName));
     }
 
+
+
+    private sealed class TestHostEnvironment(string environmentName) : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = environmentName;
+
+        public string ApplicationName { get; set; } = "CoinBot.UnitTests";
+
+        public string ContentRootPath { get; set; } = AppContext.BaseDirectory;
+
+        public Microsoft.Extensions.FileProviders.IFileProvider ContentRootFileProvider { get; set; } =
+            new Microsoft.Extensions.FileProviders.NullFileProvider();
+    }
     private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow()

@@ -78,9 +78,11 @@ public sealed class BinanceDepthStreamClient(
             return null;
         }
 
-        var receivedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
-        var eventTimeUtc = ResolveEventTimeUtc(dataElement, receivedAtUtc);
-
+        var localReceivedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+        var eventTimeUtc = ResolveEventTimeUtc(dataElement, localReceivedAtUtc);
+        var receivedAtUtc = localReceivedAtUtc < eventTimeUtc
+            ? eventTimeUtc
+            : localReceivedAtUtc;
         return new MarketDepthSnapshot(
             MarketDataSymbolNormalizer.Normalize(symbol),
             bids,
@@ -245,3 +247,4 @@ public sealed class BinanceDepthStreamClient(
         };
     }
 }
+

@@ -124,6 +124,8 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal("1m", scopedState.LatestTimeframe);
         Assert.Equal("binance:rest-backfill", scopedState.LatestHeartbeatSource);
         Assert.Equal(0, scopedState.LatestContinuityGapCount);
+        Assert.Equal(0, scopedState.LatestClockDriftMilliseconds);
+        Assert.NotNull(scopedState.LatestHeartbeatReceivedAtUtc);
         Assert.NotNull(scopedState.LatestDataTimestampAtUtc);
     }
 
@@ -1323,6 +1325,10 @@ public sealed class BotWorkerJobProcessorTests
         }
     }
 }
+
+
+
+
 
 
 

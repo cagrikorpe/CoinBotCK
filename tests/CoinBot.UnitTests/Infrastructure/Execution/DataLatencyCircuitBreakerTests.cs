@@ -260,6 +260,135 @@ public sealed class DataLatencyCircuitBreakerTests
         Assert.Null(snapshot.LatestDataTimestampAtUtc);
         Assert.Equal(1, marketDataService.SharedKlineReadCount);
     }
+
+    [Fact]
+    public async Task GetSnapshotAsync_DoesNotEscalateSharedKlineAgeToClockDriftExceeded_WhenCachedHeartbeatIsRecent()
+    {
+        var sharedKline = new MarketCandleSnapshot(
+            "btcusdt",
+            "1m",
+            new DateTime(2026, 3, 22, 11, 59, 0, DateTimeKind.Utc),
+            new DateTime(2026, 3, 22, 11, 59, 59, 999, DateTimeKind.Utc),
+            100m,
+            101m,
+            99m,
+            100m,
+            10m,
+            true,
+            new DateTime(2026, 3, 22, 12, 0, 0, 100, DateTimeKind.Utc),
+            "Binance.WebSocket.Kline");
+        var marketDataService = new FakeMarketDataService(sharedKline);
+        await using var harness = CreateHarness(marketDataService);
+        harness.TimeProvider.Advance(TimeSpan.FromSeconds(3));
+
+        var snapshot = await harness.CircuitBreaker.GetSnapshotAsync(
+            correlationId: "corr-shared-kline-003",
+            symbol: "BTCUSDT",
+            timeframe: "1m");
+
+        Assert.Equal(DegradedModeStateCode.Degraded, snapshot.StateCode);
+        Assert.Equal(DegradedModeReasonCode.MarketDataLatencyBreached, snapshot.ReasonCode);
+        Assert.Equal(101, snapshot.LatestClockDriftMilliseconds);
+        Assert.Equal("Binance.WebSocket.Kline", snapshot.LatestHeartbeatSource);
+        Assert.Equal(1, marketDataService.SharedKlineReadCount);
+    }
+
+    [Fact]
+    public async Task GetSnapshotAsync_DoesNotTreatRestBackfillSharedKlineAsClockDriftExceeded()
+    {
+        var sharedKline = new MarketCandleSnapshot(
+            "btcusdt",
+            "1m",
+            new DateTime(2026, 3, 22, 11, 59, 0, DateTimeKind.Utc),
+            new DateTime(2026, 3, 22, 11, 59, 59, 999, DateTimeKind.Utc),
+            100m,
+            101m,
+            99m,
+            100m,
+            10m,
+            true,
+            new DateTime(2026, 3, 22, 12, 0, 43, 471, DateTimeKind.Utc),
+            "Binance.Rest.Kline");
+        var marketDataService = new FakeMarketDataService(sharedKline);
+        await using var harness = CreateHarness(
+            marketDataService,
+            new DataLatencyGuardOptions
+            {
+                StaleDataThresholdSeconds = 60,
+                StopDataThresholdSeconds = 120,
+                ClockDriftThresholdSeconds = 2
+            });
+        harness.TimeProvider.Advance(TimeSpan.FromSeconds(44));
+
+        var snapshot = await harness.CircuitBreaker.GetSnapshotAsync(
+            correlationId: "corr-shared-kline-rest-001",
+            symbol: "BTCUSDT",
+            timeframe: "1m");
+
+        Assert.Equal(DegradedModeStateCode.Normal, snapshot.StateCode);
+        Assert.Equal(DegradedModeReasonCode.None, snapshot.ReasonCode);
+        Assert.Equal(0, snapshot.LatestClockDriftMilliseconds);
+        Assert.Equal(sharedKline.ReceivedAtUtc, snapshot.LatestHeartbeatReceivedAtUtc);
+        Assert.Equal("Binance.Rest.Kline", snapshot.LatestHeartbeatSource);
+        Assert.Equal(1, marketDataService.SharedKlineReadCount);
+    }
+
+    [Fact]
+    public async Task RecordHeartbeatAsync_DoesNotTreatHistoricalRestBackfillAsClockDriftExceeded()
+    {
+        await using var harness = CreateHarness(
+            guardOptions: new DataLatencyGuardOptions
+            {
+                StaleDataThresholdSeconds = 60,
+                StopDataThresholdSeconds = 120,
+                ClockDriftThresholdSeconds = 2
+            });
+        harness.TimeProvider.Advance(TimeSpan.FromSeconds(44));
+        var heartbeatReceivedAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime;
+
+        var snapshot = await harness.CircuitBreaker.RecordHeartbeatAsync(
+            new DataLatencyHeartbeat(
+                "binance:rest-backfill",
+                new DateTime(2026, 3, 22, 11, 59, 59, 999, DateTimeKind.Utc),
+                Symbol: "BTCUSDT",
+                Timeframe: "1m",
+                ExpectedOpenTimeUtc: new DateTime(2026, 3, 22, 12, 0, 0, DateTimeKind.Utc),
+                ContinuityGapCount: 0,
+                HeartbeatReceivedAtUtc: heartbeatReceivedAtUtc),
+            correlationId: "corr-latency-heartbeat-rest-001");
+
+        Assert.Equal(DegradedModeStateCode.Normal, snapshot.StateCode);
+        Assert.Equal(DegradedModeReasonCode.None, snapshot.ReasonCode);
+        Assert.Equal(0, snapshot.LatestClockDriftMilliseconds);
+        Assert.Equal(heartbeatReceivedAtUtc, snapshot.LatestHeartbeatReceivedAtUtc);
+        Assert.Equal("binance:rest-backfill", snapshot.LatestHeartbeatSource);
+    }
+
+    [Fact]
+    public async Task RecordHeartbeatAsync_UsesHeartbeatReceivedAtUtc_ForClockDriftEvaluation()
+    {
+        await using var harness = CreateHarness();
+        var dataTimestampUtc = new DateTime(2026, 3, 22, 11, 59, 59, 999, DateTimeKind.Utc);
+        var heartbeatReceivedAtUtc = new DateTime(2026, 3, 22, 12, 0, 0, 100, DateTimeKind.Utc);
+
+        var snapshot = await harness.CircuitBreaker.RecordHeartbeatAsync(
+            new DataLatencyHeartbeat(
+                "binance:kline",
+                dataTimestampUtc,
+                Symbol: "BTCUSDT",
+                Timeframe: "1m",
+                ExpectedOpenTimeUtc: new DateTime(2026, 3, 22, 12, 0, 0, DateTimeKind.Utc),
+                ContinuityGapCount: 0,
+                HeartbeatReceivedAtUtc: heartbeatReceivedAtUtc),
+            correlationId: "corr-latency-heartbeat-received-001");
+
+        Assert.Equal(DegradedModeStateCode.Normal, snapshot.StateCode);
+        Assert.Equal(DegradedModeReasonCode.None, snapshot.ReasonCode);
+        Assert.Equal(101, snapshot.LatestClockDriftMilliseconds);
+        Assert.Equal(heartbeatReceivedAtUtc, snapshot.LatestHeartbeatReceivedAtUtc);
+        Assert.Equal(dataTimestampUtc, snapshot.LatestDataTimestampAtUtc);
+    }
+
     [Fact]
     public async Task RecordHeartbeatAsync_PersistsLatestMarketDataIdentityAndContinuityMetadata()
     {
@@ -304,18 +433,18 @@ public sealed class DataLatencyCircuitBreakerTests
         Assert.Null(state.LatestContinuityRecoveredAtUtc);
     }
 
-    private static TestHarness CreateHarness(IMarketDataService? marketDataService = null)
+    private static TestHarness CreateHarness(IMarketDataService? marketDataService = null, DataLatencyGuardOptions? guardOptions = null)
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+        var dbOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
             .Options;
-        var dbContext = new ApplicationDbContext(options, new TestDataScopeContext());
+        var dbContext = new ApplicationDbContext(dbOptions, new TestDataScopeContext());
         var alertService = new FakeAlertService();
         var circuitBreaker = new DataLatencyCircuitBreaker(
             dbContext,
             alertService,
-            Options.Create(new DataLatencyGuardOptions()),
+            Options.Create(guardOptions ?? new DataLatencyGuardOptions()),
             timeProvider,
             NullLogger<DataLatencyCircuitBreaker>.Instance,
             marketDataService);
@@ -423,5 +552,9 @@ public sealed class DataLatencyCircuitBreakerTests
         }
     }
 }
+
+
+
+
 
 

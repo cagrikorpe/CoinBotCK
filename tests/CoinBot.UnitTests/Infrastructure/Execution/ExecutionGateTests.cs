@@ -750,19 +750,19 @@ public sealed class ExecutionGateTests
         var privateDataOptions = Options.Create(new BinancePrivateDataOptions
         {
             RestBaseUrl = useTestnetEndpoints
-                ? "https://testnet.binance.example/futures-rest"
+                ? "https://testnet.binancefuture.com"
                 : "https://fapi.binance.com",
             WebSocketBaseUrl = useTestnetEndpoints
-                ? "wss://testnet.binance.example/futures-private"
+                ? "wss://fstream.binancefuture.com"
                 : "wss://fstream.binance.com"
         });
         var marketDataOptions = Options.Create(new BinanceMarketDataOptions
         {
             RestBaseUrl = useTestnetEndpoints
-                ? "https://testnet.binance.example/futures-market-rest"
+                ? "https://testnet.binancefuture.com"
                 : "https://fapi.binance.com",
             WebSocketBaseUrl = useTestnetEndpoints
-                ? "wss://testnet.binance.example/futures-market-stream"
+                ? "wss://fstream.binancefuture.com"
                 : "wss://fstream.binance.com",
             KlineInterval = "1m"
         });
@@ -958,6 +958,7 @@ public sealed class ExecutionGateTests
         }
     }
 }
+
 
 
 

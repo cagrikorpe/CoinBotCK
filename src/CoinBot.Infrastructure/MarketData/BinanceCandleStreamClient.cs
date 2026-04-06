@@ -107,7 +107,7 @@ public sealed class BinanceCandleStreamClient(
         return Encoding.UTF8.GetString(writer.WrittenSpan);
     }
 
-    private MarketCandleSnapshot? TryParseSnapshot(string payload)
+    internal MarketCandleSnapshot? TryParseSnapshot(string payload)
     {
         using var document = JsonDocument.Parse(payload);
 
@@ -144,6 +144,11 @@ public sealed class BinanceCandleStreamClient(
             return null;
         }
 
+        var localReceivedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+        var receivedAtUtc = localReceivedAtUtc < closeTimeUtc
+            ? closeTimeUtc
+            : localReceivedAtUtc;
+
         return new MarketCandleSnapshot(
             MarketDataSymbolNormalizer.Normalize(symbol),
             interval.Trim(),
@@ -155,7 +160,7 @@ public sealed class BinanceCandleStreamClient(
             closePrice.Value,
             volume.Value,
             isClosedElement.GetBoolean(),
-            timeProvider.GetUtcNow().UtcDateTime,
+            receivedAtUtc,
             Source: "Binance.WebSocket.Kline");
     }
 
@@ -192,3 +197,4 @@ public sealed class BinanceCandleStreamClient(
         return true;
     }
 }
+

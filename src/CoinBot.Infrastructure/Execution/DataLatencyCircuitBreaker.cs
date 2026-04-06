@@ -60,7 +60,7 @@ public sealed class DataLatencyCircuitBreaker(
         return MapSnapshot(state, evaluationTimeUtc, isPersisted: true);
     }
 
-    private async Task<bool> TrySynchronizeScopedStateFromSharedKlineAsync(
+        private async Task<bool> TrySynchronizeScopedStateFromSharedKlineAsync(
         DegradedModeState state,
         DateTime evaluationTimeUtc,
         string? symbol,
@@ -96,10 +96,10 @@ public sealed class DataLatencyCircuitBreaker(
             sharedKlineRead.Entry?.Payload is MarketCandleSnapshot sharedSnapshot)
         {
             var sharedDataTimestampUtc = NormalizeTimestamp(sharedKlineRead.Entry.UpdatedAtUtc);
+            var sharedHeartbeatReceivedAtUtc = NormalizeTimestamp(sharedSnapshot.ReceivedAtUtc);
             state.LatestDataTimestampAtUtc = sharedDataTimestampUtc;
-            state.LatestHeartbeatReceivedAtUtc = NormalizeTimestamp(sharedKlineRead.Entry.CachedAtUtc);
-            state.LatestClockDriftMilliseconds = ToMilliseconds(
-                Math.Abs((evaluationTimeUtc - sharedDataTimestampUtc).TotalMilliseconds));
+            state.LatestHeartbeatReceivedAtUtc = sharedHeartbeatReceivedAtUtc;
+            state.LatestClockDriftMilliseconds = ResolveSharedKlineClockDriftMilliseconds(sharedSnapshot, sharedDataTimestampUtc);
             state.LatestHeartbeatSource = sharedKlineRead.Entry.Source;
             state.LatestSymbol = normalizedSymbol;
             state.LatestTimeframe = normalizedTimeframe;
@@ -118,6 +118,7 @@ public sealed class DataLatencyCircuitBreaker(
             sharedKlineRead.Status == SharedMarketDataCacheReadStatus.InvalidPayload)
         {
             state.LatestDataTimestampAtUtc = null;
+            state.LatestHeartbeatReceivedAtUtc = null;
             state.LatestClockDriftMilliseconds = null;
             state.LatestHeartbeatSource = $"shared-cache:kline:{sharedKlineRead.Status}";
             state.LatestSymbol = normalizedSymbol;
@@ -126,6 +127,7 @@ public sealed class DataLatencyCircuitBreaker(
             state.LatestContinuityGapCount = null;
 
             return state.LatestDataTimestampAtUtc != previousDataTimestampUtc ||
+                state.LatestHeartbeatReceivedAtUtc != previousHeartbeatReceivedAtUtc ||
                 state.LatestClockDriftMilliseconds != previousClockDriftMilliseconds ||
                 !string.Equals(state.LatestHeartbeatSource, previousHeartbeatSource, StringComparison.Ordinal) ||
                 state.LatestExpectedOpenTimeUtc != previousExpectedOpenTimeUtc;
@@ -148,10 +150,12 @@ public sealed class DataLatencyCircuitBreaker(
             !string.IsNullOrWhiteSpace(timeframe);
         var evaluationTimeUtc = timeProvider.GetUtcNow().UtcDateTime;
         var dataTimestampUtc = NormalizeTimestamp(heartbeat.DataTimestampUtc);
-        var clockDriftMilliseconds = ToMilliseconds(Math.Abs((evaluationTimeUtc - dataTimestampUtc).TotalMilliseconds));
+        var heartbeatReceivedAtUtc = NormalizeTimestamp(heartbeat.HeartbeatReceivedAtUtc ?? evaluationTimeUtc);
+        var clockDriftMilliseconds = ResolveHeartbeatClockDriftMilliseconds(heartbeatSource, heartbeatReceivedAtUtc, dataTimestampUtc);
         var scopedSnapshot = await RecordHeartbeatForScopeAsync(
             evaluationTimeUtc,
             dataTimestampUtc,
+            heartbeatReceivedAtUtc,
             clockDriftMilliseconds,
             heartbeatSource,
             symbol,
@@ -169,6 +173,7 @@ public sealed class DataLatencyCircuitBreaker(
             await RecordHeartbeatForScopeAsync(
                 evaluationTimeUtc,
                 dataTimestampUtc,
+            heartbeatReceivedAtUtc,
                 clockDriftMilliseconds,
                 heartbeatSource,
                 symbol: null,
@@ -190,6 +195,7 @@ public sealed class DataLatencyCircuitBreaker(
     private async Task<DegradedModeSnapshot> RecordHeartbeatForScopeAsync(
         DateTime evaluationTimeUtc,
         DateTime dataTimestampUtc,
+        DateTime heartbeatReceivedAtUtc,
         int clockDriftMilliseconds,
         string heartbeatSource,
         string? symbol,
@@ -212,7 +218,7 @@ public sealed class DataLatencyCircuitBreaker(
         var previousSnapshot = MapSnapshot(state, evaluationTimeUtc, isPersisted: true);
 
         state.LatestDataTimestampAtUtc = dataTimestampUtc;
-        state.LatestHeartbeatReceivedAtUtc = evaluationTimeUtc;
+        state.LatestHeartbeatReceivedAtUtc = heartbeatReceivedAtUtc;
         state.LatestClockDriftMilliseconds = clockDriftMilliseconds;
         state.LatestHeartbeatSource = heartbeatSource;
         state.LatestSymbol = latestSymbolOverride ?? symbol;
@@ -580,6 +586,35 @@ public sealed class DataLatencyCircuitBreaker(
             DegradedModeReasonCode.CandleDataOutOfOrderDetected;
     }
 
+    private static int ResolveHeartbeatClockDriftMilliseconds(
+        string heartbeatSource,
+        DateTime heartbeatReceivedAtUtc,
+        DateTime dataTimestampUtc)
+    {
+        if (heartbeatSource.StartsWith("binance:rest-backfill", StringComparison.OrdinalIgnoreCase) ||
+            heartbeatSource.StartsWith("market-scanner:historical-candles", StringComparison.OrdinalIgnoreCase))
+        {
+            return 0;
+        }
+
+        return ToMilliseconds(Math.Abs((heartbeatReceivedAtUtc - dataTimestampUtc).TotalMilliseconds));
+    }
+
+
+    private static int ResolveSharedKlineClockDriftMilliseconds(
+        MarketCandleSnapshot sharedSnapshot,
+        DateTime sharedDataTimestampUtc)
+    {
+        if (sharedSnapshot.Source.StartsWith("Binance.Rest.", StringComparison.OrdinalIgnoreCase))
+        {
+            return 0;
+        }
+
+        var sharedHeartbeatReceivedAtUtc = NormalizeTimestamp(sharedSnapshot.ReceivedAtUtc);
+        return ToMilliseconds(Math.Abs((sharedHeartbeatReceivedAtUtc - sharedDataTimestampUtc).TotalMilliseconds));
+    }
+
+
     private static string? NormalizeOptional(string? value, int maxLength)
     {
         var normalizedValue = value?.Trim();
@@ -648,6 +683,10 @@ public sealed class DataLatencyCircuitBreaker(
         bool ExecutionFlowBlocked,
         int? LatestDataAgeMilliseconds);
 }
+
+
+
+
 
 
 

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Text;
@@ -5,6 +6,7 @@ using System.Text.Json;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Application.Abstractions.Monitoring;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace CoinBot.Infrastructure.MarketData;
@@ -13,12 +15,15 @@ internal sealed class RedisSharedMarketDataCache(
     IConfiguration configuration,
     TimeProvider timeProvider,
     ILogger<RedisSharedMarketDataCache> logger,
+    IHostEnvironment? hostEnvironment = null,
     ISharedMarketDataCacheObservabilityCollector? cacheObservabilityCollector = null) : ISharedMarketDataCache
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(5);
     private static readonly JsonSerializerOptions JsonSerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly ISharedMarketDataCacheObservabilityCollector cacheObservabilityCollector =
         cacheObservabilityCollector ?? SharedMarketDataCacheObservabilityCollector.NoOp;
+    private readonly ConcurrentDictionary<string, string> developmentFallbackEntries = new(StringComparer.Ordinal);
+    private int developmentFallbackWarningLogged;
 
     public async ValueTask<SharedMarketDataCacheWriteResult> WriteAsync<TPayload>(
         SharedMarketDataCacheEntry<TPayload> entry,
@@ -31,17 +36,20 @@ internal sealed class RedisSharedMarketDataCache(
             return SharedMarketDataCacheWriteResult.InvalidPayload(invalidReason);
         }
 
-        var connectionString = ResolveConnectionString();
-        if (string.IsNullOrWhiteSpace(connectionString) ||
-            !TryParseConnectionDetails(connectionString, out var details))
-        {
-            return SharedMarketDataCacheWriteResult.ProviderUnavailable("Redis connection string is missing or invalid.");
-        }
-
         var key = SharedMarketDataCacheKeyBuilder.Build(
             normalizedEntry.DataType,
             normalizedEntry.Symbol,
             normalizedEntry.Timeframe);
+
+        var connectionString = ResolveConnectionString();
+        var useDevelopmentFallback = ShouldUseDevelopmentFallback(connectionString);
+        RedisConnectionDetails details = default!;
+        if (!useDevelopmentFallback &&
+            (string.IsNullOrWhiteSpace(connectionString) ||
+             !TryParseConnectionDetails(connectionString, out details)))
+        {
+            return SharedMarketDataCacheWriteResult.ProviderUnavailable("Redis connection string is missing or invalid.");
+        }
 
         string payloadJson;
         try
@@ -51,6 +59,13 @@ internal sealed class RedisSharedMarketDataCache(
         catch (Exception exception)
         {
             return SharedMarketDataCacheWriteResult.SerializeFailed(SanitizeMessage(exception.Message));
+        }
+
+        if (useDevelopmentFallback)
+        {
+            LogDevelopmentFallbackOnce();
+            developmentFallbackEntries[key] = payloadJson;
+            return SharedMarketDataCacheWriteResult.Written();
         }
 
         var ttlMilliseconds = Math.Max(
@@ -86,8 +101,11 @@ internal sealed class RedisSharedMarketDataCache(
         CancellationToken cancellationToken = default)
     {
         var connectionString = ResolveConnectionString();
-        if (string.IsNullOrWhiteSpace(connectionString) ||
-            !TryParseConnectionDetails(connectionString, out var details))
+        var useDevelopmentFallback = ShouldUseDevelopmentFallback(connectionString);
+        RedisConnectionDetails details = default!;
+        if (!useDevelopmentFallback &&
+            (string.IsNullOrWhiteSpace(connectionString) ||
+             !TryParseConnectionDetails(connectionString, out details)))
         {
             return RecordReadAndReturn(
                 dataType,
@@ -111,23 +129,34 @@ internal sealed class RedisSharedMarketDataCache(
         }
 
         string? payloadJson;
-        try
+        if (useDevelopmentFallback)
         {
-            payloadJson = await ExecuteAsync(details, ["GET", key], cancellationToken);
+            LogDevelopmentFallbackOnce();
+            payloadJson = developmentFallbackEntries.TryGetValue(key, out var cachedPayloadJson)
+                ? cachedPayloadJson
+                : null;
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        else
         {
-            throw;
+            try
+            {
+                payloadJson = await ExecuteAsync(details, ["GET", key], cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                logger.LogDebug(exception, "Redis shared market-data cache read failed for {Endpoint}.", details.EndpointDisplay);
+                return RecordReadAndReturn(
+                    dataType,
+                    symbol,
+                    timeframe,
+                    SharedMarketDataCacheReadResult<TPayload>.ProviderUnavailable(SanitizeMessage(exception.Message)));
+            }
         }
-        catch (Exception exception)
-        {
-            logger.LogDebug(exception, "Redis shared market-data cache read failed for {Endpoint}.", details.EndpointDisplay);
-            return RecordReadAndReturn(
-                dataType,
-                symbol,
-                timeframe,
-                SharedMarketDataCacheReadResult<TPayload>.ProviderUnavailable(SanitizeMessage(exception.Message)));
-        }
+
 
         if (payloadJson is null)
         {
@@ -189,6 +218,25 @@ internal sealed class RedisSharedMarketDataCache(
             ? null
             : redisConnectionString;
     }
+
+    private bool ShouldUseDevelopmentFallback(string? connectionString)
+    {
+        return hostEnvironment?.IsDevelopment() == true &&
+               (string.IsNullOrWhiteSpace(connectionString) ||
+                !TryParseConnectionDetails(connectionString, out _));
+    }
+
+    private void LogDevelopmentFallbackOnce()
+    {
+        if (Interlocked.Exchange(ref developmentFallbackWarningLogged, 1) != 0)
+        {
+            return;
+        }
+
+        logger.LogWarning(
+            "Redis shared market-data cache is not configured in Development. Falling back to a process-local cache; cross-process market-data sharing is disabled.");
+    }
+
 
     private static bool TryValidateWriteEntry<TPayload>(
         SharedMarketDataCacheEntry<TPayload> entry,
@@ -612,3 +660,4 @@ internal sealed class RedisSharedMarketDataCache(
         TimeSpan Timeout,
         string EndpointDisplay);
 }
+
