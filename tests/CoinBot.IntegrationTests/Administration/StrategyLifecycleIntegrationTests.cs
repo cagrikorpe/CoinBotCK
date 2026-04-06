@@ -238,7 +238,7 @@ public sealed class StrategyLifecycleIntegrationTests
             var decisionOutcomes = decisionTraces
                 .Select(entity => entity.DecisionOutcome)
                 .ToList();
-            var vetoTrace = Assert.Single(decisionTraces.Where(entity => entity.DecisionOutcome == "Vetoed"));
+            var vetoTrace = Assert.Single(decisionTraces, entity => entity.DecisionOutcome == "Vetoed");
 
             Assert.Single(persistedResult.Signals);
             Assert.Empty(noSignalResult.Signals);
@@ -575,6 +575,7 @@ public sealed class StrategyLifecycleIntegrationTests
         public bool HasIsolationBypass => true;
     }
 }
+
 
 
 

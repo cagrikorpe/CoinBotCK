@@ -1,6 +1,33 @@
-# build artifacts
+# Build outputs
 **/bin/
 **/obj/
+TestResults/
+artifacts/
+build/
 
-# local diagnostics
+# Local diagnostics and runtime output
 .diag/
+*.log
+*.diag
+*.diag.*
+*.binlog
+*.etl
+
+# IDE and user-specific files
+.vs/
+*.user
+*.suo
+*.csproj.user
+*.slnLaunch.user
+
+# Local tool, cache, and profile state
+.appdata/
+.dotnet/
+.dotnet-home/
+.dotnetcli/
+.nuget/
+.tmp/
+.userprofile/
+
+# Local scratch and one-off operational files
+ck.txt
