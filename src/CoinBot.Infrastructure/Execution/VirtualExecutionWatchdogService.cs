@@ -22,12 +22,12 @@ public sealed class VirtualExecutionWatchdogService(
     ILogger<VirtualExecutionWatchdogService> logger)
 {
     private const string SystemActor = "system:virtual-watchdog";
-    private static readonly IReadOnlySet<ExecutionOrderState> OpenOrderStates = new HashSet<ExecutionOrderState>
-    {
+    private static readonly ExecutionOrderState[] OpenOrderStates =
+    [
         ExecutionOrderState.Submitted,
         ExecutionOrderState.PartiallyFilled,
         ExecutionOrderState.CancelRequested
-    };
+    ];
 
     private readonly DemoFillSimulatorOptions fillOptionsValue = fillOptions.Value;
 
