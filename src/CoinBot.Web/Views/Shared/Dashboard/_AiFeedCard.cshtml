@@ -1,11 +1,76 @@
 @model CoinBot.Web.ViewModels.Home.DashboardViewModel
 
-<div class="card ...">
-    <div class="cb-feed-list">
-        @foreach (var item in Model.AiFeed) // Artık Model'den besleniyor
+<div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-5">
+        <div class="card-title d-block">
+            <h3 class="mb-0">AI direction history</h3>
+            <div class="text-muted mt-2">Shadow history, fallback davranışı ve feature snapshot referansları gerçek kayıtlarla görünür.</div>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        @if (Model.AiFeed.Count == 0)
         {
-            <div class="cb-feed-item">
-                <div class="cb-feed-time cb-mono">@item.Time</div>
+            <div class="alert alert-light mb-0">Henüz gerçek AI history yok.</div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-borderless table-striped">
+                    <thead>
+                        <tr>
+                            <th>Zaman</th>
+                            <th>Symbol</th>
+                            <th>Strategy vs AI</th>
+                            <th>Action</th>
+                            <th>Feature</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var item in Model.AiFeed)
+                        {
+                            var badgeClass = item.Tone == "success"
+                                ? "cb-badge-success"
+                                : item.Tone == "warning"
+                                    ? "cb-badge-warning"
+                                    : item.Tone == "danger"
+                                        ? "cb-badge-danger"
+                                        : "cb-badge-neutral";
+                            <tr>
+                                <td class="cb-mono">@item.Time</td>
+                                <td>
+                                    <div class="font-weight-bolder">@item.Symbol</div>
+                                    <div class="text-muted">@item.Timeframe</div>
+                                </td>
+                                <td>
+                                    <div>Strategy @item.StrategyDirection (@item.StrategyConfidence)</div>
+                                    <div class="font-weight-bolder">AI @item.Direction (@item.Confidence)</div>
+                                    <div class="text-muted">@item.Reason</div>
+                                </td>
+                                <td>
+                                    <div><span class="cb-badge @badgeClass">@item.FinalAction</span></div>
+                                    <div class="text-muted mt-2">@item.Agreement</div>
+                                    <div class="text-muted">@item.NoSubmitReason</div>
+                                    @if (!string.IsNullOrWhiteSpace(item.HypotheticalBlockReason))
+                                    {
+                                        <div class="text-muted">@item.HypotheticalBlockReason</div>
+                                    }
+                                    @if (item.IsFallback)
+                                    {
+                                        <div><span class="cb-badge cb-badge-warning">Fallback</span></div>
+                                    }
+                                </td>
+                                <td>
+                                    <div class="cb-mono">@(item.FeatureSnapshotReference ?? "-")</div>
+                                    <div class="text-muted mt-2">@(item.FeatureSummary ?? "Feature summary yok.")</div>
+                                    @if (!string.IsNullOrWhiteSpace(item.TopSignalHints))
+                                    {
+                                        <div class="text-muted">@item.TopSignalHints</div>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
             </div>
         }
     </div>

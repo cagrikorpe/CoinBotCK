@@ -1,0 +1,62 @@
+@model CoinBot.Web.ViewModels.Home.DashboardViewModel
+
+<div class="card card-custom gutter-b cb-card">
+    <div class="card-header border-0 pt-5">
+        <div class="card-title d-block">
+            <h3 class="mb-0">Recent orders / fills</h3>
+            <div class="text-muted mt-2">Gerçek order history, fill sayısı, PnL, reconciliation ve reject summary aynı tabloda görünür.</div>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        @if (Model.RecentOrders.Count == 0)
+        {
+            <div class="alert alert-light mb-0">Henüz gerçek order history yok.</div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-borderless table-striped">
+                    <thead>
+                        <tr>
+                            <th>Zaman</th>
+                            <th>Symbol</th>
+                            <th>State</th>
+                            <th>Fill</th>
+                            <th>PnL</th>
+                            <th>Reconciliation</th>
+                            <th>Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var item in Model.RecentOrders)
+                        {
+                            var badgeClass = item.FinalStateTone == "success"
+                                ? "cb-badge-success"
+                                : item.FinalStateTone == "warning"
+                                    ? "cb-badge-warning"
+                                    : item.FinalStateTone == "danger"
+                                        ? "cb-badge-danger"
+                                        : "cb-badge-neutral";
+                            <tr>
+                                <td class="cb-mono">@item.Time</td>
+                                <td>
+                                    <div class="font-weight-bolder">@item.Symbol</div>
+                                    <div class="text-muted">@item.Side</div>
+                                </td>
+                                <td>
+                                    <div><span class="cb-badge @badgeClass">@item.FinalState</span></div>
+                                    <div class="text-muted mt-2">@item.ResultCode</div>
+                                    <div class="text-muted">@item.ResultSummary</div>
+                                </td>
+                                <td>@item.FillSummary</td>
+                                <td>@item.PnlSummary</td>
+                                <td>@item.Reconciliation</td>
+                                <td class="text-muted">@item.ReasonSummary</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>

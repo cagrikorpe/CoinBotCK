@@ -1,71 +1,193 @@
+@model CoinBot.Web.ViewModels.AiRobot.AiRobotViewModel
 @{
     ViewData["Title"] = "AI Robot";
     ViewData["ActiveNav"] = "AiRobot";
-    ViewData["PageDescription"] = "AI öneri, veto, explainability ve model health foundation ekranı; scoring servisi bağlanmadan önce karar yüzeyinin tasarım dilini kurar.";
+    ViewData["PageDescription"] = "Gerçek AI shadow kararları, feature snapshot referansları ve no-submit nedenleri aynı operasyon yüzeyinde gösterilir.";
     ViewData["BreadcrumbItems"] = new[] { "Trade Lab", "AI Robot" };
 }
 
-@section Scripts {
-    <script src="~/js/ai-robot-foundation.js" asp-append-version="true"></script>
-}
-
-<div class="row" data-cb-ai-robot data-cb-ai-scenario="collecting">
+<div class="row">
     <div class="col-12">
         <div class="card card-custom gutter-b cb-card">
             <div class="card-body">
                 <div class="cb-page-header">
                     <div>
                         <div class="cb-page-eyebrow">AI Decision Center</div>
-                        <h2 class="cb-page-title">AI Robot karar yüzeyi</h2>
-                        <p class="cb-page-description">AI modülünün hangi coinleri önerdiğini, ne zaman veto ettiğini ve önerilerin arkasındaki kısa açıklamaları aynı operasyonel dilde görmen için hazırlanmış foundation ekranı.</p>
+                        <h2 class="cb-page-title">AI shadow ve compare geçmişi</h2>
+                        <p class="cb-page-description">Provider bağımsız AI sonucu, strategy karşılaştırması, fallback davranışı ve no-submit nedenleri yalnız gerçek DB kayıtlarından okunur.</p>
                     </div>
                     <div class="cb-toolbar">
-                        <span class="cb-badge cb-badge-info">UI-only foundation</span>
-                        <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-ai-refresh>AI akışını yenile <span class="cb-btn-spinner"></span></button>
-                        <button type="button" class="btn btn-primary font-weight-bolder" data-cb-drawer-target="#cb_ai_detail_drawer" data-cb-ai-detail="btc">Öneri detayını aç</button>
+                        <span class="cb-badge cb-badge-info">@Model.Summary.LatestNoTradeStatus</span>
                     </div>
                 </div>
 
-                <div class="cb-section mt-6">
-                    <div class="cb-section-title">Durum Senaryoları</div>
-                    <p class="cb-page-description mt-2 mb-0">Farklı AI state'lerini görmek için senaryo değiştirin. Bu seçim gerçek inference çalıştırmaz; yalnızca foundation yüzeyini günceller.</p>
-                    <div class="cb-chip-group mt-4" data-cb-toggle-group>
-                        <button type="button" class="cb-chip is-active" data-cb-toggle-active data-cb-ai-scenario-trigger="collecting">Veri topluyor</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-ai-scenario-trigger="active">Aktif ve sağlıklı</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-ai-scenario-trigger="low">Düşük güven</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-ai-scenario-trigger="stale">Degraded / stale</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-ai-scenario-trigger="empty">Öneri yok</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-ai-scenario-trigger="loading">Loading</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-ai-scenario-trigger="error">Error</button>
+                @if (!string.IsNullOrWhiteSpace(Model.Summary.EmptyStateMessage))
+                {
+                    <div class="alert alert-light mt-6 mb-0">@Model.Summary.EmptyStateMessage</div>
+                }
+                else
+                {
+                    <div class="row mt-6">
+                        <div class="col-md-3 mb-4">
+                            <div class="cb-chart-summary-card">
+                                <div class="cb-stat-label">Direction dağılımı</div>
+                                <div class="cb-chart-summary-value">L @Model.Summary.LongCount / S @Model.Summary.ShortCount / N @Model.Summary.NeutralCount</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3 mb-4">
+                            <div class="cb-chart-summary-card">
+                                <div class="cb-stat-label">Fallback</div>
+                                <div class="cb-chart-summary-value">@Model.Summary.FallbackCount / @Model.Summary.TotalCount</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3 mb-4">
+                            <div class="cb-chart-summary-card">
+                                <div class="cb-stat-label">Agreement</div>
+                                <div class="cb-chart-summary-value">@Model.Summary.AgreementCount ok / @Model.Summary.DisagreementCount fark</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3 mb-4">
+                            <div class="cb-chart-summary-card">
+                                <div class="cb-stat-label">Ortalama güven</div>
+                                <div class="cb-chart-summary-value">@Model.Summary.AverageConfidence</div>
+                            </div>
+                        </div>
                     </div>
-                </div>
+                }
+
+                <div class="mt-6 text-muted">@Model.Summary.LatestNoTradeSummary</div>
             </div>
         </div>
     </div>
 
-    <div class="col-12">
-        @await Html.PartialAsync("AiRobot/_HeroSummary")
-    </div>
+    <div class="col-xl-4">
+        <div class="card card-custom gutter-b cb-card">
+            <div class="card-header border-0 pt-5">
+                <div class="card-title"><h3 class="mb-0">No-submit reasons</h3></div>
+            </div>
+            <div class="card-body">
+                @if (Model.NoSubmitReasons.Count == 0)
+                {
+                    <div class="text-muted">Henüz gerçek no-submit reason dağılımı yok.</div>
+                }
+                else
+                {
+                    foreach (var item in Model.NoSubmitReasons)
+                    {
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <span>@item.Label</span>
+                            <strong class="cb-mono">@item.Count</strong>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
 
-    <div class="col-12">
-        @await Html.PartialAsync("AiRobot/_FreshnessMeta")
-    </div>
-
-    <div class="col-12">
-        @await Html.PartialAsync("AiRobot/_HighlightCards")
+        <div class="card card-custom gutter-b cb-card">
+            <div class="card-header border-0 pt-5">
+                <div class="card-title"><h3 class="mb-0">Hypothetical block reasons</h3></div>
+            </div>
+            <div class="card-body">
+                @if (Model.HypotheticalBlockReasons.Count == 0)
+                {
+                    <div class="text-muted">Henüz hypothetical block dağılımı yok.</div>
+                }
+                else
+                {
+                    foreach (var item in Model.HypotheticalBlockReasons)
+                    {
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <span>@item.Label</span>
+                            <strong class="cb-mono">@item.Count</strong>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
     </div>
 
     <div class="col-xl-8">
-        @await Html.PartialAsync("AiRobot/_RecommendationList")
-    </div>
-
-    <div class="col-xl-4">
-        @await Html.PartialAsync("AiRobot/_ExplainabilityCard")
-        @await Html.PartialAsync("AiRobot/_VetoCard")
-        @await Html.PartialAsync("AiRobot/_ModelHealthCard")
-        @await Html.PartialAsync("AiRobot/_HelpCard")
-        @await Html.PartialAsync("AiRobot/_StatePatternsCard")
+        <div class="card card-custom gutter-b cb-card">
+            <div class="card-header border-0 pt-5">
+                <div class="card-title d-block">
+                    <h3 class="mb-0">Recent AI decisions</h3>
+                    <div class="text-muted mt-2">Strategy vs AI compare, fallback ve feature snapshot referansları gerçek shadow kayıtlarından akar.</div>
+                </div>
+            </div>
+            <div class="card-body pt-2">
+                @if (Model.Decisions.Count == 0)
+                {
+                    <div class="alert alert-light mb-0">Henüz gerçek AI decision history yok.</div>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-striped table-borderless">
+                            <thead>
+                                <tr>
+                                    <th>Zaman</th>
+                                    <th>Symbol</th>
+                                    <th>Strategy</th>
+                                    <th>AI</th>
+                                    <th>Action</th>
+                                    <th>Reason</th>
+                                    <th>Feature</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var item in Model.Decisions)
+                                {
+                                    var badgeClass = item.Tone == "success"
+                                        ? "cb-badge-success"
+                                        : item.Tone == "warning"
+                                            ? "cb-badge-warning"
+                                            : item.Tone == "danger"
+                                                ? "cb-badge-danger"
+                                                : "cb-badge-neutral";
+                                    <tr>
+                                        <td class="cb-mono">@item.Time</td>
+                                        <td>
+                                            <div class="font-weight-bolder">@item.Symbol</div>
+                                            <div class="text-muted">@item.Timeframe</div>
+                                        </td>
+                                        <td>
+                                            <div>@item.StrategyDirection</div>
+                                            <div class="text-muted">@item.StrategyConfidence</div>
+                                        </td>
+                                        <td>
+                                            <div class="font-weight-bolder">@item.AiDirection</div>
+                                            <div class="text-muted">@item.AiConfidence · @item.Provider</div>
+                                            @if (item.IsFallback)
+                                            {
+                                                <div><span class="cb-badge cb-badge-warning">Fallback</span></div>
+                                            }
+                                        </td>
+                                        <td>
+                                            <div><span class="cb-badge @badgeClass">@item.FinalAction</span></div>
+                                            <div class="text-muted mt-2">@item.Agreement</div>
+                                            <div class="text-muted">@item.NoSubmitReason</div>
+                                            @if (!string.IsNullOrWhiteSpace(item.HypotheticalBlockReason))
+                                            {
+                                                <div class="text-muted">@item.HypotheticalBlockReason</div>
+                                            }
+                                        </td>
+                                        <td>
+                                            <div>@item.ReasonSummary</div>
+                                            <div class="text-muted mt-2">@item.RiskSummary</div>
+                                            <div class="text-muted">@item.PilotSummary</div>
+                                        </td>
+                                        <td>
+                                            <div class="cb-mono">@item.FeatureSnapshotReference</div>
+                                            <div class="text-muted mt-2">@item.FeatureSummary</div>
+                                            <div class="text-muted">@item.RegimeSummary</div>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
     </div>
 </div>
-
-@await Html.PartialAsync("AiRobot/_RecommendationDrawer")

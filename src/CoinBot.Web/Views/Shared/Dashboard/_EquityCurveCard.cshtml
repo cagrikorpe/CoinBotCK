@@ -1,66 +1,69 @@
+@model CoinBot.Web.ViewModels.Home.DashboardViewModel
+
 <div class="card card-custom gutter-b cb-card cb-dashboard-card cb-equity-card">
     <div class="card-header border-0 pt-6">
         <div class="card-title d-block">
-            <div class="d-flex align-items-center flex-wrap gap-2">
-                <h3 class="card-label font-weight-bolder mb-0">Equity Curve</h3>
-                <span class="cb-badge cb-badge-info">Chart foundation</span>
-            </div>
-            <div class="text-muted mt-2">Gerçek equity verisi sonradan bağlanacak. Bu kart chart alanı, filtre ve özet bölgesini şimdiden oturtur.</div>
-        </div>
-        <div class="card-toolbar">
-            <div class="cb-chip-group" data-cb-toggle-group>
-                <button type="button" class="cb-chip is-active" data-cb-toggle-active>1D</button>
-                <button type="button" class="cb-chip" data-cb-toggle-active>7D</button>
-                <button type="button" class="cb-chip" data-cb-toggle-active>30D</button>
-                <button type="button" class="cb-chip" data-cb-toggle-active>90D</button>
-            </div>
+            <h3 class="card-label font-weight-bolder mb-0">Equity / performance</h3>
+            <div class="text-muted mt-2">Gerçek bakiye, realized/unrealized PnL ve kapanan trade etkisi aynı kartta özetlenir.</div>
         </div>
     </div>
     <div class="card-body pt-2">
-        <div class="cb-chart-shell">
-            <div class="cb-chart-grid"></div>
-            <svg class="cb-chart-svg" viewBox="0 0 640 280" role="img" aria-label="Equity curve placeholder">
-                <defs>
-                    <linearGradient id="cbEquityStroke" x1="0%" y1="0%" x2="0%" y2="100%">
-                        <stop offset="0%" stop-color="#5ac8fa"></stop>
-                        <stop offset="100%" stop-color="#4b7cf3"></stop>
-                    </linearGradient>
-                    <linearGradient id="cbEquityFill" x1="0%" y1="0%" x2="0%" y2="100%">
-                        <stop offset="0%" stop-color="rgba(90,200,250,0.30)"></stop>
-                        <stop offset="100%" stop-color="rgba(75,124,243,0.02)"></stop>
-                    </linearGradient>
-                </defs>
-                <path d="M20 214 C 90 190, 118 172, 168 160 S 258 118, 314 132 S 398 104, 448 120 S 540 86, 620 76" fill="none" stroke="url(#cbEquityStroke)" stroke-width="5" stroke-linecap="round"></path>
-                <path d="M20 214 C 90 190, 118 172, 168 160 S 258 118, 314 132 S 398 104, 448 120 S 540 86, 620 76 L620 260 L20 260 Z" fill="url(#cbEquityFill)"></path>
-                <circle cx="168" cy="160" r="6" fill="#5ac8fa"></circle>
-                <circle cx="314" cy="132" r="6" fill="#4b7cf3"></circle>
-                <circle cx="620" cy="76" r="7" fill="#12c29c"></circle>
-            </svg>
-            <div class="cb-chart-overlay-note">
-                <span class="cb-badge cb-badge-success">Data connected later</span>
-                <span class="cb-chart-overlay-text">Loading, empty ve error state için aynı kart yüzeyi korunur.</span>
+        <div class="row">
+            <div class="col-md-3 mb-4">
+                <div class="cb-chart-summary-card">
+                    <div class="cb-stat-label">Equity estimate</div>
+                    <div class="cb-chart-summary-value cb-mono">@Model.Performance.EquityEstimate</div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-4">
+                <div class="cb-chart-summary-card">
+                    <div class="cb-stat-label">Günlük PnL</div>
+                    <div class="cb-chart-summary-value cb-mono">@Model.Performance.DailyPnl</div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-4">
+                <div class="cb-chart-summary-card">
+                    <div class="cb-stat-label">Açık pozisyon etkisi</div>
+                    <div class="cb-chart-summary-value cb-mono">@Model.Performance.OpenPositionEffect</div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-4">
+                <div class="cb-chart-summary-card">
+                    <div class="cb-stat-label">Kapanan trade etkisi</div>
+                    <div class="cb-chart-summary-value cb-mono">@Model.Performance.ClosedTradeEffect</div>
+                </div>
             </div>
         </div>
 
-        <div class="row mt-6">
-            <div class="col-md-4">
-                <div class="cb-chart-summary-card">
-                    <div class="cb-stat-label">Başlangıç bakiye</div>
-                    <div class="cb-chart-summary-value cb-mono">$ 20,000.00</div>
-                </div>
+        <div class="text-muted mb-4">@Model.Performance.Summary</div>
+
+        @if (!Model.Performance.HasSufficientData)
+        {
+            <div class="alert alert-light mb-0">@Model.Performance.EmptyStateMessage</div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-borderless table-striped mb-0">
+                    <thead>
+                        <tr>
+                            <th>Zaman</th>
+                            <th>Equity</th>
+                            <th>Kaynak</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var point in Model.Performance.Points)
+                        {
+                            <tr>
+                                <td class="cb-mono">@point.Time</td>
+                                <td class="cb-mono">@point.Equity</td>
+                                <td>@point.Source</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
             </div>
-            <div class="col-md-4 mt-4 mt-md-0">
-                <div class="cb-chart-summary-card">
-                    <div class="cb-stat-label">Güncel bakiye</div>
-                    <div class="cb-chart-summary-value cb-mono">$ 24,860.42</div>
-                </div>
-            </div>
-            <div class="col-md-4 mt-4 mt-md-0">
-                <div class="cb-chart-summary-card">
-                    <div class="cb-stat-label">Değişim</div>
-                    <div class="cb-chart-summary-value cb-mono cb-text-positive">+24.30%</div>
-                </div>
-            </div>
-        </div>
+        }
     </div>
 </div>

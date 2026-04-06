@@ -227,6 +227,7 @@ public static class DependencyInjection
         services.AddScoped<IBotPilotControlService, BotPilotControlService>();
         services.AddScoped<IUserDashboardPortfolioReadModelService, UserDashboardPortfolioReadModelService>();
         services.AddScoped<IUserDashboardOperationsReadModelService, UserDashboardOperationsReadModelService>();
+        services.AddScoped<IUserDashboardLiveReadModelService, UserDashboardLiveReadModelService>();
         services.AddScoped<IAlertService, AlertingService>();
         services.AddSingleton<IAlertDispatchCoordinator, AlertDispatchCoordinator>();
         services.AddScoped<ILogCenterReadModelService, LogCenterReadModelService>();
@@ -515,6 +516,7 @@ public static class DependencyInjection
         return services;
     }
 }
+
 
 
 

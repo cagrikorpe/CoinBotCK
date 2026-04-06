@@ -5,7 +5,7 @@
         <div class="card-title">
             <div>
                 <div class="text-muted font-weight-bold text-uppercase mb-1">Operations Summary</div>
-                <h3 class="mb-0">Bot ve guard durumu</h3>
+                <h3 class="mb-0">Bot, guard ve control state</h3>
             </div>
         </div>
     </div>
@@ -34,6 +34,22 @@
                 <div class="font-weight-bolder mt-3" data-cb-ops-breaker>@Model.OperationsSummary.BreakerLabel</div>
                 <div class="text-muted">@Model.OperationsSummary.OpenCircuitBreakerCount aktif breaker</div>
             </div>
+            <div class="col-md-4 mb-4">
+                <div class="font-size-sm text-muted text-uppercase">Trade master / mode</div>
+                <div class="font-weight-bolder">@Model.OperationsSummary.TradeMasterStatus</div>
+                <div class="text-muted">@Model.OperationsSummary.TradingModeStatus</div>
+                <div class="text-muted">Pilot @Model.OperationsSummary.PilotActivationStatus</div>
+            </div>
+            <div class="col-md-4 mb-4">
+                <div class="font-size-sm text-muted text-uppercase">Market readiness</div>
+                <div class="font-weight-bolder">@Model.OperationsSummary.MarketReadinessStatus</div>
+                <div class="text-muted">@Model.OperationsSummary.MarketReadinessSummary</div>
+            </div>
+            <div class="col-md-4 mb-4">
+                <div class="font-size-sm text-muted text-uppercase">Private plane</div>
+                <div class="font-weight-bolder">@Model.OperationsSummary.PrivatePlaneStatus</div>
+                <div class="text-muted">@Model.OperationsSummary.PrivatePlaneSummary</div>
+            </div>
             <div class="col-md-4 mb-2">
                 <div class="font-size-sm text-muted text-uppercase">Günlük limit</div>
                 <div class="font-weight-bolder" data-cb-ops-daily-loss>@Model.OperationsSummary.DailyLossSummary</div>
@@ -45,6 +61,20 @@
             <div class="col-md-4 mb-2">
                 <div class="font-size-sm text-muted text-uppercase">Cooldown</div>
                 <div class="font-weight-bolder" data-cb-ops-cooldown>@Model.OperationsSummary.CooldownSummary</div>
+            </div>
+            <div class="col-md-12 mt-4">
+                <div class="font-size-sm text-muted text-uppercase">Neden order açılmadı?</div>
+                <div class="font-weight-bolder">@Model.OperationsSummary.LatestNoTradeStatus</div>
+                <div class="text-muted">@(string.IsNullOrWhiteSpace(Model.OperationsSummary.LatestNoTradeCode) ? Model.OperationsSummary.LatestNoTradeSummary : $"{Model.OperationsSummary.LatestNoTradeCode} · {Model.OperationsSummary.LatestNoTradeSummary}")</div>
+            </div>
+            <div class="col-md-12 mt-4">
+                <div class="font-size-sm text-muted text-uppercase">Son reject / failure</div>
+                <div class="font-weight-bolder">@Model.OperationsSummary.LatestRejectStatus</div>
+                <div class="text-muted">@(string.IsNullOrWhiteSpace(Model.OperationsSummary.LatestRejectCode) ? Model.OperationsSummary.LatestRejectSummary : $"{Model.OperationsSummary.LatestRejectCode} · {Model.OperationsSummary.LatestRejectSummary}")</div>
+                @if (!string.IsNullOrWhiteSpace(Model.OperationsSummary.LatestRejectReconciliation))
+                {
+                    <div class="text-muted">Reconciliation @Model.OperationsSummary.LatestRejectReconciliation</div>
+                }
             </div>
             <div class="col-md-12 mt-4">
                 <div class="font-size-sm text-muted text-uppercase">Drift / sync</div>
