@@ -255,7 +255,8 @@ public sealed class MarketDataServiceProjectionTests
         Assert.Equal(SharedMarketDataCacheReadStatus.HitFresh, klineRead.Status);
         Assert.Equal("BTCUSDT", klineRead.Entry?.Symbol);
         Assert.Equal("1m", klineRead.Entry?.Timeframe);
-        Assert.Equal(closeTimeUtc, klineRead.Entry?.UpdatedAtUtc);
+        Assert.Equal(klineReceivedAtUtc, klineRead.Entry?.UpdatedAtUtc);
+        Assert.Equal(klineReceivedAtUtc.AddSeconds(15), klineRead.Entry?.FreshUntilUtc);
         Assert.Equal(64000m, klineRead.Entry?.Payload.ClosePrice);
 
         Assert.Equal(SharedMarketDataCacheReadStatus.HitFresh, depthRead.Status);
@@ -429,3 +430,5 @@ public sealed class MarketDataServiceProjectionTests
         }
     }
 }
+
+

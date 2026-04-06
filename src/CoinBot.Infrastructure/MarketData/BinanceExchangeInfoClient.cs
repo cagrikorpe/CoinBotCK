@@ -39,6 +39,7 @@ public sealed class BinanceExchangeInfoClient(
             return Array.Empty<SymbolMetadataSnapshot>();
         }
 
+        var requestedSymbols = normalizedSymbols.ToHashSet(StringComparer.Ordinal);
         var symbolsPayload = Uri.EscapeDataString(JsonSerializer.Serialize(normalizedSymbols, SerializerOptions));
         var requestPath = normalizedSymbols.Count == 1
             ? $"fapi/v1/exchangeInfo?symbol={Uri.EscapeDataString(normalizedSymbols.First())}"
@@ -65,6 +66,9 @@ public sealed class BinanceExchangeInfoClient(
             results = payload?.Symbols?
                 .Select(symbol => TryMapSymbol(symbol, refreshedAtUtc))
                 .OfType<SymbolMetadataSnapshot>()
+                .Where(snapshot => requestedSymbols.Contains(snapshot.Symbol))
+                .GroupBy(snapshot => snapshot.Symbol, StringComparer.Ordinal)
+                .Select(group => group.First())
                 .OrderBy(snapshot => snapshot.Symbol, StringComparer.Ordinal)
                 .ToArray()
                 ?? [];
@@ -343,3 +347,4 @@ public sealed class BinanceExchangeInfoClient(
         [property: JsonPropertyName("minNotional")] string? MinNotional,
         [property: JsonPropertyName("notional")] string? Notional);
 }
+

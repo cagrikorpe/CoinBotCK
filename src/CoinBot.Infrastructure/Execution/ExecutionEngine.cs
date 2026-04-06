@@ -521,9 +521,70 @@ public sealed class ExecutionEngine(
 
         transitions.Add(transition);
         dbContext.ExecutionOrderTransitions.Add(transition);
-        await dbContext.SaveChangesAsync(cancellationToken);
 
-        return transition;
+        try
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return transition;
+        }
+        catch (DbUpdateException exception) when (IsDuplicateTransitionSequenceViolation(exception))
+        {
+            logger.LogInformation(
+                exception,
+                "Execution engine suppressed duplicate transition persistence for order {ExecutionOrderId} at sequence {SequenceNumber}.",
+                order.Id,
+                transition.SequenceNumber);
+
+            dbContext.ChangeTracker.Clear();
+
+            var persistedOrder = await dbContext.ExecutionOrders
+                .IgnoreQueryFilters()
+                .SingleAsync(
+                    entity => entity.Id == order.Id &&
+                              !entity.IsDeleted,
+                    cancellationToken);
+
+            var persistedTransition = await dbContext.ExecutionOrderTransitions
+                .IgnoreQueryFilters()
+                .SingleAsync(
+                    entity => entity.ExecutionOrderId == order.Id &&
+                              entity.SequenceNumber == transition.SequenceNumber &&
+                              !entity.IsDeleted,
+                    cancellationToken);
+
+            SyncOrderState(order, persistedOrder);
+            transitions[^1] = persistedTransition;
+            return persistedTransition;
+        }
+    }
+
+    private static bool IsDuplicateTransitionSequenceViolation(DbUpdateException exception)
+    {
+        const string IndexName = "IX_ExecutionOrderTransitions_ExecutionOrderId_SequenceNumber";
+        return exception.Message.Contains(IndexName, StringComparison.OrdinalIgnoreCase) ||
+            exception.InnerException?.Message.Contains(IndexName, StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    private static void SyncOrderState(ExecutionOrder target, ExecutionOrder source)
+    {
+        target.ExternalOrderId = source.ExternalOrderId;
+        target.FailureCode = source.FailureCode;
+        target.FailureDetail = source.FailureDetail;
+        target.FilledQuantity = source.FilledQuantity;
+        target.AverageFillPrice = source.AverageFillPrice;
+        target.LastFilledAtUtc = source.LastFilledAtUtc;
+        target.LastReconciledAtUtc = source.LastReconciledAtUtc;
+        target.LastDriftDetectedAtUtc = source.LastDriftDetectedAtUtc;
+        target.LastStateChangedAtUtc = source.LastStateChangedAtUtc;
+        target.ReconciliationStatus = source.ReconciliationStatus;
+        target.ReconciliationSummary = source.ReconciliationSummary;
+        target.RejectionStage = source.RejectionStage;
+        target.RetryEligible = source.RetryEligible;
+        target.CooldownApplied = source.CooldownApplied;
+        target.DuplicateSuppressed = source.DuplicateSuppressed;
+        target.SubmittedToBroker = source.SubmittedToBroker;
+        target.SubmittedAtUtc = source.SubmittedAtUtc;
+        target.State = source.State;
     }
 
     private async Task<ExecutionOrderSnapshot> GetSnapshotAsync(
@@ -1312,4 +1373,5 @@ public sealed class ExecutionEngine(
             transition.OccurredAtUtc);
     }
 }
+
 

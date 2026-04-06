@@ -71,6 +71,59 @@ public sealed class BinanceExchangeInfoClientTests
     }
 
     [Fact]
+    public async Task GetSymbolMetadataAsync_FiltersUnexpectedExtraSymbols_FromSingleSymbolExchangeInfoResponse()
+    {
+        var now = new DateTimeOffset(2026, 4, 6, 18, 0, 0, TimeSpan.Zero);
+        var handler = new StubHttpMessageHandler(
+            """
+            {
+              "symbols": [
+                {
+                  "symbol": "BTCUSDT",
+                  "status": "TRADING",
+                  "baseAsset": "BTC",
+                  "quoteAsset": "USDT",
+                  "pricePrecision": 2,
+                  "quantityPrecision": 4,
+                  "filters": [
+                    { "filterType": "PRICE_FILTER", "tickSize": "0.01000000" },
+                    { "filterType": "LOT_SIZE", "minQty": "0.00100000", "stepSize": "0.00010000" },
+                    { "filterType": "MIN_NOTIONAL", "notional": "100.00000000" }
+                  ]
+                },
+                {
+                  "symbol": "ETHUSDT",
+                  "status": "TRADING",
+                  "baseAsset": "ETH",
+                  "quoteAsset": "USDT",
+                  "pricePrecision": 2,
+                  "quantityPrecision": 4,
+                  "filters": [
+                    { "filterType": "PRICE_FILTER", "tickSize": "0.01000000" },
+                    { "filterType": "LOT_SIZE", "minQty": "0.00100000", "stepSize": "0.00010000" },
+                    { "filterType": "MIN_NOTIONAL", "notional": "100.00000000" }
+                  ]
+                }
+              ]
+            }
+            """);
+        using var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("https://testnet.binancefuture.com/")
+        };
+        var client = new BinanceExchangeInfoClient(
+            httpClient,
+            new AdjustableTimeProvider(now),
+            NullLogger<BinanceExchangeInfoClient>.Instance);
+
+        var snapshots = await client.GetSymbolMetadataAsync(["BTCUSDT"]);
+
+        var snapshot = Assert.Single(snapshots);
+        Assert.Equal("BTCUSDT", snapshot.Symbol);
+        Assert.DoesNotContain(snapshots, item => item.Symbol == "ETHUSDT");
+        Assert.Contains("symbol=BTCUSDT", handler.LastRequestUri, StringComparison.Ordinal);
+    }
+    [Fact]
     public async Task GetServerTimeUtcAsync_MapsServerTimeToUtcDateTime()
     {
         var serverTime = new DateTimeOffset(2026, 3, 24, 12, 5, 30, TimeSpan.Zero);
@@ -167,3 +220,5 @@ public sealed class BinanceExchangeInfoClientTests
         }
     }
 }
+
+

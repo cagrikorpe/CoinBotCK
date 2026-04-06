@@ -1,5 +1,18 @@
 # Pilot Testnet Runbook
 
+## Secilen plane
+
+Bu pilot paketi **FUTURES** plane icin tanimlidir.
+
+Neden:
+- worker pilot submit path'i ExchangeDataPlane.Futures ile dispatch eder
+- gate/pilot override beklentisi DevelopmentFuturesTestnetPilot=True context'i ustunden calisir
+- credential readiness testnet futures yetkisi (SupportsFutures=true) ile kapanir
+- live executor secimi bu path'te BinanceExecutor olur
+- BinanceSpotExecutor repo icinde ayri spot execution flow'u icin vardir; pilot smoke/acceptance zincirinin parcasi degildir
+
+SupportsSpot bilgisi gorulebilir kalir ama plane secmez. Pilot kapanisinda zorunlu capability SupportsFutures=true olmaya devam eder.
+
 ## Scope
 
 Bu runbook yalnız dar pilot scope icindir:
@@ -23,7 +36,9 @@ Bu runbook yalnız dar pilot scope icindir:
 - hedef DB'de enabled bot sayisi `1` olmali.
 - acik execution order sayisi `0` olmali.
 - acik position sayisi `0` olmali.
-- `ApiCredentialValidation` sonucu `Valid`, `EnvironmentScope=Demo`, `SupportsFutures=true`, `CanTrade=true` olmali.
+- ApiCredentialValidation sonucu Valid, EnvironmentScope=Demo, SupportsFutures=true, CanTrade=true olmali.
+- runtime smoke script'i web/worker ortaminda scanner/handoff/history-filler gurultusunu kapatir, futures seed symbol setini smoke sembolune daraltir ve izole smoke DB'de global policy autonomy mode'unu RecommendOnly advisory durumda baslatir.
+- `SupportsSpot` true veya false olabilir; pilot plane secimini etkilemez.
 - testnet endpointleri resolve edilmeli:
   - `https://testnet.binancefuture.com`
   - `wss://fstream.binancefuture.com`
@@ -52,10 +67,11 @@ Script akisi:
 1. mevcut dev DB'den aktif testnet credential ve validation metadata'sini okur
 2. izole LocalDB smoke veritabani olusturur
 3. deterministic pilot strategy + single bot graph seed eder
-4. `PilotActivationEnabled=false` ile warm-up kosar
-5. market-data ve private-plane readiness olusmadan submit etmez
-6. `PilotActivationEnabled=true` ile ayni bot icin gercek testnet submit dener
-7. order / transition / trace / position / pnl / sync state ozetini `.diag\pilot-lifecycle-runtime-smoke\...` altina yazar
+4. izole smoke DB icin GlobalRiskPolicy autonomy mode'unu RecommendOnly advisory seviyesine sabitler; market-anomaly worker'in smoke lifecycle kanitini reduce-only restriction'a cevirmesine izin vermez
+5. `PilotActivationEnabled=false` ile warm-up kosar
+6. market-data ve private-plane readiness olusmadan submit etmez
+7. `PilotActivationEnabled=true` ile ayni bot icin gercek testnet submit dener
+8. order / transition / trace / position / pnl / sync state ozetini `.diag\pilot-lifecycle-runtime-smoke\...` altina yazar
 
 Fail-closed davranis:
 - aktif account/bot sayisi dar scope disindaysa script durur
@@ -130,3 +146,19 @@ Blocker durumunda mutlaka kaydet:
 - blocker stage
 - ilgili log satiri
 - smoke summary path
+
+## Reconciliation beklentisi
+
+Runtime smoke kapanisinda ReconciliationStatus=Unknown gorulebilir ve bu **beklenen ara durum** kabul edilir; cunku smoke kabulunu anlik futures private-stream/order/position/balance telemetry kapatir, async reconciliation ise sonraki cycle'da ilerler.
+
+Kapanis icin minimum kanit:
+- SubmittedToBroker=true
+- ExternalOrderId dolu
+- futures transition zinciri (GatePassed, Dispatching, Submitted ve terminal durum) yazilmis
+- execution trace veya order query telemetry alinmis
+- futures position/balance read-model zinciri akmis
+
+
+
+
+

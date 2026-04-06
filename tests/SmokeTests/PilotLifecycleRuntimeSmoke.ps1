@@ -260,6 +260,39 @@ END
     Invoke-SqlNonQuery -ConnectionString $ConnectionString -CommandText "INSERT INTO ApiCredentials (Id, ExchangeAccountId, OwnerUserId, ApiKeyCiphertext, ApiSecretCiphertext, CredentialFingerprint, KeyVersion, EncryptedBlobVersion, ValidationStatus, PermissionSummary, StoredAtUtc, LastValidatedAtUtc, LastFailureReason, CreatedDate, UpdatedDate, IsDeleted) VALUES (@ApiCredentialId, @ExchangeAccountId, @UserId, @ApiKeyCiphertext, @ApiSecretCiphertext, @CredentialFingerprint, @CredentialKeyVersion, 1, @ValidationStatus, @PermissionSummary, @UtcNow, @ValidatedAtUtc, @FailureReason, @UtcNow, @UtcNow, 0);" -Parameters @{ ApiCredentialId = $ApiCredentialId; ExchangeAccountId = $ExchangeAccountId; UserId = $UserId; ApiKeyCiphertext = $Bootstrap.Source.ApiKeyCiphertext; ApiSecretCiphertext = $Bootstrap.Source.ApiSecretCiphertext; CredentialFingerprint = $Bootstrap.Source.CredentialFingerprint; CredentialKeyVersion = if ([string]::IsNullOrWhiteSpace([string]$Bootstrap.Source.CredentialKeyVersion)) { 'credential-v1' } else { $Bootstrap.Source.CredentialKeyVersion }; ValidationStatus = $Bootstrap.Source.ValidationStatus; PermissionSummary = $Bootstrap.Source.PermissionSummary; UtcNow = $UtcNow; ValidatedAtUtc = $Bootstrap.Source.ValidatedAtUtc; FailureReason = $Bootstrap.Source.FailureReason } | Out-Null
     Invoke-SqlNonQuery -ConnectionString $ConnectionString -CommandText "INSERT INTO ApiCredentialValidations (Id, ApiCredentialId, ExchangeAccountId, OwnerUserId, IsKeyValid, CanTrade, CanWithdraw, SupportsSpot, SupportsFutures, EnvironmentScope, IsEnvironmentMatch, HasTimestampSkew, HasIpRestrictionIssue, ValidationStatus, PermissionSummary, FailureReason, CorrelationId, ValidatedAtUtc, CreatedDate, UpdatedDate, IsDeleted) VALUES (NEWID(), @ApiCredentialId, @ExchangeAccountId, @UserId, @IsKeyValid, @CanTrade, @CanWithdraw, @SupportsSpot, @SupportsFutures, @EnvironmentScope, @IsEnvironmentMatch, @HasTimestampSkew, @HasIpRestrictionIssue, @ValidationStatus, @PermissionSummary, @FailureReason, @CorrelationId, @ValidatedAtUtc, @UtcNow, @UtcNow, 0);" -Parameters @{ ApiCredentialId = $ApiCredentialId; ExchangeAccountId = $ExchangeAccountId; UserId = $UserId; IsKeyValid = $Bootstrap.Source.IsKeyValid; CanTrade = $Bootstrap.Source.CanTrade; CanWithdraw = if ($null -eq $Bootstrap.Source.CanWithdraw) { $false } else { $Bootstrap.Source.CanWithdraw }; SupportsSpot = if ($null -eq $Bootstrap.Source.SupportsSpot) { $false } else { $Bootstrap.Source.SupportsSpot }; SupportsFutures = $Bootstrap.Source.SupportsFutures; EnvironmentScope = $Bootstrap.Source.EnvironmentScope; IsEnvironmentMatch = $Bootstrap.Source.IsEnvironmentMatch; HasTimestampSkew = if ($null -eq $Bootstrap.Source.HasTimestampSkew) { $false } else { $Bootstrap.Source.HasTimestampSkew }; HasIpRestrictionIssue = if ($null -eq $Bootstrap.Source.HasIpRestrictionIssue) { $false } else { $Bootstrap.Source.HasIpRestrictionIssue }; ValidationStatus = $Bootstrap.Source.ValidationStatus; PermissionSummary = $Bootstrap.Source.PermissionSummary; FailureReason = $Bootstrap.Source.FailureReason; CorrelationId = $Bootstrap.Source.CorrelationId; ValidatedAtUtc = $Bootstrap.Source.ValidatedAtUtc; UtcNow = $UtcNow } | Out-Null
     Invoke-SqlNonQuery -ConnectionString $ConnectionString -CommandText "INSERT INTO TradingBots (Id, Name, StrategyKey, Symbol, Quantity, ExchangeAccountId, Leverage, MarginType, IsEnabled, TradingModeOverride, TradingModeApprovedAtUtc, TradingModeApprovalReference, OpenOrderCount, OpenPositionCount, CreatedDate, UpdatedDate, IsDeleted, OwnerUserId) VALUES (@BotId, 'Pilot Lifecycle Smoke Bot', 'pilot-lifecycle-smoke-core', @Symbol, 0.002, @ExchangeAccountId, 1, 'ISOLATED', 1, NULL, NULL, NULL, 0, 0, @UtcNow, @UtcNow, 0, @UserId);" -Parameters @{ BotId = $BotId; Symbol = $Bootstrap.Source.Symbol; ExchangeAccountId = $ExchangeAccountId; UtcNow = $UtcNow; UserId = $UserId } | Out-Null
+    Seed-SmokeGlobalPolicy -ConnectionString $ConnectionString -UtcNow $UtcNow
+}
+
+function Seed-SmokeGlobalPolicy {
+    param([string]$ConnectionString, [datetime]$UtcNow)
+
+    $policyJson = [ordered]@{
+        PolicyKey = 'GlobalRiskPolicy'
+        ExecutionGuardPolicy = [ordered]@{
+            MaxOrderNotional = 1000000
+            MaxPositionNotional = $null
+            MaxDailyTrades = $null
+            CloseOnlyBlocksNewPositions = $true
+        }
+        AutonomyPolicy = [ordered]@{
+            Mode = 1
+            RequireManualApprovalForLive = $false
+        }
+        SymbolRestrictions = @()
+    } | ConvertTo-Json -Compress -Depth 8
+
+    $policyHashBytes = [System.Security.Cryptography.SHA256]::HashData([System.Text.Encoding]::UTF8.GetBytes($policyJson))
+    $policyHash = ([System.BitConverter]::ToString($policyHashBytes)).Replace('-', '').ToLowerInvariant()
+    $policyId = '8A8A6C2B-7B4D-4B1C-9136-4AF1D06F2C21'
+
+    Invoke-SqlNonQuery -ConnectionString $ConnectionString -CommandText @"
+DELETE FROM RiskPolicyVersions;
+DELETE FROM RiskPolicies;
+INSERT INTO RiskPolicies (Id, PolicyKey, CurrentVersion, PolicyJson, PolicyHash, LastUpdatedAtUtc, LastUpdatedByUserId, LastChangeSummary)
+VALUES (@PolicyId, 'GlobalRiskPolicy', 1, @PolicyJson, @PolicyHash, @UtcNow, 'system', 'Pilot runtime smoke policy bootstrap');
+INSERT INTO RiskPolicyVersions (Id, RiskPolicyId, Version, CreatedAtUtc, CreatedByUserId, Source, CorrelationId, ChangeSummary, PolicyJson, DiffJson, RolledBackFromVersion)
+VALUES (NEWID(), @PolicyId, 1, @UtcNow, 'system', 'PilotLifecycleRuntimeSmoke', 'pilot-lifecycle-runtime-smoke', 'Pilot runtime smoke policy bootstrap', @PolicyJson, '[]', NULL);
+"@ -Parameters @{ PolicyId = $policyId; PolicyJson = $policyJson; PolicyHash = $policyHash; UtcNow = $UtcNow } | Out-Null
 }
 
 function Get-ReadinessSnapshot {
@@ -276,15 +309,65 @@ WHERE ea.Id = @ExchangeAccountId;
 "@ -Parameters @{ ExchangeAccountId = $ExchangeAccountId; Symbol = $Symbol; Timeframe = $Timeframe }
 }
 
-function Get-SmokeOrders { param([string]$ConnectionString, [guid]$BotId) Invoke-SqlRows -ConnectionString $ConnectionString -CommandText "SELECT TOP (10) Id, StrategySignalId, State, FailureCode, FailureDetail, ReconciliationStatus, ReconciliationSummary, SubmittedToBroker, ExternalOrderId, FilledQuantity, AverageFillPrice, SubmittedAtUtc, LastStateChangedAtUtc, CreatedDate FROM ExecutionOrders WHERE BotId = @BotId AND IsDeleted = 0 ORDER BY CreatedDate DESC;" -Parameters @{ BotId = $BotId } }
+function Get-SmokeOrders { param([string]$ConnectionString, [guid]$BotId) Invoke-SqlRows -ConnectionString $ConnectionString -CommandText "SELECT TOP (10) Id, StrategySignalId, Plane, State, FailureCode, FailureDetail, ReconciliationStatus, ReconciliationSummary, SubmittedToBroker, ExternalOrderId, FilledQuantity, AverageFillPrice, SubmittedAtUtc, LastStateChangedAtUtc, CreatedDate FROM ExecutionOrders WHERE BotId = @BotId AND IsDeleted = 0 ORDER BY CreatedDate DESC;" -Parameters @{ BotId = $BotId } }
 function Get-SmokeTransitions { param([string]$ConnectionString, [guid]$ExecutionOrderId) Invoke-SqlRows -ConnectionString $ConnectionString -CommandText "SELECT TOP (20) SequenceNumber, State, EventCode, Detail, CorrelationId, ParentCorrelationId, OccurredAtUtc FROM ExecutionOrderTransitions WHERE ExecutionOrderId = @ExecutionOrderId AND IsDeleted = 0 ORDER BY SequenceNumber ASC;" -Parameters @{ ExecutionOrderId = $ExecutionOrderId } }
 function Get-SmokeExecutionTraces { param([string]$ConnectionString, [guid]$ExecutionOrderId) Invoke-SqlRows -ConnectionString $ConnectionString -CommandText "SELECT TOP (20) Provider, Endpoint, HttpStatusCode, ExchangeCode, LatencyMs, CreatedAtUtc FROM ExecutionTraces WHERE ExecutionOrderId = @ExecutionOrderId AND IsDeleted = 0 ORDER BY CreatedAtUtc ASC;" -Parameters @{ ExecutionOrderId = $ExecutionOrderId } }
 function Get-SmokePositions { param([string]$ConnectionString, [guid]$ExchangeAccountId) Invoke-SqlRows -ConnectionString $ConnectionString -CommandText "SELECT TOP (10) Symbol, PositionSide, Quantity, EntryPrice, BreakEvenPrice, UnrealizedProfit, MarginType, ExchangeUpdatedAtUtc FROM ExchangePositions WHERE ExchangeAccountId = @ExchangeAccountId AND IsDeleted = 0 ORDER BY UpdatedDate DESC;" -Parameters @{ ExchangeAccountId = $ExchangeAccountId } }
 function Get-SmokeBalances { param([string]$ConnectionString, [guid]$ExchangeAccountId) Invoke-SqlRows -ConnectionString $ConnectionString -CommandText "SELECT TOP (10) Asset, WalletBalance, CrossWalletBalance, AvailableBalance, MaxWithdrawAmount, ExchangeUpdatedAtUtc FROM ExchangeBalances WHERE ExchangeAccountId = @ExchangeAccountId AND IsDeleted = 0 ORDER BY UpdatedDate DESC;" -Parameters @{ ExchangeAccountId = $ExchangeAccountId } }
+function Set-SmokeBotEnabled {
+    param([string]$ConnectionString, [guid]$BotId, [bool]$IsEnabled)
+    Invoke-SqlNonQuery -ConnectionString $ConnectionString -CommandText "UPDATE TradingBots SET IsEnabled = @IsEnabled, UpdatedDate = SYSUTCDATETIME() WHERE Id = @BotId AND IsDeleted = 0;" -Parameters @{ BotId = $BotId; IsEnabled = $IsEnabled } | Out-Null
+}
 
 function Build-EnvironmentVariables {
     param([string]$ConnectionString, [string]$BaseUrl, [string]$UserId, [guid]$BotId, [string]$Symbol, [bool]$PilotActivationEnabled, [string]$WorkerInstanceId)
-    return @{ DOTNET_CLI_HOME = (Join-Path $repoRoot '.dotnet'); DOTNET_SKIP_FIRST_TIME_EXPERIENCE = '1'; DOTNET_NOLOGO = '1'; ASPNETCORE_ENVIRONMENT = 'Development'; DOTNET_ENVIRONMENT = 'Development'; ASPNETCORE_URLS = $BaseUrl; ConnectionStrings__DefaultConnection = $ConnectionString; JobOrchestration__Enabled = 'true'; JobOrchestration__SchedulerPollIntervalSeconds = '1'; JobOrchestration__BotExecutionIntervalSeconds = '5'; JobOrchestration__InitialRetryDelaySeconds = '1'; JobOrchestration__MaxRetryDelaySeconds = '5'; JobOrchestration__MaxRetryAttempts = '5'; JobOrchestration__WorkerInstanceId = $WorkerInstanceId; ExchangeSync__Binance__SessionScanIntervalSeconds = '5'; ExchangeSync__Binance__ReconnectDelaySeconds = '5'; ExchangeSync__Binance__ReconciliationIntervalMinutes = '1'; BotExecutionPilot__Enabled = 'true'; BotExecutionPilot__PilotActivationEnabled = if ($PilotActivationEnabled) { 'true' } else { 'false' }; BotExecutionPilot__SignalEvaluationMode = 'Live'; BotExecutionPilot__DefaultSymbol = $Symbol; BotExecutionPilot__Timeframe = '1m'; BotExecutionPilot__DefaultLeverage = '1'; BotExecutionPilot__DefaultMarginType = 'ISOLATED'; BotExecutionPilot__AllowedUserIds__0 = $UserId; BotExecutionPilot__AllowedBotIds__0 = $BotId.ToString('N'); BotExecutionPilot__AllowedSymbols__0 = $Symbol; BotExecutionPilot__AllowedSymbols__1 = ''; BotExecutionPilot__AllowedSymbols__2 = ''; BotExecutionPilot__MaxPilotOrderNotional = '250'; BotExecutionPilot__MaxOpenPositionsPerUser = '1'; BotExecutionPilot__PerBotCooldownSeconds = '120'; BotExecutionPilot__PerSymbolCooldownSeconds = '60'; BotExecutionPilot__MaxDailyLossPercentage = '1'; BotExecutionPilot__PrimeHistoricalCandleCount = '120' }
+    return @{
+        DOTNET_CLI_HOME = (Join-Path $repoRoot '.dotnet')
+        DOTNET_SKIP_FIRST_TIME_EXPERIENCE = '1'
+        DOTNET_NOLOGO = '1'
+        ASPNETCORE_ENVIRONMENT = 'Development'
+        DOTNET_ENVIRONMENT = 'Development'
+        ASPNETCORE_URLS = $BaseUrl
+        ConnectionStrings__DefaultConnection = $ConnectionString
+        JobOrchestration__Enabled = 'true'
+        JobOrchestration__SchedulerPollIntervalSeconds = '1'
+        JobOrchestration__BotExecutionIntervalSeconds = '1'
+        JobOrchestration__InitialRetryDelaySeconds = '1'
+        JobOrchestration__MaxRetryDelaySeconds = '5'
+        JobOrchestration__MaxRetryAttempts = '5'
+        JobOrchestration__WorkerInstanceId = $WorkerInstanceId
+        MarketData__Binance__Enabled = 'true'
+        MarketData__Binance__RestBaseUrl = 'https://testnet.binancefuture.com'
+        MarketData__Binance__WebSocketBaseUrl = 'wss://fstream.binancefuture.com'
+        MarketData__Binance__SeedSymbols__0 = $Symbol
+        MarketData__HistoricalGapFiller__Enabled = 'false'
+        MarketData__Scanner__Enabled = 'false'
+        MarketData__Scanner__HandoffEnabled = 'false'
+        ExchangeSync__Binance__Enabled = 'true'
+        ExchangeSync__Binance__RestBaseUrl = 'https://testnet.binancefuture.com'
+        ExchangeSync__Binance__WebSocketBaseUrl = 'wss://fstream.binancefuture.com'
+        ExchangeSync__Binance__SessionScanIntervalSeconds = '5'
+        ExchangeSync__Binance__ReconnectDelaySeconds = '5'
+        ExchangeSync__Binance__ReconciliationIntervalMinutes = '1'
+        BotExecutionPilot__Enabled = 'true'
+        BotExecutionPilot__PilotActivationEnabled = if ($PilotActivationEnabled) { 'true' } else { 'false' }
+        BotExecutionPilot__SignalEvaluationMode = 'Live'
+        BotExecutionPilot__DefaultSymbol = $Symbol
+        BotExecutionPilot__Timeframe = '1m'
+        BotExecutionPilot__DefaultLeverage = '1'
+        BotExecutionPilot__DefaultMarginType = 'ISOLATED'
+        BotExecutionPilot__AllowedUserIds__0 = $UserId
+        BotExecutionPilot__AllowedBotIds__0 = $BotId.ToString('N')
+        BotExecutionPilot__AllowedSymbols__0 = $Symbol
+        BotExecutionPilot__AllowedSymbols__1 = ''
+        BotExecutionPilot__AllowedSymbols__2 = ''
+        BotExecutionPilot__MaxPilotOrderNotional = '250'
+        BotExecutionPilot__MaxOpenPositionsPerUser = '1'
+        BotExecutionPilot__PerBotCooldownSeconds = '120'
+        BotExecutionPilot__PerSymbolCooldownSeconds = '60'
+        BotExecutionPilot__MaxDailyLossPercentage = '1'
+        BotExecutionPilot__PrimeHistoricalCandleCount = '120'
+    }
 }
 if (Test-Path $runRoot) { Remove-Item $runRoot -Recurse -Force }
 New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
@@ -306,9 +389,11 @@ $apiCredentialId = [Guid]'74444444-4444-4444-4444-444444444444'
 $botId = [Guid]'75555555-5555-5555-5555-555555555555'
 $symbol = [string]$bootstrap.Source.Symbol
 $summary = [ordered]@{
+    SelectedPlane = 'Futures'
     SmokeDatabaseName = $smokeDatabaseName
     SummaryPath = $summaryPath
     SourcePreflight = [ordered]@{
+        SelectedPlane = 'Futures'
         ActiveAccounts = $bootstrap.Preflight.ActiveAccounts
         EnabledBots = $bootstrap.Preflight.EnabledBots
         OpenExecutionOrders = $bootstrap.Preflight.OpenExecutionOrders
@@ -316,6 +401,9 @@ $summary = [ordered]@{
         Symbol = $symbol
         ValidationStatus = $bootstrap.Source.ValidationStatus
         EnvironmentScope = $bootstrap.Source.EnvironmentScope
+        SupportsSpot = $bootstrap.Source.SupportsSpot
+        SupportsFutures = $bootstrap.Source.SupportsFutures
+        SmokePolicyMode = 'RecommendOnly'
         PrivateStreamConnectionState = $bootstrap.Source.PrivateStreamConnectionState
         DriftStatus = $bootstrap.Source.DriftStatus
     }
@@ -327,6 +415,7 @@ $submitWorkerHandle = $null
 
 try {
     $webEnvironment = Build-EnvironmentVariables -ConnectionString $connectionString -BaseUrl $baseUrl -UserId $smokeUserId -BotId $botId -Symbol $symbol -PilotActivationEnabled:$false -WorkerInstanceId 'pilot-lifecycle-web'
+    $webEnvironment['JobOrchestration__Enabled'] = 'false'
     $webHandle = Start-ManagedProcess -FilePath 'dotnet' -ArgumentList @('run', '--project', 'src\CoinBot.Web\CoinBot.Web.csproj', '--no-build', '--no-launch-profile') -WorkingDirectory $repoRoot -StandardOutputPath $webStdOutPath -StandardErrorPath $webStdErrPath -EnvironmentVariables $webEnvironment
 
     Wait-Until -Name 'web startup' -TimeoutSeconds 120 -Condition {
@@ -368,6 +457,7 @@ try {
     if ($warmupOrders.Count -ne 0) { throw "Warm-up phase created execution orders while PilotActivationEnabled=false. Count=$($warmupOrders.Count)." }
     $summary.WarmupSubmitBlocked = $true
     $summary.WarmupWorkerLines = Get-LatestLogLines -Path $warmupStdOutPath -Pattern 'PilotActivationEnabled is false|readiness|skipped submit' -Take 20
+    Set-SmokeBotEnabled -ConnectionString $connectionString -BotId $botId -IsEnabled:$false
 
     Stop-ManagedProcess -Handle $warmupWorkerHandle
     $warmupWorkerHandle = $null
@@ -375,21 +465,50 @@ try {
     $submitEnvironment = Build-EnvironmentVariables -ConnectionString $connectionString -BaseUrl $baseUrl -UserId $smokeUserId -BotId $botId -Symbol $symbol -PilotActivationEnabled:$true -WorkerInstanceId 'pilot-lifecycle-submit'
     $submitWorkerHandle = Start-ManagedProcess -FilePath 'dotnet' -ArgumentList @('run', '--project', 'src\CoinBot.Worker\CoinBot.Worker.csproj', '--no-build', '--no-launch-profile') -WorkingDirectory $repoRoot -StandardOutputPath $submitStdOutPath -StandardErrorPath $submitStdErrPath -EnvironmentVariables $submitEnvironment
 
+    $submitWorkerReadiness = Wait-Until -Name 'submit worker market readiness' -TimeoutSeconds 180 -Condition {
+        $snapshot = Get-ReadinessSnapshot -ConnectionString $connectionString -ExchangeAccountId $exchangeAccountId -Symbol $symbol -Timeframe '1m'
+        if ($null -eq $snapshot) { return $null }
+        if ($snapshot.StateCode -ne 'Normal' -or $snapshot.ReasonCode -ne 'None') { return $null }
+        if ($snapshot.PrivateStreamConnectionState -ne 'Connected' -or $snapshot.DriftStatus -ne 'InSync') { return $null }
+        if ($null -eq $snapshot.LastPrivateSyncAtUtc -or $null -eq $snapshot.LatestHeartbeatReceivedAtUtc) { return $null }
+
+        $heartbeatAdvanced = [DateTime]$snapshot.LatestHeartbeatReceivedAtUtc -gt ([DateTime]$summary.SubmitReadiness.LatestHeartbeatReceivedAtUtc)
+        $dataAdvanced = $null -ne $snapshot.LatestDataTimestampAtUtc -and [DateTime]$snapshot.LatestDataTimestampAtUtc -gt $baselineDataTimestampUtc
+        if (-not $heartbeatAdvanced -and -not $dataAdvanced) { return $null }
+
+        return $snapshot
+    }
+
+    $summary.SubmitWorkerReadiness = $submitWorkerReadiness
+    Set-SmokeBotEnabled -ConnectionString $connectionString -BotId $botId -IsEnabled:$true
+
     $firstOrder = Wait-Until -Name 'first pilot execution order' -TimeoutSeconds 240 -Condition {
         $rows = @(Get-SmokeOrders -ConnectionString $connectionString -BotId $botId)
         if ($rows.Count -eq 0) { return $null }
         return $rows[0]
     }
 
-    if (-not $firstOrder.SubmittedToBroker -and -not [string]::IsNullOrWhiteSpace([string]$firstOrder.FailureCode)) {
-        throw "Pilot submit stopped before broker dispatch. FailureCode=$($firstOrder.FailureCode)."
+    $submittedOrBlockedOrder = Wait-Until -Name 'broker submit or terminal pre-submit rejection' -TimeoutSeconds 240 -Condition {
+        $row = (Get-SmokeOrders -ConnectionString $connectionString -BotId $botId | Where-Object { $_.Id -eq $firstOrder.Id } | Select-Object -First 1)
+        if ($null -eq $row) { return $null }
+        if (-not [string]::IsNullOrWhiteSpace([string]$row.FailureCode)) { return $row }
+        if ($row.SubmittedToBroker -and $null -ne $row.SubmittedAtUtc) { return $row }
+        return $null
     }
 
-    $finalOrder = Wait-Until -Name 'broker submit or terminal lifecycle state' -TimeoutSeconds 240 -Condition {
-        $row = (Get-SmokeOrders -ConnectionString $connectionString -BotId $botId | Select-Object -First 1)
+    Set-SmokeBotEnabled -ConnectionString $connectionString -BotId $botId -IsEnabled:$false
+    Stop-ManagedProcess -Handle $submitWorkerHandle
+    $submitWorkerHandle = $null
+
+    if (-not $submittedOrBlockedOrder.SubmittedToBroker -and -not [string]::IsNullOrWhiteSpace([string]$submittedOrBlockedOrder.FailureCode)) {
+        throw "Pilot submit stopped before broker dispatch. FailureCode=$($submittedOrBlockedOrder.FailureCode)."
+    }
+
+    $finalOrder = Wait-Until -Name 'broker response or terminal lifecycle state' -TimeoutSeconds 240 -Condition {
+        $row = (Get-SmokeOrders -ConnectionString $connectionString -BotId $botId | Where-Object { $_.Id -eq $firstOrder.Id } | Select-Object -First 1)
         if ($null -eq $row) { return $null }
-        if ($row.SubmittedToBroker) { return $row }
-        if ($row.State -in @('Rejected','Cancelled','Filled','PartiallyFilled','Submitted') -and -not [string]::IsNullOrWhiteSpace([string]$row.FailureCode)) { return $row }
+        if ($row.State -in @('Rejected','Cancelled','Filled','PartiallyFilled') -and ($row.SubmittedToBroker -or -not [string]::IsNullOrWhiteSpace([string]$row.FailureCode))) { return $row }
+        if ($row.SubmittedToBroker -and $null -ne $row.SubmittedAtUtc -and -not [string]::IsNullOrWhiteSpace([string]$row.ExternalOrderId) -and $row.State -eq 'Submitted') { return $row }
         return $null
     }
 
@@ -397,10 +516,15 @@ try {
         throw "Pilot order never reached broker submit. State=$($finalOrder.State); FailureCode=$($finalOrder.FailureCode)."
     }
 
+    if ($finalOrder.Plane -ne 'Futures') {
+        throw "Pilot smoke resolved unexpected execution plane. Plane=$($finalOrder.Plane)."
+    }
+
     $transitions = Wait-Until -Name 'execution transitions' -TimeoutSeconds 180 -Condition {
         $rows = @(Get-SmokeTransitions -ConnectionString $connectionString -ExecutionOrderId ([Guid]$finalOrder.Id))
-        if ($rows.Count -ge 2) { return $rows }
-        return $null
+        if ($rows.Count -lt 4) { return $null }
+        if (-not ($rows | Where-Object { $_.State -in @('Submitted','PartiallyFilled','Filled','Rejected','Cancelled') })) { return $null }
+        return $rows
     }
 
     $orders = @(Get-SmokeOrders -ConnectionString $connectionString -BotId $botId)
@@ -417,15 +541,22 @@ try {
     $summary.OrderCount = $orders.Count
     $summary.PositionCount = $summary.Positions.Count
     $summary.BalanceCount = $summary.Balances.Count
+    $summary.ReconciliationExpectation = if ($summary.FinalOrder.ReconciliationStatus -eq 'Unknown') { 'AcceptedInterimStateUntilAsyncReconciliationRuns' } else { 'Observed' }
+    $summary.ReconciliationNote = 'Pilot runtime smoke uses futures private-stream and order telemetry for immediate closure. ReconciliationStatus=Unknown is accepted at smoke completion until asynchronous reconciliation advances in a later cycle.'
+    $summary.SmokePolicyMode = 'RecommendOnly'
 
     $summary | ConvertTo-Json -Depth 8 | Set-Content -Path $summaryPath -Encoding UTF8
 
+    Write-Host ('SelectedPlane=' + $summary.SelectedPlane)
+    Write-Host ('SmokePolicyMode=' + $summary.SmokePolicyMode)
     Write-Host ('SmokeDatabaseName=' + $smokeDatabaseName)
     Write-Host ('WarmupSubmitBlocked=' + $summary.WarmupSubmitBlocked)
     Write-Host ('BrokerSubmitReached=' + $summary.BrokerSubmitReached)
+    Write-Host ('OrderPlane=' + $summary.FinalOrder.Plane)
     Write-Host ('OrderState=' + $summary.FinalOrder.State)
     Write-Host ('FailureCode=' + ($summary.FinalOrder.FailureCode ?? 'none'))
     Write-Host ('ExternalOrderIdPresent=' + $summary.ExternalOrderIdPresent)
+    Write-Host ('ReconciliationStatus=' + ($summary.FinalOrder.ReconciliationStatus ?? 'none'))
     Write-Host ('PositionCount=' + $summary.PositionCount)
     Write-Host ('BalanceCount=' + $summary.BalanceCount)
     Write-Host ('SummaryPath=' + $summaryPath)
@@ -435,6 +566,17 @@ finally {
     Stop-ManagedProcess -Handle $warmupWorkerHandle
     Stop-ManagedProcess -Handle $webHandle
 }
+
+
+
+
+
+
+
+
+
+
+
 
 
 

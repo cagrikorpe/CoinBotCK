@@ -39,7 +39,7 @@ public sealed class DataLatencyCircuitBreakerTests
             new DataLatencyHeartbeat("binance-btcusdt", harness.TimeProvider.GetUtcNow().UtcDateTime),
             correlationId: "corr-latency-002");
 
-        harness.TimeProvider.Advance(TimeSpan.FromSeconds(3));
+        harness.TimeProvider.Advance(TimeSpan.FromSeconds(4));
 
         var degradedSnapshot = await harness.CircuitBreaker.GetSnapshotAsync(correlationId: "corr-latency-003");
 
@@ -231,7 +231,7 @@ public sealed class DataLatencyCircuitBreakerTests
         Assert.Equal("Binance.WebSocket.Kline", snapshot.LatestHeartbeatSource);
         Assert.Equal("BTCUSDT", snapshot.LatestSymbol);
         Assert.Equal("1m", snapshot.LatestTimeframe);
-        Assert.Equal(sharedKline.CloseTimeUtc, snapshot.LatestDataTimestampAtUtc);
+        Assert.Equal(sharedKline.ReceivedAtUtc, snapshot.LatestDataTimestampAtUtc);
         Assert.Equal(sharedKline.ReceivedAtUtc, snapshot.LatestHeartbeatReceivedAtUtc);
         Assert.Equal(sharedKline.CloseTimeUtc.AddMilliseconds(1), snapshot.LatestExpectedOpenTimeUtc);
         Assert.Equal(1, marketDataService.SharedKlineReadCount);
@@ -279,7 +279,7 @@ public sealed class DataLatencyCircuitBreakerTests
             "Binance.WebSocket.Kline");
         var marketDataService = new FakeMarketDataService(sharedKline);
         await using var harness = CreateHarness(marketDataService);
-        harness.TimeProvider.Advance(TimeSpan.FromSeconds(3));
+        harness.TimeProvider.Advance(TimeSpan.FromSeconds(4));
 
         var snapshot = await harness.CircuitBreaker.GetSnapshotAsync(
             correlationId: "corr-shared-kline-003",
@@ -468,9 +468,9 @@ public sealed class DataLatencyCircuitBreakerTests
                     SharedMarketDataCacheDataType.Kline,
                     normalizedSnapshot.Symbol,
                     normalizedSnapshot.Interval,
-                    UpdatedAtUtc: normalizedSnapshot.CloseTimeUtc,
+                    UpdatedAtUtc: normalizedSnapshot.ReceivedAtUtc,
                     CachedAtUtc: normalizedSnapshot.ReceivedAtUtc,
-                    FreshUntilUtc: normalizedSnapshot.CloseTimeUtc.AddSeconds(15),
+                    FreshUntilUtc: normalizedSnapshot.ReceivedAtUtc.AddSeconds(15),
                     ExpiresAtUtc: normalizedSnapshot.ReceivedAtUtc.AddMinutes(5),
                     Source: normalizedSnapshot.Source,
                     Payload: normalizedSnapshot));
@@ -552,6 +552,7 @@ public sealed class DataLatencyCircuitBreakerTests
         }
     }
 }
+
 
 
 

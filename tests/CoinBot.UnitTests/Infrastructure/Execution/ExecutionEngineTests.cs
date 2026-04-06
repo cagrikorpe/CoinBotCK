@@ -287,9 +287,13 @@ public sealed class ExecutionEngineTests
         Assert.Equal(ExecutionEnvironment.Live, result.Order.ExecutionEnvironment);
         Assert.Equal(ExecutionOrderExecutorKind.Binance, result.Order.ExecutorKind);
         Assert.Equal(ExecutionOrderState.Submitted, result.Order.State);
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync(entity => entity.Id == result.Order.ExecutionOrderId);
+
+        Assert.Equal(ExchangeDataPlane.Futures, persistedOrder.Plane);
         Assert.Equal(1, harness.PrivateRestClient.EnsureMarginTypeCalls);
         Assert.Equal(1, harness.PrivateRestClient.EnsureLeverageCalls);
         Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal(0, harness.SpotPrivateRestClient.PlaceOrderCalls);
     }
 
     [Fact]
@@ -1895,6 +1899,9 @@ public sealed class ExecutionEngineTests
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 }
+
+
+
 
 
 

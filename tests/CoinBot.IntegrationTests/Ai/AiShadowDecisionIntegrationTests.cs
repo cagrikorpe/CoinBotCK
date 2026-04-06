@@ -188,8 +188,11 @@ public sealed class AiShadowDecisionIntegrationTests
 
             Assert.True(result.IsSuccessful);
             Assert.Equal(ExecutionOrderState.Submitted, submittedOrder.State);
+            Assert.Equal(ExchangeDataPlane.Futures, submittedOrder.Plane);
+            Assert.Equal(ExchangeStateDriftStatus.Unknown, submittedOrder.ReconciliationStatus);
             Assert.Empty(harness.DbContext.AiShadowDecisions);
             Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+            Assert.Equal(0, harness.SpotPrivateRestClient.PlaceOrderCalls);
 
             harness.TimeProvider.Advance(TimeSpan.FromMinutes(1));
             var filledAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime;
@@ -441,7 +444,7 @@ public sealed class AiShadowDecisionIntegrationTests
             timeProvider,
             NullLogger<BotWorkerJobProcessor>.Instance);
 
-        return new TestHarness(dbContext, processor, switchService, circuitBreaker, timeProvider, privateRestClient, pilotOptions);
+        return new TestHarness(dbContext, processor, switchService, circuitBreaker, timeProvider, privateRestClient, spotPrivateRestClient, pilotOptions);
     }
 
     private static AiSignalOptions CreateEnabledAiOptions()
@@ -872,8 +875,12 @@ public sealed class AiShadowDecisionIntegrationTests
 
     private sealed class FakeSpotPrivateRestClient(TimeProvider timeProvider) : IBinanceSpotPrivateRestClient
     {
+        public int PlaceOrderCalls { get; private set; }
+
         public Task<BinanceOrderPlacementResult> PlaceOrderAsync(BinanceOrderPlacementRequest request, CancellationToken cancellationToken = default)
         {
+            PlaceOrderCalls++;
+
             var snapshot = new BinanceOrderStatusSnapshot(
                 request.Symbol,
                 "spot-order-1",
@@ -940,6 +947,7 @@ public sealed class AiShadowDecisionIntegrationTests
         IDataLatencyCircuitBreaker circuitBreaker,
         AdjustableTimeProvider timeProvider,
         FakePrivateRestClient privateRestClient,
+        FakeSpotPrivateRestClient spotPrivateRestClient,
         BotExecutionPilotOptions pilotOptions) : IAsyncDisposable
     {
         public ApplicationDbContext DbContext { get; } = dbContext;
@@ -948,6 +956,7 @@ public sealed class AiShadowDecisionIntegrationTests
         public IDataLatencyCircuitBreaker CircuitBreaker { get; } = circuitBreaker;
         public AdjustableTimeProvider TimeProvider { get; } = timeProvider;
         public FakePrivateRestClient PrivateRestClient { get; } = privateRestClient;
+        public FakeSpotPrivateRestClient SpotPrivateRestClient { get; } = spotPrivateRestClient;
         public BotExecutionPilotOptions PilotOptions { get; } = pilotOptions;
 
         public async ValueTask DisposeAsync()
@@ -956,5 +965,7 @@ public sealed class AiShadowDecisionIntegrationTests
         }
     }
 }
+
+
 
 

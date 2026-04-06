@@ -248,7 +248,22 @@ public sealed class ExecutionOrderLifecycleService(
         }
 
         await UpdateBotOpenOrderCountAsync(order.BotId, cancellationToken);
-        await dbContext.SaveChangesAsync(cancellationToken);
+
+        try
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException exception) when (transition is not null && IsDuplicateTransitionSequenceViolation(exception))
+        {
+            logger.LogInformation(
+                exception,
+                "Execution order lifecycle suppressed duplicate transition persistence for order {ExecutionOrderId} at sequence {SequenceNumber}.",
+                order.Id,
+                transition.SequenceNumber);
+
+            dbContext.ChangeTracker.Clear();
+            return;
+        }
 
         if (transition is not null)
         {
@@ -332,6 +347,13 @@ public sealed class ExecutionOrderLifecycleService(
                           !entity.IsDeleted &&
                           OpenStates.Contains(entity.State),
                 cancellationToken);
+    }
+
+    private static bool IsDuplicateTransitionSequenceViolation(DbUpdateException exception)
+    {
+        const string IndexName = "IX_ExecutionOrderTransitions_ExecutionOrderId_SequenceNumber";
+        return exception.Message.Contains(IndexName, StringComparison.OrdinalIgnoreCase) ||
+            exception.InnerException?.Message.Contains(IndexName, StringComparison.OrdinalIgnoreCase) == true;
     }
 
     private static BinanceOrderStatusSnapshot NormalizeSnapshot(BinanceOrderStatusSnapshot snapshot)
@@ -753,3 +775,4 @@ public sealed class ExecutionOrderLifecycleService(
         return $"{runtimeLabel}/{executionLabel}";
     }
 }
+

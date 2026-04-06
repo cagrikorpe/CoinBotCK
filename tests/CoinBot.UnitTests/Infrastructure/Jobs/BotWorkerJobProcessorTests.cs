@@ -59,10 +59,13 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
         Assert.Equal(ExecutionEnvironment.Live, persistedOrder.ExecutionEnvironment);
         Assert.Equal(ExecutionOrderExecutorKind.Binance, persistedOrder.ExecutorKind);
+        Assert.Equal(ExchangeDataPlane.Futures, persistedOrder.Plane);
+        Assert.Equal(ExchangeStateDriftStatus.Unknown, persistedOrder.ReconciliationStatus);
         Assert.Equal(0.002m, persistedOrder.Quantity);
         Assert.Equal(1, harness.PrivateRestClient.EnsureMarginTypeCalls);
         Assert.Equal(1, harness.PrivateRestClient.EnsureLeverageCalls);
         Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal(0, harness.SpotPrivateRestClient.PlaceOrderCalls);
         Assert.StartsWith("cbp0_", harness.PrivateRestClient.LastPlacedClientOrderId, StringComparison.Ordinal);
         Assert.Equal("BTCUSDT", persistedOrder.Symbol);
     }
@@ -306,8 +309,10 @@ public sealed class BotWorkerJobProcessorTests
         Assert.True(result.IsSuccessful);
         Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
         Assert.Equal(ExecutionEnvironment.Live, persistedOrder.ExecutionEnvironment);
+        Assert.Equal(ExchangeDataPlane.Futures, persistedOrder.Plane);
         Assert.Empty(harness.DbContext.AiShadowDecisions);
         Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal(0, harness.SpotPrivateRestClient.PlaceOrderCalls);
     }
 
     [Fact]
@@ -718,6 +723,7 @@ public sealed class BotWorkerJobProcessorTests
             circuitBreaker,
             timeProvider,
             privateRestClient,
+            spotPrivateRestClient,
             pilotOptions);
     }
 
@@ -1299,10 +1305,14 @@ public sealed class BotWorkerJobProcessorTests
 
     private sealed class FakeSpotPrivateRestClient(TimeProvider timeProvider) : IBinanceSpotPrivateRestClient
     {
+        public int PlaceOrderCalls { get; private set; }
+
         public Task<BinanceOrderPlacementResult> PlaceOrderAsync(
             BinanceOrderPlacementRequest request,
             CancellationToken cancellationToken = default)
         {
+            PlaceOrderCalls++;
+
             var snapshot = new BinanceOrderStatusSnapshot(
                 request.Symbol,
                 "spot-order-1",
@@ -1395,6 +1405,7 @@ public sealed class BotWorkerJobProcessorTests
         IDataLatencyCircuitBreaker circuitBreaker,
         AdjustableTimeProvider timeProvider,
         FakePrivateRestClient privateRestClient,
+        FakeSpotPrivateRestClient spotPrivateRestClient,
         BotExecutionPilotOptions pilotOptions) : IAsyncDisposable
     {
         public ApplicationDbContext DbContext { get; } = dbContext;
@@ -1409,6 +1420,8 @@ public sealed class BotWorkerJobProcessorTests
 
         public FakePrivateRestClient PrivateRestClient { get; } = privateRestClient;
 
+        public FakeSpotPrivateRestClient SpotPrivateRestClient { get; } = spotPrivateRestClient;
+
         public BotExecutionPilotOptions PilotOptions { get; } = pilotOptions;
 
         public async ValueTask DisposeAsync()
@@ -1417,5 +1430,7 @@ public sealed class BotWorkerJobProcessorTests
         }
     }
 }
+
+
 
 

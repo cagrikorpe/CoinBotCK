@@ -336,13 +336,13 @@ public sealed class MarketDataService(
         }
 
         var cachedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
-        var freshUntilUtc = normalizedSnapshot.CloseTimeUtc.Add(cachePolicyProvider.GetFreshness(SharedMarketDataCacheDataType.Kline));
+        var freshUntilUtc = normalizedSnapshot.ReceivedAtUtc.Add(cachePolicyProvider.GetFreshness(SharedMarketDataCacheDataType.Kline));
         var cacheResult = await sharedMarketDataCache.WriteAsync(
             new SharedMarketDataCacheEntry<MarketCandleSnapshot>(
                 SharedMarketDataCacheDataType.Kline,
                 normalizedSnapshot.Symbol,
                 normalizedSnapshot.Interval,
-                UpdatedAtUtc: normalizedSnapshot.CloseTimeUtc,
+                UpdatedAtUtc: normalizedSnapshot.ReceivedAtUtc,
                 CachedAtUtc: cachedAtUtc,
                 FreshUntilUtc: freshUntilUtc,
                 ExpiresAtUtc: cachedAtUtc.Add(cachePolicyProvider.GetRetention(SharedMarketDataCacheDataType.Kline)),
@@ -556,3 +556,4 @@ public sealed class MarketDataService(
         return result;
     }
 }
+
