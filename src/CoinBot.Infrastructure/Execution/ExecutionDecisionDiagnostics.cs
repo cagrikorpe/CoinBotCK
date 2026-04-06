@@ -89,6 +89,32 @@ internal static class ExecutionDecisionDiagnostics
             return "TradingModeMismatch";
         }
 
+        if (string.Equals(reasonCode, ExecutionGateBlockedReason.PilotConfigurationMissing.ToString(), StringComparison.Ordinal) ||
+            string.Equals(reasonCode, ExecutionGateBlockedReason.PilotRequiresDevelopment.ToString(), StringComparison.Ordinal) ||
+            string.Equals(reasonCode, ExecutionGateBlockedReason.PilotTestnetEndpointMismatch.ToString(), StringComparison.Ordinal) ||
+            string.Equals(reasonCode, ExecutionGateBlockedReason.PilotCredentialValidationUnavailable.ToString(), StringComparison.Ordinal) ||
+            string.Equals(reasonCode, ExecutionGateBlockedReason.PilotCredentialEnvironmentMismatch.ToString(), StringComparison.Ordinal) ||
+            string.Equals(reasonCode, ExecutionGateBlockedReason.PrivatePlaneUnavailable.ToString(), StringComparison.Ordinal) ||
+            string.Equals(reasonCode, ExecutionGateBlockedReason.PrivatePlaneStale.ToString(), StringComparison.Ordinal) ||
+            reasonCode.StartsWith("Pilot", StringComparison.Ordinal))
+        {
+            return "PilotSafety";
+        }
+
+        if (reasonCode.StartsWith("UserExecution", StringComparison.Ordinal) &&
+            (reasonCode.Contains("Cooldown", StringComparison.OrdinalIgnoreCase) ||
+             reasonCode.Contains("MaxOpenPositions", StringComparison.OrdinalIgnoreCase) ||
+             reasonCode.Contains("MaxOrderSize", StringComparison.OrdinalIgnoreCase) ||
+             reasonCode.Contains("MaxDailyTrades", StringComparison.OrdinalIgnoreCase) ||
+             reasonCode.Contains("Notional", StringComparison.OrdinalIgnoreCase) ||
+             reasonCode.Contains("Allowed", StringComparison.OrdinalIgnoreCase) ||
+             reasonCode.Contains("Scope", StringComparison.OrdinalIgnoreCase) ||
+             reasonCode.Contains("ReduceOnly", StringComparison.OrdinalIgnoreCase) ||
+             reasonCode.Contains("SessionDisabled", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "PilotLimit";
+        }
+
         if (string.Equals(reasonCode, ExecutionGateBlockedReason.SwitchConfigurationMissing.ToString(), StringComparison.Ordinal) ||
             reasonCode.Contains("Missing", StringComparison.OrdinalIgnoreCase) ||
             reasonCode.Contains("Credential", StringComparison.OrdinalIgnoreCase) ||
@@ -139,6 +165,8 @@ internal static class ExecutionDecisionDiagnostics
             "GlobalExecutionOff" => "Global execution switch blocked execution.",
             "TradingModeMismatch" => "Trading mode mismatch blocked execution.",
             "MissingPrivatePlaneOrConfig" => "Required private-plane, balance or config state is missing.",
+            "PilotSafety" => "Pilot safety pack blocked execution.",
+            "PilotLimit" => "Pilot limit blocked execution.",
             "DuplicateSuppression" => "Duplicate execution request was suppressed.",
             "StrategyCandidate" => "Strategy did not produce an executable candidate.",
             _ => $"Execution decision blocked the request ({reasonCode})."
@@ -336,3 +364,5 @@ internal static class ExecutionDecisionDiagnostics
             : value;
     }
 }
+
+

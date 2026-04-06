@@ -1,3 +1,4 @@
+using System.Globalization;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Policy;
 using CoinBot.Application.Abstractions.Risk;
@@ -30,6 +31,10 @@ public sealed class UserExecutionOverrideGuard(
 
         var normalizedUserId = NormalizeRequired(request.UserId, nameof(request.UserId));
         var normalizedSymbol = NormalizeRequired(request.Symbol, nameof(request.Symbol)).ToUpperInvariant();
+        var pilotContextRequested = IsPilotContextRequested(request.Context);
+        var pilotGuardSummary = pilotContextRequested
+            ? BuildPilotGuardSummary(request, normalizedUserId, normalizedSymbol)
+            : null;
 
         if (globalPolicyEngine is not null)
         {
@@ -49,7 +54,8 @@ public sealed class UserExecutionOverrideGuard(
             {
                 return Block(
                     policyEvaluation.BlockCode ?? "GlobalPolicyBlocked",
-                    policyEvaluation.Message ?? "Execution blocked by global policy.");
+                    policyEvaluation.Message ?? "Execution blocked by global policy.",
+                    guardSummary: pilotGuardSummary);
             }
 
             if (policyEvaluation.IsAdvisory)
@@ -73,11 +79,24 @@ public sealed class UserExecutionOverrideGuard(
                 cancellationToken);
 
             if (resolution.EffectiveMode != ExecutionEnvironment.Live &&
-                !IsDevelopmentFuturesPilotOverrideAllowed(request.Context))
+                !pilotContextRequested)
             {
                 return Block(
                     "LiveProviderBlockedByResolvedDemoMode",
-                    "Live provider access blocked because the effective mode resolved to Demo.");
+                    "Live provider access blocked because the effective mode resolved to Demo.",
+                    guardSummary: pilotGuardSummary);
+            }
+        }
+
+        if (pilotContextRequested)
+        {
+            var pilotBlockedReasons = EvaluatePilotConfiguration(request, normalizedUserId, normalizedSymbol);
+            if (pilotBlockedReasons.Count > 0)
+            {
+                return Block(
+                    pilotBlockedReasons,
+                    $"Execution blocked because pilot scope constraints are not satisfied. BlockReasons={string.Join(",", pilotBlockedReasons)}; GuardSummary={pilotGuardSummary}",
+                    guardSummary: pilotGuardSummary);
             }
         }
 
@@ -85,7 +104,8 @@ public sealed class UserExecutionOverrideGuard(
         {
             return Block(
                 "UserExecutionSymbolConflict",
-                "Execution blocked because multiple enabled bots share the same symbol for the same user.");
+                "Execution blocked because multiple enabled bots share the same symbol for the same user.",
+                guardSummary: pilotGuardSummary);
         }
 
         var isReplacementOrder = request.ReplacesExecutionOrderId.HasValue;
@@ -111,7 +131,8 @@ public sealed class UserExecutionOverrideGuard(
         {
             return Block(
                 "UserExecutionBotCooldownActive",
-                "Execution blocked because the bot cooldown is still active.");
+                "Execution blocked because the bot cooldown is still active.",
+                guardSummary: pilotGuardSummary);
         }
 
         if (!isReplacementOrder &&
@@ -127,7 +148,8 @@ public sealed class UserExecutionOverrideGuard(
         {
             return Block(
                 "UserExecutionSymbolCooldownActive",
-                "Execution blocked because the symbol cooldown is still active.");
+                "Execution blocked because the symbol cooldown is still active.",
+                guardSummary: pilotGuardSummary);
         }
 
         if (!isReplacementOrder &&
@@ -137,15 +159,17 @@ public sealed class UserExecutionOverrideGuard(
         {
             return Block(
                 "UserExecutionMaxOpenPositionsExceeded",
-                "Execution blocked because the maximum open position limit has been reached.");
+                "Execution blocked because the maximum open position limit has been reached.",
+                guardSummary: pilotGuardSummary);
         }
 
+        RiskVetoResult? riskEvaluation = null;
         if (riskPolicyEvaluator is not null &&
             request.TradingStrategyId.HasValue &&
             request.TradingStrategyVersionId.HasValue &&
             !string.IsNullOrWhiteSpace(request.Timeframe))
         {
-            var riskEvaluation = await riskPolicyEvaluator.EvaluateAsync(
+            riskEvaluation = await riskPolicyEvaluator.EvaluateAsync(
                 new RiskPolicyEvaluationRequest(
                     normalizedUserId,
                     request.TradingStrategyId.Value,
@@ -165,8 +189,26 @@ public sealed class UserExecutionOverrideGuard(
                 return Block(
                     $"UserExecutionRisk{riskEvaluation.ReasonCode}",
                     $"Execution blocked because risk policy vetoed the order: {riskEvaluation.ReasonSummary}.",
-                    riskEvaluation);
+                    riskEvaluation,
+                    pilotGuardSummary);
             }
+
+            if (pilotContextRequested &&
+                riskEvaluation.Snapshot.CurrentDailyLossPercentage >= optionsValue.MaxDailyLossPercentage)
+            {
+                return Block(
+                    ["UserExecutionPilotDailyLossLimitExceeded"],
+                    $"Execution blocked because pilot daily loss limit is exceeded. CurrentDailyLossPercentage={riskEvaluation.Snapshot.CurrentDailyLossPercentage.ToString("0.##", CultureInfo.InvariantCulture)}; LimitPercentage={optionsValue.MaxDailyLossPercentage.ToString("0.##", CultureInfo.InvariantCulture)}; GuardSummary={pilotGuardSummary}",
+                    riskEvaluation,
+                    pilotGuardSummary);
+            }
+        }
+        else if (pilotContextRequested)
+        {
+            return Block(
+                ["UserExecutionPilotRiskEvaluationUnavailable"],
+                $"Execution blocked because pilot daily loss evaluation inputs are unavailable. GuardSummary={pilotGuardSummary}",
+                guardSummary: pilotGuardSummary);
         }
 
         var overrideEntity = await dbContext.UserExecutionOverrides
@@ -179,14 +221,15 @@ public sealed class UserExecutionOverrideGuard(
 
         if (overrideEntity is null)
         {
-            return Allow();
+            return Allow(pilotGuardSummary);
         }
 
         if (overrideEntity.SessionDisabled)
         {
             return Block(
                 "UserExecutionSessionDisabled",
-                "Execution blocked because the user session is disabled by override.");
+                "Execution blocked because the user session is disabled by override.",
+                guardSummary: pilotGuardSummary);
         }
 
         var allowedSymbols = ParseSymbols(overrideEntity.AllowedSymbolsCsv);
@@ -195,7 +238,8 @@ public sealed class UserExecutionOverrideGuard(
         {
             return Block(
                 "UserExecutionSymbolDenied",
-                "Execution blocked because the symbol is outside the allow-list.");
+                "Execution blocked because the symbol is outside the allow-list.",
+                guardSummary: pilotGuardSummary);
         }
 
         var deniedSymbols = ParseSymbols(overrideEntity.DeniedSymbolsCsv);
@@ -204,7 +248,8 @@ public sealed class UserExecutionOverrideGuard(
         {
             return Block(
                 "UserExecutionSymbolDenied",
-                "Execution blocked because the symbol is denied by override.");
+                "Execution blocked because the symbol is denied by override.",
+                guardSummary: pilotGuardSummary);
         }
 
         if (overrideEntity.MaxOrderSize is decimal maxOrderSize &&
@@ -212,7 +257,8 @@ public sealed class UserExecutionOverrideGuard(
         {
             return Block(
                 "UserExecutionMaxOrderSizeExceeded",
-                "Execution blocked because the order notional exceeds the user override cap.");
+                "Execution blocked because the order notional exceeds the user override cap.",
+                guardSummary: pilotGuardSummary);
         }
 
         if (overrideEntity.MaxDailyTrades is int maxDailyTrades &&
@@ -221,7 +267,8 @@ public sealed class UserExecutionOverrideGuard(
         {
             return Block(
                 "UserExecutionMaxDailyTradesExceeded",
-                "Execution blocked because the user daily trade cap has been reached.");
+                "Execution blocked because the user daily trade cap has been reached.",
+                guardSummary: pilotGuardSummary);
         }
 
         if (overrideEntity.ReduceOnly &&
@@ -229,12 +276,131 @@ public sealed class UserExecutionOverrideGuard(
         {
             return Block(
                 "UserExecutionReduceOnlyRequired",
-                "Execution blocked because reduce-only mode is enabled for the user.");
+                "Execution blocked because reduce-only mode is enabled for the user.",
+                guardSummary: pilotGuardSummary);
         }
 
-        return Allow();
+        return Allow(pilotGuardSummary);
     }
 
+    private IReadOnlyList<string> EvaluatePilotConfiguration(
+        UserExecutionOverrideEvaluationRequest request,
+        string normalizedUserId,
+        string normalizedSymbol)
+    {
+        var blockedReasons = new List<string>();
+        var allowedUserIds = optionsValue.AllowedUserIds
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Select(item => item.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var allowedBotIds = optionsValue.AllowedBotIds
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Select(item => item.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var allowedSymbols = ResolveConfiguredPilotSymbols();
+        var orderNotional = request.Quantity * request.Price;
+
+        if (request.Environment != ExecutionEnvironment.Live)
+        {
+            blockedReasons.Add("UserExecutionPilotEnvironmentInvalid");
+        }
+
+        if (request.Plane != ExchangeDataPlane.Futures)
+        {
+            blockedReasons.Add("UserExecutionPilotPlaneInvalid");
+        }
+
+        if (allowedUserIds.Length != 1)
+        {
+            blockedReasons.Add("UserExecutionPilotAllowedUsersConfigurationInvalid");
+        }
+        else if (!string.Equals(allowedUserIds[0], normalizedUserId, StringComparison.Ordinal))
+        {
+            blockedReasons.Add("UserExecutionPilotUserNotAllowed");
+        }
+
+        if (!request.BotId.HasValue)
+        {
+            blockedReasons.Add("UserExecutionPilotBotRequired");
+        }
+
+        if (allowedBotIds.Length != 1)
+        {
+            blockedReasons.Add("UserExecutionPilotAllowedBotsConfigurationInvalid");
+        }
+        else if (request.BotId.HasValue &&
+                 !string.Equals(allowedBotIds[0], request.BotId.Value.ToString("N"), StringComparison.OrdinalIgnoreCase))
+        {
+            blockedReasons.Add("UserExecutionPilotBotNotAllowed");
+        }
+
+        if (allowedSymbols.Count != 1)
+        {
+            blockedReasons.Add("UserExecutionPilotAllowedSymbolsConfigurationInvalid");
+        }
+        else if (!allowedSymbols.Contains(normalizedSymbol))
+        {
+            blockedReasons.Add("UserExecutionPilotSymbolNotAllowed");
+        }
+
+        if (optionsValue.MaxOpenPositionsPerUser != 1)
+        {
+            blockedReasons.Add("UserExecutionPilotMaxOpenPositionsConfigurationInvalid");
+        }
+
+        if (optionsValue.PerBotCooldownSeconds <= 0 || optionsValue.PerSymbolCooldownSeconds <= 0)
+        {
+            blockedReasons.Add("UserExecutionPilotCooldownConfigurationInvalid");
+        }
+
+        if (optionsValue.MaxOrderNotional <= 0m)
+        {
+            blockedReasons.Add("UserExecutionPilotNotionalConfigurationMissing");
+        }
+        else if (orderNotional > optionsValue.MaxOrderNotional)
+        {
+            blockedReasons.Add("UserExecutionPilotNotionalLimitExceeded");
+        }
+
+        if (optionsValue.MaxDailyLossPercentage <= 0m)
+        {
+            blockedReasons.Add("UserExecutionPilotDailyLossConfigurationMissing");
+        }
+
+        return blockedReasons
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private HashSet<string> ResolveConfiguredPilotSymbols()
+    {
+        var configuredSymbols = optionsValue.AllowedSymbols
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Select(item => item.Trim().ToUpperInvariant())
+            .ToHashSet(StringComparer.Ordinal);
+
+        if (configuredSymbols.Count == 0)
+        {
+            configuredSymbols.Add(NormalizeSymbol(optionsValue.DefaultSymbol));
+        }
+
+        return configuredSymbols;
+    }
+
+    private string BuildPilotGuardSummary(
+        UserExecutionOverrideEvaluationRequest request,
+        string normalizedUserId,
+        string normalizedSymbol)
+    {
+        var allowedUserCount = optionsValue.AllowedUserIds.Count(item => !string.IsNullOrWhiteSpace(item));
+        var allowedBotCount = optionsValue.AllowedBotIds.Count(item => !string.IsNullOrWhiteSpace(item));
+        var allowedSymbolCount = ResolveConfiguredPilotSymbols().Count;
+        var orderNotional = request.Quantity * request.Price;
+
+        return $"PilotUserId={normalizedUserId}; PilotBotId={request.BotId?.ToString("N") ?? "missing"}; Symbol={normalizedSymbol}; Plane={request.Plane}; AllowedUserCount={allowedUserCount}; AllowedBotCount={allowedBotCount}; AllowedSymbolCount={allowedSymbolCount}; MaxOpenPositions={optionsValue.MaxOpenPositionsPerUser}; PerBotCooldownSeconds={optionsValue.PerBotCooldownSeconds}; PerSymbolCooldownSeconds={optionsValue.PerSymbolCooldownSeconds}; MaxOrderNotional={optionsValue.MaxOrderNotional.ToString("0.##", CultureInfo.InvariantCulture)}; RequestedNotional={orderNotional.ToString("0.##", CultureInfo.InvariantCulture)}; MaxDailyLossPercentage={optionsValue.MaxDailyLossPercentage.ToString("0.##", CultureInfo.InvariantCulture)}";
+    }
     private async Task<bool> HasSameSymbolConflictAsync(
         string userId,
         Guid? currentBotId,
@@ -388,19 +554,29 @@ public sealed class UserExecutionOverrideGuard(
                 .ToHashSet(StringComparer.Ordinal);
     }
 
-    private static UserExecutionOverrideEvaluationResult Allow()
+    private static UserExecutionOverrideEvaluationResult Allow(string? guardSummary = null)
     {
-        return new UserExecutionOverrideEvaluationResult(false, null, null);
+        return new UserExecutionOverrideEvaluationResult(false, null, null, null, null, guardSummary);
     }
 
     private static UserExecutionOverrideEvaluationResult Block(
         string reason,
         string message,
-        RiskVetoResult? riskEvaluation = null)
+        RiskVetoResult? riskEvaluation = null,
+        string? guardSummary = null)
     {
-        return new UserExecutionOverrideEvaluationResult(true, reason, message, riskEvaluation);
+        return new UserExecutionOverrideEvaluationResult(true, reason, message, riskEvaluation, [reason], guardSummary);
     }
 
+    private static UserExecutionOverrideEvaluationResult Block(
+        IReadOnlyList<string> reasons,
+        string message,
+        RiskVetoResult? riskEvaluation = null,
+        string? guardSummary = null)
+    {
+        var primaryReason = reasons.Count == 0 ? "Blocked" : reasons[0];
+        return new UserExecutionOverrideEvaluationResult(true, primaryReason, message, riskEvaluation, reasons.ToArray(), guardSummary);
+    }
     private static string NormalizeRequired(string? value, string parameterName)
     {
         var normalizedValue = value?.Trim();
@@ -420,12 +596,10 @@ public sealed class UserExecutionOverrideGuard(
             : value.Trim().ToUpperInvariant();
     }
 
-    private bool IsDevelopmentFuturesPilotOverrideAllowed(string? context)
+    private static bool IsPilotContextRequested(string? context)
     {
-        return hostEnvironment?.IsDevelopment() == true &&
-               TryReadBooleanFlag(context, "DevelopmentFuturesTestnetPilot");
+        return TryReadBooleanFlag(context, "DevelopmentFuturesTestnetPilot");
     }
-
     private static bool TryReadBooleanFlag(string? context, string key)
     {
         if (string.IsNullOrWhiteSpace(context))
@@ -449,3 +623,5 @@ public sealed class UserExecutionOverrideGuard(
         return false;
     }
 }
+
+

@@ -10,6 +10,9 @@ using CoinBot.Infrastructure.Administration;
 using CoinBot.Infrastructure.Auditing;
 using CoinBot.Infrastructure.DemoPortfolio;
 using CoinBot.Infrastructure.Execution;
+using CoinBot.Infrastructure.Exchange;
+using CoinBot.Infrastructure.Jobs;
+using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Identity;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
@@ -236,8 +239,18 @@ public sealed class ExecutionGateTests
     [Fact]
     public async Task EnsureExecutionAllowedAsync_AllowsDevelopmentFuturesPilotOverride_WhenLivePathIsRequestedFromDemoMode()
     {
-        await using var harness = CreateHarness(environmentName: Environments.Development);
+        await using var harness = CreateHarness(
+            environmentName: Environments.Development,
+            useTestnetEndpoints: true,
+            pilotOptions: new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                PrivatePlaneFreshnessThresholdSeconds = 120
+            });
+        var exchangeAccountId = Guid.NewGuid();
+        var botId = Guid.NewGuid();
         await PrimeFreshMarketDataAsync(harness, "corr-pilot-1");
+        await SeedPilotSafetyAsync(harness, "user-pilot", exchangeAccountId);
         await harness.SwitchService.SetTradeMasterStateAsync(
             TradeMasterSwitchState.Armed,
             actor: "admin-pilot",
@@ -251,14 +264,117 @@ public sealed class ExecutionGateTests
                 Target: "bot-pilot",
                 Environment: ExecutionEnvironment.Live,
                 Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
-                CorrelationId: "corr-pilot-3"));
+                CorrelationId: "corr-pilot-3",
+                UserId: "user-pilot",
+                BotId: botId,
+                Symbol: "BTCUSDT",
+                Timeframe: "1m",
+                ExchangeAccountId: exchangeAccountId,
+                Plane: ExchangeDataPlane.Futures));
 
         var auditLog = await harness.DbContext.AuditLogs
             .SingleAsync(entity => entity.Action == "TradeExecution.Dispatch");
+        var decisionTrace = await harness.DbContext.DecisionTraces.SingleAsync();
 
         Assert.True(snapshot.IsPersisted);
         Assert.Equal("Allowed", auditLog.Outcome);
-        Assert.Contains("DevelopmentFuturesTestnetPilot=True", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("DecisionOutcome=Allow", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("PilotGuardSummary=PilotRequest=True", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("EndpointScopes=PrivateRest:Demo/PrivateWs:Demo/MarketRest:Demo/MarketWs:Demo", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("PilotBlockedReasons=none", auditLog.Context, StringComparison.Ordinal);
+        Assert.Equal("Allow", decisionTrace.DecisionOutcome);
+        Assert.Contains("\"pilotSafety\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EnsureExecutionAllowedAsync_BlocksPilotRequest_WhenConfiguredEndpointsResolveLive()
+    {
+        await using var harness = CreateHarness(
+            environmentName: Environments.Development,
+            pilotOptions: new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                PrivatePlaneFreshnessThresholdSeconds = 120
+            });
+        var exchangeAccountId = Guid.NewGuid();
+        var botId = Guid.NewGuid();
+        await PrimeFreshMarketDataAsync(harness, "corr-pilot-live-1");
+        await SeedPilotSafetyAsync(harness, "user-pilot-live", exchangeAccountId);
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-pilot-live",
+            context: "Execution open",
+            correlationId: "corr-pilot-live-2");
+
+        var exception = await Assert.ThrowsAsync<ExecutionGateRejectedException>(() =>
+            harness.ExecutionGate.EnsureExecutionAllowedAsync(
+                new ExecutionGateRequest(
+                    Actor: "system:bot-worker",
+                    Action: "TradeExecution.Dispatch",
+                    Target: "bot-pilot-live",
+                    Environment: ExecutionEnvironment.Live,
+                    Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                    CorrelationId: "corr-pilot-live-3",
+                    UserId: "user-pilot-live",
+                    BotId: botId,
+                    Symbol: "BTCUSDT",
+                    Timeframe: "1m",
+                    ExchangeAccountId: exchangeAccountId,
+                    Plane: ExchangeDataPlane.Futures)));
+
+        var auditLog = await harness.DbContext.AuditLogs.SingleAsync(entity => entity.Action == "TradeExecution.Dispatch");
+
+        Assert.Equal(ExecutionGateBlockedReason.PilotTestnetEndpointMismatch, exception.Reason);
+        Assert.Contains("PilotBlockedReasons=PilotTestnetEndpointMismatch", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("EndpointScopes=PrivateRest:Live/PrivateWs:Live/MarketRest:Live/MarketWs:Live", auditLog.Context, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EnsureExecutionAllowedAsync_BlocksPilotRequest_WhenPrivatePlaneIsStale()
+    {
+        await using var harness = CreateHarness(
+            environmentName: Environments.Development,
+            useTestnetEndpoints: true,
+            pilotOptions: new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                PrivatePlaneFreshnessThresholdSeconds = 120
+            });
+        var exchangeAccountId = Guid.NewGuid();
+        var botId = Guid.NewGuid();
+        await PrimeFreshMarketDataAsync(harness, "corr-pilot-stale-1");
+        await SeedPilotSafetyAsync(
+            harness,
+            "user-pilot-stale",
+            exchangeAccountId,
+            lastPrivateSyncAtUtc: harness.TimeProvider.GetUtcNow().UtcDateTime.AddMinutes(-5));
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-pilot-stale",
+            context: "Execution open",
+            correlationId: "corr-pilot-stale-2");
+
+        var exception = await Assert.ThrowsAsync<ExecutionGateRejectedException>(() =>
+            harness.ExecutionGate.EnsureExecutionAllowedAsync(
+                new ExecutionGateRequest(
+                    Actor: "system:bot-worker",
+                    Action: "TradeExecution.Dispatch",
+                    Target: "bot-pilot-stale",
+                    Environment: ExecutionEnvironment.Live,
+                    Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                    CorrelationId: "corr-pilot-stale-3",
+                    UserId: "user-pilot-stale",
+                    BotId: botId,
+                    Symbol: "BTCUSDT",
+                    Timeframe: "1m",
+                    ExchangeAccountId: exchangeAccountId,
+                    Plane: ExchangeDataPlane.Futures)));
+
+        var auditLog = await harness.DbContext.AuditLogs.SingleAsync(entity => entity.Action == "TradeExecution.Dispatch");
+
+        Assert.Equal(ExecutionGateBlockedReason.PrivatePlaneStale, exception.Reason);
+        Assert.Contains("PilotBlockedReasons=PrivatePlaneStale", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("PrivatePlaneFreshness=Stale", auditLog.Context, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -295,6 +411,7 @@ public sealed class ExecutionGateTests
         Assert.Equal("Blocked:LiveExecutionClosedByDemoMode", auditLog.Outcome);
         Assert.Contains("ResolvedMode=Live; Source=UserOverride", auditLog.Context, StringComparison.Ordinal);
     }
+
 
     [Fact]
     public async Task EnsureExecutionAllowedAsync_BlocksWhenGlobalSystemStateIsMaintenance()
@@ -546,13 +663,57 @@ public sealed class ExecutionGateTests
         Assert.Equal(DegradedModeReasonCode.MarketDataLatencyCritical, singletonState.ReasonCode);
         Assert.Equal("ETHUSDT", singletonState.LatestSymbol);
     }
-    private static TestHarness CreateHarness(string environmentName = "Production")
+    [Fact]
+    public async Task EnsureExecutionAllowedAsync_BlocksPilotRequest_WhenConfigurationIsIncomplete()
+    {
+        await using var harness = CreateHarness(
+            environmentName: Environments.Development,
+            useTestnetEndpoints: true,
+            pilotOptions: new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                PrivatePlaneFreshnessThresholdSeconds = 120
+            });
+        var botId = Guid.NewGuid();
+        await PrimeFreshMarketDataAsync(harness, "corr-pilot-config-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-pilot-config",
+            context: "Execution open",
+            correlationId: "corr-pilot-config-2");
+
+        var exception = await Assert.ThrowsAsync<ExecutionGateRejectedException>(() =>
+            harness.ExecutionGate.EnsureExecutionAllowedAsync(
+                new ExecutionGateRequest(
+                    Actor: "system:bot-worker",
+                    Action: "TradeExecution.Dispatch",
+                    Target: "bot-pilot-config",
+                    Environment: ExecutionEnvironment.Live,
+                    Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                    CorrelationId: "corr-pilot-config-3",
+                    UserId: "user-pilot-config",
+                    BotId: botId,
+                    Symbol: "BTCUSDT",
+                    Timeframe: "1m",
+                    Plane: ExchangeDataPlane.Futures)));
+
+        var auditLog = await harness.DbContext.AuditLogs.SingleAsync(entity => entity.Action == "TradeExecution.Dispatch");
+
+        Assert.Equal(ExecutionGateBlockedReason.PilotConfigurationMissing, exception.Reason);
+        Assert.Contains("PilotBlockedReasons=PilotConfigurationMissing", auditLog.Context, StringComparison.Ordinal);
+    }
+
+    private static TestHarness CreateHarness(
+        string environmentName = "Production",
+        bool useTestnetEndpoints = false,
+        BotExecutionPilotOptions? pilotOptions = null)
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
             .Options;
 
+        pilotOptions ??= new BotExecutionPilotOptions();
         var dbContext = new ApplicationDbContext(options, new TestDataScopeContext());
         var auditLogService = new AuditLogService(dbContext, new CorrelationContextAccessor());
         var switchService = new GlobalExecutionSwitchService(dbContext, auditLogService);
@@ -586,6 +747,25 @@ public sealed class ExecutionGateTests
             Options.Create(new DemoSessionOptions()),
             timeProvider,
             NullLogger<DemoSessionService>.Instance);
+        var privateDataOptions = Options.Create(new BinancePrivateDataOptions
+        {
+            RestBaseUrl = useTestnetEndpoints
+                ? "https://testnet.binance.example/futures-rest"
+                : "https://fapi.binance.com",
+            WebSocketBaseUrl = useTestnetEndpoints
+                ? "wss://testnet.binance.example/futures-private"
+                : "wss://fstream.binance.com"
+        });
+        var marketDataOptions = Options.Create(new BinanceMarketDataOptions
+        {
+            RestBaseUrl = useTestnetEndpoints
+                ? "https://testnet.binance.example/futures-market-rest"
+                : "https://fapi.binance.com",
+            WebSocketBaseUrl = useTestnetEndpoints
+                ? "wss://testnet.binance.example/futures-market-stream"
+                : "wss://fstream.binance.com",
+            KlineInterval = "1m"
+        });
         var executionGate = new ExecutionGate(
             demoSessionService,
             globalSystemStateService,
@@ -597,9 +777,13 @@ public sealed class ExecutionGateTests
             new TestHostEnvironment(environmentName),
             traceService,
             timeProvider,
-            latencyOptions);
+            latencyOptions,
+            dbContext,
+            privateDataOptions,
+            marketDataOptions,
+            Options.Create(pilotOptions));
 
-        return new TestHarness(dbContext, switchService, globalSystemStateService, circuitBreaker, executionGate, timeProvider);
+        return new TestHarness(dbContext, switchService, globalSystemStateService, circuitBreaker, executionGate, timeProvider, pilotOptions);
     }
 
     private static async Task PrimeFreshMarketDataAsync(TestHarness harness, string correlationId)
@@ -613,6 +797,52 @@ public sealed class ExecutionGateTests
                 ExpectedOpenTimeUtc: harness.TimeProvider.GetUtcNow().UtcDateTime.AddMinutes(1),
                 ContinuityGapCount: 0),
             correlationId);
+    }
+
+    private static async Task SeedPilotSafetyAsync(
+        TestHarness harness,
+        string ownerUserId,
+        Guid exchangeAccountId,
+        DateTime? lastPrivateSyncAtUtc = null,
+        string environmentScope = "Demo",
+        bool isEnvironmentMatch = true,
+        bool canTrade = true,
+        bool supportsFutures = true,
+        ExchangePrivateStreamConnectionState connectionState = ExchangePrivateStreamConnectionState.Connected,
+        ExchangeStateDriftStatus driftStatus = ExchangeStateDriftStatus.InSync)
+    {
+        var observedAtUtc = lastPrivateSyncAtUtc ?? harness.TimeProvider.GetUtcNow().UtcDateTime;
+        harness.DbContext.ApiCredentialValidations.Add(new ApiCredentialValidation
+        {
+            Id = Guid.NewGuid(),
+            ApiCredentialId = Guid.NewGuid(),
+            ExchangeAccountId = exchangeAccountId,
+            OwnerUserId = ownerUserId,
+            IsKeyValid = true,
+            CanTrade = canTrade,
+            SupportsSpot = false,
+            SupportsFutures = supportsFutures,
+            EnvironmentScope = environmentScope,
+            IsEnvironmentMatch = isEnvironmentMatch,
+            ValidationStatus = canTrade && supportsFutures ? "Valid" : "Invalid",
+            PermissionSummary = "Trade=Y; Futures=Y; Testnet=Y",
+            ValidatedAtUtc = observedAtUtc
+        });
+        harness.DbContext.ExchangeAccountSyncStates.Add(new ExchangeAccountSyncState
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = ownerUserId,
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            PrivateStreamConnectionState = connectionState,
+            DriftStatus = driftStatus,
+            LastPrivateStreamEventAtUtc = observedAtUtc,
+            LastBalanceSyncedAtUtc = observedAtUtc,
+            LastPositionSyncedAtUtc = observedAtUtc,
+            LastStateReconciledAtUtc = observedAtUtc
+        });
+
+        await harness.DbContext.SaveChangesAsync();
     }
 
     private sealed class TestHostEnvironment(string environmentName) : IHostEnvironment
@@ -705,7 +935,8 @@ public sealed class ExecutionGateTests
         IGlobalSystemStateService globalSystemStateService,
         IDataLatencyCircuitBreaker circuitBreaker,
         IExecutionGate executionGate,
-        AdjustableTimeProvider timeProvider) : IAsyncDisposable
+        AdjustableTimeProvider timeProvider,
+        BotExecutionPilotOptions pilotOptions) : IAsyncDisposable
     {
         public ApplicationDbContext DbContext { get; } = dbContext;
 
@@ -719,10 +950,15 @@ public sealed class ExecutionGateTests
 
         public AdjustableTimeProvider TimeProvider { get; } = timeProvider;
 
+        public BotExecutionPilotOptions PilotOptions { get; } = pilotOptions;
+
         public async ValueTask DisposeAsync()
         {
             await DbContext.DisposeAsync();
         }
     }
 }
+
+
+
 

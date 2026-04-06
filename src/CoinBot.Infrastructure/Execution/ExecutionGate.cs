@@ -4,8 +4,14 @@ using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Auditing;
 using CoinBot.Application.Abstractions.DemoPortfolio;
 using CoinBot.Application.Abstractions.Execution;
+using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Exchange;
+using CoinBot.Infrastructure.Jobs;
+using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Observability;
+using CoinBot.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -23,11 +29,20 @@ public sealed class ExecutionGate(
     IHostEnvironment? hostEnvironment = null,
     ITraceService? traceService = null,
     TimeProvider? timeProvider = null,
-    IOptions<DataLatencyGuardOptions>? dataLatencyGuardOptions = null) : IExecutionGate
+    IOptions<DataLatencyGuardOptions>? dataLatencyGuardOptions = null,
+    ApplicationDbContext? applicationDbContext = null,
+    IOptions<BinancePrivateDataOptions>? privateDataOptions = null,
+    IOptions<BinanceMarketDataOptions>? marketDataOptions = null,
+    IOptions<BotExecutionPilotOptions>? botExecutionPilotOptions = null) : IExecutionGate
 {
     private readonly ITraceService? traceWriter = traceService;
     private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
     private readonly int staleThresholdMilliseconds = checked((dataLatencyGuardOptions?.Value ?? new DataLatencyGuardOptions()).StaleDataThresholdSeconds * 1000);
+    private readonly ApplicationDbContext? dbContext = applicationDbContext;
+    private readonly BinancePrivateDataOptions privateDataOptionsValue = privateDataOptions?.Value ?? new BinancePrivateDataOptions();
+    private readonly BinanceMarketDataOptions marketDataOptionsValue = marketDataOptions?.Value ?? new BinanceMarketDataOptions();
+    private readonly BotExecutionPilotOptions pilotOptionsValue = botExecutionPilotOptions?.Value ?? new BotExecutionPilotOptions();
+    private readonly int privatePlaneFreshnessThresholdMilliseconds = checked((botExecutionPilotOptions?.Value ?? new BotExecutionPilotOptions()).PrivatePlaneFreshnessThresholdSeconds * 1000);
 
     public async Task<GlobalExecutionSwitchSnapshot> EnsureExecutionAllowedAsync(
         ExecutionGateRequest request,
@@ -289,23 +304,32 @@ public sealed class ExecutionGate(
                 modeResolution.ResolutionSource);
         }
 
+        var pilotSafetyEvaluation = await EvaluatePilotSafetyAsync(request, cancellationToken);
+
         using var finalExecutionActivity = CoinBotActivity.StartActivity("CoinBot.Execution.Gate");
         ApplyTags(finalExecutionActivity, request);
         ApplyLatencyTags(finalExecutionActivity, latencySnapshot);
+        ApplyPilotSafetyTags(finalExecutionActivity, pilotSafetyEvaluation);
         var blockedReason = Evaluate(
             snapshot,
             request.Environment,
             modeResolution,
-            IsDevelopmentFuturesPilotOverrideAllowed(request));
-        finalExecutionActivity.SetTag("coinbot.execution.result", blockedReason?.ToString() ?? "Allowed");
+            pilotSafetyEvaluation.AllowModeOverride);
+        ExecutionGateBlockedReason? pilotBlockedReason = pilotSafetyEvaluation.BlockedReasons.Count > 0
+            ? pilotSafetyEvaluation.BlockedReasons[0]
+            : null;
+        var primaryBlockedReason = blockedReason ?? pilotBlockedReason;
+        finalExecutionActivity.SetTag("coinbot.execution.result", primaryBlockedReason?.ToString() ?? "Allowed");
+        var blockedMessage = primaryBlockedReason is null
+            ? null
+            : CreateBlockedMessage(primaryBlockedReason.Value, request.Environment, latencySnapshot, pilotSafetyEvaluation);
         var finalDecision = CreateDecisionDescriptor(
             request,
-            isBlocked: blockedReason is not null,
-            reasonCode: blockedReason?.ToString() ?? ExecutionDecisionDiagnostics.AllowedDecisionCode,
-            summary: blockedReason is null
+            isBlocked: primaryBlockedReason is not null,
+            reasonCode: primaryBlockedReason?.ToString() ?? ExecutionDecisionDiagnostics.AllowedDecisionCode,
+            summary: primaryBlockedReason is null
                 ? "Execution decision allowed the request."
-                : ExecutionDecisionDiagnostics.ExtractHumanSummary(CreateMessage(blockedReason.Value, request.Environment, latencySnapshot)) ??
-                    CreateMessage(blockedReason.Value, request.Environment, latencySnapshot),
+                : ExecutionDecisionDiagnostics.ExtractHumanSummary(blockedMessage) ?? blockedMessage ?? CreateMessage(primaryBlockedReason.Value, request.Environment, latencySnapshot),
             latencySnapshot,
             clock.GetUtcNow().UtcDateTime);
 
@@ -320,9 +344,11 @@ public sealed class ExecutionGate(
                     finalDecision,
                     modeResolution,
                     demoSessionSnapshot,
-                    globalSystemStateSnapshot),
+                    globalSystemStateSnapshot,
+                    null,
+                    pilotSafetyEvaluation),
                 request.CorrelationId,
-                blockedReason is null ? "Allowed" : MapOutcome(blockedReason.Value),
+                primaryBlockedReason is null ? "Allowed" : MapOutcome(primaryBlockedReason.Value),
                 request.Environment.ToString()),
             cancellationToken);
 
@@ -333,20 +359,21 @@ public sealed class ExecutionGate(
             cancellationToken,
             modeResolution,
             demoSessionSnapshot,
-            globalSystemStateSnapshot);
+            globalSystemStateSnapshot,
+            null,
+            pilotSafetyEvaluation);
 
-        if (blockedReason is not null)
+        if (primaryBlockedReason is not null)
         {
             logger.LogWarning(
                 "Execution stage blocked the request with reason {BlockedReason}.",
-                blockedReason);
+                primaryBlockedReason);
 
             throw new ExecutionGateRejectedException(
-                blockedReason.Value,
+                primaryBlockedReason.Value,
                 request.Environment,
-                CreateMessage(blockedReason.Value, request.Environment, latencySnapshot));
+                blockedMessage ?? CreateMessage(primaryBlockedReason.Value, request.Environment, latencySnapshot));
         }
-
         logger.LogInformation("Execution stage allowed the request.");
 
         return snapshot;
@@ -458,6 +485,276 @@ public sealed class ExecutionGate(
         activity.SetTag("coinbot.market_data.decision_method", "ExecutionGate.EvaluateDataLatencyAsync");
     }
 
+    private void ApplyPilotSafetyTags(Activity activity, PilotSafetyEvaluation evaluation)
+    {
+        activity.SetTag("coinbot.pilot.request", evaluation.IsPilotRequest);
+
+        if (!evaluation.IsPilotRequest)
+        {
+            return;
+        }
+
+        activity.SetTag("coinbot.pilot.allow_mode_override", evaluation.AllowModeOverride);
+        activity.SetTag("coinbot.pilot.private_rest_scope", evaluation.PrivateRestEnvironmentScope);
+        activity.SetTag("coinbot.pilot.private_ws_scope", evaluation.PrivateSocketEnvironmentScope);
+        activity.SetTag("coinbot.pilot.market_rest_scope", evaluation.MarketDataRestEnvironmentScope);
+        activity.SetTag("coinbot.pilot.market_ws_scope", evaluation.MarketDataSocketEnvironmentScope);
+        activity.SetTag("coinbot.pilot.credential_status", evaluation.CredentialValidationStatus);
+        activity.SetTag("coinbot.pilot.credential_environment_scope", evaluation.CredentialEnvironmentScope);
+        activity.SetTag("coinbot.pilot.private_plane_freshness", evaluation.PrivatePlaneFreshness);
+        activity.SetTag("coinbot.pilot.private_stream_state", evaluation.PrivateStreamConnectionState);
+        activity.SetTag("coinbot.pilot.drift_status", evaluation.DriftStatus);
+        activity.SetTag("coinbot.pilot.blocked_reasons", BuildPilotBlockedReasonsText(evaluation.BlockedReasons));
+
+        if (evaluation.LastPrivateSyncAtUtc is DateTime lastPrivateSyncAtUtc)
+        {
+            activity.SetTag("coinbot.pilot.last_private_sync_at_utc", lastPrivateSyncAtUtc.ToString("O"));
+        }
+
+        if (evaluation.PrivatePlaneAgeMs is int privatePlaneAgeMs)
+        {
+            activity.SetTag("coinbot.pilot.private_plane_age_ms", privatePlaneAgeMs);
+        }
+    }
+
+    private async Task<PilotSafetyEvaluation> EvaluatePilotSafetyAsync(
+        ExecutionGateRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!IsPilotContextRequested(request.Context))
+        {
+            return PilotSafetyEvaluation.NotApplicable;
+        }
+
+        var blockedReasons = new List<ExecutionGateBlockedReason>();
+        var privateRestEnvironmentScope = ResolveEnvironmentScope(privateDataOptionsValue.RestBaseUrl);
+        var privateSocketEnvironmentScope = ResolveEnvironmentScope(privateDataOptionsValue.WebSocketBaseUrl);
+        var marketDataRestEnvironmentScope = ResolveEnvironmentScope(marketDataOptionsValue.RestBaseUrl);
+        var marketDataSocketEnvironmentScope = ResolveEnvironmentScope(marketDataOptionsValue.WebSocketBaseUrl);
+        var credentialValidationStatus = "Missing";
+        var credentialEnvironmentScope = "Unknown";
+        var privatePlaneFreshness = "Unknown";
+        var privateStreamConnectionState = "Missing";
+        var driftStatus = "Missing";
+        DateTime? lastPrivateSyncAtUtc = null;
+        int? privatePlaneAgeMs = null;
+
+        if (!IsDevelopmentPilotHostAndActor(request))
+        {
+            blockedReasons.Add(ExecutionGateBlockedReason.PilotRequiresDevelopment);
+        }
+
+        if (!pilotOptionsValue.Enabled ||
+            request.Environment != ExecutionEnvironment.Live ||
+            request.Plane != ExchangeDataPlane.Futures ||
+            string.IsNullOrWhiteSpace(request.UserId) ||
+            !request.BotId.HasValue ||
+            !request.ExchangeAccountId.HasValue)
+        {
+            blockedReasons.Add(ExecutionGateBlockedReason.PilotConfigurationMissing);
+        }
+
+        if (!string.Equals(privateRestEnvironmentScope, "Demo", StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(privateSocketEnvironmentScope, "Demo", StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(marketDataRestEnvironmentScope, "Demo", StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(marketDataSocketEnvironmentScope, "Demo", StringComparison.OrdinalIgnoreCase))
+        {
+            blockedReasons.Add(ExecutionGateBlockedReason.PilotTestnetEndpointMismatch);
+        }
+
+        if (dbContext is null ||
+            string.IsNullOrWhiteSpace(request.UserId) ||
+            !request.ExchangeAccountId.HasValue)
+        {
+            credentialValidationStatus = "Unavailable";
+            blockedReasons.Add(ExecutionGateBlockedReason.PilotCredentialValidationUnavailable);
+            privatePlaneFreshness = "Unavailable";
+            blockedReasons.Add(ExecutionGateBlockedReason.PrivatePlaneUnavailable);
+        }
+        else
+        {
+            var latestValidation = await dbContext.ApiCredentialValidations
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.ExchangeAccountId == request.ExchangeAccountId.Value &&
+                    entity.OwnerUserId == request.UserId &&
+                    !entity.IsDeleted)
+                .OrderByDescending(entity => entity.ValidatedAtUtc)
+                .ThenByDescending(entity => entity.CreatedDate)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (latestValidation is null)
+            {
+                blockedReasons.Add(ExecutionGateBlockedReason.PilotCredentialValidationUnavailable);
+            }
+            else
+            {
+                credentialValidationStatus = string.IsNullOrWhiteSpace(latestValidation.ValidationStatus)
+                    ? "Unknown"
+                    : latestValidation.ValidationStatus.Trim();
+                credentialEnvironmentScope = string.IsNullOrWhiteSpace(latestValidation.EnvironmentScope)
+                    ? "Unknown"
+                    : latestValidation.EnvironmentScope.Trim();
+
+                if (!latestValidation.IsKeyValid ||
+                    !latestValidation.CanTrade ||
+                    !latestValidation.SupportsFutures)
+                {
+                    blockedReasons.Add(ExecutionGateBlockedReason.PilotCredentialValidationUnavailable);
+                }
+                else if (!latestValidation.IsEnvironmentMatch ||
+                         !string.Equals(credentialEnvironmentScope, "Demo", StringComparison.OrdinalIgnoreCase))
+                {
+                    blockedReasons.Add(ExecutionGateBlockedReason.PilotCredentialEnvironmentMismatch);
+                }
+            }
+
+            var syncState = await dbContext.ExchangeAccountSyncStates
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.ExchangeAccountId == request.ExchangeAccountId.Value &&
+                    entity.OwnerUserId == request.UserId &&
+                    entity.Plane == request.Plane &&
+                    !entity.IsDeleted)
+                .OrderByDescending(entity => entity.UpdatedDate)
+                .ThenByDescending(entity => entity.CreatedDate)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (syncState is null)
+            {
+                privatePlaneFreshness = "Unavailable";
+                blockedReasons.Add(ExecutionGateBlockedReason.PrivatePlaneUnavailable);
+            }
+            else
+            {
+                privateStreamConnectionState = syncState.PrivateStreamConnectionState.ToString();
+                driftStatus = syncState.DriftStatus.ToString();
+                lastPrivateSyncAtUtc = ResolveLastPrivateSyncAtUtc(syncState);
+                privatePlaneAgeMs = ResolveAgeMilliseconds(clock.GetUtcNow().UtcDateTime, lastPrivateSyncAtUtc);
+
+                if (!lastPrivateSyncAtUtc.HasValue)
+                {
+                    privatePlaneFreshness = "Unavailable";
+                    blockedReasons.Add(ExecutionGateBlockedReason.PrivatePlaneUnavailable);
+                }
+                else if (syncState.PrivateStreamConnectionState != ExchangePrivateStreamConnectionState.Connected ||
+                         syncState.DriftStatus != ExchangeStateDriftStatus.InSync ||
+                         !privatePlaneAgeMs.HasValue ||
+                         privatePlaneAgeMs.Value > privatePlaneFreshnessThresholdMilliseconds)
+                {
+                    privatePlaneFreshness = "Stale";
+                    blockedReasons.Add(ExecutionGateBlockedReason.PrivatePlaneStale);
+                }
+                else
+                {
+                    privatePlaneFreshness = "Fresh";
+                }
+            }
+        }
+
+        return new PilotSafetyEvaluation(
+            true,
+            true,
+            privateRestEnvironmentScope,
+            privateSocketEnvironmentScope,
+            marketDataRestEnvironmentScope,
+            marketDataSocketEnvironmentScope,
+            credentialValidationStatus,
+            credentialEnvironmentScope,
+            privatePlaneFreshness,
+            privateStreamConnectionState,
+            driftStatus,
+            lastPrivateSyncAtUtc,
+            privatePlaneAgeMs,
+            blockedReasons
+                .Distinct()
+                .ToArray());
+    }
+
+    private string CreateBlockedMessage(
+        ExecutionGateBlockedReason blockedReason,
+        ExecutionEnvironment requestedEnvironment,
+        DegradedModeSnapshot? latencySnapshot,
+        PilotSafetyEvaluation evaluation)
+    {
+        var baseMessage = CreateMessage(blockedReason, requestedEnvironment, latencySnapshot);
+        if (!evaluation.IsPilotRequest)
+        {
+            return baseMessage;
+        }
+
+        return $"{baseMessage} PilotGuardSummary={BuildPilotGuardSummary(evaluation)}; PilotBlockedReasons={BuildPilotBlockedReasonsText(evaluation.BlockedReasons)}.";
+    }
+
+    private string BuildPilotGuardSummary(PilotSafetyEvaluation evaluation)
+    {
+        return $"PilotRequest=True; AllowModeOverride={evaluation.AllowModeOverride}; EndpointScopes=PrivateRest:{evaluation.PrivateRestEnvironmentScope}/PrivateWs:{evaluation.PrivateSocketEnvironmentScope}/MarketRest:{evaluation.MarketDataRestEnvironmentScope}/MarketWs:{evaluation.MarketDataSocketEnvironmentScope}; CredentialValidationStatus={evaluation.CredentialValidationStatus}; CredentialEnvironmentScope={evaluation.CredentialEnvironmentScope}; PrivatePlaneFreshness={evaluation.PrivatePlaneFreshness}; PrivateStreamState={evaluation.PrivateStreamConnectionState}; DriftStatus={evaluation.DriftStatus}; LastPrivateSyncAtUtc={evaluation.LastPrivateSyncAtUtc?.ToString("O") ?? "missing"}; PrivatePlaneAgeMs={evaluation.PrivatePlaneAgeMs?.ToString() ?? "missing"}; PrivatePlaneThresholdMs={privatePlaneFreshnessThresholdMilliseconds}";
+    }
+
+    private static string BuildPilotBlockedReasonsText(IReadOnlyList<ExecutionGateBlockedReason> blockedReasons)
+    {
+        return blockedReasons.Count == 0
+            ? "none"
+            : string.Join(",", blockedReasons.Select(item => item.ToString()));
+    }
+
+    private static DateTime? ResolveLastPrivateSyncAtUtc(ExchangeAccountSyncState syncState)
+    {
+        DateTime? latest = null;
+        Consider(syncState.LastPrivateStreamEventAtUtc);
+        Consider(syncState.LastBalanceSyncedAtUtc);
+        Consider(syncState.LastPositionSyncedAtUtc);
+        Consider(syncState.LastStateReconciledAtUtc);
+        return latest;
+
+        void Consider(DateTime? value)
+        {
+            var normalizedValue = NormalizeUtcNullable(value);
+            if (!normalizedValue.HasValue)
+            {
+                return;
+            }
+
+            if (!latest.HasValue || normalizedValue.Value > latest.Value)
+            {
+                latest = normalizedValue.Value;
+            }
+        }
+    }
+
+    private static int? ResolveAgeMilliseconds(DateTime nowUtc, DateTime? observedAtUtc)
+    {
+        if (!observedAtUtc.HasValue)
+        {
+            return null;
+        }
+
+        var deltaMilliseconds = (NormalizeUtc(nowUtc) - observedAtUtc.Value).TotalMilliseconds;
+        if (deltaMilliseconds <= 0)
+        {
+            return 0;
+        }
+
+        return deltaMilliseconds >= int.MaxValue
+            ? int.MaxValue
+            : (int)Math.Round(deltaMilliseconds, MidpointRounding.AwayFromZero);
+    }
+
+    private static string ResolveEnvironmentScope(string? baseUrl)
+    {
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            return "Unknown";
+        }
+
+        var normalizedValue = baseUrl.Trim();
+        return normalizedValue.Contains("testnet", StringComparison.OrdinalIgnoreCase) ||
+               normalizedValue.Contains("demo", StringComparison.OrdinalIgnoreCase)
+            ? "Demo"
+            : "Live";
+    }
     private static ExecutionGateBlockedReason? ResolveLatencyBlockedReason(DegradedModeSnapshot snapshot)
     {
         if (!snapshot.SignalFlowBlocked && !snapshot.ExecutionFlowBlocked)
@@ -524,10 +821,16 @@ public sealed class ExecutionGate(
             ExecutionGateBlockedReason.ClockDriftExceeded => "Blocked:ClockDriftExceeded",
             ExecutionGateBlockedReason.DataLatencyGuardUnavailable => "Blocked:DataLatencyGuardUnavailable",
             ExecutionGateBlockedReason.DemoSessionDriftDetected => "Blocked:DemoSessionDriftDetected",
+            ExecutionGateBlockedReason.PilotConfigurationMissing => "Blocked:PilotConfigurationMissing",
+            ExecutionGateBlockedReason.PilotRequiresDevelopment => "Blocked:PilotRequiresDevelopment",
+            ExecutionGateBlockedReason.PilotTestnetEndpointMismatch => "Blocked:PilotTestnetEndpointMismatch",
+            ExecutionGateBlockedReason.PilotCredentialValidationUnavailable => "Blocked:PilotCredentialValidationUnavailable",
+            ExecutionGateBlockedReason.PilotCredentialEnvironmentMismatch => "Blocked:PilotCredentialEnvironmentMismatch",
+            ExecutionGateBlockedReason.PrivatePlaneUnavailable => "Blocked:PrivatePlaneUnavailable",
+            ExecutionGateBlockedReason.PrivatePlaneStale => "Blocked:PrivatePlaneStale",
             _ => "Blocked:Unknown"
         };
     }
-
     private static string CreateMessage(
         ExecutionGateBlockedReason blockedReason,
         ExecutionEnvironment requestedEnvironment,
@@ -563,10 +866,23 @@ public sealed class ExecutionGate(
                 "Execution blocked because the data latency guard could not be evaluated.",
             ExecutionGateBlockedReason.DemoSessionDriftDetected =>
                 "Execution blocked because the active demo session consistency watchdog detected drift.",
+            ExecutionGateBlockedReason.PilotConfigurationMissing =>
+                "Execution blocked because pilot safety configuration is missing or incomplete.",
+            ExecutionGateBlockedReason.PilotRequiresDevelopment =>
+                "Execution blocked because the pilot path is restricted to Development system actors.",
+            ExecutionGateBlockedReason.PilotTestnetEndpointMismatch =>
+                "Execution blocked because pilot execution resolved a live or unknown exchange endpoint instead of testnet.",
+            ExecutionGateBlockedReason.PilotCredentialValidationUnavailable =>
+                "Execution blocked because pilot credential validation is missing or insufficient for safe testnet futures trading.",
+            ExecutionGateBlockedReason.PilotCredentialEnvironmentMismatch =>
+                "Execution blocked because the credential validation environment does not match testnet futures execution.",
+            ExecutionGateBlockedReason.PrivatePlaneUnavailable =>
+                "Execution blocked because private plane freshness could not be verified.",
+            ExecutionGateBlockedReason.PrivatePlaneStale =>
+                "Execution blocked because private plane data is stale.",
             _ => "Execution blocked by an unknown gate decision."
         };
     }
-
     private static string BuildGlobalSystemOutcome(GlobalSystemStateKind state)
     {
         return state switch
@@ -700,7 +1016,8 @@ public sealed class ExecutionGate(
         TradingModeResolution? modeResolution = null,
         DemoSessionSnapshot? demoSessionSnapshot = null,
         GlobalSystemStateSnapshot? globalSystemStateSnapshot = null,
-        string? administrativeOverrideReason = null)
+        string? administrativeOverrideReason = null,
+        PilotSafetyEvaluation? pilotSafetyEvaluation = null)
     {
         if (traceWriter is null)
         {
@@ -722,7 +1039,8 @@ public sealed class ExecutionGate(
                     modeResolution,
                     demoSessionSnapshot,
                     globalSystemStateSnapshot,
-                    administrativeOverrideReason),
+                    administrativeOverrideReason,
+                    pilotSafetyEvaluation),
                 LatencyMs: 0,
                 CorrelationId: request.CorrelationId,
                 DecisionReasonType: decisionDescriptor.ReasonType,
@@ -741,15 +1059,15 @@ public sealed class ExecutionGate(
                 CreatedAtUtc: decisionDescriptor.DecisionAtUtc),
             cancellationToken);
     }
-
-    private static string BuildDecisionTracePayload(
+    private string BuildDecisionTracePayload(
         ExecutionGateRequest request,
         ExecutionDecisionDescriptor decisionDescriptor,
         DegradedModeSnapshot latencySnapshot,
         TradingModeResolution? modeResolution,
         DemoSessionSnapshot? demoSessionSnapshot,
         GlobalSystemStateSnapshot? globalSystemStateSnapshot,
-        string? administrativeOverrideReason)
+        string? administrativeOverrideReason,
+        PilotSafetyEvaluation? pilotSafetyEvaluation)
     {
         return JsonSerializer.Serialize(
             new
@@ -767,6 +1085,8 @@ public sealed class ExecutionGate(
                 request.UserId,
                 request.BotId,
                 request.StrategyKey,
+                request.ExchangeAccountId,
+                Plane = request.Plane.ToString(),
                 Symbol = decisionDescriptor.Symbol,
                 Timeframe = decisionDescriptor.Timeframe,
                 LastCandleAtUtc = decisionDescriptor.LastCandleAtUtc,
@@ -810,11 +1130,29 @@ public sealed class ExecutionGate(
                         globalSystemStateSnapshot.Version,
                         globalSystemStateSnapshot.IsManualOverride
                     },
-                AdministrativeOverride = administrativeOverrideReason
+                AdministrativeOverride = administrativeOverrideReason,
+                PilotSafety = pilotSafetyEvaluation is null || !pilotSafetyEvaluation.IsPilotRequest
+                    ? null
+                    : new
+                    {
+                        pilotSafetyEvaluation.AllowModeOverride,
+                        pilotSafetyEvaluation.PrivateRestEnvironmentScope,
+                        pilotSafetyEvaluation.PrivateSocketEnvironmentScope,
+                        pilotSafetyEvaluation.MarketDataRestEnvironmentScope,
+                        pilotSafetyEvaluation.MarketDataSocketEnvironmentScope,
+                        pilotSafetyEvaluation.CredentialValidationStatus,
+                        pilotSafetyEvaluation.CredentialEnvironmentScope,
+                        pilotSafetyEvaluation.PrivatePlaneFreshness,
+                        pilotSafetyEvaluation.PrivateStreamConnectionState,
+                        pilotSafetyEvaluation.DriftStatus,
+                        pilotSafetyEvaluation.LastPrivateSyncAtUtc,
+                        pilotSafetyEvaluation.PrivatePlaneAgeMs,
+                        PrivatePlaneThresholdMs = privatePlaneFreshnessThresholdMilliseconds,
+                        BlockedReasons = pilotSafetyEvaluation.BlockedReasons
+                    }
             },
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
     }
-
     private static string ResolveDecisionUserId(string? userId)
     {
         return string.IsNullOrWhiteSpace(userId)
@@ -871,14 +1209,15 @@ public sealed class ExecutionGate(
             : (int)Math.Round(deltaMilliseconds, MidpointRounding.AwayFromZero);
     }
 
-    private static string? BuildAuditContext(
+    private string? BuildAuditContext(
         string? requestContext,
         DegradedModeSnapshot latencySnapshot,
         ExecutionDecisionDescriptor decisionDescriptor,
         TradingModeResolution? modeResolution = null,
         DemoSessionSnapshot? demoSessionSnapshot = null,
         GlobalSystemStateSnapshot? globalSystemStateSnapshot = null,
-        string? administrativeOverrideReason = null)
+        string? administrativeOverrideReason = null,
+        PilotSafetyEvaluation? pilotSafetyEvaluation = null)
     {
         var contextParts = new List<string>();
 
@@ -911,6 +1250,12 @@ public sealed class ExecutionGate(
                 $"GlobalSystemState={globalSystemStateSnapshot.State}; GlobalSystemReason={globalSystemStateSnapshot.ReasonCode}; GlobalSystemVersion={globalSystemStateSnapshot.Version}; GlobalSystemManual={globalSystemStateSnapshot.IsManualOverride}");
         }
 
+        if (pilotSafetyEvaluation is not null && pilotSafetyEvaluation.IsPilotRequest)
+        {
+            contextParts.Add(
+                $"PilotGuardSummary={Truncate(BuildPilotGuardSummary(pilotSafetyEvaluation), 512) ?? "none"}; PilotBlockedReasons={BuildPilotBlockedReasonsText(pilotSafetyEvaluation.BlockedReasons)}");
+        }
+
         if (!string.IsNullOrWhiteSpace(administrativeOverrideReason))
         {
             contextParts.Add($"AdministrativeOverride={Truncate(administrativeOverrideReason, 256)}");
@@ -922,7 +1267,38 @@ public sealed class ExecutionGate(
             ? combinedContext
             : combinedContext[..2048];
     }
-
+    private sealed record PilotSafetyEvaluation(
+        bool IsPilotRequest,
+        bool AllowModeOverride,
+        string PrivateRestEnvironmentScope,
+        string PrivateSocketEnvironmentScope,
+        string MarketDataRestEnvironmentScope,
+        string MarketDataSocketEnvironmentScope,
+        string CredentialValidationStatus,
+        string CredentialEnvironmentScope,
+        string PrivatePlaneFreshness,
+        string PrivateStreamConnectionState,
+        string DriftStatus,
+        DateTime? LastPrivateSyncAtUtc,
+        int? PrivatePlaneAgeMs,
+        IReadOnlyList<ExecutionGateBlockedReason> BlockedReasons)
+    {
+        public static PilotSafetyEvaluation NotApplicable { get; } = new(
+            false,
+            false,
+            "n/a",
+            "n/a",
+            "n/a",
+            "n/a",
+            "n/a",
+            "n/a",
+            "NotEvaluated",
+            "NotEvaluated",
+            "NotEvaluated",
+            null,
+            null,
+            Array.Empty<ExecutionGateBlockedReason>());
+    }
     private sealed record ExecutionDecisionDescriptor(
         string Outcome,
         string ReasonType,
@@ -979,11 +1355,15 @@ public sealed class ExecutionGate(
         return false;
     }
 
-    private bool IsDevelopmentFuturesPilotOverrideAllowed(ExecutionGateRequest request)
+    private static bool IsPilotContextRequested(string? context)
+    {
+        return TryReadBooleanFlag(context, "DevelopmentFuturesTestnetPilot");
+    }
+
+    private bool IsDevelopmentPilotHostAndActor(ExecutionGateRequest request)
     {
         return hostEnvironment?.IsDevelopment() == true &&
-               request.Actor.StartsWith("system:", StringComparison.OrdinalIgnoreCase) &&
-               TryReadBooleanFlag(request.Context, "DevelopmentFuturesTestnetPilot");
+               request.Actor.StartsWith("system:", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool TryReadBooleanFlag(string? context, string key)
@@ -1009,4 +1389,16 @@ public sealed class ExecutionGate(
         return false;
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
 

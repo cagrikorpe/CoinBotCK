@@ -161,7 +161,9 @@ public sealed class ExecutionEngine(
                     BotId: normalizedCommand.BotId,
                     StrategyKey: normalizedCommand.StrategyKey,
                     Symbol: normalizedCommand.Symbol,
-                    Timeframe: normalizedCommand.Timeframe),
+                    Timeframe: normalizedCommand.Timeframe,
+                    ExchangeAccountId: normalizedCommand.ExchangeAccountId,
+                    Plane: executionPlane),
                 cancellationToken);
 
             lastTransition = await PersistTransitionAsync(
@@ -1310,3 +1312,4 @@ public sealed class ExecutionEngine(
             transition.OccurredAtUtc);
     }
 }
+

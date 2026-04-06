@@ -33,6 +33,7 @@ public sealed class BotWorkerJobProcessorTests
     {
         await using var harness = CreateHarness();
         var bot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, bot);
         await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-1");
         await harness.SwitchService.SetTradeMasterStateAsync(
             TradeMasterSwitchState.Armed,
@@ -66,6 +67,7 @@ public sealed class BotWorkerJobProcessorTests
     {
         await using var harness = CreateHarness();
         var bot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, bot);
         await harness.SwitchService.SetTradeMasterStateAsync(
             TradeMasterSwitchState.Armed,
             actor: "admin-bot",
@@ -97,6 +99,7 @@ public sealed class BotWorkerJobProcessorTests
     {
         await using var harness = CreateHarness();
         var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "XRPUSDT");
+        ConfigurePilotScope(harness, bot, "BTCUSDT");
         await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-eth-1", symbol: "ETHUSDT");
         await harness.SwitchService.SetTradeMasterStateAsync(
             TradeMasterSwitchState.Armed,
@@ -122,6 +125,7 @@ public sealed class BotWorkerJobProcessorTests
     {
         await using var harness = CreateHarness();
         var bot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, bot);
         await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-disarmed-1");
         await harness.SwitchService.SetTradeMasterStateAsync(
             TradeMasterSwitchState.Armed,
@@ -153,6 +157,7 @@ public sealed class BotWorkerJobProcessorTests
     {
         await using var harness = CreateHarness();
         var firstBot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, firstBot);
         _ = await SeedBotGraphAsync(harness.DbContext, ownerUserId: firstBot.OwnerUserId);
         await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-multi-1");
         await harness.SwitchService.SetTradeMasterStateAsync(
@@ -178,6 +183,7 @@ public sealed class BotWorkerJobProcessorTests
     {
         await using var harness = CreateHarness();
         var firstBot = await SeedBotGraphAsync(harness.DbContext, symbol: "BTCUSDT");
+        ConfigurePilotScope(harness, firstBot);
         _ = await SeedBotGraphAsync(harness.DbContext, ownerUserId: firstBot.OwnerUserId, symbol: "ETHUSDT");
         await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-eth-ok-1", symbol: "BTCUSDT");
         await harness.SwitchService.SetTradeMasterStateAsync(
@@ -211,10 +217,11 @@ public sealed class BotWorkerJobProcessorTests
             marketDataService,
             timeProvider,
             NullLogger<DemoWalletValuationService>.Instance);
+        var latencyOptions = Options.Create(new DataLatencyGuardOptions());
         var circuitBreaker = new DataLatencyCircuitBreaker(
             dbContext,
             new FakeAlertService(),
-            Options.Create(new DataLatencyGuardOptions()),
+            latencyOptions,
             timeProvider,
             NullLogger<DataLatencyCircuitBreaker>.Instance);
         var tradingModeService = new TradingModeService(dbContext, auditLogService);
@@ -231,6 +238,42 @@ public sealed class BotWorkerJobProcessorTests
             timeProvider,
             NullLogger<DemoSessionService>.Instance);
         var hostEnvironment = new TestHostEnvironment(Environments.Development);
+        var traceService = new TraceService(
+            dbContext,
+            correlationContextAccessor,
+            timeProvider);
+        var pilotOptions = new BotExecutionPilotOptions
+        {
+            Enabled = true,
+            SignalEvaluationMode = ExecutionEnvironment.Live,
+            DefaultSymbol = "BTCUSDT",
+            AllowedSymbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+            Timeframe = "1m",
+            DefaultLeverage = 1m,
+            DefaultMarginType = "ISOLATED",
+            MaxOpenPositionsPerUser = 1,
+            PerBotCooldownSeconds = 300,
+            PerSymbolCooldownSeconds = 300,
+            MaxOrderNotional = 250m,
+            MaxDailyLossPercentage = 5m,
+            PrivatePlaneFreshnessThresholdSeconds = 120,
+            PrimeHistoricalCandleCount = 200
+        };
+        var privateDataOptions = Options.Create(new BinancePrivateDataOptions
+        {
+            RestBaseUrl = "https://testnet.binance.example/futures-rest",
+            WebSocketBaseUrl = "wss://testnet.binance.example/futures-private"
+        });
+        var marketDataOptions = Options.Create(new BinanceMarketDataOptions
+        {
+            RestBaseUrl = "https://testnet.binance.example/futures-market-rest",
+            WebSocketBaseUrl = "wss://testnet.binance.example/futures-market-stream",
+            KlineInterval = "1m"
+        });
+        var riskPolicyEvaluator = new RiskPolicyEvaluator(
+            dbContext,
+            timeProvider,
+            NullLogger<RiskPolicyEvaluator>.Instance);
         var executionGate = new ExecutionGate(
             demoSessionService,
             globalSystemStateService,
@@ -239,15 +282,21 @@ public sealed class BotWorkerJobProcessorTests
             tradingModeService,
             auditLogService,
             NullLogger<ExecutionGate>.Instance,
-            hostEnvironment);
+            hostEnvironment,
+            traceService,
+            timeProvider,
+            latencyOptions,
+            dbContext,
+            privateDataOptions,
+            marketDataOptions,
+            Options.Create(pilotOptions));
         var userExecutionOverrideGuard = new UserExecutionOverrideGuard(
             dbContext,
             tradingModeService,
-            hostEnvironment: hostEnvironment);
-        var traceService = new TraceService(
-            dbContext,
-            correlationContextAccessor,
-            timeProvider);
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            hostEnvironment: hostEnvironment,
+            riskPolicyEvaluator: riskPolicyEvaluator,
+            botExecutionPilotOptions: Options.Create(pilotOptions));
         var lifecycleService = new ExecutionOrderLifecycleService(
             dbContext,
             auditLogService,
@@ -270,10 +319,7 @@ public sealed class BotWorkerJobProcessorTests
         var strategySignalService = new StrategySignalService(
             dbContext,
             new StrategyEvaluatorService(new StrategyRuleParser()),
-            new RiskPolicyEvaluator(
-                dbContext,
-                timeProvider,
-                NullLogger<RiskPolicyEvaluator>.Instance),
+            riskPolicyEvaluator,
             traceService,
             correlationContextAccessor,
             timeProvider,
@@ -317,17 +363,7 @@ public sealed class BotWorkerJobProcessorTests
             executionEngine,
             circuitBreaker,
             correlationContextAccessor,
-            Options.Create(new BotExecutionPilotOptions
-            {
-                Enabled = true,
-                SignalEvaluationMode = ExecutionEnvironment.Live,
-                DefaultSymbol = "BTCUSDT",
-                AllowedSymbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
-                Timeframe = "1m",
-                DefaultLeverage = 1m,
-                DefaultMarginType = "ISOLATED",
-                PrimeHistoricalCandleCount = 200
-            }),
+            Options.Create(pilotOptions),
             hostEnvironment,
             timeProvider,
             NullLogger<BotWorkerJobProcessor>.Instance);
@@ -338,7 +374,8 @@ public sealed class BotWorkerJobProcessorTests
             switchService,
             circuitBreaker,
             timeProvider,
-            privateRestClient);
+            privateRestClient,
+            pilotOptions);
     }
 
     private static async Task<TradingBot> SeedBotGraphAsync(
@@ -346,6 +383,7 @@ public sealed class BotWorkerJobProcessorTests
         string symbol = "BTCUSDT",
         string ownerUserId = "user-bot-pilot")
     {
+        var observedAtUtc = new DateTime(2026, 4, 1, 11, 59, 0, DateTimeKind.Utc);
         var strategy = new TradingStrategy
         {
             Id = Guid.NewGuid(),
@@ -407,7 +445,8 @@ public sealed class BotWorkerJobProcessorTests
             ProfileName = "Pilot",
             MaxDailyLossPercentage = 10m,
             MaxPositionSizePercentage = 100m,
-            MaxLeverage = 2m
+            MaxLeverage = 2m,
+            MaxConcurrentPositions = 1
         });
         dbContext.ExchangeAccounts.Add(new ExchangeAccount
         {
@@ -422,12 +461,42 @@ public sealed class BotWorkerJobProcessorTests
         {
             ExchangeAccountId = exchangeAccountId,
             OwnerUserId = ownerUserId,
+            Plane = ExchangeDataPlane.Futures,
             Asset = "USDT",
             WalletBalance = 1000m,
             CrossWalletBalance = 1000m,
             AvailableBalance = 1000m,
             MaxWithdrawAmount = 1000m,
-            ExchangeUpdatedAtUtc = new DateTime(2026, 4, 1, 11, 59, 0, DateTimeKind.Utc)
+            ExchangeUpdatedAtUtc = observedAtUtc
+        });
+        dbContext.ApiCredentialValidations.Add(new ApiCredentialValidation
+        {
+            Id = Guid.NewGuid(),
+            ApiCredentialId = Guid.NewGuid(),
+            ExchangeAccountId = exchangeAccountId,
+            OwnerUserId = ownerUserId,
+            IsKeyValid = true,
+            CanTrade = true,
+            SupportsSpot = false,
+            SupportsFutures = true,
+            EnvironmentScope = "Demo",
+            IsEnvironmentMatch = true,
+            ValidationStatus = "Valid",
+            PermissionSummary = "Trade=Y; Futures=Y; Testnet=Y",
+            ValidatedAtUtc = observedAtUtc
+        });
+        dbContext.ExchangeAccountSyncStates.Add(new ExchangeAccountSyncState
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = ownerUserId,
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            PrivateStreamConnectionState = ExchangePrivateStreamConnectionState.Connected,
+            DriftStatus = ExchangeStateDriftStatus.InSync,
+            LastPrivateStreamEventAtUtc = observedAtUtc,
+            LastBalanceSyncedAtUtc = observedAtUtc,
+            LastPositionSyncedAtUtc = observedAtUtc,
+            LastStateReconciledAtUtc = observedAtUtc
         });
         dbContext.TradingStrategies.Add(strategy);
         dbContext.TradingStrategyVersions.Add(version);
@@ -435,6 +504,19 @@ public sealed class BotWorkerJobProcessorTests
         await dbContext.SaveChangesAsync();
 
         return bot;
+    }
+
+    private static void ConfigurePilotScope(TestHarness harness, TradingBot bot, string? allowedSymbol = null)
+    {
+        harness.PilotOptions.AllowedUserIds = [bot.OwnerUserId];
+        harness.PilotOptions.AllowedBotIds = [bot.Id.ToString("N")];
+        harness.PilotOptions.AllowedSymbols =
+        [
+            MarketDataSymbolNormalizer.Normalize(
+                string.IsNullOrWhiteSpace(allowedSymbol)
+                    ? bot.Symbol
+                    : allowedSymbol)
+        ];
     }
 
     private static async Task PrimeFreshMarketDataAsync(
@@ -812,7 +894,8 @@ public sealed class BotWorkerJobProcessorTests
         IGlobalExecutionSwitchService switchService,
         IDataLatencyCircuitBreaker circuitBreaker,
         AdjustableTimeProvider timeProvider,
-        FakePrivateRestClient privateRestClient) : IAsyncDisposable
+        FakePrivateRestClient privateRestClient,
+        BotExecutionPilotOptions pilotOptions) : IAsyncDisposable
     {
         public ApplicationDbContext DbContext { get; } = dbContext;
 
@@ -826,12 +909,17 @@ public sealed class BotWorkerJobProcessorTests
 
         public FakePrivateRestClient PrivateRestClient { get; } = privateRestClient;
 
+        public BotExecutionPilotOptions PilotOptions { get; } = pilotOptions;
+
         public async ValueTask DisposeAsync()
         {
             await DbContext.DisposeAsync();
         }
     }
 }
+
+
+
 
 
 

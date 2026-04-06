@@ -13,4 +13,6 @@ public sealed record ExecutionGateRequest(
     Guid? BotId = null,
     string? StrategyKey = null,
     string? Symbol = null,
-    string? Timeframe = null);
+    string? Timeframe = null,
+    Guid? ExchangeAccountId = null,
+    ExchangeDataPlane Plane = ExchangeDataPlane.Futures);

@@ -23,14 +23,27 @@ public sealed class BotExecutionPilotOptions
 
     public string[] AllowedSymbols { get; set; } = ["BTCUSDT"];
 
-    [Range(0, 3600)]
-    public int PerBotCooldownSeconds { get; set; }
+    public string[] AllowedUserIds { get; set; } = [];
+
+    public string[] AllowedBotIds { get; set; } = [];
+
+    [Range(0.00000001, 1000000)]
+    public decimal MaxOrderNotional { get; set; } = 25m;
+
+    [Range(0.01, 100)]
+    public decimal MaxDailyLossPercentage { get; set; } = 1m;
 
     [Range(0, 3600)]
-    public int PerSymbolCooldownSeconds { get; set; }
+    public int PerBotCooldownSeconds { get; set; } = 300;
+
+    [Range(0, 3600)]
+    public int PerSymbolCooldownSeconds { get; set; } = 300;
 
     [Range(0, 100)]
-    public int MaxOpenPositionsPerUser { get; set; }
+    public int MaxOpenPositionsPerUser { get; set; } = 1;
+
+    [Range(1, 3600)]
+    public int PrivatePlaneFreshnessThresholdSeconds { get; set; } = 120;
 
     [Range(50, 1000)]
     public int PrimeHistoricalCandleCount { get; set; } = 200;

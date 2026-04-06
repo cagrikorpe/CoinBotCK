@@ -11,5 +11,12 @@ public enum ExecutionGateBlockedReason
     ClockDriftExceeded = 6,
     DataLatencyGuardUnavailable = 7,
     DemoSessionDriftDetected = 8,
-    ContinuityGap = 9
+    ContinuityGap = 9,
+    PilotConfigurationMissing = 10,
+    PilotRequiresDevelopment = 11,
+    PilotTestnetEndpointMismatch = 12,
+    PilotCredentialValidationUnavailable = 13,
+    PilotCredentialEnvironmentMismatch = 14,
+    PrivatePlaneUnavailable = 15,
+    PrivatePlaneStale = 16
 }

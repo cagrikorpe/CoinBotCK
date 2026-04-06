@@ -6,4 +6,6 @@ public sealed record UserExecutionOverrideEvaluationResult(
     bool IsBlocked,
     string? BlockCode,
     string? Message,
-    RiskVetoResult? RiskEvaluation = null);
+    RiskVetoResult? RiskEvaluation = null,
+    IReadOnlyCollection<string>? BlockReasons = null,
+    string? GuardSummary = null);

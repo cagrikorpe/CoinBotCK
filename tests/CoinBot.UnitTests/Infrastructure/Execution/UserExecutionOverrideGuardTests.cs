@@ -68,11 +68,55 @@ public sealed class UserExecutionOverrideGuardTests
     public async Task EvaluateAsync_AllowsDevelopmentFuturesPilotOverride_WhenResolvedModeRemainsDemo()
     {
         await using var dbContext = CreateDbContext();
+        var botId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        var evaluatedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+
+        dbContext.RiskProfiles.Add(new RiskProfile
+        {
+            OwnerUserId = "user-pilot",
+            ProfileName = "Pilot",
+            MaxDailyLossPercentage = 5m,
+            MaxPositionSizePercentage = 100m,
+            MaxLeverage = 2m,
+            MaxConcurrentPositions = 1
+        });
+        dbContext.ExchangeBalances.Add(new ExchangeBalance
+        {
+            ExchangeAccountId = exchangeAccountId,
+            OwnerUserId = "user-pilot",
+            Plane = ExchangeDataPlane.Futures,
+            Asset = "USDT",
+            WalletBalance = 1000m,
+            CrossWalletBalance = 1000m,
+            AvailableBalance = 1000m,
+            MaxWithdrawAmount = 1000m,
+            ExchangeUpdatedAtUtc = evaluatedAtUtc
+        });
+        await dbContext.SaveChangesAsync();
+
         var guard = new UserExecutionOverrideGuard(
             dbContext,
             new FakeTradingModeResolver(),
             logger: NullLogger<UserExecutionOverrideGuard>.Instance,
-            hostEnvironment: new TestHostEnvironment(Environments.Development));
+            hostEnvironment: new TestHostEnvironment(Environments.Development),
+            riskPolicyEvaluator: new RiskPolicyEvaluator(
+                dbContext,
+                timeProvider,
+                NullLogger<RiskPolicyEvaluator>.Instance),
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                AllowedUserIds = ["user-pilot"],
+                AllowedBotIds = [botId.ToString("N")],
+                AllowedSymbols = ["BTCUSDT"],
+                MaxOpenPositionsPerUser = 1,
+                PerBotCooldownSeconds = 300,
+                PerSymbolCooldownSeconds = 300,
+                MaxOrderNotional = 200m,
+                MaxDailyLossPercentage = 5m
+            }));
 
         var result = await guard.EvaluateAsync(
             new UserExecutionOverrideEvaluationRequest(
@@ -82,13 +126,18 @@ public sealed class UserExecutionOverrideGuardTests
                 ExecutionOrderSide.Buy,
                 0.002m,
                 65000m,
-                BotId: Guid.NewGuid(),
+                BotId: botId,
                 StrategyKey: "pilot-core",
-                Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1"),
+                Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                TradingStrategyId: Guid.NewGuid(),
+                TradingStrategyVersionId: Guid.NewGuid(),
+                Timeframe: "1m"),
             CancellationToken.None);
 
         Assert.False(result.IsBlocked);
         Assert.Null(result.BlockCode);
+        Assert.Contains("PilotUserId=user-pilot", result.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("Plane=Futures", result.GuardSummary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -399,6 +448,99 @@ public sealed class UserExecutionOverrideGuardTests
         Assert.Equal(7.5m, result.RiskEvaluation.Snapshot.CurrentDailyLossPercentage);
     }
 
+    [Fact]
+    public async Task EvaluateAsync_BlocksPilotWhenScopeViolationsProduceMultipleReasons()
+    {
+        await using var dbContext = CreateDbContext();
+        var allowedBotId = Guid.NewGuid();
+        var requestedBotId = Guid.NewGuid();
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            hostEnvironment: new TestHostEnvironment(Environments.Development),
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                AllowedUserIds = ["user-allowed"],
+                AllowedBotIds = [allowedBotId.ToString("N")],
+                AllowedSymbols = ["BTCUSDT"],
+                MaxOpenPositionsPerUser = 1,
+                PerBotCooldownSeconds = 300,
+                PerSymbolCooldownSeconds = 300,
+                MaxOrderNotional = 100m,
+                MaxDailyLossPercentage = 5m
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-other",
+                "ETHUSDT",
+                ExecutionEnvironment.Live,
+                ExecutionOrderSide.Buy,
+                0.01m,
+                20000m,
+                BotId: requestedBotId,
+                StrategyKey: "pilot-core",
+                Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                Plane: ExchangeDataPlane.Futures),
+            CancellationToken.None);
+
+        Assert.True(result.IsBlocked);
+        Assert.Equal("UserExecutionPilotUserNotAllowed", result.BlockCode);
+        Assert.NotNull(result.BlockReasons);
+        Assert.Contains("UserExecutionPilotUserNotAllowed", result.BlockReasons!, StringComparer.Ordinal);
+        Assert.Contains("UserExecutionPilotBotNotAllowed", result.BlockReasons!, StringComparer.Ordinal);
+        Assert.Contains("UserExecutionPilotSymbolNotAllowed", result.BlockReasons!, StringComparer.Ordinal);
+        Assert.Contains("UserExecutionPilotNotionalLimitExceeded", result.BlockReasons!, StringComparer.Ordinal);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_BlocksPilotWhenRiskEvaluationIsUnavailable()
+    {
+        await using var dbContext = CreateDbContext();
+        var botId = Guid.NewGuid();
+
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            hostEnvironment: new TestHostEnvironment(Environments.Development),
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                AllowedUserIds = ["user-pilot-loss"],
+                AllowedBotIds = [botId.ToString("N")],
+                AllowedSymbols = ["BTCUSDT"],
+                MaxOpenPositionsPerUser = 1,
+                PerBotCooldownSeconds = 300,
+                PerSymbolCooldownSeconds = 300,
+                MaxOrderNotional = 200m,
+                MaxDailyLossPercentage = 5m
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-pilot-loss",
+                "BTCUSDT",
+                ExecutionEnvironment.Live,
+                ExecutionOrderSide.Buy,
+                0.001m,
+                65000m,
+                BotId: botId,
+                StrategyKey: "pilot-core",
+                Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                TradingStrategyId: Guid.NewGuid(),
+                TradingStrategyVersionId: Guid.NewGuid(),
+                Timeframe: "1m",
+                Plane: ExchangeDataPlane.Futures),
+            CancellationToken.None);
+
+        Assert.True(result.IsBlocked);
+        Assert.Equal("UserExecutionPilotRiskEvaluationUnavailable", result.BlockCode);
+        Assert.Contains("pilot daily loss evaluation inputs are unavailable", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static ApplicationDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -471,3 +613,7 @@ public sealed class UserExecutionOverrideGuardTests
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 }
+
+
+
+
