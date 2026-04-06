@@ -107,6 +107,8 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
     public DbSet<TradingBot> TradingBots => Set<TradingBot>();
 
+    public DbSet<TradingFeatureSnapshot> TradingFeatureSnapshots => Set<TradingFeatureSnapshot>();
+
     public DbSet<TradingStrategy> TradingStrategies => Set<TradingStrategy>();
 
     public DbSet<TradingStrategyTemplate> TradingStrategyTemplates => Set<TradingStrategyTemplate>();
@@ -204,6 +206,7 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         ConfigureRiskPolicyVersions(builder.Entity<RiskPolicyVersion>());
         ConfigureRiskProfiles(builder.Entity<RiskProfile>());
         ConfigureTradingBots(builder.Entity<TradingBot>());
+        ConfigureTradingFeatureSnapshots(builder.Entity<TradingFeatureSnapshot>());
         ConfigureTradingStrategies(builder.Entity<TradingStrategy>());
         ConfigureTradingStrategyTemplates(builder.Entity<TradingStrategyTemplate>());
         ConfigureTradingStrategyTemplateRevisions(builder.Entity<TradingStrategyTemplateRevision>());
@@ -2668,6 +2671,129 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         builder.HasIndex(entity => new { entity.WorkerName, entity.LastUpdatedAtUtc });
     }
 
+    private void ConfigureTradingFeatureSnapshots(EntityTypeBuilder<TradingFeatureSnapshot> builder)
+    {
+        ConfigureUserOwnedEntity(builder, "TradingFeatureSnapshots");
+
+        builder.Property(entity => entity.StrategyKey)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.Symbol)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.Timeframe)
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.FeatureVersion)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.SnapshotState)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.MarketDataReasonCode)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.Plane)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.TradingMode)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .IsRequired();
+
+        foreach (var propertyName in new[]
+        {
+            nameof(TradingFeatureSnapshot.ReferencePrice),
+            nameof(TradingFeatureSnapshot.Ema20),
+            nameof(TradingFeatureSnapshot.Ema50),
+            nameof(TradingFeatureSnapshot.Ema200),
+            nameof(TradingFeatureSnapshot.Alma),
+            nameof(TradingFeatureSnapshot.Frama),
+            nameof(TradingFeatureSnapshot.Rsi),
+            nameof(TradingFeatureSnapshot.MacdLine),
+            nameof(TradingFeatureSnapshot.MacdSignal),
+            nameof(TradingFeatureSnapshot.MacdHistogram),
+            nameof(TradingFeatureSnapshot.KdjK),
+            nameof(TradingFeatureSnapshot.KdjD),
+            nameof(TradingFeatureSnapshot.KdjJ),
+            nameof(TradingFeatureSnapshot.FisherTransform),
+            nameof(TradingFeatureSnapshot.Atr),
+            nameof(TradingFeatureSnapshot.BollingerPercentB),
+            nameof(TradingFeatureSnapshot.BollingerBandWidth),
+            nameof(TradingFeatureSnapshot.KeltnerChannelRelation),
+            nameof(TradingFeatureSnapshot.PmaxValue),
+            nameof(TradingFeatureSnapshot.ChandelierExit),
+            nameof(TradingFeatureSnapshot.VolumeSpikeRatio),
+            nameof(TradingFeatureSnapshot.RelativeVolume),
+            nameof(TradingFeatureSnapshot.Obv)
+        })
+        {
+            builder.Property(propertyName)
+                .HasPrecision(38, 18);
+        }
+
+        builder.Property(entity => entity.LastVetoReasonCode)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.LastDecisionOutcome)
+            .HasMaxLength(32);
+
+        builder.Property(entity => entity.LastDecisionCode)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.LastExecutionState)
+            .HasMaxLength(32);
+
+        builder.Property(entity => entity.LastFailureCode)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.FeatureSummary)
+            .HasMaxLength(1024)
+            .IsRequired();
+
+        builder.Property(entity => entity.TopSignalHints)
+            .HasMaxLength(1024)
+            .IsRequired();
+
+        builder.Property(entity => entity.PrimaryRegime)
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.MomentumBias)
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.VolatilityState)
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.NormalizationMeta)
+            .HasMaxLength(1024);
+
+        builder.HasIndex(entity => new { entity.OwnerUserId, entity.BotId, entity.Symbol, entity.Timeframe, entity.EvaluatedAtUtc });
+        builder.HasIndex(entity => new { entity.OwnerUserId, entity.Symbol, entity.Timeframe, entity.EvaluatedAtUtc });
+        builder.HasIndex(entity => entity.ExchangeAccountId);
+
+        builder.HasOne<TradingBot>()
+            .WithMany()
+            .HasForeignKey(entity => entity.BotId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<ExchangeAccount>()
+            .WithMany()
+            .HasForeignKey(entity => entity.ExchangeAccountId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
     private static void ConfigureUserExecutionOverrides(EntityTypeBuilder<UserExecutionOverride> builder)
     {
         builder.ToTable("UserExecutionOverrides");
@@ -2812,5 +2938,4 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         }
     }
 }
-
 

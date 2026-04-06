@@ -1,5 +1,6 @@
 using System.Globalization;
 using CoinBot.Application.Abstractions.Execution;
+using CoinBot.Application.Abstractions.Features;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Application.Abstractions.Strategies;
@@ -26,6 +27,7 @@ public sealed class BotWorkerJobProcessor(
     IStrategySignalService strategySignalService,
     IExecutionEngine executionEngine,
     IDataLatencyCircuitBreaker dataLatencyCircuitBreaker,
+    ITradingFeatureSnapshotService featureSnapshotService,
     ICorrelationContextAccessor correlationContextAccessor,
     IOptions<BotExecutionPilotOptions> options,
     IHostEnvironment hostEnvironment,
@@ -160,6 +162,7 @@ public sealed class BotWorkerJobProcessor(
         }
 
         var marketState = await ResolveMarketStateAsync(normalizedSymbol, timeframe, cancellationToken);
+        await TryCaptureFeatureSnapshotAsync(bot, exchangeAccount, normalizedSymbol, timeframe, marketState, cancellationToken);
 
         if (marketState.IndicatorSnapshot is null)
         {
@@ -393,7 +396,7 @@ public sealed class BotWorkerJobProcessor(
         return snapshots.SingleOrDefault();
     }
 
-    private async Task<(StrategyIndicatorSnapshot? IndicatorSnapshot, decimal? ReferencePrice)> ResolveMarketStateAsync(
+    private async Task<MarketStateResolution> ResolveMarketStateAsync(
         string symbol,
         string timeframe,
         CancellationToken cancellationToken)
@@ -405,7 +408,7 @@ public sealed class BotWorkerJobProcessor(
             indicatorSnapshot.State == IndicatorDataState.Ready &&
             latestPrice is not null)
         {
-            return (indicatorSnapshot, latestPrice.Price);
+            return new MarketStateResolution(indicatorSnapshot, latestPrice.Price, Array.Empty<MarketCandleSnapshot>());
         }
 
         IReadOnlyCollection<MarketCandleSnapshot> historicalCandles;
@@ -432,12 +435,12 @@ public sealed class BotWorkerJobProcessor(
                 "Bot execution pilot failed while backfilling historical candles for {Symbol} {Timeframe}.",
                 symbol,
                 timeframe);
-            return (indicatorSnapshot, latestPrice?.Price);
+            return new MarketStateResolution(indicatorSnapshot, latestPrice?.Price, Array.Empty<MarketCandleSnapshot>());
         }
 
         if (historicalCandles.Count == 0)
         {
-            return (indicatorSnapshot, latestPrice?.Price);
+            return new MarketStateResolution(indicatorSnapshot, latestPrice?.Price, Array.Empty<MarketCandleSnapshot>());
         }
 
         indicatorSnapshot = await indicatorDataService.PrimeAsync(
@@ -457,11 +460,47 @@ public sealed class BotWorkerJobProcessor(
             .Select(snapshot => (decimal?)snapshot.ClosePrice)
             .FirstOrDefault();
 
-        return (
+        return new MarketStateResolution(
             indicatorSnapshot is not null && indicatorSnapshot.State == IndicatorDataState.Ready
                 ? indicatorSnapshot
                 : null,
-            latestPrice?.Price ?? historicalReferencePrice);
+            latestPrice?.Price ?? historicalReferencePrice,
+            historicalCandles);
+    }
+
+
+    private async Task TryCaptureFeatureSnapshotAsync(
+        TradingBot bot,
+        ExchangeAccount exchangeAccount,
+        string symbol,
+        string timeframe,
+        MarketStateResolution marketState,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await featureSnapshotService.CaptureAsync(
+                new TradingFeatureCaptureRequest(
+                    bot.OwnerUserId,
+                    bot.Id,
+                    bot.StrategyKey,
+                    symbol,
+                    timeframe,
+                    timeProvider.GetUtcNow().UtcDateTime,
+                    exchangeAccount.Id,
+                    ExchangeDataPlane.Futures,
+                    marketState.IndicatorSnapshot,
+                    marketState.ReferencePrice,
+                    marketState.HistoricalCandles),
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(
+                exception,
+                "Bot execution pilot failed while capturing a trading feature snapshot for BotId {BotId}.",
+                bot.Id);
+        }
     }
 
     private async Task RecordHistoricalMarketDataHeartbeatAsync(
@@ -768,6 +807,11 @@ public sealed class BotWorkerJobProcessor(
             : value + (increment - remainder);
     }
 
+    private sealed record MarketStateResolution(
+        StrategyIndicatorSnapshot? IndicatorSnapshot,
+        decimal? ReferencePrice,
+        IReadOnlyCollection<MarketCandleSnapshot> HistoricalCandles);
+
     private bool IsAllowedSymbol(string symbol)
     {
         var allowedSymbols = optionsValue.AllowedSymbols
@@ -783,6 +827,4 @@ public sealed class BotWorkerJobProcessor(
         return allowedSymbols.Contains(symbol);
     }
 }
-
-
 

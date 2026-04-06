@@ -10,6 +10,7 @@ using CoinBot.Infrastructure.Administration;
 using CoinBot.Infrastructure.Auditing;
 using CoinBot.Infrastructure.DemoPortfolio;
 using CoinBot.Infrastructure.Execution;
+using CoinBot.Infrastructure.Features;
 using CoinBot.Infrastructure.Exchange;
 using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.MarketData;
@@ -150,6 +151,11 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal("TradeMasterDisarmed", result.ErrorCode);
         Assert.Equal(ExecutionOrderState.Rejected, persistedOrder.State);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+        var persistedFeature = await harness.DbContext.TradingFeatureSnapshots.SingleAsync();
+        Assert.Equal(bot.OwnerUserId, persistedFeature.OwnerUserId);
+        Assert.Equal(bot.Id, persistedFeature.BotId);
+        Assert.Equal("BTCUSDT", persistedFeature.Symbol);
+        Assert.Equal("1m", persistedFeature.Timeframe);
     }
 
     [Fact]
@@ -349,6 +355,14 @@ public sealed class BotWorkerJobProcessorTests
             lifecycleService,
             timeProvider,
             NullLogger<ExecutionEngine>.Instance);
+        var featureSnapshotService = new TradingFeatureSnapshotService(
+            dbContext,
+            circuitBreaker,
+            tradingModeService,
+            new FakeHistoricalKlineClient(timeProvider),
+            Options.Create(pilotOptions),
+            timeProvider,
+            NullLogger<TradingFeatureSnapshotService>.Instance);
         var processor = new BotWorkerJobProcessor(
             dbContext,
             new IndicatorDataService(
@@ -362,6 +376,7 @@ public sealed class BotWorkerJobProcessorTests
             strategySignalService,
             executionEngine,
             circuitBreaker,
+            featureSnapshotService,
             correlationContextAccessor,
             Options.Create(pilotOptions),
             hostEnvironment,
@@ -917,9 +932,4 @@ public sealed class BotWorkerJobProcessorTests
         }
     }
 }
-
-
-
-
-
 

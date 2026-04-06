@@ -7,6 +7,7 @@ using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Dashboard;
 using CoinBot.Application.Abstractions.DemoPortfolio;
 using CoinBot.Application.Abstractions.ExchangeCredentials;
+using CoinBot.Application.Abstractions.Features;
 using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Indicators;
@@ -26,6 +27,7 @@ using CoinBot.Infrastructure.Credentials;
 using CoinBot.Infrastructure.Dashboard;
 using CoinBot.Infrastructure.DemoPortfolio;
 using CoinBot.Infrastructure.Exchange;
+using CoinBot.Infrastructure.Features;
 using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Identity;
 using CoinBot.Infrastructure.Jobs;
@@ -246,6 +248,7 @@ public static class DependencyInjection
         services.AddScoped<IUserExecutionOverrideGuard, UserExecutionOverrideGuard>();
         services.AddScoped<IRiskPolicyEvaluator, RiskPolicyEvaluator>();
         services.AddScoped<IStrategySignalService, StrategySignalService>();
+        services.AddScoped<ITradingFeatureSnapshotService, TradingFeatureSnapshotService>();
         services.AddScoped<IStrategyVersionService, StrategyVersionService>();
         services.AddScoped<TradingModeService>();
         services.AddScoped<ITradingModeResolver>(serviceProvider => serviceProvider.GetRequiredService<TradingModeService>());
@@ -501,6 +504,4 @@ public static class DependencyInjection
         return services;
     }
 }
-
-
 

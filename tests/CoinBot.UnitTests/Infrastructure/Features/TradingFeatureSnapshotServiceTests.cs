@@ -1,0 +1,330 @@
+using CoinBot.Application.Abstractions.Alerts;
+using CoinBot.Application.Abstractions.DataScope;
+using CoinBot.Application.Abstractions.Execution;
+using CoinBot.Application.Abstractions.Features;
+using CoinBot.Application.Abstractions.MarketData;
+using CoinBot.Domain.Entities;
+using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Execution;
+using CoinBot.Infrastructure.Features;
+using CoinBot.Infrastructure.Identity;
+using CoinBot.Infrastructure.Jobs;
+using CoinBot.Infrastructure.MarketData;
+using CoinBot.Infrastructure.Persistence;
+using CoinBot.UnitTests.Infrastructure.Mfa;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+
+namespace CoinBot.UnitTests.Infrastructure.Features;
+
+public sealed class TradingFeatureSnapshotServiceTests
+{
+    [Fact]
+    public async Task CaptureAsync_ComputesDeterministicCoreFeatureSet_AndExplainabilitySummary()
+    {
+        await using var harness = await CreateHarnessAsync("feature-ready-01");
+        var evaluatedAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime;
+        var candles = CreateCandles("BTCUSDT", "1m", evaluatedAtUtc.AddMinutes(-240), 240, 65000m, 7m, 110m);
+
+        await harness.CircuitBreaker.RecordHeartbeatAsync(
+            new DataLatencyHeartbeat(
+                "feature-test",
+                candles[^1].CloseTimeUtc,
+                Symbol: "BTCUSDT",
+                Timeframe: "1m",
+                ExpectedOpenTimeUtc: candles[^1].CloseTimeUtc.AddMilliseconds(1),
+                ContinuityGapCount: 0),
+            cancellationToken: CancellationToken.None);
+
+        var snapshot = await harness.Service.CaptureAsync(
+            new TradingFeatureCaptureRequest(
+                harness.UserId,
+                harness.BotId,
+                "feature-strategy",
+                "BTCUSDT",
+                "1m",
+                evaluatedAtUtc,
+                harness.ExchangeAccountId,
+                ExchangeDataPlane.Futures,
+                HistoricalCandles: candles),
+            CancellationToken.None);
+
+        Assert.Equal(FeatureSnapshotState.Ready, snapshot.SnapshotState);
+        Assert.Equal(DegradedModeReasonCode.None, snapshot.MarketDataReasonCode);
+        Assert.Equal("AI-1.v1", snapshot.FeatureVersion);
+        Assert.Equal(240, snapshot.SampleCount);
+        Assert.Equal(200, snapshot.RequiredSampleCount);
+        Assert.NotNull(snapshot.ReferencePrice);
+        Assert.NotNull(snapshot.Trend.Ema20);
+        Assert.NotNull(snapshot.Trend.Ema50);
+        Assert.NotNull(snapshot.Trend.Ema200);
+        Assert.True(snapshot.Trend.Ema20 > snapshot.Trend.Ema50);
+        Assert.True(snapshot.Trend.Ema50 > snapshot.Trend.Ema200);
+        Assert.NotNull(snapshot.Trend.Alma);
+        Assert.NotNull(snapshot.Trend.Frama);
+        Assert.NotNull(snapshot.Momentum.Rsi);
+        Assert.NotNull(snapshot.Momentum.MacdHistogram);
+        Assert.NotNull(snapshot.Momentum.KdjK);
+        Assert.NotNull(snapshot.Momentum.FisherTransform);
+        Assert.NotNull(snapshot.Volatility.Atr);
+        Assert.NotNull(snapshot.Volatility.BollingerPercentB);
+        Assert.NotNull(snapshot.Volatility.BollingerBandWidth);
+        Assert.NotNull(snapshot.Volatility.KeltnerChannelRelation);
+        Assert.NotNull(snapshot.Volatility.PmaxValue);
+        Assert.NotNull(snapshot.Volatility.ChandelierExit);
+        Assert.NotNull(snapshot.Volume.RelativeVolume);
+        Assert.NotNull(snapshot.Volume.VolumeSpikeRatio);
+        Assert.NotNull(snapshot.Volume.Obv);
+        Assert.Equal("BullTrend", snapshot.PrimaryRegime);
+        Assert.False(string.IsNullOrWhiteSpace(snapshot.FeatureSummary));
+        Assert.False(string.IsNullOrWhiteSpace(snapshot.TopSignalHints));
+        Assert.Contains("State=Ready", snapshot.FeatureSummary, StringComparison.Ordinal);
+        Assert.Contains("Regime:", snapshot.TopSignalHints, StringComparison.Ordinal);
+
+        var readBack = await harness.Service.GetLatestAsync(harness.UserId, harness.BotId, "BTCUSDT", "1m");
+
+        Assert.NotNull(readBack);
+        Assert.Equal(snapshot.Id, readBack!.Id);
+        Assert.Equal(snapshot.FeatureSummary, readBack.FeatureSummary);
+    }
+
+    [Fact]
+    public async Task CaptureAsync_ProducesExplicitMissingDataState_WhenMarketDataIsUnavailable()
+    {
+        await using var harness = await CreateHarnessAsync("feature-missing-01");
+
+        var snapshot = await harness.Service.CaptureAsync(
+            new TradingFeatureCaptureRequest(
+                harness.UserId,
+                harness.BotId,
+                "feature-strategy",
+                "BTCUSDT",
+                "1m",
+                harness.TimeProvider.GetUtcNow().UtcDateTime,
+                harness.ExchangeAccountId,
+                ExchangeDataPlane.Futures,
+                HistoricalCandles: Array.Empty<MarketCandleSnapshot>()),
+            CancellationToken.None);
+
+        Assert.Equal(FeatureSnapshotState.MissingData, snapshot.SnapshotState);
+        Assert.Equal(DegradedModeReasonCode.MarketDataUnavailable, snapshot.MarketDataReasonCode);
+        Assert.Contains("State=MissingData", snapshot.FeatureSummary, StringComparison.Ordinal);
+        Assert.Contains("MarketDataMissing", snapshot.TopSignalHints, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CaptureAsync_ProducesExplicitStaleState_WhenLatencySnapshotIsBreached()
+    {
+        await using var harness = await CreateHarnessAsync("feature-stale-01");
+        var candles = CreateCandles("BTCUSDT", "1m", harness.TimeProvider.GetUtcNow().UtcDateTime.AddMinutes(-240), 240, 65000m, 2m, 90m);
+
+        await harness.CircuitBreaker.RecordHeartbeatAsync(
+            new DataLatencyHeartbeat(
+                "feature-test",
+                candles[^1].CloseTimeUtc,
+                Symbol: "BTCUSDT",
+                Timeframe: "1m",
+                ExpectedOpenTimeUtc: candles[^1].CloseTimeUtc.AddMilliseconds(1),
+                ContinuityGapCount: 0),
+            cancellationToken: CancellationToken.None);
+        harness.TimeProvider.Advance(TimeSpan.FromSeconds(10));
+
+        var snapshot = await harness.Service.CaptureAsync(
+            new TradingFeatureCaptureRequest(
+                harness.UserId,
+                harness.BotId,
+                "feature-strategy",
+                "BTCUSDT",
+                "1m",
+                harness.TimeProvider.GetUtcNow().UtcDateTime,
+                harness.ExchangeAccountId,
+                ExchangeDataPlane.Futures,
+                HistoricalCandles: candles),
+            CancellationToken.None);
+
+        Assert.Equal(FeatureSnapshotState.Stale, snapshot.SnapshotState);
+        Assert.Equal(DegradedModeReasonCode.MarketDataLatencyCritical, snapshot.MarketDataReasonCode);
+        Assert.Contains("State=Stale", snapshot.FeatureSummary, StringComparison.Ordinal);
+        Assert.Contains("MarketDataStale", snapshot.TopSignalHints, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CaptureAsync_ProducesSameDerivedFields_ForSameInput()
+    {
+        await using var harness = await CreateHarnessAsync("feature-deterministic-01");
+        var evaluatedAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime;
+        var candles = CreateCandles("BTCUSDT", "1m", evaluatedAtUtc.AddMinutes(-220), 220, 65000m, 5m, 120m);
+
+        await harness.CircuitBreaker.RecordHeartbeatAsync(
+            new DataLatencyHeartbeat(
+                "feature-test",
+                candles[^1].CloseTimeUtc,
+                Symbol: "BTCUSDT",
+                Timeframe: "1m",
+                ExpectedOpenTimeUtc: candles[^1].CloseTimeUtc.AddMilliseconds(1),
+                ContinuityGapCount: 0),
+            cancellationToken: CancellationToken.None);
+
+        var first = await harness.Service.CaptureAsync(
+            new TradingFeatureCaptureRequest(
+                harness.UserId,
+                harness.BotId,
+                "feature-strategy",
+                "BTCUSDT",
+                "1m",
+                evaluatedAtUtc,
+                harness.ExchangeAccountId,
+                ExchangeDataPlane.Futures,
+                HistoricalCandles: candles),
+            CancellationToken.None);
+        var second = await harness.Service.CaptureAsync(
+            new TradingFeatureCaptureRequest(
+                harness.UserId,
+                harness.BotId,
+                "feature-strategy",
+                "BTCUSDT",
+                "1m",
+                evaluatedAtUtc,
+                harness.ExchangeAccountId,
+                ExchangeDataPlane.Futures,
+                HistoricalCandles: candles),
+            CancellationToken.None);
+
+        Assert.Equal(first.SnapshotState, second.SnapshotState);
+        Assert.Equal(first.MarketDataReasonCode, second.MarketDataReasonCode);
+        Assert.Equal(first.ReferencePrice, second.ReferencePrice);
+        Assert.Equal(first.Trend, second.Trend);
+        Assert.Equal(first.Momentum, second.Momentum);
+        Assert.Equal(first.Volatility, second.Volatility);
+        Assert.Equal(first.Volume, second.Volume);
+        Assert.Equal(first.TradingContext, second.TradingContext);
+        Assert.Equal(first.FeatureSummary, second.FeatureSummary);
+        Assert.Equal(first.TopSignalHints, second.TopSignalHints);
+        Assert.Equal(first.NormalizationMeta, second.NormalizationMeta);
+    }
+
+    private static async Task<TestHarness> CreateHarnessAsync(string userId)
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"), databaseRoot)
+            .Options;
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 6, 12, 0, 0, TimeSpan.Zero));
+        var dbContext = new ApplicationDbContext(options, new TestDataScopeContext(userId, hasIsolationBypass: false));
+        var exchangeAccountId = Guid.NewGuid();
+        var botId = Guid.NewGuid();
+
+        dbContext.Users.Add(new ApplicationUser
+        {
+            Id = userId,
+            UserName = userId,
+            NormalizedUserName = userId.ToUpperInvariant(),
+            Email = $"{userId}@coinbot.test",
+            NormalizedEmail = $"{userId.ToUpperInvariant()}@COINBOT.TEST",
+            FullName = userId,
+            EmailConfirmed = true
+        });
+        dbContext.ExchangeAccounts.Add(new ExchangeAccount
+        {
+            Id = exchangeAccountId,
+            OwnerUserId = userId,
+            ExchangeName = "Binance",
+            DisplayName = "Feature Futures",
+            CredentialStatus = ExchangeCredentialStatus.Active,
+            IsReadOnly = false
+        });
+        dbContext.TradingBots.Add(new TradingBot
+        {
+            Id = botId,
+            OwnerUserId = userId,
+            Name = "Feature Bot",
+            StrategyKey = "feature-strategy",
+            Symbol = "BTCUSDT",
+            ExchangeAccountId = exchangeAccountId,
+            IsEnabled = true
+        });
+        await dbContext.SaveChangesAsync();
+
+        var circuitBreaker = new DataLatencyCircuitBreaker(
+            dbContext,
+            new FakeAlertService(),
+            Options.Create(new DataLatencyGuardOptions()),
+            timeProvider,
+            NullLogger<DataLatencyCircuitBreaker>.Instance);
+        var tradingModeService = new TradingModeService(dbContext, new NoopAuditLogService());
+        var service = new TradingFeatureSnapshotService(
+            dbContext,
+            circuitBreaker,
+            tradingModeService,
+            new FakeHistoricalKlineClient(),
+            Options.Create(new BotExecutionPilotOptions()),
+            timeProvider,
+            NullLogger<TradingFeatureSnapshotService>.Instance);
+
+        return new TestHarness(dbContext, service, circuitBreaker, timeProvider, userId, botId, exchangeAccountId);
+    }
+
+    private static MarketCandleSnapshot[] CreateCandles(string symbol, string timeframe, DateTime startOpenTimeUtc, int count, decimal startPrice, decimal driftPerCandle, decimal startVolume)
+    {
+        return Enumerable.Range(0, count)
+            .Select(index =>
+            {
+                var openPrice = startPrice + (driftPerCandle * index);
+                var closePrice = openPrice + (driftPerCandle * 0.6m);
+                var openTimeUtc = startOpenTimeUtc.AddMinutes(index);
+                return new MarketCandleSnapshot(
+                    symbol,
+                    timeframe,
+                    openTimeUtc,
+                    openTimeUtc.AddMinutes(1).AddMilliseconds(-1),
+                    openPrice,
+                    closePrice + 8m,
+                    openPrice - 8m,
+                    closePrice,
+                    startVolume + (index % 17),
+                    true,
+                    openTimeUtc.AddMinutes(1),
+                    "unit-feature");
+            })
+            .ToArray();
+    }
+
+    private sealed record TestHarness(
+        ApplicationDbContext DbContext,
+        TradingFeatureSnapshotService Service,
+        DataLatencyCircuitBreaker CircuitBreaker,
+        AdjustableTimeProvider TimeProvider,
+        string UserId,
+        Guid BotId,
+        Guid ExchangeAccountId) : IAsyncDisposable
+    {
+        public ValueTask DisposeAsync() => DbContext.DisposeAsync();
+    }
+
+    private sealed class TestDataScopeContext(string? userId, bool hasIsolationBypass) : IDataScopeContext
+    {
+        public string? UserId => userId;
+        public bool HasIsolationBypass => hasIsolationBypass;
+    }
+
+    private sealed class FakeHistoricalKlineClient : IBinanceHistoricalKlineClient
+    {
+        public Task<IReadOnlyCollection<MarketCandleSnapshot>> GetClosedCandlesAsync(string symbol, string interval, DateTime startOpenTimeUtc, DateTime endOpenTimeUtc, int limit, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<IReadOnlyCollection<MarketCandleSnapshot>>(Array.Empty<MarketCandleSnapshot>());
+        }
+    }
+
+    private sealed class FakeAlertService : IAlertService
+    {
+        public Task SendAsync(AlertNotification notification, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private sealed class NoopAuditLogService : CoinBot.Application.Abstractions.Auditing.IAuditLogService
+    {
+        public Task WriteAsync(CoinBot.Application.Abstractions.Auditing.AuditLogWriteRequest request, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+}
+
