@@ -109,7 +109,55 @@ public sealed class AiShadowDecisionIntegrationTests
             await SqlServerIntegrationDatabase.CleanupDatabaseAsync(connectionString);
         }
     }
+    [Fact]
+    public async Task ProcessAsync_ProjectsRejectTelemetryToLiveReadModel_WhenTradeMasterIsDisarmed_OnSqlServer()
+    {
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString($"CoinBotPilotReject_{Guid.NewGuid():N}");
+        await using var harness = CreateHarness(connectionString, new AiSignalOptions());
 
+        try
+        {
+            await harness.DbContext.Database.EnsureDeletedAsync();
+            await harness.DbContext.Database.MigrateAsync();
+
+            var bot = await SeedBotGraphAsync(harness.DbContext, "pilot-reject-int-user");
+            ConfigurePilotScope(harness.PilotOptions, bot);
+            harness.PilotOptions.PilotActivationEnabled = true;
+            await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-pilot-reject-int-1");
+            await harness.SwitchService.SetTradeMasterStateAsync(
+                TradeMasterSwitchState.Armed,
+                actor: "admin-pilot-int",
+                context: "Execution open",
+                correlationId: "corr-pilot-reject-int-2");
+            await harness.SwitchService.SetTradeMasterStateAsync(
+                TradeMasterSwitchState.Disarmed,
+                actor: "admin-pilot-int",
+                context: "Execution frozen",
+                correlationId: "corr-pilot-reject-int-3");
+
+            var result = await harness.Processor.ProcessAsync(bot, "job-pilot-reject-int-1", CancellationToken.None);
+            var order = await harness.DbContext.ExecutionOrders.SingleAsync();
+            var liveReadModel = new UserDashboardLiveReadModelService(
+                harness.DbContext,
+                harness.SwitchService,
+                Options.Create(harness.PilotOptions),
+                harness.TimeProvider);
+            var snapshot = await liveReadModel.GetSnapshotAsync(bot.OwnerUserId);
+
+            Assert.False(result.IsSuccessful);
+            Assert.Equal("TradeMasterDisarmed", result.ErrorCode);
+            Assert.Equal(ExecutionOrderState.Rejected, order.State);
+            Assert.Equal("TradeMasterDisarmed", order.FailureCode);
+            Assert.Equal("Disarmed", snapshot.Control.TradeMasterLabel);
+            Assert.Equal("PilotEnabled", snapshot.Control.PilotActivationLabel);
+            Assert.Equal("TradeMasterDisarmed", snapshot.LatestReject.Code);
+            Assert.Contains("Execution blocked", snapshot.LatestReject.Summary, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            await SqlServerIntegrationDatabase.CleanupDatabaseAsync(connectionString);
+        }
+    }
 
     [Fact]
     public async Task ProcessAsync_SubmitsReconcilesAndProjectsPortfolio_WhenPilotActivationIsEnabled_OnSqlServer()
@@ -908,11 +956,5 @@ public sealed class AiShadowDecisionIntegrationTests
         }
     }
 }
-
-
-
-
-
-
 
 

@@ -492,7 +492,254 @@ public sealed class UserExecutionOverrideGuardTests
         Assert.Contains("UserExecutionPilotUserNotAllowed", result.BlockReasons!, StringComparer.Ordinal);
         Assert.Contains("UserExecutionPilotBotNotAllowed", result.BlockReasons!, StringComparer.Ordinal);
         Assert.Contains("UserExecutionPilotSymbolNotAllowed", result.BlockReasons!, StringComparer.Ordinal);
-        Assert.Contains("UserExecutionPilotNotionalLimitExceeded", result.BlockReasons!, StringComparer.Ordinal);
+        Assert.Contains("UserExecutionPilotNotionalHardCapExceeded", result.BlockReasons!, StringComparer.Ordinal);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_AllowsPilotWhenRequestedNotionalIsWithinConfiguredHardCap()
+    {
+        await using var dbContext = CreateDbContext();
+        var botId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        var evaluatedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+
+        dbContext.RiskProfiles.Add(new RiskProfile
+        {
+            OwnerUserId = "user-pilot-cap",
+            ProfileName = "Pilot",
+            MaxDailyLossPercentage = 5m,
+            MaxPositionSizePercentage = 100m,
+            MaxLeverage = 2m,
+            MaxConcurrentPositions = 1
+        });
+        dbContext.ExchangeBalances.Add(new ExchangeBalance
+        {
+            ExchangeAccountId = exchangeAccountId,
+            OwnerUserId = "user-pilot-cap",
+            Plane = ExchangeDataPlane.Futures,
+            Asset = "USDT",
+            WalletBalance = 1000m,
+            CrossWalletBalance = 1000m,
+            AvailableBalance = 1000m,
+            MaxWithdrawAmount = 1000m,
+            ExchangeUpdatedAtUtc = evaluatedAtUtc
+        });
+        await dbContext.SaveChangesAsync();
+
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            hostEnvironment: new TestHostEnvironment(Environments.Development),
+            riskPolicyEvaluator: new RiskPolicyEvaluator(
+                dbContext,
+                timeProvider,
+                NullLogger<RiskPolicyEvaluator>.Instance),
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                AllowedUserIds = ["user-pilot-cap"],
+                AllowedBotIds = [botId.ToString("N")],
+                AllowedSymbols = ["BTCUSDT"],
+                MaxPilotOrderNotional = "150",
+                MaxOpenPositionsPerUser = 1,
+                PerBotCooldownSeconds = 300,
+                PerSymbolCooldownSeconds = 300,
+                MaxDailyLossPercentage = 5m
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-pilot-cap",
+                "BTCUSDT",
+                ExecutionEnvironment.Live,
+                ExecutionOrderSide.Buy,
+                0.002m,
+                65000m,
+                BotId: botId,
+                StrategyKey: "pilot-core",
+                Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                TradingStrategyId: Guid.NewGuid(),
+                TradingStrategyVersionId: Guid.NewGuid(),
+                Timeframe: "1m"),
+            CancellationToken.None);
+
+        Assert.False(result.IsBlocked);
+        Assert.Null(result.BlockCode);
+        Assert.Contains("MaxPilotOrderNotional=150", result.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("RequestedNotional=130", result.GuardSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_BlocksPilotWhenRequestedNotionalExceedsConfiguredHardCap()
+    {
+        await using var dbContext = CreateDbContext();
+        var botId = Guid.NewGuid();
+
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            hostEnvironment: new TestHostEnvironment(Environments.Development),
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                AllowedUserIds = ["user-pilot-cap"],
+                AllowedBotIds = [botId.ToString("N")],
+                AllowedSymbols = ["BTCUSDT"],
+                MaxPilotOrderNotional = "125",
+                MaxOpenPositionsPerUser = 1,
+                PerBotCooldownSeconds = 300,
+                PerSymbolCooldownSeconds = 300,
+                MaxDailyLossPercentage = 5m
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-pilot-cap",
+                "BTCUSDT",
+                ExecutionEnvironment.Live,
+                ExecutionOrderSide.Buy,
+                0.002m,
+                65000m,
+                BotId: botId,
+                StrategyKey: "pilot-core",
+                Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                Plane: ExchangeDataPlane.Futures),
+            CancellationToken.None);
+
+        Assert.True(result.IsBlocked);
+        Assert.Equal("UserExecutionPilotNotionalHardCapExceeded", result.BlockCode);
+        Assert.Contains("UserExecutionPilotNotionalHardCapExceeded", result.BlockReasons!, StringComparer.Ordinal);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_BlocksPilotWhenNotionalCapConfigurationIsMissing()
+    {
+        await using var dbContext = CreateDbContext();
+        var botId = Guid.NewGuid();
+
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            hostEnvironment: new TestHostEnvironment(Environments.Development),
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                AllowedUserIds = ["user-pilot-missing"],
+                AllowedBotIds = [botId.ToString("N")],
+                AllowedSymbols = ["BTCUSDT"],
+                MaxOpenPositionsPerUser = 1,
+                PerBotCooldownSeconds = 300,
+                PerSymbolCooldownSeconds = 300,
+                MaxDailyLossPercentage = 5m
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-pilot-missing",
+                "BTCUSDT",
+                ExecutionEnvironment.Live,
+                ExecutionOrderSide.Buy,
+                0.001m,
+                65000m,
+                BotId: botId,
+                StrategyKey: "pilot-core",
+                Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                Plane: ExchangeDataPlane.Futures),
+            CancellationToken.None);
+
+        Assert.True(result.IsBlocked);
+        Assert.Equal("UserExecutionPilotNotionalConfigurationMissing", result.BlockCode);
+        Assert.Contains("MaxPilotOrderNotional=missing", result.GuardSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_BlocksPilotWhenNotionalCapConfigurationIsInvalid()
+    {
+        await using var dbContext = CreateDbContext();
+        var botId = Guid.NewGuid();
+
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            hostEnvironment: new TestHostEnvironment(Environments.Development),
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                AllowedUserIds = ["user-pilot-invalid"],
+                AllowedBotIds = [botId.ToString("N")],
+                AllowedSymbols = ["BTCUSDT"],
+                MaxPilotOrderNotional = "not-a-number",
+                MaxOpenPositionsPerUser = 1,
+                PerBotCooldownSeconds = 300,
+                PerSymbolCooldownSeconds = 300,
+                MaxDailyLossPercentage = 5m
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-pilot-invalid",
+                "BTCUSDT",
+                ExecutionEnvironment.Live,
+                ExecutionOrderSide.Buy,
+                0.001m,
+                65000m,
+                BotId: botId,
+                StrategyKey: "pilot-core",
+                Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                Plane: ExchangeDataPlane.Futures),
+            CancellationToken.None);
+
+        Assert.True(result.IsBlocked);
+        Assert.Equal("UserExecutionPilotNotionalConfigurationInvalid", result.BlockCode);
+        Assert.Contains("MaxPilotOrderNotional=invalid:not-a-number", result.GuardSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_BlocksPilotWhenNotionalDataIsUnavailable()
+    {
+        await using var dbContext = CreateDbContext();
+        var botId = Guid.NewGuid();
+
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            hostEnvironment: new TestHostEnvironment(Environments.Development),
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                AllowedUserIds = ["user-pilot-no-price"],
+                AllowedBotIds = [botId.ToString("N")],
+                AllowedSymbols = ["BTCUSDT"],
+                MaxPilotOrderNotional = "125",
+                MaxOpenPositionsPerUser = 1,
+                PerBotCooldownSeconds = 300,
+                PerSymbolCooldownSeconds = 300,
+                MaxDailyLossPercentage = 5m
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-pilot-no-price",
+                "BTCUSDT",
+                ExecutionEnvironment.Live,
+                ExecutionOrderSide.Buy,
+                0.001m,
+                0m,
+                BotId: botId,
+                StrategyKey: "pilot-core",
+                Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                Plane: ExchangeDataPlane.Futures),
+            CancellationToken.None);
+
+        Assert.True(result.IsBlocked);
+        Assert.Equal("UserExecutionPilotNotionalDataUnavailable", result.BlockCode);
+        Assert.Contains("RequestedNotional=unavailable", result.GuardSummary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -613,6 +860,7 @@ public sealed class UserExecutionOverrideGuardTests
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 }
+
 
 
 

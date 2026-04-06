@@ -184,11 +184,14 @@ public sealed class BotWorkerJobProcessor(
 
         if (!marketState.ReferencePrice.HasValue || marketState.ReferencePrice.Value <= 0m)
         {
-            logger.LogInformation(
-                "Bot execution pilot skipped BotId {BotId} because a reference price is unavailable for {Symbol}.",
+            logger.LogWarning(
+                "Bot execution pilot rejected BotId {BotId} because notional data is unavailable for {Symbol}. PilotActivationEnabled={PilotActivationEnabled}",
                 bot.Id,
-                normalizedSymbol);
-            return BackgroundJobProcessResult.RetryableFailure("ReferencePriceUnavailable");
+                normalizedSymbol,
+                optionsValue.PilotActivationEnabled);
+            return optionsValue.PilotActivationEnabled
+                ? BackgroundJobProcessResult.PermanentFailure("UserExecutionPilotNotionalDataUnavailable")
+                : BackgroundJobProcessResult.RetryableFailure("ReferencePriceUnavailable");
         }
 
         var correlationId = Guid.NewGuid().ToString("N");
@@ -334,6 +337,39 @@ public sealed class BotWorkerJobProcessor(
             return BackgroundJobProcessResult.PermanentFailure("PilotQuantityInvalid");
         }
 
+        var pilotExecutionContext = BuildPilotExecutionContext(marginType!, leverage!.Value, pilotActivationEnabled);
+        var preSubmitPilotEvaluation = await userExecutionOverrideGuard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                bot.OwnerUserId,
+                signal.Symbol,
+                ExecutionEnvironment.Live,
+                ExecutionOrderSide.Buy,
+                quantity,
+                marketState.ReferencePrice.Value,
+                bot.Id,
+                bot.StrategyKey,
+                pilotExecutionContext,
+                signal.TradingStrategyId,
+                signal.TradingStrategyVersionId,
+                signal.Timeframe,
+                CurrentExecutionOrderId: null,
+                ReplacesExecutionOrderId: null,
+                ExchangeDataPlane.Futures),
+            cancellationToken);
+
+        if (IsPilotPreSubmitNotionalBlock(preSubmitPilotEvaluation))
+        {
+            logger.LogWarning(
+                "Bot execution pilot rejected BotId {BotId} before execution dispatch because pilot order notional guard blocked the request. Symbol={Symbol} Quantity={Quantity} Price={Price} BlockCode={BlockCode}",
+                bot.Id,
+                signal.Symbol,
+                quantity,
+                marketState.ReferencePrice.Value,
+                preSubmitPilotEvaluation.BlockCode ?? "UserExecutionPilotNotionalHardCapExceeded");
+            return BackgroundJobProcessResult.PermanentFailure(
+                preSubmitPilotEvaluation.BlockCode ?? "UserExecutionPilotNotionalHardCapExceeded");
+        }
+
         try
         {
             var dispatchResult = await executionEngine.DispatchAsync(
@@ -359,7 +395,7 @@ public sealed class BotWorkerJobProcessor(
                     IdempotencyKey: $"{idempotencyKey}:{signal.StrategySignalId:N}",
                     CorrelationId: null,
                     ParentCorrelationId: null,
-                    Context: BuildPilotExecutionContext(marginType!, leverage!.Value, pilotActivationEnabled)),
+                    Context: pilotExecutionContext),
                 cancellationToken);
 
             logger.LogInformation(
@@ -829,6 +865,42 @@ public sealed class BotWorkerJobProcessor(
         }
 
         return candidateQuantity;
+    }
+
+    private static bool IsPilotPreSubmitNotionalBlock(UserExecutionOverrideEvaluationResult evaluationResult)
+    {
+        if (!evaluationResult.IsBlocked)
+        {
+            return false;
+        }
+
+        if (IsPilotPreSubmitNotionalBlockCode(evaluationResult.BlockCode))
+        {
+            return true;
+        }
+
+        if (evaluationResult.BlockReasons is null)
+        {
+            return false;
+        }
+
+        foreach (var blockedReason in evaluationResult.BlockReasons)
+        {
+            if (IsPilotPreSubmitNotionalBlockCode(blockedReason))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsPilotPreSubmitNotionalBlockCode(string? blockCode)
+    {
+        return string.Equals(blockCode, "UserExecutionPilotNotionalHardCapExceeded", StringComparison.Ordinal) ||
+               string.Equals(blockCode, "UserExecutionPilotNotionalConfigurationMissing", StringComparison.Ordinal) ||
+               string.Equals(blockCode, "UserExecutionPilotNotionalConfigurationInvalid", StringComparison.Ordinal) ||
+               string.Equals(blockCode, "UserExecutionPilotNotionalDataUnavailable", StringComparison.Ordinal);
     }
 
     private static BackgroundJobProcessResult MapDispatchResult(ExecutionDispatchResult dispatchResult)
@@ -1494,6 +1566,10 @@ public sealed class BotWorkerJobProcessor(
         return allowedSymbols.Contains(symbol);
     }
 }
+
+
+
+
 
 
 

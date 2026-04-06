@@ -1,6 +1,8 @@
 @model CoinBot.Application.Abstractions.Execution.GlobalExecutionSwitchSnapshot
 @{
     var canEditGlobalPolicy = ViewData["AdminCanEditGlobalPolicy"] is bool canEditValue && canEditValue;
+    var pilotOrderNotionalSummary = ViewData["AdminPilotOrderNotionalSummary"] as string ?? "Missing";
+    var pilotOrderNotionalTone = ViewData["AdminPilotOrderNotionalTone"] as string ?? "critical";
 }
 
 <section id="cb_admin_settings_execution" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
@@ -117,6 +119,19 @@
                         <span class="cb-admin-info-strip-meta">Read-only</span>
                     </div>
                 }
+            </div>
+            <div class="cb-admin-summary-card">
+                <span class="cb-admin-summary-label">Pilot hard cap</span>
+                <strong>@pilotOrderNotionalSummary</strong>
+                <small>Submit oncesi pilot notional ust siniri. Missing veya invalid oldugunda request fail-closed block olur.</small>
+                <div class="cb-admin-page-meta mt-4">
+                    @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+                    {
+                        Label = pilotOrderNotionalTone == "healthy" ? "Bound" : "Blocked",
+                        Tone = pilotOrderNotionalTone,
+                        IconText = "HC"
+                    })
+                </div>
             </div>
         </div>
     </div>

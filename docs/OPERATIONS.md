@@ -18,6 +18,8 @@ dotnet test tests\CoinBot.IntegrationTests\CoinBot.IntegrationTests.csproj --no-
 
 Smoke tests under `tests/SmokeTests` are manual-only. Do not wire them into CI.
 
+Pilot testnet lifecycle enable, smoke, rollback ve incident akisi icin [PILOT_TESTNET_RUNBOOK.md](PILOT_TESTNET_RUNBOOK.md) dosyasini kullan.
+
 ## CI scope
 
 The GitHub Actions workflow is intentionally limited to:
@@ -101,3 +103,4 @@ Resolved here:
 - fixed the `xUnit2031` test warning in `StrategyLifecycleIntegrationTests`
 
 Any warnings that remain after validation should be treated as explicit backlog, not ignored by broad suppression.
+

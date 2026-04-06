@@ -5,12 +5,14 @@ using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Application.Abstractions.Policy;
 using CoinBot.Contracts.Common;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.Mfa;
 using CoinBot.Web.Areas.Admin.Controllers;
 using CoinBot.Web.ViewModels.Admin;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ViewFeatures;
+using Microsoft.Extensions.Options;
 
 namespace CoinBot.UnitTests.Web;
 
@@ -353,6 +355,7 @@ public sealed class AdminControllerTests
             switchService,
             stateService,
             logCenterRetentionService: retentionService,
+            pilotOptions: new BotExecutionPilotOptions { MaxPilotOrderNotional = "250" },
             roles: [ApplicationRoles.OpsAdmin]);
 
         var result = await controller.Settings(CancellationToken.None);
@@ -366,6 +369,8 @@ public sealed class AdminControllerTests
         Assert.IsType<GlobalPolicySnapshot>(controller.ViewData["AdminGlobalPolicySnapshot"]);
         Assert.Same(retentionSnapshot, controller.ViewData["AdminLogCenterRetentionSnapshot"]);
         Assert.Equal(false, controller.ViewData["AdminCanEditGlobalPolicy"]);
+        Assert.Equal("250", controller.ViewData["AdminPilotOrderNotionalSummary"]);
+        Assert.Equal("healthy", controller.ViewData["AdminPilotOrderNotionalTone"]);
         Assert.Equal("OpsAdmin", controller.ViewData["AdminRoleKey"]);
     }
 
@@ -1462,6 +1467,7 @@ public sealed class AdminControllerTests
         FakeLogCenterRetentionService? logCenterRetentionService = null,
         FakeGlobalPolicyEngine? globalPolicyEngine = null,
         FakeCrisisEscalationService? crisisEscalationService = null,
+        BotExecutionPilotOptions? pilotOptions = null,
         string userId = "admin-01",
         string traceIdentifier = "trace-001",
         string[]? roles = null,
@@ -1504,7 +1510,8 @@ public sealed class AdminControllerTests
             adminMonitoringReadModelService: monitoringReadModelService ?? new FakeAdminMonitoringReadModelService(),
             logCenterRetentionService: logCenterRetentionService ?? new FakeLogCenterRetentionService(),
             globalPolicyEngine: globalPolicyEngine ?? new FakeGlobalPolicyEngine(),
-            crisisEscalationService: crisisEscalationService)
+            crisisEscalationService: crisisEscalationService,
+            botExecutionPilotOptions: Options.Create(pilotOptions ?? new BotExecutionPilotOptions()))
         {
             ControllerContext = new ControllerContext
             {
@@ -2189,3 +2196,4 @@ public sealed class AdminControllerTests
         }
     }
 }
+

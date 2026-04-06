@@ -300,7 +300,6 @@ public sealed class UserExecutionOverrideGuard(
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var allowedSymbols = ResolveConfiguredPilotSymbols();
-        var orderNotional = request.Quantity * request.Price;
 
         if (request.Environment != ExecutionEnvironment.Live)
         {
@@ -355,13 +354,17 @@ public sealed class UserExecutionOverrideGuard(
             blockedReasons.Add("UserExecutionPilotCooldownConfigurationInvalid");
         }
 
-        if (optionsValue.MaxOrderNotional <= 0m)
+        if (!TryResolvePilotOrderNotionalCap(out var maxPilotOrderNotional, out var notionalConfigurationReason))
         {
-            blockedReasons.Add("UserExecutionPilotNotionalConfigurationMissing");
+            blockedReasons.Add(notionalConfigurationReason!);
         }
-        else if (orderNotional > optionsValue.MaxOrderNotional)
+        else if (!TryResolvePilotRequestedNotional(request, out var orderNotional, out var notionalDataReason))
         {
-            blockedReasons.Add("UserExecutionPilotNotionalLimitExceeded");
+            blockedReasons.Add(notionalDataReason!);
+        }
+        else if (orderNotional > maxPilotOrderNotional)
+        {
+            blockedReasons.Add("UserExecutionPilotNotionalHardCapExceeded");
         }
 
         if (optionsValue.MaxDailyLossPercentage <= 0m)
@@ -372,6 +375,63 @@ public sealed class UserExecutionOverrideGuard(
         return blockedReasons
             .Distinct(StringComparer.Ordinal)
             .ToArray();
+    }
+
+    private bool TryResolvePilotOrderNotionalCap(out decimal maxPilotOrderNotional, out string? blockedReason)
+    {
+        maxPilotOrderNotional = 0m;
+        blockedReason = null;
+
+        if (!optionsValue.HasConfiguredMaxPilotOrderNotional())
+        {
+            blockedReason = "UserExecutionPilotNotionalConfigurationMissing";
+            return false;
+        }
+
+        if (!optionsValue.TryResolveMaxPilotOrderNotional(out maxPilotOrderNotional) || maxPilotOrderNotional <= 0m)
+        {
+            blockedReason = "UserExecutionPilotNotionalConfigurationInvalid";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryResolvePilotRequestedNotional(
+        UserExecutionOverrideEvaluationRequest request,
+        out decimal orderNotional,
+        out string? blockedReason)
+    {
+        orderNotional = 0m;
+        blockedReason = null;
+
+        if (request.Quantity <= 0m || request.Price <= 0m)
+        {
+            blockedReason = "UserExecutionPilotNotionalDataUnavailable";
+            return false;
+        }
+
+        orderNotional = request.Quantity * request.Price;
+
+        if (orderNotional <= 0m)
+        {
+            blockedReason = "UserExecutionPilotNotionalDataUnavailable";
+            return false;
+        }
+
+        return true;
+    }
+
+    private string ResolvePilotOrderNotionalCapSummary()
+    {
+        if (!optionsValue.HasConfiguredMaxPilotOrderNotional())
+        {
+            return "missing";
+        }
+
+        return optionsValue.TryResolveMaxPilotOrderNotional(out var maxPilotOrderNotional) && maxPilotOrderNotional > 0m
+            ? maxPilotOrderNotional.ToString("0.##", CultureInfo.InvariantCulture)
+            : $"invalid:{optionsValue.MaxPilotOrderNotional?.Trim()}";
     }
 
     private HashSet<string> ResolveConfiguredPilotSymbols()
@@ -397,9 +457,11 @@ public sealed class UserExecutionOverrideGuard(
         var allowedUserCount = optionsValue.AllowedUserIds.Count(item => !string.IsNullOrWhiteSpace(item));
         var allowedBotCount = optionsValue.AllowedBotIds.Count(item => !string.IsNullOrWhiteSpace(item));
         var allowedSymbolCount = ResolveConfiguredPilotSymbols().Count;
-        var orderNotional = request.Quantity * request.Price;
+        var requestedNotionalLabel = TryResolvePilotRequestedNotional(request, out var orderNotional, out _)
+            ? orderNotional.ToString("0.##", CultureInfo.InvariantCulture)
+            : "unavailable";
 
-        return $"PilotUserId={normalizedUserId}; PilotBotId={request.BotId?.ToString("N") ?? "missing"}; Symbol={normalizedSymbol}; Plane={request.Plane}; AllowedUserCount={allowedUserCount}; AllowedBotCount={allowedBotCount}; AllowedSymbolCount={allowedSymbolCount}; MaxOpenPositions={optionsValue.MaxOpenPositionsPerUser}; PerBotCooldownSeconds={optionsValue.PerBotCooldownSeconds}; PerSymbolCooldownSeconds={optionsValue.PerSymbolCooldownSeconds}; MaxOrderNotional={optionsValue.MaxOrderNotional.ToString("0.##", CultureInfo.InvariantCulture)}; RequestedNotional={orderNotional.ToString("0.##", CultureInfo.InvariantCulture)}; MaxDailyLossPercentage={optionsValue.MaxDailyLossPercentage.ToString("0.##", CultureInfo.InvariantCulture)}";
+        return $"PilotUserId={normalizedUserId}; PilotBotId={request.BotId?.ToString("N") ?? "missing"}; Symbol={normalizedSymbol}; Plane={request.Plane}; AllowedUserCount={allowedUserCount}; AllowedBotCount={allowedBotCount}; AllowedSymbolCount={allowedSymbolCount}; MaxOpenPositions={optionsValue.MaxOpenPositionsPerUser}; PerBotCooldownSeconds={optionsValue.PerBotCooldownSeconds}; PerSymbolCooldownSeconds={optionsValue.PerSymbolCooldownSeconds}; MaxPilotOrderNotional={ResolvePilotOrderNotionalCapSummary()}; RequestedNotional={requestedNotionalLabel}; MaxDailyLossPercentage={optionsValue.MaxDailyLossPercentage.ToString("0.##", CultureInfo.InvariantCulture)}";
     }
     private async Task<bool> HasSameSymbolConflictAsync(
         string userId,
@@ -623,5 +685,7 @@ public sealed class UserExecutionOverrideGuard(
         return false;
     }
 }
+
+
 
 

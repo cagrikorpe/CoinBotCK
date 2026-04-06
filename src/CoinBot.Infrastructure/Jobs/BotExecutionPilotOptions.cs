@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.Globalization;
 using CoinBot.Domain.Enums;
 
 namespace CoinBot.Infrastructure.Jobs;
@@ -29,8 +30,13 @@ public sealed class BotExecutionPilotOptions
 
     public string[] AllowedBotIds { get; set; } = [];
 
-    [Range(0.00000001, 1000000)]
-    public decimal MaxOrderNotional { get; set; } = 25m;
+    public string? MaxPilotOrderNotional { get; set; }
+
+    public decimal? MaxOrderNotional
+    {
+        get => TryResolveMaxPilotOrderNotional(out var value) ? value : null;
+        set => MaxPilotOrderNotional = value?.ToString("0.############################", CultureInfo.InvariantCulture);
+    }
 
     [Range(0.01, 100)]
     public decimal MaxDailyLossPercentage { get; set; } = 1m;
@@ -49,4 +55,22 @@ public sealed class BotExecutionPilotOptions
 
     [Range(50, 1000)]
     public int PrimeHistoricalCandleCount { get; set; } = 200;
+
+    public bool HasConfiguredMaxPilotOrderNotional()
+    {
+        return !string.IsNullOrWhiteSpace(MaxPilotOrderNotional);
+    }
+
+    public bool TryResolveMaxPilotOrderNotional(out decimal value)
+    {
+        value = 0m;
+        var normalizedValue = MaxPilotOrderNotional?.Trim();
+
+        return !string.IsNullOrWhiteSpace(normalizedValue) &&
+               decimal.TryParse(
+                   normalizedValue,
+                   NumberStyles.Number,
+                   CultureInfo.InvariantCulture,
+                   out value);
+    }
 }

@@ -68,6 +68,98 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_SuppressesDuplicatePilotExecution_WhenTheSameBotRunsTwice()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-dup-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-dup-2");
+
+        var firstResult = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-dup-1",
+            CancellationToken.None);
+        var secondResult = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-dup-2",
+            CancellationToken.None);
+
+        Assert.True(firstResult.IsSuccessful);
+        Assert.True(secondResult.IsSuccessful);
+        Assert.Equal(1, await harness.DbContext.ExecutionOrders.CountAsync());
+        Assert.Equal(1, await harness.DbContext.TradingStrategySignals.CountAsync());
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Contains(
+            await harness.DbContext.DecisionTraces.Select(entity => entity.DecisionOutcome).ToArrayAsync(),
+            outcome => string.Equals(outcome, "SuppressedDuplicate", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ProcessAsync_FailsClosedBeforeExecution_WhenPilotNotionalHardCapIsExceeded()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.MaxPilotOrderNotional = "100";
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-cap-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-cap-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-cap-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var persistedFeature = await harness.DbContext.TradingFeatureSnapshots.SingleAsync();
+
+        Assert.False(result.IsSuccessful);
+        Assert.False(result.IsRetryableFailure);
+        Assert.Equal("UserExecutionPilotNotionalHardCapExceeded", result.ErrorCode);
+        Assert.Equal(StrategySignalType.Entry, persistedSignal.SignalType);
+        Assert.Equal(bot.Id, persistedFeature.BotId);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_FailsClosedBeforeExecution_WhenPilotNotionalCapConfigurationIsMissing()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.MaxPilotOrderNotional = null;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-cap-missing-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-cap-missing-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-cap-missing-1",
+            CancellationToken.None);
+
+        Assert.False(result.IsSuccessful);
+        Assert.False(result.IsRetryableFailure);
+        Assert.Equal("UserExecutionPilotNotionalConfigurationMissing", result.ErrorCode);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
     public async Task ProcessAsync_DoesNotSubmit_WhenPilotActivationIsDisabled()
     {
         await using var harness = CreateHarness();
@@ -1325,24 +1417,5 @@ public sealed class BotWorkerJobProcessorTests
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Security.Claims;
@@ -10,10 +11,12 @@ using CoinBot.Application.Abstractions.Policy;
 using CoinBot.Contracts.Common;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
+using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.Mfa;
 using CoinBot.Web.ViewModels.Admin;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace CoinBot.Web.Areas.Admin.Controllers;
 
@@ -29,6 +32,8 @@ public sealed class AdminController : Controller
     private const string GlobalSystemStateSuccessTempDataKey = "AdminGlobalSystemStateSuccess";
     private const string GlobalSystemStateErrorTempDataKey = "AdminGlobalSystemStateError";
     private const string MonitoringDashboardSnapshotViewDataKey = "AdminMonitoringDashboardSnapshot";
+    private const string PilotOrderNotionalSummaryViewDataKey = "AdminPilotOrderNotionalSummary";
+    private const string PilotOrderNotionalToneViewDataKey = "AdminPilotOrderNotionalTone";
     private const string GlobalPolicySnapshotViewDataKey = "AdminGlobalPolicySnapshot";
     private const string GlobalPolicySuccessTempDataKey = "AdminGlobalPolicySuccess";
     private const string GlobalPolicyErrorTempDataKey = "AdminGlobalPolicyError";
@@ -57,6 +62,7 @@ public sealed class AdminController : Controller
     private readonly IGlobalExecutionSwitchService globalExecutionSwitchService;
     private readonly IGlobalSystemStateService globalSystemStateService;
     private readonly ITraceService traceService;
+    private readonly BotExecutionPilotOptions pilotOptionsValue;
 
     public AdminController(
         IGlobalExecutionSwitchService globalExecutionSwitchService,
@@ -72,7 +78,8 @@ public sealed class AdminController : Controller
         IAdminMonitoringReadModelService? adminMonitoringReadModelService = null,
         ILogCenterRetentionService? logCenterRetentionService = null,
         IGlobalPolicyEngine? globalPolicyEngine = null,
-        ICrisisEscalationService? crisisEscalationService = null)
+        ICrisisEscalationService? crisisEscalationService = null,
+        IOptions<BotExecutionPilotOptions>? botExecutionPilotOptions = null)
     {
         this.globalExecutionSwitchService = globalExecutionSwitchService;
         this.globalSystemStateService = globalSystemStateService;
@@ -88,6 +95,7 @@ public sealed class AdminController : Controller
         this.logCenterRetentionService = logCenterRetentionService;
         this.globalPolicyEngine = globalPolicyEngine;
         this.crisisEscalationService = crisisEscalationService;
+        pilotOptionsValue = botExecutionPilotOptions?.Value ?? new BotExecutionPilotOptions();
     }
 
     [AllowAnonymous]
@@ -876,6 +884,8 @@ public sealed class AdminController : Controller
             ViewData[AdminLogCenterRetentionSnapshotViewDataKey] = await logCenterRetentionService.GetSnapshotAsync(cancellationToken);
         }
         ViewData[CrisisPreviewViewDataKey] = LoadCrisisPreviewViewModelFromTempData();
+        ViewData[PilotOrderNotionalSummaryViewDataKey] = ResolvePilotOrderNotionalSummary();
+        ViewData[PilotOrderNotionalToneViewDataKey] = ResolvePilotOrderNotionalTone();
         ViewData[AdminCanEditGlobalPolicyViewDataKey] = CanEditGlobalPolicy();
 
         return View();
@@ -2607,6 +2617,25 @@ public sealed class AdminController : Controller
         };
     }
 
+    private string ResolvePilotOrderNotionalSummary()
+    {
+        if (!pilotOptionsValue.HasConfiguredMaxPilotOrderNotional())
+        {
+            return "Missing";
+        }
+
+        return pilotOptionsValue.TryResolveMaxPilotOrderNotional(out var maxPilotOrderNotional) && maxPilotOrderNotional > 0m
+            ? maxPilotOrderNotional.ToString("0.##", CultureInfo.InvariantCulture)
+            : $"Invalid ({Truncate(pilotOptionsValue.MaxPilotOrderNotional, 32) ?? "n/a"})";
+    }
+
+    private string ResolvePilotOrderNotionalTone()
+    {
+        return pilotOptionsValue.TryResolveMaxPilotOrderNotional(out var maxPilotOrderNotional) && maxPilotOrderNotional > 0m
+            ? "healthy"
+            : "critical";
+    }
+
     private static string BuildExecutionSwitchSummary(GlobalExecutionSwitchSnapshot snapshot)
     {
         return
@@ -2732,3 +2761,9 @@ public sealed class AdminController : Controller
             : value[..maxLength];
     }
 }
+
+
+
+
+
+
