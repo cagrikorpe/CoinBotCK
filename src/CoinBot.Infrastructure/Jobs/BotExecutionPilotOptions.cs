@@ -21,6 +21,8 @@ public sealed class BotExecutionPilotOptions
     [Range(1, 125)]
     public decimal DefaultLeverage { get; set; } = 1m;
 
+    public bool AllowNonOneLeverageForClockDriftSmoke { get; set; } = false;
+
     [Required]
     public string DefaultMarginType { get; set; } = "ISOLATED";
 
@@ -74,3 +76,4 @@ public sealed class BotExecutionPilotOptions
                    out value);
     }
 }
+

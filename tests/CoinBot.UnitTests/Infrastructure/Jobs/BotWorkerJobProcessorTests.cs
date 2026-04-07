@@ -78,6 +78,7 @@ public sealed class BotWorkerJobProcessorTests
         bot.Leverage = 10m;
         await harness.DbContext.SaveChangesAsync();
         ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.AllowNonOneLeverageForClockDriftSmoke = true;
         harness.PilotOptions.PilotActivationEnabled = true;
         await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-lev-1");
         await harness.SwitchService.SetTradeMasterStateAsync(
@@ -98,6 +99,34 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal(1, harness.PrivateRestClient.EnsureLeverageCalls);
         Assert.Equal(10m, harness.PrivateRestClient.LastEnsuredLeverage);
         Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_RejectsDevelopmentPilotLeverageAboveOne_WhenClockDriftSmokeOverrideIsDisabled()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        bot.Leverage = 10m;
+        await harness.DbContext.SaveChangesAsync();
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-lev-block-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-lev-block-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-lev-block-1",
+            CancellationToken.None);
+
+        Assert.False(result.IsSuccessful);
+        Assert.False(result.IsRetryableFailure);
+        Assert.Equal("PilotLeverageMustBeOne", result.ErrorCode);
+        Assert.Equal(0, harness.PrivateRestClient.EnsureLeverageCalls);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
     }
 
     [Fact]
@@ -1463,8 +1492,4 @@ public sealed class BotWorkerJobProcessorTests
         }
     }
 }
-
-
-
-
 

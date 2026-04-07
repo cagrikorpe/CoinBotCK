@@ -809,7 +809,7 @@ public sealed class BotWorkerJobProcessor(
             : bot.MarginType.Trim().ToUpperInvariant();
         failureCode = null;
 
-        if (leverage != 1m && !hostEnvironment.IsDevelopment())
+        if (leverage != 1m && !IsClockDriftSmokeLeverageAllowed(bot, leverage))
         {
             failureCode = "PilotLeverageMustBeOne";
             return false;
@@ -1397,6 +1397,17 @@ public sealed class BotWorkerJobProcessor(
         return Truncate(riskEvaluation.ReasonSummary, 1024);
     }
 
+    private bool IsClockDriftSmokeLeverageAllowed(TradingBot bot, decimal? leverage)
+    {
+        if (leverage == 1m)
+        {
+            return true;
+        }
+
+        return hostEnvironment.IsDevelopment() &&
+               optionsValue.AllowNonOneLeverageForClockDriftSmoke;
+    }
+
     private static bool IsPilotSafetyBlockedReason(ExecutionGateBlockedReason blockedReason)
     {
         return blockedReason is ExecutionGateBlockedReason.PilotConfigurationMissing or
@@ -1566,23 +1577,4 @@ public sealed class BotWorkerJobProcessor(
         return allowedSymbols.Contains(symbol);
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 

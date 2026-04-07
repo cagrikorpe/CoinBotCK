@@ -390,6 +390,255 @@ function Get-SmokeCleanupOrders {
     Invoke-SqlRows -ConnectionString $ConnectionString -CommandText "SELECT TOP (20) Id, Symbol, State, FailureCode, SubmittedToBroker, ExternalOrderId, CreatedDate FROM ExecutionOrders WHERE OwnerUserId = @OwnerUserId AND StrategyKey = '__crisis_flatten__' AND IsDeleted = 0 ORDER BY CreatedDate DESC;" -Parameters @{ OwnerUserId = $OwnerUserId }
 }
 
+function Get-ConfiguredPilotSmokeSymbols {
+    $paths = @(
+        (Join-Path $repoRoot 'src\CoinBot.Web\appsettings.Development.json'),
+        (Join-Path $repoRoot 'src\CoinBot.Worker\appsettings.Development.json'))
+
+    $symbols = New-Object System.Collections.Generic.List[string]
+    foreach ($path in $paths) {
+        if (-not (Test-Path $path)) { continue }
+
+        $json = Get-Content $path -Raw | ConvertFrom-Json
+        if ($null -eq $json.BotExecutionPilot) { continue }
+
+        foreach ($item in @($json.BotExecutionPilot.AllowedSymbols)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$item)) {
+                $symbols.Add(([string]$item).Trim().ToUpperInvariant())
+            }
+        }
+
+        $defaultSymbol = [string]$json.BotExecutionPilot.DefaultSymbol
+        if (-not [string]::IsNullOrWhiteSpace($defaultSymbol)) {
+            $symbols.Add($defaultSymbol.Trim().ToUpperInvariant())
+        }
+    }
+
+    return @($symbols | Select-Object -Unique)
+}
+
+function Get-ClockDriftSmokeFallbackSymbols {
+    if (-not [string]::IsNullOrWhiteSpace($env:COINBOT_CLOCKDRIFT_SMOKE_FALLBACK_SYMBOLS)) {
+        return @($env:COINBOT_CLOCKDRIFT_SMOKE_FALLBACK_SYMBOLS.Split(",", [System.StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.Trim().ToUpperInvariant() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+    }
+
+    return @('FLOWUSDT', 'MAVIAUSDT', 'TUTUSDT', 'SXPUSDT', '1INCHUSDT', 'OBOLUSDT')
+}
+function Get-SourceFuturesQuoteBalance {
+    param([string]$ConnectionString, [guid]$ExchangeAccountId, [string]$Asset)
+
+    Invoke-SqlRow -ConnectionString $ConnectionString -CommandText @"
+SELECT TOP (1)
+    Asset,
+    WalletBalance,
+    CrossWalletBalance,
+    AvailableBalance,
+    MaxWithdrawAmount,
+    ExchangeUpdatedAtUtc
+FROM ExchangeBalances
+WHERE ExchangeAccountId = @ExchangeAccountId
+  AND Plane = 'Futures'
+  AND Asset = @Asset
+  AND IsDeleted = 0
+ORDER BY UpdatedDate DESC, CreatedDate DESC;
+"@ -Parameters @{ ExchangeAccountId = $ExchangeAccountId; Asset = $Asset }
+}
+
+function Resolve-SmokeAvailableMargin {
+    param($Balance)
+
+    if ($null -eq $Balance) { return 0 }
+    if ($null -ne $Balance.AvailableBalance) { return [Math]::Max(0, [decimal]$Balance.AvailableBalance) }
+    if ($null -ne $Balance.MaxWithdrawAmount) { return [Math]::Max(0, [decimal]$Balance.MaxWithdrawAmount) }
+    if ([decimal]$Balance.CrossWalletBalance -ne 0) { return [Math]::Max(0, [decimal]$Balance.CrossWalletBalance) }
+    return [Math]::Max(0, [decimal]$Balance.WalletBalance)
+}
+
+function Get-BinanceFuturesSymbolMetadata {
+    param([string]$Symbol)
+
+    $response = Invoke-RestMethod -Uri ('https://testnet.binancefuture.com/fapi/v1/exchangeInfo?symbol=' + $Symbol) -Method Get -TimeoutSec 30
+    $symbolRow = @($response.symbols | Where-Object { [string]$_.symbol -eq $Symbol }) | Select-Object -First 1
+    if ($null -eq $symbolRow) {
+        throw "ExchangeInfo metadata is unavailable for '$Symbol'."
+    }
+
+    $lotSize = @($symbolRow.filters | Where-Object { [string]$_.filterType -eq 'LOT_SIZE' }) | Select-Object -First 1
+    if ($null -eq $lotSize) {
+        throw "LOT_SIZE filter is unavailable for '$Symbol'."
+    }
+
+    $minNotionalFilter = @($symbolRow.filters | Where-Object { [string]$_.filterType -eq 'MIN_NOTIONAL' }) | Select-Object -First 1
+    $minNotional = $null
+    if ($null -ne $minNotionalFilter) {
+        $minNotionalValue = if ($null -ne $minNotionalFilter.notional) { $minNotionalFilter.notional } else { $minNotionalFilter.minNotional }
+        if ($null -ne $minNotionalValue -and -not [string]::IsNullOrWhiteSpace([string]$minNotionalValue)) {
+            $minNotional = [decimal]$minNotionalValue
+        }
+    }
+
+    [pscustomobject]@{
+        Symbol = [string]$symbolRow.symbol
+        BaseAsset = [string]$symbolRow.baseAsset
+        QuoteAsset = [string]$symbolRow.quoteAsset
+        StepSize = [decimal]$lotSize.stepSize
+        MinQuantity = [decimal]$lotSize.minQty
+        MinNotional = $minNotional
+        QuantityPrecision = if ($null -ne $symbolRow.quantityPrecision) { [int]$symbolRow.quantityPrecision } else { $null }
+    }
+}
+
+function Get-BinanceFuturesReferencePrice {
+    param([string]$Symbol)
+
+    $response = Invoke-RestMethod -Uri ('https://testnet.binancefuture.com/fapi/v1/ticker/price?symbol=' + $Symbol) -Method Get -TimeoutSec 30
+    if ($null -eq $response -or [string]::IsNullOrWhiteSpace([string]$response.price)) {
+        throw "Ticker price is unavailable for '$Symbol'."
+    }
+
+    return [decimal]$response.price
+}
+
+function Align-UpDecimal {
+    param([decimal]$Value, [decimal]$Increment)
+
+    if ($Increment -le 0) {
+        throw 'Step size must be positive.'
+    }
+
+    $remainder = [decimal]::Remainder($Value, $Increment)
+    if ($remainder -eq 0) {
+        return $Value
+    }
+
+    return $Value + ($Increment - $remainder)
+}
+
+function Resolve-SmokePilotQuantity {
+    param($SymbolMetadata, [decimal]$ReferencePrice)
+
+    $candidateQuantity = if ($null -ne $SymbolMetadata.MinQuantity) { [decimal]$SymbolMetadata.MinQuantity } else { [decimal]$SymbolMetadata.StepSize }
+    if ($candidateQuantity -le 0) {
+        throw "Pilot quantity could not be resolved for '$($SymbolMetadata.Symbol)'."
+    }
+
+    if ($null -ne $SymbolMetadata.MinNotional) {
+        $candidateQuantity = [Math]::Max($candidateQuantity, ([decimal]$SymbolMetadata.MinNotional / $ReferencePrice))
+    }
+
+    $candidateQuantity = Align-UpDecimal -Value $candidateQuantity -Increment ([decimal]$SymbolMetadata.StepSize)
+
+    if ($null -ne $SymbolMetadata.MinQuantity -and $candidateQuantity -lt [decimal]$SymbolMetadata.MinQuantity) {
+        $candidateQuantity = Align-UpDecimal -Value ([decimal]$SymbolMetadata.MinQuantity) -Increment ([decimal]$SymbolMetadata.StepSize)
+    }
+
+    if ($null -ne $SymbolMetadata.QuantityPrecision) {
+        $candidateQuantity = [decimal]::Round($candidateQuantity, [int]$SymbolMetadata.QuantityPrecision, [System.MidpointRounding]::AwayFromZero)
+    }
+
+    if ($null -ne $SymbolMetadata.MinNotional -and ($candidateQuantity * $ReferencePrice) -lt [decimal]$SymbolMetadata.MinNotional) {
+        $candidateQuantity = Align-UpDecimal -Value (([decimal]$SymbolMetadata.MinNotional) / $ReferencePrice) -Increment ([decimal]$SymbolMetadata.StepSize)
+    }
+
+    if ($candidateQuantity -le 0) {
+        throw "Pilot quantity resolved to a non-positive value for '$($SymbolMetadata.Symbol)'."
+    }
+
+    return $candidateQuantity
+}
+
+function Resolve-ClockDriftSmokeSymbolSelection {
+    param(
+        [string]$ConnectionString,
+        [guid]$ExchangeAccountId,
+        [string]$RequestedSymbol,
+        [decimal]$Leverage)
+
+    $candidateSymbols = New-Object System.Collections.Generic.List[string]
+    foreach ($candidate in @($RequestedSymbol) + @(Get-ConfiguredPilotSmokeSymbols) + @(Get-ClockDriftSmokeFallbackSymbols)) {
+        if ([string]::IsNullOrWhiteSpace([string]$candidate)) { continue }
+
+        $normalized = ([string]$candidate).Trim().ToUpperInvariant()
+        if (-not $candidateSymbols.Contains($normalized)) {
+            $candidateSymbols.Add($normalized)
+        }
+    }
+
+    $assessments = New-Object System.Collections.Generic.List[object]
+    foreach ($candidateSymbol in $candidateSymbols) {
+        $metadata = Get-BinanceFuturesSymbolMetadata -Symbol $candidateSymbol
+        $price = Get-BinanceFuturesReferencePrice -Symbol $candidateSymbol
+        $quantity = Resolve-SmokePilotQuantity -SymbolMetadata $metadata -ReferencePrice $price
+        $balance = Get-SourceFuturesQuoteBalance -ConnectionString $ConnectionString -ExchangeAccountId $ExchangeAccountId -Asset ([string]$metadata.QuoteAsset)
+        $availableMargin = Resolve-SmokeAvailableMargin -Balance $balance
+        $requiredMargin = [decimal]::Round((([decimal]$quantity) * ([decimal]$price)) / $Leverage, 18, [System.MidpointRounding]::AwayFromZero)
+
+        $assessments.Add([pscustomobject]@{
+            Symbol = $candidateSymbol
+            QuoteAsset = [string]$metadata.QuoteAsset
+            ReferencePrice = [decimal]$price
+            MinQuantity = [decimal]$metadata.MinQuantity
+            MinNotional = if ($null -eq $metadata.MinNotional) { $null } else { [decimal]$metadata.MinNotional }
+            StepSize = [decimal]$metadata.StepSize
+            QuantityPrecision = $metadata.QuantityPrecision
+            ResolvedQuantity = [decimal]$quantity
+            AvailableMargin = [decimal]$availableMargin
+            RequiredMargin = [decimal]$requiredMargin
+            Feasible = ([decimal]$availableMargin -ge [decimal]$requiredMargin)
+            BalanceTimestampUtc = if ($null -eq $balance) { $null } else { $balance.ExchangeUpdatedAtUtc }
+        })
+    }
+
+    $requestedAssessment = @($assessments | Where-Object { $_.Symbol -eq $RequestedSymbol }) | Select-Object -First 1
+    if ($null -ne $requestedAssessment -and $requestedAssessment.Feasible) {
+        return New-Object psobject -Property ([ordered]@{
+            RequestedSymbol = $RequestedSymbol
+            SelectedSymbol = $RequestedSymbol
+            Decision = 'RequestedSymbolFeasible'
+            Leverage = $Leverage
+            Assessments = $assessments.ToArray()
+            FailureCode = $null
+            FailureDetail = $null
+        })
+    }
+
+    $selectedAssessment = $assessments | Where-Object { $_.Feasible } | Select-Object -First 1
+    if ($null -eq $selectedAssessment) {
+        $requestedDetail = if ($null -eq $requestedAssessment) { 'missing' } else { "required=$($requestedAssessment.RequiredMargin); available=$($requestedAssessment.AvailableMargin)" }
+        return New-Object psobject -Property ([ordered]@{
+            RequestedSymbol = $RequestedSymbol
+            SelectedSymbol = $null
+            Decision = 'NoFeasibleSymbol'
+            Leverage = $Leverage
+            Assessments = $assessments.ToArray()
+            FailureCode = 'NoFeasibleClockDriftSmokeSymbol'
+            FailureDetail = "No feasible clock-drift smoke symbol was found for leverage $Leverage. RequestedSymbol=$RequestedSymbol; RequestedDetail=$requestedDetail."
+        })
+    }
+
+    $selectedSymbol = [string]($selectedAssessment | Select-Object -ExpandProperty Symbol -First 1)
+    return New-Object psobject -Property ([ordered]@{
+        RequestedSymbol = $RequestedSymbol
+        SelectedSymbol = $selectedSymbol
+        Decision = 'FallbackToFeasibleSymbol'
+        Leverage = $Leverage
+        Assessments = $assessments.ToArray()
+        FailureCode = $null
+        FailureDetail = $null
+    })
+}
+function Test-SqlTableExists {
+    param([string]$ConnectionString, [string]$TableName)
+
+    try {
+        $row = Invoke-SqlRow -ConnectionString $ConnectionString -CommandText "SELECT CASE WHEN EXISTS (SELECT 1 FROM sys.tables WHERE name = @TableName) THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END AS TableExists;" -Parameters @{ TableName = $TableName }
+        return $null -ne $row -and [bool]$row.TableExists
+    }
+    catch {
+        return $false
+    }
+}
+
 function Get-SourceBootstrap {
     param([string]$ConnectionString)
 
@@ -684,6 +933,7 @@ function Build-EnvironmentVariables {
         BotExecutionPilot__DefaultSymbol = $Symbol
         BotExecutionPilot__Timeframe = '1m'
         BotExecutionPilot__DefaultLeverage = '10'
+        BotExecutionPilot__AllowNonOneLeverageForClockDriftSmoke = 'true'
         BotExecutionPilot__DefaultMarginType = 'ISOLATED'
         BotExecutionPilot__AllowedUserIds__0 = $UserId
         BotExecutionPilot__AllowedBotIds__0 = $BotId.ToString('N')
@@ -717,7 +967,8 @@ $apiCredentialId = [Guid]'74444444-4444-4444-4444-444444444444'
 $botId = [Guid]'75555555-5555-5555-5555-555555555555'
 $script:adminEmail = 'clockdrift.admin.' + [Guid]::NewGuid().ToString('N') + '@coinbot.test'
 $script:adminPassword = 'Passw0rd!Clock1'
-$symbol = $Symbol
+$requestedSymbol = $Symbol
+$symbol = $requestedSymbol
 $summary = [ordered]@{
     SelectedPlane = 'Futures'
     SmokeDatabaseName = $smokeDatabaseName
@@ -731,6 +982,11 @@ $summary = [ordered]@{
     TimestampPipeline = 'BinancePrivateRestClient.GetTimestampAsync -> IBinanceTimeSyncService.GetCurrentTimestampMillisecondsAsync'
     RootCauseLocation = 'DataLatencyHealthCheck.CheckHealthAsync -> IDataLatencyCircuitBreaker.GetSnapshotAsync + src/CoinBot.Web/appsettings.Development.json vs src/CoinBot.Worker/appsettings.Development.json'
     RootCauseSummary = 'Web Development used tighter stale/stop thresholds than Worker Development, so health/readiness could re-persist false drift/stale decisions even while worker-side market data was healthy.'
+    RequestedSymbol = $requestedSymbol
+    SelectedSymbol = $symbol
+    FeasibilityDecision = 'Pending'
+    FailureCode = $null
+    FailureDetail = $null
     SourceCleanupApplied = $false
     WarmupCleanupApplied = $false
     PostRunCleanupApplied = $false
@@ -757,16 +1013,30 @@ try {
         if ($candidate.Preflight.OpenExecutionOrders -eq 0 -and $candidate.Preflight.OpenPositions -eq 0) { return $candidate }
         return $null
     }
+    $lastWaitStage = 'SymbolFeasibilityPreflight'
+    $symbolSelection = Resolve-ClockDriftSmokeSymbolSelection -ConnectionString $sourceConnectionString -ExchangeAccountId ([Guid]$bootstrap.Source.ExchangeAccountId) -RequestedSymbol $requestedSymbol -Leverage 10
+    $symbol = $symbolSelection.SelectedSymbol
 
-
+    $summary.RequestedSymbol = $requestedSymbol
     $summary.SelectedSymbol = $symbol
+    $summary.FeasibilityDecision = $symbolSelection.Decision
+    $summary.FeasibilityLeverage = $symbolSelection.Leverage
+    $summary.SymbolFeasibility = @($symbolSelection.Assessments)
+
+    if ([string]::IsNullOrWhiteSpace([string]$symbolSelection.SelectedSymbol)) {
+        $summary.FailureCode = $symbolSelection.FailureCode
+        $summary.FailureDetail = $symbolSelection.FailureDetail
+        throw $symbolSelection.FailureDetail
+    }
     $summary.SourcePreflight = [ordered]@{
         SelectedPlane = 'Futures'
         ActiveAccounts = $bootstrap.Preflight.ActiveAccounts
         EnabledBots = $bootstrap.Preflight.EnabledBots
         OpenExecutionOrders = $bootstrap.Preflight.OpenExecutionOrders
         OpenPositions = $bootstrap.Preflight.OpenPositions
-        Symbol = $symbol
+        RequestedSymbol = $requestedSymbol
+        SelectedSymbol = $symbol
+        FeasibilityDecision = $symbolSelection.Decision
         ValidationStatus = $bootstrap.Source.ValidationStatus
         EnvironmentScope = $bootstrap.Source.EnvironmentScope
         SupportsSpot = $bootstrap.Source.SupportsSpot
@@ -1050,6 +1320,9 @@ try {
     Write-Host ('SmokeDatabaseName=' + $smokeDatabaseName)
     Write-Host ('WarmupSubmitBlocked=' + $summary.WarmupSubmitBlocked)
     Write-Host ('BrokerSubmitReached=' + $summary.BrokerSubmitReached)
+    Write-Host ('RequestedSymbol=' + ($summary.RequestedSymbol ?? 'none'))
+    Write-Host ('SelectedSymbol=' + ($summary.SelectedSymbol ?? 'none'))
+    Write-Host ('FeasibilityDecision=' + ($summary.FeasibilityDecision ?? 'none'))
     Write-Host ('Symbol=' + $symbol)
     Write-Host ('OrderPlane=' + $summary.FinalOrder.Plane)
     Write-Host ('OrderState=' + $summary.FinalOrder.State)
@@ -1078,8 +1351,11 @@ try {
 catch {
     $summary.LastWaitStage = $lastWaitStage
     $summary.ErrorMessage = $_.Exception.Message
+    $localExecutionSchemaReady = Test-SqlTableExists -ConnectionString $connectionString -TableName 'ExecutionOrders'
     try {
-        Update-SmokeFailureSummary -Summary $summary -FailureStage $lastWaitStage -FailureMessage $_.Exception.Message -ConnectionString $connectionString -BotId $botId -ExchangeAccountId $exchangeAccountId -Symbol $symbol -SubmitStdOutPath $submitStdOutPath -SubmitStdErrPath $submitStdErrPath -WebStdOutPath $webStdOutPath -WebStdErrPath $webStdErrPath
+        if ($localExecutionSchemaReady) {
+            Update-SmokeFailureSummary -Summary $summary -FailureStage $lastWaitStage -FailureMessage $_.Exception.Message -ConnectionString $connectionString -BotId $botId -ExchangeAccountId $exchangeAccountId -Symbol $symbol -SubmitStdOutPath $submitStdOutPath -SubmitStdErrPath $submitStdErrPath -WebStdOutPath $webStdOutPath -WebStdErrPath $webStdErrPath
+        }
     }
     catch {
         $summary.FailureSummaryError = $_.Exception.Message
@@ -1091,13 +1367,22 @@ catch {
     $summary.WarmupCleanupErrorLines = Get-LatestLogLines -Path $warmupCleanupStdErrPath -Pattern '.' -Take 20
     $summary.PostRunCleanupLines = Get-LatestLogLines -Path $postRunCleanupStdOutPath -Pattern '.' -Take 40
     $summary.PostRunCleanupErrorLines = Get-LatestLogLines -Path $postRunCleanupStdErrPath -Pattern '.' -Take 20
-    $summary.ScopeOpenExecutionOrders = @(Get-SmokeScopedOpenExecutionOrders -ConnectionString $connectionString -OwnerUserId $smokeUserId)
-    $summary.ScopeOpenPositions = @(Get-SmokeScopedOpenPositions -ConnectionString $connectionString -OwnerUserId $smokeUserId)
-    $summary.CleanupOrders = @(Get-SmokeCleanupOrders -ConnectionString $connectionString -OwnerUserId $smokeUserId)
-    $summary.ScopeOpenExecutionOrderCount = @([array]$summary.ScopeOpenExecutionOrders).Count
-    $summary.ScopeOpenPositionCount = @([array]$summary.ScopeOpenPositions).Count
-    $summary.CleanupOrderCount = @([array]$summary.CleanupOrders).Count
+    if ($localExecutionSchemaReady) {
+        $summary.ScopeOpenExecutionOrders = @(Get-SmokeScopedOpenExecutionOrders -ConnectionString $connectionString -OwnerUserId $smokeUserId)
+        $summary.ScopeOpenPositions = @(Get-SmokeScopedOpenPositions -ConnectionString $connectionString -OwnerUserId $smokeUserId)
+        $summary.CleanupOrders = @(Get-SmokeCleanupOrders -ConnectionString $connectionString -OwnerUserId $smokeUserId)
+        $summary.ScopeOpenExecutionOrderCount = @([array]$summary.ScopeOpenExecutionOrders).Count
+        $summary.ScopeOpenPositionCount = @([array]$summary.ScopeOpenPositions).Count
+        $summary.CleanupOrderCount = @([array]$summary.CleanupOrders).Count
+    }
+    else {
+        $summary.LocalExecutionSchemaReady = $false
+    }
     Write-SmokeSummary -Summary $summary -SummaryPath $summaryPath
+    Write-Host ('RequestedSymbol=' + ($summary.RequestedSymbol ?? 'none'))
+    Write-Host ('SelectedSymbol=' + ($summary.SelectedSymbol ?? 'none'))
+    Write-Host ('FeasibilityDecision=' + ($summary.FeasibilityDecision ?? 'none'))
+    Write-Host ('FailureCode=' + ($summary.FailureCode ?? 'none'))
     Write-Host ('SummaryPath=' + $summaryPath)
     throw
 }
