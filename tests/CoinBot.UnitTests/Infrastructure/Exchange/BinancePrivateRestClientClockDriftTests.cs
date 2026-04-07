@@ -59,6 +59,24 @@ public sealed class BinancePrivateRestClientClockDriftTests
     }
 
     [Fact]
+    public async Task PlaceOrderAsync_ThrowsStableFailureCode_WhenExchangeRejectsInsufficientMargin()
+    {
+        using var handler = new RecordingMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent("""{"code":-2019,"msg":"Margin is insufficient."}""", Encoding.UTF8, "application/json")
+        });
+        using var client = new HttpClient(handler) { BaseAddress = new Uri("https://testnet.binancefuture.com") };
+        var timeSyncService = new FakeTimeSyncService(currentTimestampMilliseconds: 1_710_000_000_123L);
+        var sut = CreateClient(client, timeSyncService);
+
+        var exception = await Assert.ThrowsAsync<BinanceExchangeRejectedException>(() => sut.PlaceOrderAsync(CreateRequest()));
+
+        Assert.Equal("FuturesMarginInsufficient", exception.FailureCode);
+        Assert.Equal("-2019", exception.ExchangeCode);
+        Assert.Contains("Margin is insufficient", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(1, handler.RequestCount);
+    }
+    [Fact]
     public async Task PlaceOrderAsync_FailsClosed_WhenTimeSyncOffsetCannotBeSynchronized()
     {
         using var handler = new RecordingMessageHandler(_ => throw new InvalidOperationException("HTTP request should not be sent when timestamp sync is unavailable."));
@@ -158,3 +176,4 @@ public sealed class BinancePrivateRestClientClockDriftTests
         }
     }
 }
+

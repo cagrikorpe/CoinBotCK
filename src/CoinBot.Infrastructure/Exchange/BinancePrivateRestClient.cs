@@ -177,8 +177,8 @@ public sealed class BinancePrivateRestClient(
                     cancellationToken);
                 traceWritten = true;
 
-                await ThrowClockDriftAwareFailureAsync(
-                    $"Binance order placement request failed with status {(int)response.StatusCode}.",
+                await ThrowOrderPlacementFailureAsync(
+                    (int)response.StatusCode,
                     exchangeCode,
                     responseBody,
                     cancellationToken);
@@ -565,6 +565,80 @@ public sealed class BinancePrivateRestClient(
         }
 
         throw new InvalidOperationException(defaultMessage);
+    }
+
+    private async Task ThrowOrderPlacementFailureAsync(
+        int httpStatusCode,
+        string? exchangeCode,
+        string? responseBody,
+        CancellationToken cancellationToken)
+    {
+        if (IsClockDriftResponse(exchangeCode, responseBody))
+        {
+            await ThrowClockDriftAwareFailureAsync(
+                $"Binance order placement request failed with status {httpStatusCode}.",
+                exchangeCode,
+                responseBody,
+                cancellationToken);
+        }
+
+        var exchangeMessage = SanitizeExchangeMessage(TryReadExchangeMessage(responseBody));
+        var failureCode = ResolveOrderPlacementFailureCode(exchangeCode, exchangeMessage);
+        var safeDetail = BuildOrderPlacementFailureDetail(httpStatusCode, exchangeCode, exchangeMessage);
+        throw new BinanceExchangeRejectedException(failureCode, safeDetail, exchangeCode, httpStatusCode);
+    }
+
+    private static string ResolveOrderPlacementFailureCode(string? exchangeCode, string? exchangeMessage)
+    {
+        return string.Equals(exchangeCode, "-2019", StringComparison.Ordinal) ||
+               exchangeMessage?.Contains("insufficient", StringComparison.OrdinalIgnoreCase) == true
+            ? "FuturesMarginInsufficient"
+            : "ExchangeRejected";
+    }
+
+    private static string BuildOrderPlacementFailureDetail(
+        int httpStatusCode,
+        string? exchangeCode,
+        string? exchangeMessage)
+    {
+        if (!string.IsNullOrWhiteSpace(exchangeCode) && !string.IsNullOrWhiteSpace(exchangeMessage))
+        {
+            return $"Binance futures order rejected with exchange code {exchangeCode} ({exchangeMessage}).";
+        }
+
+        if (!string.IsNullOrWhiteSpace(exchangeCode))
+        {
+            return $"Binance futures order rejected with exchange code {exchangeCode} and HTTP status {httpStatusCode}.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(exchangeMessage))
+        {
+            return $"Binance futures order rejected with HTTP status {httpStatusCode} ({exchangeMessage}).";
+        }
+
+        return $"Binance futures order rejected with HTTP status {httpStatusCode}.";
+    }
+
+    private static string? SanitizeExchangeMessage(string? exchangeMessage)
+    {
+        if (string.IsNullOrWhiteSpace(exchangeMessage))
+        {
+            return null;
+        }
+
+        var builder = new StringBuilder(exchangeMessage.Length);
+
+        foreach (var character in exchangeMessage)
+        {
+            builder.Append(char.IsControl(character) ? ' ' : character);
+        }
+
+        var normalized = string.Join(' ', builder.ToString().Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        return string.IsNullOrWhiteSpace(normalized)
+            ? null
+            : normalized.Length <= 180
+                ? normalized
+                : normalized[..180];
     }
 
     private static string ComputeSignature(string payload, string secret)
@@ -984,3 +1058,4 @@ public sealed class BinancePrivateRestClient(
                exchangeMessage?.Contains("recvWindow", StringComparison.OrdinalIgnoreCase) == true;
     }
 }
+

@@ -877,6 +877,7 @@ public sealed class ExecutionEngine(
         {
             ExecutionValidationException validationException => validationException.ReasonCode,
             ExecutionGateRejectedException gateRejectedException => gateRejectedException.Reason.ToString(),
+            BinanceExchangeRejectedException exchangeRejectedException => exchangeRejectedException.FailureCode,
             BinanceClockDriftException => nameof(ExecutionGateBlockedReason.ClockDriftExceeded),
             _ when !string.IsNullOrWhiteSpace(fallbackFailureCode) => fallbackFailureCode!,
             _ => submittedToBroker ? "DispatchFailed" : "PreSubmitFailed"
@@ -1373,5 +1374,4 @@ public sealed class ExecutionEngine(
             transition.OccurredAtUtc);
     }
 }
-
 

@@ -826,6 +826,49 @@ public sealed class ExecutionEngineTests
         Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
         Assert.StartsWith("cbp0_", result.Order.ClientOrderId, StringComparison.Ordinal);
     }
+    [Fact]
+    public async Task DispatchAsync_PersistsStableFailureCode_WhenBrokerRejectsWithExchangeMarginReason()
+    {
+        await using var harness = CreateHarness(environmentName: Environments.Development);
+        var strategyId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        await SeedUserAsync(harness.DbContext, "user-margin-reject");
+        await SeedLiveStrategyAsync(harness.DbContext, "user-margin-reject", strategyId, "margin-reject");
+        await SeedExchangeAccountAsync(harness.DbContext, "user-margin-reject", exchangeAccountId);
+        await PrimeFreshMarketDataAsync(harness, "corr-margin-reject-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-margin-reject",
+            context: "Open live execution",
+            correlationId: "corr-margin-reject-2");
+        await harness.SwitchService.SetDemoModeAsync(
+            isEnabled: false,
+            actor: "admin-margin-reject",
+            liveApproval: new TradingModeLiveApproval("margin-reject-approval"),
+            context: "Switch to live",
+            correlationId: "corr-margin-reject-3");
+        harness.PrivateRestClient.PlaceOrderException = new BinanceExchangeRejectedException(
+            "FuturesMarginInsufficient",
+            "Binance futures order rejected with exchange code -2019 (Margin is insufficient.).",
+            "-2019",
+            400);
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-margin-reject",
+                strategyId: strategyId,
+                strategyKey: "margin-reject",
+                exchangeAccountId: exchangeAccountId,
+                isDemo: null),
+            CancellationToken.None);
+
+        Assert.Equal(ExecutionOrderState.Failed, result.Order.State);
+        Assert.Equal("FuturesMarginInsufficient", result.Order.FailureCode);
+        Assert.Contains("-2019", result.Order.FailureDetail, StringComparison.Ordinal);
+        Assert.Equal(ExecutionRejectionStage.PostSubmit, result.Order.RejectionStage);
+        Assert.True(result.Order.SubmittedToBroker);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+    }
 
     [Fact]
     public async Task DispatchAsync_UsesScopedCorrelationId_WhenCommandOmitsExplicitCorrelation()
@@ -1899,12 +1942,4 @@ public sealed class ExecutionEngineTests
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 }
-
-
-
-
-
-
-
-
 

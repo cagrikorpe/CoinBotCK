@@ -197,10 +197,30 @@ public sealed class BinanceExecutorTests
         Assert.Equal("binance-order-1", result.ExternalOrderId);
     }
 
+    [Fact]
+    public async Task DispatchAsync_FailsClosed_WhenDevelopmentPilotFuturesMarginIsInsufficient()
+    {
+        await using var harness = await CreateHarnessAsync(futuresQuoteAvailableBalance: 98.71811317m);
+
+        var exception = await Assert.ThrowsAsync<ExecutionValidationException>(() => harness.Executor.DispatchAsync(
+            harness.Order,
+            CreateCommand(harness.ExchangeAccountId) with
+            {
+                Quantity = 0.002m,
+                Price = 51135m
+            },
+            CancellationToken.None));
+
+        Assert.Equal("FuturesMarginInsufficient", exception.ReasonCode);
+        Assert.Contains("available USDT futures margin 98.71811317", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("required initial margin 102.27", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
     private static async Task<TestHarness> CreateHarnessAsync(
         SymbolMetadataSnapshot? metadata = null,
         IMarketDataService? marketDataService = null,
-        FakeExchangeInfoClient? exchangeInfoClient = null)
+        FakeExchangeInfoClient? exchangeInfoClient = null,
+        decimal? futuresQuoteAvailableBalance = null)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
@@ -218,6 +238,22 @@ public sealed class BinanceExecutorTests
             CredentialStatus = ExchangeCredentialStatus.Active
         });
 
+        if (futuresQuoteAvailableBalance.HasValue)
+        {
+            dbContext.ExchangeBalances.Add(new ExchangeBalance
+            {
+                OwnerUserId = "user-exec",
+                ExchangeAccountId = exchangeAccountId,
+                Plane = ExchangeDataPlane.Futures,
+                Asset = "USDT",
+                WalletBalance = futuresQuoteAvailableBalance.Value + 5m,
+                CrossWalletBalance = futuresQuoteAvailableBalance.Value,
+                AvailableBalance = futuresQuoteAvailableBalance.Value,
+                MaxWithdrawAmount = futuresQuoteAvailableBalance.Value,
+                ExchangeUpdatedAtUtc = new DateTime(2026, 4, 2, 12, 0, 0, DateTimeKind.Utc),
+                SyncedAtUtc = new DateTime(2026, 4, 2, 12, 0, 0, DateTimeKind.Utc)
+            });
+        }
         await dbContext.SaveChangesAsync();
 
         var order = new ExecutionOrder
@@ -537,3 +573,4 @@ public sealed class BinanceExecutorTests
         }
     }
 }
+

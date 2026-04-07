@@ -70,6 +70,7 @@ public sealed class BinanceExecutor(
                 cancellationToken);
             var symbolMetadata = await ResolveSymbolMetadataAsync(command.Symbol, cancellationToken);
             ValidateOrderPreflight(command, symbolMetadata);
+            await ValidateFuturesMarginAvailabilityAsync(exchangeAccountId, command, symbolMetadata, cancellationToken);
 
             if (TryResolveDevelopmentFuturesPilot(command.Context, out var marginType, out var leverage))
             {
@@ -176,6 +177,46 @@ public sealed class BinanceExecutor(
                 $"Symbol metadata for '{symbol}' is unavailable.");
     }
 
+    private async Task ValidateFuturesMarginAvailabilityAsync(
+        Guid exchangeAccountId,
+        ExecutionCommand command,
+        SymbolMetadataSnapshot metadata,
+        CancellationToken cancellationToken)
+    {
+        if (command.ReduceOnly ||
+            !TryResolveDevelopmentFuturesPilot(command.Context, out _, out var leverage))
+        {
+            return;
+        }
+
+        var guardAsset = ResolveGuardAsset(command, metadata);
+        var balance = await dbContext.ExchangeBalances
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .SingleOrDefaultAsync(
+                entity => entity.ExchangeAccountId == exchangeAccountId &&
+                          entity.Plane == ExchangeDataPlane.Futures &&
+                          entity.Asset == guardAsset &&
+                          !entity.IsDeleted,
+                cancellationToken);
+
+        if (balance is null)
+        {
+            return;
+        }
+
+        var availableMargin = ResolveAvailableMargin(balance);
+        var requiredMargin = ResolveRequiredMargin(command, leverage!.Value);
+
+        if (availableMargin + 0.000000000000000001m >= requiredMargin)
+        {
+            return;
+        }
+
+        throw new ExecutionValidationException(
+            "FuturesMarginInsufficient",
+            $"Execution blocked because available {guardAsset} futures margin {FormatDecimal(availableMargin)} is below required initial margin {FormatDecimal(requiredMargin)} for {command.Symbol} at leverage {FormatDecimal(leverage.Value)}.");
+    }
     private static void ValidateOrderPreflight(ExecutionCommand command, SymbolMetadataSnapshot metadata)
     {
         if (!metadata.IsTradingEnabled)
@@ -236,6 +277,49 @@ public sealed class BinanceExecutor(
         }
     }
 
+    private static string ResolveGuardAsset(ExecutionCommand command, SymbolMetadataSnapshot metadata)
+    {
+        return string.IsNullOrWhiteSpace(metadata.QuoteAsset)
+            ? command.QuoteAsset
+            : metadata.QuoteAsset;
+    }
+
+    private static decimal ResolveRequiredMargin(ExecutionCommand command, decimal leverage)
+    {
+        var normalizedLeverage = leverage < 1m ? 1m : leverage;
+        return ResolveReferenceNotional(command) / normalizedLeverage;
+    }
+
+    private static decimal ResolveReferenceNotional(ExecutionCommand command)
+    {
+        return command.QuoteQuantity ?? (command.Quantity * command.Price);
+    }
+
+    private static decimal ResolveAvailableMargin(ExchangeBalance? balance)
+    {
+        if (balance is null)
+        {
+            return 0m;
+        }
+
+        if (balance.AvailableBalance.HasValue)
+        {
+            return Math.Max(0m, balance.AvailableBalance.Value);
+        }
+
+        if (balance.MaxWithdrawAmount.HasValue)
+        {
+            return Math.Max(0m, balance.MaxWithdrawAmount.Value);
+        }
+
+        if (balance.CrossWalletBalance != 0m)
+        {
+            return Math.Max(0m, balance.CrossWalletBalance);
+        }
+
+        var lockedBalance = balance.LockedBalance ?? 0m;
+        return Math.Max(0m, balance.WalletBalance - lockedBalance);
+    }
     private static bool TryResolveDevelopmentFuturesPilot(
         string? context,
         out string? marginType,
@@ -345,6 +429,7 @@ public sealed class BinanceExecutor(
         {
             ExecutionValidationException validationException => validationException.ReasonCode,
             ExecutionGateRejectedException gateRejectedException => gateRejectedException.Reason.ToString(),
+            BinanceExchangeRejectedException exchangeRejectedException => exchangeRejectedException.FailureCode,
             BinanceClockDriftException => nameof(ExecutionGateBlockedReason.ClockDriftExceeded),
             _ => "DispatchFailed"
         };
@@ -355,5 +440,4 @@ public sealed class BinanceExecutor(
         return value.ToString("0.##################", CultureInfo.InvariantCulture);
     }
 }
-
 

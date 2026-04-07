@@ -993,6 +993,10 @@ try {
         throw 'Broker-submitted smoke run did not persist the minimum execution trace evidence.'
     }
 
+    if ($summary.ClockDriftBlockCleared -and [string]$summary.FinalOrder.FailureCode -eq 'DispatchFailed') {
+        throw 'Clock-drift smoke advanced beyond the drift blocker but execution still ended with generic DispatchFailed.'
+    }
+
     if ($summary.ScopeOpenExecutionOrderCount -ne 0 -or $summary.ScopeOpenPositionCount -ne 0) {
         throw "Smoke-local cleanup did not fully close scoped exposure. OpenOrders=$($summary.ScopeOpenExecutionOrderCount); OpenPositions=$($summary.ScopeOpenPositionCount)."
     }
@@ -1007,6 +1011,7 @@ try {
     Write-Host ('OrderPlane=' + $summary.FinalOrder.Plane)
     Write-Host ('OrderState=' + $summary.FinalOrder.State)
     Write-Host ('FailureCode=' + ($summary.FinalOrder.FailureCode ?? 'none'))
+    Write-Host ('FailureDetail=' + ($summary.FinalOrder.FailureDetail ?? 'none'))
     Write-Host ('ExternalOrderIdPresent=' + $summary.ExternalOrderIdPresent)
     Write-Host ('ReconciliationStatus=' + ($summary.FinalOrder.ReconciliationStatus ?? 'none'))
     Write-Host ('NormalizationDriftReason=' + ($summary.DriftSnapshotAfterNormalization.ReasonCode ?? 'missing'))
@@ -1058,35 +1063,4 @@ finally {
     Stop-ManagedProcess -Handle $warmupWorkerHandle
     Stop-ManagedProcess -Handle $webHandle
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
