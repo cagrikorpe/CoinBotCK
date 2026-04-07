@@ -18,16 +18,29 @@ dotnet test tests\CoinBot.IntegrationTests\CoinBot.IntegrationTests.csproj --no-
 
 Smoke tests under `tests/SmokeTests` are manual-only. Do not wire them into CI.
 
+Relevant manual smoke entry points:
+- `tests\SmokeTests\PilotLifecycleRuntimeSmoke.ps1` for Paket-1 pilot lifecycle closure
+- `tests\SmokeTests\UiLiveBrowserSmoke.ps1` for Paket-4 browser-level Home/AiRobot render closure
+
 Pilot testnet lifecycle enable, smoke, rollback ve incident akisi icin [PILOT_TESTNET_RUNBOOK.md](PILOT_TESTNET_RUNBOOK.md) dosyasini kullan.
 
 ## CI scope
 
 The GitHub Actions workflow is intentionally limited to:
+- repo hygiene guard
 - restore
 - solution build
 - unit tests on Windows
 
-Integration tests and smoke scripts remain outside CI because they need local infrastructure, user-secrets, or live testnet access.
+Integration tests and smoke scripts remain outside CI because they need local infrastructure, user-secrets, a deterministic LocalDB graph, explicit browser availability, or live testnet access.
+
+## Versioning and release tags
+
+Use a single release story:
+- create a release tag only from a commit that already passed build, unit tests, the relevant integration slice, and any explicitly required manual smoke
+- use annotated release tags in `vX.Y.Z` format
+- keep web and worker publish outputs tied to the same tagged commit
+- treat `dotnet publish` output as the deployable artifact; do not publish ad-hoc local evidence or runtime smoke output
 
 ## Release and publish checklist
 
@@ -53,13 +66,14 @@ After publish:
 
 If a release must be rolled back:
 - stop the affected web and worker services
+- confirm the target rollback build/tag and the exact migration state before changing anything
 - redeploy the previous application build
 - only roll back database changes if the migration set was designed for reversal and data impact is understood
 - restart services and verify auth, dashboard load, and worker startup
 - re-run the smallest relevant smoke or integration check
 - record the failure reason, affected migration/build, and any required follow-up cleanup
 
-## Secrets and rotation
+## Secrets and config hygiene
 
 Do not commit secrets, tokens, or local secret stores.
 
@@ -67,6 +81,11 @@ Current secret/config sources:
 - environment variables such as `COINBOT_CREDENTIAL_ENCRYPTION_KEY_BASE64`
 - ASP.NET Core user-secrets for local development
 - deployment environment configuration for connection strings and exchange credentials
+
+Rules:
+- keep local development secrets in user-secrets or local environment variables, never in tracked `appsettings*.json`
+- keep deployed secrets in environment-specific configuration outside the repo
+- use only obvious placeholders in docs and scripts; never write values that look like real secrets
 
 Rotation guidance:
 - rotate credential encryption keys, exchange API keys, database connection secrets, and any publish/deploy secrets together with a dated change record
@@ -91,7 +110,10 @@ The following must stay out of git:
 - `*.log`, `*.diag*`, `*.binlog`
 - `*.user`, `*.csproj.user`, `*.slnLaunch.user`
 
-Runtime smoke output under `.diag/` should be reviewed locally and then discarded or archived outside the repo; it is local operational evidence, not a tracked artifact.
+Runtime evidence under `.diag/` is local-only:
+- `.diag\pilot-lifecycle-runtime-smoke\...` for pilot runtime evidence
+- `.diag\ui-live-browser-smoke\...` for browser render evidence
+- screenshots, summary json, stdout/stderr logs, and browser profiles stay local and must not be committed
 
 For the pilot runtime smoke, `ReconciliationStatus=Unknown` is no longer a passing end state. A successful broker-submitted smoke run must leave `LastReconciledAtUtc` populated, `ReconciliationStatus` outside `Unknown`, and smoke-scoped open orders/positions at zero after smoke-local cleanup.
 
@@ -105,6 +127,3 @@ Resolved here:
 - fixed the `xUnit2031` test warning in `StrategyLifecycleIntegrationTests`
 
 Any warnings that remain after validation should be tracked explicitly and resolved intentionally; do not hide them behind broad suppression.
-
-
-
