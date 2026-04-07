@@ -24,7 +24,7 @@ public sealed class BotExecutionPilotOptions
     [Required]
     public string DefaultMarginType { get; set; } = "ISOLATED";
 
-    public string[] AllowedSymbols { get; set; } = ["BTCUSDT"];
+    public string[] AllowedSymbols { get; set; } = [];
 
     public string[] AllowedUserIds { get; set; } = [];
 

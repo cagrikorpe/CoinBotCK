@@ -1,3 +1,24 @@
+param(
+    [string]$Symbol
+)
+
+if ([string]::IsNullOrWhiteSpace($Symbol))
+{
+    if (-not [string]::IsNullOrWhiteSpace($env:COINBOT_CLOCKDRIFT_SMOKE_SYMBOL))
+    {
+        $Symbol = $env:COINBOT_CLOCKDRIFT_SMOKE_SYMBOL
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($env:BotExecutionPilot__DefaultSymbol))
+    {
+        $Symbol = $env:BotExecutionPilot__DefaultSymbol
+    }
+    else
+    {
+        $Symbol = 'BTCUSDT'
+    }
+}
+
+$Symbol = $Symbol.Trim().ToUpperInvariant()
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
@@ -438,7 +459,7 @@ ORDER BY b.CreatedDate DESC;
 }
 
 function Seed-SmokeGraph {
-    param([string]$ConnectionString, [pscustomobject]$Bootstrap, [string]$UserId, [string]$Email, [guid]$StrategyId, [guid]$StrategyVersionId, [guid]$ExchangeAccountId, [guid]$ApiCredentialId, [guid]$BotId, [datetime]$UtcNow)
+    param([string]$ConnectionString, [pscustomobject]$Bootstrap, [string]$UserId, [string]$Email, [guid]$StrategyId, [guid]$StrategyVersionId, [guid]$ExchangeAccountId, [guid]$ApiCredentialId, [guid]$BotId, [string]$Symbol, [datetime]$UtcNow)
 
     $definitionJson = [string]::Join([Environment]::NewLine, @(
         '{', '  "schemaVersion": 1,', '  "entry": {', '    "operator": "all",', '    "rules": [', '      {', '        "path": "context.mode",', '        "comparison": "equals",', '        "value": "Live"', '      }', '    ]', '  },', '  "risk": {', '    "operator": "all",', '    "rules": [', '      {', '        "path": "indicator.sampleCount",', '        "comparison": "greaterThanOrEqual",', '        "value": 100', '      }', '    ]', '  }', '}'
@@ -462,7 +483,7 @@ END
     Invoke-SqlNonQuery -ConnectionString $ConnectionString -CommandText "INSERT INTO ExchangeAccounts (Id, ExchangeName, DisplayName, IsReadOnly, LastValidatedAt, ApiKeyCiphertext, ApiSecretCiphertext, CredentialFingerprint, CredentialKeyVersion, CredentialStatus, CredentialStoredAtUtc, CredentialLastAccessedAtUtc, CredentialLastRotatedAtUtc, CredentialRevalidateAfterUtc, CredentialRotateAfterUtc, CreatedDate, UpdatedDate, IsDeleted, OwnerUserId) VALUES (@ExchangeAccountId, 'Binance', 'Pilot Lifecycle Smoke Binance', 0, @UtcNow, @ApiKeyCiphertext, @ApiSecretCiphertext, @CredentialFingerprint, @CredentialKeyVersion, 'Active', @UtcNow, NULL, @UtcNow, DATEADD(DAY, 30, @UtcNow), DATEADD(DAY, 90, @UtcNow), @UtcNow, @UtcNow, 0, @UserId);" -Parameters @{ ExchangeAccountId = $ExchangeAccountId; UtcNow = $UtcNow; UserId = $UserId; ApiKeyCiphertext = $Bootstrap.Source.ApiKeyCiphertext; ApiSecretCiphertext = $Bootstrap.Source.ApiSecretCiphertext; CredentialFingerprint = $Bootstrap.Source.CredentialFingerprint; CredentialKeyVersion = if ([string]::IsNullOrWhiteSpace([string]$Bootstrap.Source.CredentialKeyVersion)) { 'credential-v1' } else { $Bootstrap.Source.CredentialKeyVersion } } | Out-Null
     Invoke-SqlNonQuery -ConnectionString $ConnectionString -CommandText "INSERT INTO ApiCredentials (Id, ExchangeAccountId, OwnerUserId, ApiKeyCiphertext, ApiSecretCiphertext, CredentialFingerprint, KeyVersion, EncryptedBlobVersion, ValidationStatus, PermissionSummary, StoredAtUtc, LastValidatedAtUtc, LastFailureReason, CreatedDate, UpdatedDate, IsDeleted) VALUES (@ApiCredentialId, @ExchangeAccountId, @UserId, @ApiKeyCiphertext, @ApiSecretCiphertext, @CredentialFingerprint, @CredentialKeyVersion, 1, @ValidationStatus, @PermissionSummary, @UtcNow, @ValidatedAtUtc, @FailureReason, @UtcNow, @UtcNow, 0);" -Parameters @{ ApiCredentialId = $ApiCredentialId; ExchangeAccountId = $ExchangeAccountId; UserId = $UserId; ApiKeyCiphertext = $Bootstrap.Source.ApiKeyCiphertext; ApiSecretCiphertext = $Bootstrap.Source.ApiSecretCiphertext; CredentialFingerprint = $Bootstrap.Source.CredentialFingerprint; CredentialKeyVersion = if ([string]::IsNullOrWhiteSpace([string]$Bootstrap.Source.CredentialKeyVersion)) { 'credential-v1' } else { $Bootstrap.Source.CredentialKeyVersion }; ValidationStatus = $Bootstrap.Source.ValidationStatus; PermissionSummary = $Bootstrap.Source.PermissionSummary; UtcNow = $UtcNow; ValidatedAtUtc = $Bootstrap.Source.ValidatedAtUtc; FailureReason = $Bootstrap.Source.FailureReason } | Out-Null
     Invoke-SqlNonQuery -ConnectionString $ConnectionString -CommandText "INSERT INTO ApiCredentialValidations (Id, ApiCredentialId, ExchangeAccountId, OwnerUserId, IsKeyValid, CanTrade, CanWithdraw, SupportsSpot, SupportsFutures, EnvironmentScope, IsEnvironmentMatch, HasTimestampSkew, HasIpRestrictionIssue, ValidationStatus, PermissionSummary, FailureReason, CorrelationId, ValidatedAtUtc, CreatedDate, UpdatedDate, IsDeleted) VALUES (NEWID(), @ApiCredentialId, @ExchangeAccountId, @UserId, @IsKeyValid, @CanTrade, @CanWithdraw, @SupportsSpot, @SupportsFutures, @EnvironmentScope, @IsEnvironmentMatch, @HasTimestampSkew, @HasIpRestrictionIssue, @ValidationStatus, @PermissionSummary, @FailureReason, @CorrelationId, @ValidatedAtUtc, @UtcNow, @UtcNow, 0);" -Parameters @{ ApiCredentialId = $ApiCredentialId; ExchangeAccountId = $ExchangeAccountId; UserId = $UserId; IsKeyValid = $Bootstrap.Source.IsKeyValid; CanTrade = $Bootstrap.Source.CanTrade; CanWithdraw = if ($null -eq $Bootstrap.Source.CanWithdraw) { $false } else { $Bootstrap.Source.CanWithdraw }; SupportsSpot = if ($null -eq $Bootstrap.Source.SupportsSpot) { $false } else { $Bootstrap.Source.SupportsSpot }; SupportsFutures = $Bootstrap.Source.SupportsFutures; EnvironmentScope = $Bootstrap.Source.EnvironmentScope; IsEnvironmentMatch = $Bootstrap.Source.IsEnvironmentMatch; HasTimestampSkew = if ($null -eq $Bootstrap.Source.HasTimestampSkew) { $false } else { $Bootstrap.Source.HasTimestampSkew }; HasIpRestrictionIssue = if ($null -eq $Bootstrap.Source.HasIpRestrictionIssue) { $false } else { $Bootstrap.Source.HasIpRestrictionIssue }; ValidationStatus = $Bootstrap.Source.ValidationStatus; PermissionSummary = $Bootstrap.Source.PermissionSummary; FailureReason = $Bootstrap.Source.FailureReason; CorrelationId = $Bootstrap.Source.CorrelationId; ValidatedAtUtc = $Bootstrap.Source.ValidatedAtUtc; UtcNow = $UtcNow } | Out-Null
-    Invoke-SqlNonQuery -ConnectionString $ConnectionString -CommandText "INSERT INTO TradingBots (Id, Name, StrategyKey, Symbol, Quantity, ExchangeAccountId, Leverage, MarginType, IsEnabled, TradingModeOverride, TradingModeApprovedAtUtc, TradingModeApprovalReference, OpenOrderCount, OpenPositionCount, CreatedDate, UpdatedDate, IsDeleted, OwnerUserId) VALUES (@BotId, 'Pilot Lifecycle Smoke Bot', 'pilot-lifecycle-smoke-core', @Symbol, 0.002, @ExchangeAccountId, 1, 'ISOLATED', 1, NULL, NULL, NULL, 0, 0, @UtcNow, @UtcNow, 0, @UserId);" -Parameters @{ BotId = $BotId; Symbol = $Bootstrap.Source.Symbol; ExchangeAccountId = $ExchangeAccountId; UtcNow = $UtcNow; UserId = $UserId } | Out-Null
+    Invoke-SqlNonQuery -ConnectionString $ConnectionString -CommandText "INSERT INTO TradingBots (Id, Name, StrategyKey, Symbol, Quantity, ExchangeAccountId, Leverage, MarginType, IsEnabled, TradingModeOverride, TradingModeApprovedAtUtc, TradingModeApprovalReference, OpenOrderCount, OpenPositionCount, CreatedDate, UpdatedDate, IsDeleted, OwnerUserId) VALUES (@BotId, 'Pilot Lifecycle Smoke Bot', 'pilot-lifecycle-smoke-core', @Symbol, 0.002, @ExchangeAccountId, 1, 'ISOLATED', 1, NULL, NULL, NULL, 0, 0, @UtcNow, @UtcNow, 0, @UserId);" -Parameters @{ BotId = $BotId; Symbol = $Symbol; ExchangeAccountId = $ExchangeAccountId; UtcNow = $UtcNow; UserId = $UserId } | Out-Null
     Seed-SmokeGlobalPolicy -ConnectionString $ConnectionString -UtcNow $UtcNow
 }
 
@@ -667,8 +688,8 @@ function Build-EnvironmentVariables {
         BotExecutionPilot__AllowedUserIds__0 = $UserId
         BotExecutionPilot__AllowedBotIds__0 = $BotId.ToString('N')
         BotExecutionPilot__AllowedSymbols__0 = $Symbol
-        BotExecutionPilot__AllowedSymbols__1 = ''
-        BotExecutionPilot__AllowedSymbols__2 = ''
+        BotExecutionPilot__AllowedSymbols__1 = $Symbol
+        BotExecutionPilot__AllowedSymbols__2 = $Symbol
         BotExecutionPilot__MaxPilotOrderNotional = '250'
         BotExecutionPilot__MaxOpenPositionsPerUser = '1'
         BotExecutionPilot__PerBotCooldownSeconds = '120'
@@ -696,7 +717,7 @@ $apiCredentialId = [Guid]'74444444-4444-4444-4444-444444444444'
 $botId = [Guid]'75555555-5555-5555-5555-555555555555'
 $script:adminEmail = 'clockdrift.admin.' + [Guid]::NewGuid().ToString('N') + '@coinbot.test'
 $script:adminPassword = 'Passw0rd!Clock1'
-$symbol = 'BTCUSDT'
+$symbol = $Symbol
 $summary = [ordered]@{
     SelectedPlane = 'Futures'
     SmokeDatabaseName = $smokeDatabaseName
@@ -739,7 +760,7 @@ try {
         }
     }
 
-    $symbol = 'BTCUSDT'
+    $summary.SelectedSymbol = $symbol
     $summary.SourcePreflight = [ordered]@{
         SelectedPlane = 'Futures'
         ActiveAccounts = $bootstrap.Preflight.ActiveAccounts
@@ -771,7 +792,7 @@ try {
         }
     } | Out-Null
 
-    Seed-SmokeGraph -ConnectionString $connectionString -Bootstrap $bootstrap -UserId $smokeUserId -Email $smokeEmail -StrategyId $strategyId -StrategyVersionId $strategyVersionId -ExchangeAccountId $exchangeAccountId -ApiCredentialId $apiCredentialId -BotId $botId -UtcNow ([DateTime]::UtcNow)
+    Seed-SmokeGraph -ConnectionString $connectionString -Bootstrap $bootstrap -UserId $smokeUserId -Email $smokeEmail -StrategyId $strategyId -StrategyVersionId $strategyVersionId -ExchangeAccountId $exchangeAccountId -ApiCredentialId $apiCredentialId -BotId $botId -Symbol $symbol -UtcNow ([DateTime]::UtcNow)
 
     $lastWaitStage = 'AdminSeed'
     Wait-Until -Name 'super admin seed' -TimeoutSeconds 90 -Condition {
@@ -1008,6 +1029,7 @@ try {
     Write-Host ('SmokeDatabaseName=' + $smokeDatabaseName)
     Write-Host ('WarmupSubmitBlocked=' + $summary.WarmupSubmitBlocked)
     Write-Host ('BrokerSubmitReached=' + $summary.BrokerSubmitReached)
+    Write-Host ('Symbol=' + $symbol)
     Write-Host ('OrderPlane=' + $summary.FinalOrder.Plane)
     Write-Host ('OrderState=' + $summary.FinalOrder.State)
     Write-Host ('FailureCode=' + ($summary.FinalOrder.FailureCode ?? 'none'))
@@ -1063,4 +1085,3 @@ finally {
     Stop-ManagedProcess -Handle $warmupWorkerHandle
     Stop-ManagedProcess -Handle $webHandle
 }
-
