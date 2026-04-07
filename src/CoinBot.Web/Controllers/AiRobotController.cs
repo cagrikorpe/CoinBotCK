@@ -82,7 +82,16 @@ public sealed class AiRobotController(
             $"{outcomeSummary.ScoredCount}/{outcomeSummary.TotalDecisionCount}",
             FormatSignedDecimal(outcomeSummary.AverageOutcomeScore),
             $"+ {outcomeSummary.PositiveOutcomeCount} / - {outcomeSummary.NegativeOutcomeCount} / flat {outcomeSummary.NeutralOutcomeCount}",
-            $"False+ {outcomeSummary.FalsePositiveCount} · FalseNeutral {outcomeSummary.FalseNeutralCount} · Overtrade {outcomeSummary.OvertradingCount} · Suppression {outcomeSummary.SuppressionAlignedCount}/{outcomeSummary.SuppressionMissedCount}");
+            $"False+ {outcomeSummary.FalsePositiveCount} · FalseNeutral {outcomeSummary.FalseNeutralCount} · Overtrade {outcomeSummary.OvertradingCount} · Suppression {outcomeSummary.SuppressionAlignedCount}/{outcomeSummary.SuppressionMissedCount}",
+            snapshot.Control.TradeMasterLabel,
+            snapshot.Control.TradingModeLabel,
+            snapshot.Control.PilotActivationLabel,
+            snapshot.Control.MarketDataLabel,
+            snapshot.Control.PrivatePlaneLabel,
+            snapshot.LatestReject.Label,
+            string.IsNullOrWhiteSpace(snapshot.LatestReject.Code)
+                ? snapshot.LatestReject.Summary
+                : $"{snapshot.LatestReject.Code} · {snapshot.LatestReject.Summary}");
     }
 
     private static List<AiRobotDecisionViewModel> BuildDecisions(UserDashboardLiveSnapshot snapshot, TimeZoneInfo displayTimeZoneInfo)
@@ -112,8 +121,44 @@ public sealed class AiRobotController(
                 ResolveOutcomeLabel(item),
                 ResolveOutcomeDetail(item),
                 ResolveTone(item),
-                item.AiIsFallback))
+                item.AiIsFallback,
+                BuildStrategySummary(item),
+                BuildOverlaySummary(item),
+                BuildFinalReasonSummary(item),
+                item.TopSignalHints ?? "Top feature hints yok."))
             .ToList();
+    }
+
+    private static string BuildStrategySummary(UserDashboardAiHistoryRowSnapshot snapshot)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(snapshot.StrategyDecisionCode)) parts.Add(snapshot.StrategyDecisionCode!);
+        if (!string.IsNullOrWhiteSpace(snapshot.StrategyDecisionOutcome)) parts.Add(snapshot.StrategyDecisionOutcome!);
+        if (!string.IsNullOrWhiteSpace(snapshot.StrategySummary)) parts.Add(snapshot.StrategySummary!);
+        return parts.Count == 0 ? "Strategy summary yok." : string.Join(" · ", parts);
+    }
+
+    private static string BuildOverlaySummary(UserDashboardAiHistoryRowSnapshot snapshot)
+    {
+        if (string.IsNullOrWhiteSpace(snapshot.AiOverlayDisposition))
+        {
+            return "AI overlay uygulanmadı.";
+        }
+
+        return snapshot.AiOverlayBoostPoints == 0
+            ? $"Overlay={snapshot.AiOverlayDisposition}"
+            : $"Overlay={snapshot.AiOverlayDisposition} · Boost={snapshot.AiOverlayBoostPoints}";
+    }
+
+    private static string BuildFinalReasonSummary(UserDashboardAiHistoryRowSnapshot snapshot)
+    {
+        var parts = new List<string> { $"Final={snapshot.FinalAction}" };
+        if (!string.IsNullOrWhiteSpace(snapshot.NoSubmitReason)) parts.Add($"NoSubmit={snapshot.NoSubmitReason}");
+        if (!string.IsNullOrWhiteSpace(snapshot.HypotheticalBlockReason)) parts.Add($"HypBlock={snapshot.HypotheticalBlockReason}");
+        if (snapshot.RiskVetoPresent && !string.IsNullOrWhiteSpace(snapshot.RiskVetoReason)) parts.Add($"Risk={snapshot.RiskVetoReason}");
+        if (snapshot.PilotSafetyBlocked && !string.IsNullOrWhiteSpace(snapshot.PilotSafetyReason)) parts.Add($"Safety={snapshot.PilotSafetyReason}");
+        if (snapshot.AiIsFallback && !string.IsNullOrWhiteSpace(snapshot.AiFallbackReason)) parts.Add($"Fallback={snapshot.AiFallbackReason}");
+        return string.Join(" · ", parts);
     }
 
     private static string BuildRegimeSummary(UserDashboardAiHistoryRowSnapshot snapshot)
@@ -122,7 +167,6 @@ public sealed class AiRobotController(
         if (!string.IsNullOrWhiteSpace(snapshot.PrimaryRegime)) parts.Add($"Regime={snapshot.PrimaryRegime}");
         if (!string.IsNullOrWhiteSpace(snapshot.MomentumBias)) parts.Add($"Momentum={snapshot.MomentumBias}");
         if (!string.IsNullOrWhiteSpace(snapshot.VolatilityState)) parts.Add($"Volatility={snapshot.VolatilityState}");
-        if (!string.IsNullOrWhiteSpace(snapshot.TopSignalHints)) parts.Add(snapshot.TopSignalHints!);
         return parts.Count == 0 ? "Feature context henüz zenginleşmedi." : string.Join(" • ", parts);
     }
 
@@ -199,3 +243,4 @@ public sealed class AiRobotController(
         return $"{localTimestamp:yyyy-MM-dd HH:mm:ss} {timeZoneInfo.StandardName}";
     }
 }
+

@@ -36,19 +36,19 @@
             </div>
             <div class="col-md-4 mb-4">
                 <div class="font-size-sm text-muted text-uppercase">Trade master / mode</div>
-                <div class="font-weight-bolder">@Model.OperationsSummary.TradeMasterStatus</div>
-                <div class="text-muted">@Model.OperationsSummary.TradingModeStatus</div>
-                <div class="text-muted">Pilot @Model.OperationsSummary.PilotActivationStatus</div>
+                <div class="font-weight-bolder" data-cb-ops-trade-master data-cb-ops-trade-master-code="@Model.OperationsSummary.TradeMasterStatus">@Model.OperationsSummary.TradeMasterStatus</div>
+                <div class="text-muted" data-cb-ops-trading-mode>@Model.OperationsSummary.TradingModeStatus</div>
+                <div class="text-muted" data-cb-ops-pilot-activation>Pilot @Model.OperationsSummary.PilotActivationStatus</div>
             </div>
             <div class="col-md-4 mb-4">
                 <div class="font-size-sm text-muted text-uppercase">Market readiness</div>
-                <div class="font-weight-bolder">@Model.OperationsSummary.MarketReadinessStatus</div>
-                <div class="text-muted">@Model.OperationsSummary.MarketReadinessSummary</div>
+                <div class="font-weight-bolder" data-cb-ops-market-state>@Model.OperationsSummary.MarketReadinessStatus</div>
+                <div class="text-muted" data-cb-ops-market-summary>@Model.OperationsSummary.MarketReadinessSummary</div>
             </div>
             <div class="col-md-4 mb-4">
                 <div class="font-size-sm text-muted text-uppercase">Private plane</div>
-                <div class="font-weight-bolder">@Model.OperationsSummary.PrivatePlaneStatus</div>
-                <div class="text-muted">@Model.OperationsSummary.PrivatePlaneSummary</div>
+                <div class="font-weight-bolder" data-cb-ops-private-plane-state>@Model.OperationsSummary.PrivatePlaneStatus</div>
+                <div class="text-muted" data-cb-ops-private-plane-summary>@Model.OperationsSummary.PrivatePlaneSummary</div>
             </div>
             <div class="col-md-4 mb-2">
                 <div class="font-size-sm text-muted text-uppercase">Günlük limit</div>
@@ -64,13 +64,13 @@
             </div>
             <div class="col-md-12 mt-4">
                 <div class="font-size-sm text-muted text-uppercase">Neden order açılmadı?</div>
-                <div class="font-weight-bolder">@Model.OperationsSummary.LatestNoTradeStatus</div>
-                <div class="text-muted">@(string.IsNullOrWhiteSpace(Model.OperationsSummary.LatestNoTradeCode) ? Model.OperationsSummary.LatestNoTradeSummary : $"{Model.OperationsSummary.LatestNoTradeCode} · {Model.OperationsSummary.LatestNoTradeSummary}")</div>
+                <div class="font-weight-bolder" data-cb-ops-latest-no-trade>@Model.OperationsSummary.LatestNoTradeStatus</div>
+                <div class="text-muted" data-cb-ops-latest-no-trade-summary data-cb-ops-latest-no-trade-code="@Model.OperationsSummary.LatestNoTradeCode">@(string.IsNullOrWhiteSpace(Model.OperationsSummary.LatestNoTradeCode) ? Model.OperationsSummary.LatestNoTradeSummary : $"{Model.OperationsSummary.LatestNoTradeCode} · {Model.OperationsSummary.LatestNoTradeSummary}")</div>
             </div>
             <div class="col-md-12 mt-4">
                 <div class="font-size-sm text-muted text-uppercase">Son reject / failure</div>
-                <div class="font-weight-bolder">@Model.OperationsSummary.LatestRejectStatus</div>
-                <div class="text-muted">@(string.IsNullOrWhiteSpace(Model.OperationsSummary.LatestRejectCode) ? Model.OperationsSummary.LatestRejectSummary : $"{Model.OperationsSummary.LatestRejectCode} · {Model.OperationsSummary.LatestRejectSummary}")</div>
+                <div class="font-weight-bolder" data-cb-ops-latest-reject>@Model.OperationsSummary.LatestRejectStatus</div>
+                <div class="text-muted" data-cb-ops-latest-reject-summary data-cb-ops-latest-reject-code="@Model.OperationsSummary.LatestRejectCode">@(string.IsNullOrWhiteSpace(Model.OperationsSummary.LatestRejectCode) ? Model.OperationsSummary.LatestRejectSummary : $"{Model.OperationsSummary.LatestRejectCode} · {Model.OperationsSummary.LatestRejectSummary}")</div>
                 @if (!string.IsNullOrWhiteSpace(Model.OperationsSummary.LatestRejectReconciliation))
                 {
                     <div class="text-muted">Reconciliation @Model.OperationsSummary.LatestRejectReconciliation</div>
@@ -84,3 +84,15 @@
         </div>
     </div>
 </div>
+
+
+
+
+
+
+
+
+
+
+
+

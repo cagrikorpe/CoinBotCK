@@ -417,18 +417,30 @@ public class HomeController(
         {
             var latestPrice = await marketDataService.GetLatestPriceAsync(position.Symbol, cancellationToken);
             var direction = ResolveDirection(position);
+            var effectiveCurrentPrice = latestPrice?.Price ?? position.MarkPrice;
+            var realizedPnl = position.RealizedPnl ?? 0m;
+            var marginTone = position.MarginType.Equals("isolated", StringComparison.OrdinalIgnoreCase)
+                ? "warning"
+                : position.MarginType.Equals("spot", StringComparison.OrdinalIgnoreCase)
+                    ? "neutral"
+                    : "success";
+
             rows.Add(new OpenPositionViewModel(
                 position.Symbol,
                 direction,
                 direction == "Long" ? "success" : "danger",
-                $"{Math.Abs(position.Quantity):0.####}",
+                Math.Abs(position.Quantity).ToString("0.####", CultureInfo.InvariantCulture),
                 position.EntryPrice.ToString("0.####", CultureInfo.InvariantCulture),
-                latestPrice?.Price.ToString("0.####", CultureInfo.InvariantCulture) ?? "-",
-                $"{(position.UnrealizedProfit >= 0 ? "+" : string.Empty)}{position.UnrealizedProfit:0.####}",
+                position.BreakEvenPrice.ToString("0.####", CultureInfo.InvariantCulture),
+                effectiveCurrentPrice?.ToString("0.####", CultureInfo.InvariantCulture) ?? "-",
+                FormatSignedAmount(position.UnrealizedProfit, null),
                 position.UnrealizedProfit >= 0 ? "positive" : "negative",
+                FormatSignedAmount(realizedPnl, null),
+                realizedPnl >= 0 ? "positive" : "negative",
                 NormalizeMarginLabel(position.MarginType),
-                position.MarginType.Equals("isolated", StringComparison.OrdinalIgnoreCase) ? "warning" : "success",
-                FormatTimestamp(position.SyncedAtUtc, displayTimeZoneInfo)));
+                marginTone,
+                $"Exchange {FormatTimestamp(position.ExchangeUpdatedAtUtc, displayTimeZoneInfo)}",
+                $"Sync {FormatTimestamp(position.SyncedAtUtc, displayTimeZoneInfo)}"));
         }
 
         return rows;
@@ -451,9 +463,17 @@ public class HomeController(
 
     private static string NormalizeMarginLabel(string marginType)
     {
-        return marginType.Equals("isolated", StringComparison.OrdinalIgnoreCase)
-            ? "Isolated"
-            : "Cross";
+        if (marginType.Equals("isolated", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Isolated";
+        }
+
+        if (marginType.Equals("spot", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Spot";
+        }
+
+        return "Cross";
     }
 
     private static string FormatTimestamp(DateTime timestampUtc, TimeZoneInfo timeZoneInfo)

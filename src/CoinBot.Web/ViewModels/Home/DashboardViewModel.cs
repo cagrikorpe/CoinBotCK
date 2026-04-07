@@ -110,12 +110,17 @@ public record OpenPositionViewModel(
     string Symbol,
     string Direction,
     string DirectionTone,
-    string Leverage,
+    string Quantity,
     string Entry,
+    string BreakEven,
     string Current,
-    string Pnl,
-    string PnlTone,
-    string Risk,
-    string RiskTone,
-    string Updated
+    string UnrealizedPnl,
+    string UnrealizedPnlTone,
+    string RealizedPnl,
+    string RealizedPnlTone,
+    string Margin,
+    string MarginTone,
+    string Updated,
+    string Reconciliation
 );
+

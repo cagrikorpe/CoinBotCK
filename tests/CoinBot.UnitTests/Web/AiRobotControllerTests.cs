@@ -27,6 +27,10 @@ public sealed class AiRobotControllerTests
 
         Assert.Equal(1, model.Summary.TotalCount);
         Assert.Equal("ShadowOnly", model.Summary.LatestNoTradeStatus);
+        Assert.Equal("Armed", model.Summary.TradeMasterStatus);
+        Assert.Equal("DemoOnly", model.Summary.TradingModeStatus);
+        Assert.Equal("ShadowOnly", model.Summary.PilotActivationStatus);
+        Assert.Equal("NoReject", model.Summary.LatestRejectStatus);
         Assert.Equal("+1 bar close-to-close", model.Summary.OutcomeHorizonLabel);
         Assert.Equal("1/1", model.Summary.ScoringCoverage);
         Assert.Equal("+0.640", model.Summary.AverageOutcomeScore);
@@ -38,6 +42,10 @@ public sealed class AiRobotControllerTests
         Assert.Equal("ShadowModeActive", model.Decisions[0].NoSubmitReason);
         Assert.Equal("DeterministicStub / stub-v1", model.Decisions[0].Provider);
         Assert.Equal("AI liked momentum confirmation.", model.Decisions[0].ReasonSummary);
+        Assert.Equal("StrategyEntry · Persisted · Strategy favored long.", model.Decisions[0].StrategySummary);
+        Assert.Equal("Overlay=Boost · Boost=5", model.Decisions[0].OverlaySummary);
+        Assert.Contains("Final=ShadowOnly", model.Decisions[0].FinalReasonSummary, StringComparison.Ordinal);
+        Assert.Equal("Trend aligned.", model.Decisions[0].TopFeatureHints);
         Assert.Equal("CCCCCCCC", model.Decisions[0].FeatureSnapshotReference);
         Assert.Contains("Trending", model.Decisions[0].RegimeSummary, StringComparison.Ordinal);
         Assert.Equal("Scored · +1 bar", model.Decisions[0].OutcomeLabel);
@@ -146,7 +154,9 @@ public sealed class AiRobotControllerTests
                         false,
                         false,
                         false,
-                        false)
+                        false,
+                        "Boost",
+                        5)
                 ],
                 [new UserDashboardReasonBucketSnapshot("ShadowModeActive", 1)],
                 [],
@@ -229,3 +239,4 @@ public sealed class AiRobotControllerTests
         }
     }
 }
+

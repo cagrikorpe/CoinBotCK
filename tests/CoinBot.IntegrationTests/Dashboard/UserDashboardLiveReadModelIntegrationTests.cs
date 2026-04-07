@@ -1,4 +1,5 @@
 using CoinBot.Application.Abstractions.DataScope;
+using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Ai;
@@ -12,6 +13,8 @@ using CoinBot.Infrastructure.Persistence;
 using CoinBot.IntegrationTests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace CoinBot.IntegrationTests.Dashboard;
 
@@ -30,6 +33,9 @@ public sealed class UserDashboardLiveReadModelIntegrationTests
         var botId = Guid.NewGuid();
         var featureSnapshotId = Guid.NewGuid();
         var decisionId = Guid.NewGuid();
+        var strategySignalId = Guid.NewGuid();
+        var tradingStrategyId = Guid.NewGuid();
+        var tradingStrategyVersionId = Guid.NewGuid();
 
         await using var dbContext = new ApplicationDbContext(options, new TestDataScopeContext());
         await dbContext.Database.EnsureDeletedAsync();
@@ -67,6 +73,27 @@ public sealed class UserDashboardLiveReadModelIntegrationTests
                 ExchangeAccountId = exchangeAccountId,
                 IsEnabled = true
             });
+            dbContext.TradingStrategies.Add(new TradingStrategy
+            {
+                Id = tradingStrategyId,
+                OwnerUserId = ownerUserId,
+                StrategyKey = "ui-live",
+                DisplayName = "Dashboard Live Strategy",
+                PromotionState = StrategyPromotionState.LivePublished,
+                PublishedMode = ExecutionEnvironment.Demo,
+                PublishedAtUtc = nowUtc
+            });
+            dbContext.TradingStrategyVersions.Add(new TradingStrategyVersion
+            {
+                Id = tradingStrategyVersionId,
+                OwnerUserId = ownerUserId,
+                TradingStrategyId = tradingStrategyId,
+                SchemaVersion = 1,
+                VersionNumber = 1,
+                Status = StrategyVersionStatus.Published,
+                DefinitionJson = "{}",
+                PublishedAtUtc = nowUtc
+            });
             dbContext.TradingFeatureSnapshots.Add(new TradingFeatureSnapshot
             {
                 Id = featureSnapshotId,
@@ -93,6 +120,7 @@ public sealed class UserDashboardLiveReadModelIntegrationTests
                 BotId = botId,
                 ExchangeAccountId = exchangeAccountId,
                 FeatureSnapshotId = featureSnapshotId,
+                StrategySignalId = strategySignalId,
                 CorrelationId = "corr-ui-live-1",
                 StrategyKey = "ui-live",
                 Symbol = "BTCUSDT",
@@ -125,7 +153,40 @@ public sealed class UserDashboardLiveReadModelIntegrationTests
                 CreatedDate = nowUtc,
                 UpdatedDate = nowUtc
             });
-            dbContext.ExecutionOrders.Add(new ExecutionOrder
+            dbContext.TradingStrategySignals.Add(new TradingStrategySignal
+            {
+                Id = strategySignalId,
+                OwnerUserId = ownerUserId,
+                TradingStrategyId = tradingStrategyId,
+                TradingStrategyVersionId = tradingStrategyVersionId,
+                StrategyVersionNumber = 1,
+                StrategySchemaVersion = 1,
+                SignalType = StrategySignalType.Entry,
+                ExecutionEnvironment = ExecutionEnvironment.Demo,
+                Symbol = "BTCUSDT",
+                Timeframe = "1m",
+                IndicatorOpenTimeUtc = nowUtc.AddMinutes(-1),
+                IndicatorCloseTimeUtc = nowUtc,
+                IndicatorReceivedAtUtc = nowUtc,
+                GeneratedAtUtc = nowUtc,
+                IndicatorSnapshotJson = "{}",
+                RuleResultSnapshotJson = "{}",
+                RiskEvaluationJson = JsonSerializer.Serialize(
+                    new StrategySignalConfidenceSnapshot(
+                        78,
+                        StrategySignalConfidenceBand.High,
+                        5,
+                        6,
+                        true,
+                        true,
+                        false,
+                        RiskVetoReasonCode.None,
+                        false,
+                        "AI overlay boosted the signal.",
+                        AiOverlayDisposition: "Boost",
+                        AiOverlayBoostPoints: 5),
+                    CreateJsonSerializerOptions())
+            });            dbContext.ExecutionOrders.Add(new ExecutionOrder
             {
                 Id = Guid.NewGuid(),
                 OwnerUserId = ownerUserId,
@@ -225,6 +286,8 @@ public sealed class UserDashboardLiveReadModelIntegrationTests
             Assert.Equal(AiShadowOutcomeState.Scored, aiHistory.OutcomeState);
             Assert.Equal(AiShadowFutureDataAvailability.Available, aiHistory.FutureDataAvailability);
             Assert.Equal("High", aiHistory.OutcomeConfidenceBucket);
+            Assert.Equal("Boost", aiHistory.AiOverlayDisposition);
+            Assert.Equal(5, aiHistory.AiOverlayBoostPoints);
             Assert.NotNull(snapshot.AiOutcomeSummary);
             Assert.Equal(1, snapshot.AiOutcomeSummary!.ScoredCount);
             Assert.Equal(1, snapshot.AiOutcomeSummary.PositiveOutcomeCount);
@@ -236,6 +299,13 @@ public sealed class UserDashboardLiveReadModelIntegrationTests
         {
             await dbContext.Database.EnsureDeletedAsync();
         }
+    }
+
+    private static JsonSerializerOptions CreateJsonSerializerOptions()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new JsonStringEnumConverter());
+        return options;
     }
 
     private static void SeedHistoricalCandles(ApplicationDbContext dbContext, string symbol, string interval, DateTime decisionEvaluatedAtUtc, decimal[] closePrices)
@@ -276,3 +346,4 @@ public sealed class UserDashboardLiveReadModelIntegrationTests
         public override DateTimeOffset GetUtcNow() => value;
     }
 }
+

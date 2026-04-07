@@ -30,7 +30,14 @@ public sealed record AiRobotSummaryViewModel(
     string ScoringCoverage,
     string AverageOutcomeScore,
     string OutcomeMixSummary,
-    string CalibrationSummary);
+    string CalibrationSummary,
+    string TradeMasterStatus = "Unknown",
+    string TradingModeStatus = "Unknown",
+    string PilotActivationStatus = "Unknown",
+    string MarketReadinessStatus = "Unknown",
+    string PrivatePlaneStatus = "Unknown",
+    string LatestRejectStatus = "NoReject",
+    string LatestRejectSummary = "Son reject kaydı yok.");
 
 public sealed record AiRobotDecisionViewModel(
     string Time,
@@ -54,7 +61,11 @@ public sealed record AiRobotDecisionViewModel(
     string OutcomeLabel,
     string OutcomeDetail,
     string Tone,
-    bool IsFallback);
+    bool IsFallback,
+    string StrategySummary = "Strategy summary yok.",
+    string OverlaySummary = "AI overlay uygulanmadı.",
+    string FinalReasonSummary = "Final action özeti yok.",
+    string TopFeatureHints = "Top feature hints yok.");
 
 public sealed record AiRobotBucketViewModel(string Label, int Count);
 
@@ -67,3 +78,4 @@ public sealed record AiRobotConfidenceBucketViewModel(
     int FalseNeutralCount,
     int OvertradingCount,
     string AverageOutcomeScore);
+

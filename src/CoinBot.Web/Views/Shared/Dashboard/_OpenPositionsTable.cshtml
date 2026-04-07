@@ -1,20 +1,20 @@
 @model CoinBot.Web.ViewModels.Home.DashboardViewModel
-<div class="card card-custom gutter-b cb-card cb-dashboard-card cb-positions-card">
+<div class="card card-custom gutter-b cb-card cb-dashboard-card cb-positions-card" data-cb-open-positions-table="true">
     <div class="card-header border-0 pt-6">
         <div class="card-title d-block">
             <div class="d-flex align-items-center flex-wrap gap-2">
                 <h3 class="card-label font-weight-bolder mb-0">Açık Pozisyonlar</h3>
                 <span class="cb-badge cb-badge-neutral">@Model.OpenPositions.Count satır</span>
             </div>
-            <div class="text-muted mt-2">Exchange private sync ile yazılan gerçek futures pozisyonları burada listelenir.</div>
+            <div class="text-muted mt-2">Exchange private sync ile yazılan gerçek futures veya spot exposure satırları burada listelenir.</div>
         </div>
     </div>
     <div class="card-body pt-2">
         @if (Model.OpenPositions.Count == 0)
         {
-            <div class="cb-auth-summary-card cb-auth-summary-card-stacked">
-                <div class="cb-auth-summary-label">Aktif futures pozisyonu yok</div>
-                <div class="cb-auth-summary-text">Exchange private sync yazmaya başladığında gerçek açık pozisyonlar bu tabloda görünür.</div>
+            <div class="cb-auth-summary-card cb-auth-summary-card-stacked" data-cb-open-positions-empty>
+                <div class="cb-auth-summary-label">Aktif pozisyon yok</div>
+                <div class="cb-auth-summary-text">Exchange private sync yazmaya başladığında gerçek açık pozisyonlar, break-even ve PnL detayları bu tabloda görünür.</div>
             </div>
         }
         else
@@ -22,34 +22,39 @@
             <div class="cb-table-wrap">
                 <table class="table table-borderless cb-table mb-0">
                     <thead>
-                        <tr>
+                        <tr data-cb-open-position-row>
                             <th>Sembol</th>
                             <th>Yön</th>
                             <th>Miktar</th>
-                            <th>Giriş</th>
+                            <th>Entry / Break-even</th>
                             <th>Güncel</th>
                             <th>Unrealized PnL</th>
+                            <th>Realized PnL</th>
                             <th>Margin</th>
-                            <th>Durum</th>
+                            <th>Sync</th>
                         </tr>
                     </thead>
                     <tbody>
                         @foreach (var row in Model.OpenPositions)
                         {
-                            <tr>
+                            <tr data-cb-open-position-row>
                                 <td>
-                                    <div class="cb-position-symbol">@row.Symbol</div>
-                                    <div class="cb-dashboard-card-meta">Futures sync</div>
+                                    <div class="cb-position-symbol" data-cb-open-position-symbol>@row.Symbol</div>
+                                    <div class="cb-dashboard-card-meta" data-cb-open-position-sync>@row.Reconciliation</div>
                                 </td>
-                                <td><span class="cb-badge @(row.DirectionTone == "success" ? "cb-badge-success" : "cb-badge-danger")">@row.Direction</span></td>
-                                <td class="cb-numeric-cell">@row.Leverage</td>
-                                <td class="cb-numeric-cell">@row.Entry</td>
-                                <td class="cb-numeric-cell">@row.Current</td>
-                                <td class="cb-numeric-cell @(row.PnlTone == "positive" ? "cb-text-positive" : "cb-text-negative")">@row.Pnl</td>
-                                <td><span class="cb-badge @(row.RiskTone == "success" ? "cb-badge-success" : row.RiskTone == "warning" ? "cb-badge-warning" : "cb-badge-danger")">@row.Risk</span></td>
+                                <td><span class="cb-badge @(row.DirectionTone == "success" ? "cb-badge-success" : "cb-badge-danger")" data-cb-open-position-direction>@row.Direction</span></td>
+                                <td class="cb-numeric-cell" data-cb-open-position-quantity>@row.Quantity</td>
                                 <td>
-                                    <div>@row.Updated</div>
-                                    <div class="cb-dashboard-card-meta">İzleniyor</div>
+                                    <div class="cb-numeric-cell" data-cb-open-position-entry>@row.Entry</div>
+                                    <div class="cb-dashboard-card-meta" data-cb-open-position-break-even>Break-even @row.BreakEven</div>
+                                </td>
+                                <td class="cb-numeric-cell" data-cb-open-position-current>@row.Current</td>
+                                <td class="cb-numeric-cell @(row.UnrealizedPnlTone == "positive" ? "cb-text-positive" : "cb-text-negative")" data-cb-open-position-unrealized>@row.UnrealizedPnl</td>
+                                <td class="cb-numeric-cell @(row.RealizedPnlTone == "positive" ? "cb-text-positive" : "cb-text-negative")" data-cb-open-position-realized>@row.RealizedPnl</td>
+                                <td><span class="cb-badge @(row.MarginTone == "success" ? "cb-badge-success" : row.MarginTone == "warning" ? "cb-badge-warning" : "cb-badge-neutral")" data-cb-open-position-margin>@row.Margin</span></td>
+                                <td>
+                                    <div data-cb-open-position-updated>@row.Updated</div>
+                                    <div class="cb-dashboard-card-meta" data-cb-open-position-sync>@row.Reconciliation</div>
                                 </td>
                             </tr>
                         }
@@ -57,9 +62,24 @@
                 </table>
             </div>
             <div class="cb-positions-footer mt-5">
-                <span class="cb-dashboard-card-meta">Pozisyon satırları `ExchangePositions` ve anlık fiyat cache’i üzerinden üretilir.</span>
-                <a asp-controller="Exchanges" asp-action="Index" class="btn btn-light-primary font-weight-bold">Command Center</a>
+                <span class="cb-dashboard-card-meta">Pozisyon satırları `ExchangePositions`, `DemoPositions`, `SpotPortfolioFills` ve anlık fiyat cache’i üzerinden üretilir.</span>
+                <a asp-controller="Positions" asp-action="Index" class="btn btn-light-primary font-weight-bold">Pozisyon Detayı</a>
             </div>
         }
     </div>
 </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

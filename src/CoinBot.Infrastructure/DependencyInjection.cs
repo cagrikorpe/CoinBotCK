@@ -415,6 +415,11 @@ public static class DependencyInjection
             .AddEntityFrameworkStores<ApplicationDbContext>()
             .AddDefaultTokenProviders();
 
+        var cookieSecurePolicy = string.Equals(configuration["ASPNETCORE_ENVIRONMENT"], "Development", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(configuration["DOTNET_ENVIRONMENT"], "Development", StringComparison.OrdinalIgnoreCase)
+                ? CookieSecurePolicy.SameAsRequest
+                : CookieSecurePolicy.Always;
+
         services.ConfigureApplicationCookie(options =>
         {
             options.LoginPath = "/Auth/Login";
@@ -423,7 +428,7 @@ public static class DependencyInjection
             options.Cookie.HttpOnly = true;
             options.Cookie.IsEssential = true;
             options.Cookie.SameSite = SameSiteMode.Lax;
-            options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+            options.Cookie.SecurePolicy = cookieSecurePolicy;
             options.ExpireTimeSpan = TimeSpan.FromHours(8);
             options.SlidingExpiration = true;
             options.Events = new CookieAuthenticationEvents
@@ -446,7 +451,7 @@ public static class DependencyInjection
             options.Cookie.HttpOnly = true;
             options.Cookie.IsEssential = true;
             options.Cookie.SameSite = SameSiteMode.Strict;
-            options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+            options.Cookie.SecurePolicy = cookieSecurePolicy;
         });
 
         services.AddAuthorization(options =>
@@ -516,6 +521,7 @@ public static class DependencyInjection
         return services;
     }
 }
+
 
 
 

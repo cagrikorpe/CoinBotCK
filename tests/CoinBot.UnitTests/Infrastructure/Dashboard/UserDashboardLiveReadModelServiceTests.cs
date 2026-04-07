@@ -1,6 +1,7 @@
 using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.Dashboard;
 using CoinBot.Application.Abstractions.DataScope;
+using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Ai;
@@ -13,6 +14,8 @@ using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace CoinBot.UnitTests.Infrastructure.Dashboard;
 
@@ -29,6 +32,7 @@ public sealed class UserDashboardLiveReadModelServiceTests
         var featureSnapshotId = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
         var orderId = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd");
         var decisionId = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");
+        var strategySignalId = Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff");
 
         SeedUserGraph(dbContext, ownerUserId, exchangeAccountId, botId, featureSnapshotId);
         SeedHistoricalCandles(dbContext, "BTCUSDT", "1m", nowUtc, [64850m, 65000m, 65325m]);
@@ -39,6 +43,7 @@ public sealed class UserDashboardLiveReadModelServiceTests
             BotId = botId,
             ExchangeAccountId = exchangeAccountId,
             FeatureSnapshotId = featureSnapshotId,
+            StrategySignalId = strategySignalId,
             CorrelationId = "corr-live-1",
             StrategyKey = "ai-live",
             Symbol = "BTCUSDT",
@@ -69,6 +74,40 @@ public sealed class UserDashboardLiveReadModelServiceTests
             AgreementState = "Agreement",
             CreatedDate = nowUtc,
             UpdatedDate = nowUtc
+        });
+        dbContext.TradingStrategySignals.Add(new TradingStrategySignal
+        {
+            Id = strategySignalId,
+            OwnerUserId = ownerUserId,
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategyVersionNumber = 1,
+            StrategySchemaVersion = 1,
+            SignalType = StrategySignalType.Entry,
+            ExecutionEnvironment = ExecutionEnvironment.Demo,
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            IndicatorOpenTimeUtc = nowUtc.AddMinutes(-1),
+            IndicatorCloseTimeUtc = nowUtc,
+            IndicatorReceivedAtUtc = nowUtc,
+            GeneratedAtUtc = nowUtc,
+            IndicatorSnapshotJson = "{}",
+            RuleResultSnapshotJson = "{}",
+            RiskEvaluationJson = JsonSerializer.Serialize(
+                new StrategySignalConfidenceSnapshot(
+                    82,
+                    StrategySignalConfidenceBand.High,
+                    5,
+                    6,
+                    true,
+                    true,
+                    false,
+                    RiskVetoReasonCode.None,
+                    false,
+                    "AI overlay boosted the signal.",
+                    AiOverlayDisposition: "Boost",
+                    AiOverlayBoostPoints: 5),
+                CreateJsonSerializerOptions())
         });
         dbContext.ExecutionOrders.Add(new ExecutionOrder
         {
@@ -165,6 +204,8 @@ public sealed class UserDashboardLiveReadModelServiceTests
         Assert.Equal(AiShadowOutcomeState.Scored, aiHistory.OutcomeState);
         Assert.Equal(AiShadowFutureDataAvailability.Available, aiHistory.FutureDataAvailability);
         Assert.Equal("High", aiHistory.OutcomeConfidenceBucket);
+        Assert.Equal("Boost", aiHistory.AiOverlayDisposition);
+        Assert.Equal(5, aiHistory.AiOverlayBoostPoints);
         Assert.Equal("Long", aiHistory.RealizedDirectionality);
         Assert.True((aiHistory.OutcomeScore ?? 0m) > 0m);
         Assert.Equal(AiShadowOutcomeDefaults.OfficialHorizonKind, aiHistory.OutcomeHorizonKind);
@@ -368,6 +409,13 @@ public sealed class UserDashboardLiveReadModelServiceTests
             });
         }
     }
+    private static JsonSerializerOptions CreateJsonSerializerOptions()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new JsonStringEnumConverter());
+        return options;
+    }
+
     private static ApplicationDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -389,6 +437,4 @@ public sealed class UserDashboardLiveReadModelServiceTests
         public override DateTimeOffset GetUtcNow() => value;
     }
 }
-
-
 

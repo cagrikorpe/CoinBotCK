@@ -1,6 +1,7 @@
 using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.Dashboard;
 using CoinBot.Application.Abstractions.Execution;
+using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Execution;
@@ -8,6 +9,8 @@ using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace CoinBot.Infrastructure.Dashboard;
 
@@ -18,6 +21,7 @@ public sealed class UserDashboardLiveReadModelService(
     IOptions<BotExecutionPilotOptions> pilotOptions,
     TimeProvider timeProvider) : IUserDashboardLiveReadModelService
 {
+    private static readonly JsonSerializerOptions SerializerOptions = CreateSerializerOptions();
     private readonly BotExecutionPilotOptions optionsValue = pilotOptions.Value;
 
     public async Task<UserDashboardLiveSnapshot> GetSnapshotAsync(
@@ -62,6 +66,26 @@ public sealed class UserDashboardLiveReadModelService(
                 .IgnoreQueryFilters()
                 .Where(entity => featureSnapshotIds.Contains(entity.Id) && !entity.IsDeleted)
                 .ToDictionaryAsync(entity => entity.Id, cancellationToken);
+        var strategySignalIds = recentAiDecisions
+            .Where(entity => entity.StrategySignalId.HasValue)
+            .Select(entity => entity.StrategySignalId!.Value)
+            .Distinct()
+            .ToArray();
+        var signalConfidenceSnapshots = strategySignalIds.Length == 0
+            ? new Dictionary<Guid, StrategySignalConfidenceSnapshot>()
+            : (await dbContext.TradingStrategySignals
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity => strategySignalIds.Contains(entity.Id) && !entity.IsDeleted)
+                .Select(entity => new { entity.Id, entity.RiskEvaluationJson })
+                .ToListAsync(cancellationToken))
+                .Select(entity => new
+                {
+                    entity.Id,
+                    Confidence = DeserializeConfidenceSnapshot(entity.RiskEvaluationJson)
+                })
+                .Where(entity => entity.Confidence is not null)
+                .ToDictionary(entity => entity.Id, entity => entity.Confidence!);
         var decisionIds = recentAiDecisions.Select(entity => entity.Id).ToArray();
         var officialOutcomes = decisionIds.Length == 0
             ? new Dictionary<Guid, AiShadowDecisionOutcome>()
@@ -91,7 +115,7 @@ public sealed class UserDashboardLiveReadModelService(
             BuildLatestNoTradeSnapshot(recentAiDecisions.FirstOrDefault()),
             BuildLatestRejectSnapshot(latestRejectedOrder),
             BuildAiSummarySnapshot(recentAiDecisions),
-            recentAiDecisions.Select(entity => MapAiHistoryRow(entity, featureSnapshots, officialOutcomes)).ToArray(),
+            recentAiDecisions.Select(entity => MapAiHistoryRow(entity, featureSnapshots, officialOutcomes, signalConfidenceSnapshots)).ToArray(),
             BuildBuckets(recentAiDecisions.Select(entity => entity.NoSubmitReason)),
             BuildBuckets(recentAiDecisions.Select(entity => entity.HypotheticalBlockReason)),
             BuildOutcomeSummarySnapshot(outcomeSummary),
@@ -286,10 +310,12 @@ public sealed class UserDashboardLiveReadModelService(
     private static UserDashboardAiHistoryRowSnapshot MapAiHistoryRow(
         AiShadowDecision entity,
         IReadOnlyDictionary<Guid, TradingFeatureSnapshot> featureSnapshots,
-        IReadOnlyDictionary<Guid, AiShadowDecisionOutcome> outcomes)
+        IReadOnlyDictionary<Guid, AiShadowDecisionOutcome> outcomes,
+        IReadOnlyDictionary<Guid, StrategySignalConfidenceSnapshot> signalConfidenceSnapshots)
     {
         featureSnapshots.TryGetValue(entity.FeatureSnapshotId ?? Guid.Empty, out var featureSnapshot);
         outcomes.TryGetValue(entity.Id, out var outcome);
+        signalConfidenceSnapshots.TryGetValue(entity.StrategySignalId ?? Guid.Empty, out var confidenceSnapshot);
 
         return new UserDashboardAiHistoryRowSnapshot(
             entity.Id,
@@ -341,7 +367,9 @@ public sealed class UserDashboardLiveReadModelService(
             outcome?.FalseNeutral ?? false,
             outcome?.Overtrading ?? false,
             outcome?.SuppressionCandidate ?? ResolveSuppressionCandidate(entity),
-            outcome?.SuppressionAligned ?? false);
+            outcome?.SuppressionAligned ?? false,
+            NormalizeOptional(confidenceSnapshot?.AiOverlayDisposition),
+            confidenceSnapshot?.AiOverlayBoostPoints ?? 0);
     }
 
     private static IReadOnlyCollection<UserDashboardReasonBucketSnapshot> BuildBuckets(IEnumerable<string?> values)
@@ -355,6 +383,30 @@ public sealed class UserDashboardLiveReadModelService(
             .Take(5)
             .Select(group => new UserDashboardReasonBucketSnapshot(group.Key, group.Count()))
             .ToArray();
+    }
+
+    private static StrategySignalConfidenceSnapshot? DeserializeConfidenceSnapshot(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<StrategySignalConfidenceSnapshot>(json, SerializerOptions);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static JsonSerializerOptions CreateSerializerOptions()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new JsonStringEnumConverter());
+        return options;
     }
 
     private static DateTime? MaxTimestamp(params DateTime?[] values)

@@ -1,6 +1,6 @@
 @model CoinBot.Web.ViewModels.Home.DashboardViewModel
 
-<div class="card card-custom gutter-b cb-card">
+<div class="card card-custom gutter-b cb-card" data-cb-recent-orders="true">
     <div class="card-header border-0 pt-5">
         <div class="card-title d-block">
             <h3 class="mb-0">Recent orders / fills</h3>
@@ -10,14 +10,14 @@
     <div class="card-body pt-2">
         @if (Model.RecentOrders.Count == 0)
         {
-            <div class="alert alert-light mb-0">Henüz gerçek order history yok.</div>
+            <div class="alert alert-light mb-0" data-cb-recent-orders-empty>Henüz gerçek order history yok.</div>
         }
         else
         {
             <div class="table-responsive">
                 <table class="table table-borderless table-striped">
                     <thead>
-                        <tr>
+                        <tr data-cb-recent-order-row>
                             <th>Zaman</th>
                             <th>Symbol</th>
                             <th>State</th>
@@ -37,21 +37,21 @@
                                     : item.FinalStateTone == "danger"
                                         ? "cb-badge-danger"
                                         : "cb-badge-neutral";
-                            <tr>
+                            <tr data-cb-recent-order-row>
                                 <td class="cb-mono">@item.Time</td>
                                 <td>
-                                    <div class="font-weight-bolder">@item.Symbol</div>
-                                    <div class="text-muted">@item.Side</div>
+                                    <div class="font-weight-bolder" data-cb-recent-order-symbol>@item.Symbol</div>
+                                    <div class="text-muted" data-cb-recent-order-side>@item.Side</div>
                                 </td>
                                 <td>
-                                    <div><span class="cb-badge @badgeClass">@item.FinalState</span></div>
-                                    <div class="text-muted mt-2">@item.ResultCode</div>
+                                    <div><span class="cb-badge @badgeClass" data-cb-recent-order-state>@item.FinalState</span></div>
+                                    <div class="text-muted mt-2" data-cb-recent-order-result-code data-cb-recent-order-result-code-value="@item.ResultCode">@item.ResultCode</div>
                                     <div class="text-muted">@item.ResultSummary</div>
                                 </td>
-                                <td>@item.FillSummary</td>
-                                <td>@item.PnlSummary</td>
-                                <td>@item.Reconciliation</td>
-                                <td class="text-muted">@item.ReasonSummary</td>
+                                <td data-cb-recent-order-fill>@item.FillSummary</td>
+                                <td data-cb-recent-order-pnl>@item.PnlSummary</td>
+                                <td data-cb-recent-order-reconciliation>@item.Reconciliation</td>
+                                <td class="text-muted" data-cb-recent-order-reason>@item.ReasonSummary</td>
                             </tr>
                         }
                     </tbody>
@@ -60,3 +60,15 @@
         }
     </div>
 </div>
+
+
+
+
+
+
+
+
+
+
+
+

@@ -72,6 +72,13 @@ public sealed class HomeControllerTests
         Assert.Contains("Heartbeat drift", model.OperationsSummary.DriftSummary, StringComparison.Ordinal);
         Assert.Single(model.OpenPositions);
         Assert.Equal("XRPUSDT", model.OpenPositions[0].Symbol);
+        Assert.Equal("25", model.OpenPositions[0].Quantity);
+        Assert.Equal("0.51", model.OpenPositions[0].Entry);
+        Assert.Equal("0.51", model.OpenPositions[0].BreakEven);
+        Assert.Equal("0.55", model.OpenPositions[0].Current);
+        Assert.Equal("+15.5", model.OpenPositions[0].UnrealizedPnl);
+        Assert.Equal("+7.25", model.OpenPositions[0].RealizedPnl);
+        Assert.Contains("Sync", model.OpenPositions[0].Reconciliation, StringComparison.Ordinal);
         Assert.Single(model.AiFeed);
         Assert.Equal("BTCUSDT", model.AiFeed[0].Symbol);
         Assert.Equal("LONG", model.AiFeed[0].StrategyDirection);
@@ -143,6 +150,35 @@ public sealed class HomeControllerTests
         Assert.Equal("Rejected", model.LatestRejectStatus);
         Assert.Equal("TradeMasterDisarmed", model.LatestRejectCode);
         Assert.Equal("Unknown", model.LatestRejectReconciliation);
+    }
+
+    [Fact]
+    public async Task OperationsSummary_ReflectsPanicStopAndRejectReason_WhenTradeMasterIsDisarmed()
+    {
+        var controller = new HomeController(
+            new FakeUserExchangeCommandCenterService(),
+            new FakeUserDashboardPortfolioReadModelService(),
+            new FakeUserDashboardOperationsReadModelService(),
+            new FakeUserDashboardLiveReadModelService(
+                FakeUserDashboardLiveReadModelService.CreateSnapshot(
+                    tradeMasterLabel: "Disarmed",
+                    tradeMasterTone: "negative",
+                    latestRejectCode: "TradeMasterDisarmed",
+                    latestRejectSummary: "Execution blocked because kill switch is off.")),
+            new FakeUserSettingsService(),
+            new FakeMarketDataService(),
+            new FakeSharedSymbolRegistry(),
+            Options.Create(new BinanceMarketDataOptions()),
+            NullLogger<HomeController>.Instance);
+        controller.ControllerContext = CreateControllerContext("user-01");
+
+        var result = await controller.OperationsSummary(CancellationToken.None);
+
+        var jsonResult = Assert.IsType<JsonResult>(result);
+        var model = Assert.IsType<OperationsSummaryViewModel>(jsonResult.Value);
+        Assert.Equal("Disarmed", model.TradeMasterStatus);
+        Assert.Equal("TradeMasterDisarmed", model.LatestRejectCode);
+        Assert.Contains("kill switch", model.LatestRejectSummary, StringComparison.OrdinalIgnoreCase);
     }
 
     private static DateTime At(int minuteOffset)
@@ -289,7 +325,7 @@ public sealed class HomeControllerTests
                 new UserDashboardBalanceSnapshot("USDT", 1500m, 1490m, 1200m, 1200m, At(0), At(0))
             ],
             [
-                new UserDashboardPositionSnapshot("XRPUSDT", "LONG", 25m, 0.51m, 0.51m, 15.5m, "cross", 0m, At(0), At(0))
+                new UserDashboardPositionSnapshot("XRPUSDT", "LONG", 25m, 0.51m, 0.51m, 15.5m, "cross", 0m, At(0), At(0), ExchangeDataPlane.Futures, 7.25m, 12.75m, 0.55m, null, null)
             ],
             [
                 new UserDashboardTradeHistoryRowSnapshot(
@@ -372,81 +408,95 @@ public sealed class HomeControllerTests
 
     private sealed class FakeUserDashboardLiveReadModelService : IUserDashboardLiveReadModelService
     {
-        public UserDashboardLiveSnapshot Snapshot { get; } = new(
-            new UserDashboardLiveControlSnapshot(
-                "Armed",
-                "positive",
-                "DemoOnly",
-                "warning",
-                "PilotEnabled",
-                "positive",
-                "Fresh",
-                "positive",
-                "Reason=MarketDataHealthy; Source=shared-cache:kline; Symbol=BTCUSDT; Timeframe=1m",
-                "Fresh",
-                "positive",
-                "Stream=Connected; Drift=InSync; LastPrivateEvent=2026-03-23 09:00:00 UTC"),
-            new UserDashboardLatestNoTradeSnapshot(
-                "ShadowOnly",
-                "info",
-                "ShadowModeActive",
-                "AI=Long 84%; Strategy=Long; NoSubmit=ShadowModeActive; Hypothetical=Allowed; Reason=Trend continuation.",
-                At(1)),
-            new UserDashboardLatestRejectSnapshot(
-                "Rejected",
-                "negative",
-                "TradeMasterDisarmed",
-                "Execution blocked because kill switch is off.",
-                "Unknown",
-                At(2)),
-            new UserDashboardAiSummarySnapshot(4, 2, 1, 1, 1, 2, 1, 0.71m, 2, 1, 1),
-            [
-                new UserDashboardAiHistoryRowSnapshot(
-                    Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
-                    Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"),
-                    "BTCUSDT",
-                    "1m",
-                    At(1),
-                    "LONG",
-                    84,
-                    "Persisted",
-                    "StrategyEntry",
-                    "Strategy favored long.",
-                    "Long",
-                    0.84m,
-                    "Trend continuation.",
-                    "DeterministicStub",
-                    "stub-v1",
-                    false,
-                    null,
-                    false,
-                    null,
-                    null,
-                    false,
-                    null,
-                    null,
-                    "ShadowOnly",
-                    true,
-                    null,
-                    null,
-                    "ShadowModeActive",
-                    "Agreement",
-                    Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd"),
-                    "AI-1.v1",
-                    "Ema stack and RSI support long bias.",
-                    "Volume expansion confirmed.",
-                    "Trending",
-                    "Bullish",
-                    "Expanding",
-                    ExecutionEnvironment.Demo,
-                    ExchangeDataPlane.Futures)
-            ],
-            [new UserDashboardReasonBucketSnapshot("ShadowModeActive", 3)],
-            [new UserDashboardReasonBucketSnapshot("TradeMasterDisarmed", 1)]);
+        public FakeUserDashboardLiveReadModelService(UserDashboardLiveSnapshot? snapshot = null)
+        {
+            Snapshot = snapshot ?? CreateSnapshot();
+        }
+
+        public UserDashboardLiveSnapshot Snapshot { get; }
 
         public Task<UserDashboardLiveSnapshot> GetSnapshotAsync(string userId, CancellationToken cancellationToken = default)
         {
             return Task.FromResult(Snapshot);
+        }
+
+        public static UserDashboardLiveSnapshot CreateSnapshot(
+            string tradeMasterLabel = "Armed",
+            string tradeMasterTone = "positive",
+            string latestRejectCode = "TradeMasterDisarmed",
+            string latestRejectSummary = "Execution blocked because kill switch is off.")
+        {
+            return new UserDashboardLiveSnapshot(
+                new UserDashboardLiveControlSnapshot(
+                    tradeMasterLabel,
+                    tradeMasterTone,
+                    "DemoOnly",
+                    "warning",
+                    "PilotEnabled",
+                    "positive",
+                    "Fresh",
+                    "positive",
+                    "Reason=MarketDataHealthy; Source=shared-cache:kline; Symbol=BTCUSDT; Timeframe=1m",
+                    "Fresh",
+                    "positive",
+                    "Stream=Connected; Drift=InSync; LastPrivateEvent=2026-03-23 09:00:00 UTC"),
+                new UserDashboardLatestNoTradeSnapshot(
+                    "ShadowOnly",
+                    "info",
+                    "ShadowModeActive",
+                    "AI=Long 84%; Strategy=Long; NoSubmit=ShadowModeActive; Hypothetical=Allowed; Reason=Trend continuation.",
+                    At(1)),
+                new UserDashboardLatestRejectSnapshot(
+                    "Rejected",
+                    "negative",
+                    latestRejectCode,
+                    latestRejectSummary,
+                    "Unknown",
+                    At(2)),
+                new UserDashboardAiSummarySnapshot(4, 2, 1, 1, 1, 2, 1, 0.71m, 2, 1, 1),
+                [
+                    new UserDashboardAiHistoryRowSnapshot(
+                        Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                        Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+                        "BTCUSDT",
+                        "1m",
+                        At(1),
+                        "LONG",
+                        84,
+                        "Persisted",
+                        "StrategyEntry",
+                        "Strategy favored long.",
+                        "Long",
+                        0.84m,
+                        "Trend continuation.",
+                        "DeterministicStub",
+                        "stub-v1",
+                        false,
+                        null,
+                        false,
+                        null,
+                        null,
+                        false,
+                        null,
+                        null,
+                        "ShadowOnly",
+                        true,
+                        null,
+                        null,
+                        "ShadowModeActive",
+                        "Agreement",
+                        Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+                        "AI-1.v1",
+                        "Ema stack and RSI support long bias.",
+                        "Volume expansion confirmed.",
+                        "Trending",
+                        "Bullish",
+                        "Expanding",
+                        ExecutionEnvironment.Demo,
+                        ExchangeDataPlane.Futures)
+                ],
+                [new UserDashboardReasonBucketSnapshot("ShadowModeActive", 3)],
+                [new UserDashboardReasonBucketSnapshot("TradeMasterDisarmed", 1)]);
         }
     }
 
@@ -477,7 +527,4 @@ public sealed class HomeControllerTests
         }
     }
 }
-
-
-
 

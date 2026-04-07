@@ -1,6 +1,6 @@
 @model CoinBot.Web.ViewModels.Home.DashboardViewModel
 
-<div class="card card-custom gutter-b cb-card cb-dashboard-card cb-equity-card">
+<div class="card card-custom gutter-b cb-card cb-dashboard-card cb-equity-card" data-cb-equity-card="true">
     <div class="card-header border-0 pt-6">
         <div class="card-title d-block">
             <h3 class="card-label font-weight-bolder mb-0">Equity / performance</h3>
@@ -12,41 +12,41 @@
             <div class="col-md-3 mb-4">
                 <div class="cb-chart-summary-card">
                     <div class="cb-stat-label">Equity estimate</div>
-                    <div class="cb-chart-summary-value cb-mono">@Model.Performance.EquityEstimate</div>
+                    <div class="cb-chart-summary-value cb-mono" data-cb-equity-estimate>@Model.Performance.EquityEstimate</div>
                 </div>
             </div>
             <div class="col-md-3 mb-4">
                 <div class="cb-chart-summary-card">
                     <div class="cb-stat-label">Günlük PnL</div>
-                    <div class="cb-chart-summary-value cb-mono">@Model.Performance.DailyPnl</div>
+                    <div class="cb-chart-summary-value cb-mono" data-cb-equity-daily-pnl>@Model.Performance.DailyPnl</div>
                 </div>
             </div>
             <div class="col-md-3 mb-4">
                 <div class="cb-chart-summary-card">
                     <div class="cb-stat-label">Açık pozisyon etkisi</div>
-                    <div class="cb-chart-summary-value cb-mono">@Model.Performance.OpenPositionEffect</div>
+                    <div class="cb-chart-summary-value cb-mono" data-cb-equity-open-position-effect>@Model.Performance.OpenPositionEffect</div>
                 </div>
             </div>
             <div class="col-md-3 mb-4">
                 <div class="cb-chart-summary-card">
                     <div class="cb-stat-label">Kapanan trade etkisi</div>
-                    <div class="cb-chart-summary-value cb-mono">@Model.Performance.ClosedTradeEffect</div>
+                    <div class="cb-chart-summary-value cb-mono" data-cb-equity-closed-trade-effect>@Model.Performance.ClosedTradeEffect</div>
                 </div>
             </div>
         </div>
 
-        <div class="text-muted mb-4">@Model.Performance.Summary</div>
+        <div class="text-muted mb-4" data-cb-equity-summary>@Model.Performance.Summary</div>
 
         @if (!Model.Performance.HasSufficientData)
         {
-            <div class="alert alert-light mb-0">@Model.Performance.EmptyStateMessage</div>
+            <div class="alert alert-light mb-0" data-cb-equity-empty>@Model.Performance.EmptyStateMessage</div>
         }
         else
         {
-            <div class="table-responsive">
+            <div class="table-responsive" data-cb-equity-points="true">
                 <table class="table table-borderless table-striped mb-0">
                     <thead>
-                        <tr>
+                        <tr data-cb-equity-point-row>
                             <th>Zaman</th>
                             <th>Equity</th>
                             <th>Kaynak</th>
@@ -55,7 +55,7 @@
                     <tbody>
                         @foreach (var point in Model.Performance.Points)
                         {
-                            <tr>
+                            <tr data-cb-equity-point-row>
                                 <td class="cb-mono">@point.Time</td>
                                 <td class="cb-mono">@point.Equity</td>
                                 <td>@point.Source</td>
@@ -67,3 +67,12 @@
         }
     </div>
 </div>
+
+
+
+
+
+
+
+
+

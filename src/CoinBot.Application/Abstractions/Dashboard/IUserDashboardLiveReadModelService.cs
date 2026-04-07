@@ -140,6 +140,9 @@ public sealed record UserDashboardAiHistoryRowSnapshot(
     bool FalseNeutral = false,
     bool Overtrading = false,
     bool SuppressionCandidate = false,
-    bool SuppressionAligned = false);
+    bool SuppressionAligned = false,
+    string? AiOverlayDisposition = null,
+    int AiOverlayBoostPoints = 0);
 
 public sealed record UserDashboardReasonBucketSnapshot(string Label, int Count);
+

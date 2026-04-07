@@ -104,6 +104,7 @@ Resolved here:
 - removed redundant `Microsoft.Extensions.Configuration.EnvironmentVariables` and `Microsoft.Extensions.Configuration.Json` package references that triggered `NU1510`
 - fixed the `xUnit2031` test warning in `StrategyLifecycleIntegrationTests`
 
-Any warnings that remain after validation should be treated as explicit backlog, not ignored by broad suppression.
+Any warnings that remain after validation should be tracked explicitly and resolved intentionally; do not hide them behind broad suppression.
+
 
 

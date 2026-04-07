@@ -2,19 +2,19 @@
 @{
     ViewData["Title"] = "AI Robot";
     ViewData["ActiveNav"] = "AiRobot";
-    ViewData["PageDescription"] = "Gerçek AI shadow kararları, feature snapshot referansları ve outcome scoring summary aynı operasyon yüzeyinde gösterilir.";
+    ViewData["PageDescription"] = "Gerçek AI shadow kararları, feature snapshot referansları, final action explainability ve outcome scoring aynı operasyon yüzeyinde gösterilir.";
     ViewData["BreadcrumbItems"] = new[] { "Trade Lab", "AI Robot" };
 }
 
-<div class="row">
+<div class="row" data-cb-ai-robot-page="true">
     <div class="col-12">
         <div class="card card-custom gutter-b cb-card">
             <div class="card-body">
                 <div class="cb-page-header">
                     <div>
                         <div class="cb-page-eyebrow">AI Decision Center</div>
-                        <h2 class="cb-page-title">AI shadow, compare ve outcome scoring</h2>
-                        <p class="cb-page-description">Provider bağımsız AI sonucu, strategy karşılaştırması ve +1 bar close-to-close kalite metriği yalnız gerçek DB kayıtlarından okunur.</p>
+                        <h2 class="cb-page-title">AI shadow, compare ve explainability</h2>
+                        <p class="cb-page-description">Provider bağımsız AI sonucu, strategy karşılaştırması, risk/pilot etkisi ve outcome scoring yalnız gerçek DB kayıtlarından okunur.</p>
                     </div>
                     <div class="cb-toolbar">
                         <span class="cb-badge cb-badge-info">@Model.Summary.LatestNoTradeStatus</span>
@@ -37,14 +37,14 @@
                         <div class="col-md-3 mb-4">
                             <div class="cb-chart-summary-card">
                                 <div class="cb-stat-label">Scoring coverage</div>
-                                <div class="cb-chart-summary-value">@Model.Summary.ScoringCoverage</div>
+                                <div class="cb-chart-summary-value" data-cb-ai-scoring-coverage>@Model.Summary.ScoringCoverage</div>
                                 <div class="text-muted mt-2">@Model.Summary.OutcomeHorizonLabel</div>
                             </div>
                         </div>
                         <div class="col-md-3 mb-4">
                             <div class="cb-chart-summary-card">
                                 <div class="cb-stat-label">Ortalama outcome</div>
-                                <div class="cb-chart-summary-value">@Model.Summary.AverageOutcomeScore</div>
+                                <div class="cb-chart-summary-value" data-cb-ai-average-outcome>@Model.Summary.AverageOutcomeScore</div>
                                 <div class="text-muted mt-2">@Model.Summary.OutcomeMixSummary</div>
                             </div>
                         </div>
@@ -57,7 +57,31 @@
                     </div>
                 }
 
-                <div class="mt-6 text-muted">@Model.Summary.LatestNoTradeSummary</div>
+                <div class="row mt-2">
+                    <div class="col-md-4 mb-4">
+                        <div class="cb-chart-summary-card">
+                            <div class="cb-stat-label">Control state</div>
+                            <div class="text-muted mt-2" data-cb-ai-control-trade-master data-cb-ai-control-trade-master-code="@Model.Summary.TradeMasterStatus">Trade master @Model.Summary.TradeMasterStatus</div>
+                            <div class="text-muted" data-cb-ai-control-mode>Mode @Model.Summary.TradingModeStatus</div>
+                            <div class="text-muted" data-cb-ai-control-pilot>Pilot @Model.Summary.PilotActivationStatus</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4 mb-4">
+                        <div class="cb-chart-summary-card">
+                            <div class="cb-stat-label">Readiness</div>
+                            <div class="text-muted mt-2" data-cb-ai-readiness-market>Market @Model.Summary.MarketReadinessStatus</div>
+                            <div class="text-muted" data-cb-ai-readiness-private-plane>Private plane @Model.Summary.PrivatePlaneStatus</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4 mb-4">
+                        <div class="cb-chart-summary-card">
+                            <div class="cb-stat-label">Latest block / reject</div>
+                            <div class="cb-chart-summary-value" data-cb-ai-latest-no-trade>@Model.Summary.LatestNoTradeStatus</div>
+                            <div class="text-muted mt-2" data-cb-ai-latest-no-trade-summary data-cb-ai-latest-no-trade-summary-value="@Model.Summary.LatestNoTradeSummary">@Model.Summary.LatestNoTradeSummary</div>
+                            <div class="text-muted mt-2" data-cb-ai-latest-reject data-cb-ai-latest-reject-status="@Model.Summary.LatestRejectStatus" data-cb-ai-latest-reject-summary="@Model.Summary.LatestRejectSummary">@Model.Summary.LatestRejectStatus · @Model.Summary.LatestRejectSummary</div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -134,7 +158,7 @@
             <div class="card-header border-0 pt-5">
                 <div class="card-title d-block">
                     <h3 class="mb-0">Recent AI decisions</h3>
-                    <div class="text-muted mt-2">Strategy vs AI compare, fallback ve official outcome scoring aynı shadow kayıtları üstünde gösterilir.</div>
+                    <div class="text-muted mt-2">Strategy, AI, risk, pilot safety ve final action aynı karar satırında explainability olarak gösterilir.</div>
                 </div>
             </div>
             <div class="card-body pt-2">
@@ -147,14 +171,14 @@
                     <div class="table-responsive">
                         <table class="table table-striped table-borderless">
                             <thead>
-                                <tr>
+                                <tr data-cb-ai-decision-row>
                                     <th>Zaman</th>
                                     <th>Symbol</th>
                                     <th>Strategy</th>
                                     <th>AI</th>
-                                    <th>Action</th>
+                                    <th>Final action</th>
                                     <th>Outcome</th>
-                                    <th>Reason</th>
+                                    <th>Reason chain</th>
                                     <th>Feature</th>
                                 </tr>
                             </thead>
@@ -162,13 +186,19 @@
                                 @foreach (var item in Model.Decisions)
                                 {
                                     var badgeClass = item.Tone == "success" ? "cb-badge-success" : item.Tone == "warning" ? "cb-badge-warning" : item.Tone == "danger" ? "cb-badge-danger" : "cb-badge-neutral";
-                                    <tr>
+                                    <tr data-cb-ai-decision-row>
                                         <td class="cb-mono">@item.Time</td>
-                                        <td><div class="font-weight-bolder">@item.Symbol</div><div class="text-muted">@item.Timeframe</div></td>
-                                        <td><div>@item.StrategyDirection</div><div class="text-muted">@item.StrategyConfidence</div></td>
+                                        <td><div class="font-weight-bolder" data-cb-ai-decision-symbol>@item.Symbol</div><div class="text-muted">@item.Timeframe</div></td>
+                                        <td>
+                                            <div>@item.StrategyDirection</div>
+                                            <div class="text-muted">@item.StrategyConfidence</div>
+                                            <div class="text-muted mt-2" data-cb-ai-decision-strategy-summary>@item.StrategySummary</div>
+                                            <div class="text-muted">@item.Agreement</div>
+                                        </td>
                                         <td>
                                             <div class="font-weight-bolder">@item.AiDirection</div>
                                             <div class="text-muted">@item.AiConfidence · @item.Provider</div>
+                                            <div class="text-muted mt-2" data-cb-ai-decision-overlay-summary>@item.OverlaySummary</div>
                                             @if (item.IsFallback)
                                             {
                                                 <div><span class="cb-badge cb-badge-warning">Fallback</span></div>
@@ -176,7 +206,7 @@
                                         </td>
                                         <td>
                                             <div><span class="cb-badge @badgeClass">@item.FinalAction</span></div>
-                                            <div class="text-muted mt-2">@item.Agreement</div>
+                                            <div class="text-muted mt-2" data-cb-ai-decision-final-reason>@item.FinalReasonSummary</div>
                                             <div class="text-muted">@item.NoSubmitReason</div>
                                             @if (!string.IsNullOrWhiteSpace(item.HypotheticalBlockReason))
                                             {
@@ -184,7 +214,7 @@
                                             }
                                         </td>
                                         <td>
-                                            <div>@item.OutcomeLabel</div>
+                                            <div data-cb-ai-decision-outcome>@item.OutcomeLabel</div>
                                             <div class="text-muted mt-2">@item.OutcomeDetail</div>
                                         </td>
                                         <td>
@@ -195,6 +225,7 @@
                                         <td>
                                             <div class="cb-mono">@item.FeatureSnapshotReference</div>
                                             <div class="text-muted mt-2">@item.FeatureSummary</div>
+                                            <div class="text-muted" data-cb-ai-decision-top-feature-hints>@item.TopFeatureHints</div>
                                             <div class="text-muted">@item.RegimeSummary</div>
                                         </td>
                                     </tr>
@@ -207,3 +238,23 @@
         </div>
     </div>
 </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
