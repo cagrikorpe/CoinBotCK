@@ -1,3 +1,5 @@
+using CoinBot.Domain.Entities;
+using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -23,44 +25,57 @@ public sealed class MarketHealthCheck(
         if (activeExchangeAccounts.Count == 0)
         {
             return HealthCheckResult.Unhealthy(
-                "Market connectivity is not ready because no exchange validation state exists.",
-                data: CreateData(exchangeAccounts: 0, latestValidatedAtUtc: null, validationFreshnessMinutes: options.Value.ValidationFreshnessMinutes));
+                "Market readiness is not ready because no active exchange account exists.",
+                data: CreateData(exchangeAccounts: 0, latestSnapshotAtUtc: null, marketSnapshot: null, validationFreshnessMinutes: options.Value.ValidationFreshnessMinutes));
         }
 
-        var latestValidatedAtUtc = activeExchangeAccounts
-            .Where(entity => entity.LastValidatedAt.HasValue)
-            .Select(entity => entity.LastValidatedAt)
-            .Max();
+        var marketSnapshot = await dbContext.HealthSnapshots
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .SingleOrDefaultAsync(entity => entity.SnapshotKey == "market-watchdog", cancellationToken);
 
-        if (latestValidatedAtUtc is null)
+        if (marketSnapshot is null)
         {
             return HealthCheckResult.Unhealthy(
-                "Market connectivity is not ready because exchange validation timestamps are missing.",
-                data: CreateData(activeExchangeAccounts.Count, latestValidatedAtUtc, options.Value.ValidationFreshnessMinutes));
+                "Market readiness snapshot is missing.",
+                data: CreateData(activeExchangeAccounts.Count, latestSnapshotAtUtc: null, marketSnapshot, options.Value.ValidationFreshnessMinutes));
         }
 
         var freshnessThreshold = TimeSpan.FromMinutes(options.Value.ValidationFreshnessMinutes);
-        var age = timeProvider.GetUtcNow().UtcDateTime - latestValidatedAtUtc.Value;
+        var latestSnapshotAtUtc = marketSnapshot.LastUpdatedAtUtc;
+        var age = timeProvider.GetUtcNow().UtcDateTime - latestSnapshotAtUtc;
 
-        return age <= freshnessThreshold
+        if (age > freshnessThreshold)
+        {
+            return HealthCheckResult.Unhealthy(
+                "Market readiness snapshot is stale.",
+                data: CreateData(activeExchangeAccounts.Count, latestSnapshotAtUtc, marketSnapshot, options.Value.ValidationFreshnessMinutes));
+        }
+
+        return marketSnapshot.HealthState == MonitoringHealthState.Healthy
             ? HealthCheckResult.Healthy(
-                "Market validation state is fresh enough for readiness.",
-                CreateData(activeExchangeAccounts.Count, latestValidatedAtUtc, options.Value.ValidationFreshnessMinutes))
+                "Market readiness snapshot is fresh and healthy.",
+                CreateData(activeExchangeAccounts.Count, latestSnapshotAtUtc, marketSnapshot, options.Value.ValidationFreshnessMinutes))
             : HealthCheckResult.Unhealthy(
-                "Market validation state is stale.",
-                data: CreateData(activeExchangeAccounts.Count, latestValidatedAtUtc, options.Value.ValidationFreshnessMinutes));
+                "Market readiness snapshot reports a non-healthy market state.",
+                data: CreateData(activeExchangeAccounts.Count, latestSnapshotAtUtc, marketSnapshot, options.Value.ValidationFreshnessMinutes));
     }
 
     private static IReadOnlyDictionary<string, object> CreateData(
         int exchangeAccounts,
-        DateTime? latestValidatedAtUtc,
+        DateTime? latestSnapshotAtUtc,
+        HealthSnapshot? marketSnapshot,
         int validationFreshnessMinutes)
     {
         return new Dictionary<string, object>
         {
             ["exchangeAccounts"] = exchangeAccounts,
-            ["latestValidatedAtUtc"] = latestValidatedAtUtc?.ToString("O") ?? "missing",
-            ["validationFreshnessMinutes"] = validationFreshnessMinutes
+            ["latestSnapshotAtUtc"] = latestSnapshotAtUtc?.ToString("O") ?? "missing",
+            ["validationFreshnessMinutes"] = validationFreshnessMinutes,
+            ["snapshotKey"] = marketSnapshot?.SnapshotKey ?? "missing",
+            ["snapshotHealthState"] = marketSnapshot?.HealthState.ToString() ?? "missing",
+            ["snapshotCircuitBreakerState"] = marketSnapshot?.CircuitBreakerState.ToString() ?? "missing",
+            ["snapshotDetail"] = marketSnapshot?.Detail ?? "missing"
         };
     }
 }

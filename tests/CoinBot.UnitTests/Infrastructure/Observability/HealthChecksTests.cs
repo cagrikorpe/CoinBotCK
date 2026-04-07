@@ -29,7 +29,7 @@ public sealed class HealthChecksTests
     }
 
     [Fact]
-    public async Task MarketHealthCheck_ReturnsHealthy_WhenExchangeValidationIsFresh()
+    public async Task MarketHealthCheck_ReturnsHealthy_WhenRuntimeMarketSnapshotIsFresh()
     {
         var now = new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero);
         var timeProvider = new AdjustableTimeProvider(now);
@@ -40,8 +40,12 @@ public sealed class HealthChecksTests
             OwnerUserId = "user-001",
             ExchangeName = "Binance",
             DisplayName = "Main account",
-            LastValidatedAt = now.UtcDateTime.AddMinutes(-5)
+            LastValidatedAt = now.UtcDateTime.AddHours(-2)
         });
+        dbContext.HealthSnapshots.Add(CreateMarketWatchdogSnapshot(
+            now.UtcDateTime.AddSeconds(-10),
+            MonitoringHealthState.Healthy,
+            detail: "State=Normal; Reason=None"));
 
         await dbContext.SaveChangesAsync();
 
@@ -53,10 +57,12 @@ public sealed class HealthChecksTests
         var result = await marketHealthCheck.CheckHealthAsync(new HealthCheckContext());
 
         Assert.Equal(HealthStatus.Healthy, result.Status);
+        Assert.Equal("Healthy", result.Data["snapshotHealthState"]);
+        Assert.Equal("market-watchdog", result.Data["snapshotKey"]);
     }
 
     [Fact]
-    public async Task MarketHealthCheck_ReturnsUnhealthy_WhenNoExchangeValidationExists()
+    public async Task MarketHealthCheck_ReturnsUnhealthy_WhenNoExchangeAccountExists()
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
         await using var dbContext = CreateDbContext();
@@ -68,6 +74,71 @@ public sealed class HealthChecksTests
         var result = await marketHealthCheck.CheckHealthAsync(new HealthCheckContext());
 
         Assert.Equal(HealthStatus.Unhealthy, result.Status);
+        Assert.Equal("missing", result.Data["snapshotKey"]);
+    }
+
+    [Fact]
+    public async Task MarketHealthCheck_ReturnsUnhealthy_WhenRuntimeMarketSnapshotIsStale()
+    {
+        var now = new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(now);
+        await using var dbContext = CreateDbContext();
+
+        dbContext.ExchangeAccounts.Add(new ExchangeAccount
+        {
+            OwnerUserId = "user-001",
+            ExchangeName = "Binance",
+            DisplayName = "Main account",
+            LastValidatedAt = now.UtcDateTime
+        });
+        dbContext.HealthSnapshots.Add(CreateMarketWatchdogSnapshot(
+            now.UtcDateTime.AddMinutes(-20),
+            MonitoringHealthState.Healthy,
+            detail: "State=Normal; Reason=None"));
+
+        await dbContext.SaveChangesAsync();
+
+        var marketHealthCheck = new MarketHealthCheck(
+            dbContext,
+            Options.Create(new MarketHealthOptions { ValidationFreshnessMinutes = 15 }),
+            timeProvider);
+
+        var result = await marketHealthCheck.CheckHealthAsync(new HealthCheckContext());
+
+        Assert.Equal(HealthStatus.Unhealthy, result.Status);
+        Assert.Equal("Healthy", result.Data["snapshotHealthState"]);
+    }
+
+    [Fact]
+    public async Task MarketHealthCheck_ReturnsUnhealthy_WhenRuntimeMarketSnapshotIsDegraded()
+    {
+        var now = new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(now);
+        await using var dbContext = CreateDbContext();
+
+        dbContext.ExchangeAccounts.Add(new ExchangeAccount
+        {
+            OwnerUserId = "user-001",
+            ExchangeName = "Binance",
+            DisplayName = "Main account",
+            LastValidatedAt = now.UtcDateTime
+        });
+        dbContext.HealthSnapshots.Add(CreateMarketWatchdogSnapshot(
+            now.UtcDateTime.AddSeconds(-10),
+            MonitoringHealthState.Degraded,
+            detail: "State=Degraded; Reason=MarketDataLatencyBreached"));
+
+        await dbContext.SaveChangesAsync();
+
+        var marketHealthCheck = new MarketHealthCheck(
+            dbContext,
+            Options.Create(new MarketHealthOptions { ValidationFreshnessMinutes = 15 }),
+            timeProvider);
+
+        var result = await marketHealthCheck.CheckHealthAsync(new HealthCheckContext());
+
+        Assert.Equal(HealthStatus.Unhealthy, result.Status);
+        Assert.Equal("Degraded", result.Data["snapshotHealthState"]);
     }
 
     [Fact]
@@ -171,6 +242,28 @@ public sealed class HealthChecksTests
         var result = await demoEngineHealthCheck.CheckHealthAsync(new HealthCheckContext());
 
         Assert.Equal(HealthStatus.Unhealthy, result.Status);
+    }
+
+    private static HealthSnapshot CreateMarketWatchdogSnapshot(
+        DateTime lastUpdatedAtUtc,
+        MonitoringHealthState healthState,
+        string detail)
+    {
+        return new HealthSnapshot
+        {
+            SnapshotKey = "market-watchdog",
+            SentinelName = "MarketWatchdog",
+            DisplayName = "Market Watchdog",
+            HealthState = healthState,
+            FreshnessTier = MonitoringFreshnessTier.Hot,
+            CircuitBreakerState = healthState == MonitoringHealthState.Healthy
+                ? CircuitBreakerStateCode.Closed
+                : CircuitBreakerStateCode.Degraded,
+            LastUpdatedAtUtc = lastUpdatedAtUtc,
+            ObservedAtUtc = lastUpdatedAtUtc,
+            WorkerLastHeartbeatAtUtc = lastUpdatedAtUtc,
+            Detail = detail
+        };
     }
 
     private static ApplicationDbContext CreateDbContext()
