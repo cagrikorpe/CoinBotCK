@@ -193,6 +193,93 @@ public sealed class ExecutionReconciliationServiceTests
         Assert.Equal(ExecutionOrderState.Filled, order.State);
     }
 
+
+    [Fact]
+    public async Task RunOnceAsync_ReconcilesBrokerSubmittedTerminalOrder_WhenReconciliationIsUnknown()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 7, 9, 0, 0, TimeSpan.Zero));
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+            .Options;
+        await using var dbContext = new ApplicationDbContext(options, new TestDataScopeContext());
+        var auditLogService = new AuditLogService(dbContext, new CorrelationContextAccessor());
+        var lifecycleService = new ExecutionOrderLifecycleService(
+            dbContext,
+            auditLogService,
+            timeProvider,
+            NullLogger<ExecutionOrderLifecycleService>.Instance);
+        var executionOrderId = new Guid("44444444-4444-4444-4444-444444444444");
+        var service = new ExecutionReconciliationService(
+            dbContext,
+            new FakeExchangeCredentialService(),
+            new FakePrivateRestClient(
+                new BinanceOrderStatusSnapshot(
+                    "BTCUSDT",
+                    "binance-order-terminal-1",
+                    ExecutionClientOrderId.Create(executionOrderId),
+                    "FILLED",
+                    0.05m,
+                    0.05m,
+                    3200m,
+                    64000m,
+                    0m,
+                    0m,
+                    timeProvider.GetUtcNow().UtcDateTime,
+                    "Binance.PrivateRest.Order")),
+            new FakeSpotPrivateRestClient(),
+            lifecycleService,
+            NullLogger<ExecutionReconciliationService>.Instance);
+
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = executionOrderId,
+            OwnerUserId = "user-reconcile-terminal",
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            ExchangeAccountId = Guid.NewGuid(),
+            Plane = ExchangeDataPlane.Futures,
+            StrategyKey = "reconcile-terminal-core",
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.05m,
+            Price = 64000m,
+            FilledQuantity = 0.05m,
+            AverageFillPrice = 64000m,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            State = ExecutionOrderState.Filled,
+            IdempotencyKey = $"reconcile_terminal_{executionOrderId:N}",
+            RootCorrelationId = "root-reconcile-terminal-correlation-1",
+            ExternalOrderId = "binance-order-terminal-1",
+            SubmittedToBroker = true,
+            SubmittedAtUtc = new DateTime(2026, 4, 7, 8, 55, 0, DateTimeKind.Utc),
+            ReconciliationStatus = ExchangeStateDriftStatus.Unknown,
+            LastStateChangedAtUtc = new DateTime(2026, 4, 7, 8, 56, 0, DateTimeKind.Utc)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var reconciledCount = await service.RunOnceAsync();
+
+        var order = await dbContext.ExecutionOrders.SingleAsync(entity => entity.Id == executionOrderId);
+        var auditLog = await dbContext.AuditLogs
+            .OrderByDescending(entity => entity.CreatedDate)
+            .FirstAsync();
+
+        Assert.Equal(1, reconciledCount);
+        Assert.Equal(ExecutionOrderState.Filled, order.State);
+        Assert.Equal(ExchangeStateDriftStatus.InSync, order.ReconciliationStatus);
+        Assert.NotNull(order.LastReconciledAtUtc);
+        Assert.Contains("FilledQuantity=0.05", order.ReconciliationSummary, StringComparison.Ordinal);
+        Assert.Equal("ExecutionOrder.Reconciliation", auditLog.Action);
+        Assert.Equal("Reconciled:InSync", auditLog.Outcome);
+    }
+
     private sealed class TestDataScopeContext : IDataScopeContext
     {
         public string? UserId => null;
@@ -353,3 +440,4 @@ public sealed class ExecutionReconciliationServiceTests
         }
     }
 }
+

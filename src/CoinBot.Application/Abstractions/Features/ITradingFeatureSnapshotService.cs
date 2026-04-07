@@ -65,7 +65,9 @@ public sealed record TradingFeatureSnapshotModel(
     string PrimaryRegime,
     string MomentumBias,
     string VolatilityState,
-    string? NormalizationMeta);
+    string? NormalizationMeta,
+    FeatureSnapshotQualityReason QualityReasonCode = FeatureSnapshotQualityReason.None,
+    string? MissingFeatureSummary = null);
 
 public sealed record TradingTrendFeatureSnapshot(
     decimal? Ema20,
@@ -95,7 +97,10 @@ public sealed record TradingVolatilityFeatureSnapshot(
 public sealed record TradingVolumeFeatureSnapshot(
     decimal? VolumeSpikeRatio,
     decimal? RelativeVolume,
-    decimal? Obv);
+    decimal? Obv,
+    decimal? Mfi = null,
+    decimal? KlingerOscillator = null,
+    decimal? KlingerSignal = null);
 
 public sealed record TradingContextFeatureSnapshot(
     ExchangeDataPlane Plane,

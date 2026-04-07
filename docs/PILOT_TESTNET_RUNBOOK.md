@@ -150,24 +150,23 @@ Blocker durumunda mutlaka kaydet:
 
 ## Reconciliation beklentisi
 
-Runtime smoke kapanisinda `ReconciliationStatus=Unknown` gorulebilir ve bu **beklenen ara durum** kabul edilir. Bu tek basina smoke hatasi degildir.
+Runtime smoke artik `ReconciliationStatus=Unknown` ile basarili sayilmaz. Broker submit gorulduyse smoke, terminal order state ve kapali reconciliation gormeden kapanmaz.
 
-Neden kabul edilir:
-- smoke kapanisi anlik futures private-stream/order/position/balance telemetry uzerinden verilir
-- submit/fill/position/balance zinciri goruldugunde broker path kaniti tamamlanmis sayilir
-- async reconciliation worker'i ayni anda degil, sonraki cycle'da `LastReconciledAtUtc` ve reconciliation durumunu gunceller
-
-Beklenen sonraki durum:
-- async reconciliation calistiginda `LastReconciledAtUtc` dolar
-- reconciliation durumu `Unknown` disindaki gozlenen exchange drift durumuna ilerler
-- bu ilerleme olmuyorsa artik smoke-anlik ara durum degil, ayrica incelenecek reconciliation sorunudur
-
-Kapanis icin minimum kanit:
-- SubmittedToBroker=true
-- ExternalOrderId dolu
+Smoke success kriteri:
+- `SubmittedToBroker=true`
+- `ExternalOrderId` dolu
 - futures transition zinciri (GatePassed, Dispatching, Submitted ve terminal durum) yazilmis
-- execution trace veya order query telemetry alinmis
-- futures position/balance read-model zinciri akmis
+- en az bir execution trace veya order query telemetry alinmis
+- smoke-local cleanup sonrasi scoped open order/position sifirlanmis
+- `LastReconciledAtUtc` dolu
+- `ReconciliationStatus` `Unknown` disinda terminal bir degere ilerlemis
+
+Beklenen kapanis davranisi:
+- private-stream submit/fill telemetry order state'i terminale tasir
+- bounded reconciliation poll ayni smoke kosusunda `LastReconciledAtUtc` ve final reconciliation durumunu doldurur
+- bu kapanis gelmezse smoke pass olmaz; summary blocker olarak raporlanir
+
+
 
 
 

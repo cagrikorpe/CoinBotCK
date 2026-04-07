@@ -198,6 +198,7 @@ public sealed class StrategySignalService(
             }
 
             AiSignalEvaluationResult? aiEvaluation = null;
+            var aiOverlayDecision = AiOverlayDecision.NotApplied;
 
             if (signalType == StrategySignalType.Entry && aiSignalOptionsValue.Enabled)
             {
@@ -213,8 +214,8 @@ public sealed class StrategySignalService(
                     cancellationToken);
                 aiEvaluations.Add(aiEvaluation);
 
-                var aiOverlayBlock = ResolveAiOverlayBlock(aiEvaluation, signalType, aiSignalOptionsValue);
-                if (aiOverlayBlock is not null)
+                aiOverlayDecision = ResolveAiOverlayDecision(aiEvaluation, signalType, aiSignalOptionsValue);
+                if (aiOverlayDecision.IsSuppressed)
                 {
                     await traceService.WriteDecisionTraceAsync(
                         new DecisionTraceWriteRequest(
@@ -241,9 +242,9 @@ public sealed class StrategySignalService(
                             CorrelationId: ResolveCorrelationId(),
                             RiskScore: null,
                             VetoReasonCode: null,
-                            DecisionReasonType: aiOverlayBlock.ReasonType,
-                            DecisionReasonCode: aiOverlayBlock.ReasonCode,
-                            DecisionSummary: aiOverlayBlock.Summary,
+                            DecisionReasonType: aiOverlayDecision.ReasonType,
+                            DecisionReasonCode: aiOverlayDecision.ReasonCode,
+                            DecisionSummary: aiOverlayDecision.Summary,
                             DecisionAtUtc: now),
                         cancellationToken);
 
@@ -261,7 +262,7 @@ public sealed class StrategySignalService(
                     normalizedContext.IndicatorSnapshot.Symbol,
                     normalizedContext.IndicatorSnapshot.Timeframe),
                 cancellationToken);
-            var confidenceSnapshot = CreateConfidenceSnapshot(signalType, evaluationResult, riskEvaluation, aiEvaluation);
+            var confidenceSnapshot = CreateConfidenceSnapshot(signalType, evaluationResult, riskEvaluation, aiEvaluation, aiOverlayDecision);
 
             if (riskEvaluation.IsVetoed)
             {
@@ -619,7 +620,8 @@ public sealed class StrategySignalService(
         StrategySignalType signalType,
         StrategyEvaluationResult evaluationResult,
         RiskVetoResult riskEvaluation,
-        AiSignalEvaluationResult? aiEvaluation)
+        AiSignalEvaluationResult? aiEvaluation,
+        AiOverlayDecision aiOverlayDecision)
     {
         var relevantRules = GetRelevantRuleRoots(signalType, evaluationResult)
             .SelectMany(EnumerateLeafResults)
@@ -633,14 +635,17 @@ public sealed class StrategySignalService(
             : (int)Math.Round((matchedRuleCount * 100m) / totalRuleCount, MidpointRounding.AwayFromZero);
         var score = riskEvaluation.IsVetoed
             ? Math.Min(rawScore, 39)
-            : rawScore;
+            : Math.Min(100, rawScore + aiOverlayDecision.BoostPoints);
         var band = ResolveConfidenceBand(score);
         var riskSummary = string.IsNullOrWhiteSpace(riskEvaluation.ReasonSummary)
             ? FormatRiskReason(riskEvaluation.ReasonCode)
             : riskEvaluation.ReasonSummary.Trim();
+        var overlaySummary = aiOverlayDecision.IsApplied
+            ? $" AI overlay {aiOverlayDecision.Disposition ?? "NotApplied"} ({aiOverlayDecision.ReasonCode})."
+            : string.Empty;
         var summary = riskEvaluation.IsVetoed
-            ? $"Risk approval failed: {riskSummary}"
-            : $"Risk approval passed: {riskSummary}";
+            ? $"Risk approval failed: {riskSummary}.{overlaySummary}".Trim()
+            : $"Risk approval passed: {riskSummary}.{overlaySummary}".Trim();
 
         return new StrategySignalConfidenceSnapshot(
             score,
@@ -671,7 +676,9 @@ public sealed class StrategySignalService(
             ProjectedCoinExposurePercentage: riskEvaluation.Snapshot.ProjectedCoinExposurePercentage,
             MaxCoinExposurePercentage: riskEvaluation.Snapshot.MaxCoinExposurePercentage,
             RiskScopeSummary: riskSummary,
-            AiEvaluation: aiEvaluation);
+            AiEvaluation: aiEvaluation,
+            AiOverlayDisposition: aiOverlayDecision.Disposition,
+            AiOverlayBoostPoints: aiOverlayDecision.BoostPoints);
     }
 
     private static StrategySignalConfidenceSnapshot CreateLegacyConfidenceSnapshot(RiskVetoResult riskEvaluation)
@@ -734,48 +741,64 @@ public sealed class StrategySignalService(
             AiEvaluation: null);
     }
 
-    private static AiOverlayBlock? ResolveAiOverlayBlock(
+    private static AiOverlayDecision ResolveAiOverlayDecision(
         AiSignalEvaluationResult aiEvaluation,
         StrategySignalType signalType,
         AiSignalOptions aiSignalOptions)
     {
         if (aiEvaluation.IsFallback)
         {
-            return new AiOverlayBlock(
-                ReasonType: "AiFallback",
-                ReasonCode: $"Ai{aiEvaluation.FallbackReason ?? AiSignalFallbackReason.EvaluationException}",
-                Summary: aiEvaluation.ReasonSummary);
+            return AiOverlayDecision.Suppress(
+                "AiFallback",
+                $"Ai{aiEvaluation.FallbackReason ?? AiSignalFallbackReason.EvaluationException}",
+                aiEvaluation.ReasonSummary);
         }
 
         if (aiEvaluation.SignalDirection == AiSignalDirection.Neutral)
         {
-            return new AiOverlayBlock("AiOverlay", "AiNeutral", "AI overlay returned a neutral signal.");
+            return AiOverlayDecision.Suppress("AiOverlay", "AiNeutral", "AI overlay returned a neutral signal.");
         }
 
         if (signalType == StrategySignalType.Entry && aiEvaluation.SignalDirection == AiSignalDirection.Short)
         {
-            return new AiOverlayBlock("AiOverlay", "AiDirectionMismatch", "AI overlay returned a short signal for a long-only entry flow.");
+            return AiOverlayDecision.Suppress("AiOverlay", "AiDirectionMismatch", "AI overlay returned a short signal for a long-only entry flow.");
         }
 
         if (aiEvaluation.SignalDirection == AiSignalDirection.Long && !aiSignalOptions.AllowLong)
         {
-            return new AiOverlayBlock("AiOverlay", "AiDirectionNotAllowed", "AI overlay long decisions are disabled by configuration.");
+            return AiOverlayDecision.Suppress("AiOverlay", "AiDirectionNotAllowed", "AI overlay long decisions are disabled by configuration.");
         }
 
         if (aiEvaluation.SignalDirection == AiSignalDirection.Short && !aiSignalOptions.AllowShort)
         {
-            return new AiOverlayBlock("AiOverlay", "AiDirectionNotAllowed", "AI overlay short decisions are disabled by configuration.");
+            return AiOverlayDecision.Suppress("AiOverlay", "AiDirectionNotAllowed", "AI overlay short decisions are disabled by configuration.");
         }
 
         if (aiEvaluation.ConfidenceScore < aiSignalOptions.MinimumConfidence)
         {
-            return new AiOverlayBlock(
+            return AiOverlayDecision.Suppress(
                 "AiOverlay",
                 "AiLowConfidence",
                 $"AI overlay confidence {aiEvaluation.ConfidenceScore:0.##} is below the minimum {aiSignalOptions.MinimumConfidence:0.##}.");
         }
 
-        return null;
+        var boostThreshold = Math.Max(aiSignalOptions.MinimumConfidence, 0.90m);
+        if (aiEvaluation.ConfidenceScore >= boostThreshold)
+        {
+            return AiOverlayDecision.Allow(
+                disposition: "Boost",
+                boostPoints: 5,
+                reasonType: "AiOverlay",
+                reasonCode: "AiBoost",
+                summary: "AI overlay strongly confirmed the strategy direction.");
+        }
+
+        return AiOverlayDecision.Allow(
+            disposition: "Confirm",
+            boostPoints: 0,
+            reasonType: "AiOverlay",
+            reasonCode: "AiConfirm",
+            summary: "AI overlay confirmed the strategy direction.");
     }
 
     private static StrategySignalConfidenceBand ResolveConfidenceBand(int scorePercentage)
@@ -1109,7 +1132,16 @@ public sealed class StrategySignalService(
             : normalizedSummary;
     }
 
-    private sealed record AiOverlayBlock(string ReasonType, string ReasonCode, string Summary);
+    private sealed record AiOverlayDecision(bool IsSuppressed, bool IsApplied, string? Disposition, int BoostPoints, string ReasonType, string ReasonCode, string Summary)
+    {
+        public static AiOverlayDecision NotApplied { get; } = new(false, false, null, 0, string.Empty, string.Empty, string.Empty);
+
+        public static AiOverlayDecision Suppress(string reasonType, string reasonCode, string summary) =>
+            new(true, true, "Suppress", 0, reasonType, reasonCode, summary);
+
+        public static AiOverlayDecision Allow(string disposition, int boostPoints, string reasonType, string reasonCode, string summary) =>
+            new(false, true, disposition, boostPoints, reasonType, reasonCode, summary);
+    }
 
     private string ResolveCorrelationId()
     {
@@ -1205,6 +1237,7 @@ public sealed class StrategySignalService(
             SerializerOptions);
     }
 }
+
 
 
 

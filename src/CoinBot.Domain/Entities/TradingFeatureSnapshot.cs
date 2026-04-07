@@ -13,6 +13,8 @@ public sealed class TradingFeatureSnapshot : UserOwnedEntity
     public DateTime? MarketDataTimestampUtc { get; set; }
     public string FeatureVersion { get; set; } = string.Empty;
     public FeatureSnapshotState SnapshotState { get; set; } = FeatureSnapshotState.MissingData;
+    public FeatureSnapshotQualityReason QualityReasonCode { get; set; } = FeatureSnapshotQualityReason.None;
+    public string? MissingFeatureSummary { get; set; }
     public DegradedModeReasonCode MarketDataReasonCode { get; set; } = DegradedModeReasonCode.MarketDataUnavailable;
     public int SampleCount { get; set; }
     public int RequiredSampleCount { get; set; }
@@ -39,6 +41,9 @@ public sealed class TradingFeatureSnapshot : UserOwnedEntity
     public decimal? VolumeSpikeRatio { get; set; }
     public decimal? RelativeVolume { get; set; }
     public decimal? Obv { get; set; }
+    public decimal? Mfi { get; set; }
+    public decimal? KlingerOscillator { get; set; }
+    public decimal? KlingerSignal { get; set; }
     public ExchangeDataPlane Plane { get; set; } = ExchangeDataPlane.Futures;
     public ExecutionEnvironment TradingMode { get; set; } = ExecutionEnvironment.Demo;
     public bool HasOpenPosition { get; set; }

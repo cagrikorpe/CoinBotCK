@@ -2699,6 +2699,14 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             .HasMaxLength(32)
             .IsRequired();
 
+        builder.Property(entity => entity.QualityReasonCode)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.MissingFeatureSummary)
+            .HasMaxLength(512);
+
         builder.Property(entity => entity.MarketDataReasonCode)
             .HasConversion<string>()
             .HasMaxLength(32)
@@ -2738,7 +2746,10 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             nameof(TradingFeatureSnapshot.ChandelierExit),
             nameof(TradingFeatureSnapshot.VolumeSpikeRatio),
             nameof(TradingFeatureSnapshot.RelativeVolume),
-            nameof(TradingFeatureSnapshot.Obv)
+            nameof(TradingFeatureSnapshot.Obv),
+            nameof(TradingFeatureSnapshot.Mfi),
+            nameof(TradingFeatureSnapshot.KlingerOscillator),
+            nameof(TradingFeatureSnapshot.KlingerSignal)
         })
         {
             builder.Property(propertyName)
@@ -3064,6 +3075,9 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         }
     }
 }
+
+
+
 
 
 

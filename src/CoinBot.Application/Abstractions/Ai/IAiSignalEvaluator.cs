@@ -75,5 +75,6 @@ public enum AiSignalFallbackReason
     EvaluationException = 7,
     UnsupportedProvider = 8,
     FeatureSnapshotUnavailable = 9,
-    FeatureSnapshotNotReady = 10
+    FeatureSnapshotNotReady = 10,
+    FeatureSnapshotQualityFailed = 11
 }

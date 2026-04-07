@@ -221,13 +221,173 @@ public sealed class StrategySignalAiOverlayTests
         Assert.NotNull(loadedSignal);
         Assert.NotNull(loadedSignal!.ExplainabilityPayload.ConfidenceSnapshot.AiEvaluation);
         Assert.Equal(featureSnapshot.Id, loadedSignal.ExplainabilityPayload.ConfidenceSnapshot.AiEvaluation!.FeatureSnapshotId);
+        Assert.Equal("Boost", loadedSignal.ExplainabilityPayload.ConfidenceSnapshot.AiOverlayDisposition);
+        Assert.Equal(5, loadedSignal.ExplainabilityPayload.ConfidenceSnapshot.AiOverlayBoostPoints);
         Assert.Contains("\"aiEvaluation\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
         Assert.Contains(featureSnapshot.Id.ToString(), decisionTrace.SnapshotJson, StringComparison.Ordinal);
         Assert.Contains("DeterministicStub", decisionTrace.SnapshotJson, StringComparison.Ordinal);
         Assert.Empty(dbContext.ExecutionOrders);
     }
 
-    private static StrategySignalService CreateService(ApplicationDbContext dbContext, TimeProvider timeProvider, AiSignalOptions aiSignalOptions)
+    [Fact]
+    public async Task GenerateAsync_PersistsSignal_WhenAiConfirmsStrategyDirection()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 6, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("ai-overlay-user-confirm", "ai-overlay-core");
+        var version = CreateVersion(strategy, 1, CreateDefinitionJson());
+
+        dbContext.TradingStrategies.Add(strategy);
+        dbContext.TradingStrategyVersions.Add(version);
+        dbContext.RiskProfiles.Add(CreateRiskProfile(strategy.OwnerUserId));
+        dbContext.DemoWallets.Add(CreateDemoWallet(strategy.OwnerUserId));
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(
+            dbContext,
+            timeProvider,
+            new AiSignalOptions
+            {
+                Enabled = true,
+                SelectedProvider = DeterministicStubAiSignalProviderAdapter.ProviderNameValue,
+                MinimumConfidence = 0.70m
+            },
+            new FixedAiSignalEvaluator(AiSignalDirection.Long, 0.80m, false, null));
+
+        var result = await service.GenerateAsync(
+            new GenerateStrategySignalsRequest(
+                version.Id,
+                CreateContext(),
+                CreateFeatureSnapshot(FeatureSnapshotState.Ready)));
+
+        var signal = Assert.Single(result.Signals);
+        var loadedSignal = await service.GetAsync(signal.StrategySignalId);
+
+        Assert.NotNull(loadedSignal);
+        Assert.Equal("Confirm", loadedSignal!.ExplainabilityPayload.ConfidenceSnapshot.AiOverlayDisposition);
+        Assert.Equal(0, loadedSignal.ExplainabilityPayload.ConfidenceSnapshot.AiOverlayBoostPoints);
+    }
+
+    [Fact]
+    public async Task GenerateAsync_SuppressesEntrySignal_WhenAiDirectionConflictsWithStrategyDirection()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 6, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("ai-overlay-user-short", "ai-overlay-core");
+        var version = CreateVersion(strategy, 1, CreateDefinitionJson());
+
+        dbContext.TradingStrategies.Add(strategy);
+        dbContext.TradingStrategyVersions.Add(version);
+        dbContext.RiskProfiles.Add(CreateRiskProfile(strategy.OwnerUserId));
+        dbContext.DemoWallets.Add(CreateDemoWallet(strategy.OwnerUserId));
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(
+            dbContext,
+            timeProvider,
+            new AiSignalOptions
+            {
+                Enabled = true,
+                SelectedProvider = DeterministicStubAiSignalProviderAdapter.ProviderNameValue,
+                MinimumConfidence = 0.70m,
+                AllowShort = true
+            },
+            new FixedAiSignalEvaluator(AiSignalDirection.Short, 0.82m, false, null));
+
+        var result = await service.GenerateAsync(
+            new GenerateStrategySignalsRequest(
+                version.Id,
+                CreateContext(),
+                CreateFeatureSnapshot(FeatureSnapshotState.Ready)));
+        var decisionTrace = await dbContext.DecisionTraces.SingleAsync();
+
+        Assert.Empty(result.Signals);
+        Assert.Equal("AiDirectionMismatch", decisionTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task GenerateAsync_SuppressesEntrySignal_WhenAiFallsBackWithInvalidPayload()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 6, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("ai-overlay-user-fallback", "ai-overlay-core");
+        var version = CreateVersion(strategy, 1, CreateDefinitionJson());
+
+        dbContext.TradingStrategies.Add(strategy);
+        dbContext.TradingStrategyVersions.Add(version);
+        dbContext.RiskProfiles.Add(CreateRiskProfile(strategy.OwnerUserId));
+        dbContext.DemoWallets.Add(CreateDemoWallet(strategy.OwnerUserId));
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(
+            dbContext,
+            timeProvider,
+            new AiSignalOptions
+            {
+                Enabled = true,
+                SelectedProvider = DeterministicStubAiSignalProviderAdapter.ProviderNameValue,
+                MinimumConfidence = 0.70m
+            },
+            new FixedAiSignalEvaluator(AiSignalDirection.Neutral, 0m, true, AiSignalFallbackReason.InvalidPayload));
+
+        var result = await service.GenerateAsync(
+            new GenerateStrategySignalsRequest(
+                version.Id,
+                CreateContext(),
+                CreateFeatureSnapshot(FeatureSnapshotState.Ready)));
+        var decisionTrace = await dbContext.DecisionTraces.SingleAsync();
+        var aiEvaluation = Assert.Single(result.AiEvaluations);
+
+        Assert.Empty(result.Signals);
+        Assert.True(aiEvaluation.IsFallback);
+        Assert.Equal(AiSignalFallbackReason.InvalidPayload, aiEvaluation.FallbackReason);
+        Assert.Equal("AiInvalidPayload", decisionTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task GenerateAsync_SuppressesEntrySignal_WhenFeatureSnapshotQualityFails()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 6, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("ai-overlay-user-quality", "ai-overlay-core");
+        var version = CreateVersion(strategy, 1, CreateDefinitionJson());
+
+        dbContext.TradingStrategies.Add(strategy);
+        dbContext.TradingStrategyVersions.Add(version);
+        dbContext.RiskProfiles.Add(CreateRiskProfile(strategy.OwnerUserId));
+        dbContext.DemoWallets.Add(CreateDemoWallet(strategy.OwnerUserId));
+        await dbContext.SaveChangesAsync();
+
+        var featureSnapshot = CreateFeatureSnapshot(FeatureSnapshotState.Invalid) with
+        {
+            QualityReasonCode = FeatureSnapshotQualityReason.IncompleteSnapshot,
+            MissingFeatureSummary = "MissingFeatures=RelativeVolume,KlingerSignal"
+        };
+        var service = CreateService(
+            dbContext,
+            timeProvider,
+            new AiSignalOptions
+            {
+                Enabled = true,
+                SelectedProvider = DeterministicStubAiSignalProviderAdapter.ProviderNameValue,
+                MinimumConfidence = 0.70m
+            });
+
+        var result = await service.GenerateAsync(
+            new GenerateStrategySignalsRequest(
+                version.Id,
+                CreateContext(),
+                featureSnapshot));
+        var decisionTrace = await dbContext.DecisionTraces.SingleAsync();
+        var aiEvaluation = Assert.Single(result.AiEvaluations);
+
+        Assert.Empty(result.Signals);
+        Assert.True(aiEvaluation.IsFallback);
+        Assert.Equal(AiSignalFallbackReason.FeatureSnapshotQualityFailed, aiEvaluation.FallbackReason);
+        Assert.Equal("AiFeatureSnapshotQualityFailed", decisionTrace.DecisionReasonCode);
+    }
+
+    private static StrategySignalService CreateService(ApplicationDbContext dbContext, TimeProvider timeProvider, AiSignalOptions aiSignalOptions, IAiSignalEvaluator? aiSignalEvaluatorOverride = null)
     {
         var correlationContextAccessor = new CorrelationContextAccessor();
 
@@ -243,7 +403,7 @@ public sealed class StrategySignalAiOverlayTests
                 correlationContextAccessor,
                 timeProvider),
             correlationContextAccessor,
-            new AiSignalEvaluator(
+            aiSignalEvaluatorOverride ?? new AiSignalEvaluator(
                 [new DeterministicStubAiSignalProviderAdapter(), new OfflineAiSignalProviderAdapter(), new OpenAiSignalProviderAdapter(), new GeminiAiSignalProviderAdapter()],
                 Options.Create(aiSignalOptions),
                 timeProvider,
@@ -411,5 +571,42 @@ public sealed class StrategySignalAiOverlayTests
 
         public bool HasIsolationBypass => true;
     }
+
+    private sealed class FixedAiSignalEvaluator(
+        AiSignalDirection direction,
+        decimal confidence,
+        bool isFallback,
+        AiSignalFallbackReason? fallbackReason) : IAiSignalEvaluator
+    {
+        public Task<AiSignalEvaluationResult> EvaluateAsync(AiSignalEvaluationRequest request, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(isFallback
+                ? AiSignalEvaluationResult.NeutralFallback(
+                    fallbackReason ?? AiSignalFallbackReason.EvaluationException,
+                    "Fixed fallback.",
+                    request.FeatureSnapshot?.Id,
+                    "FixedAi",
+                    "fixed-v1",
+                    0,
+                    new DateTime(2026, 4, 6, 12, 0, 0, DateTimeKind.Utc))
+                : new AiSignalEvaluationResult(
+                    direction,
+                    confidence,
+                    "Fixed evaluator.",
+                    request.FeatureSnapshot?.Id,
+                    "FixedAi",
+                    "fixed-v1",
+                    0,
+                    false,
+                    null,
+                    false,
+                    new DateTime(2026, 4, 6, 12, 0, 0, DateTimeKind.Utc)));
+        }
+    }
 }
+
+
+
+
 

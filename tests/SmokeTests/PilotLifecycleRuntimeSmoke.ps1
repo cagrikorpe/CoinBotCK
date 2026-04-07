@@ -13,6 +13,12 @@ $warmupStdErrPath = Join-Path $runRoot 'worker-warmup.stderr.log'
 $submitStdOutPath = Join-Path $runRoot 'worker-submit.stdout.log'
 $submitStdErrPath = Join-Path $runRoot 'worker-submit.stderr.log'
 $summaryPath = Join-Path $runRoot 'pilot-lifecycle-runtime-smoke-summary.json'
+$sourceCleanupStdOutPath = Join-Path $runRoot 'source-cleanup.stdout.log'
+$sourceCleanupStdErrPath = Join-Path $runRoot 'source-cleanup.stderr.log'
+$warmupCleanupStdOutPath = Join-Path $runRoot 'warmup-cleanup.stdout.log'
+$warmupCleanupStdErrPath = Join-Path $runRoot 'warmup-cleanup.stderr.log'
+$postRunCleanupStdOutPath = Join-Path $runRoot 'postrun-cleanup.stdout.log'
+$postRunCleanupStdErrPath = Join-Path $runRoot 'postrun-cleanup.stderr.log'
 
 function New-FreeTcpPort {
     $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
@@ -144,6 +150,65 @@ function Stop-ManagedProcess {
     }
 }
 
+function Invoke-OneShotProcess {
+    param(
+        [string]$FilePath,
+        [string[]]$ArgumentList,
+        [string]$WorkingDirectory,
+        [string]$StandardOutputPath,
+        [string]$StandardErrorPath,
+        [hashtable]$EnvironmentVariables,
+        [int]$TimeoutSeconds = 600)
+
+    $handle = Start-ManagedProcess -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -StandardOutputPath $StandardOutputPath -StandardErrorPath $StandardErrorPath -EnvironmentVariables $EnvironmentVariables
+
+    try {
+        if (-not $handle.Process.WaitForExit($TimeoutSeconds * 1000)) {
+            Stop-ManagedProcess -Handle $handle
+            throw "Timed out while waiting for process '$FilePath'."
+        }
+
+        if ($handle.Process.ExitCode -ne 0) {
+            throw "Process '$FilePath' exited with code $($handle.Process.ExitCode)."
+        }
+    }
+    finally {
+        try { $handle.Process.Dispose() } catch {}
+    }
+}
+
+function Invoke-SmokeCleanupHarness {
+    param(
+        [string]$ConnectionString,
+        [string]$Scope,
+        [string]$Phase,
+        [string]$StandardOutputPath,
+        [string]$StandardErrorPath,
+        [int]$TimeoutSeconds = 420)
+
+    $environmentVariables = @{
+        DOTNET_CLI_HOME = (Join-Path $repoRoot '.dotnet')
+        DOTNET_SKIP_FIRST_TIME_EXPERIENCE = '1'
+        DOTNET_NOLOGO = '1'
+        ASPNETCORE_ENVIRONMENT = 'Development'
+        DOTNET_ENVIRONMENT = 'Development'
+        PILOT_SMOKE_CLEANUP_ENABLED = 'true'
+        PILOT_SMOKE_CLEANUP_CONNECTION_STRING = $ConnectionString
+        PILOT_SMOKE_CLEANUP_SCOPE = $Scope
+        PILOT_SMOKE_CLEANUP_PHASE = $Phase
+        PILOT_SMOKE_CLEANUP_TIMEOUT_SECONDS = $TimeoutSeconds.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    }
+
+    Invoke-OneShotProcess -FilePath 'dotnet' -ArgumentList @(
+        'test',
+        'tests\CoinBot.IntegrationTests\CoinBot.IntegrationTests.csproj',
+        '--no-build',
+        '--no-restore',
+        '-v:minimal',
+        '--filter',
+        'FullyQualifiedName~PilotLifecycleSmokeCleanupHarnessTests.RunAsync_WhenRequested') -WorkingDirectory $repoRoot -StandardOutputPath $StandardOutputPath -StandardErrorPath $StandardErrorPath -EnvironmentVariables $environmentVariables -TimeoutSeconds $TimeoutSeconds
+}
+
 function Get-UserSecretsConnectionString {
     $userSecretsId = '016c8a65-b0e7-404b-a04c-0a51f7bea920'
     $path = Join-Path $env:APPDATA ("Microsoft\\UserSecrets\\$userSecretsId\\secrets.json")
@@ -234,6 +299,21 @@ function Get-SmokeSyncedOpenPositions {
     Invoke-SqlRows -ConnectionString $ConnectionString -CommandText "SELECT TOP (10) Symbol, PositionSide, Quantity, EntryPrice, BreakEvenPrice, UnrealizedProfit, ExchangeUpdatedAtUtc FROM ExchangePositions WHERE ExchangeAccountId = @ExchangeAccountId AND IsDeleted = 0 AND ABS(Quantity) > 0 ORDER BY UpdatedDate DESC;" -Parameters @{ ExchangeAccountId = $ExchangeAccountId }
 }
 
+function Get-SmokeScopedOpenExecutionOrders {
+    param([string]$ConnectionString, [string]$OwnerUserId)
+    Invoke-SqlRows -ConnectionString $ConnectionString -CommandText "SELECT TOP (20) Id, StrategyKey, Symbol, State, FailureCode, RejectionStage, SubmittedToBroker, ExternalOrderId, CreatedDate FROM ExecutionOrders WHERE OwnerUserId = @OwnerUserId AND IsDeleted = 0 AND State IN ('Received','GatePassed','Dispatching','Submitted','PartiallyFilled','CancelRequested') ORDER BY CreatedDate DESC;" -Parameters @{ OwnerUserId = $OwnerUserId }
+}
+
+function Get-SmokeScopedOpenPositions {
+    param([string]$ConnectionString, [string]$OwnerUserId)
+    Invoke-SqlRows -ConnectionString $ConnectionString -CommandText "SELECT TOP (20) Symbol, PositionSide, Quantity, EntryPrice, BreakEvenPrice, UnrealizedProfit, ExchangeUpdatedAtUtc FROM ExchangePositions WHERE OwnerUserId = @OwnerUserId AND Plane = 'Futures' AND IsDeleted = 0 AND ABS(Quantity) > 0 ORDER BY UpdatedDate DESC;" -Parameters @{ OwnerUserId = $OwnerUserId }
+}
+
+function Get-SmokeCleanupOrders {
+    param([string]$ConnectionString, [string]$OwnerUserId)
+    Invoke-SqlRows -ConnectionString $ConnectionString -CommandText "SELECT TOP (20) Id, Symbol, State, FailureCode, SubmittedToBroker, ExternalOrderId, CreatedDate FROM ExecutionOrders WHERE OwnerUserId = @OwnerUserId AND StrategyKey = '__crisis_flatten__' AND IsDeleted = 0 ORDER BY CreatedDate DESC;" -Parameters @{ OwnerUserId = $OwnerUserId }
+}
+
 function Get-SourceBootstrap {
     param([string]$ConnectionString)
 
@@ -247,11 +327,13 @@ SELECT
 
     if ($preflight.ActiveAccounts -ne 1) { throw "Pilot smoke requires exactly one active exchange account. Found=$($preflight.ActiveAccounts)." }
     if ($preflight.EnabledBots -ne 1) { throw "Pilot smoke requires exactly one enabled bot. Found=$($preflight.EnabledBots)." }
-    if ($preflight.OpenExecutionOrders -ne 0) { throw "Pilot smoke requires zero open execution orders. Found=$($preflight.OpenExecutionOrders)." }
-    if ($preflight.OpenPositions -ne 0) { throw "Pilot smoke requires zero open positions. Found=$($preflight.OpenPositions)." }
+
+
 
     $row = Invoke-SqlRow -ConnectionString $ConnectionString -CommandText @"
 SELECT TOP (1)
+    ea.Id AS ExchangeAccountId,
+    ea.OwnerUserId,
     ea.ApiKeyCiphertext,
     ea.ApiSecretCiphertext,
     ea.CredentialFingerprint,
@@ -375,7 +457,7 @@ WHERE ea.Id = @ExchangeAccountId;
 "@ -Parameters @{ ExchangeAccountId = $ExchangeAccountId; Symbol = $Symbol; Timeframe = $Timeframe }
 }
 
-function Get-SmokeOrders { param([string]$ConnectionString, [guid]$BotId) Invoke-SqlRows -ConnectionString $ConnectionString -CommandText "SELECT TOP (10) Id, StrategySignalId, Plane, State, FailureCode, FailureDetail, RejectionStage, DuplicateSuppressed, RetryEligible, ReconciliationStatus, ReconciliationSummary, SubmittedToBroker, ExternalOrderId, FilledQuantity, AverageFillPrice, SubmittedAtUtc, LastStateChangedAtUtc, CreatedDate FROM ExecutionOrders WHERE BotId = @BotId AND IsDeleted = 0 ORDER BY CreatedDate DESC;" -Parameters @{ BotId = $BotId } }
+function Get-SmokeOrders { param([string]$ConnectionString, [guid]$BotId) Invoke-SqlRows -ConnectionString $ConnectionString -CommandText "SELECT TOP (10) Id, StrategySignalId, Plane, State, FailureCode, FailureDetail, RejectionStage, DuplicateSuppressed, RetryEligible, ReconciliationStatus, ReconciliationSummary, SubmittedToBroker, ExternalOrderId, FilledQuantity, AverageFillPrice, SubmittedAtUtc, LastReconciledAtUtc, LastStateChangedAtUtc, CreatedDate FROM ExecutionOrders WHERE BotId = @BotId AND IsDeleted = 0 ORDER BY CreatedDate DESC;" -Parameters @{ BotId = $BotId } }
 function Get-SmokeTransitions { param([string]$ConnectionString, [guid]$ExecutionOrderId) Invoke-SqlRows -ConnectionString $ConnectionString -CommandText "SELECT TOP (20) SequenceNumber, State, EventCode, Detail, CorrelationId, ParentCorrelationId, OccurredAtUtc FROM ExecutionOrderTransitions WHERE ExecutionOrderId = @ExecutionOrderId AND IsDeleted = 0 ORDER BY SequenceNumber ASC;" -Parameters @{ ExecutionOrderId = $ExecutionOrderId } }
 function Get-SmokeExecutionTraces { param([string]$ConnectionString, [guid]$ExecutionOrderId) Invoke-SqlRows -ConnectionString $ConnectionString -CommandText "SELECT TOP (20) Provider, Endpoint, HttpStatusCode, ExchangeCode, LatencyMs, CreatedAtUtc FROM ExecutionTraces WHERE ExecutionOrderId = @ExecutionOrderId AND IsDeleted = 0 ORDER BY CreatedAtUtc ASC;" -Parameters @{ ExecutionOrderId = $ExecutionOrderId } }
 function Get-SmokePositions { param([string]$ConnectionString, [guid]$ExchangeAccountId) Invoke-SqlRows -ConnectionString $ConnectionString -CommandText "SELECT TOP (10) Symbol, PositionSide, Quantity, EntryPrice, BreakEvenPrice, UnrealizedProfit, MarginType, ExchangeUpdatedAtUtc FROM ExchangePositions WHERE ExchangeAccountId = @ExchangeAccountId AND IsDeleted = 0 ORDER BY UpdatedDate DESC;" -Parameters @{ ExchangeAccountId = $ExchangeAccountId } }
@@ -560,6 +642,9 @@ $summary = [ordered]@{
     SmokeDatabaseName = $smokeDatabaseName
     SummaryPath = $summaryPath
     SummaryStoragePolicy = 'LocalGitIgnoredEvidence'
+    SourceCleanupApplied = $false
+    WarmupCleanupApplied = $false
+    PostRunCleanupApplied = $false
 }
 
 $webHandle = $null
@@ -569,21 +654,20 @@ $lastWaitStage = 'Initialization'
 
 try {
     $lastWaitStage = 'SourcePreflight'
-    try {
-        $bootstrap = Get-SourceBootstrap -ConnectionString $sourceConnectionString
-    }
-    catch {
-        $summary.OutcomeKind = 'RerunCleanupRequired'
-        $summary.RerunBlockReason = 'SourceExposureDetected'
-        $summary.ErrorMessage = $_.Exception.Message
-        $summary.SourceOpenExecutionOrders = @(Get-SourceOpenExecutionOrders -ConnectionString $sourceConnectionString)
-        $summary.SourceOpenPositions = @(Get-SourceOpenPositions -ConnectionString $sourceConnectionString)
-        $summary.SourceOpenExecutionOrderCount = @($summary.SourceOpenExecutionOrders).Count
-        $summary.SourceOpenPositionCount = @($summary.SourceOpenPositions).Count
-        $summary.RerunGuidance = 'Resolve the open testnet pilot exposure, wait for source database sync to clear it, then rerun the smoke.'
-        Write-SmokeSummary -Summary $summary -SummaryPath $summaryPath
-        Write-Host ('SummaryPath=' + $summaryPath)
-        throw
+    $bootstrap = Get-SourceBootstrap -ConnectionString $sourceConnectionString
+    if ($bootstrap.Preflight.OpenExecutionOrders -ne 0 -or $bootstrap.Preflight.OpenPositions -ne 0) {
+        $lastWaitStage = 'SourcePreflightCleanup'
+        $summary.SourceOpenExecutionOrdersBeforeCleanup = @(Get-SourceOpenExecutionOrders -ConnectionString $sourceConnectionString)
+        $summary.SourceOpenPositionsBeforeCleanup = @(Get-SourceOpenPositions -ConnectionString $sourceConnectionString)
+        $summary.SourceOpenExecutionOrderCountBeforeCleanup = @([array]$summary.SourceOpenExecutionOrdersBeforeCleanup).Count
+        $summary.SourceOpenPositionCountBeforeCleanup = @([array]$summary.SourceOpenPositionsBeforeCleanup).Count
+        Invoke-SmokeCleanupHarness -ConnectionString $sourceConnectionString -Scope ("FLATTEN:USER:{0}" -f [string]$bootstrap.Source.OwnerUserId) -Phase 'source-preflight' -StandardOutputPath $sourceCleanupStdOutPath -StandardErrorPath $sourceCleanupStdErrPath -TimeoutSeconds 420
+        $summary.SourceCleanupApplied = $true
+        $bootstrap = Wait-Until -Name 'source cleanup closure' -TimeoutSeconds 360 -Condition {
+            $candidate = Get-SourceBootstrap -ConnectionString $sourceConnectionString
+            if ($candidate.Preflight.OpenExecutionOrders -eq 0 -and $candidate.Preflight.OpenPositions -eq 0) { return $candidate }
+            return $null
+        }
     }
 
     $symbol = [string]$bootstrap.Source.Symbol
@@ -648,14 +732,18 @@ try {
     $warmupOrders = @(Get-SmokeOrders -ConnectionString $connectionString -BotId $botId)
     if ($warmupOrders.Count -ne 0) { throw "Warm-up phase created execution orders while PilotActivationEnabled=false. Count=$($warmupOrders.Count)." }
 
-    $syncedOpenPositions = @(Get-SmokeSyncedOpenPositions -ConnectionString $connectionString -ExchangeAccountId $exchangeAccountId)
-    if ($syncedOpenPositions.Count -ne 0) {
-        $summary.OutcomeKind = 'RerunCleanupRequired'
-        $summary.RerunBlockReason = 'SyncedOpenPositionDetected'
-        $summary.SyncedOpenPositions = $syncedOpenPositions
-        $summary.SyncedOpenPositionCount = $syncedOpenPositions.Count
-        $summary.RerunGuidance = 'Close the existing testnet pilot position, wait for the private-stream and position sync to clear it, then rerun the smoke.'
-        throw "Pilot smoke rerun blocked by pre-existing synced testnet positions. Count=$($syncedOpenPositions.Count)."
+    $warmupScopeOpenOrders = @(Get-SmokeScopedOpenExecutionOrders -ConnectionString $connectionString -OwnerUserId $smokeUserId)
+    $warmupScopeOpenPositions = @(Get-SmokeScopedOpenPositions -ConnectionString $connectionString -OwnerUserId $smokeUserId)
+    if ($warmupScopeOpenOrders.Count -ne 0 -or $warmupScopeOpenPositions.Count -ne 0) {
+        $lastWaitStage = 'WarmupScopeCleanup'
+        Invoke-SmokeCleanupHarness -ConnectionString $connectionString -Scope ("FLATTEN:USER:{0}" -f $smokeUserId) -Phase 'warmup-pre-submit' -StandardOutputPath $warmupCleanupStdOutPath -StandardErrorPath $warmupCleanupStdErrPath -TimeoutSeconds 420
+        $summary.WarmupCleanupApplied = $true
+        Wait-Until -Name 'warmup scope closure' -TimeoutSeconds 300 -Condition {
+            $openOrders = @(Get-SmokeScopedOpenExecutionOrders -ConnectionString $connectionString -OwnerUserId $smokeUserId)
+            $openPositions = @(Get-SmokeScopedOpenPositions -ConnectionString $connectionString -OwnerUserId $smokeUserId)
+            if ($openOrders.Count -eq 0 -and $openPositions.Count -eq 0) { return $true }
+            return $null
+        } | Out-Null
     }
 
     $summary.WarmupSubmitBlocked = $true
@@ -707,28 +795,57 @@ try {
     }
 
     Set-SmokeBotEnabled -ConnectionString $connectionString -BotId $botId -IsEnabled:$false
-    Stop-ManagedProcess -Handle $submitWorkerHandle
-    $submitWorkerHandle = $null
 
-    $summary.OutcomeKind = Get-OrderOutcomeKind -Order $submittedOrBlockedOrder
+    $summary.InitialOutcomeKind = Get-OrderOutcomeKind -Order $submittedOrBlockedOrder
 
-    $lastWaitStage = 'FinalOrderLifecycleState'
     if (Test-BrokerObserved -Order $submittedOrBlockedOrder) {
-        $finalOrder = $submittedOrBlockedOrder
-    }
-    else {
-        $finalOrder = Wait-Until -Name 'broker response or terminal lifecycle state' -TimeoutSeconds 240 -Condition {
-            $row = Get-LatestObservedPilotOrder -ConnectionString $connectionString -BotId $botId -ObservedAtOrAfterUtc $submitObservationStartedAtUtc
-            if ($null -eq $row) { return $null }
-            $outcomeKind = Get-OrderOutcomeKind -Order $row
-            if ($row.State -in @('Rejected','Cancelled','Filled','PartiallyFilled','Failed') -and $null -ne $outcomeKind) { return $row }
-            if ($row.State -eq 'Submitted' -and (Test-BrokerObserved -Order $row)) { return $row }
+        $lastWaitStage = 'BrokerTraceObservation'
+        $summary.InitialExecutionTraces = Wait-Until -Name 'broker execution traces' -TimeoutSeconds 180 -Condition {
+            $rows = @(Get-SmokeExecutionTraces -ConnectionString $connectionString -ExecutionOrderId ([Guid]$submittedOrBlockedOrder.Id))
+            if ($rows.Count -ge 1) { return $rows }
             return $null
         }
-    }
 
-    if (-not (Test-BrokerObserved -Order $finalOrder) -and $finalOrder.State -notin @('Rejected', 'Cancelled', 'Failed')) {
-        throw "Pilot order never reached broker submit or a terminal pre-submit state. State=$($finalOrder.State); FailureCode=$($finalOrder.FailureCode); RejectionStage=$($finalOrder.RejectionStage)."
+        Stop-ManagedProcess -Handle $submitWorkerHandle
+        $submitWorkerHandle = $null
+
+        $lastWaitStage = 'PostRunCleanup'
+        Invoke-SmokeCleanupHarness -ConnectionString $connectionString -Scope ("FLATTEN:USER:{0}" -f $smokeUserId) -Phase 'post-run' -StandardOutputPath $postRunCleanupStdOutPath -StandardErrorPath $postRunCleanupStdErrPath -TimeoutSeconds 420
+        $summary.PostRunCleanupApplied = $true
+
+        $lastWaitStage = 'PostRunScopeClosure'
+        Wait-Until -Name 'post-run scope closure' -TimeoutSeconds 300 -Condition {
+            $openOrders = @(Get-SmokeScopedOpenExecutionOrders -ConnectionString $connectionString -OwnerUserId $smokeUserId)
+            $openPositions = @(Get-SmokeScopedOpenPositions -ConnectionString $connectionString -OwnerUserId $smokeUserId)
+            if ($openOrders.Count -eq 0 -and $openPositions.Count -eq 0) {
+                return [pscustomobject]@{ OpenOrders = @(); OpenPositions = @() }
+            }
+            return $null
+        } | Out-Null
+
+        $lastWaitStage = 'FinalReconciledTerminalOrder'
+        $finalOrder = Wait-Until -Name 'final reconciled terminal order' -TimeoutSeconds 360 -Condition {
+            $row = Get-LatestObservedPilotOrder -ConnectionString $connectionString -BotId $botId -ObservedAtOrAfterUtc $submitObservationStartedAtUtc
+            if ($null -eq $row) { return $null }
+            if (-not (Test-BrokerObserved -Order $row)) { return $null }
+            if ($row.State -notin @('Rejected', 'Cancelled', 'Filled', 'Failed')) { return $null }
+            if ([string]$row.ReconciliationStatus -eq 'Unknown' -or $null -eq $row.LastReconciledAtUtc) { return $null }
+            return $row
+        }
+    }
+    else {
+        $lastWaitStage = 'FinalPreSubmitTerminalOrder'
+        $finalOrder = Wait-Until -Name 'final terminal pre-submit rejection' -TimeoutSeconds 180 -Condition {
+            $row = Get-LatestObservedPilotOrder -ConnectionString $connectionString -BotId $botId -ObservedAtOrAfterUtc $submitObservationStartedAtUtc
+            if ($null -eq $row) { return $null }
+            if (Test-BrokerObserved -Order $row) { return $null }
+            if ($row.State -in @('Rejected', 'Cancelled', 'Failed')) { return $row }
+            if (-not [string]::IsNullOrWhiteSpace([string]$row.FailureCode) -and [string]$row.RejectionStage -eq 'PreSubmit') { return $row }
+            return $null
+        }
+
+        Stop-ManagedProcess -Handle $submitWorkerHandle
+        $submitWorkerHandle = $null
     }
 
     if ($finalOrder.Plane -ne 'Futures') {
@@ -754,22 +871,34 @@ try {
     $summary.ExecutionTraces = @(Get-SmokeExecutionTraces -ConnectionString $connectionString -ExecutionOrderId ([Guid]$summary.FinalOrder.Id))
     $summary.Positions = @(Get-SmokePositions -ConnectionString $connectionString -ExchangeAccountId $exchangeAccountId)
     $summary.Balances = @(Get-SmokeBalances -ConnectionString $connectionString -ExchangeAccountId $exchangeAccountId)
+    $summary.ScopeOpenExecutionOrders = @(Get-SmokeScopedOpenExecutionOrders -ConnectionString $connectionString -OwnerUserId $smokeUserId)
+    $summary.ScopeOpenPositions = @(Get-SmokeScopedOpenPositions -ConnectionString $connectionString -OwnerUserId $smokeUserId)
+    $summary.CleanupOrders = @(Get-SmokeCleanupOrders -ConnectionString $connectionString -OwnerUserId $smokeUserId)
     $summary.BrokerSubmitReached = Test-BrokerObserved -Order $summary.FinalOrder
     $summary.ExternalOrderIdPresent = -not [string]::IsNullOrWhiteSpace([string]$summary.FinalOrder.ExternalOrderId)
     $summary.OrderCount = $orders.Count
-    $summary.PositionCount = $summary.Positions.Count
-    $summary.BalanceCount = $summary.Balances.Count
+    $summary.PositionCount = @([array]$summary.Positions).Count
+    $summary.BalanceCount = @([array]$summary.Balances).Count
+    $summary.TransitionCount = @([array]$summary.Transitions).Count
+    $summary.ExecutionTraceCount = @([array]$summary.ExecutionTraces).Count
+    $summary.ScopeOpenExecutionOrderCount = @([array]$summary.ScopeOpenExecutionOrders).Count
+    $summary.ScopeOpenPositionCount = @([array]$summary.ScopeOpenPositions).Count
+    $summary.CleanupOrderCount = @([array]$summary.CleanupOrders).Count
     $summary.LastWaitStage = $lastWaitStage
-    $summary.ReconciliationExpectation = if ($summary.FinalOrder.ReconciliationStatus -eq 'Unknown') { 'AcceptedInterimStateUntilAsyncReconciliationRuns' } else { 'Observed' }
-    $summary.ReconciliationNote = 'Pilot runtime smoke uses futures private-stream and order telemetry for immediate closure. ReconciliationStatus=Unknown is accepted at smoke completion until asynchronous reconciliation advances in a later cycle.'
-    $summary.ReconciliationExpectationDetail = 'Async reconciliation should later populate LastReconciledAtUtc and move reconciliation status away from Unknown. If it does not, investigate reconciliation separately from smoke closure.'
+    $summary.ReconciliationClosure = if ($summary.BrokerSubmitReached) { 'Closed' } else { 'NotRequired' }
+    $summary.ReconciliationNote = if ($summary.BrokerSubmitReached) { 'Broker-submitted smoke orders remain under bounded polling until LastReconciledAtUtc is populated and reconciliation leaves Unknown.' } else { 'Pre-submit rejects close without broker reconciliation work.' }
+    $summary.ReconciliationExpectationDetail = if ($summary.BrokerSubmitReached) { 'Smoke success requires terminal order state, execution traces, non-Unknown reconciliation, and zero scoped open orders/positions after cleanup.' } else { 'Pre-submit rejects succeed only after terminal rejection with zero scoped open orders/positions.' }
+    $summary.CleanupApplied = ($summary.SourceCleanupApplied -eq $true) -or ($summary.WarmupCleanupApplied -eq $true) -or ($summary.PostRunCleanupApplied -eq $true)
+    $summary.OutcomeKind = if ($summary.BrokerSubmitReached) { 'PostSubmitTerminalClosed' } else { 'PreSubmitTerminalRejected' }
+    $summary.TerminalStateObserved = $true
     $summary.SmokePolicyMode = 'RecommendOnly'
 
-    $cleanupRequiredStates = @('Dispatching', 'Submitted', 'PartiallyFilled', 'CancelRequested')
-    if ((Test-BrokerObserved -Order $summary.FinalOrder) -and $summary.FinalOrder.State -in $cleanupRequiredStates) {
-        $summary.OutcomeKind = 'RerunCleanupRequired'
-        $summary.RerunBlockReason = 'OpenSmokeOrderRequiresCleanup'
-        $summary.RerunGuidance = 'Wait for the exchange order to reach a terminal state or cancel it on testnet before rerunning the smoke.'
+    if ($summary.BrokerSubmitReached -and $summary.ExecutionTraceCount -lt 1) {
+        throw 'Broker-submitted smoke run did not persist the minimum execution trace evidence.'
+    }
+
+    if ($summary.ScopeOpenExecutionOrderCount -ne 0 -or $summary.ScopeOpenPositionCount -ne 0) {
+        throw "Smoke-local cleanup did not fully close scoped exposure. OpenOrders=$($summary.ScopeOpenExecutionOrderCount); OpenPositions=$($summary.ScopeOpenPositionCount)."
     }
 
     Write-SmokeSummary -Summary $summary -SummaryPath $summaryPath
@@ -784,13 +913,13 @@ try {
     Write-Host ('FailureCode=' + ($summary.FinalOrder.FailureCode ?? 'none'))
     Write-Host ('ExternalOrderIdPresent=' + $summary.ExternalOrderIdPresent)
     Write-Host ('ReconciliationStatus=' + ($summary.FinalOrder.ReconciliationStatus ?? 'none'))
+    Write-Host ('CleanupApplied=' + $summary.CleanupApplied)
+    Write-Host ('ScopeOpenExecutionOrderCount=' + $summary.ScopeOpenExecutionOrderCount)
+    Write-Host ('ScopeOpenPositionCount=' + $summary.ScopeOpenPositionCount)
+    Write-Host ('ExecutionTraceCount=' + $summary.ExecutionTraceCount)
     Write-Host ('PositionCount=' + $summary.PositionCount)
     Write-Host ('BalanceCount=' + $summary.BalanceCount)
     Write-Host ('SummaryPath=' + $summaryPath)
-
-    if ($summary.OutcomeKind -eq 'RerunCleanupRequired') {
-        throw 'Pilot smoke observed an open broker-submitted order that requires cleanup before rerun.'
-    }
 }
 catch {
     $summary.LastWaitStage = $lastWaitStage
@@ -801,6 +930,19 @@ catch {
     catch {
         $summary.FailureSummaryError = $_.Exception.Message
     }
+
+    $summary.SourceCleanupLines = Get-LatestLogLines -Path $sourceCleanupStdOutPath -Pattern '.' -Take 40
+    $summary.SourceCleanupErrorLines = Get-LatestLogLines -Path $sourceCleanupStdErrPath -Pattern '.' -Take 20
+    $summary.WarmupCleanupLines = Get-LatestLogLines -Path $warmupCleanupStdOutPath -Pattern '.' -Take 40
+    $summary.WarmupCleanupErrorLines = Get-LatestLogLines -Path $warmupCleanupStdErrPath -Pattern '.' -Take 20
+    $summary.PostRunCleanupLines = Get-LatestLogLines -Path $postRunCleanupStdOutPath -Pattern '.' -Take 40
+    $summary.PostRunCleanupErrorLines = Get-LatestLogLines -Path $postRunCleanupStdErrPath -Pattern '.' -Take 20
+    $summary.ScopeOpenExecutionOrders = @(Get-SmokeScopedOpenExecutionOrders -ConnectionString $connectionString -OwnerUserId $smokeUserId)
+    $summary.ScopeOpenPositions = @(Get-SmokeScopedOpenPositions -ConnectionString $connectionString -OwnerUserId $smokeUserId)
+    $summary.CleanupOrders = @(Get-SmokeCleanupOrders -ConnectionString $connectionString -OwnerUserId $smokeUserId)
+    $summary.ScopeOpenExecutionOrderCount = @([array]$summary.ScopeOpenExecutionOrders).Count
+    $summary.ScopeOpenPositionCount = @([array]$summary.ScopeOpenPositions).Count
+    $summary.CleanupOrderCount = @([array]$summary.CleanupOrders).Count
     Write-SmokeSummary -Summary $summary -SummaryPath $summaryPath
     Write-Host ('SummaryPath=' + $summaryPath)
     throw
@@ -810,6 +952,8 @@ finally {
     Stop-ManagedProcess -Handle $warmupWorkerHandle
     Stop-ManagedProcess -Handle $webHandle
 }
+
+
 
 
 

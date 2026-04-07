@@ -1,6 +1,9 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using CoinBot.Application.Abstractions.Ai;
+using CoinBot.Application.Abstractions.Features;
 using CoinBot.Domain.Enums;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -44,6 +47,19 @@ public sealed class AiSignalEvaluator(
                 AiSignalFallbackReason.FeatureSnapshotUnavailable,
                 "Feature snapshot is unavailable for AI evaluation.",
                 null,
+                providerName: NormalizeProviderName(optionsValue.SelectedProvider),
+                providerModel: null,
+                latencyMs: 0,
+                evaluatedAtUtc: nowUtc);
+        }
+
+        if (request.FeatureSnapshot.QualityReasonCode != FeatureSnapshotQualityReason.None ||
+            request.FeatureSnapshot.SnapshotState == FeatureSnapshotState.Invalid)
+        {
+            return CreateFallback(
+                AiSignalFallbackReason.FeatureSnapshotQualityFailed,
+                BuildQualityFailureSummary(request.FeatureSnapshot),
+                request.FeatureSnapshot.Id,
                 providerName: NormalizeProviderName(optionsValue.SelectedProvider),
                 providerModel: null,
                 latencyMs: 0,
@@ -172,6 +188,18 @@ public sealed class AiSignalEvaluator(
         {
             using var document = JsonDocument.Parse(payload);
             var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return CreateFallback(
+                    AiSignalFallbackReason.InvalidPayload,
+                    "AI provider payload root must be a JSON object.",
+                    featureSnapshotId,
+                    providerName,
+                    providerModel,
+                    latencyMs,
+                    evaluatedAtUtc);
+            }
+
             var rawDirection = ResolveString(root, "direction", "signalDirection", "signal");
             var rawReasonSummary = ResolveString(root, "reasonSummary", "summary", "reason");
             var confidenceScore = ResolveDecimal(root, "confidenceScore", "confidence");
@@ -200,18 +228,7 @@ public sealed class AiSignalEvaluator(
                     evaluatedAtUtc);
             }
 
-            if (confidenceScore.Value < 0m || confidenceScore.Value > 1m)
-            {
-                return CreateFallback(
-                    AiSignalFallbackReason.UnsupportedResponse,
-                    "AI provider returned an unsupported confidence score.",
-                    featureSnapshotId,
-                    providerName,
-                    providerModel,
-                    latencyMs,
-                    evaluatedAtUtc);
-            }
-
+            var normalizedConfidence = ClampConfidence(confidenceScore.Value);
             var summary = TrimReason(
                 string.IsNullOrWhiteSpace(rawReasonSummary)
                     ? BuildDefaultSummary(direction)
@@ -219,8 +236,8 @@ public sealed class AiSignalEvaluator(
 
             return new AiSignalEvaluationResult(
                 direction,
-                confidenceScore.Value,
-                summary,
+                normalizedConfidence,
+                string.IsNullOrWhiteSpace(summary) ? BuildDefaultSummary(direction) : summary,
                 featureSnapshotId,
                 providerName,
                 providerModel,
@@ -271,14 +288,12 @@ public sealed class AiSignalEvaluator(
                 continue;
             }
 
-            return propertyValue.ValueKind switch
+            if (propertyValue.ValueKind == JsonValueKind.String)
             {
-                JsonValueKind.String => propertyValue.GetString(),
-                JsonValueKind.Number => propertyValue.GetRawText(),
-                JsonValueKind.True => bool.TrueString,
-                JsonValueKind.False => bool.FalseString,
-                _ => propertyValue.GetRawText()
-            };
+                return propertyValue.GetString();
+            }
+
+            return null;
         }
 
         return null;
@@ -299,10 +314,12 @@ public sealed class AiSignalEvaluator(
             }
 
             if (propertyValue.ValueKind == JsonValueKind.String &&
-                decimal.TryParse(propertyValue.GetString(), out var parsedValue))
+                decimal.TryParse(propertyValue.GetString(), NumberStyles.Number, CultureInfo.InvariantCulture, out var parsedValue))
             {
                 return parsedValue;
             }
+
+            return null;
         }
 
         return null;
@@ -319,7 +336,33 @@ public sealed class AiSignalEvaluator(
 
     private string TrimReason(string value)
     {
-        var normalizedValue = value.Trim();
+        var builder = new StringBuilder(value.Length);
+        var previousWasWhitespace = false;
+
+        foreach (var character in value)
+        {
+            if (char.IsControl(character))
+            {
+                continue;
+            }
+
+            if (char.IsWhiteSpace(character))
+            {
+                if (previousWasWhitespace)
+                {
+                    continue;
+                }
+
+                builder.Append(' ');
+                previousWasWhitespace = true;
+                continue;
+            }
+
+            builder.Append(character);
+            previousWasWhitespace = false;
+        }
+
+        var normalizedValue = builder.ToString().Trim();
         return normalizedValue.Length <= optionsValue.MaxReasonLength
             ? normalizedValue
             : normalizedValue[..optionsValue.MaxReasonLength];
@@ -333,6 +376,25 @@ public sealed class AiSignalEvaluator(
             : normalizedProviderName;
     }
 
+    private static decimal ClampConfidence(decimal value)
+    {
+        return value switch
+        {
+            < 0m => 0m,
+            > 1m => 1m,
+            _ => value
+        };
+    }
+
+    private static string BuildQualityFailureSummary(TradingFeatureSnapshotModel featureSnapshot)
+    {
+        var summary = string.IsNullOrWhiteSpace(featureSnapshot.MissingFeatureSummary)
+            ? $"Feature snapshot quality failed: {featureSnapshot.QualityReasonCode}."
+            : $"Feature snapshot quality failed: {featureSnapshot.QualityReasonCode}. {featureSnapshot.MissingFeatureSummary}";
+
+        return summary;
+    }
+
     private static string BuildDefaultSummary(AiSignalDirection direction)
     {
         return direction switch
@@ -343,3 +405,9 @@ public sealed class AiSignalEvaluator(
         };
     }
 }
+
+
+
+
+
+

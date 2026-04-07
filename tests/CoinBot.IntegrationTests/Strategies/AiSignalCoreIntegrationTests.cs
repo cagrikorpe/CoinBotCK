@@ -109,6 +109,51 @@ public sealed class AiSignalCoreIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task InvalidQualityFeatureSnapshot_ToAiOverlay_SuppressesSignal_OnSqlServer()
+    {
+        var databaseName = $"CoinBotAiSignalCoreQuality_{Guid.NewGuid():N}";
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString(databaseName);
+        var nowUtc = new DateTimeOffset(2026, 4, 6, 12, 0, 0, TimeSpan.Zero);
+        await using var dbContext = CreateDbContext(connectionString);
+        await dbContext.Database.EnsureDeletedAsync();
+        await dbContext.Database.EnsureCreatedAsync();
+
+        try
+        {
+            SeedStrategyGraph(dbContext, nowUtc.UtcDateTime);
+            await dbContext.SaveChangesAsync();
+
+            var featureSnapshot = PromoteForLongOverlay(await CaptureFeatureSnapshotAsync(dbContext, nowUtc, stale: false)) with
+            {
+                SnapshotState = FeatureSnapshotState.Invalid,
+                QualityReasonCode = FeatureSnapshotQualityReason.IncompleteSnapshot,
+                MissingFeatureSummary = "MissingFeatures=RelativeVolume,KlingerSignal"
+            };
+            var service = CreateSignalService(dbContext, nowUtc, CreateEnabledAiOptions());
+            var versionId = await dbContext.TradingStrategyVersions.Select(entity => entity.Id).SingleAsync();
+
+            var result = await service.GenerateAsync(
+                new GenerateStrategySignalsRequest(
+                    versionId,
+                    CreateContext(nowUtc.UtcDateTime),
+                    featureSnapshot));
+            var decisionTrace = await dbContext.DecisionTraces.SingleAsync();
+
+            Assert.Empty(result.Signals);
+            var aiEvaluation = Assert.Single(result.AiEvaluations);
+            Assert.True(aiEvaluation.IsFallback);
+            Assert.Equal(AiSignalFallbackReason.FeatureSnapshotQualityFailed, aiEvaluation.FallbackReason);
+            Assert.Equal("SuppressedByAi", decisionTrace.DecisionOutcome);
+            Assert.Equal("AiFeatureSnapshotQualityFailed", decisionTrace.DecisionReasonCode);
+            Assert.Contains("MissingFeatures=RelativeVolume,KlingerSignal", decisionTrace.SnapshotJson, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await SqlServerIntegrationDatabase.CleanupDatabaseAsync(connectionString);
+        }
+    }
+
     private static AiSignalOptions CreateEnabledAiOptions()
     {
         return new AiSignalOptions
@@ -389,4 +434,5 @@ public sealed class AiSignalCoreIntegrationTests
         public bool HasIsolationBypass => true;
     }
 }
+
 

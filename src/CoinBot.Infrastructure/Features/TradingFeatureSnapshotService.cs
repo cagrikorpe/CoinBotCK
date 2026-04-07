@@ -36,6 +36,10 @@ public sealed class TradingFeatureSnapshotService(
     private const int KdjPeriod = 9;
     private const int FisherPeriod = 10;
     private const int RelativeVolumePeriod = 20;
+    private const int MfiPeriod = 14;
+    private const int KlingerFastPeriod = 34;
+    private const int KlingerSlowPeriod = 55;
+    private const int KlingerSignalPeriod = 13;
     private const int ChandelierPeriod = 22;
     private const decimal ChandelierAtrMultiplier = 3m;
     private const int PmaxAtrPeriod = 10;
@@ -108,6 +112,8 @@ public sealed class TradingFeatureSnapshotService(
             MarketDataTimestampUtc = derived.MarketDataTimestampUtc,
             FeatureVersion = FeatureVersionValue,
             SnapshotState = derived.SnapshotState,
+            QualityReasonCode = derived.QualityReasonCode,
+            MissingFeatureSummary = derived.MissingFeatureSummary,
             MarketDataReasonCode = derived.MarketDataReasonCode,
             SampleCount = candles.Count,
             RequiredSampleCount = RequiredSampleCount,
@@ -134,6 +140,9 @@ public sealed class TradingFeatureSnapshotService(
             VolumeSpikeRatio = derived.VolumeSpikeRatio,
             RelativeVolume = derived.RelativeVolume,
             Obv = derived.Obv,
+            Mfi = derived.Mfi,
+            KlingerOscillator = derived.KlingerOscillator,
+            KlingerSignal = derived.KlingerSignal,
             Plane = request.Plane,
             TradingMode = tradingModeResolution.EffectiveMode,
             HasOpenPosition = hasOpenPosition,
@@ -490,54 +499,97 @@ public sealed class TradingFeatureSnapshotService(
         var closes = candles.Select(item => item.ClosePrice).ToArray();
         var volumes = candles.Select(item => item.Volume).ToArray();
         var latestClose = closes.Length > 0 ? closes[^1] : resolvedReferencePrice;
+        var invalidNumericValueDetected = false;
 
-        var ema20 = ComputeEma(closes, 20);
-        var ema50 = ComputeEma(closes, 50);
-        var ema200 = ComputeEma(closes, 200);
-        var alma = ComputeAlma(closes, AlmaPeriod, AlmaOffset, AlmaSigma);
-        var frama = ComputeFrama(highs, lows, closes, FramaPeriod);
+        var ema20 = ComputeEma(closes, 20, ref invalidNumericValueDetected);
+        var ema50 = ComputeEma(closes, 50, ref invalidNumericValueDetected);
+        var ema200 = ComputeEma(closes, 200, ref invalidNumericValueDetected);
+        var alma = ComputeAlma(closes, AlmaPeriod, AlmaOffset, AlmaSigma, ref invalidNumericValueDetected);
+        var frama = ComputeFrama(highs, lows, closes, FramaPeriod, ref invalidNumericValueDetected);
         var atr = ComputeAtr(highs, lows, closes, AtrPeriod);
         var macd = indicatorSnapshot?.Macd.IsReady == true
             ? (indicatorSnapshot.Macd.MacdLine, indicatorSnapshot.Macd.SignalLine, indicatorSnapshot.Macd.Histogram)
-            : ComputeMacd(closes, 12, 26, 9);
+            : ComputeMacd(closes, 12, 26, 9, ref invalidNumericValueDetected);
         var rsi = indicatorSnapshot?.Rsi.IsReady == true
             ? indicatorSnapshot.Rsi.Value
             : ComputeRsi(closes, 14);
         var bollinger = indicatorSnapshot?.Bollinger.IsReady == true
             ? (indicatorSnapshot.Bollinger.MiddleBand, indicatorSnapshot.Bollinger.UpperBand, indicatorSnapshot.Bollinger.LowerBand, indicatorSnapshot.Bollinger.StandardDeviation)
-            : ComputeBollinger(closes, BollingerPeriod, BollingerMultiplier);
+            : ComputeBollinger(closes, BollingerPeriod, BollingerMultiplier, ref invalidNumericValueDetected);
         var bollingerPercentB = ComputeBollingerPercentB(latestClose, bollinger.Item2, bollinger.Item3);
         var bollingerBandWidth = ComputeBollingerBandwidth(bollinger.Item1, bollinger.Item2, bollinger.Item3);
         var (kdjK, kdjD, kdjJ) = ComputeKdj(highs, lows, closes, KdjPeriod);
-        var fisher = ComputeFisherTransform(highs, lows, closes, FisherPeriod);
+        var fisher = ComputeFisherTransform(highs, lows, closes, FisherPeriod, ref invalidNumericValueDetected);
         var relativeVolume = ComputeRelativeVolume(volumes, RelativeVolumePeriod);
         var volumeSpikeRatio = ComputeVolumeSpike(volumes, RelativeVolumePeriod);
         var obv = ComputeObv(closes, volumes);
+        var mfi = ComputeMfi(highs, lows, closes, volumes, MfiPeriod);
+        var (klingerOscillator, klingerSignal) = ComputeKlinger(highs, lows, closes, volumes, KlingerFastPeriod, KlingerSlowPeriod, KlingerSignalPeriod, ref invalidNumericValueDetected);
         var keltnerChannelRelation = ComputeKeltnerChannelRelation(latestClose, ema20, atr);
-        var pmaxValue = ComputePmax(highs, lows, closes, PmaxMaPeriod, PmaxAtrPeriod, PmaxAtrMultiplier);
+        var pmaxValue = ComputePmax(highs, lows, closes, PmaxMaPeriod, PmaxAtrPeriod, PmaxAtrMultiplier, ref invalidNumericValueDetected);
         var chandelierExit = ComputeChandelierExit(highs, atr, ChandelierPeriod, ChandelierAtrMultiplier);
 
-        var snapshotState = ResolveSnapshotState(candles.Count, marketDataTimestampUtc, latencySnapshot, indicatorSnapshot);
+        var baseSnapshotState = ResolveSnapshotState(candles.Count, marketDataTimestampUtc, latencySnapshot, indicatorSnapshot);
+        var qualityEvaluation = EvaluateSnapshotQuality(
+            candles,
+            indicatorSnapshot,
+            baseSnapshotState,
+            marketDataTimestampUtc,
+            resolvedReferencePrice,
+            latestClose,
+            invalidNumericValueDetected,
+            ema20,
+            ema50,
+            ema200,
+            alma,
+            frama,
+            rsi,
+            macd.MacdLine,
+            macd.SignalLine,
+            macd.Histogram,
+            kdjK,
+            kdjD,
+            kdjJ,
+            fisher,
+            atr,
+            bollingerPercentB,
+            bollingerBandWidth,
+            keltnerChannelRelation,
+            pmaxValue,
+            chandelierExit,
+            volumeSpikeRatio,
+            relativeVolume,
+            obv,
+            mfi,
+            klingerOscillator,
+            klingerSignal);
+        var snapshotState = ResolveQualifiedSnapshotState(baseSnapshotState, qualityEvaluation.QualityReasonCode);
         var marketDataReasonCode = ResolveMarketDataReasonCode(snapshotState, latencySnapshot, indicatorSnapshot);
         var primaryRegime = ResolvePrimaryRegime(latestClose, ema50, ema200, frama, pmaxValue, bollingerBandWidth);
-        var momentumBias = ResolveMomentumBias(rsi, macd.Histogram, fisher);
+        var momentumBias = ResolveMomentumBias(rsi, macd.Histogram, fisher, mfi, klingerOscillator);
         var volatilityState = ResolveVolatilityState(snapshotState, atr, latestClose, bollingerBandWidth, relativeVolume);
         var (lastDecisionOutcome, lastDecisionCode, lastExecutionState, lastFailureCode, lastVetoReasonCode) =
             ResolveDecisionContext(latestOrder, latestVeto);
         var topSignalHints = BuildTopSignalHints(
             snapshotState,
+            qualityEvaluation.QualityReasonCode,
+            qualityEvaluation.MissingFeatureSummary,
             marketDataReasonCode,
             primaryRegime,
             momentumBias,
             volatilityState,
             relativeVolume,
             volumeSpikeRatio,
+            mfi,
+            klingerOscillator,
             hasOpenPosition,
             isInCooldown,
             lastFailureCode,
             lastVetoReasonCode);
         var featureSummary = BuildFeatureSummary(
             snapshotState,
+            qualityEvaluation.QualityReasonCode,
+            qualityEvaluation.MissingFeatureSummary,
             marketDataReasonCode,
             primaryRegime,
             momentumBias,
@@ -548,13 +600,19 @@ public sealed class TradingFeatureSnapshotService(
             atr,
             relativeVolume,
             volumeSpikeRatio,
+            mfi,
+            klingerOscillator,
+            klingerSignal,
             candles.Count,
-            indicatorSnapshot is not null && indicatorSnapshot.State == IndicatorDataState.Ready);
+            indicatorSnapshot is not null && indicatorSnapshot.State == IndicatorDataState.Ready,
+            qualityEvaluation.QualityReasonCode);
 
         return new DerivedFeatureSnapshot(
             marketDataTimestampUtc,
             resolvedReferencePrice,
             snapshotState,
+            qualityEvaluation.QualityReasonCode,
+            qualityEvaluation.MissingFeatureSummary,
             marketDataReasonCode,
             ema20,
             ema50,
@@ -578,6 +636,9 @@ public sealed class TradingFeatureSnapshotService(
             volumeSpikeRatio,
             relativeVolume,
             obv,
+            mfi,
+            klingerOscillator,
+            klingerSignal,
             primaryRegime,
             momentumBias,
             volatilityState,
@@ -622,6 +683,212 @@ public sealed class TradingFeatureSnapshotService(
         }
 
         return FeatureSnapshotState.Ready;
+    }
+
+    private static FeatureSnapshotState ResolveQualifiedSnapshotState(
+        FeatureSnapshotState baseSnapshotState,
+        FeatureSnapshotQualityReason qualityReasonCode)
+    {
+        return qualityReasonCode switch
+        {
+            FeatureSnapshotQualityReason.None => baseSnapshotState,
+            FeatureSnapshotQualityReason.InsufficientCandles => baseSnapshotState == FeatureSnapshotState.Stale
+                ? FeatureSnapshotState.Stale
+                : FeatureSnapshotState.WarmingUp,
+            FeatureSnapshotQualityReason.MissingInputs => baseSnapshotState == FeatureSnapshotState.Stale
+                ? FeatureSnapshotState.Stale
+                : FeatureSnapshotState.MissingData,
+            FeatureSnapshotQualityReason.InvalidNumericValue or FeatureSnapshotQualityReason.InvalidRange or FeatureSnapshotQualityReason.IncompleteSnapshot => FeatureSnapshotState.Invalid,
+            _ => baseSnapshotState
+        };
+    }
+
+    private static FeatureSnapshotQualityEvaluation EvaluateSnapshotQuality(
+        IReadOnlyList<FeatureCandle> candles,
+        StrategyIndicatorSnapshot? indicatorSnapshot,
+        FeatureSnapshotState baseSnapshotState,
+        DateTime? marketDataTimestampUtc,
+        decimal? referencePrice,
+        decimal? latestClose,
+        bool invalidNumericValueDetected,
+        params decimal?[] requiredIndicators)
+    {
+        if (candles.Count == 0 || !marketDataTimestampUtc.HasValue)
+        {
+            return new FeatureSnapshotQualityEvaluation(
+                FeatureSnapshotQualityReason.MissingInputs,
+                BuildMissingInputSummary(candles.Count == 0, !marketDataTimestampUtc.HasValue, !referencePrice.HasValue, !latestClose.HasValue, indicatorSnapshot));
+        }
+
+        if (baseSnapshotState == FeatureSnapshotState.WarmingUp)
+        {
+            return new FeatureSnapshotQualityEvaluation(
+                FeatureSnapshotQualityReason.InsufficientCandles,
+                FormattableString.Invariant($"SampleCount={candles.Count}/{RequiredSampleCount}; IndicatorState={indicatorSnapshot?.State.ToString() ?? "Unavailable"}"));
+        }
+
+        if (baseSnapshotState == FeatureSnapshotState.MissingData)
+        {
+            return new FeatureSnapshotQualityEvaluation(
+                FeatureSnapshotQualityReason.MissingInputs,
+                BuildMissingInputSummary(false, false, !referencePrice.HasValue, !latestClose.HasValue, indicatorSnapshot));
+        }
+
+        if (HasInvalidCandleRanges(candles) || HasInvalidIndicatorRanges(referencePrice, latestClose, requiredIndicators))
+        {
+            return new FeatureSnapshotQualityEvaluation(
+                FeatureSnapshotQualityReason.InvalidRange,
+                "One or more candle or indicator values are outside the allowed range.");
+        }
+
+        if (invalidNumericValueDetected)
+        {
+            return new FeatureSnapshotQualityEvaluation(
+                FeatureSnapshotQualityReason.InvalidNumericValue,
+                "Indicator computation produced NaN, infinity, or overflowed numeric output.");
+        }
+
+        if (baseSnapshotState == FeatureSnapshotState.Ready)
+        {
+            var missingIndicators = new List<string>();
+            var indicatorNames = new[]
+            {
+                "Ema20",
+                "Ema50",
+                "Ema200",
+                "Alma",
+                "Frama",
+                "Rsi",
+                "MacdLine",
+                "MacdSignal",
+                "MacdHistogram",
+                "KdjK",
+                "KdjD",
+                "KdjJ",
+                "FisherTransform",
+                "Atr",
+                "BollingerPercentB",
+                "BollingerBandWidth",
+                "KeltnerChannelRelation",
+                "PmaxValue",
+                "ChandelierExit",
+                "VolumeSpikeRatio",
+                "RelativeVolume",
+                "Obv",
+                "Mfi",
+                "KlingerOscillator",
+                "KlingerSignal"
+            };
+
+            for (var index = 0; index < indicatorNames.Length && index < requiredIndicators.Length; index++)
+            {
+                if (!requiredIndicators[index].HasValue)
+                {
+                    missingIndicators.Add(indicatorNames[index]);
+                }
+            }
+
+            if (missingIndicators.Count > 0)
+            {
+                return new FeatureSnapshotQualityEvaluation(
+                    FeatureSnapshotQualityReason.IncompleteSnapshot,
+                    BuildMissingFeatureSummary(missingIndicators));
+            }
+        }
+
+        return new FeatureSnapshotQualityEvaluation(FeatureSnapshotQualityReason.None, null);
+    }
+
+    private static bool HasInvalidCandleRanges(IReadOnlyList<FeatureCandle> candles)
+    {
+        return candles.Any(candle =>
+            candle.OpenPrice <= 0m ||
+            candle.ClosePrice <= 0m ||
+            candle.HighPrice <= 0m ||
+            candle.LowPrice <= 0m ||
+            candle.Volume < 0m ||
+            candle.HighPrice < candle.LowPrice ||
+            candle.HighPrice < candle.OpenPrice ||
+            candle.HighPrice < candle.ClosePrice ||
+            candle.LowPrice > candle.OpenPrice ||
+            candle.LowPrice > candle.ClosePrice ||
+            candle.CloseTimeUtc < candle.OpenTimeUtc ||
+            candle.ReceivedAtUtc < candle.CloseTimeUtc);
+    }
+
+    private static bool HasInvalidIndicatorRanges(decimal? referencePrice, decimal? latestClose, params decimal?[] requiredIndicators)
+    {
+        if (referencePrice.HasValue && referencePrice.Value <= 0m)
+        {
+            return true;
+        }
+
+        if (latestClose.HasValue && latestClose.Value <= 0m)
+        {
+            return true;
+        }
+
+        if (requiredIndicators.Length < 25)
+        {
+            return false;
+        }
+
+        var rsi = requiredIndicators[5];
+        var atr = requiredIndicators[13];
+        var bollingerBandWidth = requiredIndicators[15];
+        var volumeSpikeRatio = requiredIndicators[19];
+        var relativeVolume = requiredIndicators[20];
+        var mfi = requiredIndicators[22];
+
+        return (rsi.HasValue && (rsi.Value < 0m || rsi.Value > 100m)) ||
+               (mfi.HasValue && (mfi.Value < 0m || mfi.Value > 100m)) ||
+               (atr.HasValue && atr.Value < 0m) ||
+               (bollingerBandWidth.HasValue && bollingerBandWidth.Value < 0m) ||
+               (volumeSpikeRatio.HasValue && volumeSpikeRatio.Value < 0m) ||
+               (relativeVolume.HasValue && relativeVolume.Value < 0m);
+    }
+
+    private static string BuildMissingInputSummary(
+        bool missingCandles,
+        bool missingMarketTimestamp,
+        bool missingReferencePrice,
+        bool missingLatestClose,
+        StrategyIndicatorSnapshot? indicatorSnapshot)
+    {
+        var missingInputs = new List<string>();
+        if (missingCandles)
+        {
+            missingInputs.Add("Candles");
+        }
+
+        if (missingMarketTimestamp)
+        {
+            missingInputs.Add("MarketDataTimestampUtc");
+        }
+
+        if (missingReferencePrice)
+        {
+            missingInputs.Add("ReferencePrice");
+        }
+
+        if (missingLatestClose)
+        {
+            missingInputs.Add("LatestClose");
+        }
+
+        if (indicatorSnapshot?.State == IndicatorDataState.MissingData)
+        {
+            missingInputs.Add("IndicatorSnapshot");
+        }
+
+        return missingInputs.Count == 0
+            ? "MissingInputs=Unknown"
+            : $"MissingInputs={string.Join(',', missingInputs.Distinct(StringComparer.Ordinal))}";
+    }
+
+    private static string BuildMissingFeatureSummary(IEnumerable<string> missingIndicators)
+    {
+        return $"MissingFeatures={string.Join(',', missingIndicators.Where(static item => !string.IsNullOrWhiteSpace(item)).Distinct(StringComparer.Ordinal))}";
     }
 
     private static DegradedModeReasonCode ResolveMarketDataReasonCode(
@@ -687,29 +954,62 @@ public sealed class TradingFeatureSnapshotService(
         return "Transition";
     }
 
-    private static string ResolveMomentumBias(decimal? rsi, decimal? macdHistogram, decimal? fisher)
+    private static string ResolveMomentumBias(decimal? rsi, decimal? macdHistogram, decimal? fisher, decimal? mfi, decimal? klingerOscillator)
     {
-        if (rsi is null && macdHistogram is null && fisher is null)
+        if (rsi is null && macdHistogram is null && fisher is null && mfi is null && klingerOscillator is null)
         {
             return "Unknown";
         }
 
-        if (rsi <= 30m)
+        if ((rsi.HasValue && rsi.Value <= 30m) || (mfi.HasValue && mfi.Value <= 20m))
         {
             return "Oversold";
         }
 
-        if (rsi >= 70m)
+        if ((rsi.HasValue && rsi.Value >= 70m) || (mfi.HasValue && mfi.Value >= 80m))
         {
             return "Overbought";
         }
 
-        if (rsi >= 55m && macdHistogram >= 0m && fisher >= 0m)
+        var bullishVotes = 0;
+        var bearishVotes = 0;
+
+        if (rsi.HasValue)
+        {
+            if (rsi.Value >= 55m) bullishVotes++;
+            if (rsi.Value <= 45m) bearishVotes++;
+        }
+
+        if (macdHistogram.HasValue)
+        {
+            if (macdHistogram.Value >= 0m) bullishVotes++;
+            if (macdHistogram.Value <= 0m) bearishVotes++;
+        }
+
+        if (fisher.HasValue)
+        {
+            if (fisher.Value >= 0m) bullishVotes++;
+            if (fisher.Value <= 0m) bearishVotes++;
+        }
+
+        if (mfi.HasValue)
+        {
+            if (mfi.Value >= 55m) bullishVotes++;
+            if (mfi.Value <= 45m) bearishVotes++;
+        }
+
+        if (klingerOscillator.HasValue)
+        {
+            if (klingerOscillator.Value >= 0m) bullishVotes++;
+            if (klingerOscillator.Value <= 0m) bearishVotes++;
+        }
+
+        if (bullishVotes >= 3)
         {
             return "Bullish";
         }
 
-        if (rsi <= 45m && macdHistogram <= 0m && fisher <= 0m)
+        if (bearishVotes >= 3)
         {
             return "Bearish";
         }
@@ -791,18 +1091,32 @@ public sealed class TradingFeatureSnapshotService(
 
     private static string BuildTopSignalHints(
         FeatureSnapshotState snapshotState,
+        FeatureSnapshotQualityReason qualityReasonCode,
+        string? missingFeatureSummary,
         DegradedModeReasonCode marketDataReasonCode,
         string primaryRegime,
         string momentumBias,
         string volatilityState,
         decimal? relativeVolume,
         decimal? volumeSpikeRatio,
+        decimal? mfi,
+        decimal? klingerOscillator,
         bool hasOpenPosition,
         bool isInCooldown,
         string? latestFailureCode,
         string? lastVetoReasonCode)
     {
         var hints = new List<string>();
+
+        if (qualityReasonCode != FeatureSnapshotQualityReason.None)
+        {
+            hints.Add($"Quality:{qualityReasonCode}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(missingFeatureSummary))
+        {
+            hints.Add($"Missing:{TrimSummaryValue(missingFeatureSummary!)}");
+        }
 
         if (snapshotState == FeatureSnapshotState.Stale)
         {
@@ -815,6 +1129,10 @@ public sealed class TradingFeatureSnapshotService(
         else if (snapshotState == FeatureSnapshotState.WarmingUp)
         {
             hints.Add("FeatureWarmup");
+        }
+        else if (snapshotState == FeatureSnapshotState.Invalid)
+        {
+            hints.Add("FeatureInvalid");
         }
 
         if (!string.Equals(primaryRegime, "Unknown", StringComparison.Ordinal))
@@ -844,6 +1162,23 @@ public sealed class TradingFeatureSnapshotService(
             hints.Add("VolumeSpikeDetected");
         }
 
+        if (mfi.HasValue)
+        {
+            if (mfi.Value <= 20m)
+            {
+                hints.Add("MfiOversold");
+            }
+            else if (mfi.Value >= 80m)
+            {
+                hints.Add("MfiOverbought");
+            }
+        }
+
+        if (klingerOscillator.HasValue)
+        {
+            hints.Add(klingerOscillator.Value >= 0m ? "KlingerBullish" : "KlingerBearish");
+        }
+
         if (hasOpenPosition)
         {
             hints.Add("OpenPositionPresent");
@@ -867,11 +1202,13 @@ public sealed class TradingFeatureSnapshotService(
         return string.Join(" | ", hints
             .Where(item => !string.IsNullOrWhiteSpace(item))
             .Distinct(StringComparer.Ordinal)
-            .Take(4));
+            .Take(6));
     }
 
     private static string BuildFeatureSummary(
         FeatureSnapshotState snapshotState,
+        FeatureSnapshotQualityReason qualityReasonCode,
+        string? missingFeatureSummary,
         DegradedModeReasonCode marketDataReasonCode,
         string primaryRegime,
         string momentumBias,
@@ -881,9 +1218,12 @@ public sealed class TradingFeatureSnapshotService(
         var normalizedHints = string.IsNullOrWhiteSpace(topSignalHints)
             ? "none"
             : topSignalHints;
+        var normalizedMissingSummary = string.IsNullOrWhiteSpace(missingFeatureSummary)
+            ? "none"
+            : missingFeatureSummary;
 
         return FormattableString.Invariant(
-            $"State={snapshotState}; MarketReason={marketDataReasonCode}; Regime={primaryRegime}; Momentum={momentumBias}; Volatility={volatilityState}; Hints={normalizedHints}");
+            $"State={snapshotState}; Quality={qualityReasonCode}; Missing={normalizedMissingSummary}; MarketReason={marketDataReasonCode}; Regime={primaryRegime}; Momentum={momentumBias}; Volatility={volatilityState}; Hints={normalizedHints}");
     }
 
     private static string BuildNormalizationMeta(
@@ -891,18 +1231,30 @@ public sealed class TradingFeatureSnapshotService(
         decimal? atr,
         decimal? relativeVolume,
         decimal? volumeSpikeRatio,
+        decimal? mfi,
+        decimal? klingerOscillator,
+        decimal? klingerSignal,
         int sampleCount,
-        bool indicatorParityAvailable)
+        bool indicatorParityAvailable,
+        FeatureSnapshotQualityReason qualityReasonCode)
     {
         var atrPercent = latestClose.HasValue && latestClose.Value > 0m && atr.HasValue
             ? atr.Value / latestClose.Value
             : (decimal?)null;
 
         return FormattableString.Invariant(
-            $"ClosePrice={FormatDecimal(latestClose)}; AtrPct={FormatDecimal(atrPercent)}; RelativeVolume={FormatDecimal(relativeVolume)}; VolumeSpikeRatio={FormatDecimal(volumeSpikeRatio)}; SampleCount={sampleCount}; IndicatorParity={indicatorParityAvailable}");
+            $"ClosePrice={FormatDecimal(latestClose)}; AtrPct={FormatDecimal(atrPercent)}; RelativeVolume={FormatDecimal(relativeVolume)}; VolumeSpikeRatio={FormatDecimal(volumeSpikeRatio)}; Mfi={FormatDecimal(mfi)}; KlingerOscillator={FormatDecimal(klingerOscillator)}; KlingerSignal={FormatDecimal(klingerSignal)}; SampleCount={sampleCount}; IndicatorParity={indicatorParityAvailable}; Quality={qualityReasonCode}");
     }
 
-    private static decimal? ComputeEma(IReadOnlyList<decimal> values, int period)
+    private static string TrimSummaryValue(string value, int maxLength = 96)
+    {
+        var normalizedValue = value.Trim();
+        return normalizedValue.Length <= maxLength
+            ? normalizedValue
+            : normalizedValue[..maxLength];
+    }
+
+    private static decimal? ComputeEma(IReadOnlyList<decimal> values, int period, ref bool invalidNumericValueDetected)
     {
         if (values.Count < period || period <= 0)
         {
@@ -917,10 +1269,10 @@ public sealed class TradingFeatureSnapshotService(
             ema = (((double)values[index] - ema) * multiplier) + ema;
         }
 
-        return ToDecimal(ema);
+        return TryConvertDecimal(ema, ref invalidNumericValueDetected);
     }
 
-    private static decimal? ComputeAlma(IReadOnlyList<decimal> values, int period, double offset, double sigma)
+    private static decimal? ComputeAlma(IReadOnlyList<decimal> values, int period, double offset, double sigma, ref bool invalidNumericValueDetected)
     {
         if (values.Count < period || period <= 0)
         {
@@ -940,14 +1292,15 @@ public sealed class TradingFeatureSnapshotService(
             weightTotal += weight;
         }
 
-        return weightTotal <= 0d ? null : ToDecimal(weightedSum / weightTotal);
+        return weightTotal <= 0d ? null : TryConvertDecimal(weightedSum / weightTotal, ref invalidNumericValueDetected);
     }
 
     private static decimal? ComputeFrama(
         IReadOnlyList<decimal> highs,
         IReadOnlyList<decimal> lows,
         IReadOnlyList<decimal> closes,
-        int period)
+        int period,
+        ref bool invalidNumericValueDetected)
     {
         if (closes.Count < period || highs.Count < period || lows.Count < period || period < 4)
         {
@@ -982,7 +1335,7 @@ public sealed class TradingFeatureSnapshotService(
             frama = alpha * (double)closes[index] + (1d - alpha) * frama;
         }
 
-        return ToDecimal(frama);
+        return TryConvertDecimal(frama, ref invalidNumericValueDetected);
     }
 
     private static decimal? ComputeRsi(IReadOnlyList<decimal> closes, int period)
@@ -1031,15 +1384,16 @@ public sealed class TradingFeatureSnapshotService(
         IReadOnlyList<decimal> closes,
         int fastPeriod,
         int slowPeriod,
-        int signalPeriod)
+        int signalPeriod,
+        ref bool invalidNumericValueDetected)
     {
         if (closes.Count < slowPeriod + signalPeriod)
         {
             return (null, null, null);
         }
 
-        var fastSeries = ComputeEmaSeries(closes, fastPeriod);
-        var slowSeries = ComputeEmaSeries(closes, slowPeriod);
+        var fastSeries = ComputeEmaSeries(closes, fastPeriod, ref invalidNumericValueDetected);
+        var slowSeries = ComputeEmaSeries(closes, slowPeriod, ref invalidNumericValueDetected);
         var macdSeries = new List<decimal>();
 
         for (var index = 0; index < closes.Count; index++)
@@ -1052,7 +1406,7 @@ public sealed class TradingFeatureSnapshotService(
             macdSeries.Add(fastSeries[index]!.Value - slowSeries[index]!.Value);
         }
 
-        var signal = ComputeEma(macdSeries, signalPeriod);
+        var signal = ComputeEma(macdSeries, signalPeriod, ref invalidNumericValueDetected);
         var macdLine = macdSeries.Count > 0 ? macdSeries[^1] : (decimal?)null;
         var histogram = macdLine.HasValue && signal.HasValue ? macdLine.Value - signal.Value : (decimal?)null;
         return (macdLine, signal, histogram);
@@ -1061,7 +1415,8 @@ public sealed class TradingFeatureSnapshotService(
     private static (decimal? MiddleBand, decimal? UpperBand, decimal? LowerBand, decimal? StandardDeviation) ComputeBollinger(
         IReadOnlyList<decimal> closes,
         int period,
-        decimal multiplier)
+        decimal multiplier,
+        ref bool invalidNumericValueDetected)
     {
         if (closes.Count < period || period <= 0)
         {
@@ -1072,8 +1427,13 @@ public sealed class TradingFeatureSnapshotService(
         var average = window.Average();
         var variance = window.Select(value => Math.Pow(value - average, 2d)).Average();
         var standardDeviation = Math.Sqrt(variance);
-        var middle = ToDecimal(average);
-        var deviation = ToDecimal(standardDeviation);
+        var middle = TryConvertDecimal(average, ref invalidNumericValueDetected);
+        var deviation = TryConvertDecimal(standardDeviation, ref invalidNumericValueDetected);
+        if (!middle.HasValue || !deviation.HasValue)
+        {
+            return (null, null, null, null);
+        }
+
         return (middle, middle + (deviation * multiplier), middle - (deviation * multiplier), deviation);
     }
 
@@ -1129,7 +1489,7 @@ public sealed class TradingFeatureSnapshotService(
         return (k, d, (3m * k) - (2m * d));
     }
 
-    private static decimal? ComputeFisherTransform(IReadOnlyList<decimal> highs, IReadOnlyList<decimal> lows, IReadOnlyList<decimal> closes, int period)
+    private static decimal? ComputeFisherTransform(IReadOnlyList<decimal> highs, IReadOnlyList<decimal> lows, IReadOnlyList<decimal> closes, int period, ref bool invalidNumericValueDetected)
     {
         if (closes.Count < period || highs.Count < period || lows.Count < period)
         {
@@ -1149,7 +1509,7 @@ public sealed class TradingFeatureSnapshotService(
             fisher = (0.5d * Math.Log((1d + value) / (1d - value))) + (0.5d * fisher);
         }
 
-        return ToDecimal(fisher);
+        return TryConvertDecimal(fisher, ref invalidNumericValueDetected);
     }
 
     private static decimal? ComputeRelativeVolume(IReadOnlyList<decimal> volumes, int period)
@@ -1194,6 +1554,116 @@ public sealed class TradingFeatureSnapshotService(
         return obv;
     }
 
+    private static decimal? ComputeMfi(
+        IReadOnlyList<decimal> highs,
+        IReadOnlyList<decimal> lows,
+        IReadOnlyList<decimal> closes,
+        IReadOnlyList<decimal> volumes,
+        int period)
+    {
+        if (highs.Count != lows.Count || lows.Count != closes.Count || closes.Count != volumes.Count || closes.Count <= period)
+        {
+            return null;
+        }
+
+        var positiveFlow = 0m;
+        var negativeFlow = 0m;
+        var startIndex = closes.Count - period;
+
+        for (var index = startIndex; index < closes.Count; index++)
+        {
+            var typicalPrice = (highs[index] + lows[index] + closes[index]) / 3m;
+            var previousTypicalPrice = (highs[index - 1] + lows[index - 1] + closes[index - 1]) / 3m;
+            var rawMoneyFlow = typicalPrice * volumes[index];
+
+            if (typicalPrice > previousTypicalPrice)
+            {
+                positiveFlow += rawMoneyFlow;
+            }
+            else if (typicalPrice < previousTypicalPrice)
+            {
+                negativeFlow += rawMoneyFlow;
+            }
+        }
+
+        if (negativeFlow == 0m)
+        {
+            return 100m;
+        }
+
+        var moneyFlowRatio = positiveFlow / negativeFlow;
+        return 100m - (100m / (1m + moneyFlowRatio));
+    }
+
+    private static (decimal? KlingerOscillator, decimal? KlingerSignal) ComputeKlinger(
+        IReadOnlyList<decimal> highs,
+        IReadOnlyList<decimal> lows,
+        IReadOnlyList<decimal> closes,
+        IReadOnlyList<decimal> volumes,
+        int fastPeriod,
+        int slowPeriod,
+        int signalPeriod,
+        ref bool invalidNumericValueDetected)
+    {
+        if (highs.Count != lows.Count || lows.Count != closes.Count || closes.Count != volumes.Count || closes.Count < slowPeriod + signalPeriod + 1)
+        {
+            return (null, null);
+        }
+
+        var volumeForce = new List<decimal>(closes.Count - 1);
+        var previousPriceSum = highs[0] + lows[0] + closes[0];
+        var previousTrend = 0m;
+        var previousCumulativeMeasurement = 0m;
+        var previousDailyMeasurement = 0m;
+
+        for (var index = 1; index < closes.Count; index++)
+        {
+            var currentPriceSum = highs[index] + lows[index] + closes[index];
+            var trend = currentPriceSum > previousPriceSum
+                ? 1m
+                : currentPriceSum < previousPriceSum
+                    ? -1m
+                    : previousTrend == 0m ? 1m : previousTrend;
+            var dailyMeasurement = highs[index] - lows[index];
+            var cumulativeMeasurement = trend == previousTrend
+                ? previousCumulativeMeasurement + dailyMeasurement
+                : previousDailyMeasurement + dailyMeasurement;
+
+            if (cumulativeMeasurement <= 0m)
+            {
+                volumeForce.Add(0m);
+            }
+            else
+            {
+                var force = volumes[index] * Math.Abs(2m * ((dailyMeasurement / cumulativeMeasurement) - 1m)) * trend * 100m;
+                volumeForce.Add(force);
+            }
+
+            previousPriceSum = currentPriceSum;
+            previousTrend = trend;
+            previousDailyMeasurement = dailyMeasurement;
+            previousCumulativeMeasurement = cumulativeMeasurement;
+        }
+
+        var fastSeries = ComputeEmaSeries(volumeForce, fastPeriod, ref invalidNumericValueDetected);
+        var slowSeries = ComputeEmaSeries(volumeForce, slowPeriod, ref invalidNumericValueDetected);
+        var oscillatorSeries = new List<decimal>();
+
+        for (var index = 0; index < volumeForce.Count; index++)
+        {
+            if (!fastSeries[index].HasValue || !slowSeries[index].HasValue)
+            {
+                continue;
+            }
+
+            oscillatorSeries.Add(fastSeries[index]!.Value - slowSeries[index]!.Value);
+        }
+
+        var signal = ComputeEma(oscillatorSeries, signalPeriod, ref invalidNumericValueDetected);
+        var oscillator = oscillatorSeries.Count > 0 ? oscillatorSeries[^1] : (decimal?)null;
+        return (oscillator, signal);
+    }
+
     private static decimal? ComputeBollingerPercentB(decimal? latestClose, decimal? upperBand, decimal? lowerBand)
     {
         if (!latestClose.HasValue || !upperBand.HasValue || !lowerBand.HasValue)
@@ -1225,7 +1695,7 @@ public sealed class TradingFeatureSnapshotService(
         return (latestClose.Value - ema20.Value) / (2m * atr.Value);
     }
 
-    private static decimal? ComputePmax(IReadOnlyList<decimal> highs, IReadOnlyList<decimal> lows, IReadOnlyList<decimal> closes, int maPeriod, int atrPeriod, decimal atrMultiplier)
+    private static decimal? ComputePmax(IReadOnlyList<decimal> highs, IReadOnlyList<decimal> lows, IReadOnlyList<decimal> closes, int maPeriod, int atrPeriod, decimal atrMultiplier, ref bool invalidNumericValueDetected)
     {
         if (closes.Count < Math.Max(maPeriod, atrPeriod) + 2)
         {
@@ -1233,7 +1703,7 @@ public sealed class TradingFeatureSnapshotService(
         }
 
         var atrSeries = ComputeAtrSeries(highs, lows, closes, atrPeriod);
-        var maSeries = ComputeEmaSeries(closes, maPeriod);
+        var maSeries = ComputeEmaSeries(closes, maPeriod, ref invalidNumericValueDetected);
         decimal? previousLongStop = null;
         decimal? previousShortStop = null;
         var bullish = true;
@@ -1273,7 +1743,7 @@ public sealed class TradingFeatureSnapshotService(
         return highestHigh - (atrMultiplier * atr.Value);
     }
 
-    private static IReadOnlyList<decimal?> ComputeEmaSeries(IReadOnlyList<decimal> values, int period)
+    private static IReadOnlyList<decimal?> ComputeEmaSeries(IReadOnlyList<decimal> values, int period, ref bool invalidNumericValueDetected)
     {
         var result = Enumerable.Repeat<decimal?>(null, values.Count).ToArray();
         if (values.Count < period)
@@ -1283,11 +1753,11 @@ public sealed class TradingFeatureSnapshotService(
 
         var multiplier = 2d / (period + 1d);
         var ema = (double)values.Take(period).Average();
-        result[period - 1] = ToDecimal(ema);
+        result[period - 1] = TryConvertDecimal(ema, ref invalidNumericValueDetected);
         for (var index = period; index < values.Count; index++)
         {
             ema = (((double)values[index] - ema) * multiplier) + ema;
-            result[index] = ToDecimal(ema);
+            result[index] = TryConvertDecimal(ema, ref invalidNumericValueDetected);
         }
 
         return result;
@@ -1321,6 +1791,25 @@ public sealed class TradingFeatureSnapshotService(
         return result;
     }
 
+    private static decimal? TryConvertDecimal(double value, ref bool invalidNumericValueDetected)
+    {
+        if (double.IsNaN(value) || double.IsInfinity(value))
+        {
+            invalidNumericValueDetected = true;
+            return null;
+        }
+
+        try
+        {
+            return decimal.Round((decimal)value, 8, MidpointRounding.AwayFromZero);
+        }
+        catch (OverflowException)
+        {
+            invalidNumericValueDetected = true;
+            return null;
+        }
+    }
+
     private static TradingFeatureSnapshotModel MapSnapshot(TradingFeatureSnapshot entity)
     {
         return new TradingFeatureSnapshotModel(
@@ -1342,14 +1831,16 @@ public sealed class TradingFeatureSnapshotService(
             new TradingTrendFeatureSnapshot(entity.Ema20, entity.Ema50, entity.Ema200, entity.Alma, entity.Frama),
             new TradingMomentumFeatureSnapshot(entity.Rsi, entity.MacdLine, entity.MacdSignal, entity.MacdHistogram, entity.KdjK, entity.KdjD, entity.KdjJ, entity.FisherTransform),
             new TradingVolatilityFeatureSnapshot(entity.Atr, entity.BollingerPercentB, entity.BollingerBandWidth, entity.KeltnerChannelRelation, entity.PmaxValue, entity.ChandelierExit),
-            new TradingVolumeFeatureSnapshot(entity.VolumeSpikeRatio, entity.RelativeVolume, entity.Obv),
+            new TradingVolumeFeatureSnapshot(entity.VolumeSpikeRatio, entity.RelativeVolume, entity.Obv, entity.Mfi, entity.KlingerOscillator, entity.KlingerSignal),
             new TradingContextFeatureSnapshot(entity.Plane, entity.TradingMode, entity.HasOpenPosition, entity.IsInCooldown, entity.LastVetoReasonCode, entity.LastDecisionOutcome, entity.LastDecisionCode, entity.LastExecutionState, entity.LastFailureCode),
             entity.FeatureSummary,
             entity.TopSignalHints,
             entity.PrimaryRegime,
             entity.MomentumBias,
             entity.VolatilityState,
-            entity.NormalizationMeta);
+            entity.NormalizationMeta,
+            entity.QualityReasonCode,
+            entity.MissingFeatureSummary);
     }
 
     private static string NormalizeSymbol(string symbol) => MarketDataSymbolNormalizer.Normalize(symbol);
@@ -1404,7 +1895,6 @@ public sealed class TradingFeatureSnapshotService(
         };
     }
 
-    private static decimal ToDecimal(double value) => decimal.Round((decimal)value, 8, MidpointRounding.AwayFromZero);
     private static string FormatDecimal(decimal? value) => value?.ToString("0.########", CultureInfo.InvariantCulture) ?? "n/a";
 
     private sealed record FeatureCandle(
@@ -1424,6 +1914,8 @@ public sealed class TradingFeatureSnapshotService(
         DateTime? MarketDataTimestampUtc,
         decimal? ReferencePrice,
         FeatureSnapshotState SnapshotState,
+        FeatureSnapshotQualityReason QualityReasonCode,
+        string? MissingFeatureSummary,
         DegradedModeReasonCode MarketDataReasonCode,
         decimal? Ema20,
         decimal? Ema50,
@@ -1447,6 +1939,9 @@ public sealed class TradingFeatureSnapshotService(
         decimal? VolumeSpikeRatio,
         decimal? RelativeVolume,
         decimal? Obv,
+        decimal? Mfi,
+        decimal? KlingerOscillator,
+        decimal? KlingerSignal,
         string PrimaryRegime,
         string MomentumBias,
         string VolatilityState,
@@ -1462,5 +1957,26 @@ public sealed class TradingFeatureSnapshotService(
         ExecutionEnvironment TradingMode,
         bool HasOpenPosition,
         bool IsInCooldown);
+
+    private sealed record FeatureSnapshotQualityEvaluation(
+        FeatureSnapshotQualityReason QualityReasonCode,
+        string? MissingFeatureSummary);
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

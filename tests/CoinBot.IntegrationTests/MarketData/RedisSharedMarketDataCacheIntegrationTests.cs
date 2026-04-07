@@ -151,7 +151,7 @@ public sealed class RedisSharedMarketDataCacheIntegrationTests
         Assert.Equal(SharedMarketDataCacheReadStatus.HitFresh, rawKlineRead.Status);
         Assert.Equal("BTCUSDT", rawKlineRead.Entry?.Symbol);
         Assert.Equal("1m", rawKlineRead.Entry?.Timeframe);
-        Assert.Equal(nowUtc.UtcDateTime.AddMilliseconds(-1), rawKlineRead.Entry?.UpdatedAtUtc);
+        Assert.Equal(nowUtc.UtcDateTime, rawKlineRead.Entry?.UpdatedAtUtc);
         Assert.Equal(SharedMarketDataCacheReadStatus.HitFresh, rawDepthRead.Status);
         Assert.Equal("BTCUSDT", rawDepthRead.Entry?.Symbol);
         Assert.Equal("spot", rawDepthRead.Entry?.Timeframe);
@@ -340,7 +340,7 @@ public sealed class RedisSharedMarketDataCacheIntegrationTests
         Assert.Equal("BTCUSDT", webRead.Entry!.Payload.Symbol);
         Assert.Equal("1m", webRead.Entry.Payload.Interval);
         Assert.Equal(65250m, webRead.Entry.Payload.ClosePrice);
-        Assert.Equal(sharedKline.CloseTimeUtc, webRead.Entry.UpdatedAtUtc);
+        Assert.Equal(sharedKline.ReceivedAtUtc, webRead.Entry.UpdatedAtUtc);
         Assert.NotNull(indicatorSnapshot);
         Assert.Equal("BTCUSDT", indicatorSnapshot!.Symbol);
         Assert.Equal("1m", indicatorSnapshot.Timeframe);
@@ -444,7 +444,8 @@ public sealed class RedisSharedMarketDataCacheIntegrationTests
             Assert.NotNull(depthRead.Entry);
             Assert.NotNull(indicatorSnapshot);
             Assert.Equal(65250m, tickerRead.Entry!.Payload.Price);
-            Assert.Equal(klineRead.Entry!.UpdatedAtUtc, indicatorSnapshot!.CloseTimeUtc);
+            Assert.Equal(klineRead.Entry!.Payload.CloseTimeUtc, indicatorSnapshot!.CloseTimeUtc);
+            Assert.Equal(klineRead.Entry.UpdatedAtUtc, indicatorSnapshot.ReceivedAtUtc);
             Assert.Equal("BTCUSDT", indicatorSnapshot.Symbol);
             Assert.Equal("1m", indicatorSnapshot.Timeframe);
             Assert.Equal(700001, depthRead.Entry!.Payload.LastUpdateId);
@@ -968,6 +969,4 @@ public sealed class RedisSharedMarketDataCacheIntegrationTests
         }
     }
 }
-
-
 

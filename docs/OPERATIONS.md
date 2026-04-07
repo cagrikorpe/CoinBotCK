@@ -93,7 +93,7 @@ The following must stay out of git:
 
 Runtime smoke output under `.diag/` should be reviewed locally and then discarded or archived outside the repo; it is local operational evidence, not a tracked artifact.
 
-For the pilot runtime smoke, `ReconciliationStatus=Unknown` at smoke completion is an accepted interim state when submit/fill/position/balance telemetry is already present. Async reconciliation is expected to advance `LastReconciledAtUtc` and move the reconciliation status away from `Unknown` in a later cycle. If that follow-up never happens, treat it as a reconciliation issue rather than a smoke-pass condition.
+For the pilot runtime smoke, `ReconciliationStatus=Unknown` is no longer a passing end state. A successful broker-submitted smoke run must leave `LastReconciledAtUtc` populated, `ReconciliationStatus` outside `Unknown`, and smoke-scoped open orders/positions at zero after smoke-local cleanup.
 
 ## Warning hygiene
 
@@ -105,4 +105,5 @@ Resolved here:
 - fixed the `xUnit2031` test warning in `StrategyLifecycleIntegrationTests`
 
 Any warnings that remain after validation should be treated as explicit backlog, not ignored by broad suppression.
+
 

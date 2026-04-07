@@ -162,9 +162,8 @@ public sealed class AiSignalEvaluatorTests
         Assert.Equal(AiSignalDirection.Neutral, result.SignalDirection);
         Assert.Equal(AiSignalFallbackReason.UnsupportedProvider, result.FallbackReason);
     }
-
     [Fact]
-    public async Task EvaluateAsync_ReturnsNeutralFallback_WhenConfidenceValueIsUnsupported()
+    public async Task EvaluateAsync_ClampsConfidence_WhenProviderValueExceedsRange()
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 6, 12, 0, 0, TimeSpan.Zero));
         var evaluator = CreateEvaluator(
@@ -178,9 +177,81 @@ public sealed class AiSignalEvaluatorTests
 
         var result = await evaluator.EvaluateAsync(CreateRequest(CreateReadyFeatureSnapshot()));
 
+        Assert.False(result.IsFallback);
+        Assert.Equal(AiSignalDirection.Long, result.SignalDirection);
+        Assert.Equal(1.0m, result.ConfidenceScore);
+        Assert.Null(result.FallbackReason);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_ReturnsNeutralFallback_WhenFeatureSnapshotQualityFails()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 6, 12, 0, 0, TimeSpan.Zero));
+        var evaluator = CreateEvaluator(
+            timeProvider,
+            new AiSignalOptions
+            {
+                Enabled = true,
+                SelectedProvider = DeterministicStubAiSignalProviderAdapter.ProviderNameValue
+            },
+            new DeterministicStubAiSignalProviderAdapter());
+        var featureSnapshot = CreateReadyFeatureSnapshot() with
+        {
+            SnapshotState = FeatureSnapshotState.Invalid,
+            QualityReasonCode = FeatureSnapshotQualityReason.IncompleteSnapshot,
+            MissingFeatureSummary = "MissingFeatures=RelativeVolume,KlingerSignal"
+        };
+
+        var result = await evaluator.EvaluateAsync(CreateRequest(featureSnapshot));
+
         Assert.True(result.IsFallback);
         Assert.Equal(AiSignalDirection.Neutral, result.SignalDirection);
-        Assert.Equal(AiSignalFallbackReason.UnsupportedResponse, result.FallbackReason);
+        Assert.Equal(AiSignalFallbackReason.FeatureSnapshotQualityFailed, result.FallbackReason);
+        Assert.Contains("IncompleteSnapshot", result.ReasonSummary, StringComparison.Ordinal);
+        Assert.Contains("MissingFeatures=RelativeVolume,KlingerSignal", result.ReasonSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_ReturnsNeutralFallback_WhenDirectionPropertyIsNotString()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 6, 12, 0, 0, TimeSpan.Zero));
+        var evaluator = CreateEvaluator(
+            timeProvider,
+            new AiSignalOptions
+            {
+                Enabled = true,
+                SelectedProvider = "NonStringDirection"
+            },
+            new NonStringDirectionAdapter());
+
+        var result = await evaluator.EvaluateAsync(CreateRequest(CreateReadyFeatureSnapshot()));
+
+        Assert.True(result.IsFallback);
+        Assert.Equal(AiSignalFallbackReason.InvalidPayload, result.FallbackReason);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_SanitizesAndTrimsReasonSummary()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 6, 12, 0, 0, TimeSpan.Zero));
+        var evaluator = CreateEvaluator(
+            timeProvider,
+            new AiSignalOptions
+            {
+                Enabled = true,
+                SelectedProvider = "SanitizeReason",
+                MaxReasonLength = 32
+            },
+            new SanitizeReasonAdapter());
+
+        var result = await evaluator.EvaluateAsync(CreateRequest(CreateReadyFeatureSnapshot()));
+
+        Assert.False(result.IsFallback);
+        Assert.Equal(AiSignalDirection.Long, result.SignalDirection);
+        Assert.True(result.ReasonSummary.Length <= 32);
+        Assert.DoesNotContain('\n', result.ReasonSummary);
+        Assert.DoesNotContain('\t', result.ReasonSummary);
+        Assert.DoesNotContain("  ", result.ReasonSummary, StringComparison.Ordinal);
     }
 
     private static IAiSignalEvaluator CreateEvaluator(
@@ -292,4 +363,25 @@ public sealed class AiSignalEvaluatorTests
         }
     }
 
+    private sealed class NonStringDirectionAdapter : IAiSignalProviderAdapter
+    {
+        public string Name => "NonStringDirection";
+
+        public Task<AiSignalProviderAdapterResponse> EvaluateAsync(AiSignalProviderAdapterRequest request, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(AiSignalProviderAdapterResponse.Success(Name, "non-string-v1", "{\"direction\":1,\"confidenceScore\":0.91,\"reasonSummary\":\"invalid\"}"));
+        }
+    }
+
+    private sealed class SanitizeReasonAdapter : IAiSignalProviderAdapter
+    {
+        public string Name => "SanitizeReason";
+
+        public Task<AiSignalProviderAdapterResponse> EvaluateAsync(AiSignalProviderAdapterRequest request, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(AiSignalProviderAdapterResponse.Success(Name, "sanitize-v1", "{\"direction\":\"Long\",\"confidenceScore\":0.91,\"reasonSummary\":\"  reason\\nwith\\tcontrol   spacing and extra words  \"}"));
+        }
+    }
 }

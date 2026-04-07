@@ -32,4 +32,6 @@ public sealed record StrategySignalConfidenceSnapshot(
     decimal? ProjectedCoinExposurePercentage = null,
     decimal? MaxCoinExposurePercentage = null,
     string? RiskScopeSummary = null,
-    AiSignalEvaluationResult? AiEvaluation = null);
+    AiSignalEvaluationResult? AiEvaluation = null,
+    string? AiOverlayDisposition = null,
+    int AiOverlayBoostPoints = 0);

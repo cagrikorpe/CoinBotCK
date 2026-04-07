@@ -34,15 +34,15 @@ public sealed class CrisisEscalationService(
 {
     private const string CrisisSource = "AdminPortal.CrisisEscalation";
     private const string CrisisStrategyKey = "__crisis_flatten__";
-    private static readonly IReadOnlySet<ExecutionOrderState> OpenOrderStates = new HashSet<ExecutionOrderState>
-    {
+    private static readonly ExecutionOrderState[] OpenOrderStates =
+    [
         ExecutionOrderState.Received,
         ExecutionOrderState.GatePassed,
         ExecutionOrderState.Dispatching,
         ExecutionOrderState.Submitted,
         ExecutionOrderState.PartiallyFilled,
         ExecutionOrderState.CancelRequested
-    };
+    ];
     private static readonly string[] KnownQuoteAssets =
     [
         "USDT",
@@ -1162,3 +1162,4 @@ public sealed class CrisisEscalationService(
         bool IsGlobal,
         string? UserId);
 }
+

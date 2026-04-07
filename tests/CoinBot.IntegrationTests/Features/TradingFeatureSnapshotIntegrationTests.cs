@@ -82,12 +82,16 @@ public sealed class TradingFeatureSnapshotIntegrationTests
             Assert.Equal(firstEvaluatedAtUtc, latestOneMinute.EvaluatedAtUtc);
             Assert.Equal("AI-1.v1", latestOneMinute.FeatureVersion);
             Assert.Equal(FeatureSnapshotState.Ready, latestOneMinute.SnapshotState);
+            Assert.Equal(FeatureSnapshotQualityReason.None, latestOneMinute.QualityReasonCode);
+            Assert.NotNull(latestOneMinute.Volume.Mfi);
+            Assert.NotNull(latestOneMinute.Volume.KlingerOscillator);
+            Assert.NotNull(latestOneMinute.Volume.KlingerSignal);
             Assert.Single(recentFiveMinute);
             Assert.Equal(secondSnapshot.Id, recentFiveMinute.Single().Id);
             Assert.Equal(secondEvaluatedAtUtc, recentFiveMinute.Single().EvaluatedAtUtc);
             Assert.Equal(2, persistedRows.Count);
-            Assert.Contains(persistedRows, item => item.Timeframe == "1m" && item.Symbol == "BTCUSDT" && item.EvaluatedAtUtc == firstEvaluatedAtUtc);
-            Assert.Contains(persistedRows, item => item.Timeframe == "5m" && item.Symbol == "BTCUSDT" && item.EvaluatedAtUtc == secondEvaluatedAtUtc);
+            Assert.Contains(persistedRows, item => item.Timeframe == "1m" && item.Symbol == "BTCUSDT" && item.EvaluatedAtUtc == firstEvaluatedAtUtc && item.QualityReasonCode == FeatureSnapshotQualityReason.None && item.Mfi.HasValue && item.KlingerOscillator.HasValue && item.KlingerSignal.HasValue);
+            Assert.Contains(persistedRows, item => item.Timeframe == "5m" && item.Symbol == "BTCUSDT" && item.EvaluatedAtUtc == secondEvaluatedAtUtc && item.QualityReasonCode == FeatureSnapshotQualityReason.None && item.Mfi.HasValue && item.KlingerOscillator.HasValue && item.KlingerSignal.HasValue);
         }
         finally
         {
@@ -132,11 +136,63 @@ public sealed class TradingFeatureSnapshotIntegrationTests
             var persistedSnapshot = await harness.DbContext.TradingFeatureSnapshots.SingleAsync();
 
             Assert.Equal(FeatureSnapshotState.Stale, snapshot.SnapshotState);
+            Assert.Equal(FeatureSnapshotQualityReason.None, snapshot.QualityReasonCode);
             Assert.Equal(DegradedModeReasonCode.MarketDataLatencyCritical, snapshot.MarketDataReasonCode);
             Assert.Equal(FeatureSnapshotState.Stale, persistedSnapshot.SnapshotState);
+            Assert.Equal(FeatureSnapshotQualityReason.None, persistedSnapshot.QualityReasonCode);
             Assert.Equal(DegradedModeReasonCode.MarketDataLatencyCritical, persistedSnapshot.MarketDataReasonCode);
             Assert.Contains("State=Stale", snapshot.FeatureSummary, StringComparison.Ordinal);
             Assert.Contains("MarketDataStale", snapshot.TopSignalHints, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await SqlServerIntegrationDatabase.CleanupDatabaseAsync(connectionString);
+        }
+    }
+
+    [Fact]
+    public async Task CaptureAsync_PersistsQualityFailureSummary_WhenSnapshotIsIncomplete_OnSqlServer()
+    {
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString($"CoinBotFeatureStoreIncompleteInt_{Guid.NewGuid():N}");
+        const string userId = "feature-sql-user-03";
+        var botId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+
+        await using var harness = CreateHarness(connectionString, userId);
+
+        try
+        {
+            await harness.DbContext.Database.EnsureDeletedAsync();
+            await harness.DbContext.Database.MigrateAsync();
+            await SeedFeatureGraphAsync(harness.DbContext, userId, botId, exchangeAccountId);
+
+            var evaluatedAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime;
+            var candles = CreateCandles("BTCUSDT", "1m", evaluatedAtUtc.AddMinutes(-240), 240, 65000m, 4m, 0m)
+                .Select(candle => candle with { Volume = 0m })
+                .ToArray();
+            await RecordFreshHeartbeatAsync(harness.CircuitBreaker, candles[^1], "BTCUSDT", "1m");
+
+            var snapshot = await harness.Service.CaptureAsync(
+                new TradingFeatureCaptureRequest(
+                    userId,
+                    botId,
+                    "feature-store",
+                    "BTCUSDT",
+                    "1m",
+                    evaluatedAtUtc,
+                    exchangeAccountId,
+                    ExchangeDataPlane.Futures,
+                    HistoricalCandles: candles),
+                CancellationToken.None);
+
+            var persistedSnapshot = await harness.DbContext.TradingFeatureSnapshots.SingleAsync();
+
+            Assert.Equal(FeatureSnapshotState.Invalid, snapshot.SnapshotState);
+            Assert.Equal(FeatureSnapshotQualityReason.IncompleteSnapshot, snapshot.QualityReasonCode);
+            Assert.Contains("MissingFeatures=VolumeSpikeRatio,RelativeVolume", snapshot.MissingFeatureSummary, StringComparison.Ordinal);
+            Assert.Equal(FeatureSnapshotState.Invalid, persistedSnapshot.SnapshotState);
+            Assert.Equal(FeatureSnapshotQualityReason.IncompleteSnapshot, persistedSnapshot.QualityReasonCode);
+            Assert.Contains("MissingFeatures=VolumeSpikeRatio,RelativeVolume", persistedSnapshot.MissingFeatureSummary, StringComparison.Ordinal);
         }
         finally
         {
@@ -293,4 +349,6 @@ public sealed class TradingFeatureSnapshotIntegrationTests
         public Task WriteAsync(AuditLogWriteRequest request, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }
+
+
 

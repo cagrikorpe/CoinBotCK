@@ -22,6 +22,13 @@ public sealed class ExecutionReconciliationService(
         ExecutionOrderState.PartiallyFilled,
         ExecutionOrderState.CancelRequested
     ];
+    private static readonly ExecutionOrderState[] TerminalStatesRequiringClosure =
+    [
+        ExecutionOrderState.Filled,
+        ExecutionOrderState.Cancelled,
+        ExecutionOrderState.Rejected,
+        ExecutionOrderState.Failed
+    ];
 
     internal async Task<int> RunOnceAsync(CancellationToken cancellationToken = default)
     {
@@ -32,7 +39,11 @@ public sealed class ExecutionReconciliationService(
                 entity.ExecutionEnvironment == ExecutionEnvironment.Live &&
                 entity.ExecutorKind == ExecutionOrderExecutorKind.Binance &&
                 entity.ExchangeAccountId.HasValue &&
-                OpenStates.Contains(entity.State))
+                (OpenStates.Contains(entity.State) ||
+                 (entity.SubmittedToBroker &&
+                  TerminalStatesRequiringClosure.Contains(entity.State) &&
+                  (entity.LastReconciledAtUtc == null ||
+                   entity.ReconciliationStatus == ExchangeStateDriftStatus.Unknown))))
             .OrderBy(entity => entity.LastReconciledAtUtc ?? DateTime.MinValue)
             .Select(entity => new ExecutionOrderDescriptor(
                 entity.Id,
