@@ -50,9 +50,27 @@ public sealed class BinanceCredentialProbeClientTests
         Assert.False(string.IsNullOrWhiteSpace(snapshot.SafeFailureReason));
     }
 
+    [Fact]
+    public async Task ProbeAsync_ReportsTimestampSkew_WhenServerTimeOffsetCannotBeProduced()
+    {
+        using var spotHandler = new StubHttpMessageHandler(HttpStatusCode.OK, """{"canTrade":true,"canWithdraw":true,"permissions":["SPOT"]}""");
+        using var futuresHandler = new StubHttpMessageHandler(HttpStatusCode.OK, """{"canTrade":true}""");
+        var timeSyncService = new FakeTimeSyncService(
+            currentTimestampException: new BinanceClockDriftException("Offset unavailable."));
+        var client = CreateClient(spotHandler, futuresHandler, timeSyncService);
+
+        var snapshot = await client.ProbeAsync("api-key", "api-secret");
+
+        Assert.True(snapshot.HasTimestampSkew);
+        Assert.False(snapshot.IsKeyValid);
+        Assert.Equal("Binance server-time offset üretilemedi.", snapshot.SafeFailureReason);
+        Assert.Equal(0, spotHandler.RequestCount);
+        Assert.Equal(0, futuresHandler.RequestCount);
+    }
+
     private static BinanceCredentialProbeClient CreateClient(
-        HttpMessageHandler spotHandler,
-        HttpMessageHandler futuresHandler,
+        StubHttpMessageHandler spotHandler,
+        StubHttpMessageHandler futuresHandler,
         IBinanceTimeSyncService timeSyncService)
     {
         return new BinanceCredentialProbeClient(
@@ -85,8 +103,11 @@ public sealed class BinanceCredentialProbeClientTests
 
     private sealed class StubHttpMessageHandler(HttpStatusCode statusCode, string responseBody) : HttpMessageHandler
     {
+        public int RequestCount { get; private set; }
+
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            RequestCount++;
             return Task.FromResult(new HttpResponseMessage(statusCode)
             {
                 Content = new StringContent(responseBody, Encoding.UTF8, "application/json")
@@ -94,7 +115,7 @@ public sealed class BinanceCredentialProbeClientTests
         }
     }
 
-    private sealed class FakeTimeSyncService : IBinanceTimeSyncService
+    private sealed class FakeTimeSyncService(Exception? currentTimestampException = null) : IBinanceTimeSyncService
     {
         public int ForcedRefreshCalls { get; private set; }
 
@@ -117,6 +138,11 @@ public sealed class BinanceCredentialProbeClientTests
 
         public Task<long> GetCurrentTimestampMillisecondsAsync(CancellationToken cancellationToken = default)
         {
+            if (currentTimestampException is not null)
+            {
+                return Task.FromException<long>(currentTimestampException);
+            }
+
             return Task.FromResult(1_710_000_000_000L);
         }
     }

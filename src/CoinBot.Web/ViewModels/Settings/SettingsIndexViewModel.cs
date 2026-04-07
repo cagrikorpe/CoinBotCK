@@ -8,31 +8,6 @@ public sealed class SettingsIndexViewModel
 
     public IReadOnlyCollection<TimeZoneOptionViewModel> TimeZoneOptions { get; init; } = [];
 
-    public ClockDriftInfoViewModel ClockDrift { get; init; } = new(
-        "UTC",
-        "UTC",
-        "Henüz yok",
-        "Henüz yok",
-        "0 ms",
-        "Henüz yok",
-        "Henüz yok",
-        "Bilinmiyor",
-        null,
-        "Henüz yok",
-        "Henüz yok");
-
-    public MarketDriftGuardInfoViewModel DriftGuard { get; init; } = new(
-        "Bilinmiyor",
-        "Henüz yok",
-        "Henüz yok",
-        "Henüz yok",
-        "Henüz yok",
-        "Henüz yok",
-        "Henüz yok",
-        "Henüz yok",
-        "Market-data heartbeat (binance:kline)",
-        "Server-time refresh yalnız signed REST offset'ini yeniler.");
-
     public string? SuccessMessage { get; init; }
 
     public string? ErrorMessage { get; init; }

@@ -1,4 +1,4 @@
-﻿import { spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createWriteStream, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -268,7 +268,7 @@ class CdpClient {
     process.env.DOTNET_CLI_HOME = path.join(repoRoot, '.dotnet');
     process.env.DOTNET_SKIP_FIRST_TIME_EXPERIENCE = '1';
     process.env.DOTNET_NOLOGO = '1';
-    process.env.ASPNETCORE_ENVIRONMENT = 'Production';
+    process.env.ASPNETCORE_ENVIRONMENT = 'Development';
     process.env.ASPNETCORE_URLS = baseUrl;
 
     webProcess = startManagedProcess(
@@ -387,14 +387,14 @@ class CdpClient {
 
     await client.waitForReady();
     await client.waitForLocationContains('/Settings');
-    await client.captureScreenshot(settingsScreenshotPath);
-
-    const settingsPageState = await client.evaluate(`(() => {
+    await client.captureScreenshot(settingsScreenshotPath);    const settingsPageState = await client.evaluate(`(() => {
       const select = document.querySelector('select[name="Form.PreferredTimeZoneId"]');
       const token = document.querySelector('input[name="__RequestVerificationToken"]');
       const refreshButton = document.querySelector('form[action$="/Settings/RefreshClockDrift"] button[type="submit"]');
       const guardThresholdCell = Array.from(document.querySelectorAll('td')).find(cell => cell.innerText.trim() === 'Threshold')?.nextElementSibling;
       const guardReasonCell = Array.from(document.querySelectorAll('td')).find(cell => cell.innerText.trim() === 'Readable reason')?.nextElementSibling;
+      const helperText = Array.from(document.querySelectorAll('.cb-helper-text')).map(node => node.innerText.trim()).join(' | ');
+      const opsNoticeText = Array.from(document.querySelectorAll('.cb-validation-summary-warning')).map(node => node.innerText.trim()).join(' | ');
       return {
         selectExists: !!select,
         optionCount: select ? select.options.length : 0,
@@ -402,7 +402,9 @@ class CdpClient {
         hasToken: !!token,
         refreshButtonExists: !!refreshButton,
         guardThresholdText: guardThresholdCell ? guardThresholdCell.innerText.trim() : '',
-        guardReasonText: guardReasonCell ? guardReasonCell.innerText.trim() : ''
+        guardReasonText: guardReasonCell ? guardReasonCell.innerText.trim() : '',
+        helperText,
+        opsNoticeText
       };
     })()`);
 
@@ -418,40 +420,20 @@ class CdpClient {
       throw new Error('Antiforgery token was not rendered on /Settings.');
     }
 
-    if (!settingsPageState.refreshButtonExists) {
-      throw new Error('Server time sync refresh button was not rendered on /Settings.');
+    if (settingsPageState.refreshButtonExists) {
+      throw new Error('Server time sync refresh button should not be rendered for a normal user on /Settings.');
     }
 
-    if (!settingsPageState.guardThresholdText) {
-      throw new Error('Market-data drift guard threshold was not rendered on /Settings.');
+    if (settingsPageState.guardThresholdText || settingsPageState.guardReasonText) {
+      throw new Error('Operational drift guard fields should not be rendered on the normal user settings page.');
     }
 
-    await client.evaluate(`(() => {
-      const form = document.querySelector('form[action$="/Settings/RefreshClockDrift"]');
-      if (!form) throw new Error('Refresh form was not found.');
-      form.submit();
-      return true;
-    })()`);
+    if (!/display timezone/i.test(settingsPageState.helperText)) {
+      throw new Error('Display-only timezone helper text was not rendered on /Settings.');
+    }
 
-    await client.waitForReady();
-    await client.waitForLocationContains('/Settings');
-    await client.captureScreenshot(refreshScreenshotPath);
-
-    const refreshState = await client.evaluate(`(() => {
-      const success = document.querySelector('.cb-validation-summary-success');
-      const danger = document.querySelector('.cb-validation-summary-danger');
-      const lastSyncCell = Array.from(document.querySelectorAll('td')).find(cell => cell.innerText.trim() === 'Last sync')?.nextElementSibling;
-      const statusCell = Array.from(document.querySelectorAll('td')).find(cell => cell.innerText.trim() === 'Sync status')?.nextElementSibling;
-      return {
-        hasMessage: !!success || !!danger,
-        messageText: success ? success.innerText.trim() : (danger ? danger.innerText.trim() : ''),
-        lastSyncText: lastSyncCell ? lastSyncCell.innerText.trim() : '',
-        statusText: statusCell ? statusCell.innerText.trim() : ''
-      };
-    })()`);
-
-    if (!refreshState.hasMessage) {
-      throw new Error('Refresh action did not surface any user-facing result message.');
+    if (!/Super Admin\/Ops/i.test(settingsPageState.opsNoticeText)) {
+      throw new Error('Ops scope notice was not rendered on /Settings.');
     }
 
     await client.evaluate(`(() => {
@@ -584,12 +566,9 @@ class CdpClient {
       timeZoneOptionCount: Number(settingsPageState.optionCount),
       initialPreferredTimeZoneId: String(settingsPageState.currentValue ?? ''),
       refreshButtonVisible: Boolean(settingsPageState.refreshButtonExists),
-      guardThresholdText: String(settingsPageState.guardThresholdText ?? ''),
-      guardReasonText: String(settingsPageState.guardReasonText ?? ''),
-      refreshMessageVisible: Boolean(refreshState.hasMessage),
-      refreshMessageText: String(refreshState.messageText ?? ''),
-      refreshLastSyncText: String(refreshState.lastSyncText ?? ''),
-      refreshStatusText: String(refreshState.statusText ?? ''),
+      operationalFieldsHidden: !settingsPageState.guardThresholdText && !settingsPageState.guardReasonText,
+      displayOnlyHelperText: String(settingsPageState.helperText ?? ''),
+      opsNoticeText: String(settingsPageState.opsNoticeText ?? ''),
       savedPreferredTimeZoneId: String(postSaveState.selectedValue ?? ''),
       reloadedPreferredTimeZoneId: String(reloadedState.selectedValue ?? ''),
       saveSuccessVisible: Boolean(postSaveState.successVisible),
@@ -602,7 +581,6 @@ class CdpClient {
       screenshots: {
         anonymous: anonymousScreenshotPath,
         settings: settingsScreenshotPath,
-        refresh: refreshScreenshotPath,
         saved: savedScreenshotPath,
         invalid: invalidScreenshotPath,
         dashboard: dashboardScreenshotPath
@@ -619,8 +597,8 @@ class CdpClient {
 
     console.log(`AnonymousLocation=${anonymousLocation}`);
     console.log(`TimeZoneOptionCount=${summary.timeZoneOptionCount}`);
-    console.log(`GuardThresholdText=${summary.guardThresholdText}`);
-    console.log(`RefreshMessageVisible=${summary.refreshMessageVisible}`);
+    console.log(`OperationalFieldsHidden=${summary.operationalFieldsHidden}`);
+    console.log(`OpsNoticeText=${summary.opsNoticeText}`);
     console.log(`SavedPreferredTimeZoneId=${summary.savedPreferredTimeZoneId}`);
     console.log(`ReloadedPreferredTimeZoneId=${summary.reloadedPreferredTimeZoneId}`);
     console.log(`AntiforgeryStatus=${summary.antiforgeryStatus}`);
@@ -644,5 +622,11 @@ class CdpClient {
   console.error(error?.stack ?? error?.message ?? String(error));
   process.exit(1);
 });
+
+
+
+
+
+
 
 

@@ -120,11 +120,7 @@ public sealed class SettingsPersistenceIntegrationTests
         scope.ServiceProvider.GetRequiredService<IHttpContextAccessor>().HttpContext = httpContext;
         var controller = new SettingsController(
             new FakeMfaManagementService(),
-            scope.ServiceProvider.GetRequiredService<CoinBot.Application.Abstractions.Settings.IUserSettingsService>(),
-            scope.ServiceProvider.GetRequiredService<IBinanceTimeSyncService>(),
-            scope.ServiceProvider.GetRequiredService<CoinBot.Application.Abstractions.Execution.IDataLatencyCircuitBreaker>(),
-            scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<CoinBot.Infrastructure.Execution.DataLatencyGuardOptions>>(),
-            scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<CoinBot.Infrastructure.Exchange.BinancePrivateDataOptions>>());
+            scope.ServiceProvider.GetRequiredService<CoinBot.Application.Abstractions.Settings.IUserSettingsService>());
 
         controller.ControllerContext = new ControllerContext
         {
@@ -284,3 +280,5 @@ public sealed class SettingsPersistenceIntegrationTests
         }
     }
 }
+
+

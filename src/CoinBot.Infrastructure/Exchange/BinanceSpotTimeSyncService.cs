@@ -61,6 +61,22 @@ public sealed class BinanceSpotTimeSyncService(
     public async Task<long> GetCurrentTimestampMillisecondsAsync(CancellationToken cancellationToken = default)
     {
         var snapshot = await GetSnapshotAsync(cancellationToken: cancellationToken);
+
+        if (!snapshot.HasSynchronizedOffset)
+        {
+            snapshot = await GetSnapshotAsync(forceRefresh: true, cancellationToken);
+        }
+
+        if (!snapshot.HasSynchronizedOffset)
+        {
+            var failureReason = string.IsNullOrWhiteSpace(snapshot.FailureReason)
+                ? "Binance spot server time offset could not be synchronized."
+                : snapshot.FailureReason;
+            var lastSyncText = snapshot.LastSynchronizedAtUtc?.ToString("O") ?? "missing";
+            throw new BinanceClockDriftException(
+                $"Binance spot request timestamp is unavailable because server-time offset could not be synchronized. Status={snapshot.StatusCode}; OffsetMs={snapshot.OffsetMilliseconds}; LastSyncUtc={lastSyncText}; Reason={failureReason}");
+        }
+
         return timeProvider.GetUtcNow().ToUnixTimeMilliseconds() + snapshot.OffsetMilliseconds;
     }
 
@@ -165,3 +181,4 @@ public sealed class BinanceSpotTimeSyncService(
         int? RoundTripMilliseconds,
         DateTime LastSynchronizedAtUtc);
 }
+

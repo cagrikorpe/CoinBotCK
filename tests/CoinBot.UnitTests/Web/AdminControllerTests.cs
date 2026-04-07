@@ -1,14 +1,19 @@
 using System.Security.Claims;
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Execution;
+using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Application.Abstractions.Policy;
 using CoinBot.Contracts.Common;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Execution;
+using CoinBot.Infrastructure.Exchange;
 using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.Mfa;
 using CoinBot.Web.Areas.Admin.Controllers;
 using CoinBot.Web.ViewModels.Admin;
+using CoinBot.Web.ViewModels.Settings;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ViewFeatures;
@@ -318,8 +323,8 @@ public sealed class AdminControllerTests
         Assert.Null(viewResult.Model);
     }
 
-    [Fact]
-    public async Task Settings_LoadsSnapshots_AndMarksOpsAdminAsReadOnly()
+        [Fact]
+    public async Task Settings_LoadsOperationalSnapshots_AndMarksOpsAdminAsReadOnly()
     {
         var executionSnapshot = new GlobalExecutionSwitchSnapshot(
             TradeMasterSwitchState.Armed,
@@ -351,27 +356,85 @@ public sealed class AdminControllerTests
         var switchService = new FakeGlobalExecutionSwitchService { Snapshot = executionSnapshot };
         var stateService = new FakeGlobalSystemStateService { Snapshot = globalSystemStateSnapshot };
         var retentionService = new FakeLogCenterRetentionService { Snapshot = retentionSnapshot };
+        var timeSyncService = new FakeBinanceTimeSyncService();
+        var driftGuardService = new FakeDataLatencyCircuitBreaker();
         var controller = CreateController(
             switchService,
             stateService,
             logCenterRetentionService: retentionService,
+            timeSyncService: timeSyncService,
+            dataLatencyCircuitBreaker: driftGuardService,
             pilotOptions: new BotExecutionPilotOptions { MaxPilotOrderNotional = "250" },
             roles: [ApplicationRoles.OpsAdmin]);
 
         var result = await controller.Settings(CancellationToken.None);
 
+        var clockDrift = Assert.IsType<ClockDriftInfoViewModel>(controller.ViewData["AdminClockDriftSnapshot"]);
+        var driftGuard = Assert.IsType<MarketDriftGuardInfoViewModel>(controller.ViewData["AdminDriftGuardSnapshot"]);
+
         Assert.IsType<ViewResult>(result);
         Assert.Equal(1, switchService.GetSnapshotCalls);
         Assert.Equal(1, stateService.GetSnapshotCalls);
         Assert.Equal(1, retentionService.GetSnapshotCalls);
+        Assert.False(Assert.Single(timeSyncService.ForceRefreshCalls));
+        Assert.Equal(1, driftGuardService.GetSnapshotCalls);
         Assert.Same(executionSnapshot, controller.ViewData["AdminExecutionSwitchSnapshot"]);
         Assert.Same(globalSystemStateSnapshot, controller.ViewData["AdminGlobalSystemStateSnapshot"]);
         Assert.IsType<GlobalPolicySnapshot>(controller.ViewData["AdminGlobalPolicySnapshot"]);
         Assert.Same(retentionSnapshot, controller.ViewData["AdminLogCenterRetentionSnapshot"]);
         Assert.Equal(false, controller.ViewData["AdminCanEditGlobalPolicy"]);
+        Assert.Equal(false, controller.ViewData["AdminCanRefreshClockDrift"]);
         Assert.Equal("250", controller.ViewData["AdminPilotOrderNotionalSummary"]);
         Assert.Equal("healthy", controller.ViewData["AdminPilotOrderNotionalTone"]);
         Assert.Equal("OpsAdmin", controller.ViewData["AdminRoleKey"]);
+        Assert.Equal("Synchronized", clockDrift.StatusLabel);
+        Assert.Contains("Clock drift block aktif", driftGuard.ReasonLabel, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RefreshClockDrift_ForceRefreshesSync_AndRedirectsForPlatformAdmin()
+    {
+        var timeSyncService = new FakeBinanceTimeSyncService
+        {
+            ForcedSnapshot = new BinanceTimeSyncSnapshot(
+                new DateTime(2026, 4, 2, 10, 0, 0, DateTimeKind.Utc),
+                new DateTime(2026, 4, 2, 10, 0, 0, 600, DateTimeKind.Utc),
+                600,
+                22,
+                new DateTime(2026, 4, 2, 10, 0, 1, DateTimeKind.Utc),
+                "Synchronized",
+                null)
+        };
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            timeSyncService: timeSyncService,
+            roles: [ApplicationRoles.SuperAdmin]);
+
+        var result = await controller.RefreshClockDrift(CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+
+        Assert.Equal(nameof(AdminController.Settings), redirectResult.ActionName);
+        Assert.Equal([true], timeSyncService.ForceRefreshCalls);
+        Assert.Equal("Binance server time sync yenilendi. Son probe drift 600 ms. Market heartbeat drift guard snapshot'i ayri izlenir.", controller.TempData["AdminClockDriftSuccess"]);
+    }
+
+    [Fact]
+    public void RefreshClockDrift_RequiresPlatformAdministration_AndAntiForgery()
+    {
+        var authorizeAttribute = Assert.Single(
+            typeof(AdminController)
+                .GetMethod(nameof(AdminController.RefreshClockDrift), [typeof(CancellationToken)])!
+                .GetCustomAttributes(typeof(AuthorizeAttribute), inherit: true)
+                .Cast<AuthorizeAttribute>());
+        var antiForgeryAttribute = Assert.Single(
+            typeof(AdminController)
+                .GetMethod(nameof(AdminController.RefreshClockDrift), [typeof(CancellationToken)])!
+                .GetCustomAttributes(typeof(ValidateAntiForgeryTokenAttribute), inherit: true)
+                .Cast<ValidateAntiForgeryTokenAttribute>());
+
+        Assert.Equal(ApplicationPolicies.PlatformAdministration, authorizeAttribute.Policy);
+        Assert.NotNull(antiForgeryAttribute);
     }
 
     [Fact]
@@ -1465,6 +1528,8 @@ public sealed class AdminControllerTests
         FakeAdminGovernanceReadModelService? governanceReadModelService = null,
         FakeAdminMonitoringReadModelService? monitoringReadModelService = null,
         FakeLogCenterRetentionService? logCenterRetentionService = null,
+        FakeBinanceTimeSyncService? timeSyncService = null,
+        FakeDataLatencyCircuitBreaker? dataLatencyCircuitBreaker = null,
         FakeGlobalPolicyEngine? globalPolicyEngine = null,
         FakeCrisisEscalationService? crisisEscalationService = null,
         BotExecutionPilotOptions? pilotOptions = null,
@@ -1502,6 +1567,8 @@ public sealed class AdminControllerTests
             adminCommandRegistry: commandRegistry ?? new FakeAdminCommandRegistry(),
             adminAuditLogService: auditLogService ?? new FakeAdminAuditLogService(),
             traceService: traceService ?? new FakeTraceService(),
+            binanceTimeSyncService: timeSyncService ?? new FakeBinanceTimeSyncService(),
+            dataLatencyCircuitBreaker: dataLatencyCircuitBreaker ?? new FakeDataLatencyCircuitBreaker(),
             apiCredentialValidationService: apiCredentialValidationService ?? new FakeApiCredentialValidationService(),
             adminWorkspaceReadModelService: workspaceReadModelService ?? new FakeAdminWorkspaceReadModelService(),
             criticalUserOperationAuthorizer: criticalUserOperationAuthorizer ?? new FakeCriticalUserOperationAuthorizer(),
@@ -1511,7 +1578,17 @@ public sealed class AdminControllerTests
             logCenterRetentionService: logCenterRetentionService ?? new FakeLogCenterRetentionService(),
             globalPolicyEngine: globalPolicyEngine ?? new FakeGlobalPolicyEngine(),
             crisisEscalationService: crisisEscalationService,
-            botExecutionPilotOptions: Options.Create(pilotOptions ?? new BotExecutionPilotOptions()))
+            botExecutionPilotOptions: Options.Create(pilotOptions ?? new BotExecutionPilotOptions()),
+            dataLatencyGuardOptions: Options.Create(new DataLatencyGuardOptions
+            {
+                ClockDriftThresholdSeconds = 2,
+                StaleDataThresholdSeconds = 3,
+                StopDataThresholdSeconds = 6
+            }),
+            privateDataOptions: Options.Create(new BinancePrivateDataOptions
+            {
+                ServerTimeSyncRefreshSeconds = 30
+            }))
         {
             ControllerContext = new ControllerContext
             {
@@ -2081,6 +2158,59 @@ public sealed class AdminControllerTests
         }
     }
 
+    private sealed class FakeBinanceTimeSyncService : IBinanceTimeSyncService
+    {
+        public List<bool> ForceRefreshCalls { get; } = [];
+
+        public BinanceTimeSyncSnapshot Snapshot { get; init; } = new(
+            new DateTime(2026, 4, 2, 10, 0, 0, DateTimeKind.Utc),
+            new DateTime(2026, 4, 2, 10, 0, 0, DateTimeKind.Utc),
+            0,
+            12,
+            new DateTime(2026, 4, 2, 10, 0, 0, DateTimeKind.Utc),
+            "Synchronized",
+            null);
+
+        public BinanceTimeSyncSnapshot? ForcedSnapshot { get; init; }
+
+        public Task<BinanceTimeSyncSnapshot> GetSnapshotAsync(bool forceRefresh = false, CancellationToken cancellationToken = default)
+        {
+            ForceRefreshCalls.Add(forceRefresh);
+            return Task.FromResult(forceRefresh && ForcedSnapshot is not null ? ForcedSnapshot : Snapshot);
+        }
+
+        public Task<long> GetCurrentTimestampMillisecondsAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(1_710_000_000_000L);
+        }
+    }
+
+    private sealed class FakeDataLatencyCircuitBreaker : IDataLatencyCircuitBreaker
+    {
+        public int GetSnapshotCalls { get; private set; }
+
+        public Task<DegradedModeSnapshot> GetSnapshotAsync(string? correlationId = null, string? symbol = null, string? timeframe = null, CancellationToken cancellationToken = default)
+        {
+            GetSnapshotCalls++;
+            return Task.FromResult(new DegradedModeSnapshot(
+                DegradedModeStateCode.Stopped,
+                DegradedModeReasonCode.ClockDriftExceeded,
+                SignalFlowBlocked: true,
+                ExecutionFlowBlocked: true,
+                LatestDataTimestampAtUtc: new DateTime(2026, 4, 2, 10, 0, 0, DateTimeKind.Utc),
+                LatestHeartbeatReceivedAtUtc: new DateTime(2026, 4, 2, 10, 0, 2, DateTimeKind.Utc),
+                LatestDataAgeMilliseconds: 2200,
+                LatestClockDriftMilliseconds: 2234,
+                LastStateChangedAtUtc: new DateTime(2026, 4, 2, 10, 0, 3, DateTimeKind.Utc),
+                IsPersisted: true));
+        }
+
+        public Task<DegradedModeSnapshot> RecordHeartbeatAsync(DataLatencyHeartbeat heartbeat, string? correlationId = null, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+    }
+
     private sealed class FakeCrisisEscalationService : ICrisisEscalationService
     {
         public CrisisEscalationPreview PreviewResult { get; set; } = new(
@@ -2196,4 +2326,11 @@ public sealed class AdminControllerTests
         }
     }
 }
+
+
+
+
+
+
+
 

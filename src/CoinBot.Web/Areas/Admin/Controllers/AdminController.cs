@@ -6,14 +6,18 @@ using System.Text;
 using System.Text.Json;
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Execution;
+using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Application.Abstractions.Policy;
 using CoinBot.Contracts.Common;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
+using CoinBot.Infrastructure.Execution;
+using CoinBot.Infrastructure.Exchange;
 using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.Mfa;
 using CoinBot.Web.ViewModels.Admin;
+using CoinBot.Web.ViewModels.Settings;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -38,6 +42,11 @@ public sealed class AdminController : Controller
     private const string GlobalPolicySuccessTempDataKey = "AdminGlobalPolicySuccess";
     private const string GlobalPolicyErrorTempDataKey = "AdminGlobalPolicyError";
     private const string AdminLogCenterRetentionSnapshotViewDataKey = "AdminLogCenterRetentionSnapshot";
+    private const string ClockDriftSnapshotViewDataKey = "AdminClockDriftSnapshot";
+    private const string DriftGuardSnapshotViewDataKey = "AdminDriftGuardSnapshot";
+    private const string CanRefreshClockDriftViewDataKey = "AdminCanRefreshClockDrift";
+    private const string ClockDriftSuccessTempDataKey = "AdminClockDriftSuccess";
+    private const string ClockDriftErrorTempDataKey = "AdminClockDriftError";
     private const string ApprovalSuccessTempDataKey = "AdminApprovalSuccess";
     private const string ApprovalErrorTempDataKey = "AdminApprovalError";
     private const string CrisisPreviewViewDataKey = "AdminCrisisEscalationPreview";
@@ -61,6 +70,10 @@ public sealed class AdminController : Controller
     private readonly IGlobalPolicyEngine? globalPolicyEngine;
     private readonly IGlobalExecutionSwitchService globalExecutionSwitchService;
     private readonly IGlobalSystemStateService globalSystemStateService;
+    private readonly IBinanceTimeSyncService binanceTimeSyncService;
+    private readonly IDataLatencyCircuitBreaker dataLatencyCircuitBreaker;
+    private readonly DataLatencyGuardOptions dataLatencyGuardOptions;
+    private readonly BinancePrivateDataOptions privateDataOptions;
     private readonly ITraceService traceService;
     private readonly BotExecutionPilotOptions pilotOptionsValue;
 
@@ -70,6 +83,8 @@ public sealed class AdminController : Controller
         IAdminCommandRegistry adminCommandRegistry,
         IAdminAuditLogService adminAuditLogService,
         ITraceService traceService,
+        IBinanceTimeSyncService binanceTimeSyncService,
+        IDataLatencyCircuitBreaker dataLatencyCircuitBreaker,
         IApiCredentialValidationService apiCredentialValidationService,
         IAdminWorkspaceReadModelService adminWorkspaceReadModelService,
         ICriticalUserOperationAuthorizer criticalUserOperationAuthorizer,
@@ -79,13 +94,17 @@ public sealed class AdminController : Controller
         ILogCenterRetentionService? logCenterRetentionService = null,
         IGlobalPolicyEngine? globalPolicyEngine = null,
         ICrisisEscalationService? crisisEscalationService = null,
-        IOptions<BotExecutionPilotOptions>? botExecutionPilotOptions = null)
+        IOptions<BotExecutionPilotOptions>? botExecutionPilotOptions = null,
+        IOptions<DataLatencyGuardOptions>? dataLatencyGuardOptions = null,
+        IOptions<BinancePrivateDataOptions>? privateDataOptions = null)
     {
         this.globalExecutionSwitchService = globalExecutionSwitchService;
         this.globalSystemStateService = globalSystemStateService;
         this.adminCommandRegistry = adminCommandRegistry;
         this.adminAuditLogService = adminAuditLogService;
         this.traceService = traceService;
+        this.binanceTimeSyncService = binanceTimeSyncService;
+        this.dataLatencyCircuitBreaker = dataLatencyCircuitBreaker;
         this.apiCredentialValidationService = apiCredentialValidationService;
         this.adminWorkspaceReadModelService = adminWorkspaceReadModelService;
         this.criticalUserOperationAuthorizer = criticalUserOperationAuthorizer;
@@ -95,6 +114,8 @@ public sealed class AdminController : Controller
         this.logCenterRetentionService = logCenterRetentionService;
         this.globalPolicyEngine = globalPolicyEngine;
         this.crisisEscalationService = crisisEscalationService;
+        this.dataLatencyGuardOptions = dataLatencyGuardOptions?.Value ?? new DataLatencyGuardOptions();
+        this.privateDataOptions = privateDataOptions?.Value ?? new BinancePrivateDataOptions();
         pilotOptionsValue = botExecutionPilotOptions?.Value ?? new BotExecutionPilotOptions();
     }
 
@@ -883,12 +904,40 @@ public sealed class AdminController : Controller
         {
             ViewData[AdminLogCenterRetentionSnapshotViewDataKey] = await logCenterRetentionService.GetSnapshotAsync(cancellationToken);
         }
+
+        var clockDriftSnapshot = await binanceTimeSyncService.GetSnapshotAsync(cancellationToken: cancellationToken);
+        var driftGuardSnapshot = await dataLatencyCircuitBreaker.GetSnapshotAsync(HttpContext.TraceIdentifier, cancellationToken: cancellationToken);
+        ViewData[ClockDriftSnapshotViewDataKey] = BuildClockDriftInfoViewModel(clockDriftSnapshot);
+        ViewData[DriftGuardSnapshotViewDataKey] = BuildMarketDriftGuardInfoViewModel(driftGuardSnapshot);
+        ViewData[CanRefreshClockDriftViewDataKey] = CanRefreshClockDrift();
         ViewData[CrisisPreviewViewDataKey] = LoadCrisisPreviewViewModelFromTempData();
         ViewData[PilotOrderNotionalSummaryViewDataKey] = ResolvePilotOrderNotionalSummary();
         ViewData[PilotOrderNotionalToneViewDataKey] = ResolvePilotOrderNotionalTone();
         ViewData[AdminCanEditGlobalPolicyViewDataKey] = CanEditGlobalPolicy();
 
         return View();
+    }
+
+    [HttpPost]
+    [Authorize(Policy = ApplicationPolicies.PlatformAdministration)]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> RefreshClockDrift(CancellationToken cancellationToken)
+    {
+        var refreshedSnapshot = await binanceTimeSyncService.GetSnapshotAsync(forceRefresh: true, cancellationToken);
+
+        if (string.Equals(refreshedSnapshot.StatusCode, "Synchronized", StringComparison.OrdinalIgnoreCase))
+        {
+            TempData[ClockDriftSuccessTempDataKey] =
+                $"Binance server time sync yenilendi. Son probe drift {refreshedSnapshot.ClockDriftMilliseconds?.ToString() ?? "n/a"} ms. Market heartbeat drift guard snapshot'i ayri izlenir.";
+        }
+        else
+        {
+            TempData[ClockDriftErrorTempDataKey] =
+                refreshedSnapshot.FailureReason ??
+                "Binance server time sync yenilenemedi. Son basarili offset kullanılmaya devam ediyor.";
+        }
+
+        return RedirectToAction(nameof(Settings));
     }
 
     [HttpPost]
@@ -2636,6 +2685,96 @@ public sealed class AdminController : Controller
             : "critical";
     }
 
+    private ClockDriftInfoViewModel BuildClockDriftInfoViewModel(BinanceTimeSyncSnapshot snapshot)
+    {
+        return new ClockDriftInfoViewModel(
+            "UTC",
+            "UTC",
+            FormatOperationalTimestamp(snapshot.LocalAppTimeUtc),
+            FormatOperationalTimestamp(snapshot.ExchangeServerTimeUtc),
+            $"{snapshot.OffsetMilliseconds} ms",
+            snapshot.ClockDriftMilliseconds is int clockDriftMilliseconds
+                ? $"{clockDriftMilliseconds} ms"
+                : "Henüz yok",
+            FormatOperationalTimestamp(snapshot.LastSynchronizedAtUtc),
+            snapshot.StatusCode,
+            snapshot.FailureReason,
+            snapshot.RoundTripMilliseconds is int roundTripMilliseconds
+                ? $"{roundTripMilliseconds} ms"
+                : "Henüz yok",
+            $"{privateDataOptions.ServerTimeSyncRefreshSeconds} sn");
+    }
+
+    private MarketDriftGuardInfoViewModel BuildMarketDriftGuardInfoViewModel(DegradedModeSnapshot snapshot)
+    {
+        var clockDriftThresholdMilliseconds = checked(dataLatencyGuardOptions.ClockDriftThresholdSeconds * 1000);
+
+        return new MarketDriftGuardInfoViewModel(
+            $"{clockDriftThresholdMilliseconds} ms",
+            $"{snapshot.StateCode} • {(snapshot.ExecutionFlowBlocked ? "Execution blocked" : "Execution open")}",
+            BuildGuardReason(snapshot, clockDriftThresholdMilliseconds),
+            FormatOperationalTimestamp(snapshot.LatestHeartbeatReceivedAtUtc),
+            FormatOperationalTimestamp(snapshot.LatestDataTimestampAtUtc),
+            snapshot.LatestDataAgeMilliseconds is int latestDataAgeMilliseconds
+                ? $"{latestDataAgeMilliseconds} ms"
+                : "Henüz yok",
+            snapshot.LatestClockDriftMilliseconds is int latestClockDriftMilliseconds
+                ? $"{latestClockDriftMilliseconds} ms"
+                : "Henüz yok",
+            FormatOperationalTimestamp(snapshot.LastStateChangedAtUtc),
+            "Market-data heartbeat (binance:kline)",
+            BuildRetryExpectation(snapshot));
+    }
+
+    private static string BuildGuardReason(DegradedModeSnapshot snapshot, int clockDriftThresholdMilliseconds)
+    {
+        return snapshot.ReasonCode switch
+        {
+            DegradedModeReasonCode.None when snapshot.IsNormal =>
+                $"Guard normal. Threshold {clockDriftThresholdMilliseconds} ms, latest heartbeat drift {(snapshot.LatestClockDriftMilliseconds?.ToString() ?? "n/a")} ms.",
+            DegradedModeReasonCode.ClockDriftExceeded =>
+                $"Clock drift block aktif. Market-data heartbeat drift {(snapshot.LatestClockDriftMilliseconds?.ToString() ?? "n/a")} ms, threshold {clockDriftThresholdMilliseconds} ms.",
+            DegradedModeReasonCode.MarketDataLatencyBreached or DegradedModeReasonCode.MarketDataLatencyCritical =>
+                $"Market-data freshness guard aktif. Data age {(snapshot.LatestDataAgeMilliseconds?.ToString() ?? "n/a")} ms, latest heartbeat drift {(snapshot.LatestClockDriftMilliseconds?.ToString() ?? "n/a")} ms.",
+            DegradedModeReasonCode.MarketDataUnavailable =>
+                "Market-data heartbeat henüz güvenli kabul edilecek kadar gelmedi.",
+            _ =>
+                $"Guard reason {snapshot.ReasonCode}. Latest heartbeat drift {(snapshot.LatestClockDriftMilliseconds?.ToString() ?? "n/a")} ms."
+        };
+    }
+
+    private static string BuildRetryExpectation(DegradedModeSnapshot snapshot)
+    {
+        return snapshot.ReasonCode switch
+        {
+            DegradedModeReasonCode.ClockDriftExceeded =>
+                "Server-time refresh yalnız signed REST offset'ini yeniler. Yeni order için market-data heartbeat drift'inin threshold altına inmesi gerekir.",
+            DegradedModeReasonCode.MarketDataLatencyBreached or DegradedModeReasonCode.MarketDataLatencyCritical or DegradedModeReasonCode.MarketDataUnavailable =>
+                "Retry öncesi fresh kline heartbeat beklenmelidir; yalnız server-time refresh bu blokları tek başına kaldırmaz.",
+            _ =>
+                "Server-time refresh sonrası signed REST timestamp yeniden senkronlanır. Guard normal ise sonraki retry order path'e ilerleyebilir."
+        };
+    }
+
+    private bool CanRefreshClockDrift()
+    {
+        return User.HasClaim(ApplicationClaimTypes.Permission, ApplicationPermissions.PlatformAdministration);
+    }
+
+    private static string FormatOperationalTimestamp(DateTime? utcTimestamp)
+    {
+        if (!utcTimestamp.HasValue)
+        {
+            return "Henüz yok";
+        }
+
+        var normalizedUtcTimestamp = utcTimestamp.Value.Kind == DateTimeKind.Utc
+            ? utcTimestamp.Value
+            : DateTime.SpecifyKind(utcTimestamp.Value, DateTimeKind.Utc);
+
+        return $"{normalizedUtcTimestamp:yyyy-MM-dd HH:mm:ss} UTC";
+    }
+
     private static string BuildExecutionSwitchSummary(GlobalExecutionSwitchSnapshot snapshot)
     {
         return
@@ -2761,6 +2900,13 @@ public sealed class AdminController : Controller
             : value[..maxLength];
     }
 }
+
+
+
+
+
+
+
 
 
 

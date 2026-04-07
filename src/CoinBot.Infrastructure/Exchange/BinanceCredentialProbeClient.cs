@@ -54,7 +54,24 @@ public sealed class BinanceCredentialProbeClient(
         CancellationToken cancellationToken)
     {
         var client = httpClientFactory.CreateClient(SpotClientName);
-        var path = await CreateSignedPathAsync("/api/v3/account", apiSecret, cancellationToken);
+        string path;
+
+        try
+        {
+            path = await CreateSignedPathAsync("/api/v3/account", apiSecret, cancellationToken);
+        }
+        catch (BinanceClockDriftException)
+        {
+            return new EndpointProbeResult(
+                IsSuccess: false,
+                CanTrade: false,
+                CanWithdraw: null,
+                SupportsSpot: false,
+                SupportsFutures: false,
+                HasTimestampSkew: true,
+                HasIpRestrictionIssue: false,
+                SafeFailureReason: "Binance server-time offset üretilemedi.");
+        }
 
         using var request = CreateApiKeyRequest(path, apiKey);
         using var response = await client.SendAsync(request, cancellationToken);
@@ -100,7 +117,24 @@ public sealed class BinanceCredentialProbeClient(
         CancellationToken cancellationToken)
     {
         var client = httpClientFactory.CreateClient(FuturesClientName);
-        var path = await CreateSignedPathAsync("/fapi/v3/account", apiSecret, cancellationToken);
+        string path;
+
+        try
+        {
+            path = await CreateSignedPathAsync("/fapi/v3/account", apiSecret, cancellationToken);
+        }
+        catch (BinanceClockDriftException)
+        {
+            return new EndpointProbeResult(
+                IsSuccess: false,
+                CanTrade: false,
+                CanWithdraw: null,
+                SupportsSpot: false,
+                SupportsFutures: false,
+                HasTimestampSkew: true,
+                HasIpRestrictionIssue: false,
+                SafeFailureReason: "Binance server-time offset üretilemedi.");
+        }
 
         using var request = CreateApiKeyRequest(path, apiKey);
         using var response = await client.SendAsync(request, cancellationToken);
@@ -356,3 +390,4 @@ public sealed class BinanceCredentialProbeClient(
         }
     }
 }
+

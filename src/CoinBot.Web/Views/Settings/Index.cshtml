@@ -2,12 +2,12 @@
 @{
     ViewData["Title"] = "Ayarlar";
     ViewData["ActiveNav"] = "Settings";
-    ViewData["PageDescription"] = "Kullanıcı saat dilimi tercihini ve Binance clock drift görünürlüğünü bu ekrandan yönetin.";
+    ViewData["PageDescription"] = "Kullanıcı saat dilimi tercihini bu ekrandan yönetir; operasyonel sync ve drift guard alanları Super Admin/Ops scope'undadır.";
     ViewData["BreadcrumbItems"] = new[] { "System", "Ayarlar" };
 }
 
 <div class="row">
-    <div class="col-xl-5">
+    <div class="col-xl-6 col-lg-8">
         <div class="card card-custom gutter-b cb-card">
             <div class="card-body">
                 <div class="cb-page-header">
@@ -17,10 +17,6 @@
                         <p class="cb-page-description">Dashboard ve bot yüzeylerindeki zaman gösterimleri bu tercihe göre render edilir.</p>
                     </div>
                     <div class="cb-toolbar">
-                        <form asp-controller="Settings" asp-action="RefreshClockDrift" method="post" class="d-inline">
-                            @Html.AntiForgeryToken()
-                            <button type="submit" class="btn btn-light-warning font-weight-bold">Server time sync yenile</button>
-                        </form>
                         <a asp-controller="Settings" asp-action="Mfa" class="btn btn-light-primary font-weight-bold">2FA yönetimi</a>
                     </div>
                 </div>
@@ -35,6 +31,10 @@
                     <div class="cb-validation-summary cb-validation-summary-danger mt-6">@errorMessage</div>
                 }
 
+                <div class="cb-validation-summary cb-validation-summary-warning mt-6">
+                    Binance server-time sync, drift guard threshold ve operasyonel sync aksiyonlari bu ekranda yonetilmez. Bu alanlar Super Admin/Ops Global Ayarlar yuzeyinde read-only veya policy bazli olarak aciktir.
+                </div>
+
                 <form asp-controller="Settings" asp-action="Index" method="post" class="mt-6" novalidate>
                     @Html.AntiForgeryToken()
                     <div asp-validation-summary="ModelOnly" class="cb-validation-summary cb-validation-summary-danger"></div>
@@ -48,7 +48,7 @@
                             }
                         </select>
                         <span asp-validation-for="Form.PreferredTimeZoneId" class="text-danger small"></span>
-                        <div class="cb-helper-text mt-2">Bu seçim yalnız display timezone içindir; Binance request timestamp düzeltmesi ayrı drift sync katmanından gelir.</div>
+                        <div class="cb-helper-text mt-2">Bu seçim yalnız display timezone içindir; signed REST server-time sync ve market-data drift guard değerlendirmesi kullanıcı ayarından ayrı operasyon katmanında yürür.</div>
                     </div>
 
                     <div class="cb-auth-action-row mt-8">
@@ -56,121 +56,6 @@
                         <a asp-controller="Home" asp-action="Index" class="btn btn-light-primary font-weight-bold">Dashboard</a>
                     </div>
                 </form>
-            </div>
-        </div>
-    </div>
-
-    <div class="col-xl-7">
-        <div class="card card-custom gutter-b cb-card">
-            <div class="card-body">
-                <div class="cb-section-title">Server-time sync</div>
-                <p class="cb-page-description mt-3">Bu panel signed REST timestamp düzeltmesinin durumunu gösterir. Local saat ile Binance server time farkı burada ölçülür.</p>
-
-                <div class="table-responsive mt-6">
-                    <table class="table table-borderless mb-0">
-                        <tbody>
-                            <tr>
-                                <td class="font-weight-bolder">Seçili saat dilimi</td>
-                                <td>@Model.ClockDrift.SelectedTimeZoneDisplayName</td>
-                            </tr>
-                            <tr>
-                                <td class="font-weight-bolder">Local app time</td>
-                                <td>@Model.ClockDrift.LocalAppTimeLabel</td>
-                            </tr>
-                            <tr>
-                                <td class="font-weight-bolder">Exchange server time</td>
-                                <td>@Model.ClockDrift.ExchangeServerTimeLabel</td>
-                            </tr>
-                            <tr>
-                                <td class="font-weight-bolder">Measured offset</td>
-                                <td>@Model.ClockDrift.OffsetLabel</td>
-                            </tr>
-                            <tr>
-                                <td class="font-weight-bolder">Measured drift</td>
-                                <td>@Model.ClockDrift.DriftLabel</td>
-                            </tr>
-                            <tr>
-                                <td class="font-weight-bolder">Last sync</td>
-                                <td>@Model.ClockDrift.LastSyncLabel</td>
-                            </tr>
-                            <tr>
-                                <td class="font-weight-bolder">Round trip</td>
-                                <td>@Model.ClockDrift.RoundTripLabel</td>
-                            </tr>
-                            <tr>
-                                <td class="font-weight-bolder">Refresh cadence</td>
-                                <td>@Model.ClockDrift.RefreshCadenceLabel</td>
-                            </tr>
-                            <tr>
-                                <td class="font-weight-bolder">Sync status</td>
-                                <td>@Model.ClockDrift.StatusLabel</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-
-                @if (!string.IsNullOrWhiteSpace(Model.ClockDrift.FailureReason))
-                {
-                    <div class="cb-validation-summary cb-validation-summary-warning mt-6">
-                        @Model.ClockDrift.FailureReason
-                    </div>
-                }
-
-                <div class="cb-helper-text mt-4">Bu yenileme yalnız signed REST offset'ini günceller. Market-data heartbeat drift blokları aşağıdaki guard panelinde ayrıca görünür.</div>
-            </div>
-        </div>
-
-        <div class="card card-custom gutter-b cb-card mt-6">
-            <div class="card-body">
-                <div class="cb-section-title">Market-data drift guard</div>
-                <p class="cb-page-description mt-3">Execution gate'i bloklayan drift/freshness kararı market-data heartbeat kaynaklıdır. Bu bölüm threshold, reason ve retry beklentisini gösterir.</p>
-
-                <div class="table-responsive mt-6">
-                    <table class="table table-borderless mb-0">
-                        <tbody>
-                            <tr>
-                                <td class="font-weight-bolder">Source</td>
-                                <td>@Model.DriftGuard.SourceLabel</td>
-                            </tr>
-                            <tr>
-                                <td class="font-weight-bolder">Threshold</td>
-                                <td>@Model.DriftGuard.ThresholdLabel</td>
-                            </tr>
-                            <tr>
-                                <td class="font-weight-bolder">Guard state</td>
-                                <td>@Model.DriftGuard.StateLabel</td>
-                            </tr>
-                            <tr>
-                                <td class="font-weight-bolder">Readable reason</td>
-                                <td>@Model.DriftGuard.ReasonLabel</td>
-                            </tr>
-                            <tr>
-                                <td class="font-weight-bolder">Latest heartbeat</td>
-                                <td>@Model.DriftGuard.LatestHeartbeatLabel</td>
-                            </tr>
-                            <tr>
-                                <td class="font-weight-bolder">Latest data timestamp</td>
-                                <td>@Model.DriftGuard.LatestDataTimestampLabel</td>
-                            </tr>
-                            <tr>
-                                <td class="font-weight-bolder">Latest data age</td>
-                                <td>@Model.DriftGuard.LatestDataAgeLabel</td>
-                            </tr>
-                            <tr>
-                                <td class="font-weight-bolder">Latest measured drift</td>
-                                <td>@Model.DriftGuard.LatestDriftLabel</td>
-                            </tr>
-                            <tr>
-                                <td class="font-weight-bolder">Last state change</td>
-                                <td>@Model.DriftGuard.LastStateChangedLabel</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-
-                <div class="cb-validation-summary cb-validation-summary-warning mt-6">
-                    @Model.DriftGuard.RetryExpectation
-                </div>
             </div>
         </div>
     </div>

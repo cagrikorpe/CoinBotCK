@@ -68,6 +68,22 @@ public sealed class BinanceTimeSyncServiceTests
         Assert.Equal(now.ToUnixTimeMilliseconds() + 1500, timestamp);
     }
 
+    [Fact]
+    public async Task GetCurrentTimestampMillisecondsAsync_ThrowsClockDriftException_WhenOffsetCannotBeSynchronized()
+    {
+        var now = DateTimeOffset.Parse("2026-04-02T10:00:00Z");
+        var timeProvider = new AdjustableTimeProvider(now);
+        using var handler = new ErrorServerTimeHandler(HttpStatusCode.ServiceUnavailable);
+        using var client = new HttpClient(handler) { BaseAddress = new Uri("https://testnet.binancefuture.com") };
+        using var memoryCache = new MemoryCache(new MemoryCacheOptions { SizeLimit = 16 });
+        var service = CreateService(client, memoryCache, timeProvider);
+
+        var exception = await Assert.ThrowsAsync<BinanceClockDriftException>(() => service.GetCurrentTimestampMillisecondsAsync());
+
+        Assert.Contains("server-time offset could not be synchronized", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(2, handler.RequestCount);
+    }
+
     private static BinanceTimeSyncService CreateService(HttpClient client, IMemoryCache memoryCache, TimeProvider timeProvider)
     {
         return new BinanceTimeSyncService(
@@ -100,6 +116,20 @@ public sealed class BinanceTimeSyncServiceTests
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(payload, Encoding.UTF8, "application/json")
+            });
+        }
+    }
+
+    private sealed class ErrorServerTimeHandler(HttpStatusCode statusCode) : HttpMessageHandler
+    {
+        public int RequestCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            RequestCount++;
+            return Task.FromResult(new HttpResponseMessage(statusCode)
+            {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json")
             });
         }
     }

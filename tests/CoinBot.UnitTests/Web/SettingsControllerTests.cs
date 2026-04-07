@@ -1,18 +1,13 @@
 using System.Security.Claims;
-using CoinBot.Application.Abstractions.Execution;
-using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Application.Abstractions.Mfa;
+using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Application.Abstractions.Settings;
-using CoinBot.Domain.Enums;
-using CoinBot.Infrastructure.Execution;
-using CoinBot.Infrastructure.Exchange;
 using CoinBot.Web.Controllers;
 using CoinBot.Web.ViewModels.Settings;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ViewFeatures;
-using Microsoft.Extensions.Options;
 
 namespace CoinBot.UnitTests.Web;
 
@@ -31,8 +26,6 @@ public sealed class SettingsControllerTests
 
         Assert.Equal(settingsService.Snapshot.PreferredTimeZoneId, model.Form.PreferredTimeZoneId);
         Assert.NotEmpty(model.TimeZoneOptions);
-        Assert.Equal("2000 ms", model.DriftGuard.ThresholdLabel);
-        Assert.Contains("signed REST", model.DriftGuard.RetryExpectation, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -76,7 +69,7 @@ public sealed class SettingsControllerTests
     }
 
     [Fact]
-    public void Controller_RequiresAuthorize_AndPostRequiresAntiForgery()
+    public void Controller_RequiresAuthorize_AndTimeZonePostRequiresAntiForgery()
     {
         var authorizeAttribute = Assert.Single(
             typeof(SettingsController)
@@ -87,65 +80,20 @@ public sealed class SettingsControllerTests
                 .GetMethod(nameof(SettingsController.Index), [typeof(TimeZoneSettingsInputModel), typeof(CancellationToken)])!
                 .GetCustomAttributes(typeof(ValidateAntiForgeryTokenAttribute), inherit: true)
                 .Cast<ValidateAntiForgeryTokenAttribute>());
-        var refreshAntiForgeryAttribute = Assert.Single(
-            typeof(SettingsController)
-                .GetMethod(nameof(SettingsController.RefreshClockDrift), [typeof(CancellationToken)])!
-                .GetCustomAttributes(typeof(ValidateAntiForgeryTokenAttribute), inherit: true)
-                .Cast<ValidateAntiForgeryTokenAttribute>());
 
         Assert.NotNull(authorizeAttribute);
         Assert.NotNull(antiForgeryAttribute);
-        Assert.NotNull(refreshAntiForgeryAttribute);
-    }
-
-    [Fact]
-    public async Task RefreshClockDrift_ForceRefreshesSync_AndRedirects()
-    {
-        var settingsService = new FakeUserSettingsService();
-        var timeSyncService = new FakeBinanceTimeSyncService
-        {
-            ForcedSnapshot = new BinanceTimeSyncSnapshot(
-                new DateTime(2026, 4, 2, 10, 0, 0, DateTimeKind.Utc),
-                new DateTime(2026, 4, 2, 10, 0, 0, 600, DateTimeKind.Utc),
-                600,
-                22,
-                new DateTime(2026, 4, 2, 10, 0, 1, DateTimeKind.Utc),
-                "Synchronized",
-                null)
-        };
-        var controller = CreateController(settingsService, "settings-user-04", "trace-settings-004", timeSyncService: timeSyncService);
-
-        var result = await controller.RefreshClockDrift(CancellationToken.None);
-
-        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
-
-        Assert.Equal(nameof(SettingsController.Index), redirectResult.ActionName);
-        Assert.Single(timeSyncService.ForceRefreshCalls);
-        Assert.Equal("Binance server time sync yenilendi. Son probe drift 600 ms. Market heartbeat drift guard ayrı değerlendirilir.", controller.TempData["SettingsSuccess"]);
+        Assert.Null(typeof(SettingsController).GetMethod("RefreshClockDrift", [typeof(CancellationToken)]));
     }
 
     private static SettingsController CreateController(
         FakeUserSettingsService userSettingsService,
         string userId,
-        string traceIdentifier,
-        FakeBinanceTimeSyncService? timeSyncService = null,
-        FakeDataLatencyCircuitBreaker? dataLatencyCircuitBreaker = null)
+        string traceIdentifier)
     {
         var controller = new SettingsController(
             new FakeMfaManagementService(),
-            userSettingsService,
-            timeSyncService ?? new FakeBinanceTimeSyncService(),
-            dataLatencyCircuitBreaker ?? new FakeDataLatencyCircuitBreaker(),
-            Options.Create(new DataLatencyGuardOptions
-            {
-                ClockDriftThresholdSeconds = 2,
-                StaleDataThresholdSeconds = 3,
-                StopDataThresholdSeconds = 6
-            }),
-            Options.Create(new BinancePrivateDataOptions
-            {
-                ServerTimeSyncRefreshSeconds = 30
-            }));
+            userSettingsService);
         var httpContext = new DefaultHttpContext();
         httpContext.TraceIdentifier = traceIdentifier;
         httpContext.User = new ClaimsPrincipal(
@@ -210,56 +158,6 @@ public sealed class SettingsControllerTests
         string Actor,
         string? CorrelationId);
 
-    private sealed class FakeBinanceTimeSyncService : IBinanceTimeSyncService
-    {
-        public List<bool> ForceRefreshCalls { get; } = [];
-
-        public BinanceTimeSyncSnapshot Snapshot { get; init; } = new(
-            new DateTime(2026, 4, 2, 10, 0, 0, DateTimeKind.Utc),
-            new DateTime(2026, 4, 2, 10, 0, 0, DateTimeKind.Utc),
-            0,
-            12,
-            new DateTime(2026, 4, 2, 10, 0, 0, DateTimeKind.Utc),
-            "Synchronized",
-            null);
-
-        public BinanceTimeSyncSnapshot? ForcedSnapshot { get; init; }
-
-        public Task<BinanceTimeSyncSnapshot> GetSnapshotAsync(bool forceRefresh = false, CancellationToken cancellationToken = default)
-        {
-            ForceRefreshCalls.Add(forceRefresh);
-            return Task.FromResult(forceRefresh && ForcedSnapshot is not null ? ForcedSnapshot : Snapshot);
-        }
-
-        public Task<long> GetCurrentTimestampMillisecondsAsync(CancellationToken cancellationToken = default)
-        {
-            return Task.FromResult(1_710_000_000_000L);
-        }
-    }
-
-    private sealed class FakeDataLatencyCircuitBreaker : IDataLatencyCircuitBreaker
-    {
-        public Task<DegradedModeSnapshot> GetSnapshotAsync(string? correlationId = null, string? symbol = null, string? timeframe = null, CancellationToken cancellationToken = default)
-        {
-            return Task.FromResult(new DegradedModeSnapshot(
-                DegradedModeStateCode.Stopped,
-                DegradedModeReasonCode.ClockDriftExceeded,
-                SignalFlowBlocked: true,
-                ExecutionFlowBlocked: true,
-                LatestDataTimestampAtUtc: new DateTime(2026, 4, 2, 10, 0, 0, DateTimeKind.Utc),
-                LatestHeartbeatReceivedAtUtc: new DateTime(2026, 4, 2, 10, 0, 2, DateTimeKind.Utc),
-                LatestDataAgeMilliseconds: 2200,
-                LatestClockDriftMilliseconds: 2234,
-                LastStateChangedAtUtc: new DateTime(2026, 4, 2, 10, 0, 3, DateTimeKind.Utc),
-                IsPersisted: true));
-        }
-
-        public Task<DegradedModeSnapshot> RecordHeartbeatAsync(DataLatencyHeartbeat heartbeat, string? correlationId = null, CancellationToken cancellationToken = default)
-        {
-            throw new NotSupportedException();
-        }
-    }
-
     private sealed class TestTempDataProvider : ITempDataProvider
     {
         private readonly Dictionary<string, object> values = new(StringComparer.Ordinal);
@@ -280,3 +178,5 @@ public sealed class SettingsControllerTests
         }
     }
 }
+
+

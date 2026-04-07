@@ -28,6 +28,7 @@ public sealed class BinancePrivateRestClientClockDriftTests
         Assert.NotNull(handler.LastRequestUri);
         Assert.Contains("timestamp=1710000000123", handler.LastRequestUri!, StringComparison.Ordinal);
         Assert.Equal(1, timeSyncService.CurrentTimestampCalls);
+        Assert.Equal(1, handler.RequestCount);
     }
 
     [Fact]
@@ -54,6 +55,23 @@ public sealed class BinancePrivateRestClientClockDriftTests
 
         Assert.Contains("DriftMs=2500", exception.Message, StringComparison.Ordinal);
         Assert.Equal(1, timeSyncService.ForcedRefreshCalls);
+        Assert.Equal(1, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task PlaceOrderAsync_FailsClosed_WhenTimeSyncOffsetCannotBeSynchronized()
+    {
+        using var handler = new RecordingMessageHandler(_ => throw new InvalidOperationException("HTTP request should not be sent when timestamp sync is unavailable."));
+        using var client = new HttpClient(handler) { BaseAddress = new Uri("https://testnet.binancefuture.com") };
+        var timeSyncService = new FakeTimeSyncService(
+            currentTimestampMilliseconds: 0,
+            currentTimestampException: new BinanceClockDriftException("Offset unavailable."));
+        var sut = CreateClient(client, timeSyncService);
+
+        await Assert.ThrowsAsync<BinanceClockDriftException>(() => sut.PlaceOrderAsync(CreateRequest()));
+
+        Assert.Equal(1, timeSyncService.CurrentTimestampCalls);
+        Assert.Equal(0, handler.RequestCount);
     }
 
     private static BinancePrivateRestClient CreateClient(HttpClient httpClient, IBinanceTimeSyncService timeSyncService)
@@ -87,7 +105,8 @@ public sealed class BinancePrivateRestClientClockDriftTests
 
     private sealed class FakeTimeSyncService(
         long currentTimestampMilliseconds,
-        BinanceTimeSyncSnapshot? refreshedSnapshot = null) : IBinanceTimeSyncService
+        BinanceTimeSyncSnapshot? refreshedSnapshot = null,
+        Exception? currentTimestampException = null) : IBinanceTimeSyncService
     {
         public int CurrentTimestampCalls { get; private set; }
 
@@ -115,6 +134,12 @@ public sealed class BinancePrivateRestClientClockDriftTests
         public Task<long> GetCurrentTimestampMillisecondsAsync(CancellationToken cancellationToken = default)
         {
             CurrentTimestampCalls++;
+
+            if (currentTimestampException is not null)
+            {
+                return Task.FromException<long>(currentTimestampException);
+            }
+
             return Task.FromResult(currentTimestampMilliseconds);
         }
     }
@@ -123,8 +148,11 @@ public sealed class BinancePrivateRestClientClockDriftTests
     {
         public string? LastRequestUri { get; private set; }
 
+        public int RequestCount { get; private set; }
+
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            RequestCount++;
             LastRequestUri = request.RequestUri?.ToString();
             return Task.FromResult(responder(request));
         }

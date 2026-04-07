@@ -3,6 +3,9 @@
     var globalSystemStateSnapshot = (CoinBot.Application.Abstractions.Administration.GlobalSystemStateSnapshot)ViewData["AdminGlobalSystemStateSnapshot"]!;
     var crisisPreview = ViewData["AdminCrisisEscalationPreview"] as CoinBot.Web.ViewModels.Admin.AdminCrisisEscalationPreviewViewModel;
     var canEditGlobalPolicy = ViewData["AdminCanEditGlobalPolicy"] is bool canEditValue && canEditValue;
+    var canRefreshClockDrift = ViewData["AdminCanRefreshClockDrift"] is bool canRefreshClockDriftValue && canRefreshClockDriftValue;
+    var clockDrift = ViewData["AdminClockDriftSnapshot"] as CoinBot.Web.ViewModels.Settings.ClockDriftInfoViewModel;
+    var driftGuard = ViewData["AdminDriftGuardSnapshot"] as CoinBot.Web.ViewModels.Settings.MarketDriftGuardInfoViewModel;
     var headerModel = new AdminPageHeaderViewModel
     {
         Eyebrow = "System Settings",
@@ -32,7 +35,7 @@
                 {
                     Tone = "warning",
                     Title = "Bu ekran sistem ayarıdır",
-                    Message = "Bu sayfada yalnizca gercek backend write/read-model baglari bulunan execution, global state, crisis, retention ve policy alanlari gosterilir.",
+                    Message = "Bu sayfada yalnizca gercek backend write/read-model baglari bulunan execution, global state, crisis, retention, policy ve runtime sync alanlari gosterilir.",
                     Meta = "Global Scope"
                 })
 
@@ -64,6 +67,28 @@
                         <div>
                             <div class="cb-admin-info-strip-title">Switch update rejected</div>
                             <div class="cb-admin-info-strip-text">@executionSwitchErrorMessage</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Blocked</span>
+                    </div>
+                }
+
+                @if (TempData["AdminClockDriftSuccess"] is string clockDriftSuccessMessage)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-healthy mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Server-time sync yenilendi</div>
+                            <div class="cb-admin-info-strip-text">@clockDriftSuccessMessage</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Applied</span>
+                    </div>
+                }
+
+                @if (TempData["AdminClockDriftError"] is string clockDriftErrorMessage)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-danger mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Server-time sync yenilenemedi</div>
+                            <div class="cb-admin-info-strip-text">@clockDriftErrorMessage</div>
                         </div>
                         <span class="cb-admin-info-strip-meta">Blocked</span>
                     </div>
@@ -146,6 +171,106 @@
     <div class="col-xl-9 col-lg-8">
         <div class="cb-admin-settings-shell">
             @await Html.PartialAsync("Foundation/_AdminGlobalExecutionSwitchSection", executionSnapshot)
+
+            @if (clockDrift is not null && driftGuard is not null)
+            {
+                <section id="cb_admin_settings_clock_sync" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+                    <div class="card-body">
+                        <div class="cb-admin-section-kicker">Runtime Sync Ops</div>
+                        <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
+                            <div>
+                                <div class="cb-admin-section-title">Binance server-time sync ve drift guard</div>
+                                <p class="cb-admin-section-description">Normal kullanıcı timezone seçimi yalnız display içindir. Signed REST server-time sync, drift threshold ve market-data guard değerlendirmesi bu operasyon panelinde izlenir.</p>
+                            </div>
+                            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+                            {
+                                Label = canRefreshClockDrift ? "Write" : "Read-only",
+                                Tone = canRefreshClockDrift ? "warning" : "info",
+                                IconText = canRefreshClockDrift ? "RW" : "RO"
+                            })
+                        </div>
+
+                        <div class="cb-admin-settings-switch-grid mt-6">
+                            <div class="cb-admin-summary-card">
+                                <span class="cb-admin-summary-label">Server-time sync</span>
+                                <strong>@clockDrift.StatusLabel</strong>
+                                <small>Signed REST timestamp ofseti ve last sync burada izlenir.</small>
+                                <div class="table-responsive mt-5">
+                                    <table class="table table-borderless mb-0">
+                                        <tbody>
+                                            <tr><td class="font-weight-bolder">Local app time</td><td>@clockDrift.LocalAppTimeLabel</td></tr>
+                                            <tr><td class="font-weight-bolder">Exchange server time</td><td>@clockDrift.ExchangeServerTimeLabel</td></tr>
+                                            <tr><td class="font-weight-bolder">Measured offset</td><td>@clockDrift.OffsetLabel</td></tr>
+                                            <tr><td class="font-weight-bolder">Measured drift</td><td>@clockDrift.DriftLabel</td></tr>
+                                            <tr><td class="font-weight-bolder">Last sync</td><td>@clockDrift.LastSyncLabel</td></tr>
+                                            <tr><td class="font-weight-bolder">Round trip</td><td>@clockDrift.RoundTripLabel</td></tr>
+                                            <tr><td class="font-weight-bolder">Refresh cadence</td><td>@clockDrift.RefreshCadenceLabel</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                @if (!string.IsNullOrWhiteSpace(clockDrift.FailureReason))
+                                {
+                                    <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-5">
+                                        <div>
+                                            <div class="cb-admin-info-strip-title">Last sync failure</div>
+                                            <div class="cb-admin-info-strip-text">@clockDrift.FailureReason</div>
+                                        </div>
+                                        <span class="cb-admin-info-strip-meta">Retry aware</span>
+                                    </div>
+                                }
+
+                                @if (canRefreshClockDrift)
+                                {
+                                    <form asp-area="Admin" asp-controller="Admin" asp-action="RefreshClockDrift" method="post" class="mt-5">
+                                        @Html.AntiForgeryToken()
+                                        <button type="submit" class="btn btn-light-warning font-weight-bold">Server time sync yenile</button>
+                                    </form>
+                                }
+                                else
+                                {
+                                    <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
+                                        <div>
+                                            <div class="cb-admin-info-strip-title">Read-only sync visibility</div>
+                                            <div class="cb-admin-info-strip-text">Ops rolu bu paneli izler; refresh aksiyonu policy bazli olarak platform admin kapsaminda tutulur.</div>
+                                        </div>
+                                        <span class="cb-admin-info-strip-meta">Ops</span>
+                                    </div>
+                                }
+                            </div>
+
+                            <div class="cb-admin-summary-card">
+                                <span class="cb-admin-summary-label">Market-data drift guard</span>
+                                <strong>@driftGuard.StateLabel</strong>
+                                <small>Execution gate bloklayan freshness ve drift kararinin backend snapshot'i.</small>
+                                <div class="table-responsive mt-5">
+                                    <table class="table table-borderless mb-0">
+                                        <tbody>
+                                            <tr><td class="font-weight-bolder">Source</td><td>@driftGuard.SourceLabel</td></tr>
+                                            <tr><td class="font-weight-bolder">Threshold</td><td>@driftGuard.ThresholdLabel</td></tr>
+                                            <tr><td class="font-weight-bolder">Readable reason</td><td>@driftGuard.ReasonLabel</td></tr>
+                                            <tr><td class="font-weight-bolder">Latest heartbeat</td><td>@driftGuard.LatestHeartbeatLabel</td></tr>
+                                            <tr><td class="font-weight-bolder">Latest data timestamp</td><td>@driftGuard.LatestDataTimestampLabel</td></tr>
+                                            <tr><td class="font-weight-bolder">Latest data age</td><td>@driftGuard.LatestDataAgeLabel</td></tr>
+                                            <tr><td class="font-weight-bolder">Latest drift</td><td>@driftGuard.LatestDriftLabel</td></tr>
+                                            <tr><td class="font-weight-bolder">Last state change</td><td>@driftGuard.LastStateChangedLabel</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-5">
+                                    <div>
+                                        <div class="cb-admin-info-strip-title">Retry expectation</div>
+                                        <div class="cb-admin-info-strip-text">@driftGuard.RetryExpectation</div>
+                                    </div>
+                                    <span class="cb-admin-info-strip-meta">Fail-closed</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            }
+
             @await Html.PartialAsync("Foundation/_AdminGlobalSystemStateSection", globalSystemStateSnapshot)
             @await Html.PartialAsync("Foundation/_AdminCrisisEscalationSection", crisisPreview)
             @await Html.PartialAsync("Foundation/_AdminLoggingRetentionSection")
