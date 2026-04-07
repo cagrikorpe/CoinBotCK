@@ -16,7 +16,11 @@ public sealed record UserDashboardLiveSnapshot(
     UserDashboardAiSummarySnapshot AiSummary,
     IReadOnlyCollection<UserDashboardAiHistoryRowSnapshot> AiHistory,
     IReadOnlyCollection<UserDashboardReasonBucketSnapshot> NoSubmitReasons,
-    IReadOnlyCollection<UserDashboardReasonBucketSnapshot> HypotheticalBlockReasons);
+    IReadOnlyCollection<UserDashboardReasonBucketSnapshot> HypotheticalBlockReasons,
+    UserDashboardAiOutcomeSummarySnapshot? AiOutcomeSummary = null,
+    IReadOnlyCollection<UserDashboardReasonBucketSnapshot>? OutcomeStates = null,
+    IReadOnlyCollection<UserDashboardReasonBucketSnapshot>? FutureDataAvailabilityBuckets = null,
+    IReadOnlyCollection<UserDashboardAiConfidenceBucketSnapshot>? OutcomeConfidenceBuckets = null);
 
 public sealed record UserDashboardLiveControlSnapshot(
     string TradeMasterLabel,
@@ -60,6 +64,32 @@ public sealed record UserDashboardAiSummarySnapshot(
     int MediumConfidenceCount,
     int LowConfidenceCount);
 
+public sealed record UserDashboardAiOutcomeSummarySnapshot(
+    string HorizonLabel,
+    int TotalDecisionCount,
+    int ScoredCount,
+    int FutureDataUnavailableCount,
+    int ReferenceDataUnavailableCount,
+    decimal AverageOutcomeScore,
+    int PositiveOutcomeCount,
+    int NegativeOutcomeCount,
+    int NeutralOutcomeCount,
+    int FalsePositiveCount,
+    int FalseNeutralCount,
+    int OvertradingCount,
+    int SuppressionAlignedCount,
+    int SuppressionMissedCount);
+
+public sealed record UserDashboardAiConfidenceBucketSnapshot(
+    string Label,
+    int TotalCount,
+    int ScoredCount,
+    int SuccessCount,
+    int FalsePositiveCount,
+    int FalseNeutralCount,
+    int OvertradingCount,
+    decimal AverageOutcomeScore);
+
 public sealed record UserDashboardAiHistoryRowSnapshot(
     Guid DecisionId,
     Guid BotId,
@@ -98,6 +128,18 @@ public sealed record UserDashboardAiHistoryRowSnapshot(
     string? MomentumBias,
     string? VolatilityState,
     ExecutionEnvironment TradingMode,
-    ExchangeDataPlane Plane);
+    ExchangeDataPlane Plane,
+    AiShadowOutcomeState? OutcomeState = null,
+    decimal? OutcomeScore = null,
+    string? RealizedDirectionality = null,
+    string OutcomeConfidenceBucket = "Low",
+    AiShadowFutureDataAvailability? FutureDataAvailability = null,
+    AiShadowOutcomeHorizonKind? OutcomeHorizonKind = null,
+    int? OutcomeHorizonValue = null,
+    bool FalsePositive = false,
+    bool FalseNeutral = false,
+    bool Overtrading = false,
+    bool SuppressionCandidate = false,
+    bool SuppressionAligned = false);
 
 public sealed record UserDashboardReasonBucketSnapshot(string Label, int Count);

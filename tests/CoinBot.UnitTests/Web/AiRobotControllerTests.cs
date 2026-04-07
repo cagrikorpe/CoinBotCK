@@ -27,6 +27,10 @@ public sealed class AiRobotControllerTests
 
         Assert.Equal(1, model.Summary.TotalCount);
         Assert.Equal("ShadowOnly", model.Summary.LatestNoTradeStatus);
+        Assert.Equal("+1 bar close-to-close", model.Summary.OutcomeHorizonLabel);
+        Assert.Equal("1/1", model.Summary.ScoringCoverage);
+        Assert.Equal("+0.640", model.Summary.AverageOutcomeScore);
+        Assert.Contains("False+ 0", model.Summary.CalibrationSummary, StringComparison.Ordinal);
         Assert.Single(model.Decisions);
         Assert.Equal("BTCUSDT", model.Decisions[0].Symbol);
         Assert.Equal("Long", model.Decisions[0].AiDirection);
@@ -36,9 +40,16 @@ public sealed class AiRobotControllerTests
         Assert.Equal("AI liked momentum confirmation.", model.Decisions[0].ReasonSummary);
         Assert.Equal("CCCCCCCC", model.Decisions[0].FeatureSnapshotReference);
         Assert.Contains("Trending", model.Decisions[0].RegimeSummary, StringComparison.Ordinal);
+        Assert.Equal("Scored · +1 bar", model.Decisions[0].OutcomeLabel);
+        Assert.Contains("Score=+0.640", model.Decisions[0].OutcomeDetail, StringComparison.Ordinal);
+        Assert.Contains("Bucket=High", model.Decisions[0].OutcomeDetail, StringComparison.Ordinal);
         Assert.Single(model.NoSubmitReasons);
+        Assert.Single(model.OutcomeStates);
+        Assert.Single(model.FutureDataAvailability);
+        Assert.Single(model.OutcomeConfidenceBuckets);
+        Assert.Equal("High", model.OutcomeConfidenceBuckets[0].Label);
+        Assert.Equal("+0.640", model.OutcomeConfidenceBuckets[0].AverageOutcomeScore);
     }
-
 
     [Fact]
     public async Task Index_EmitsHonestEmptyState_WhenNoAiHistoryExists()
@@ -54,8 +65,12 @@ public sealed class AiRobotControllerTests
         var model = Assert.IsType<AiRobotViewModel>(viewResult.Model);
         Assert.Empty(model.Decisions);
         Assert.Empty(model.NoSubmitReasons);
+        Assert.Empty(model.OutcomeStates);
+        Assert.Empty(model.FutureDataAvailability);
+        Assert.Empty(model.OutcomeConfidenceBuckets);
         Assert.Equal("Henüz gerçek AI shadow kaydı yok.", model.Summary.EmptyStateMessage);
         Assert.Equal("NoShadowData", model.Summary.LatestNoTradeStatus);
+        Assert.Equal("0/0", model.Summary.ScoringCoverage);
     }
 
     private static ControllerContext CreateControllerContext(string userId)
@@ -119,13 +134,42 @@ public sealed class AiRobotControllerTests
                         "Bullish",
                         "Expanding",
                         ExecutionEnvironment.Demo,
-                        ExchangeDataPlane.Futures)
+                        ExchangeDataPlane.Futures,
+                        AiShadowOutcomeState.Scored,
+                        0.64m,
+                        "Long",
+                        "High",
+                        AiShadowFutureDataAvailability.Available,
+                        AiShadowOutcomeHorizonKind.BarsForward,
+                        1,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false)
                 ],
                 [new UserDashboardReasonBucketSnapshot("ShadowModeActive", 1)],
-                []));
+                [],
+                new UserDashboardAiOutcomeSummarySnapshot(
+                    "+1 bar close-to-close",
+                    1,
+                    1,
+                    0,
+                    0,
+                    0.64m,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0),
+                [new UserDashboardReasonBucketSnapshot(nameof(AiShadowOutcomeState.Scored), 1)],
+                [new UserDashboardReasonBucketSnapshot(nameof(AiShadowFutureDataAvailability.Available), 1)],
+                [new UserDashboardAiConfidenceBucketSnapshot("High", 1, 1, 1, 0, 0, 0, 0.64m)]));
         }
     }
-
 
     private sealed class EmptyUserDashboardLiveReadModelService : IUserDashboardLiveReadModelService
     {
@@ -136,6 +180,24 @@ public sealed class AiRobotControllerTests
                 new UserDashboardLatestNoTradeSnapshot("NoShadowData", "neutral", null, "Henüz AI shadow kaydı yok.", null),
                 new UserDashboardLatestRejectSnapshot("NoReject", "neutral", null, "Son reject kaydı yok.", null, null),
                 new UserDashboardAiSummarySnapshot(0, 0, 0, 0, 0, 0, 0, 0m, 0, 0, 0),
+                [],
+                [],
+                [],
+                new UserDashboardAiOutcomeSummarySnapshot(
+                    "+1 bar close-to-close",
+                    0,
+                    0,
+                    0,
+                    0,
+                    0m,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0),
                 [],
                 [],
                 []));
@@ -167,8 +229,3 @@ public sealed class AiRobotControllerTests
         }
     }
 }
-
-
-
-
-

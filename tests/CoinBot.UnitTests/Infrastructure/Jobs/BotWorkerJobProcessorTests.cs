@@ -691,7 +691,7 @@ public sealed class BotWorkerJobProcessorTests
             Options.Create(pilotOptions),
             timeProvider,
             NullLogger<TradingFeatureSnapshotService>.Instance);
-        var aiShadowDecisionService = new AiShadowDecisionService(dbContext);
+        var aiShadowDecisionService = new AiShadowDecisionService(dbContext, TimeProvider.System);
         var processor = new BotWorkerJobProcessor(
             dbContext,
             new IndicatorDataService(
@@ -1430,6 +1430,7 @@ public sealed class BotWorkerJobProcessorTests
         }
     }
 }
+
 
 
 

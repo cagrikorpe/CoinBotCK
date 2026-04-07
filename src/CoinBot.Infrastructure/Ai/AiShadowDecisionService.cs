@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace CoinBot.Infrastructure.Ai;
 
-public sealed class AiShadowDecisionService(ApplicationDbContext dbContext) : IAiShadowDecisionService
+public sealed partial class AiShadowDecisionService(ApplicationDbContext dbContext, TimeProvider timeProvider) : IAiShadowDecisionService
 {
     public async Task<AiShadowDecisionSnapshot> CaptureAsync(
         AiShadowDecisionWriteRequest request,
@@ -324,3 +324,4 @@ public sealed class AiShadowDecisionService(ApplicationDbContext dbContext) : IA
         };
     }
 }
+

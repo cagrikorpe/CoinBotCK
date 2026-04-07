@@ -140,6 +140,7 @@ public sealed class AiShadowDecisionIntegrationTests
             var liveReadModel = new UserDashboardLiveReadModelService(
                 harness.DbContext,
                 harness.SwitchService,
+                new AiShadowDecisionService(harness.DbContext, harness.TimeProvider),
                 Options.Create(harness.PilotOptions),
                 harness.TimeProvider);
             var snapshot = await liveReadModel.GetSnapshotAsync(bot.OwnerUserId);
@@ -423,7 +424,7 @@ public sealed class AiShadowDecisionIntegrationTests
             Options.Create(pilotOptions),
             timeProvider,
             NullLogger<TradingFeatureSnapshotService>.Instance);
-        var aiShadowDecisionService = new AiShadowDecisionService(dbContext);
+        var aiShadowDecisionService = new AiShadowDecisionService(dbContext, TimeProvider.System);
         var processor = new BotWorkerJobProcessor(
             dbContext,
             new IndicatorDataService(marketDataService, new IndicatorStreamHub(), Options.Create(new IndicatorEngineOptions()), NullLogger<IndicatorDataService>.Instance),
@@ -965,6 +966,9 @@ public sealed class AiShadowDecisionIntegrationTests
         }
     }
 }
+
+
+
 
 
 

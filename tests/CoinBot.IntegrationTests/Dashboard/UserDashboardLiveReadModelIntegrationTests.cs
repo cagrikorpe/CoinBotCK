@@ -1,6 +1,7 @@
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Ai;
 using CoinBot.Infrastructure.Auditing;
 using CoinBot.Infrastructure.Dashboard;
 using CoinBot.Infrastructure.Execution;
@@ -17,7 +18,7 @@ namespace CoinBot.IntegrationTests.Dashboard;
 public sealed class UserDashboardLiveReadModelIntegrationTests
 {
     [Fact]
-    public async Task GetSnapshotAsync_ProjectsAiHistoryControlAndRejectSummary_OnSqlServer()
+    public async Task GetSnapshotAsync_ProjectsAiHistoryControlRejectSummaryAndOutcome_OnSqlServer()
     {
         var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString($"CoinBotDashboardLive_{Guid.NewGuid():N}");
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -28,6 +29,7 @@ public sealed class UserDashboardLiveReadModelIntegrationTests
         var exchangeAccountId = Guid.NewGuid();
         var botId = Guid.NewGuid();
         var featureSnapshotId = Guid.NewGuid();
+        var decisionId = Guid.NewGuid();
 
         await using var dbContext = new ApplicationDbContext(options, new TestDataScopeContext());
         await dbContext.Database.EnsureDeletedAsync();
@@ -86,7 +88,7 @@ public sealed class UserDashboardLiveReadModelIntegrationTests
             });
             dbContext.AiShadowDecisions.Add(new AiShadowDecision
             {
-                Id = Guid.NewGuid(),
+                Id = decisionId,
                 OwnerUserId = ownerUserId,
                 BotId = botId,
                 ExchangeAccountId = exchangeAccountId,
@@ -96,6 +98,7 @@ public sealed class UserDashboardLiveReadModelIntegrationTests
                 Symbol = "BTCUSDT",
                 Timeframe = "1m",
                 EvaluatedAtUtc = nowUtc,
+                MarketDataTimestampUtc = nowUtc,
                 FeatureVersion = "AI-1.v1",
                 StrategyDirection = "Long",
                 StrategyConfidenceScore = 78,
@@ -109,6 +112,7 @@ public sealed class UserDashboardLiveReadModelIntegrationTests
                 AiProviderModel = "stub-v1",
                 AiLatencyMs = 9,
                 AiIsFallback = false,
+                AiFallbackReason = null,
                 RiskVetoPresent = false,
                 PilotSafetyBlocked = false,
                 TradingMode = ExecutionEnvironment.Demo,
@@ -179,6 +183,7 @@ public sealed class UserDashboardLiveReadModelIntegrationTests
                 LatestHeartbeatReceivedAtUtc = nowUtc,
                 LastStateChangedAtUtc = nowUtc
             });
+            SeedHistoricalCandles(dbContext, "BTCUSDT", "1m", nowUtc, [64850m, 65000m, 65300m]);
             await dbContext.SaveChangesAsync();
 
             var switchService = new GlobalExecutionSwitchService(
@@ -186,18 +191,22 @@ public sealed class UserDashboardLiveReadModelIntegrationTests
                 new AuditLogService(dbContext, new CorrelationContextAccessor()));
             await switchService.SetTradeMasterStateAsync(TradeMasterSwitchState.Armed, "integration-test");
 
+            var fixedTimeProvider = new FixedTimeProvider(nowUtc.AddMinutes(2));
+            var aiShadowDecisionService = new AiShadowDecisionService(dbContext, fixedTimeProvider);
             var service = new UserDashboardLiveReadModelService(
                 dbContext,
                 switchService,
+                aiShadowDecisionService,
                 Options.Create(new BotExecutionPilotOptions
                 {
                     Enabled = true,
                     PilotActivationEnabled = false,
                     PrivatePlaneFreshnessThresholdSeconds = 120
                 }),
-                new FixedTimeProvider(nowUtc));
+                fixedTimeProvider);
 
             var snapshot = await service.GetSnapshotAsync(ownerUserId);
+            var outcome = await dbContext.AiShadowDecisionOutcomes.SingleAsync();
 
             Assert.Equal("Armed", snapshot.Control.TradeMasterLabel);
             Assert.Equal("ShadowOnly", snapshot.Control.PilotActivationLabel);
@@ -205,13 +214,53 @@ public sealed class UserDashboardLiveReadModelIntegrationTests
             Assert.Equal("Fresh", snapshot.Control.PrivatePlaneLabel);
             Assert.Equal("ShadowOnly", snapshot.LatestNoTrade.Label);
             Assert.Equal("TradeMasterDisarmed", snapshot.LatestReject.Code);
+            Assert.Equal(AiShadowOutcomeState.Scored, outcome.OutcomeState);
+            Assert.Equal(AiShadowFutureDataAvailability.Available, outcome.FutureDataAvailability);
+            Assert.Equal("Long", outcome.RealizedDirectionality);
+            Assert.True((outcome.OutcomeScore ?? 0m) > 0m);
+
             var aiHistory = Assert.Single(snapshot.AiHistory);
             Assert.Equal(featureSnapshotId, aiHistory.FeatureSnapshotId);
             Assert.Equal("Trending", aiHistory.PrimaryRegime);
+            Assert.Equal(AiShadowOutcomeState.Scored, aiHistory.OutcomeState);
+            Assert.Equal(AiShadowFutureDataAvailability.Available, aiHistory.FutureDataAvailability);
+            Assert.Equal("High", aiHistory.OutcomeConfidenceBucket);
+            Assert.NotNull(snapshot.AiOutcomeSummary);
+            Assert.Equal(1, snapshot.AiOutcomeSummary!.ScoredCount);
+            Assert.Equal(1, snapshot.AiOutcomeSummary.PositiveOutcomeCount);
+            Assert.Contains(snapshot.OutcomeStates ?? [], item => item.Label == nameof(AiShadowOutcomeState.Scored) && item.Count == 1);
+            Assert.Contains(snapshot.FutureDataAvailabilityBuckets ?? [], item => item.Label == nameof(AiShadowFutureDataAvailability.Available) && item.Count == 1);
+            Assert.Contains(snapshot.OutcomeConfidenceBuckets ?? [], item => item.Label == "High" && item.TotalCount == 1);
         }
         finally
         {
             await dbContext.Database.EnsureDeletedAsync();
+        }
+    }
+
+    private static void SeedHistoricalCandles(ApplicationDbContext dbContext, string symbol, string interval, DateTime decisionEvaluatedAtUtc, decimal[] closePrices)
+    {
+        var referenceCloseTimeUtc = decisionEvaluatedAtUtc;
+        var startCloseTimeUtc = referenceCloseTimeUtc.AddMinutes(-(closePrices.Length - 2));
+        for (var index = 0; index < closePrices.Length; index++)
+        {
+            var closeTimeUtc = startCloseTimeUtc.AddMinutes(index);
+            var closePrice = closePrices[index];
+            dbContext.HistoricalMarketCandles.Add(new HistoricalMarketCandle
+            {
+                Id = Guid.NewGuid(),
+                Symbol = symbol,
+                Interval = interval,
+                OpenTimeUtc = closeTimeUtc.AddMinutes(-1),
+                CloseTimeUtc = closeTimeUtc,
+                OpenPrice = closePrice - 10m,
+                HighPrice = closePrice + 15m,
+                LowPrice = closePrice - 20m,
+                ClosePrice = closePrice,
+                Volume = 1000m + (index * 25m),
+                ReceivedAtUtc = closeTimeUtc,
+                Source = "integration-test"
+            });
         }
     }
 
@@ -227,8 +276,3 @@ public sealed class UserDashboardLiveReadModelIntegrationTests
         public override DateTimeOffset GetUtcNow() => value;
     }
 }
-
-
-
-
-

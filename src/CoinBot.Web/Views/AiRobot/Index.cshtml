@@ -2,7 +2,7 @@
 @{
     ViewData["Title"] = "AI Robot";
     ViewData["ActiveNav"] = "AiRobot";
-    ViewData["PageDescription"] = "Gerçek AI shadow kararları, feature snapshot referansları ve no-submit nedenleri aynı operasyon yüzeyinde gösterilir.";
+    ViewData["PageDescription"] = "Gerçek AI shadow kararları, feature snapshot referansları ve outcome scoring summary aynı operasyon yüzeyinde gösterilir.";
     ViewData["BreadcrumbItems"] = new[] { "Trade Lab", "AI Robot" };
 }
 
@@ -13,8 +13,8 @@
                 <div class="cb-page-header">
                     <div>
                         <div class="cb-page-eyebrow">AI Decision Center</div>
-                        <h2 class="cb-page-title">AI shadow ve compare geçmişi</h2>
-                        <p class="cb-page-description">Provider bağımsız AI sonucu, strategy karşılaştırması, fallback davranışı ve no-submit nedenleri yalnız gerçek DB kayıtlarından okunur.</p>
+                        <h2 class="cb-page-title">AI shadow, compare ve outcome scoring</h2>
+                        <p class="cb-page-description">Provider bağımsız AI sonucu, strategy karşılaştırması ve +1 bar close-to-close kalite metriği yalnız gerçek DB kayıtlarından okunur.</p>
                     </div>
                     <div class="cb-toolbar">
                         <span class="cb-badge cb-badge-info">@Model.Summary.LatestNoTradeStatus</span>
@@ -36,20 +36,22 @@
                         </div>
                         <div class="col-md-3 mb-4">
                             <div class="cb-chart-summary-card">
-                                <div class="cb-stat-label">Fallback</div>
-                                <div class="cb-chart-summary-value">@Model.Summary.FallbackCount / @Model.Summary.TotalCount</div>
+                                <div class="cb-stat-label">Scoring coverage</div>
+                                <div class="cb-chart-summary-value">@Model.Summary.ScoringCoverage</div>
+                                <div class="text-muted mt-2">@Model.Summary.OutcomeHorizonLabel</div>
                             </div>
                         </div>
                         <div class="col-md-3 mb-4">
                             <div class="cb-chart-summary-card">
-                                <div class="cb-stat-label">Agreement</div>
-                                <div class="cb-chart-summary-value">@Model.Summary.AgreementCount ok / @Model.Summary.DisagreementCount fark</div>
+                                <div class="cb-stat-label">Ortalama outcome</div>
+                                <div class="cb-chart-summary-value">@Model.Summary.AverageOutcomeScore</div>
+                                <div class="text-muted mt-2">@Model.Summary.OutcomeMixSummary</div>
                             </div>
                         </div>
                         <div class="col-md-3 mb-4">
                             <div class="cb-chart-summary-card">
-                                <div class="cb-stat-label">Ortalama güven</div>
-                                <div class="cb-chart-summary-value">@Model.Summary.AverageConfidence</div>
+                                <div class="cb-stat-label">Calibration</div>
+                                <div class="cb-chart-summary-value">@Model.Summary.CalibrationSummary</div>
                             </div>
                         </div>
                     </div>
@@ -62,9 +64,30 @@
 
     <div class="col-xl-4">
         <div class="card card-custom gutter-b cb-card">
-            <div class="card-header border-0 pt-5">
-                <div class="card-title"><h3 class="mb-0">No-submit reasons</h3></div>
+            <div class="card-header border-0 pt-5"><div class="card-title"><h3 class="mb-0">Confidence bucket quality</h3></div></div>
+            <div class="card-body">
+                @if (Model.OutcomeConfidenceBuckets.Count == 0)
+                {
+                    <div class="text-muted">Henüz confidence bucket outcome analizi yok.</div>
+                }
+                else
+                {
+                    foreach (var item in Model.OutcomeConfidenceBuckets)
+                    {
+                        <div class="mb-4">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <strong>@item.Label</strong>
+                                <span class="cb-mono">@item.ScoredCount/@item.TotalCount</span>
+                            </div>
+                            <div class="text-muted mt-1">Success @item.SuccessCount · False+ @item.FalsePositiveCount · FalseNeutral @item.FalseNeutralCount · Overtrade @item.OvertradingCount · Avg @item.AverageOutcomeScore</div>
+                        </div>
+                    }
+                }
             </div>
+        </div>
+
+        <div class="card card-custom gutter-b cb-card">
+            <div class="card-header border-0 pt-5"><div class="card-title"><h3 class="mb-0">No-submit reasons</h3></div></div>
             <div class="card-body">
                 @if (Model.NoSubmitReasons.Count == 0)
                 {
@@ -74,32 +97,32 @@
                 {
                     foreach (var item in Model.NoSubmitReasons)
                     {
-                        <div class="d-flex justify-content-between align-items-center mb-3">
-                            <span>@item.Label</span>
-                            <strong class="cb-mono">@item.Count</strong>
-                        </div>
+                        <div class="d-flex justify-content-between align-items-center mb-3"><span>@item.Label</span><strong class="cb-mono">@item.Count</strong></div>
                     }
                 }
             </div>
         </div>
 
         <div class="card card-custom gutter-b cb-card">
-            <div class="card-header border-0 pt-5">
-                <div class="card-title"><h3 class="mb-0">Hypothetical block reasons</h3></div>
-            </div>
+            <div class="card-header border-0 pt-5"><div class="card-title"><h3 class="mb-0">Outcome states</h3></div></div>
             <div class="card-body">
-                @if (Model.HypotheticalBlockReasons.Count == 0)
+                @if (Model.OutcomeStates.Count == 0)
                 {
-                    <div class="text-muted">Henüz hypothetical block dağılımı yok.</div>
+                    <div class="text-muted">Henüz outcome state dağılımı yok.</div>
                 }
                 else
                 {
-                    foreach (var item in Model.HypotheticalBlockReasons)
+                    foreach (var item in Model.OutcomeStates)
                     {
-                        <div class="d-flex justify-content-between align-items-center mb-3">
-                            <span>@item.Label</span>
-                            <strong class="cb-mono">@item.Count</strong>
-                        </div>
+                        <div class="d-flex justify-content-between align-items-center mb-3"><span>@item.Label</span><strong class="cb-mono">@item.Count</strong></div>
+                    }
+                }
+                @if (Model.FutureDataAvailability.Count > 0)
+                {
+                    <hr />
+                    foreach (var item in Model.FutureDataAvailability)
+                    {
+                        <div class="d-flex justify-content-between align-items-center mb-3"><span>@item.Label</span><strong class="cb-mono">@item.Count</strong></div>
                     }
                 }
             </div>
@@ -111,7 +134,7 @@
             <div class="card-header border-0 pt-5">
                 <div class="card-title d-block">
                     <h3 class="mb-0">Recent AI decisions</h3>
-                    <div class="text-muted mt-2">Strategy vs AI compare, fallback ve feature snapshot referansları gerçek shadow kayıtlarından akar.</div>
+                    <div class="text-muted mt-2">Strategy vs AI compare, fallback ve official outcome scoring aynı shadow kayıtları üstünde gösterilir.</div>
                 </div>
             </div>
             <div class="card-body pt-2">
@@ -130,6 +153,7 @@
                                     <th>Strategy</th>
                                     <th>AI</th>
                                     <th>Action</th>
+                                    <th>Outcome</th>
                                     <th>Reason</th>
                                     <th>Feature</th>
                                 </tr>
@@ -137,23 +161,11 @@
                             <tbody>
                                 @foreach (var item in Model.Decisions)
                                 {
-                                    var badgeClass = item.Tone == "success"
-                                        ? "cb-badge-success"
-                                        : item.Tone == "warning"
-                                            ? "cb-badge-warning"
-                                            : item.Tone == "danger"
-                                                ? "cb-badge-danger"
-                                                : "cb-badge-neutral";
+                                    var badgeClass = item.Tone == "success" ? "cb-badge-success" : item.Tone == "warning" ? "cb-badge-warning" : item.Tone == "danger" ? "cb-badge-danger" : "cb-badge-neutral";
                                     <tr>
                                         <td class="cb-mono">@item.Time</td>
-                                        <td>
-                                            <div class="font-weight-bolder">@item.Symbol</div>
-                                            <div class="text-muted">@item.Timeframe</div>
-                                        </td>
-                                        <td>
-                                            <div>@item.StrategyDirection</div>
-                                            <div class="text-muted">@item.StrategyConfidence</div>
-                                        </td>
+                                        <td><div class="font-weight-bolder">@item.Symbol</div><div class="text-muted">@item.Timeframe</div></td>
+                                        <td><div>@item.StrategyDirection</div><div class="text-muted">@item.StrategyConfidence</div></td>
                                         <td>
                                             <div class="font-weight-bolder">@item.AiDirection</div>
                                             <div class="text-muted">@item.AiConfidence · @item.Provider</div>
@@ -170,6 +182,10 @@
                                             {
                                                 <div class="text-muted">@item.HypotheticalBlockReason</div>
                                             }
+                                        </td>
+                                        <td>
+                                            <div>@item.OutcomeLabel</div>
+                                            <div class="text-muted mt-2">@item.OutcomeDetail</div>
                                         </td>
                                         <td>
                                             <div>@item.ReasonSummary</div>

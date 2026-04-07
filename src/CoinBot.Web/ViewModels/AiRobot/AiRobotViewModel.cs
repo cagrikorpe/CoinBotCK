@@ -9,7 +9,10 @@ public sealed record AiRobotViewModel(
     AiRobotSummaryViewModel Summary,
     List<AiRobotDecisionViewModel> Decisions,
     List<AiRobotBucketViewModel> NoSubmitReasons,
-    List<AiRobotBucketViewModel> HypotheticalBlockReasons);
+    List<AiRobotBucketViewModel> HypotheticalBlockReasons,
+    List<AiRobotBucketViewModel> OutcomeStates,
+    List<AiRobotBucketViewModel> FutureDataAvailability,
+    List<AiRobotConfidenceBucketViewModel> OutcomeConfidenceBuckets);
 
 public sealed record AiRobotSummaryViewModel(
     int TotalCount,
@@ -22,7 +25,12 @@ public sealed record AiRobotSummaryViewModel(
     string AverageConfidence,
     string LatestNoTradeStatus,
     string LatestNoTradeSummary,
-    string EmptyStateMessage);
+    string EmptyStateMessage,
+    string OutcomeHorizonLabel,
+    string ScoringCoverage,
+    string AverageOutcomeScore,
+    string OutcomeMixSummary,
+    string CalibrationSummary);
 
 public sealed record AiRobotDecisionViewModel(
     string Time,
@@ -43,7 +51,19 @@ public sealed record AiRobotDecisionViewModel(
     string RegimeSummary,
     string RiskSummary,
     string PilotSummary,
+    string OutcomeLabel,
+    string OutcomeDetail,
     string Tone,
     bool IsFallback);
 
 public sealed record AiRobotBucketViewModel(string Label, int Count);
+
+public sealed record AiRobotConfidenceBucketViewModel(
+    string Label,
+    int TotalCount,
+    int ScoredCount,
+    int SuccessCount,
+    int FalsePositiveCount,
+    int FalseNeutralCount,
+    int OvertradingCount,
+    string AverageOutcomeScore);

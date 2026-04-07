@@ -1,3 +1,4 @@
+using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.Dashboard;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Domain.Entities;
@@ -13,6 +14,7 @@ namespace CoinBot.Infrastructure.Dashboard;
 public sealed class UserDashboardLiveReadModelService(
     ApplicationDbContext dbContext,
     IGlobalExecutionSwitchService globalExecutionSwitchService,
+    IAiShadowDecisionService aiShadowDecisionService,
     IOptions<BotExecutionPilotOptions> pilotOptions,
     TimeProvider timeProvider) : IUserDashboardLiveReadModelService
 {
@@ -23,6 +25,8 @@ public sealed class UserDashboardLiveReadModelService(
         CancellationToken cancellationToken = default)
     {
         var normalizedUserId = dbContext.EnsureCurrentUserScope(userId);
+        await aiShadowDecisionService.EnsureOutcomeCoverageAsync(normalizedUserId, take: 200, cancellationToken: cancellationToken);
+        var outcomeSummary = await aiShadowDecisionService.GetOutcomeSummaryAsync(normalizedUserId, take: 200, cancellationToken: cancellationToken);
         var switchSnapshot = await globalExecutionSwitchService.GetSnapshotAsync(cancellationToken);
         var degradedModeState = await dbContext.DegradedModeStates
             .AsNoTracking()
@@ -58,6 +62,19 @@ public sealed class UserDashboardLiveReadModelService(
                 .IgnoreQueryFilters()
                 .Where(entity => featureSnapshotIds.Contains(entity.Id) && !entity.IsDeleted)
                 .ToDictionaryAsync(entity => entity.Id, cancellationToken);
+        var decisionIds = recentAiDecisions.Select(entity => entity.Id).ToArray();
+        var officialOutcomes = decisionIds.Length == 0
+            ? new Dictionary<Guid, AiShadowDecisionOutcome>()
+            : await dbContext.AiShadowDecisionOutcomes
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.OwnerUserId == normalizedUserId &&
+                    decisionIds.Contains(entity.AiShadowDecisionId) &&
+                    entity.HorizonKind == AiShadowOutcomeDefaults.OfficialHorizonKind &&
+                    entity.HorizonValue == AiShadowOutcomeDefaults.OfficialHorizonValue &&
+                    !entity.IsDeleted)
+                .ToDictionaryAsync(entity => entity.AiShadowDecisionId, cancellationToken);
         var latestRejectedOrder = await dbContext.ExecutionOrders
             .AsNoTracking()
             .IgnoreQueryFilters()
@@ -74,9 +91,21 @@ public sealed class UserDashboardLiveReadModelService(
             BuildLatestNoTradeSnapshot(recentAiDecisions.FirstOrDefault()),
             BuildLatestRejectSnapshot(latestRejectedOrder),
             BuildAiSummarySnapshot(recentAiDecisions),
-            recentAiDecisions.Select(entity => MapAiHistoryRow(entity, featureSnapshots)).ToArray(),
+            recentAiDecisions.Select(entity => MapAiHistoryRow(entity, featureSnapshots, officialOutcomes)).ToArray(),
             BuildBuckets(recentAiDecisions.Select(entity => entity.NoSubmitReason)),
-            BuildBuckets(recentAiDecisions.Select(entity => entity.HypotheticalBlockReason)));
+            BuildBuckets(recentAiDecisions.Select(entity => entity.HypotheticalBlockReason)),
+            BuildOutcomeSummarySnapshot(outcomeSummary),
+            outcomeSummary.OutcomeStates.Select(entity => new UserDashboardReasonBucketSnapshot(entity.Key, entity.Count)).ToArray(),
+            outcomeSummary.FutureDataAvailabilityBuckets.Select(entity => new UserDashboardReasonBucketSnapshot(entity.Key, entity.Count)).ToArray(),
+            outcomeSummary.ConfidenceBuckets.Select(entity => new UserDashboardAiConfidenceBucketSnapshot(
+                entity.Bucket,
+                entity.TotalCount,
+                entity.ScoredCount,
+                entity.SuccessCount,
+                entity.FalsePositiveCount,
+                entity.FalseNeutralCount,
+                entity.OvertradingCount,
+                entity.AverageOutcomeScore)).ToArray());
     }
 
     private UserDashboardLiveControlSnapshot BuildControlSnapshot(
@@ -86,9 +115,7 @@ public sealed class UserDashboardLiveReadModelService(
     {
         var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
         var (tradeMasterLabel, tradeMasterTone) = switchSnapshot.IsPersisted
-            ? switchSnapshot.IsTradeMasterArmed
-                ? ("Armed", "positive")
-                : ("Disarmed", "negative")
+            ? switchSnapshot.IsTradeMasterArmed ? ("Armed", "positive") : ("Disarmed", "negative")
             : ("Unconfigured", "warning");
         var (tradingModeLabel, tradingModeTone) = switchSnapshot.DemoModeEnabled
             ? ("DemoOnly", "warning")
@@ -113,7 +140,6 @@ public sealed class UserDashboardLiveReadModelService(
             privatePlaneTone,
             privatePlaneSummary);
     }
-
     private static (string Label, string Tone, string Summary) MapMarketDataState(DegradedModeState? state)
     {
         if (state is null)
@@ -137,9 +163,7 @@ public sealed class UserDashboardLiveReadModelService(
         return (label, tone, summary);
     }
 
-    private (string Label, string Tone, string Summary) MapPrivatePlaneState(
-        ExchangeAccountSyncState? state,
-        DateTime nowUtc)
+    private (string Label, string Tone, string Summary) MapPrivatePlaneState(ExchangeAccountSyncState? state, DateTime nowUtc)
     {
         if (state is null)
         {
@@ -182,18 +206,11 @@ public sealed class UserDashboardLiveReadModelService(
     {
         if (entity is null)
         {
-            return new UserDashboardLatestNoTradeSnapshot(
-                "NoShadowData",
-                "neutral",
-                null,
-                "Henüz AI shadow kaydı yok.",
-                null);
+            return new UserDashboardLatestNoTradeSnapshot("NoShadowData", "neutral", null, "Henüz AI shadow kaydı yok.", null);
         }
 
         var tone = entity.FinalAction == "NoSubmit"
-            ? entity.RiskVetoPresent || entity.PilotSafetyBlocked
-                ? "negative"
-                : "warning"
+            ? entity.RiskVetoPresent || entity.PilotSafetyBlocked ? "negative" : "warning"
             : "info";
         var summary = $"AI={entity.AiDirection} {entity.AiConfidence:P0}; Strategy={entity.StrategyDirection}; NoSubmit={entity.NoSubmitReason}; Hypothetical={(entity.HypotheticalSubmitAllowed ? "Allowed" : NormalizeOptional(entity.HypotheticalBlockReason) ?? "Blocked")}; Reason={entity.AiReasonSummary}";
 
@@ -209,13 +226,7 @@ public sealed class UserDashboardLiveReadModelService(
     {
         if (entity is null)
         {
-            return new UserDashboardLatestRejectSnapshot(
-                "NoReject",
-                "neutral",
-                null,
-                "Son execution reject kaydı yok.",
-                null,
-                null);
+            return new UserDashboardLatestRejectSnapshot("NoReject", "neutral", null, "Son execution reject kaydı yok.", null, null);
         }
 
         var summary = NormalizeOptional(entity.FailureDetail)
@@ -254,11 +265,31 @@ public sealed class UserDashboardLiveReadModelService(
             rows.Count(entity => entity.AiConfidence < 0.40m));
     }
 
+    private static UserDashboardAiOutcomeSummarySnapshot BuildOutcomeSummarySnapshot(AiShadowDecisionOutcomeSummarySnapshot snapshot)
+    {
+        return new UserDashboardAiOutcomeSummarySnapshot(
+            $"+{snapshot.HorizonValue} bar close-to-close",
+            snapshot.TotalDecisionCount,
+            snapshot.ScoredCount,
+            snapshot.FutureDataUnavailableCount,
+            snapshot.ReferenceDataUnavailableCount,
+            snapshot.AverageOutcomeScore,
+            snapshot.PositiveOutcomeCount,
+            snapshot.NegativeOutcomeCount,
+            snapshot.NeutralOutcomeCount,
+            snapshot.FalsePositiveCount,
+            snapshot.FalseNeutralCount,
+            snapshot.OvertradingCount,
+            snapshot.SuppressionAlignedCount,
+            snapshot.SuppressionMissedCount);
+    }
     private static UserDashboardAiHistoryRowSnapshot MapAiHistoryRow(
         AiShadowDecision entity,
-        IReadOnlyDictionary<Guid, TradingFeatureSnapshot> featureSnapshots)
+        IReadOnlyDictionary<Guid, TradingFeatureSnapshot> featureSnapshots,
+        IReadOnlyDictionary<Guid, AiShadowDecisionOutcome> outcomes)
     {
         featureSnapshots.TryGetValue(entity.FeatureSnapshotId ?? Guid.Empty, out var featureSnapshot);
+        outcomes.TryGetValue(entity.Id, out var outcome);
 
         return new UserDashboardAiHistoryRowSnapshot(
             entity.Id,
@@ -298,7 +329,19 @@ public sealed class UserDashboardLiveReadModelService(
             featureSnapshot?.MomentumBias,
             featureSnapshot?.VolatilityState,
             entity.TradingMode,
-            entity.Plane);
+            entity.Plane,
+            outcome?.OutcomeState,
+            outcome?.OutcomeScore,
+            outcome?.RealizedDirectionality,
+            outcome?.ConfidenceBucket ?? ResolveConfidenceBucket(entity.AiConfidence),
+            outcome?.FutureDataAvailability,
+            outcome?.HorizonKind,
+            outcome?.HorizonValue,
+            outcome?.FalsePositive ?? false,
+            outcome?.FalseNeutral ?? false,
+            outcome?.Overtrading ?? false,
+            outcome?.SuppressionCandidate ?? ResolveSuppressionCandidate(entity),
+            outcome?.SuppressionAligned ?? false);
     }
 
     private static IReadOnlyCollection<UserDashboardReasonBucketSnapshot> BuildBuckets(IEnumerable<string?> values)
@@ -319,11 +362,20 @@ public sealed class UserDashboardLiveReadModelService(
         return values.Where(value => value.HasValue).Select(value => value!.Value).DefaultIfEmpty().Max();
     }
 
+    private static string ResolveConfidenceBucket(decimal aiConfidence) =>
+        aiConfidence >= 0.70m ? "High" : aiConfidence >= 0.40m ? "Medium" : "Low";
+
+    private static bool ResolveSuppressionCandidate(AiShadowDecision entity)
+    {
+        return string.Equals(entity.FinalAction, "NoSubmit", StringComparison.Ordinal) ||
+               entity.RiskVetoPresent ||
+               entity.PilotSafetyBlocked ||
+               !entity.HypotheticalSubmitAllowed;
+    }
+
     private static string? NormalizeOptional(string? value)
     {
-        return string.IsNullOrWhiteSpace(value)
-            ? null
-            : value.Trim();
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
 
     private static string FormatUtc(DateTime? value)
