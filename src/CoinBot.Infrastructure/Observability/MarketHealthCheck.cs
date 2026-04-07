@@ -1,4 +1,4 @@
-using CoinBot.Domain.Entities;
+using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -9,6 +9,7 @@ namespace CoinBot.Infrastructure.Observability;
 
 public sealed class MarketHealthCheck(
     ApplicationDbContext dbContext,
+    IDataLatencyCircuitBreaker dataLatencyCircuitBreaker,
     IOptions<MarketHealthOptions> options,
     TimeProvider timeProvider) : IHealthCheck
 {
@@ -26,56 +27,59 @@ public sealed class MarketHealthCheck(
         {
             return HealthCheckResult.Unhealthy(
                 "Market readiness is not ready because no active exchange account exists.",
-                data: CreateData(exchangeAccounts: 0, latestSnapshotAtUtc: null, marketSnapshot: null, validationFreshnessMinutes: options.Value.ValidationFreshnessMinutes));
+                data: CreateData(exchangeAccounts: 0, latestObservedAtUtc: null, marketSnapshot: null, validationFreshnessMinutes: options.Value.ValidationFreshnessMinutes));
         }
 
-        var marketSnapshot = await dbContext.HealthSnapshots
-            .IgnoreQueryFilters()
-            .AsNoTracking()
-            .SingleOrDefaultAsync(entity => entity.SnapshotKey == "market-watchdog", cancellationToken);
+        var marketSnapshot = await dataLatencyCircuitBreaker.GetSnapshotAsync(cancellationToken: cancellationToken);
+        var latestObservedAtUtc = marketSnapshot.LatestHeartbeatReceivedAtUtc ?? marketSnapshot.LatestDataTimestampAtUtc;
+        var freshnessThreshold = TimeSpan.FromMinutes(options.Value.ValidationFreshnessMinutes);
+        var age = latestObservedAtUtc is null
+            ? freshnessThreshold + TimeSpan.FromSeconds(1)
+            : timeProvider.GetUtcNow().UtcDateTime - latestObservedAtUtc.Value;
 
-        if (marketSnapshot is null)
+        if (latestObservedAtUtc is null)
         {
             return HealthCheckResult.Unhealthy(
-                "Market readiness snapshot is missing.",
-                data: CreateData(activeExchangeAccounts.Count, latestSnapshotAtUtc: null, marketSnapshot, options.Value.ValidationFreshnessMinutes));
+                "Market readiness state is missing.",
+                data: CreateData(activeExchangeAccounts.Count, latestObservedAtUtc, marketSnapshot, options.Value.ValidationFreshnessMinutes));
         }
-
-        var freshnessThreshold = TimeSpan.FromMinutes(options.Value.ValidationFreshnessMinutes);
-        var latestSnapshotAtUtc = marketSnapshot.LastUpdatedAtUtc;
-        var age = timeProvider.GetUtcNow().UtcDateTime - latestSnapshotAtUtc;
 
         if (age > freshnessThreshold)
         {
             return HealthCheckResult.Unhealthy(
-                "Market readiness snapshot is stale.",
-                data: CreateData(activeExchangeAccounts.Count, latestSnapshotAtUtc, marketSnapshot, options.Value.ValidationFreshnessMinutes));
+                "Market readiness state is stale.",
+                data: CreateData(activeExchangeAccounts.Count, latestObservedAtUtc, marketSnapshot, options.Value.ValidationFreshnessMinutes));
         }
 
-        return marketSnapshot.HealthState == MonitoringHealthState.Healthy
+        return marketSnapshot.StateCode == DegradedModeStateCode.Normal
             ? HealthCheckResult.Healthy(
-                "Market readiness snapshot is fresh and healthy.",
-                CreateData(activeExchangeAccounts.Count, latestSnapshotAtUtc, marketSnapshot, options.Value.ValidationFreshnessMinutes))
+                "Market readiness state is fresh and healthy.",
+                CreateData(activeExchangeAccounts.Count, latestObservedAtUtc, marketSnapshot, options.Value.ValidationFreshnessMinutes))
             : HealthCheckResult.Unhealthy(
-                "Market readiness snapshot reports a non-healthy market state.",
-                data: CreateData(activeExchangeAccounts.Count, latestSnapshotAtUtc, marketSnapshot, options.Value.ValidationFreshnessMinutes));
+                "Market readiness state reports a non-healthy market state.",
+                data: CreateData(activeExchangeAccounts.Count, latestObservedAtUtc, marketSnapshot, options.Value.ValidationFreshnessMinutes));
     }
 
     private static IReadOnlyDictionary<string, object> CreateData(
         int exchangeAccounts,
-        DateTime? latestSnapshotAtUtc,
-        HealthSnapshot? marketSnapshot,
+        DateTime? latestObservedAtUtc,
+        DegradedModeSnapshot? marketSnapshot,
         int validationFreshnessMinutes)
     {
         return new Dictionary<string, object>
         {
             ["exchangeAccounts"] = exchangeAccounts,
-            ["latestSnapshotAtUtc"] = latestSnapshotAtUtc?.ToString("O") ?? "missing",
+            ["latestObservedAtUtc"] = latestObservedAtUtc?.ToString("O") ?? "missing",
             ["validationFreshnessMinutes"] = validationFreshnessMinutes,
-            ["snapshotKey"] = marketSnapshot?.SnapshotKey ?? "missing",
-            ["snapshotHealthState"] = marketSnapshot?.HealthState.ToString() ?? "missing",
-            ["snapshotCircuitBreakerState"] = marketSnapshot?.CircuitBreakerState.ToString() ?? "missing",
-            ["snapshotDetail"] = marketSnapshot?.Detail ?? "missing"
+            ["stateCode"] = marketSnapshot?.StateCode.ToString() ?? "missing",
+            ["reasonCode"] = marketSnapshot?.ReasonCode.ToString() ?? "missing",
+            ["signalFlowBlocked"] = marketSnapshot?.SignalFlowBlocked ?? true,
+            ["executionFlowBlocked"] = marketSnapshot?.ExecutionFlowBlocked ?? true,
+            ["latestDataTimestampAtUtc"] = marketSnapshot?.LatestDataTimestampAtUtc?.ToString("O") ?? "missing",
+            ["latestHeartbeatReceivedAtUtc"] = marketSnapshot?.LatestHeartbeatReceivedAtUtc?.ToString("O") ?? "missing",
+            ["latestDataAgeMilliseconds"] = marketSnapshot?.LatestDataAgeMilliseconds?.ToString() ?? "missing",
+            ["latestClockDriftMilliseconds"] = marketSnapshot?.LatestClockDriftMilliseconds?.ToString() ?? "missing",
+            ["isPersisted"] = marketSnapshot?.IsPersisted ?? false
         };
     }
 }

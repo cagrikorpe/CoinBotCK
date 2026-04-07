@@ -42,23 +42,19 @@ public sealed class HealthChecksTests
             DisplayName = "Main account",
             LastValidatedAt = now.UtcDateTime.AddHours(-2)
         });
-        dbContext.HealthSnapshots.Add(CreateMarketWatchdogSnapshot(
-            now.UtcDateTime.AddSeconds(-10),
-            MonitoringHealthState.Healthy,
-            detail: "State=Normal; Reason=None"));
-
         await dbContext.SaveChangesAsync();
 
-        var marketHealthCheck = new MarketHealthCheck(
-            dbContext,
-            Options.Create(new MarketHealthOptions { ValidationFreshnessMinutes = 15 }),
-            timeProvider);
+        var circuitBreaker = CreateCircuitBreaker(dbContext, timeProvider);
+        await circuitBreaker.RecordHeartbeatAsync(
+            new DataLatencyHeartbeat("binance-btcusdt", now.UtcDateTime),
+            correlationId: "corr-market-health-001");
 
+        var marketHealthCheck = CreateMarketHealthCheck(dbContext, circuitBreaker, timeProvider);
         var result = await marketHealthCheck.CheckHealthAsync(new HealthCheckContext());
 
         Assert.Equal(HealthStatus.Healthy, result.Status);
-        Assert.Equal("Healthy", result.Data["snapshotHealthState"]);
-        Assert.Equal("market-watchdog", result.Data["snapshotKey"]);
+        Assert.Equal("Normal", result.Data["stateCode"]);
+        Assert.Equal("True", result.Data["isPersisted"].ToString());
     }
 
     [Fact]
@@ -66,15 +62,13 @@ public sealed class HealthChecksTests
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
         await using var dbContext = CreateDbContext();
-        var marketHealthCheck = new MarketHealthCheck(
-            dbContext,
-            Options.Create(new MarketHealthOptions { ValidationFreshnessMinutes = 15 }),
-            timeProvider);
+        var circuitBreaker = CreateCircuitBreaker(dbContext, timeProvider);
+        var marketHealthCheck = CreateMarketHealthCheck(dbContext, circuitBreaker, timeProvider);
 
         var result = await marketHealthCheck.CheckHealthAsync(new HealthCheckContext());
 
         Assert.Equal(HealthStatus.Unhealthy, result.Status);
-        Assert.Equal("missing", result.Data["snapshotKey"]);
+        Assert.Equal("missing", result.Data["stateCode"]);
     }
 
     [Fact]
@@ -91,22 +85,21 @@ public sealed class HealthChecksTests
             DisplayName = "Main account",
             LastValidatedAt = now.UtcDateTime
         });
-        dbContext.HealthSnapshots.Add(CreateMarketWatchdogSnapshot(
-            now.UtcDateTime.AddMinutes(-20),
-            MonitoringHealthState.Healthy,
-            detail: "State=Normal; Reason=None"));
-
         await dbContext.SaveChangesAsync();
 
-        var marketHealthCheck = new MarketHealthCheck(
-            dbContext,
-            Options.Create(new MarketHealthOptions { ValidationFreshnessMinutes = 15 }),
-            timeProvider);
+        var circuitBreaker = CreateCircuitBreaker(dbContext, timeProvider);
+        await circuitBreaker.RecordHeartbeatAsync(
+            new DataLatencyHeartbeat("binance-btcusdt", now.UtcDateTime),
+            correlationId: "corr-market-health-002");
 
+        timeProvider.Advance(TimeSpan.FromMinutes(20));
+
+        var marketHealthCheck = CreateMarketHealthCheck(dbContext, circuitBreaker, timeProvider);
         var result = await marketHealthCheck.CheckHealthAsync(new HealthCheckContext());
 
         Assert.Equal(HealthStatus.Unhealthy, result.Status);
-        Assert.Equal("Healthy", result.Data["snapshotHealthState"]);
+        Assert.Equal("Stopped", result.Data["stateCode"]);
+        Assert.Equal("MarketDataLatencyCritical", result.Data["reasonCode"]);
     }
 
     [Fact]
@@ -123,22 +116,21 @@ public sealed class HealthChecksTests
             DisplayName = "Main account",
             LastValidatedAt = now.UtcDateTime
         });
-        dbContext.HealthSnapshots.Add(CreateMarketWatchdogSnapshot(
-            now.UtcDateTime.AddSeconds(-10),
-            MonitoringHealthState.Degraded,
-            detail: "State=Degraded; Reason=MarketDataLatencyBreached"));
-
         await dbContext.SaveChangesAsync();
 
-        var marketHealthCheck = new MarketHealthCheck(
-            dbContext,
-            Options.Create(new MarketHealthOptions { ValidationFreshnessMinutes = 15 }),
-            timeProvider);
+        var circuitBreaker = CreateCircuitBreaker(dbContext, timeProvider);
+        await circuitBreaker.RecordHeartbeatAsync(
+            new DataLatencyHeartbeat("binance-btcusdt", now.UtcDateTime),
+            correlationId: "corr-market-health-003");
 
+        timeProvider.Advance(TimeSpan.FromSeconds(3));
+
+        var marketHealthCheck = CreateMarketHealthCheck(dbContext, circuitBreaker, timeProvider);
         var result = await marketHealthCheck.CheckHealthAsync(new HealthCheckContext());
 
         Assert.Equal(HealthStatus.Unhealthy, result.Status);
-        Assert.Equal("Degraded", result.Data["snapshotHealthState"]);
+        Assert.Equal("Degraded", result.Data["stateCode"]);
+        Assert.Equal("MarketDataLatencyBreached", result.Data["reasonCode"]);
     }
 
     [Fact]
@@ -244,26 +236,28 @@ public sealed class HealthChecksTests
         Assert.Equal(HealthStatus.Unhealthy, result.Status);
     }
 
-    private static HealthSnapshot CreateMarketWatchdogSnapshot(
-        DateTime lastUpdatedAtUtc,
-        MonitoringHealthState healthState,
-        string detail)
+    private static MarketHealthCheck CreateMarketHealthCheck(
+        ApplicationDbContext dbContext,
+        IDataLatencyCircuitBreaker circuitBreaker,
+        AdjustableTimeProvider timeProvider)
     {
-        return new HealthSnapshot
-        {
-            SnapshotKey = "market-watchdog",
-            SentinelName = "MarketWatchdog",
-            DisplayName = "Market Watchdog",
-            HealthState = healthState,
-            FreshnessTier = MonitoringFreshnessTier.Hot,
-            CircuitBreakerState = healthState == MonitoringHealthState.Healthy
-                ? CircuitBreakerStateCode.Closed
-                : CircuitBreakerStateCode.Degraded,
-            LastUpdatedAtUtc = lastUpdatedAtUtc,
-            ObservedAtUtc = lastUpdatedAtUtc,
-            WorkerLastHeartbeatAtUtc = lastUpdatedAtUtc,
-            Detail = detail
-        };
+        return new MarketHealthCheck(
+            dbContext,
+            circuitBreaker,
+            Options.Create(new MarketHealthOptions { ValidationFreshnessMinutes = 15 }),
+            timeProvider);
+    }
+
+    private static DataLatencyCircuitBreaker CreateCircuitBreaker(
+        ApplicationDbContext dbContext,
+        AdjustableTimeProvider timeProvider)
+    {
+        return new DataLatencyCircuitBreaker(
+            dbContext,
+            new FakeAlertService(),
+            Options.Create(new DataLatencyGuardOptions()),
+            timeProvider,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<DataLatencyCircuitBreaker>.Instance);
     }
 
     private static ApplicationDbContext CreateDbContext()
