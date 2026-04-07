@@ -797,7 +797,7 @@ public sealed class BotWorkerJobProcessor(
             : await strategySignalService.GetAsync(persistedSignal.Id, cancellationToken);
     }
 
-    private static bool TryResolvePilotExecutionParameters(
+    private bool TryResolvePilotExecutionParameters(
         TradingBot bot,
         out decimal? leverage,
         out string? marginType,
@@ -809,7 +809,7 @@ public sealed class BotWorkerJobProcessor(
             : bot.MarginType.Trim().ToUpperInvariant();
         failureCode = null;
 
-        if (leverage != 1m)
+        if (leverage != 1m && !hostEnvironment.IsDevelopment())
         {
             failureCode = "PilotLeverageMustBeOne";
             return false;

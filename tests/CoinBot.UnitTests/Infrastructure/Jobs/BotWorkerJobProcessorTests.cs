@@ -71,6 +71,36 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_AllowsDevelopmentPilotLeverageAboveOne_ForClockDriftSmokeScope()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        bot.Leverage = 10m;
+        await harness.DbContext.SaveChangesAsync();
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-lev-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-lev-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-lev-1",
+            CancellationToken.None);
+
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.Equal(1, harness.PrivateRestClient.EnsureLeverageCalls);
+        Assert.Equal(10m, harness.PrivateRestClient.LastEnsuredLeverage);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
     public async Task ProcessAsync_SuppressesDuplicatePilotExecution_WhenTheSameBotRunsTwice()
     {
         await using var harness = CreateHarness();
@@ -1222,6 +1252,8 @@ public sealed class BotWorkerJobProcessorTests
 
         public int PlaceOrderCalls { get; private set; }
 
+        public decimal? LastEnsuredLeverage { get; private set; }
+
         public string? LastPlacedClientOrderId { get; private set; }
 
         public Task EnsureMarginTypeAsync(
@@ -1245,6 +1277,7 @@ public sealed class BotWorkerJobProcessorTests
             CancellationToken cancellationToken = default)
         {
             EnsureLeverageCalls++;
+            LastEnsuredLeverage = leverage;
             return Task.CompletedTask;
         }
 

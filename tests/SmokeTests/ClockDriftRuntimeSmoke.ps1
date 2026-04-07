@@ -483,7 +483,7 @@ END
     Invoke-SqlNonQuery -ConnectionString $ConnectionString -CommandText "INSERT INTO ExchangeAccounts (Id, ExchangeName, DisplayName, IsReadOnly, LastValidatedAt, ApiKeyCiphertext, ApiSecretCiphertext, CredentialFingerprint, CredentialKeyVersion, CredentialStatus, CredentialStoredAtUtc, CredentialLastAccessedAtUtc, CredentialLastRotatedAtUtc, CredentialRevalidateAfterUtc, CredentialRotateAfterUtc, CreatedDate, UpdatedDate, IsDeleted, OwnerUserId) VALUES (@ExchangeAccountId, 'Binance', 'Pilot Lifecycle Smoke Binance', 0, @UtcNow, @ApiKeyCiphertext, @ApiSecretCiphertext, @CredentialFingerprint, @CredentialKeyVersion, 'Active', @UtcNow, NULL, @UtcNow, DATEADD(DAY, 30, @UtcNow), DATEADD(DAY, 90, @UtcNow), @UtcNow, @UtcNow, 0, @UserId);" -Parameters @{ ExchangeAccountId = $ExchangeAccountId; UtcNow = $UtcNow; UserId = $UserId; ApiKeyCiphertext = $Bootstrap.Source.ApiKeyCiphertext; ApiSecretCiphertext = $Bootstrap.Source.ApiSecretCiphertext; CredentialFingerprint = $Bootstrap.Source.CredentialFingerprint; CredentialKeyVersion = if ([string]::IsNullOrWhiteSpace([string]$Bootstrap.Source.CredentialKeyVersion)) { 'credential-v1' } else { $Bootstrap.Source.CredentialKeyVersion } } | Out-Null
     Invoke-SqlNonQuery -ConnectionString $ConnectionString -CommandText "INSERT INTO ApiCredentials (Id, ExchangeAccountId, OwnerUserId, ApiKeyCiphertext, ApiSecretCiphertext, CredentialFingerprint, KeyVersion, EncryptedBlobVersion, ValidationStatus, PermissionSummary, StoredAtUtc, LastValidatedAtUtc, LastFailureReason, CreatedDate, UpdatedDate, IsDeleted) VALUES (@ApiCredentialId, @ExchangeAccountId, @UserId, @ApiKeyCiphertext, @ApiSecretCiphertext, @CredentialFingerprint, @CredentialKeyVersion, 1, @ValidationStatus, @PermissionSummary, @UtcNow, @ValidatedAtUtc, @FailureReason, @UtcNow, @UtcNow, 0);" -Parameters @{ ApiCredentialId = $ApiCredentialId; ExchangeAccountId = $ExchangeAccountId; UserId = $UserId; ApiKeyCiphertext = $Bootstrap.Source.ApiKeyCiphertext; ApiSecretCiphertext = $Bootstrap.Source.ApiSecretCiphertext; CredentialFingerprint = $Bootstrap.Source.CredentialFingerprint; CredentialKeyVersion = if ([string]::IsNullOrWhiteSpace([string]$Bootstrap.Source.CredentialKeyVersion)) { 'credential-v1' } else { $Bootstrap.Source.CredentialKeyVersion }; ValidationStatus = $Bootstrap.Source.ValidationStatus; PermissionSummary = $Bootstrap.Source.PermissionSummary; UtcNow = $UtcNow; ValidatedAtUtc = $Bootstrap.Source.ValidatedAtUtc; FailureReason = $Bootstrap.Source.FailureReason } | Out-Null
     Invoke-SqlNonQuery -ConnectionString $ConnectionString -CommandText "INSERT INTO ApiCredentialValidations (Id, ApiCredentialId, ExchangeAccountId, OwnerUserId, IsKeyValid, CanTrade, CanWithdraw, SupportsSpot, SupportsFutures, EnvironmentScope, IsEnvironmentMatch, HasTimestampSkew, HasIpRestrictionIssue, ValidationStatus, PermissionSummary, FailureReason, CorrelationId, ValidatedAtUtc, CreatedDate, UpdatedDate, IsDeleted) VALUES (NEWID(), @ApiCredentialId, @ExchangeAccountId, @UserId, @IsKeyValid, @CanTrade, @CanWithdraw, @SupportsSpot, @SupportsFutures, @EnvironmentScope, @IsEnvironmentMatch, @HasTimestampSkew, @HasIpRestrictionIssue, @ValidationStatus, @PermissionSummary, @FailureReason, @CorrelationId, @ValidatedAtUtc, @UtcNow, @UtcNow, 0);" -Parameters @{ ApiCredentialId = $ApiCredentialId; ExchangeAccountId = $ExchangeAccountId; UserId = $UserId; IsKeyValid = $Bootstrap.Source.IsKeyValid; CanTrade = $Bootstrap.Source.CanTrade; CanWithdraw = if ($null -eq $Bootstrap.Source.CanWithdraw) { $false } else { $Bootstrap.Source.CanWithdraw }; SupportsSpot = if ($null -eq $Bootstrap.Source.SupportsSpot) { $false } else { $Bootstrap.Source.SupportsSpot }; SupportsFutures = $Bootstrap.Source.SupportsFutures; EnvironmentScope = $Bootstrap.Source.EnvironmentScope; IsEnvironmentMatch = $Bootstrap.Source.IsEnvironmentMatch; HasTimestampSkew = if ($null -eq $Bootstrap.Source.HasTimestampSkew) { $false } else { $Bootstrap.Source.HasTimestampSkew }; HasIpRestrictionIssue = if ($null -eq $Bootstrap.Source.HasIpRestrictionIssue) { $false } else { $Bootstrap.Source.HasIpRestrictionIssue }; ValidationStatus = $Bootstrap.Source.ValidationStatus; PermissionSummary = $Bootstrap.Source.PermissionSummary; FailureReason = $Bootstrap.Source.FailureReason; CorrelationId = $Bootstrap.Source.CorrelationId; ValidatedAtUtc = $Bootstrap.Source.ValidatedAtUtc; UtcNow = $UtcNow } | Out-Null
-    Invoke-SqlNonQuery -ConnectionString $ConnectionString -CommandText "INSERT INTO TradingBots (Id, Name, StrategyKey, Symbol, Quantity, ExchangeAccountId, Leverage, MarginType, IsEnabled, TradingModeOverride, TradingModeApprovedAtUtc, TradingModeApprovalReference, OpenOrderCount, OpenPositionCount, CreatedDate, UpdatedDate, IsDeleted, OwnerUserId) VALUES (@BotId, 'Pilot Lifecycle Smoke Bot', 'pilot-lifecycle-smoke-core', @Symbol, 0.002, @ExchangeAccountId, 1, 'ISOLATED', 1, NULL, NULL, NULL, 0, 0, @UtcNow, @UtcNow, 0, @UserId);" -Parameters @{ BotId = $BotId; Symbol = $Symbol; ExchangeAccountId = $ExchangeAccountId; UtcNow = $UtcNow; UserId = $UserId } | Out-Null
+    Invoke-SqlNonQuery -ConnectionString $ConnectionString -CommandText "INSERT INTO TradingBots (Id, Name, StrategyKey, Symbol, Quantity, ExchangeAccountId, Leverage, MarginType, IsEnabled, TradingModeOverride, TradingModeApprovedAtUtc, TradingModeApprovalReference, OpenOrderCount, OpenPositionCount, CreatedDate, UpdatedDate, IsDeleted, OwnerUserId) VALUES (@BotId, 'Pilot Lifecycle Smoke Bot', 'pilot-lifecycle-smoke-core', @Symbol, 0.002, @ExchangeAccountId, 10, 'ISOLATED', 1, NULL, NULL, NULL, 0, 0, @UtcNow, @UtcNow, 0, @UserId);" -Parameters @{ BotId = $BotId; Symbol = $Symbol; ExchangeAccountId = $ExchangeAccountId; UtcNow = $UtcNow; UserId = $UserId } | Out-Null
     Seed-SmokeGlobalPolicy -ConnectionString $ConnectionString -UtcNow $UtcNow
 }
 
@@ -683,7 +683,7 @@ function Build-EnvironmentVariables {
         BotExecutionPilot__SignalEvaluationMode = 'Live'
         BotExecutionPilot__DefaultSymbol = $Symbol
         BotExecutionPilot__Timeframe = '1m'
-        BotExecutionPilot__DefaultLeverage = '1'
+        BotExecutionPilot__DefaultLeverage = '10'
         BotExecutionPilot__DefaultMarginType = 'ISOLATED'
         BotExecutionPilot__AllowedUserIds__0 = $UserId
         BotExecutionPilot__AllowedBotIds__0 = $BotId.ToString('N')
@@ -745,20 +745,19 @@ $lastWaitStage = 'Initialization'
 try {
     $lastWaitStage = 'SourcePreflight'
     $bootstrap = Get-SourceBootstrap -ConnectionString $sourceConnectionString
-    if ($bootstrap.Preflight.OpenExecutionOrders -ne 0 -or $bootstrap.Preflight.OpenPositions -ne 0) {
-        $lastWaitStage = 'SourcePreflightCleanup'
-        $summary.SourceOpenExecutionOrdersBeforeCleanup = @(Get-SourceOpenExecutionOrders -ConnectionString $sourceConnectionString)
-        $summary.SourceOpenPositionsBeforeCleanup = @(Get-SourceOpenPositions -ConnectionString $sourceConnectionString)
-        $summary.SourceOpenExecutionOrderCountBeforeCleanup = @([array]$summary.SourceOpenExecutionOrdersBeforeCleanup).Count
-        $summary.SourceOpenPositionCountBeforeCleanup = @([array]$summary.SourceOpenPositionsBeforeCleanup).Count
-        Invoke-SmokeCleanupHarness -ConnectionString $sourceConnectionString -Scope ("FLATTEN:USER:{0}" -f [string]$bootstrap.Source.OwnerUserId) -Phase 'source-preflight' -StandardOutputPath $sourceCleanupStdOutPath -StandardErrorPath $sourceCleanupStdErrPath -TimeoutSeconds 420
-        $summary.SourceCleanupApplied = $true
-        $bootstrap = Wait-Until -Name 'source cleanup closure' -TimeoutSeconds 360 -Condition {
-            $candidate = Get-SourceBootstrap -ConnectionString $sourceConnectionString
-            if ($candidate.Preflight.OpenExecutionOrders -eq 0 -and $candidate.Preflight.OpenPositions -eq 0) { return $candidate }
-            return $null
-        }
+    $lastWaitStage = 'SourcePreflightCleanup'
+    $summary.SourceOpenExecutionOrdersBeforeCleanup = @(Get-SourceOpenExecutionOrders -ConnectionString $sourceConnectionString)
+    $summary.SourceOpenPositionsBeforeCleanup = @(Get-SourceOpenPositions -ConnectionString $sourceConnectionString)
+    $summary.SourceOpenExecutionOrderCountBeforeCleanup = @([array]$summary.SourceOpenExecutionOrdersBeforeCleanup).Count
+    $summary.SourceOpenPositionCountBeforeCleanup = @([array]$summary.SourceOpenPositionsBeforeCleanup).Count
+    Invoke-SmokeCleanupHarness -ConnectionString $sourceConnectionString -Scope ("FLATTEN:USER:{0}" -f [string]$bootstrap.Source.OwnerUserId) -Phase 'source-preflight' -StandardOutputPath $sourceCleanupStdOutPath -StandardErrorPath $sourceCleanupStdErrPath -TimeoutSeconds 420
+    $summary.SourceCleanupApplied = $summary.SourceOpenExecutionOrderCountBeforeCleanup -ne 0 -or $summary.SourceOpenPositionCountBeforeCleanup -ne 0
+    $bootstrap = Wait-Until -Name 'source cleanup closure' -TimeoutSeconds 360 -Condition {
+        $candidate = Get-SourceBootstrap -ConnectionString $sourceConnectionString
+        if ($candidate.Preflight.OpenExecutionOrders -eq 0 -and $candidate.Preflight.OpenPositions -eq 0) { return $candidate }
+        return $null
     }
+
 
     $summary.SelectedSymbol = $symbol
     $summary.SourcePreflight = [ordered]@{
@@ -911,9 +910,6 @@ try {
             return $null
         }
 
-        Stop-ManagedProcess -Handle $submitWorkerHandle
-        $submitWorkerHandle = $null
-
         $lastWaitStage = 'PostRunCleanup'
         Invoke-SmokeCleanupHarness -ConnectionString $connectionString -Scope ("FLATTEN:USER:{0}" -f $smokeUserId) -Phase 'post-run' -StandardOutputPath $postRunCleanupStdOutPath -StandardErrorPath $postRunCleanupStdErrPath -TimeoutSeconds 420
         $summary.PostRunCleanupApplied = $true
@@ -927,6 +923,24 @@ try {
             }
             return $null
         } | Out-Null
+
+        $lastWaitStage = 'PostCleanupHealthRecovery'
+        $summary.PostCleanupReadiness = Wait-Until -Name 'post-cleanup market readiness' -TimeoutSeconds 180 -Condition {
+            $snapshot = Get-ReadinessSnapshot -ConnectionString $connectionString -ExchangeAccountId $exchangeAccountId -Symbol $symbol -Timeframe '1m'
+            if ($null -eq $snapshot) { return $null }
+            if ($snapshot.StateCode -ne 'Normal' -or $snapshot.ReasonCode -ne 'None') { return $null }
+            if ($snapshot.PrivateStreamConnectionState -ne 'Connected' -or $snapshot.DriftStatus -ne 'InSync') { return $null }
+
+            $readyHealth = Invoke-HealthJson -BaseUrl $baseUrl -Session $adminSession -Path '/health/ready'
+            $dataLatencyHealth = Invoke-HealthJson -BaseUrl $baseUrl -Session $adminSession -Path '/health/data-latency'
+            if ($readyHealth.status -ne 'Healthy' -or $dataLatencyHealth.status -ne 'Healthy') { return $null }
+
+            return [pscustomobject]@{
+                Snapshot = $snapshot
+                ReadyHealth = $readyHealth
+                DataLatencyHealth = $dataLatencyHealth
+            }
+        }
 
         $lastWaitStage = 'FinalPostSubmitTerminalOrBrokerObservedOrder'
         $finalOrder = Wait-Until -Name 'final post-submit terminal or broker-observed order' -TimeoutSeconds 240 -Condition {
@@ -1022,6 +1036,13 @@ try {
         throw "Smoke-local cleanup did not fully close scoped exposure. OpenOrders=$($summary.ScopeOpenExecutionOrderCount); OpenPositions=$($summary.ScopeOpenPositionCount)."
     }
 
+    if ($summary.HealthAfterAttempts.Ready.status -ne 'Healthy' -or $summary.HealthAfterAttempts.DataLatency.status -ne 'Healthy') {
+        throw "Post-cleanup health did not recover. Ready=$($summary.HealthAfterAttempts.Ready.status); DataLatency=$($summary.HealthAfterAttempts.DataLatency.status); Reason=$($summary.DriftSnapshotAfterAttempts.ReasonCode ?? 'missing')."
+    }
+
+    Stop-ManagedProcess -Handle $submitWorkerHandle
+    $submitWorkerHandle = $null
+
     Write-SmokeSummary -Summary $summary -SummaryPath $summaryPath
 
     Write-Host ('SelectedPlane=' + $summary.SelectedPlane)
@@ -1085,3 +1106,4 @@ finally {
     Stop-ManagedProcess -Handle $warmupWorkerHandle
     Stop-ManagedProcess -Handle $webHandle
 }
+
