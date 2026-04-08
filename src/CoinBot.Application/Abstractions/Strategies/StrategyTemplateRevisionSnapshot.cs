@@ -13,4 +13,5 @@ public sealed record StrategyTemplateRevisionSnapshot(
     bool IsArchived,
     string? SourceTemplateKey = null,
     int? SourceRevisionNumber = null,
-    DateTime? ArchivedAtUtc = null);
+    DateTime? ArchivedAtUtc = null,
+    bool IsPublished = false);

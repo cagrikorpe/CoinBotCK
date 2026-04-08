@@ -33,7 +33,7 @@ public class StrategyBuilderController(
             .Select(entity => new SelectListItem(
                 string.IsNullOrWhiteSpace(entity.DisplayName)
                     ? entity.StrategyKey
-                    : entity.DisplayName,
+                    : $"{entity.DisplayName} ({entity.StrategyKey})",
                 entity.Id.ToString()))
             .ToListAsync(cancellationToken);
         return View();
@@ -59,14 +59,20 @@ public class StrategyBuilderController(
             return RedirectToAction(nameof(Index));
         }
 
-        var strategyExists = await dbContext.TradingStrategies
+        var targetStrategy = await dbContext.TradingStrategies
             .AsNoTracking()
-            .AnyAsync(
-                entity => entity.Id == strategyId &&
-                          entity.OwnerUserId == userId &&
-                          !entity.IsDeleted,
-                cancellationToken);
-        if (!strategyExists)
+            .Where(entity => entity.Id == strategyId &&
+                             entity.OwnerUserId == userId &&
+                             !entity.IsDeleted)
+            .Select(entity => new
+            {
+                entity.StrategyKey,
+                DisplayLabel = string.IsNullOrWhiteSpace(entity.DisplayName)
+                    ? entity.StrategyKey
+                    : $"{entity.DisplayName} ({entity.StrategyKey})"
+            })
+            .SingleOrDefaultAsync(cancellationToken);
+        if (targetStrategy is null)
         {
             TempData["StrategyBuilderTemplateError"] = "Hedef strateji bulunamadı veya kullanıcı kapsamı dışında.";
             return RedirectToAction(nameof(Index));
@@ -81,7 +87,7 @@ public class StrategyBuilderController(
 
             TempData["StrategyBuilderTemplateSuccess"] = SanitizeTemplateMessage(
                 FormattableString.Invariant(
-                    $"Draft oluşturuldu. Template={draft.TemplateKey ?? normalizedTemplateKey}; Version={draft.VersionNumber}; Validation={draft.ValidationStatusCode}."));
+                    $"Bagimsiz draft olusturuldu. Strategy={targetStrategy.DisplayLabel}; Template={draft.TemplateKey ?? normalizedTemplateKey}; SourceRevision=r{draft.TemplateRevisionNumber?.ToString(CultureInfo.InvariantCulture) ?? "n/a"}; Version={draft.VersionNumber}; Validation={draft.ValidationStatusCode}."));
         }
         catch (StrategyDefinitionValidationException exception)
         {
@@ -93,6 +99,10 @@ public class StrategyBuilderController(
         {
             TempData["StrategyBuilderTemplateError"] = SanitizeTemplateMessage(
                 $"ParseFailed: {exception.Message}");
+        }
+        catch (StrategyTemplateCatalogException exception)
+        {
+            TempData["StrategyBuilderTemplateError"] = BuildTemplateCatalogErrorMessage(exception);
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
         {
@@ -107,9 +117,17 @@ public class StrategyBuilderController(
         return User.FindFirstValue(ClaimTypes.NameIdentifier);
     }
 
+    private static string BuildTemplateCatalogErrorMessage(StrategyTemplateCatalogException exception)
+    {
+        return SanitizeTemplateMessage($"{exception.FailureCode}: {exception.Message}");
+    }
+
     private static string SanitizeTemplateMessage(string? value)
     {
-        var normalized = value?.Trim();
+        var normalized = value?
+            .Replace("\r", " ", StringComparison.Ordinal)
+            .Replace("\n", " ", StringComparison.Ordinal)
+            .Trim();
         if (string.IsNullOrWhiteSpace(normalized))
         {
             return "Template draft sonucu okunamadı.";
@@ -120,3 +138,5 @@ public class StrategyBuilderController(
             : normalized[..256];
     }
 }
+
+

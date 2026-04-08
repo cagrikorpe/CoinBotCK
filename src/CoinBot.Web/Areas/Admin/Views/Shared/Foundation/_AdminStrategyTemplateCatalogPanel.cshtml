@@ -10,7 +10,7 @@
             <div>
                 <div class="cb-admin-section-kicker">Template Lifecycle</div>
                 <div class="cb-admin-section-title">Template revision katalogu</div>
-                <p class="cb-admin-section-description mb-0">Built-in ve custom template lineage, active/latest revision ve archived durumu aynı admin hakikatinden okunur.</p>
+                <p class="cb-admin-section-description mb-0">Built-in ve custom template lineage, current/published/latest revision ve archived durumu aynı admin hakikatinden okunur.</p>
             </div>
             @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = snapshot is null ? "Veri yok" : $"{templates.Count} template", Tone = "info", IconText = "TP" })
         </div>
@@ -31,7 +31,7 @@
                 {
                     <div class="cb-admin-profile-row">
                         <span data-cb-strategy-template-key>@template.TemplateKey</span>
-                        <strong data-cb-strategy-template-revisions>@template.TemplateName · @template.TemplateSource · Active=r@template.ActiveRevisionNumber · Latest=r@template.LatestRevisionNumber · @template.LifecycleStatusLabel</strong>
+                        <strong data-cb-strategy-template-revisions>@template.TemplateName · @template.TemplateSource · Published=r@template.PublishedRevisionNumber · Current=r@template.ActiveRevisionNumber · Latest=r@template.LatestRevisionNumber · @template.LifecycleStatusLabel</strong>
                     </div>
                     <div class="cb-admin-profile-row">
                         <span>Lineage</span>
@@ -42,3 +42,4 @@
         }
     </div>
 </div>
+

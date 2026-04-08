@@ -1,0 +1,126 @@
+@using CoinBot.Application.Abstractions.Administration
+@{
+    var snapshot = ViewData["AdminStrategyAiMonitoringPageSnapshot"] as AdminStrategyAiMonitoringPageSnapshot;
+    var summary = snapshot?.TemplateAdoptionSummary;
+    var topTemplates = snapshot?.TemplateAdoptionRows ?? Array.Empty<AdminTemplateAdoptionRowSnapshot>();
+    var recentClones = snapshot?.RecentTemplateClones ?? Array.Empty<AdminRecentTemplateCloneSnapshot>();
+}
+
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-panel-card" data-cb-template-adoption-summary>
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Template Adoption</div>
+                <div class="cb-admin-section-title">Template kullanım ve sağlık özeti</div>
+                <p class="cb-admin-section-description mb-0">Gerçek template catalog ve strategy version metadata üzerinden clone hacmi, published/archive durumu ve son validation issue özeti gösterilir.</p>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = summary is null ? "Veri yok" : $"{summary.TotalCloneCount} clone", Tone = summary is null || summary.TotalCloneCount == 0 ? "neutral" : "info", IconText = "TP" })
+        </div>
+
+        @if (snapshot is null)
+        {
+            @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+            {
+                Title = "Template adoption verisi yok",
+                Message = "Strategy / AI monitoring snapshot'u bulunamadı.",
+                IconText = "TP"
+            })
+        }
+        else if (summary is not null && summary.TotalTemplateCount == 0 && summary.TotalCloneCount == 0)
+        {
+            @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
+            {
+                Title = "Template adoption boş",
+                Message = "Persisted template veya template-sourced draft strategy version bulunamadı.",
+                IconText = "TP",
+                ActionText = "Template catalog",
+                ActionHref = Url.Action("StrategyTemplates", "Admin", new { area = "Admin" })
+            })
+        }
+        else if (summary is not null)
+        {
+            <div class="cb-admin-ai-health-grid mt-6">
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Toplam template</span>
+                    <strong data-cb-template-total>@summary.TotalTemplateCount</strong>
+                    <small>Catalog master</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Published</span>
+                    <strong data-cb-template-published>@summary.PublishedTemplateCount</strong>
+                    <small>Clone kaynağı açık</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Archived</span>
+                    <strong data-cb-template-archived>@summary.ArchivedTemplateCount</strong>
+                    <small>Read-only lifecycle</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Toplam clone</span>
+                    <strong data-cb-template-clone-count>@summary.TotalCloneCount</strong>
+                    <small>Template-sourced version</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Aktif usage</span>
+                    <strong data-cb-template-active-strategy-count>@summary.ActiveTemplateStrategyCount</strong>
+                    <small>Runtime template strategy</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Son clone</span>
+                    <strong data-cb-template-last-clone>@summary.LastCloneAtLabel</strong>
+                    <small>@summary.MostUsedTemplateLabel</small>
+                </div>
+            </div>
+
+            <div class="cb-admin-profile-list mt-6">
+                <div class="cb-admin-profile-row">
+                    <span>Validation issue</span>
+                    <strong data-cb-template-latest-validation>@summary.LatestValidationIssueSummary</strong>
+                </div>
+            </div>
+
+            <div class="mt-6">
+                <div class="cb-admin-section-kicker">Top templates</div>
+                @if (topTemplates.Count == 0)
+                {
+                    <p class="text-muted mb-0">Template clone verisi yok.</p>
+                }
+                else
+                {
+                    <div class="cb-admin-profile-list mt-3">
+                        @foreach (var item in topTemplates)
+                        {
+                            <div class="cb-admin-profile-row">
+                                <span>@item.TemplateKey</span>
+                                <strong>
+                                    <a asp-area="Admin" asp-controller="Admin" asp-action="StrategyTemplates" asp-route-templateKey="@item.TemplateKey">@item.TemplateName</a>
+                                    · Clone=@item.CloneCount · Active=@item.ActiveStrategyCount · @item.LifecycleStatusLabel · Validation=@item.ValidationStatusCode · Son=@item.LastCloneAtLabel
+                                </strong>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+
+            <div class="mt-6">
+                <div class="cb-admin-section-kicker">Recent clones</div>
+                @if (recentClones.Count == 0)
+                {
+                    <p class="text-muted mb-0">Son clone kaydı yok.</p>
+                }
+                else
+                {
+                    <div class="cb-admin-profile-list mt-3">
+                        @foreach (var item in recentClones)
+                        {
+                            <div class="cb-admin-profile-row">
+                                <span>@item.StrategyKey</span>
+                                <strong data-cb-template-recent-clone>@item.StrategyDisplayName · @item.TemplateName (@item.TemplateRevisionLabel) · @item.VersionLabel · @item.CreatedAtLabel</strong>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>

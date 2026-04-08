@@ -18,6 +18,8 @@ public sealed class TradingStrategyTemplate : UserOwnedEntity
 
     public Guid? ActiveTradingStrategyTemplateRevisionId { get; set; }
 
+    public Guid? PublishedTradingStrategyTemplateRevisionId { get; set; }
+
     public Guid? LatestTradingStrategyTemplateRevisionId { get; set; }
 
     public string? SourceTemplateKey { get; set; }

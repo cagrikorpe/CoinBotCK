@@ -107,7 +107,8 @@ public sealed partial class AdminWorkspaceReadModelService
             .AsNoTracking()
             .Where(version => !version.IsDeleted)
             .ToListAsync(cancellationToken);
-        var templates = (await strategyTemplateCatalogService.ListAsync(cancellationToken))
+        var templateSnapshots = await strategyTemplateCatalogService.ListAllAsync(cancellationToken);
+        var templates = templateSnapshots
             .Select(template => new AdminStrategyTemplateSnapshot(
                 template.TemplateKey,
                 template.TemplateName,
@@ -118,16 +119,25 @@ public sealed partial class AdminWorkspaceReadModelService
                 template.Description,
                 template.ActiveRevisionNumber,
                 template.LatestRevisionNumber,
+                template.PublishedRevisionNumber,
                 template.TemplateSource,
                 template.IsActive ? "Active" : "Archived",
                 BuildTemplateLineageLabel(template)))
             .ToArray();
 
-        var rows = strategies.Select(strategy =>
+        var versionLookup = versions
+            .GroupBy(version => version.TradingStrategyId)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyCollection<TradingStrategyVersion>)group.ToArray());
+
+        var allUsageRows = strategies.Select(strategy =>
         {
             var strategySignals = signals.Where(signal => signal.TradingStrategyId == strategy.Id).ToArray();
             var strategyVetoes = vetoes.Where(veto => veto.TradingStrategyId == strategy.Id).ToArray();
-            var strategyVersions = versions.Where(version => version.TradingStrategyId == strategy.Id).ToArray();
+            var strategyVersions = versionLookup.TryGetValue(strategy.Id, out var scopedVersions)
+                ? scopedVersions
+                : Array.Empty<TradingStrategyVersion>();
             var latestSignal = strategySignals.OrderByDescending(signal => signal.GeneratedAtUtc).FirstOrDefault();
             var latestVeto = strategyVetoes.OrderByDescending(veto => veto.EvaluatedAtUtc).FirstOrDefault();
             var runtimeVersion = ResolveRuntimeStrategyVersion(strategy, strategyVersions);
@@ -166,7 +176,7 @@ public sealed partial class AdminWorkspaceReadModelService
                 BuildLifecycleTokenLabel(strategy));
         }).ToArray();
 
-        rows = rows
+        var rows = allUsageRows
             .Where(row => string.IsNullOrWhiteSpace(normalizedQuery) ||
                           row.StrategyKey.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase) ||
                           row.DisplayName.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase) ||
@@ -195,8 +205,22 @@ public sealed partial class AdminWorkspaceReadModelService
         };
 
         var latestExplainability = BuildLatestStrategyExplainabilitySnapshot(strategies, versions, signals, vetoes);
+        var templateCloneFacts = BuildTemplateCloneFacts(strategies, versions);
+        var templateAdoptionSummary = BuildTemplateAdoptionSummary(now, templateSnapshots, templateCloneFacts, allUsageRows);
+        var templateAdoptionRows = BuildTemplateAdoptionRows(now, templateSnapshots, templateCloneFacts, allUsageRows);
+        var recentTemplateClones = BuildRecentTemplateClones(now, templateCloneFacts);
 
-        return new AdminStrategyAiMonitoringPageSnapshot(normalizedQuery, summaryTiles, rows, healthTiles, templates, latestExplainability, now);
+        return new AdminStrategyAiMonitoringPageSnapshot(
+            normalizedQuery,
+            summaryTiles,
+            rows,
+            healthTiles,
+            templates,
+            templateAdoptionSummary,
+            templateAdoptionRows,
+            recentTemplateClones,
+            latestExplainability,
+            now);
     }
 
     public async Task<AdminSupportLookupSnapshot> GetSupportLookupAsync(
@@ -701,8 +725,152 @@ public sealed partial class AdminWorkspaceReadModelService
             ? $"r{template.ActiveRevisionNumber}"
             : "inactive";
 
-        return $"{sourceLabel}; Active={activeLabel}; Latest=r{template.LatestRevisionNumber}";
+        return $"{sourceLabel}; Published=r{template.PublishedRevisionNumber}; Active={activeLabel}; Latest=r{template.LatestRevisionNumber}";
     }
+
+    private IReadOnlyCollection<TemplateCloneFact> BuildTemplateCloneFacts(
+        IReadOnlyCollection<TradingStrategy> strategies,
+        IReadOnlyCollection<TradingStrategyVersion> versions)
+    {
+        var strategyLookup = strategies.ToDictionary(strategy => strategy.Id, strategy => strategy);
+
+        return versions
+            .Select(version =>
+            {
+                strategyLookup.TryGetValue(version.TradingStrategyId, out var strategy);
+                var definitionSummary = BuildStrategyDefinitionSummary(version);
+                if (string.IsNullOrWhiteSpace(definitionSummary.TemplateKey) ||
+                    string.Equals(definitionSummary.TemplateKey, "custom", StringComparison.OrdinalIgnoreCase))
+                {
+                    return null;
+                }
+
+                return new TemplateCloneFact(
+                    definitionSummary.TemplateKey,
+                    definitionSummary.TemplateName,
+                    strategy?.StrategyKey ?? "n/a",
+                    strategy?.DisplayName ?? (strategy?.StrategyKey ?? version.TradingStrategyId.ToString()),
+                    FormatVersionLabel(version),
+                    definitionSummary.TemplateRevisionLabel,
+                    version.CreatedDate,
+                    definitionSummary.ValidationStatusCode,
+                    definitionSummary.ValidationSummary);
+            })
+            .Where(fact => fact is not null)
+            .Select(fact => fact!)
+            .ToArray();
+    }
+
+    private AdminTemplateAdoptionSummarySnapshot BuildTemplateAdoptionSummary(
+        DateTime now,
+        IReadOnlyCollection<StrategyTemplateSnapshot> templates,
+        IReadOnlyCollection<TemplateCloneFact> cloneFacts,
+        IReadOnlyCollection<AdminStrategyUsageSnapshot> usageRows)
+    {
+        DateTime? lastCloneAtUtc = cloneFacts.Count == 0
+            ? null
+            : cloneFacts.Max(fact => fact.CreatedAtUtc);
+        var mostUsedTemplate = cloneFacts
+            .GroupBy(fact => new { fact.TemplateKey, fact.TemplateName })
+            .OrderByDescending(group => group.Count())
+            .ThenBy(group => group.Key.TemplateName, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+        var latestValidationIssue = templates
+            .Where(template => !string.Equals(template.Validation.StatusCode, "Valid", StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(template => template.UpdatedAtUtc ?? template.CreatedAtUtc ?? DateTime.MinValue)
+            .FirstOrDefault();
+        var activeTemplateStrategyCount = usageRows
+            .Where(row => !string.Equals(row.TemplateKey, "custom", StringComparison.OrdinalIgnoreCase) &&
+                          !string.Equals(row.RuntimeVersionLabel, "Inactive", StringComparison.OrdinalIgnoreCase))
+            .Select(row => row.StrategyKey)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+
+        return new AdminTemplateAdoptionSummarySnapshot(
+            templates.Count,
+            templates.Count(template => template.PublishedRevisionNumber > 0),
+            templates.Count(template => !template.IsActive),
+            cloneFacts.Count,
+            lastCloneAtUtc,
+            BuildRelativeTimeLabel(now, lastCloneAtUtc),
+            mostUsedTemplate is null
+                ? "n/a"
+                : $"{mostUsedTemplate.Key.TemplateName} ({mostUsedTemplate.Count().ToString(System.Globalization.CultureInfo.InvariantCulture)})",
+            activeTemplateStrategyCount,
+            latestValidationIssue is null
+                ? "No validation issue"
+                : $"{latestValidationIssue.TemplateName} · {latestValidationIssue.Validation.StatusCode} · {latestValidationIssue.Validation.Summary}");
+    }
+
+    private IReadOnlyCollection<AdminTemplateAdoptionRowSnapshot> BuildTemplateAdoptionRows(
+        DateTime now,
+        IReadOnlyCollection<StrategyTemplateSnapshot> templates,
+        IReadOnlyCollection<TemplateCloneFact> cloneFacts,
+        IReadOnlyCollection<AdminStrategyUsageSnapshot> usageRows)
+    {
+        var templateLookup = templates.ToDictionary(template => template.TemplateKey, template => template, StringComparer.OrdinalIgnoreCase);
+        var activeUsageLookup = usageRows
+            .Where(row => !string.Equals(row.TemplateKey, "custom", StringComparison.OrdinalIgnoreCase) &&
+                          !string.Equals(row.RuntimeVersionLabel, "Inactive", StringComparison.OrdinalIgnoreCase))
+            .GroupBy(row => row.TemplateKey, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Select(row => row.StrategyKey).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                StringComparer.OrdinalIgnoreCase);
+
+        return cloneFacts
+            .GroupBy(fact => fact.TemplateKey, StringComparer.OrdinalIgnoreCase)
+            .Select(group =>
+            {
+                templateLookup.TryGetValue(group.Key, out var template);
+                activeUsageLookup.TryGetValue(group.Key, out var activeStrategyCount);
+                var lastCloneAtUtc = group.Max(item => item.CreatedAtUtc);
+                var latestClone = group.OrderByDescending(item => item.CreatedAtUtc).First();
+
+                return new AdminTemplateAdoptionRowSnapshot(
+                    group.Key,
+                    template?.TemplateName ?? latestClone.TemplateName,
+                    group.Count(),
+                    activeStrategyCount,
+                    BuildRelativeTimeLabel(now, lastCloneAtUtc),
+                    template is null ? "Unknown" : template.IsActive ? "Active" : "Archived",
+                    template?.Validation.StatusCode ?? latestClone.ValidationStatusCode);
+            })
+            .OrderByDescending(row => row.CloneCount)
+            .ThenBy(row => row.TemplateName, StringComparer.OrdinalIgnoreCase)
+            .Take(5)
+            .ToArray();
+    }
+
+    private IReadOnlyCollection<AdminRecentTemplateCloneSnapshot> BuildRecentTemplateClones(
+        DateTime now,
+        IReadOnlyCollection<TemplateCloneFact> cloneFacts)
+    {
+        return cloneFacts
+            .OrderByDescending(fact => fact.CreatedAtUtc)
+            .ThenBy(fact => fact.StrategyDisplayName, StringComparer.OrdinalIgnoreCase)
+            .Take(5)
+            .Select(fact => new AdminRecentTemplateCloneSnapshot(
+                fact.StrategyKey,
+                fact.StrategyDisplayName,
+                fact.TemplateKey,
+                fact.TemplateName,
+                fact.VersionLabel,
+                fact.TemplateRevisionLabel,
+                BuildRelativeTimeLabel(now, fact.CreatedAtUtc)))
+            .ToArray();
+    }
+
+    private sealed record TemplateCloneFact(
+        string TemplateKey,
+        string TemplateName,
+        string StrategyKey,
+        string StrategyDisplayName,
+        string VersionLabel,
+        string TemplateRevisionLabel,
+        DateTime CreatedAtUtc,
+        string ValidationStatusCode,
+        string ValidationSummary);
 
     private sealed record StrategyDefinitionSummary(
         string TemplateKey,
@@ -1100,6 +1268,12 @@ public sealed partial class AdminWorkspaceReadModelService
         return $"{snapshot.Summary}{tags}";
     }
 }
+
+
+
+
+
+
 
 
 

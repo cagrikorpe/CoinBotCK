@@ -14,8 +14,12 @@ public sealed record StrategyTemplateSnapshot(
     string? SourceTemplateKey = null,
     int ActiveRevisionNumber = 1,
     int LatestRevisionNumber = 1,
+    int PublishedRevisionNumber = 1,
     int? SourceRevisionNumber = null,
     Guid? TemplateId = null,
     Guid? ActiveRevisionId = null,
     Guid? LatestRevisionId = null,
-    DateTime? ArchivedAtUtc = null);
+    Guid? PublishedRevisionId = null,
+    DateTime? ArchivedAtUtc = null,
+    DateTime? CreatedAtUtc = null,
+    DateTime? UpdatedAtUtc = null);

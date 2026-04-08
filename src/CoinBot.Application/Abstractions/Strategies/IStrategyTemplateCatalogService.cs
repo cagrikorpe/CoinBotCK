@@ -4,7 +4,11 @@ public interface IStrategyTemplateCatalogService
 {
     Task<IReadOnlyCollection<StrategyTemplateSnapshot>> ListAsync(CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyCollection<StrategyTemplateSnapshot>> ListAllAsync(CancellationToken cancellationToken = default);
+
     Task<StrategyTemplateSnapshot> GetAsync(string templateKey, CancellationToken cancellationToken = default);
+
+    Task<StrategyTemplateSnapshot> GetIncludingArchivedAsync(string templateKey, CancellationToken cancellationToken = default);
 
     Task<StrategyTemplateSnapshot> CreateCustomAsync(
         string ownerUserId,
@@ -30,6 +34,11 @@ public interface IStrategyTemplateCatalogService
         string description,
         string category,
         string definitionJson,
+        CancellationToken cancellationToken = default);
+
+    Task<StrategyTemplateSnapshot> PublishAsync(
+        string templateKey,
+        int revisionNumber,
         CancellationToken cancellationToken = default);
 
     Task<IReadOnlyCollection<StrategyTemplateRevisionSnapshot>> ListRevisionsAsync(

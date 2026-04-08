@@ -65,6 +65,48 @@ public sealed class StrategyVersionServiceTests
     }
 
     [Fact]
+    public async Task CreateDraftFromTemplateAsync_UsesLatestPublishedRevision_AndDoesNotLeakDraftTemplateRevision()
+    {
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-template-publish-1", "published-template-core");
+        dbContext.TradingStrategies.Add(strategy);
+        await dbContext.SaveChangesAsync();
+
+        var parser = new StrategyRuleParser();
+        var validator = new StrategyDefinitionValidator();
+        var templateCatalog = new StrategyTemplateCatalogService(parser, validator, dbContext);
+        var service = new StrategyVersionService(
+            dbContext,
+            parser,
+            new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero)),
+            validator,
+            templateCatalog);
+
+        _ = await templateCatalog.CreateCustomAsync(
+            strategy.OwnerUserId,
+            "published-template-core-template",
+            "Published Template Core",
+            "Initial template.",
+            "Momentum",
+            CreateDefinitionJson("Live", 30m));
+        _ = await templateCatalog.ReviseAsync(
+            "published-template-core-template",
+            "Published Template Core",
+            "Draft revision two.",
+            "Momentum",
+            CreateDefinitionJson("Live", 25m));
+
+        var firstDraft = await service.CreateDraftFromTemplateAsync(strategy.Id, "published-template-core-template");
+        _ = await templateCatalog.PublishAsync("published-template-core-template", 2);
+        var secondDraft = await service.CreateDraftFromTemplateAsync(strategy.Id, "published-template-core-template");
+        var persistedVersions = await dbContext.TradingStrategyVersions.OrderBy(entity => entity.VersionNumber).ToListAsync();
+
+        Assert.Equal(1, firstDraft.TemplateRevisionNumber);
+        Assert.Equal(2, secondDraft.TemplateRevisionNumber);
+        Assert.Contains("\"templateRevisionNumber\": 1", persistedVersions[0].DefinitionJson, StringComparison.Ordinal);
+        Assert.Contains("\"templateRevisionNumber\": 2", persistedVersions[1].DefinitionJson, StringComparison.Ordinal);
+    }
+    [Fact]
     public async Task CreateDraftFromVersionAsync_LeavesPublishedVersionImmutable_AndCreatesNewDraft()
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
@@ -389,3 +431,5 @@ public sealed class StrategyVersionServiceTests
         public bool HasIsolationBypass => true;
     }
 }
+
+

@@ -9,6 +9,7 @@ using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Application.Abstractions.Policy;
+using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Contracts.Common;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
@@ -53,6 +54,8 @@ public sealed class AdminController : Controller
     private const string CrisisSuccessTempDataKey = "AdminCrisisEscalationSuccess";
     private const string CrisisErrorTempDataKey = "AdminCrisisEscalationError";
     private const string CrisisPreviewTempDataKey = "AdminCrisisEscalationPreviewState";
+    private const string StrategyTemplateSuccessTempDataKey = "AdminStrategyTemplateSuccess";
+    private const string StrategyTemplateErrorTempDataKey = "AdminStrategyTemplateError";
     private static readonly JsonSerializerOptions PolicyJsonSerializerOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true
@@ -66,6 +69,7 @@ public sealed class AdminController : Controller
     private readonly IApprovalWorkflowService? approvalWorkflowService;
     private readonly ICrisisEscalationService? crisisEscalationService;
     private readonly ICriticalUserOperationAuthorizer criticalUserOperationAuthorizer;
+    private readonly IStrategyTemplateCatalogService strategyTemplateCatalogService;
     private readonly ILogCenterRetentionService? logCenterRetentionService;
     private readonly IGlobalPolicyEngine? globalPolicyEngine;
     private readonly IGlobalExecutionSwitchService globalExecutionSwitchService;
@@ -87,6 +91,7 @@ public sealed class AdminController : Controller
         IDataLatencyCircuitBreaker dataLatencyCircuitBreaker,
         IApiCredentialValidationService apiCredentialValidationService,
         IAdminWorkspaceReadModelService adminWorkspaceReadModelService,
+        IStrategyTemplateCatalogService strategyTemplateCatalogService,
         ICriticalUserOperationAuthorizer criticalUserOperationAuthorizer,
         IApprovalWorkflowService? approvalWorkflowService = null,
         IAdminGovernanceReadModelService? adminGovernanceReadModelService = null,
@@ -107,6 +112,7 @@ public sealed class AdminController : Controller
         this.dataLatencyCircuitBreaker = dataLatencyCircuitBreaker;
         this.apiCredentialValidationService = apiCredentialValidationService;
         this.adminWorkspaceReadModelService = adminWorkspaceReadModelService;
+        this.strategyTemplateCatalogService = strategyTemplateCatalogService;
         this.criticalUserOperationAuthorizer = criticalUserOperationAuthorizer;
         this.approvalWorkflowService = approvalWorkflowService;
         this.adminGovernanceReadModelService = adminGovernanceReadModelService;
@@ -499,6 +505,472 @@ public sealed class AdminController : Controller
         return View();
     }
 
+    [Authorize(Policy = ApplicationPolicies.AdminPortalAccess)]
+    public async Task<IActionResult> StrategyTemplates(string? templateKey, CancellationToken cancellationToken)
+    {
+        ApplyShellMeta(
+            title: "Strategy Templates",
+            description: "Built-in ve custom strategy template katalogunu revision history ile yoneten Super Admin katalog yuzeyi.",
+            activeNav: "StrategyTemplates",
+            breadcrumbItems: new[] { "Super Admin", "Strategy", "Strategy Templates" });
+
+        var model = await BuildStrategyTemplateCatalogPageViewModelAsync(templateKey, cancellationToken);
+        return View(model);
+    }
+
+    [HttpPost]
+    [Authorize(Policy = ApplicationPolicies.PlatformAdministration)]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> CreateStrategyTemplate(
+        string? templateKey,
+        string? templateName,
+        string? description,
+        string? category,
+        string? definitionJson,
+        string? reason,
+        CancellationToken cancellationToken)
+    {
+        var mfaResult = await EnforcePlatformAdminMfaAsync(
+            "StrategyTemplates.Create",
+            StrategyTemplateErrorTempDataKey,
+            nameof(StrategyTemplates),
+            new { area = "Admin" },
+            cancellationToken);
+
+        if (mfaResult is not null)
+        {
+            return mfaResult;
+        }
+
+        var normalizedReason = NormalizeRequiredReason(reason);
+        if (normalizedReason is null)
+        {
+            TempData[StrategyTemplateErrorTempDataKey] = "Audit reason zorunludur.";
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin" });
+        }
+
+        var normalizedTemplateKey = NormalizeRequiredInput(templateKey, 128);
+        var normalizedTemplateName = NormalizeRequiredInput(templateName, 128);
+        var normalizedDescription = NormalizeRequiredInput(description, 512);
+        var normalizedCategory = NormalizeRequiredInput(category, 64);
+        var normalizedDefinitionJson = definitionJson?.Trim();
+        if (normalizedTemplateKey is null ||
+            normalizedTemplateName is null ||
+            normalizedDescription is null ||
+            normalizedCategory is null ||
+            string.IsNullOrWhiteSpace(normalizedDefinitionJson))
+        {
+            TempData[StrategyTemplateErrorTempDataKey] = "Template key, isim, aciklama, kategori ve definition zorunludur.";
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin" });
+        }
+
+        var actorUserId = ResolveAdminUserId();
+
+        try
+        {
+            var created = await strategyTemplateCatalogService.CreateCustomAsync(
+                actorUserId,
+                normalizedTemplateKey,
+                normalizedTemplateName,
+                normalizedDescription,
+                normalizedCategory,
+                normalizedDefinitionJson,
+                cancellationToken);
+
+            await adminAuditLogService.WriteAsync(
+                BuildAdminAuditLogWriteRequest(
+                    actorUserId,
+                    "Admin.StrategyTemplates.Create",
+                    "StrategyTemplate",
+                    created.TemplateKey,
+                    oldValueSummary: null,
+                    newValueSummary: BuildStrategyTemplateSummary(created),
+                    normalizedReason,
+                    HttpContext.TraceIdentifier),
+                cancellationToken);
+
+            TempData[StrategyTemplateSuccessTempDataKey] = $"Strategy template '{created.TemplateName}' revision 1 olarak olusturuldu.";
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin", templateKey = created.TemplateKey });
+        }
+        catch (StrategyTemplateCatalogException exception)
+        {
+            await WriteStrategyTemplateFailureAuditAsync(
+                actorUserId,
+                "Admin.StrategyTemplates.CreateBlocked",
+                normalizedTemplateKey,
+                null,
+                $"TemplateKey={normalizedTemplateKey}; Name={normalizedTemplateName}; Category={normalizedCategory}",
+                normalizedReason,
+                exception.FailureCode,
+                cancellationToken);
+            TempData[StrategyTemplateErrorTempDataKey] = BuildStrategyTemplateFailureMessage(exception);
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin" });
+        }
+        catch (StrategyDefinitionValidationException exception)
+        {
+            await WriteStrategyTemplateFailureAuditAsync(
+                actorUserId,
+                "Admin.StrategyTemplates.CreateBlocked",
+                normalizedTemplateKey,
+                null,
+                $"TemplateKey={normalizedTemplateKey}; Name={normalizedTemplateName}; Category={normalizedCategory}",
+                normalizedReason,
+                exception.StatusCode,
+                cancellationToken);
+            TempData[StrategyTemplateErrorTempDataKey] = SanitizeStrategyTemplateMessage(exception.Message);
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin" });
+        }
+        catch (InvalidOperationException exception)
+        {
+            await WriteStrategyTemplateFailureAuditAsync(
+                actorUserId,
+                "Admin.StrategyTemplates.CreateBlocked",
+                normalizedTemplateKey,
+                null,
+                $"TemplateKey={normalizedTemplateKey}; Name={normalizedTemplateName}; Category={normalizedCategory}",
+                normalizedReason,
+                "OperationInvalid",
+                cancellationToken);
+            TempData[StrategyTemplateErrorTempDataKey] = SanitizeStrategyTemplateMessage(exception.Message);
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin" });
+        }
+        catch
+        {
+            TempData[StrategyTemplateErrorTempDataKey] = "Strategy template islemi tamamlanamadi.";
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin" });
+        }
+    }
+
+    [HttpPost]
+    [Authorize(Policy = ApplicationPolicies.PlatformAdministration)]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> ReviseStrategyTemplate(
+        string? templateKey,
+        string? templateName,
+        string? description,
+        string? category,
+        string? definitionJson,
+        string? reason,
+        CancellationToken cancellationToken)
+    {
+        var normalizedTemplateKey = NormalizeRequiredInput(templateKey, 128);
+        if (normalizedTemplateKey is null)
+        {
+            TempData[StrategyTemplateErrorTempDataKey] = "Template key zorunludur.";
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin" });
+        }
+
+        var mfaResult = await EnforcePlatformAdminMfaAsync(
+            "StrategyTemplates.Revise",
+            StrategyTemplateErrorTempDataKey,
+            nameof(StrategyTemplates),
+            new { area = "Admin", templateKey = normalizedTemplateKey },
+            cancellationToken);
+
+        if (mfaResult is not null)
+        {
+            return mfaResult;
+        }
+
+        var normalizedReason = NormalizeRequiredReason(reason);
+        if (normalizedReason is null)
+        {
+            TempData[StrategyTemplateErrorTempDataKey] = "Audit reason zorunludur.";
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin", templateKey = normalizedTemplateKey });
+        }
+
+        var normalizedTemplateName = NormalizeRequiredInput(templateName, 128);
+        var normalizedDescription = NormalizeRequiredInput(description, 512);
+        var normalizedCategory = NormalizeRequiredInput(category, 64);
+        var normalizedDefinitionJson = definitionJson?.Trim();
+        if (normalizedTemplateName is null ||
+            normalizedDescription is null ||
+            normalizedCategory is null ||
+            string.IsNullOrWhiteSpace(normalizedDefinitionJson))
+        {
+            TempData[StrategyTemplateErrorTempDataKey] = "Template adi, aciklama, kategori ve definition zorunludur.";
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin", templateKey = normalizedTemplateKey });
+        }
+
+        var actorUserId = ResolveAdminUserId();
+
+        try
+        {
+            var previous = await strategyTemplateCatalogService.GetIncludingArchivedAsync(normalizedTemplateKey, cancellationToken);
+            var revised = await strategyTemplateCatalogService.ReviseAsync(
+                normalizedTemplateKey,
+                normalizedTemplateName,
+                normalizedDescription,
+                normalizedCategory,
+                normalizedDefinitionJson,
+                cancellationToken);
+
+            await adminAuditLogService.WriteAsync(
+                BuildAdminAuditLogWriteRequest(
+                    actorUserId,
+                    "Admin.StrategyTemplates.Revise",
+                    "StrategyTemplate",
+                    revised.TemplateKey,
+                    oldValueSummary: BuildStrategyTemplateSummary(previous),
+                    newValueSummary: BuildStrategyTemplateSummary(revised),
+                    normalizedReason,
+                    HttpContext.TraceIdentifier),
+                cancellationToken);
+
+            TempData[StrategyTemplateSuccessTempDataKey] = $"Strategy template '{revised.TemplateName}' revision {revised.ActiveRevisionNumber} olarak guncellendi.";
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin", templateKey = revised.TemplateKey });
+        }
+        catch (StrategyTemplateCatalogException exception)
+        {
+            await WriteStrategyTemplateFailureAuditAsync(
+                actorUserId,
+                "Admin.StrategyTemplates.ReviseBlocked",
+                normalizedTemplateKey,
+                null,
+                $"TemplateKey={normalizedTemplateKey}; Name={normalizedTemplateName}; Category={normalizedCategory}",
+                normalizedReason,
+                exception.FailureCode,
+                cancellationToken);
+            TempData[StrategyTemplateErrorTempDataKey] = BuildStrategyTemplateFailureMessage(exception);
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin", templateKey = normalizedTemplateKey });
+        }
+        catch (StrategyDefinitionValidationException exception)
+        {
+            await WriteStrategyTemplateFailureAuditAsync(
+                actorUserId,
+                "Admin.StrategyTemplates.ReviseBlocked",
+                normalizedTemplateKey,
+                null,
+                $"TemplateKey={normalizedTemplateKey}; Name={normalizedTemplateName}; Category={normalizedCategory}",
+                normalizedReason,
+                exception.StatusCode,
+                cancellationToken);
+            TempData[StrategyTemplateErrorTempDataKey] = SanitizeStrategyTemplateMessage(exception.Message);
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin", templateKey = normalizedTemplateKey });
+        }
+        catch (InvalidOperationException exception)
+        {
+            await WriteStrategyTemplateFailureAuditAsync(
+                actorUserId,
+                "Admin.StrategyTemplates.ReviseBlocked",
+                normalizedTemplateKey,
+                null,
+                $"TemplateKey={normalizedTemplateKey}; Name={normalizedTemplateName}; Category={normalizedCategory}",
+                normalizedReason,
+                "OperationInvalid",
+                cancellationToken);
+            TempData[StrategyTemplateErrorTempDataKey] = SanitizeStrategyTemplateMessage(exception.Message);
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin", templateKey = normalizedTemplateKey });
+        }
+        catch
+        {
+            TempData[StrategyTemplateErrorTempDataKey] = "Strategy template revizyonu tamamlanamadi.";
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin", templateKey = normalizedTemplateKey });
+        }
+    }
+
+    [HttpPost]
+    [Authorize(Policy = ApplicationPolicies.PlatformAdministration)]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> PublishStrategyTemplate(
+        string? templateKey,
+        int revisionNumber,
+        string? reason,
+        CancellationToken cancellationToken)
+    {
+        var normalizedTemplateKey = NormalizeRequiredInput(templateKey, 128);
+        if (normalizedTemplateKey is null)
+        {
+            TempData[StrategyTemplateErrorTempDataKey] = "Template key zorunludur.";
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin" });
+        }
+
+        var mfaResult = await EnforcePlatformAdminMfaAsync(
+            "StrategyTemplates.Publish",
+            StrategyTemplateErrorTempDataKey,
+            nameof(StrategyTemplates),
+            new { area = "Admin", templateKey = normalizedTemplateKey },
+            cancellationToken);
+
+        if (mfaResult is not null)
+        {
+            return mfaResult;
+        }
+
+        var normalizedReason = NormalizeRequiredReason(reason);
+        if (normalizedReason is null)
+        {
+            TempData[StrategyTemplateErrorTempDataKey] = "Audit reason zorunludur.";
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin", templateKey = normalizedTemplateKey });
+        }
+
+        if (revisionNumber <= 0)
+        {
+            TempData[StrategyTemplateErrorTempDataKey] = "Revision numarasi gecersiz.";
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin", templateKey = normalizedTemplateKey });
+        }
+
+        var actorUserId = ResolveAdminUserId();
+
+        try
+        {
+            var previous = await strategyTemplateCatalogService.GetIncludingArchivedAsync(normalizedTemplateKey, cancellationToken);
+            var published = await strategyTemplateCatalogService.PublishAsync(normalizedTemplateKey, revisionNumber, cancellationToken);
+
+            await adminAuditLogService.WriteAsync(
+                BuildAdminAuditLogWriteRequest(
+                    actorUserId,
+                    "Admin.StrategyTemplates.Publish",
+                    "StrategyTemplate",
+                    published.TemplateKey,
+                    oldValueSummary: BuildStrategyTemplateSummary(previous),
+                    newValueSummary: BuildStrategyTemplateSummary(published),
+                    normalizedReason,
+                    HttpContext.TraceIdentifier),
+                cancellationToken);
+
+            TempData[StrategyTemplateSuccessTempDataKey] = $"Strategy template '{published.TemplateName}' revision {published.PublishedRevisionNumber} olarak publish edildi.";
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin", templateKey = published.TemplateKey });
+        }
+        catch (StrategyTemplateCatalogException exception)
+        {
+            await WriteStrategyTemplateFailureAuditAsync(
+                actorUserId,
+                "Admin.StrategyTemplates.PublishBlocked",
+                normalizedTemplateKey,
+                null,
+                $"TemplateKey={normalizedTemplateKey}; Revision={revisionNumber}",
+                normalizedReason,
+                exception.FailureCode,
+                cancellationToken);
+            TempData[StrategyTemplateErrorTempDataKey] = BuildStrategyTemplateFailureMessage(exception);
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin", templateKey = normalizedTemplateKey });
+        }
+        catch (ArgumentOutOfRangeException exception)
+        {
+            await WriteStrategyTemplateFailureAuditAsync(
+                actorUserId,
+                "Admin.StrategyTemplates.PublishBlocked",
+                normalizedTemplateKey,
+                null,
+                $"TemplateKey={normalizedTemplateKey}; Revision={revisionNumber}",
+                normalizedReason,
+                "RevisionOutOfRange",
+                cancellationToken);
+            TempData[StrategyTemplateErrorTempDataKey] = SanitizeStrategyTemplateMessage(exception.Message);
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin", templateKey = normalizedTemplateKey });
+        }
+        catch (InvalidOperationException exception)
+        {
+            await WriteStrategyTemplateFailureAuditAsync(
+                actorUserId,
+                "Admin.StrategyTemplates.PublishBlocked",
+                normalizedTemplateKey,
+                null,
+                $"TemplateKey={normalizedTemplateKey}; Revision={revisionNumber}",
+                normalizedReason,
+                "OperationInvalid",
+                cancellationToken);
+            TempData[StrategyTemplateErrorTempDataKey] = SanitizeStrategyTemplateMessage(exception.Message);
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin", templateKey = normalizedTemplateKey });
+        }
+        catch
+        {
+            TempData[StrategyTemplateErrorTempDataKey] = "Strategy template publish islemi tamamlanamadi.";
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin", templateKey = normalizedTemplateKey });
+        }
+    }
+
+    [HttpPost]
+    [Authorize(Policy = ApplicationPolicies.PlatformAdministration)]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> ArchiveStrategyTemplate(
+        string? templateKey,
+        string? reason,
+        CancellationToken cancellationToken)
+    {
+        var normalizedTemplateKey = NormalizeRequiredInput(templateKey, 128);
+        if (normalizedTemplateKey is null)
+        {
+            TempData[StrategyTemplateErrorTempDataKey] = "Template key zorunludur.";
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin" });
+        }
+
+        var mfaResult = await EnforcePlatformAdminMfaAsync(
+            "StrategyTemplates.Archive",
+            StrategyTemplateErrorTempDataKey,
+            nameof(StrategyTemplates),
+            new { area = "Admin", templateKey = normalizedTemplateKey },
+            cancellationToken);
+
+        if (mfaResult is not null)
+        {
+            return mfaResult;
+        }
+
+        var normalizedReason = NormalizeRequiredReason(reason);
+        if (normalizedReason is null)
+        {
+            TempData[StrategyTemplateErrorTempDataKey] = "Audit reason zorunludur.";
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin", templateKey = normalizedTemplateKey });
+        }
+
+        var actorUserId = ResolveAdminUserId();
+
+        try
+        {
+            var previous = await strategyTemplateCatalogService.GetIncludingArchivedAsync(normalizedTemplateKey, cancellationToken);
+            var archived = await strategyTemplateCatalogService.ArchiveAsync(normalizedTemplateKey, cancellationToken);
+
+            await adminAuditLogService.WriteAsync(
+                BuildAdminAuditLogWriteRequest(
+                    actorUserId,
+                    "Admin.StrategyTemplates.Archive",
+                    "StrategyTemplate",
+                    archived.TemplateKey,
+                    oldValueSummary: BuildStrategyTemplateSummary(previous),
+                    newValueSummary: BuildStrategyTemplateSummary(archived),
+                    normalizedReason,
+                    HttpContext.TraceIdentifier),
+                cancellationToken);
+
+            TempData[StrategyTemplateSuccessTempDataKey] = $"Strategy template '{archived.TemplateName}' archive olarak isaretlendi.";
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin", templateKey = archived.TemplateKey });
+        }
+        catch (StrategyTemplateCatalogException exception)
+        {
+            await WriteStrategyTemplateFailureAuditAsync(
+                actorUserId,
+                "Admin.StrategyTemplates.ArchiveBlocked",
+                normalizedTemplateKey,
+                null,
+                $"TemplateKey={normalizedTemplateKey}; Action=Archive",
+                normalizedReason,
+                exception.FailureCode,
+                cancellationToken);
+            TempData[StrategyTemplateErrorTempDataKey] = BuildStrategyTemplateFailureMessage(exception);
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin", templateKey = normalizedTemplateKey });
+        }
+        catch (InvalidOperationException exception)
+        {
+            await WriteStrategyTemplateFailureAuditAsync(
+                actorUserId,
+                "Admin.StrategyTemplates.ArchiveBlocked",
+                normalizedTemplateKey,
+                null,
+                $"TemplateKey={normalizedTemplateKey}; Action=Archive",
+                normalizedReason,
+                "OperationInvalid",
+                cancellationToken);
+            TempData[StrategyTemplateErrorTempDataKey] = SanitizeStrategyTemplateMessage(exception.Message);
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin", templateKey = normalizedTemplateKey });
+        }
+        catch
+        {
+            TempData[StrategyTemplateErrorTempDataKey] = "Strategy template archive islemi tamamlanamadi.";
+            return RedirectToAction(nameof(StrategyTemplates), new { area = "Admin", templateKey = normalizedTemplateKey });
+        }
+    }
     public async Task<IActionResult> SystemHealth(CancellationToken cancellationToken)
     {
         ApplyShellMeta(
@@ -2185,6 +2657,101 @@ public sealed class AdminController : Controller
         return RedirectToAction(nameof(Settings));
     }
 
+    private async Task<AdminStrategyTemplateCatalogPageViewModel> BuildStrategyTemplateCatalogPageViewModelAsync(
+        string? templateKey,
+        CancellationToken cancellationToken)
+    {
+        var templates = await strategyTemplateCatalogService.ListAllAsync(cancellationToken);
+        var normalizedTemplateKey = NormalizeOptionalInput(templateKey, 128);
+        StrategyTemplateSnapshot? selectedTemplate = null;
+
+        if (normalizedTemplateKey is not null)
+        {
+            selectedTemplate = templates.FirstOrDefault(template =>
+                string.Equals(template.TemplateKey, normalizedTemplateKey, StringComparison.OrdinalIgnoreCase));
+
+            if (selectedTemplate is null && TempData[StrategyTemplateErrorTempDataKey] is null)
+            {
+                TempData[StrategyTemplateErrorTempDataKey] = "Secilen strategy template bulunamadi.";
+            }
+        }
+
+        selectedTemplate ??= templates
+            .OrderBy(template => template.IsBuiltIn ? 1 : 0)
+            .ThenBy(template => template.IsActive ? 0 : 1)
+            .ThenBy(template => template.TemplateName, StringComparer.Ordinal)
+            .FirstOrDefault();
+
+        var revisions = selectedTemplate is null
+            ? Array.Empty<StrategyTemplateRevisionSnapshot>()
+            : await strategyTemplateCatalogService.ListRevisionsAsync(selectedTemplate.TemplateKey, cancellationToken);
+
+        return new AdminStrategyTemplateCatalogPageViewModel(
+            selectedTemplate?.TemplateKey,
+            templates,
+            selectedTemplate,
+            revisions,
+            CanManageStrategyTemplates(),
+            DateTime.UtcNow);
+    }
+
+    private bool CanManageStrategyTemplates()
+    {
+        return User.HasClaim(ApplicationClaimTypes.Permission, ApplicationPermissions.PlatformAdministration);
+    }
+
+    private static string BuildStrategyTemplateSummary(StrategyTemplateSnapshot snapshot)
+    {
+        return $"TemplateKey={snapshot.TemplateKey}; Name={snapshot.TemplateName}; Category={snapshot.Category}; Source={snapshot.TemplateSource}; Active={snapshot.IsActive}; CurrentRevision={snapshot.ActiveRevisionNumber}; PublishedRevision={snapshot.PublishedRevisionNumber}; LatestRevision={snapshot.LatestRevisionNumber}; ArchivedAtUtc={snapshot.ArchivedAtUtc?.ToString("O") ?? "none"}";
+    }
+
+    private async Task WriteStrategyTemplateFailureAuditAsync(
+        string actorUserId,
+        string actionType,
+        string? targetId,
+        string? oldValueSummary,
+        string? newValueSummary,
+        string reason,
+        string failureCode,
+        CancellationToken cancellationToken)
+    {
+        var attemptedSummary = string.IsNullOrWhiteSpace(newValueSummary)
+            ? $"FailureCode={failureCode}"
+            : $"{newValueSummary}; FailureCode={failureCode}";
+
+        await adminAuditLogService.WriteAsync(
+            BuildAdminAuditLogWriteRequest(
+                actorUserId,
+                actionType,
+                "StrategyTemplate",
+                targetId,
+                oldValueSummary,
+                attemptedSummary,
+                reason,
+                HttpContext.TraceIdentifier),
+            cancellationToken);
+    }
+
+    private static string BuildStrategyTemplateFailureMessage(StrategyTemplateCatalogException exception)
+    {
+        return SanitizeStrategyTemplateMessage($"{exception.FailureCode}: {exception.Message}");
+    }
+
+    private static string SanitizeStrategyTemplateMessage(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return "Strategy template islemi tamamlanamadi.";
+        }
+
+        var normalizedMessage = message
+            .Replace("\r", " ", StringComparison.Ordinal)
+            .Replace("\n", " ", StringComparison.Ordinal)
+            .Trim();
+
+        return Truncate(normalizedMessage, 256) ?? "Strategy template islemi tamamlanamadi.";
+    }
+
     private void ApplyShellMeta(string title, string description, string activeNav, string[] breadcrumbItems)
     {
         var roleKey = ResolveAdminRoleKey();
@@ -2900,6 +3467,21 @@ public sealed class AdminController : Controller
             : value[..maxLength];
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

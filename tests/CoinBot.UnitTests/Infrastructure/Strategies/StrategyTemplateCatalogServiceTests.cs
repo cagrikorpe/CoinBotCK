@@ -44,8 +44,9 @@ public sealed class StrategyTemplateCatalogServiceTests
     {
         var service = new StrategyTemplateCatalogService(new StrategyRuleParser(), new StrategyDefinitionValidator());
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => service.GetAsync("unknown-template"));
+        var exception = await Assert.ThrowsAsync<StrategyTemplateCatalogException>(() => service.GetAsync("unknown-template"));
 
+        Assert.Equal("TemplateNotFound", exception.FailureCode);
         Assert.Contains("unknown-template", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -97,6 +98,54 @@ public sealed class StrategyTemplateCatalogServiceTests
         Assert.False(cloned.IsBuiltIn);
         Assert.Contains("\"templateKey\": \"rsi-reversal-clone\"", cloned.DefinitionJson, StringComparison.Ordinal);
     }
+    [Fact]
+    public async Task CreateCustomAsync_RejectsDuplicateTemplateKey_FailClosed()
+    {
+        await using var dbContext = CreateDbContext();
+        var service = CreateService(dbContext);
+
+        _ = await service.CreateCustomAsync(
+            "template-owner",
+            "duplicate-template",
+            "Duplicate Template",
+            "Initial template.",
+            "Custom",
+            CreateTemplateDefinitionJson());
+
+        var exception = await Assert.ThrowsAsync<StrategyTemplateCatalogException>(() => service.CreateCustomAsync(
+            "template-owner",
+            "duplicate-template",
+            "Duplicate Template 2",
+            "Duplicate template.",
+            "Custom",
+            CreateTemplateDefinitionJson()));
+
+        Assert.Equal("TemplateKeyAlreadyExists", exception.FailureCode);
+        Assert.Contains("already exists", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ListAllAsync_AndGetIncludingArchivedAsync_ExposeArchivedTemplate_ForAdminCatalog()
+    {
+        await using var dbContext = CreateDbContext();
+        var service = CreateService(dbContext);
+        _ = await service.CreateCustomAsync(
+            "template-owner",
+            "admin-archived-template",
+            "Admin Archived Template",
+            "Archived custom template.",
+            "Custom",
+            CreateTemplateDefinitionJson());
+
+        var archived = await service.ArchiveAsync("admin-archived-template");
+        var listedTemplates = await service.ListAllAsync();
+        var selected = await service.GetIncludingArchivedAsync("admin-archived-template");
+
+        Assert.False(archived.IsActive);
+        Assert.Contains(listedTemplates, template => template.TemplateKey == "admin-archived-template" && template.IsActive is false);
+        Assert.False(selected.IsActive);
+        Assert.NotNull(selected.ArchivedAtUtc);
+    }
 
     [Fact]
     public async Task ArchiveAsync_HidesCustomTemplateFromActiveCatalog()
@@ -116,7 +165,8 @@ public sealed class StrategyTemplateCatalogServiceTests
 
         Assert.False(archived.IsActive);
         Assert.DoesNotContain(listedTemplates, template => template.TemplateKey == "archivable-template");
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.GetAsync("archivable-template"));
+        var archivedException = await Assert.ThrowsAsync<StrategyTemplateCatalogException>(() => service.GetAsync("archivable-template"));
+        Assert.Equal("TemplateArchived", archivedException.FailureCode);
     }
 
     [Fact]
@@ -149,6 +199,59 @@ public sealed class StrategyTemplateCatalogServiceTests
         Assert.Contains(revisions, revision => revision.RevisionNumber == 2 && revision.IsActive && revision.SourceTemplateKey == "revisioned-template" && revision.SourceRevisionNumber == 1);
     }
 
+    [Fact]
+    public async Task PublishAsync_PublishesSelectedRevision_AndGetAsync_UsesPublishedRevision()
+    {
+        await using var dbContext = CreateDbContext();
+        var service = CreateService(dbContext);
+
+        _ = await service.CreateCustomAsync(
+            "template-owner",
+            "published-template",
+            "Published Template",
+            "Initial published revision.",
+            "Custom",
+            CreateTemplateDefinitionJson());
+        _ = await service.ReviseAsync(
+            "published-template",
+            "Published Template v2",
+            "Draft revision.",
+            "Custom",
+            CreateTemplateDefinitionJson(timeframe: "30m", latencyRule: true));
+
+        var beforePublish = await service.GetAsync("published-template");
+        var published = await service.PublishAsync("published-template", 2);
+        var afterPublish = await service.GetAsync("published-template");
+        var revisions = await service.ListRevisionsAsync("published-template");
+
+        Assert.Equal(1, beforePublish.PublishedRevisionNumber);
+        Assert.Contains("\"templateRevisionNumber\": 1", beforePublish.DefinitionJson, StringComparison.Ordinal);
+        Assert.Equal(2, published.PublishedRevisionNumber);
+        Assert.Contains("\"templateRevisionNumber\": 2", afterPublish.DefinitionJson, StringComparison.Ordinal);
+        Assert.Contains(revisions, revision => revision.RevisionNumber == 2 && revision.IsPublished);
+        Assert.Contains(revisions, revision => revision.RevisionNumber == 1 && !revision.IsPublished);
+    }
+
+    [Fact]
+    public async Task PublishAsync_RejectsArchivedTemplate_FailClosed()
+    {
+        await using var dbContext = CreateDbContext();
+        var service = CreateService(dbContext);
+
+        _ = await service.CreateCustomAsync(
+            "template-owner",
+            "archived-publish-template",
+            "Archived Publish Template",
+            "Archive then publish should fail.",
+            "Custom",
+            CreateTemplateDefinitionJson());
+        _ = await service.ArchiveAsync("archived-publish-template");
+
+        var exception = await Assert.ThrowsAsync<StrategyTemplateCatalogException>(() => service.PublishAsync("archived-publish-template", 1));
+
+        Assert.Equal("TemplateArchived", exception.FailureCode);
+        Assert.Contains("archived", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
     [Fact]
     public async Task ReviseAsync_RejectsInvalidRevision_FailClosed()
     {
@@ -254,7 +357,7 @@ public sealed class StrategyTemplateCatalogServiceTests
         await using var dbContext = CreateDbContext("template-owner-a", hasIsolationBypass: false);
         var service = CreateService(dbContext);
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => service.CreateCustomAsync(
+        var exception = await Assert.ThrowsAsync<StrategyTemplateCatalogException>(() => service.CreateCustomAsync(
             "template-owner-b",
             "cross-scope-template",
             "Cross Scope Template",
@@ -349,3 +452,7 @@ public sealed class StrategyTemplateCatalogServiceTests
         public bool HasIsolationBypass => hasIsolationBypass;
     }
 }
+
+
+
+

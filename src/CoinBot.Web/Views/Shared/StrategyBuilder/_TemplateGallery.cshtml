@@ -5,22 +5,22 @@
         ?? Array.Empty<StrategyTemplateSnapshot>();
     var draftTargets = ViewData["StrategyBuilderDraftTargets"] as IReadOnlyCollection<SelectListItem>
         ?? Array.Empty<SelectListItem>();
-    var templates = templateSnapshots.Select((template, index) => new
+    var templates = templateSnapshots.Select(template => new
     {
         Key = template.TemplateKey,
         Name = template.TemplateName,
         Description = template.Description,
-        Risk = template.Category == "Momentum" ? "Yüksek" : template.Category == "MeanReversion" ? "Orta" : "Orta",
+        Risk = template.Category == "Momentum" ? "Yuksek" : template.Category == "MeanReversion" ? "Orta" : "Orta",
         Market = "Spot / Futures",
         Tag = template.Category,
         Validation = template.Validation.StatusCode,
         SchemaVersion = template.SchemaVersion,
         Source = template.TemplateSource,
-        ActiveRevisionLabel = template.IsActive ? $"r{template.ActiveRevisionNumber}" : "inactive",
-        ActiveRevision = template.ActiveRevisionNumber,
+        CurrentRevisionLabel = template.IsActive ? $"r{template.ActiveRevisionNumber}" : "inactive",
+        CurrentRevision = template.ActiveRevisionNumber,
         LatestRevision = template.LatestRevisionNumber,
-        Lifecycle = template.IsActive ? "Active" : "Archived",
-        Selected = index == 0
+        PublishedRevision = template.PublishedRevisionNumber,
+        Lifecycle = template.IsActive ? "Active" : "Archived"
     }).ToArray();
 }
 
@@ -28,46 +28,54 @@
     <div class="card-header border-0 pt-6">
         <div class="card-title">
             <div>
-                <h3 class="card-label font-weight-bolder mb-1">Template seçimi</h3>
-                <div class="text-muted font-size-sm">Hazır strategy şablonları backend catalog servisinden gelir ve publish öncesi validator ile kontrol edilir.</div>
+                <h3 class="card-label font-weight-bolder mb-1">Template secimi</h3>
+                <div class="text-muted font-size-sm">Hazir strategy sablonlari catalog servisinden gelir. Clone akisi yalniz published revision'dan, hedef strategy altinda bagimsiz draft version uretir.</div>
             </div>
         </div>
         <div class="card-toolbar">
-            <button type="button" class="btn btn-light-primary btn-sm font-weight-bolder" data-cb-drawer-target="#cb_strategy_template_drawer">Template detayları</button>
+            <button type="button" class="btn btn-light-primary btn-sm font-weight-bolder" data-cb-drawer-target="#cb_strategy_template_drawer">Template detaylari</button>
         </div>
     </div>
     <div class="card-body pt-2">
-        <div class="cb-strategy-template-grid" data-cb-strategy-template-grid>
-            @foreach (var template in templates)
-            {
-                <button type="button"
-                        class="cb-template-card @(template.Selected ? "is-selected" : string.Empty)"
-                        data-cb-template-card
-                        data-cb-template-key="@template.Key"
-                        data-cb-template-name="@template.Name"
-                        data-cb-template-risk="@template.Risk"
-                        data-cb-template-market="@template.Market"
-                        data-cb-template-tag="@template.Tag"
-                        data-cb-template-validation="@template.Validation"
-                        data-cb-template-schema="@template.SchemaVersion"
-                        data-cb-template-source="@template.Source"
-                        data-cb-template-active-revision="@template.ActiveRevision"
-                        data-cb-template-latest-revision="@template.LatestRevision"
-                        data-cb-template-lifecycle="@template.Lifecycle"
-                        data-cb-template-description="@template.Description">
-                    <span class="cb-template-tag">@template.Tag</span>
-                    <div class="cb-template-title-row">
-                        <strong>@template.Name</strong>
-                        <span class="cb-badge @(template.Risk == "Yüksek" ? "cb-badge-danger" : template.Risk == "Düşük" ? "cb-badge-success" : "cb-badge-warning")">@template.Risk</span>
-                    </div>
-                    <p>@template.Description</p>
-                    <div class="cb-template-meta">
-                        <span data-cb-template-card-revision>Schema v@template.SchemaVersion · @template.Validation · @template.Source · @template.ActiveRevisionLabel/r@template.LatestRevision</span>
-                        <span data-cb-template-card-lifecycle>@template.Lifecycle</span>
-                    </div>
-                </button>
-            }
-        </div>
+        @if (templates.Length == 0)
+        {
+            <div class="alert alert-warning mb-6">Clone icin kullanilabilir published template bulunamadi.</div>
+        }
+        else
+        {
+            <div class="cb-strategy-template-grid" data-cb-strategy-template-grid>
+                @foreach (var template in templates)
+                {
+                    <button type="button"
+                            class="cb-template-card"
+                            data-cb-template-card
+                            data-cb-template-key="@template.Key"
+                            data-cb-template-name="@template.Name"
+                            data-cb-template-risk="@template.Risk"
+                            data-cb-template-market="@template.Market"
+                            data-cb-template-tag="@template.Tag"
+                            data-cb-template-validation="@template.Validation"
+                            data-cb-template-schema="@template.SchemaVersion"
+                            data-cb-template-source="@template.Source"
+                            data-cb-template-current-revision="@template.CurrentRevision"
+                            data-cb-template-latest-revision="@template.LatestRevision"
+                            data-cb-template-published-revision="@template.PublishedRevision"
+                            data-cb-template-lifecycle="@template.Lifecycle"
+                            data-cb-template-description="@template.Description">
+                        <span class="cb-template-tag">@template.Tag</span>
+                        <div class="cb-template-title-row">
+                            <strong>@template.Name</strong>
+                            <span class="cb-badge @(template.Risk == "Yuksek" ? "cb-badge-danger" : template.Risk == "Dusuk" ? "cb-badge-success" : "cb-badge-warning")">@template.Risk</span>
+                        </div>
+                        <p>@template.Description</p>
+                        <div class="cb-template-meta">
+                            <span data-cb-template-card-revision>Schema v@template.SchemaVersion · @template.Validation · @template.Source · Published=r@template.PublishedRevision · Current=@template.CurrentRevisionLabel · Latest=r@template.LatestRevision</span>
+                            <span data-cb-template-card-lifecycle>@template.Lifecycle</span>
+                        </div>
+                    </button>
+                }
+            </div>
+        }
         <form asp-controller="StrategyBuilder"
               asp-action="CreateDraftFromTemplate"
               method="post"
@@ -77,7 +85,7 @@
             <input type="hidden"
                    id="cb_strategy_template_draft_key"
                    name="templateKey"
-                   value="@(templates.FirstOrDefault()?.Key ?? string.Empty)"
+                   value=""
                    data-cb-template-draft-template />
             <div class="flex-grow-1" style="min-width: 240px;">
                 <label class="text-muted font-size-sm mb-2" for="cb_strategy_template_draft_target">Hedef strategy</label>
@@ -88,7 +96,7 @@
                         disabled="@(draftTargets.Count == 0)">
                     @if (draftTargets.Count == 0)
                     {
-                        <option value="">Kullanıcıya ait strategy bulunamadı</option>
+                        <option value="">Kullaniciya ait strategy bulunamadi</option>
                     }
                     else
                     {
@@ -102,10 +110,12 @@
             <button type="submit"
                     class="btn btn-primary font-weight-bolder"
                     data-cb-template-draft-submit
-                    disabled="@(draftTargets.Count == 0 || templates.Length == 0)">
-                Seçili template’ten draft oluştur
+                    disabled>
+                Secili template'ten draft olustur
             </button>
         </form>
+        <div class="text-muted font-size-sm mt-3" data-cb-template-selection-summary>Once bir template sec. Clone sonucu hedef strategy altinda bagimsiz draft version olusur.</div>
+        <div class="text-muted font-size-sm mt-2" data-cb-template-target-summary>Hedef strategy yalniz kullanicinin own scope icindeki strategy kayitlarindan secilebilir.</div>
     </div>
 </div>
 

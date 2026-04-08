@@ -4,6 +4,7 @@ using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Application.Abstractions.Policy;
+using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Contracts.Common;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Execution;
@@ -302,6 +303,226 @@ public sealed class AdminControllerTests
         Assert.Same(workspaceService.NotificationsSnapshot, controller.ViewData["AdminNotificationsPageSnapshot"]);
     }
 
+    [Fact]
+    public async Task StrategyTemplates_LoadsCatalogAndSelectedArchivedTemplate()
+    {
+        var templateService = new FakeStrategyTemplateCatalogService();
+        templateService.Templates.Add(CreateStrategyTemplateSnapshot("built-in-template", "Built In", isBuiltIn: true));
+        templateService.Templates.Add(CreateStrategyTemplateSnapshot("archived-template", "Archived Template", isActive: false, archivedAtUtc: new DateTime(2026, 4, 8, 10, 0, 0, DateTimeKind.Utc)));
+        templateService.RevisionsByTemplateKey["archived-template"] =
+        [
+            new StrategyTemplateRevisionSnapshot(Guid.NewGuid(), Guid.NewGuid(), "archived-template", 2, 2, "Valid", "Archived revision", IsActive: false, IsLatest: true, IsArchived: true, SourceTemplateKey: "archived-template", SourceRevisionNumber: 1, ArchivedAtUtc: new DateTime(2026, 4, 8, 10, 0, 0, DateTimeKind.Utc))
+        ];
+        var controller = CreateController(new FakeGlobalExecutionSwitchService(), strategyTemplateCatalogService: templateService);
+
+        var result = await controller.StrategyTemplates("archived-template", CancellationToken.None);
+
+        var view = Assert.IsType<ViewResult>(result);
+        var model = Assert.IsType<AdminStrategyTemplateCatalogPageViewModel>(view.Model);
+        Assert.Equal("archived-template", model.SelectedTemplateKey);
+        Assert.NotNull(model.SelectedTemplate);
+        Assert.False(model.SelectedTemplate!.IsActive);
+        Assert.Single(model.SelectedTemplateRevisions);
+    }
+
+    [Fact]
+    public async Task CreateStrategyTemplate_CreatesTemplate_AndWritesAudit()
+    {
+        var templateService = new FakeStrategyTemplateCatalogService();
+        var auditLogService = new FakeAdminAuditLogService();
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            auditLogService: auditLogService,
+            strategyTemplateCatalogService: templateService,
+            userId: "super-admin",
+            roles: [ApplicationRoles.SuperAdmin]);
+
+        var result = await controller.CreateStrategyTemplate(
+            "custom-template",
+            "Custom Template",
+            "Catalog create test.",
+            "Momentum",
+            "{\"schemaVersion\":2,\"entry\":{\"path\":\"indicator.rsi.value\",\"comparison\":\"lessThanOrEqual\",\"value\":30,\"ruleId\":\"entry-rsi\",\"ruleType\":\"rsi\",\"weight\":10,\"enabled\":true}}",
+            "Create reason",
+            CancellationToken.None);
+
+        var redirect = Assert.IsType<RedirectToActionResult>(result);
+        var call = Assert.Single(templateService.CreateCalls);
+        var audit = Assert.Single(auditLogService.Requests);
+
+        Assert.Equal(nameof(AdminController.StrategyTemplates), redirect.ActionName);
+        Assert.Equal("custom-template", call.TemplateKey);
+        Assert.Equal("Admin.StrategyTemplates.Create", audit.ActionType);
+        Assert.Equal("Create reason", audit.Reason);
+        Assert.Equal("Strategy template 'Custom Template' revision 1 olarak olusturuldu.", controller.TempData["AdminStrategyTemplateSuccess"]);
+    }
+
+    [Fact]
+    public async Task ReviseStrategyTemplate_CreatesNewRevision_AndRedirects()
+    {
+        var templateService = new FakeStrategyTemplateCatalogService();
+        templateService.Templates.Add(CreateStrategyTemplateSnapshot("revisioned-template", "Revisioned Template"));
+        var auditLogService = new FakeAdminAuditLogService();
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            auditLogService: auditLogService,
+            strategyTemplateCatalogService: templateService,
+            userId: "super-admin",
+            roles: [ApplicationRoles.SuperAdmin]);
+
+        var result = await controller.ReviseStrategyTemplate(
+            "revisioned-template",
+            "Revisioned Template v2",
+            "Updated description",
+            "Momentum",
+            "{\"schemaVersion\":2,\"entry\":{\"path\":\"indicator.rsi.value\",\"comparison\":\"lessThanOrEqual\",\"value\":28,\"ruleId\":\"entry-rsi\",\"ruleType\":\"rsi\",\"weight\":10,\"enabled\":true}}",
+            "Revise reason",
+            CancellationToken.None);
+
+        var redirect = Assert.IsType<RedirectToActionResult>(result);
+        var call = Assert.Single(templateService.ReviseCalls);
+        var audit = Assert.Single(auditLogService.Requests);
+
+        Assert.Equal(nameof(AdminController.StrategyTemplates), redirect.ActionName);
+        Assert.Equal("revisioned-template", call.TemplateKey);
+        Assert.Equal("Admin.StrategyTemplates.Revise", audit.ActionType);
+        Assert.Equal("Revise reason", audit.Reason);
+        Assert.Equal("Strategy template 'Revisioned Template v2' revision 2 olarak guncellendi.", controller.TempData["AdminStrategyTemplateSuccess"]);
+    }
+
+    [Fact]
+    public async Task PublishStrategyTemplate_PublishesSelectedRevision_AndRedirects()
+    {
+        var templateService = new FakeStrategyTemplateCatalogService();
+        templateService.Templates.Add(CreateStrategyTemplateSnapshot("publishable-template", "Publishable Template", latestRevisionNumber: 2, publishedRevisionNumber: 1));
+        templateService.RevisionsByTemplateKey["publishable-template"] =
+        [
+            new StrategyTemplateRevisionSnapshot(Guid.NewGuid(), Guid.NewGuid(), "publishable-template", 2, 2, "Valid", "Draft revision", IsActive: true, IsLatest: true, IsArchived: false, SourceTemplateKey: "publishable-template", SourceRevisionNumber: 1, IsPublished: false),
+            new StrategyTemplateRevisionSnapshot(Guid.NewGuid(), Guid.NewGuid(), "publishable-template", 1, 2, "Valid", "Published revision", IsActive: false, IsLatest: false, IsArchived: false, IsPublished: true)
+        ];
+        var auditLogService = new FakeAdminAuditLogService();
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            auditLogService: auditLogService,
+            strategyTemplateCatalogService: templateService,
+            userId: "super-admin",
+            roles: [ApplicationRoles.SuperAdmin]);
+
+        var result = await controller.PublishStrategyTemplate("publishable-template", 2, "Publish reason", CancellationToken.None);
+
+        var redirect = Assert.IsType<RedirectToActionResult>(result);
+        var call = Assert.Single(templateService.PublishCalls);
+        var audit = Assert.Single(auditLogService.Requests);
+
+        Assert.Equal(nameof(AdminController.StrategyTemplates), redirect.ActionName);
+        Assert.Equal(("publishable-template", 2), call);
+        Assert.Equal("Admin.StrategyTemplates.Publish", audit.ActionType);
+        Assert.Equal("Publish reason", audit.Reason);
+        Assert.Equal("Strategy template 'Publishable Template' revision 2 olarak publish edildi.", controller.TempData["AdminStrategyTemplateSuccess"]);
+    }
+
+    [Fact]
+    public async Task ArchiveStrategyTemplate_SetsArchiveState_AndRedirects()
+    {
+        var templateService = new FakeStrategyTemplateCatalogService();
+        templateService.Templates.Add(CreateStrategyTemplateSnapshot("archivable-template", "Archivable Template"));
+        var auditLogService = new FakeAdminAuditLogService();
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            auditLogService: auditLogService,
+            strategyTemplateCatalogService: templateService,
+            userId: "super-admin",
+            roles: [ApplicationRoles.SuperAdmin]);
+
+        var result = await controller.ArchiveStrategyTemplate("archivable-template", "Archive reason", CancellationToken.None);
+
+        var redirect = Assert.IsType<RedirectToActionResult>(result);
+        var call = Assert.Single(templateService.ArchiveCalls);
+        var audit = Assert.Single(auditLogService.Requests);
+
+        Assert.Equal(nameof(AdminController.StrategyTemplates), redirect.ActionName);
+        Assert.Equal("archivable-template", call);
+        Assert.Equal("Admin.StrategyTemplates.Archive", audit.ActionType);
+        Assert.Equal("Archive reason", audit.Reason);
+        Assert.Equal("Strategy template 'Archivable Template' archive olarak isaretlendi.", controller.TempData["AdminStrategyTemplateSuccess"]);
+    }
+
+    [Fact]
+    public async Task CreateStrategyTemplate_UsesStableFailureCode_AndWritesBlockedAudit_WhenCatalogRejectsDuplicateKey()
+    {
+        var templateService = new FakeStrategyTemplateCatalogService
+        {
+            CreateException = new StrategyTemplateCatalogException("TemplateKeyAlreadyExists", "Strategy template 'custom-template' already exists.")
+        };
+        var auditLogService = new FakeAdminAuditLogService();
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            auditLogService: auditLogService,
+            strategyTemplateCatalogService: templateService,
+            roles: [ApplicationRoles.SuperAdmin]);
+
+        var result = await controller.CreateStrategyTemplate(
+            "custom-template",
+            "Custom Template",
+            "Catalog create test.",
+            "Momentum",
+            "{\"schemaVersion\":2}",
+            "Create reason",
+            CancellationToken.None);
+
+        Assert.IsType<RedirectToActionResult>(result);
+        var audit = Assert.Single(auditLogService.Requests);
+        Assert.Equal("Admin.StrategyTemplates.CreateBlocked", audit.ActionType);
+        Assert.Equal("custom-template", audit.TargetId);
+        Assert.Contains("FailureCode=TemplateKeyAlreadyExists", audit.NewValueSummary, StringComparison.Ordinal);
+        Assert.Equal("TemplateKeyAlreadyExists: Strategy template 'custom-template' already exists.", controller.TempData["AdminStrategyTemplateError"]);
+    }
+
+    [Fact]
+    public async Task CreateStrategyTemplate_SanitizesUnexpectedErrorFeedback()
+    {
+        var templateService = new FakeStrategyTemplateCatalogService
+        {
+            CreateException = new Exception("raw failure`r`nsecret-like")
+        };
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            strategyTemplateCatalogService: templateService,
+            roles: [ApplicationRoles.SuperAdmin]);
+
+        var result = await controller.CreateStrategyTemplate(
+            "custom-template",
+            "Custom Template",
+            "Catalog create test.",
+            "Momentum",
+            "{\"schemaVersion\":2}",
+            "Create reason",
+            CancellationToken.None);
+
+        Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal("Strategy template islemi tamamlanamadi.", controller.TempData["AdminStrategyTemplateError"]);
+    }
+
+    [Fact]
+    public void StrategyTemplateWriteActions_RequirePlatformAdministration_AndAntiForgery()
+    {
+        foreach (var methodName in new[] { nameof(AdminController.CreateStrategyTemplate), nameof(AdminController.ReviseStrategyTemplate), nameof(AdminController.PublishStrategyTemplate), nameof(AdminController.ArchiveStrategyTemplate) })
+        {
+            var method = typeof(AdminController).GetMethods().Single(item => item.Name == methodName);
+            var authorize = Assert.Single(method.GetCustomAttributes(typeof(AuthorizeAttribute), inherit: true).Cast<AuthorizeAttribute>());
+            Assert.Equal(ApplicationPolicies.PlatformAdministration, authorize.Policy);
+            Assert.Single(method.GetCustomAttributes(typeof(ValidateAntiForgeryTokenAttribute), inherit: true).Cast<ValidateAntiForgeryTokenAttribute>());
+        }
+    }
+
+    [Fact]
+    public void StrategyTemplates_UsesAdminPortalAccessPolicy()
+    {
+        var method = typeof(AdminController).GetMethod(nameof(AdminController.StrategyTemplates), [typeof(string), typeof(CancellationToken)])!;
+        var authorize = Assert.Single(method.GetCustomAttributes(typeof(AuthorizeAttribute), inherit: true).Cast<AuthorizeAttribute>());
+
+        Assert.Equal(ApplicationPolicies.AdminPortalAccess, authorize.Policy);
+    }
     [Fact]
     public async Task UserDetail_WhenSnapshotMissing_RendersProductNotFoundState_With404Status()
     {
@@ -1515,6 +1736,37 @@ public sealed class AdminControllerTests
         Assert.True(controller.ViewData["AdminSelectedConfigVersion"] is GlobalPolicyVersionSnapshot selectedVersion && selectedVersion.Version == 12);
     }
 
+    private static StrategyTemplateSnapshot CreateStrategyTemplateSnapshot(
+        string templateKey,
+        string templateName,
+        bool isBuiltIn = false,
+        bool isActive = true,
+        DateTime? archivedAtUtc = null,
+        int latestRevisionNumber = 1,
+        int? publishedRevisionNumber = null)
+    {
+        return new StrategyTemplateSnapshot(
+            templateKey,
+            templateName,
+            $"{templateName} description",
+            "Momentum",
+            2,
+            "{\"schemaVersion\":2}",
+            new StrategyDefinitionValidationSnapshot(true, "Valid", "Validated", Array.Empty<string>(), 1),
+            IsBuiltIn: isBuiltIn,
+            IsActive: isActive,
+            TemplateSource: isBuiltIn ? "BuiltIn" : "Custom",
+            ActiveRevisionNumber: isActive ? latestRevisionNumber : 0,
+            LatestRevisionNumber: latestRevisionNumber,
+            PublishedRevisionNumber: publishedRevisionNumber ?? latestRevisionNumber,
+            TemplateId: Guid.NewGuid(),
+            ActiveRevisionId: isActive ? Guid.NewGuid() : null,
+            LatestRevisionId: Guid.NewGuid(),
+            PublishedRevisionId: Guid.NewGuid(),
+            ArchivedAtUtc: archivedAtUtc,
+            CreatedAtUtc: new DateTime(2026, 4, 8, 8, 0, 0, DateTimeKind.Utc),
+            UpdatedAtUtc: new DateTime(2026, 4, 8, 9, 0, 0, DateTimeKind.Utc));
+    }
     private static AdminController CreateController(
         FakeGlobalExecutionSwitchService switchService,
         FakeGlobalSystemStateService? stateService = null,
@@ -1523,6 +1775,7 @@ public sealed class AdminControllerTests
         FakeTraceService? traceService = null,
         FakeApiCredentialValidationService? apiCredentialValidationService = null,
         FakeAdminWorkspaceReadModelService? workspaceReadModelService = null,
+        FakeStrategyTemplateCatalogService? strategyTemplateCatalogService = null,
         FakeCriticalUserOperationAuthorizer? criticalUserOperationAuthorizer = null,
         FakeApprovalWorkflowService? approvalWorkflowService = null,
         FakeAdminGovernanceReadModelService? governanceReadModelService = null,
@@ -1571,6 +1824,7 @@ public sealed class AdminControllerTests
             dataLatencyCircuitBreaker: dataLatencyCircuitBreaker ?? new FakeDataLatencyCircuitBreaker(),
             apiCredentialValidationService: apiCredentialValidationService ?? new FakeApiCredentialValidationService(),
             adminWorkspaceReadModelService: workspaceReadModelService ?? new FakeAdminWorkspaceReadModelService(),
+            strategyTemplateCatalogService: strategyTemplateCatalogService ?? new FakeStrategyTemplateCatalogService(),
             criticalUserOperationAuthorizer: criticalUserOperationAuthorizer ?? new FakeCriticalUserOperationAuthorizer(),
             approvalWorkflowService: approvalWorkflowService,
             adminGovernanceReadModelService: governanceReadModelService,
@@ -2096,6 +2350,155 @@ public sealed class AdminControllerTests
         }
     }
 
+    private sealed class FakeStrategyTemplateCatalogService : IStrategyTemplateCatalogService
+    {
+        public List<StrategyTemplateSnapshot> Templates { get; } = [];
+        public Dictionary<string, IReadOnlyCollection<StrategyTemplateRevisionSnapshot>> RevisionsByTemplateKey { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public List<(string OwnerUserId, string TemplateKey, string TemplateName, string Description, string Category, string DefinitionJson)> CreateCalls { get; } = [];
+        public List<(string TemplateKey, string TemplateName, string Description, string Category, string DefinitionJson)> ReviseCalls { get; } = [];
+        public List<(string TemplateKey, int RevisionNumber)> PublishCalls { get; } = [];
+        public List<string> ArchiveCalls { get; } = [];
+        public Exception? CreateException { get; set; }
+        public Exception? ReviseException { get; set; }
+        public Exception? PublishException { get; set; }
+        public Exception? ArchiveException { get; set; }
+
+        public Task<IReadOnlyCollection<StrategyTemplateSnapshot>> ListAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<IReadOnlyCollection<StrategyTemplateSnapshot>>(
+                Templates.Where(template => template.IsActive && template.PublishedRevisionNumber > 0).ToArray());
+        }
+
+        public Task<IReadOnlyCollection<StrategyTemplateSnapshot>> ListAllAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<IReadOnlyCollection<StrategyTemplateSnapshot>>(Templates.ToArray());
+        }
+
+        public Task<StrategyTemplateSnapshot> GetAsync(string templateKey, CancellationToken cancellationToken = default)
+        {
+            var template = Templates.SingleOrDefault(item =>
+                    string.Equals(item.TemplateKey, templateKey, StringComparison.OrdinalIgnoreCase) &&
+                    item.IsActive &&
+                    item.PublishedRevisionNumber > 0)
+                ?? throw new StrategyTemplateCatalogException("TemplateNotFound", $"Strategy template '{templateKey}' was not found.");
+            return Task.FromResult(template);
+        }
+
+        public Task<StrategyTemplateSnapshot> GetIncludingArchivedAsync(string templateKey, CancellationToken cancellationToken = default)
+        {
+            var template = Templates.SingleOrDefault(item => string.Equals(item.TemplateKey, templateKey, StringComparison.OrdinalIgnoreCase))
+                ?? throw new StrategyTemplateCatalogException("TemplateNotFound", $"Strategy template '{templateKey}' was not found.");
+            return Task.FromResult(template);
+        }
+
+        public Task<StrategyTemplateSnapshot> CreateCustomAsync(string ownerUserId, string templateKey, string templateName, string description, string category, string definitionJson, CancellationToken cancellationToken = default)
+        {
+            if (CreateException is not null)
+            {
+                throw CreateException;
+            }
+
+            var created = CreateStrategyTemplateSnapshot(templateKey, templateName, publishedRevisionNumber: 1);
+            CreateCalls.Add((ownerUserId, templateKey, templateName, description, category, definitionJson));
+            Templates.RemoveAll(item => string.Equals(item.TemplateKey, templateKey, StringComparison.OrdinalIgnoreCase));
+            Templates.Add(created);
+            RevisionsByTemplateKey[templateKey] =
+            [
+                new StrategyTemplateRevisionSnapshot(Guid.NewGuid(), created.TemplateId, created.TemplateKey, 1, created.SchemaVersion, created.Validation.StatusCode, created.Validation.Summary, IsActive: true, IsLatest: true, IsArchived: false, IsPublished: true)
+            ];
+            return Task.FromResult(created);
+        }
+
+        public Task<StrategyTemplateSnapshot> CloneAsync(string ownerUserId, string sourceTemplateKey, string templateKey, string templateName, string description, string category, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<StrategyTemplateSnapshot> ReviseAsync(string templateKey, string templateName, string description, string category, string definitionJson, CancellationToken cancellationToken = default)
+        {
+            if (ReviseException is not null)
+            {
+                throw ReviseException;
+            }
+
+            ReviseCalls.Add((templateKey, templateName, description, category, definitionJson));
+            var current = Templates.Single(item => string.Equals(item.TemplateKey, templateKey, StringComparison.OrdinalIgnoreCase));
+            var revised = current with
+            {
+                TemplateName = templateName,
+                Description = description,
+                Category = category,
+                ActiveRevisionNumber = current.LatestRevisionNumber + 1,
+                LatestRevisionNumber = current.LatestRevisionNumber + 1,
+                PublishedRevisionNumber = current.PublishedRevisionNumber,
+                UpdatedAtUtc = new DateTime(2026, 4, 8, 10, 0, 0, DateTimeKind.Utc)
+            };
+            Templates.Remove(current);
+            Templates.Add(revised);
+            RevisionsByTemplateKey[templateKey] =
+            [
+                new StrategyTemplateRevisionSnapshot(Guid.NewGuid(), revised.TemplateId, revised.TemplateKey, revised.LatestRevisionNumber, revised.SchemaVersion, revised.Validation.StatusCode, revised.Validation.Summary, IsActive: true, IsLatest: true, IsArchived: false, SourceTemplateKey: templateKey, SourceRevisionNumber: current.ActiveRevisionNumber, IsPublished: false),
+                new StrategyTemplateRevisionSnapshot(Guid.NewGuid(), revised.TemplateId, revised.TemplateKey, current.PublishedRevisionNumber, revised.SchemaVersion, revised.Validation.StatusCode, revised.Validation.Summary, IsActive: false, IsLatest: false, IsArchived: false, IsPublished: true)
+            ];
+            return Task.FromResult(revised);
+        }
+
+        public Task<StrategyTemplateSnapshot> PublishAsync(string templateKey, int revisionNumber, CancellationToken cancellationToken = default)
+        {
+            if (PublishException is not null)
+            {
+                throw PublishException;
+            }
+
+            PublishCalls.Add((templateKey, revisionNumber));
+            var current = Templates.Single(item => string.Equals(item.TemplateKey, templateKey, StringComparison.OrdinalIgnoreCase));
+            var published = current with
+            {
+                PublishedRevisionNumber = revisionNumber,
+                UpdatedAtUtc = new DateTime(2026, 4, 8, 10, 30, 0, DateTimeKind.Utc)
+            };
+            Templates.Remove(current);
+            Templates.Add(published);
+
+            if (RevisionsByTemplateKey.TryGetValue(templateKey, out var revisions))
+            {
+                RevisionsByTemplateKey[templateKey] = revisions
+                    .Select(revision => revision with { IsPublished = revision.RevisionNumber == revisionNumber })
+                    .ToArray();
+            }
+
+            return Task.FromResult(published);
+        }
+
+        public Task<IReadOnlyCollection<StrategyTemplateRevisionSnapshot>> ListRevisionsAsync(string templateKey, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(RevisionsByTemplateKey.TryGetValue(templateKey, out var revisions)
+                ? revisions
+                : (IReadOnlyCollection<StrategyTemplateRevisionSnapshot>)Array.Empty<StrategyTemplateRevisionSnapshot>());
+        }
+
+        public Task<StrategyTemplateSnapshot> ArchiveAsync(string templateKey, CancellationToken cancellationToken = default)
+        {
+            if (ArchiveException is not null)
+            {
+                throw ArchiveException;
+            }
+
+            ArchiveCalls.Add(templateKey);
+            var current = Templates.Single(item => string.Equals(item.TemplateKey, templateKey, StringComparison.OrdinalIgnoreCase));
+            var archivedAtUtc = new DateTime(2026, 4, 8, 11, 0, 0, DateTimeKind.Utc);
+            var archived = current with
+            {
+                IsActive = false,
+                ActiveRevisionNumber = 0,
+                ArchivedAtUtc = archivedAtUtc,
+                UpdatedAtUtc = archivedAtUtc
+            };
+            Templates.Remove(current);
+            Templates.Add(archived);
+            return Task.FromResult(archived);
+        }
+    }
     private sealed class FakeAdminMonitoringReadModelService : IAdminMonitoringReadModelService
     {
         public MonitoringDashboardSnapshot Snapshot { get; set; } = MonitoringDashboardSnapshot.Empty(new DateTime(2026, 3, 24, 12, 0, 0, DateTimeKind.Utc));
@@ -2326,6 +2729,17 @@ public sealed class AdminControllerTests
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
 
 
 

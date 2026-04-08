@@ -210,9 +210,39 @@ public sealed record AdminStrategyTemplateSnapshot(
     string Description,
     int ActiveRevisionNumber = 1,
     int LatestRevisionNumber = 1,
+    int PublishedRevisionNumber = 1,
     string TemplateSource = "BuiltIn",
     string LifecycleStatusLabel = "Active",
     string SourceLineageLabel = "self");
+
+public sealed record AdminTemplateAdoptionSummarySnapshot(
+    int TotalTemplateCount,
+    int PublishedTemplateCount,
+    int ArchivedTemplateCount,
+    int TotalCloneCount,
+    DateTime? LastCloneAtUtc,
+    string LastCloneAtLabel,
+    string MostUsedTemplateLabel,
+    int ActiveTemplateStrategyCount,
+    string LatestValidationIssueSummary);
+
+public sealed record AdminTemplateAdoptionRowSnapshot(
+    string TemplateKey,
+    string TemplateName,
+    int CloneCount,
+    int ActiveStrategyCount,
+    string LastCloneAtLabel,
+    string LifecycleStatusLabel,
+    string ValidationStatusCode);
+
+public sealed record AdminRecentTemplateCloneSnapshot(
+    string StrategyKey,
+    string StrategyDisplayName,
+    string TemplateKey,
+    string TemplateName,
+    string VersionLabel,
+    string TemplateRevisionLabel,
+    string CreatedAtLabel);
 
 public sealed record AdminStrategyExplainabilitySnapshot(
     string StrategyKey,
@@ -233,6 +263,9 @@ public sealed record AdminStrategyAiMonitoringPageSnapshot(
     IReadOnlyCollection<AdminStrategyUsageSnapshot> UsageRows,
     IReadOnlyCollection<AdminStatTileSnapshot> HealthTiles,
     IReadOnlyCollection<AdminStrategyTemplateSnapshot> TemplateCatalog,
+    AdminTemplateAdoptionSummarySnapshot TemplateAdoptionSummary,
+    IReadOnlyCollection<AdminTemplateAdoptionRowSnapshot> TemplateAdoptionRows,
+    IReadOnlyCollection<AdminRecentTemplateCloneSnapshot> RecentTemplateClones,
     AdminStrategyExplainabilitySnapshot LatestExplainability,
     DateTime LastRefreshedAtUtc)
 {
@@ -243,6 +276,9 @@ public sealed record AdminStrategyAiMonitoringPageSnapshot(
             Array.Empty<AdminStrategyUsageSnapshot>(),
             Array.Empty<AdminStatTileSnapshot>(),
             Array.Empty<AdminStrategyTemplateSnapshot>(),
+            new AdminTemplateAdoptionSummarySnapshot(0, 0, 0, 0, null, "No clone", "n/a", 0, "No validation issue"),
+            Array.Empty<AdminTemplateAdoptionRowSnapshot>(),
+            Array.Empty<AdminRecentTemplateCloneSnapshot>(),
             new AdminStrategyExplainabilitySnapshot("n/a", "n/a", "n/a", "NotEvaluated", "n/a", "Explainability snapshot yok.", "n/a", "custom", null),
             lastRefreshedAtUtc);
 }
@@ -320,4 +356,7 @@ public sealed record AdminNotificationsPageSnapshot(
     public static AdminNotificationsPageSnapshot Empty(DateTime lastRefreshedAtUtc) =>
         new(null, null, Array.Empty<AdminStatTileSnapshot>(), Array.Empty<AdminNotificationSnapshot>(), lastRefreshedAtUtc);
 }
+
+
+
 

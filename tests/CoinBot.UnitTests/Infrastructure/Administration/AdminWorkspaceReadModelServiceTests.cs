@@ -2,6 +2,7 @@ using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Monitoring;
+using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
@@ -335,6 +336,159 @@ public sealed class AdminWorkspaceReadModelServiceTests
             templateRow.LatestRevisionNumber == revisedTemplate.LatestRevisionNumber &&
             templateRow.TemplateSource == "Custom");
     }
+
+    [Fact]
+    public async Task GetStrategyAiMonitoringAsync_ProjectsTemplateAdoptionSummary_AndIgnoresMissingTemplateMetadata()
+    {
+        var now = new DateTime(2026, 4, 8, 12, 0, 0, DateTimeKind.Utc);
+        await using var dbContext = CreateDbContext();
+
+        var alphaStrategyId = Guid.NewGuid();
+        var alphaRuntimeVersionId = Guid.NewGuid();
+        var alphaShadowVersionId = Guid.NewGuid();
+        var betaStrategyId = Guid.NewGuid();
+        var betaVersionId = Guid.NewGuid();
+        var customStrategyId = Guid.NewGuid();
+        var customVersionId = Guid.NewGuid();
+
+        dbContext.TradingStrategies.AddRange(
+            new TradingStrategy
+            {
+                Id = alphaStrategyId,
+                OwnerUserId = "strategy-owner-003",
+                StrategyKey = "alpha-live",
+                DisplayName = "Alpha Live",
+                PublishedMode = ExecutionEnvironment.Demo,
+                PublishedAtUtc = now.AddMinutes(-40),
+                CreatedDate = now.AddHours(-3),
+                UpdatedDate = now.AddMinutes(-20)
+            },
+            new TradingStrategy
+            {
+                Id = betaStrategyId,
+                OwnerUserId = "strategy-owner-003",
+                StrategyKey = "beta-live",
+                DisplayName = "Beta Live",
+                PublishedMode = ExecutionEnvironment.Demo,
+                PublishedAtUtc = now.AddMinutes(-15),
+                CreatedDate = now.AddHours(-2),
+                UpdatedDate = now.AddMinutes(-10)
+            },
+            new TradingStrategy
+            {
+                Id = customStrategyId,
+                OwnerUserId = "strategy-owner-003",
+                StrategyKey = "custom-live",
+                DisplayName = "Custom Live",
+                PublishedMode = ExecutionEnvironment.Demo,
+                PublishedAtUtc = now.AddMinutes(-5),
+                CreatedDate = now.AddHours(-1),
+                UpdatedDate = now.AddMinutes(-5)
+            });
+
+        dbContext.TradingStrategyVersions.AddRange(
+            new TradingStrategyVersion
+            {
+                Id = alphaRuntimeVersionId,
+                OwnerUserId = "strategy-owner-003",
+                TradingStrategyId = alphaStrategyId,
+                SchemaVersion = 2,
+                VersionNumber = 1,
+                Status = StrategyVersionStatus.Published,
+                DefinitionJson = CreateStrategyDefinition("alpha-template", "Alpha Template", revision: 2, timeframe: "15m"),
+                PublishedAtUtc = now.AddMinutes(-35),
+                CreatedDate = now.AddMinutes(-35),
+                UpdatedDate = now.AddMinutes(-35)
+            },
+            new TradingStrategyVersion
+            {
+                Id = alphaShadowVersionId,
+                OwnerUserId = "strategy-owner-003",
+                TradingStrategyId = alphaStrategyId,
+                SchemaVersion = 2,
+                VersionNumber = 2,
+                Status = StrategyVersionStatus.Draft,
+                DefinitionJson = CreateStrategyDefinition("alpha-template", "Alpha Template", revision: 2, timeframe: "15m"),
+                CreatedDate = now.AddMinutes(-25),
+                UpdatedDate = now.AddMinutes(-25)
+            },
+            new TradingStrategyVersion
+            {
+                Id = betaVersionId,
+                OwnerUserId = "strategy-owner-003",
+                TradingStrategyId = betaStrategyId,
+                SchemaVersion = 2,
+                VersionNumber = 1,
+                Status = StrategyVersionStatus.Published,
+                DefinitionJson = CreateStrategyDefinition("beta-template", "Beta Template", revision: 1, timeframe: "1h"),
+                PublishedAtUtc = now.AddMinutes(-12),
+                CreatedDate = now.AddMinutes(-12),
+                UpdatedDate = now.AddMinutes(-12)
+            },
+            new TradingStrategyVersion
+            {
+                Id = customVersionId,
+                OwnerUserId = "strategy-owner-003",
+                TradingStrategyId = customStrategyId,
+                SchemaVersion = 2,
+                VersionNumber = 1,
+                Status = StrategyVersionStatus.Published,
+                DefinitionJson = CreateStrategyDefinitionWithoutTemplateMetadata("5m"),
+                PublishedAtUtc = now.AddMinutes(-4),
+                CreatedDate = now.AddMinutes(-4),
+                UpdatedDate = now.AddMinutes(-4)
+            });
+
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminWorkspaceReadModelService(
+            dbContext,
+            new FakeAdminMonitoringReadModelService(now),
+            new FakeTradingModeResolver(),
+            new FixedTimeProvider(now),
+            strategyTemplateCatalogService: new FakeStrategyTemplateCatalogService(
+                CreateTemplateSnapshot("alpha-template", "Alpha Template", isActive: true, publishedRevisionNumber: 2, validationStatusCode: "Valid", validationSummary: "Template valid.", updatedAtUtc: now.AddMinutes(-30)),
+                CreateTemplateSnapshot("beta-template", "Beta Template", isActive: false, publishedRevisionNumber: 0, validationStatusCode: "ParseFailed", validationSummary: "Template definition parse failed.", updatedAtUtc: now.AddMinutes(-6))));
+
+        var snapshot = await service.GetStrategyAiMonitoringAsync();
+
+        Assert.Equal(2, snapshot.TemplateAdoptionSummary.TotalTemplateCount);
+        Assert.Equal(1, snapshot.TemplateAdoptionSummary.PublishedTemplateCount);
+        Assert.Equal(1, snapshot.TemplateAdoptionSummary.ArchivedTemplateCount);
+        Assert.Equal(3, snapshot.TemplateAdoptionSummary.TotalCloneCount);
+        Assert.Equal(2, snapshot.TemplateAdoptionSummary.ActiveTemplateStrategyCount);
+        Assert.Contains("Alpha Template", snapshot.TemplateAdoptionSummary.MostUsedTemplateLabel, StringComparison.Ordinal);
+        Assert.Contains("Beta Template", snapshot.TemplateAdoptionSummary.LatestValidationIssueSummary, StringComparison.Ordinal);
+
+        var topTemplate = Assert.Single(snapshot.TemplateAdoptionRows, item => item.TemplateKey == "alpha-template");
+        Assert.Equal(2, topTemplate.CloneCount);
+        Assert.Equal(1, topTemplate.ActiveStrategyCount);
+        Assert.Contains(snapshot.RecentTemplateClones, item => item.TemplateKey == "beta-template" && item.StrategyKey == "beta-live");
+        Assert.DoesNotContain(snapshot.TemplateAdoptionRows, item => string.Equals(item.TemplateKey, "custom", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task GetStrategyAiMonitoringAsync_ReturnsEmptyTemplateAdoptionSummary_WhenNoTemplateOrCloneDataExists()
+    {
+        var now = new DateTime(2026, 4, 8, 13, 0, 0, DateTimeKind.Utc);
+        await using var dbContext = CreateDbContext();
+
+        var service = new AdminWorkspaceReadModelService(
+            dbContext,
+            new FakeAdminMonitoringReadModelService(now),
+            new FakeTradingModeResolver(),
+            new FixedTimeProvider(now),
+            strategyTemplateCatalogService: new FakeStrategyTemplateCatalogService());
+
+        var snapshot = await service.GetStrategyAiMonitoringAsync();
+
+        Assert.Equal(0, snapshot.TemplateAdoptionSummary.TotalTemplateCount);
+        Assert.Equal(0, snapshot.TemplateAdoptionSummary.TotalCloneCount);
+        Assert.Equal("No validation issue", snapshot.TemplateAdoptionSummary.LatestValidationIssueSummary);
+        Assert.Empty(snapshot.TemplateAdoptionRows);
+        Assert.Empty(snapshot.RecentTemplateClones);
+    }
+
     private static ApplicationDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -383,6 +537,92 @@ public sealed class AdminWorkspaceReadModelServiceTests
         public bool HasIsolationBypass => true;
     }
 
+    private sealed class FakeStrategyTemplateCatalogService(params StrategyTemplateSnapshot[] templates) : IStrategyTemplateCatalogService
+    {
+        private IReadOnlyCollection<StrategyTemplateSnapshot> Templates { get; } = templates;
+
+        public Task<IReadOnlyCollection<StrategyTemplateSnapshot>> ListAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<IReadOnlyCollection<StrategyTemplateSnapshot>>(Templates.Where(template => template.IsActive && template.PublishedRevisionNumber > 0).ToArray());
+        }
+
+        public Task<IReadOnlyCollection<StrategyTemplateSnapshot>> ListAllAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(Templates);
+        }
+
+        public Task<StrategyTemplateSnapshot> GetAsync(string templateKey, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(Templates.Single(template => string.Equals(template.TemplateKey, templateKey, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        public Task<StrategyTemplateSnapshot> GetIncludingArchivedAsync(string templateKey, CancellationToken cancellationToken = default)
+        {
+            return GetAsync(templateKey, cancellationToken);
+        }
+
+        public Task<StrategyTemplateSnapshot> CreateCustomAsync(string ownerUserId, string templateKey, string templateName, string description, string category, string definitionJson, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<StrategyTemplateSnapshot> CloneAsync(string ownerUserId, string sourceTemplateKey, string templateKey, string templateName, string description, string category, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<StrategyTemplateSnapshot> ReviseAsync(string templateKey, string templateName, string description, string category, string definitionJson, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<StrategyTemplateSnapshot> PublishAsync(string templateKey, int revisionNumber, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<IReadOnlyCollection<StrategyTemplateRevisionSnapshot>> ListRevisionsAsync(string templateKey, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<StrategyTemplateSnapshot> ArchiveAsync(string templateKey, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    }
+
+    private static StrategyTemplateSnapshot CreateTemplateSnapshot(
+        string templateKey,
+        string templateName,
+        bool isActive,
+        int publishedRevisionNumber,
+        string validationStatusCode,
+        string validationSummary,
+        DateTime updatedAtUtc)
+    {
+        return new StrategyTemplateSnapshot(
+            templateKey,
+            templateName,
+            $"{templateName} description",
+            "Custom",
+            2,
+            CreateStrategyDefinition(templateKey, templateName, Math.Max(1, publishedRevisionNumber == 0 ? 1 : publishedRevisionNumber), "15m"),
+            new StrategyDefinitionValidationSnapshot(string.Equals(validationStatusCode, "Valid", StringComparison.OrdinalIgnoreCase), validationStatusCode, validationSummary, Array.Empty<string>(), 1),
+            IsBuiltIn: false,
+            IsActive: isActive,
+            TemplateSource: "Custom",
+            SourceTemplateKey: null,
+            ActiveRevisionNumber: publishedRevisionNumber == 0 ? 1 : publishedRevisionNumber,
+            LatestRevisionNumber: publishedRevisionNumber == 0 ? 1 : publishedRevisionNumber,
+            PublishedRevisionNumber: publishedRevisionNumber,
+            SourceRevisionNumber: null,
+            TemplateId: Guid.NewGuid(),
+            ActiveRevisionId: Guid.NewGuid(),
+            LatestRevisionId: Guid.NewGuid(),
+            PublishedRevisionId: publishedRevisionNumber > 0 ? Guid.NewGuid() : null,
+            ArchivedAtUtc: isActive ? null : updatedAtUtc,
+            CreatedAtUtc: updatedAtUtc.AddHours(-1),
+            UpdatedAtUtc: updatedAtUtc);
+    }
+
+    private static string CreateStrategyDefinitionWithoutTemplateMetadata(string timeframe)
+    {
+        return
+            """
+            {
+              "schemaVersion": 2,
+              "entry": {
+                "path": "context.mode",
+                "comparison": "equals",
+                "value": "Live",
+                "ruleId": "entry-mode",
+                "ruleType": "context",
+                "timeframe": "{{timeframe}}",
+                "weight": 20,
+                "enabled": true
+              }
+            }
+            """;
+    }
+
     private static string CreateStrategyDefinition(string templateKey, string templateName, int revision, string timeframe)
     {
         return
@@ -409,5 +649,10 @@ public sealed class AdminWorkspaceReadModelServiceTests
             """;
     }
 }
+
+
+
+
+
 
 

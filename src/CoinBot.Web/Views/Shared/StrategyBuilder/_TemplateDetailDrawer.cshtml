@@ -2,28 +2,37 @@
     <div class="cb-drawer-header">
         <div>
             <div class="cb-drawer-eyebrow" id="cb_strategy_drawer_eyebrow">Template detail</div>
-            <h5 class="cb-drawer-title mb-0" id="cb_strategy_drawer_title">Sıfırdan Başla</h5>
+            <h5 class="cb-drawer-title mb-0" id="cb_strategy_drawer_title">Template secilmedi</h5>
         </div>
         <button type="button" class="btn btn-xs btn-icon btn-light" data-cb-drawer-close>
             <span>&times;</span>
         </button>
     </div>
     <div class="cb-drawer-body">
-        <div class="cb-mini-helper-card" id="cb_strategy_drawer_description">Hazır template seçmeden kendi condition ve action bloklarını ekleyebileceğin boş canvas başlangıcı.</div>
+        <div class="cb-mini-helper-card" id="cb_strategy_drawer_description">Published template secildiginde hedef strategy altinda bagimsiz draft version uretilir. Template ile canli referans kurulmaz.</div>
         <div class="cb-section mt-6">
             <div class="cb-section-title">Uygun market</div>
             <div class="cb-inline-stack mt-3">
                 <span class="cb-badge cb-badge-info" id="cb_strategy_drawer_market">Spot / Futures</span>
-                <span class="cb-badge cb-badge-warning" id="cb_strategy_drawer_risk">Esnek</span>
-                <span class="cb-badge cb-badge-neutral" id="cb_strategy_drawer_tag">Blank</span>
+                <span class="cb-badge cb-badge-warning" id="cb_strategy_drawer_risk">Secim bekleniyor</span>
+                <span class="cb-badge cb-badge-neutral" id="cb_strategy_drawer_tag">Catalog</span>
             </div>
+        </div>
+        <div class="cb-section mt-6">
+            <div class="cb-section-title">Revision surface</div>
+            <ul class="mb-0 pl-5 text-muted">
+                <li id="cb_strategy_drawer_published_revision">Published revision: n/a</li>
+                <li id="cb_strategy_drawer_current_revision">Current revision: n/a</li>
+                <li id="cb_strategy_drawer_clone_surface">Clone source: latest published revision only</li>
+                <li id="cb_strategy_drawer_clone_independence">Clone sonucu yeni draft version olusur; template degisince geriye donuk etkilenmez.</li>
+            </ul>
         </div>
         <div class="cb-section mt-6">
             <div class="cb-section-title">Builder foundation neyi doldurur?</div>
             <ul class="mb-0 pl-5 text-muted">
-                <li>Örnek entry blokları</li>
-                <li>Exit / risk section varsayılanları</li>
-                <li>Summary açıklama alanı</li>
+                <li>Template metadata ve published revision bilgisi</li>
+                <li>Validation sonucu ve source bilgisi</li>
+                <li>Secilen template icin builder baslangic aciklamasi</li>
             </ul>
         </div>
     </div>
@@ -32,3 +41,4 @@
         <button type="button" class="btn btn-primary font-weight-bolder" id="cb_strategy_drawer_apply" data-cb-strategy-apply-template data-cb-drawer-close>Template uygula</button>
     </div>
 </aside>
+

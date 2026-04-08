@@ -2120,6 +2120,8 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
         builder.HasIndex(entity => entity.ActiveTradingStrategyTemplateRevisionId);
 
+        builder.HasIndex(entity => entity.PublishedTradingStrategyTemplateRevisionId);
+
         builder.HasIndex(entity => entity.LatestTradingStrategyTemplateRevisionId);
 
         builder.HasIndex(entity => entity.TemplateKey)
@@ -2130,6 +2132,11 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         builder.HasOne<TradingStrategyTemplateRevision>()
             .WithMany()
             .HasForeignKey(entity => entity.ActiveTradingStrategyTemplateRevisionId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<TradingStrategyTemplateRevision>()
+            .WithMany()
+            .HasForeignKey(entity => entity.PublishedTradingStrategyTemplateRevisionId)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne<TradingStrategyTemplateRevision>()
@@ -3140,6 +3147,8 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         }
     }
 }
+
+
 
 
 

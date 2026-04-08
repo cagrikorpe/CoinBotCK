@@ -153,7 +153,7 @@ public sealed class StrategyTemplateDraftIntegrationTests
                 CreateCustomDefinitionJson(revision: 2));
             _ = await templateCatalog.ArchiveAsync("archived-runtime-template");
 
-            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => strategyVersionService.CreateDraftFromTemplateAsync(strategyId, "archived-runtime-template"));
+            var exception = await Assert.ThrowsAsync<StrategyTemplateCatalogException>(() => strategyVersionService.CreateDraftFromTemplateAsync(strategyId, "archived-runtime-template"));
             var templateId = await dbContext.TradingStrategyTemplates
                 .AsNoTracking()
                 .Where(entity => entity.TemplateKey == "archived-runtime-template")
@@ -164,7 +164,8 @@ public sealed class StrategyTemplateDraftIntegrationTests
                 .Where(entity => entity.TradingStrategyTemplateId == templateId)
                 .ToListAsync();
 
-            Assert.Contains("not found", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("TemplateArchived", exception.FailureCode);
+            Assert.Contains("archived", exception.Message, StringComparison.OrdinalIgnoreCase);
             Assert.All(revisions, revision => Assert.True(revision.ArchivedAtUtc.HasValue));
         }
         finally
@@ -173,6 +174,81 @@ public sealed class StrategyTemplateDraftIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task CreateDraftFromTemplateAsync_UsesPublishedRevision_AndPreviousDraftsRemainImmutable_OnSqlServer()
+    {
+        var databaseName = $"CoinBotStrategyTemplatePublishedCloneInt_{Guid.NewGuid():N}";
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString(databaseName);
+        var nowUtc = new DateTimeOffset(2026, 4, 8, 12, 0, 0, TimeSpan.Zero);
+        await using var dbContext = CreateDbContext(connectionString);
+        await dbContext.Database.EnsureDeletedAsync();
+        await dbContext.Database.EnsureCreatedAsync();
+
+        try
+        {
+            var strategyId = Guid.NewGuid();
+            dbContext.Users.Add(new ApplicationUser
+            {
+                Id = "template-publish-user",
+                UserName = "template-publish-user",
+                NormalizedUserName = "TEMPLATE-PUBLISH-USER",
+                Email = "template-publish-user@coinbot.test",
+                NormalizedEmail = "TEMPLATE-PUBLISH-USER@COINBOT.TEST",
+                FullName = "Template Publish User",
+                EmailConfirmed = true
+            });
+            dbContext.TradingStrategies.Add(new TradingStrategy
+            {
+                Id = strategyId,
+                OwnerUserId = "template-publish-user",
+                StrategyKey = "template-published-clone-int",
+                DisplayName = "Template Published Clone Integration",
+                PromotionState = StrategyPromotionState.Draft
+            });
+            await dbContext.SaveChangesAsync();
+
+            var parser = new StrategyRuleParser();
+            var validator = new StrategyDefinitionValidator();
+            var templateCatalog = new StrategyTemplateCatalogService(parser, validator, dbContext);
+            var strategyVersionService = new StrategyVersionService(
+                dbContext,
+                parser,
+                new FixedTimeProvider(nowUtc),
+                validator,
+                templateCatalog);
+
+            _ = await templateCatalog.CreateCustomAsync(
+                "template-publish-user",
+                "published-clone-template",
+                "Published Clone Template",
+                "Initial published template.",
+                "Custom",
+                CreateCustomDefinitionJson(revision: 1));
+            _ = await templateCatalog.ReviseAsync(
+                "published-clone-template",
+                "Published Clone Template",
+                "Draft revision two.",
+                "Custom",
+                CreateCustomDefinitionJson(revision: 2));
+
+            var firstDraft = await strategyVersionService.CreateDraftFromTemplateAsync(strategyId, "published-clone-template");
+            _ = await templateCatalog.PublishAsync("published-clone-template", 2);
+            var secondDraft = await strategyVersionService.CreateDraftFromTemplateAsync(strategyId, "published-clone-template");
+            var persistedVersions = await dbContext.TradingStrategyVersions
+                .AsNoTracking()
+                .OrderBy(entity => entity.VersionNumber)
+                .ToListAsync();
+
+            Assert.Equal(1, firstDraft.TemplateRevisionNumber);
+            Assert.Equal(2, secondDraft.TemplateRevisionNumber);
+            Assert.Contains("\"templateRevisionNumber\": 1", persistedVersions[0].DefinitionJson, StringComparison.Ordinal);
+            Assert.Contains("\"templateRevisionNumber\": 2", persistedVersions[1].DefinitionJson, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await dbContext.Database.EnsureDeletedAsync();
+        }
+    }
     private static ApplicationDbContext CreateDbContext(string connectionString)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -246,3 +322,5 @@ public sealed class StrategyTemplateDraftIntegrationTests
             """;
     }
 }
+
+

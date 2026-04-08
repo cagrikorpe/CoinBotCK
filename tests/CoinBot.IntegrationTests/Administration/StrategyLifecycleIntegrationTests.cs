@@ -92,7 +92,8 @@ public sealed class StrategyLifecycleIntegrationTests
                 "Custom demo template revised.",
                 "Custom",
                 CreateDefinitionJson("Demo", 32m, 100, timeframe: "30m", includeLatencyRule: true));
-            var draft = await versionService.CreateDraftFromTemplateAsync(strategyId, revisedTemplate.TemplateKey);
+            var publishedTemplate = await templateCatalog.PublishAsync(revisedTemplate.TemplateKey, 2);
+            var draft = await versionService.CreateDraftFromTemplateAsync(strategyId, publishedTemplate.TemplateKey);
             var published = await versionService.PublishAsync(draft.StrategyVersionId);
             var result = await signalService.GenerateAsync(
                 new GenerateStrategySignalsRequest(
@@ -130,7 +131,11 @@ public sealed class StrategyLifecycleIntegrationTests
             Assert.Equal("demo-rsi-template", usageRow.TemplateKey);
             Assert.Equal("r2", usageRow.RuntimeTemplateRevisionLabel);
             Assert.Contains("Runtime=v1", usageRow.Note, StringComparison.Ordinal);
-            Assert.Contains(snapshot.TemplateCatalog, item => item.TemplateKey == "demo-rsi-template" && item.ActiveRevisionNumber == 2 && item.LatestRevisionNumber == 2 && item.TemplateSource == "Custom");
+            Assert.Contains(snapshot.TemplateCatalog, item => item.TemplateKey == "demo-rsi-template" && item.ActiveRevisionNumber == 2 && item.LatestRevisionNumber == 2 && item.PublishedRevisionNumber == 2 && item.TemplateSource == "Custom");
+            Assert.Equal(1, snapshot.TemplateAdoptionSummary.TotalCloneCount);
+            Assert.Contains("Demo RSI Template", snapshot.TemplateAdoptionSummary.MostUsedTemplateLabel, StringComparison.Ordinal);
+            Assert.Contains(snapshot.TemplateAdoptionRows, item => item.TemplateKey == "demo-rsi-template" && item.CloneCount == 1);
+            Assert.Contains(snapshot.RecentTemplateClones, item => item.TemplateKey == "demo-rsi-template" && item.StrategyKey == "strategy-lifecycle");
         }
         finally
         {
@@ -575,6 +580,9 @@ public sealed class StrategyLifecycleIntegrationTests
         public bool HasIsolationBypass => true;
     }
 }
+
+
+
 
 
 
