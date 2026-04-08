@@ -61,6 +61,32 @@ public sealed class StrategyBuilderControllerTests
         Assert.DoesNotContain(targets, item => item.Text.Contains("gamma-core", StringComparison.Ordinal));
     }
 
+
+    [Fact]
+    public async Task CreateDraftFromTemplate_BlocksEmptyTemplateSelection_FailClosed()
+    {
+        await using var dbContext = CreateDbContext();
+        var strategyId = Guid.Parse("12121212-1212-1212-1212-121212121212");
+        dbContext.TradingStrategies.Add(new TradingStrategy
+        {
+            Id = strategyId,
+            OwnerUserId = "builder-user",
+            StrategyKey = "empty-template-core",
+            DisplayName = "Empty Template Core"
+        });
+        await dbContext.SaveChangesAsync();
+
+        var versionService = new FakeStrategyVersionService();
+        var controller = CreateController(dbContext, new FakeStrategyTemplateCatalogService(), versionService, "builder-user");
+
+        var result = await controller.CreateDraftFromTemplate(strategyId, "   ", CancellationToken.None);
+
+        var redirect = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(StrategyBuilderController.Index), redirect.ActionName);
+        Assert.Empty(versionService.CreateDraftFromTemplateRequests);
+        Assert.Equal("Template ve hedef strateji seçimi gerekli.", controller.TempData["StrategyBuilderTemplateError"]?.ToString());
+    }
+
     [Fact]
     public async Task CreateDraftFromTemplate_CreatesIndependentDraft_AndSetsSuccessFeedback()
     {

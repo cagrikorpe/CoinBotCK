@@ -685,7 +685,15 @@ public sealed class StrategyTemplateCatalogService(
         cancellationToken.ThrowIfCancellationRequested();
         EnsurePersistenceAvailable();
 
-        var normalizedOwnerUserId = dbContext!.EnsureCurrentUserScope(ownerUserId);
+        string normalizedOwnerUserId;
+        try
+        {
+            normalizedOwnerUserId = dbContext!.EnsureCurrentUserScope(ownerUserId);
+        }
+        catch (InvalidOperationException exception)
+        {
+            throw new StrategyTemplateCatalogException("TemplateOwnershipScopeViolation", exception.Message);
+        }
         var normalizedTemplateKey = NormalizeTemplateKey(templateKey, nameof(templateKey));
         var normalizedTemplateName = NormalizeRequired(templateName, 128, nameof(templateName));
         var normalizedDescription = NormalizeRequired(description, 512, nameof(description));

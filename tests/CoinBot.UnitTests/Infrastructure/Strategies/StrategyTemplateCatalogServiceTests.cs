@@ -40,9 +40,21 @@ public sealed class StrategyTemplateCatalogServiceTests
     }
 
     [Fact]
-    public async Task GetAsync_FailsClosed_WhenTemplateKeyIsUnknown()
+    public async Task GetAsync_FailsClosed_WhenPersistenceIsUnavailable_ForUnknownCustomTemplate()
     {
         var service = new StrategyTemplateCatalogService(new StrategyRuleParser(), new StrategyDefinitionValidator());
+
+        var exception = await Assert.ThrowsAsync<StrategyTemplateCatalogException>(() => service.GetAsync("unknown-template"));
+
+        Assert.Equal("TemplatePersistenceUnavailable", exception.FailureCode);
+        Assert.Contains("unknown-template", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task GetAsync_FailsClosed_WhenPersistedTemplateKeyIsUnknown()
+    {
+        await using var dbContext = CreateDbContext();
+        var service = CreateService(dbContext);
 
         var exception = await Assert.ThrowsAsync<StrategyTemplateCatalogException>(() => service.GetAsync("unknown-template"));
 
@@ -232,6 +244,42 @@ public sealed class StrategyTemplateCatalogServiceTests
         Assert.Contains(revisions, revision => revision.RevisionNumber == 1 && !revision.IsPublished);
     }
 
+
+    [Fact]
+    public async Task GetAsync_FailsClosed_WhenPublishedRevisionPointerIsBroken()
+    {
+        await using var dbContext = CreateDbContext();
+        var service = CreateService(dbContext);
+
+        _ = await service.CreateCustomAsync(
+            "template-owner",
+            "broken-published-template",
+            "Broken Published Template",
+            "Template with corrupted published pointer.",
+            "Custom",
+            CreateTemplateDefinitionJson());
+        _ = await service.ReviseAsync(
+            "broken-published-template",
+            "Broken Published Template v2",
+            "Draft revision.",
+            "Custom",
+            CreateTemplateDefinitionJson(timeframe: "30m", latencyRule: true));
+
+        var template = await dbContext.TradingStrategyTemplates
+            .SingleAsync(entity => entity.TemplateKey == "broken-published-template");
+        template.PublishedTradingStrategyTemplateRevisionId = Guid.NewGuid();
+        await dbContext.SaveChangesAsync();
+
+        var exception = await Assert.ThrowsAsync<StrategyTemplateCatalogException>(() => service.GetAsync("broken-published-template"));
+        var listedTemplates = await service.ListAsync();
+        var adminSnapshot = await service.GetIncludingArchivedAsync("broken-published-template");
+
+        Assert.Equal("TemplateUnpublished", exception.FailureCode);
+        Assert.DoesNotContain(listedTemplates, item => item.TemplateKey == "broken-published-template");
+        Assert.Equal(0, adminSnapshot.PublishedRevisionNumber);
+        Assert.Equal(2, adminSnapshot.ActiveRevisionNumber);
+    }
+
     [Fact]
     public async Task PublishAsync_RejectsArchivedTemplate_FailClosed()
     {
@@ -348,7 +396,8 @@ public sealed class StrategyTemplateCatalogServiceTests
         var templates = await foreignService.ListAsync();
 
         Assert.DoesNotContain(templates, template => template.TemplateKey == "isolated-template");
-        await Assert.ThrowsAsync<InvalidOperationException>(() => foreignService.GetAsync("isolated-template"));
+        var exception = await Assert.ThrowsAsync<StrategyTemplateCatalogException>(() => foreignService.GetAsync("isolated-template"));
+        Assert.Equal("TemplateNotFound", exception.FailureCode);
     }
 
     [Fact]
@@ -365,6 +414,7 @@ public sealed class StrategyTemplateCatalogServiceTests
             "Custom",
             CreateTemplateDefinitionJson()));
 
+        Assert.Equal("TemplateOwnershipScopeViolation", exception.FailureCode);
         Assert.Contains("outside the authenticated isolation boundary", exception.Message, StringComparison.Ordinal);
     }
 

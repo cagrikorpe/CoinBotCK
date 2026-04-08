@@ -478,6 +478,44 @@ public sealed class AdminControllerTests
         Assert.Equal("TemplateKeyAlreadyExists: Strategy template 'custom-template' already exists.", controller.TempData["AdminStrategyTemplateError"]);
     }
 
+
+    [Fact]
+    public async Task CreateStrategyTemplate_WhenAdminMfaIsRequired_FailsClosedWithoutCallingCatalog()
+    {
+        var templateService = new FakeStrategyTemplateCatalogService();
+        var auditLogService = new FakeAdminAuditLogService();
+        var criticalUserOperationAuthorizer = new FakeCriticalUserOperationAuthorizer
+        {
+            Result = new CriticalUserOperationAuthorizationResult(
+                false,
+                "MfaRequired",
+                "Bu islem icin MFA zorunludur.")
+        };
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            auditLogService: auditLogService,
+            strategyTemplateCatalogService: templateService,
+            criticalUserOperationAuthorizer: criticalUserOperationAuthorizer,
+            roles: [ApplicationRoles.SuperAdmin]);
+
+        var result = await controller.CreateStrategyTemplate(
+            "custom-template",
+            "Custom Template",
+            "Catalog create test.",
+            "Momentum",
+            "{\"schemaVersion\":2}",
+            "Create reason",
+            CancellationToken.None);
+
+        var redirect = Assert.IsType<RedirectToActionResult>(result);
+
+        Assert.Equal(nameof(AdminController.StrategyTemplates), redirect.ActionName);
+        Assert.Empty(templateService.CreateCalls);
+        Assert.Empty(auditLogService.Requests);
+        Assert.Equal("Bu islem icin MFA zorunludur.", controller.TempData["AdminStrategyTemplateError"]);
+        Assert.Single(criticalUserOperationAuthorizer.Requests);
+    }
+
     [Fact]
     public async Task CreateStrategyTemplate_SanitizesUnexpectedErrorFeedback()
     {
