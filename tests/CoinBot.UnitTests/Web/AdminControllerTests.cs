@@ -697,6 +697,325 @@ public sealed class AdminControllerTests
     }
 
     [Fact]
+    public async Task Settings_LoadsActivationControlCenterModel_FailClosedSummaryVisible()
+    {
+        var switchService = new FakeGlobalExecutionSwitchService
+        {
+            GetSnapshotException = new InvalidOperationException("switch unavailable")
+        };
+        var stateService = new FakeGlobalSystemStateService
+        {
+            GetSnapshotException = new InvalidOperationException("state unavailable")
+        };
+        var timeSyncService = new FakeBinanceTimeSyncService
+        {
+            SnapshotException = new InvalidOperationException("time sync unavailable")
+        };
+        var driftGuardService = new FakeDataLatencyCircuitBreaker
+        {
+            GetSnapshotException = new InvalidOperationException("drift guard unavailable")
+        };
+        var controller = CreateController(
+            switchService,
+            stateService,
+            timeSyncService: timeSyncService,
+            dataLatencyCircuitBreaker: driftGuardService,
+            roles: [ApplicationRoles.SuperAdmin]);
+
+        var result = await controller.Settings(CancellationToken.None);
+
+        var viewResult = Assert.IsType<ViewResult>(result);
+        var model = Assert.IsType<AdminActivationControlCenterViewModel>(viewResult.Model);
+
+        Assert.False(model.IsActivatable);
+        Assert.Equal("ActivationStateUnavailable", model.LastDecision.Code);
+        Assert.Contains(model.ReadinessChecklist, item => item.ReasonCode == "ServerTimeSyncUnavailable");
+        Assert.Contains(model.ReadinessChecklist, item => item.ReasonCode == "DataLatencyGuardUnavailable");
+        Assert.Equal("Aktif edilemez", model.StatusLabel);
+    }
+
+    [Fact]
+    public async Task ActivateSystem_WhenReadinessPass_ArmsTradeMaster_AndWritesAudit()
+    {
+        var switchService = new FakeGlobalExecutionSwitchService
+        {
+            Snapshot = new GlobalExecutionSwitchSnapshot(
+                TradeMasterSwitchState.Disarmed,
+                DemoModeEnabled: true,
+                IsPersisted: true)
+        };
+        var stateService = new FakeGlobalSystemStateService
+        {
+            Snapshot = new GlobalSystemStateSnapshot(
+                GlobalSystemStateKind.Active,
+                "SYSTEM_ACTIVE",
+                Message: null,
+                Source: "AdminPortal.Settings",
+                CorrelationId: null,
+                IsManualOverride: false,
+                ExpiresAtUtc: null,
+                UpdatedAtUtc: new DateTime(2026, 4, 8, 10, 0, 0, DateTimeKind.Utc),
+                UpdatedByUserId: "super-admin",
+                UpdatedFromIp: "ip:masked",
+                Version: 3,
+                IsPersisted: true)
+        };
+        var commandRegistry = new FakeAdminCommandRegistry();
+        var auditLogService = new FakeAdminAuditLogService();
+        var driftGuardService = new FakeDataLatencyCircuitBreaker
+        {
+            Snapshot = new DegradedModeSnapshot(
+                DegradedModeStateCode.Normal,
+                DegradedModeReasonCode.None,
+                SignalFlowBlocked: false,
+                ExecutionFlowBlocked: false,
+                LatestDataTimestampAtUtc: new DateTime(2026, 4, 8, 9, 59, 0, DateTimeKind.Utc),
+                LatestHeartbeatReceivedAtUtc: new DateTime(2026, 4, 8, 9, 59, 5, DateTimeKind.Utc),
+                LatestDataAgeMilliseconds: 500,
+                LatestClockDriftMilliseconds: 8,
+                LastStateChangedAtUtc: new DateTime(2026, 4, 8, 9, 59, 10, DateTimeKind.Utc),
+                IsPersisted: true)
+        };
+        var controller = CreateController(
+            switchService,
+            stateService,
+            commandRegistry,
+            auditLogService,
+            timeSyncService: new FakeBinanceTimeSyncService(),
+            dataLatencyCircuitBreaker: driftGuardService,
+            pilotOptions: new BotExecutionPilotOptions
+            {
+                PilotActivationEnabled = true,
+                MaxPilotOrderNotional = "250"
+            },
+            userId: "super-admin",
+            traceIdentifier: "trace-activate-1",
+            roles: [ApplicationRoles.SuperAdmin]);
+
+        var result = await controller.ActivateSystem(
+            reason: "Controlled activation",
+            commandId: "cmd-activate-001",
+            reauthToken: "reauth-hook",
+            cancellationToken: CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        var call = Assert.Single(switchService.TradeMasterCalls);
+        var completion = Assert.Single(commandRegistry.CompletionRequests);
+        var auditLog = auditLogService.Requests.Single(request => request.ActionType == "Admin.Settings.Activation.Activate");
+
+        Assert.Equal(nameof(AdminController.Settings), redirectResult.ActionName);
+        Assert.Equal(TradeMasterSwitchState.Armed, call.TradeMasterState);
+        Assert.Equal("admin:super-admin", call.Actor);
+        Assert.Equal("trace-activate-1", call.CorrelationId);
+        Assert.Equal(AdminCommandStatus.Completed, completion.Status);
+        Assert.Equal("Admin.Settings.Activation.Activate", auditLog.ActionType);
+        Assert.Contains("Sistem aktive edildi", controller.TempData["AdminExecutionSwitchSuccess"]?.ToString() ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ActivateSystem_WhenReadinessUnknown_Blocks_AndWritesAudit()
+    {
+        var switchService = new FakeGlobalExecutionSwitchService
+        {
+            Snapshot = new GlobalExecutionSwitchSnapshot(
+                TradeMasterSwitchState.Disarmed,
+                DemoModeEnabled: true,
+                IsPersisted: true)
+        };
+        var stateService = new FakeGlobalSystemStateService
+        {
+            GetSnapshotException = new InvalidOperationException("state unavailable")
+        };
+        var commandRegistry = new FakeAdminCommandRegistry();
+        var auditLogService = new FakeAdminAuditLogService();
+        var driftGuardService = new FakeDataLatencyCircuitBreaker
+        {
+            Snapshot = new DegradedModeSnapshot(
+                DegradedModeStateCode.Normal,
+                DegradedModeReasonCode.None,
+                SignalFlowBlocked: false,
+                ExecutionFlowBlocked: false,
+                LatestDataTimestampAtUtc: new DateTime(2026, 4, 8, 9, 59, 0, DateTimeKind.Utc),
+                LatestHeartbeatReceivedAtUtc: new DateTime(2026, 4, 8, 9, 59, 5, DateTimeKind.Utc),
+                LatestDataAgeMilliseconds: 500,
+                LatestClockDriftMilliseconds: 8,
+                LastStateChangedAtUtc: new DateTime(2026, 4, 8, 9, 59, 10, DateTimeKind.Utc),
+                IsPersisted: true)
+        };
+        var controller = CreateController(
+            switchService,
+            stateService,
+            commandRegistry,
+            auditLogService,
+            timeSyncService: new FakeBinanceTimeSyncService(),
+            dataLatencyCircuitBreaker: driftGuardService,
+            pilotOptions: new BotExecutionPilotOptions
+            {
+                PilotActivationEnabled = true,
+                MaxPilotOrderNotional = "250"
+            },
+            roles: [ApplicationRoles.SuperAdmin]);
+
+        var result = await controller.ActivateSystem(
+            reason: "Controlled activation",
+            commandId: "cmd-activate-002",
+            reauthToken: null,
+            cancellationToken: CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        var auditLog = auditLogService.Requests.Single(request => request.ActionType == "Admin.Settings.Activation.ActivateBlocked");
+        var completion = Assert.Single(commandRegistry.CompletionRequests);
+
+        Assert.Equal(nameof(AdminController.Settings), redirectResult.ActionName);
+        Assert.Empty(switchService.TradeMasterCalls);
+        Assert.Equal(AdminCommandStatus.Failed, completion.Status);
+        Assert.Equal("Admin.Settings.Activation.ActivateBlocked", auditLog.ActionType);
+        Assert.Contains("ActivationStateUnavailable", controller.TempData["AdminExecutionSwitchError"]?.ToString() ?? string.Empty, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ActivateSystem_WhenConfirmationIsMissing_FailsClosedWithoutChangingState()
+    {
+        var switchService = new FakeGlobalExecutionSwitchService();
+        var stateService = new FakeGlobalSystemStateService();
+        var commandRegistry = new FakeAdminCommandRegistry();
+        var auditLogService = new FakeAdminAuditLogService();
+        var controller = CreateController(
+            switchService,
+            stateService,
+            commandRegistry,
+            auditLogService,
+            roles: [ApplicationRoles.SuperAdmin]);
+
+        var result = await controller.ActivateSystem(
+            reason: "Controlled activation",
+            commandId: "cmd-activate-confirm",
+            reauthToken: null,
+            cancellationToken: CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+
+        Assert.Equal(nameof(AdminController.Settings), redirectResult.ActionName);
+        Assert.Empty(switchService.TradeMasterCalls);
+        Assert.Null(commandRegistry.LastStartRequest);
+        Assert.Equal("CriticalActionConfirmationRequired: Bu kritik islem icin ONAYLA ibaresi zorunludur.", controller.TempData["AdminExecutionSwitchError"]);
+    }
+
+    [Fact]
+    public async Task ActivateSystem_WhenAdminMfaIsRequired_FailsClosedWithoutChangingState()
+    {
+        var switchService = new FakeGlobalExecutionSwitchService();
+        var stateService = new FakeGlobalSystemStateService();
+        var commandRegistry = new FakeAdminCommandRegistry();
+        var auditLogService = new FakeAdminAuditLogService();
+        var criticalUserOperationAuthorizer = new FakeCriticalUserOperationAuthorizer
+        {
+            Result = new CriticalUserOperationAuthorizationResult(
+                false,
+                "MfaRequired",
+                "Bu islem icin MFA zorunludur.")
+        };
+        var controller = CreateController(
+            switchService,
+            stateService,
+            commandRegistry,
+            auditLogService,
+            criticalUserOperationAuthorizer: criticalUserOperationAuthorizer,
+            roles: [ApplicationRoles.SuperAdmin]);
+
+        var result = await controller.ActivateSystem(
+            reason: "Controlled activation",
+            commandId: "cmd-activate-mfa",
+            reauthToken: null,
+            cancellationToken: CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+
+        Assert.Equal(nameof(AdminController.Settings), redirectResult.ActionName);
+        Assert.Empty(switchService.TradeMasterCalls);
+        Assert.Null(commandRegistry.LastStartRequest);
+        Assert.Equal("Bu islem icin MFA zorunludur.", controller.TempData["AdminExecutionSwitchError"]);
+        Assert.Single(criticalUserOperationAuthorizer.Requests);
+    }
+
+    [Fact]
+    public async Task DeactivateSystem_DisarmsTradeMaster_AndWritesAudit()
+    {
+        var switchService = new FakeGlobalExecutionSwitchService
+        {
+            Snapshot = new GlobalExecutionSwitchSnapshot(
+                TradeMasterSwitchState.Armed,
+                DemoModeEnabled: true,
+                IsPersisted: true)
+        };
+        var stateService = new FakeGlobalSystemStateService();
+        var commandRegistry = new FakeAdminCommandRegistry();
+        var auditLogService = new FakeAdminAuditLogService();
+        var controller = CreateController(
+            switchService,
+            stateService,
+            commandRegistry,
+            auditLogService,
+            userId: "super-admin",
+            traceIdentifier: "trace-deactivate-1",
+            roles: [ApplicationRoles.SuperAdmin]);
+
+        var result = await controller.DeactivateSystem(
+            reason: "Controlled shutdown",
+            commandId: "cmd-deactivate-001",
+            reauthToken: "reauth-hook",
+            cancellationToken: CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        var call = Assert.Single(switchService.TradeMasterCalls);
+        var completion = Assert.Single(commandRegistry.CompletionRequests);
+        var auditLog = auditLogService.Requests.Single(request => request.ActionType == "Admin.Settings.Activation.Deactivate");
+
+        Assert.Equal(nameof(AdminController.Settings), redirectResult.ActionName);
+        Assert.Equal(TradeMasterSwitchState.Disarmed, call.TradeMasterState);
+        Assert.Equal("admin:super-admin", call.Actor);
+        Assert.Equal("trace-deactivate-1", call.CorrelationId);
+        Assert.Equal(AdminCommandStatus.Completed, completion.Status);
+        Assert.Equal("Admin.Settings.Activation.Deactivate", auditLog.ActionType);
+        Assert.Contains("fail-closed kapatildi", controller.TempData["AdminExecutionSwitchSuccess"]?.ToString() ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ActivateSystem_RequiresPlatformAdministration_AndAntiForgery()
+    {
+        var authorizeAttribute = Assert.Single(
+            typeof(AdminController)
+                .GetMethod(nameof(AdminController.ActivateSystem), [typeof(string), typeof(string), typeof(string), typeof(CancellationToken)])!
+                .GetCustomAttributes(typeof(AuthorizeAttribute), inherit: true)
+                .Cast<AuthorizeAttribute>());
+        var antiForgeryAttribute = Assert.Single(
+            typeof(AdminController)
+                .GetMethod(nameof(AdminController.ActivateSystem), [typeof(string), typeof(string), typeof(string), typeof(CancellationToken)])!
+                .GetCustomAttributes(typeof(ValidateAntiForgeryTokenAttribute), inherit: true)
+                .Cast<ValidateAntiForgeryTokenAttribute>());
+
+        Assert.Equal(ApplicationPolicies.PlatformAdministration, authorizeAttribute.Policy);
+        Assert.NotNull(antiForgeryAttribute);
+    }
+
+    [Fact]
+    public void DeactivateSystem_RequiresPlatformAdministration_AndAntiForgery()
+    {
+        var authorizeAttribute = Assert.Single(
+            typeof(AdminController)
+                .GetMethod(nameof(AdminController.DeactivateSystem), [typeof(string), typeof(string), typeof(string), typeof(CancellationToken)])!
+                .GetCustomAttributes(typeof(AuthorizeAttribute), inherit: true)
+                .Cast<AuthorizeAttribute>());
+        var antiForgeryAttribute = Assert.Single(
+            typeof(AdminController)
+                .GetMethod(nameof(AdminController.DeactivateSystem), [typeof(string), typeof(string), typeof(string), typeof(CancellationToken)])!
+                .GetCustomAttributes(typeof(ValidateAntiForgeryTokenAttribute), inherit: true)
+                .Cast<ValidateAntiForgeryTokenAttribute>());
+
+        Assert.Equal(ApplicationPolicies.PlatformAdministration, authorizeAttribute.Policy);
+        Assert.NotNull(antiForgeryAttribute);
+    }
+    [Fact]
     public async Task SetTradeMasterState_PassesActorContextCorrelation_AndCompletesIdempotentCommand()
     {
         var switchService = new FakeGlobalExecutionSwitchService();
@@ -765,6 +1084,35 @@ public sealed class AdminControllerTests
         Assert.Null(commandRegistry.LastStartRequest);
         Assert.Empty(auditLogService.Requests);
         Assert.Equal("Audit reason zorunludur.", controller.TempData["AdminExecutionSwitchError"]);
+    }
+
+    [Fact]
+    public async Task SetTradeMasterState_WhenConfirmationIsMissing_FailsClosedWithoutCallingServices()
+    {
+        var switchService = new FakeGlobalExecutionSwitchService();
+        var stateService = new FakeGlobalSystemStateService();
+        var commandRegistry = new FakeAdminCommandRegistry();
+        var auditLogService = new FakeAdminAuditLogService();
+        var controller = CreateController(
+            switchService,
+            stateService,
+            commandRegistry,
+            auditLogService,
+            roles: [ApplicationRoles.SuperAdmin]);
+
+        var result = await controller.SetTradeMasterState(
+            isArmed: true,
+            reason: "Controlled enablement",
+            commandId: "cmd-trade-confirm",
+            reauthToken: null,
+            cancellationToken: CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+
+        Assert.Equal(nameof(AdminController.Settings), redirectResult.ActionName);
+        Assert.Empty(switchService.TradeMasterCalls);
+        Assert.Null(commandRegistry.LastStartRequest);
+        Assert.Equal("CriticalActionConfirmationRequired: Bu kritik islem icin ONAYLA ibaresi zorunludur.", controller.TempData["AdminExecutionSwitchError"]);
     }
 
     [Fact]
@@ -842,6 +1190,68 @@ public sealed class AdminControllerTests
         Assert.Contains("CommandId=cmd-demo-001", call.Context, StringComparison.Ordinal);
         Assert.Equal(AdminCommandStatus.Completed, completion.Status);
         Assert.Equal("DemoMode disabled. Live execution yalnizca approval reference ile acildi.", controller.TempData["AdminExecutionSwitchSuccess"]);
+    }
+
+    [Fact]
+    public async Task SetDemoMode_WhenConfirmationIsMissing_FailsClosedWithoutCallingServices()
+    {
+        var switchService = new FakeGlobalExecutionSwitchService();
+        var stateService = new FakeGlobalSystemStateService();
+        var commandRegistry = new FakeAdminCommandRegistry();
+        var auditLogService = new FakeAdminAuditLogService();
+        var controller = CreateController(
+            switchService,
+            stateService,
+            commandRegistry,
+            auditLogService,
+            roles: [ApplicationRoles.SuperAdmin]);
+
+        var result = await controller.SetDemoMode(
+            isEnabled: false,
+            reason: "Planned live window",
+            commandId: "cmd-demo-confirm",
+            reauthToken: null,
+            liveApprovalReference: "chg-9001",
+            cancellationToken: CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+
+        Assert.Equal(nameof(AdminController.Settings), redirectResult.ActionName);
+        Assert.Empty(switchService.DemoModeCalls);
+        Assert.Null(commandRegistry.LastStartRequest);
+        Assert.Equal("CriticalActionConfirmationRequired: Bu kritik islem icin ONAYLA ibaresi zorunludur.", controller.TempData["AdminExecutionSwitchError"]);
+    }
+
+    [Fact]
+    public async Task SetGlobalSystemState_WhenConfirmationIsMissing_FailsClosedBeforeUpdate()
+    {
+        var switchService = new FakeGlobalExecutionSwitchService();
+        var stateService = new FakeGlobalSystemStateService();
+        var commandRegistry = new FakeAdminCommandRegistry();
+        var auditLogService = new FakeAdminAuditLogService();
+        var controller = CreateController(
+            switchService,
+            stateService,
+            commandRegistry,
+            auditLogService,
+            roles: [ApplicationRoles.SuperAdmin]);
+
+        var result = await controller.SetGlobalSystemState(
+            state: GlobalSystemStateKind.Maintenance,
+            reason: "Planned maintenance",
+            reasonCode: "PLANNED_MAINTENANCE",
+            message: "Exchange sync freeze",
+            expiresAtUtc: new DateTime(2026, 3, 24, 23, 0, 0, DateTimeKind.Utc),
+            commandId: "cmd-gs-confirm",
+            reauthToken: null,
+            cancellationToken: CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+
+        Assert.Equal(nameof(AdminController.Settings), redirectResult.ActionName);
+        Assert.Empty(stateService.SetRequests);
+        Assert.Null(commandRegistry.LastStartRequest);
+        Assert.Equal("CriticalActionConfirmationRequired: Bu kritik islem icin ONAYLA ibaresi zorunludur.", controller.TempData["AdminGlobalSystemStateError"]);
     }
 
     [Fact]
@@ -1551,6 +1961,39 @@ public sealed class AdminControllerTests
     }
 
     [Fact]
+    public async Task ExecuteCrisisEscalation_WhenPreviewStampIsMissing_FailsClosedWithoutExecuting()
+    {
+        var commandRegistry = new FakeAdminCommandRegistry();
+        var auditLogService = new FakeAdminAuditLogService();
+        var crisisService = new FakeCrisisEscalationService();
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            commandRegistry: commandRegistry,
+            auditLogService: auditLogService,
+            crisisEscalationService: crisisService,
+            roles: [ApplicationRoles.SuperAdmin]);
+
+        var result = await controller.ExecuteCrisisEscalation(
+            CrisisEscalationLevel.SoftHalt,
+            "GLOBAL_SOFT_HALT",
+            "CRISIS_SOFT_HALT",
+            "Operator note",
+            "Market integrity protection",
+            previewStamp: null,
+            commandId: "cmd-crisis-missing-preview",
+            reauthToken: null,
+            secondApprovalReference: null,
+            cancellationToken: CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+
+        Assert.Equal(nameof(AdminController.Settings), redirectResult.ActionName);
+        Assert.Empty(crisisService.ExecuteRequests);
+        Assert.Null(commandRegistry.LastStartRequest);
+        Assert.Equal("Impact preview zorunludur.", controller.TempData["AdminCrisisEscalationError"]);
+    }
+
+    [Fact]
     public async Task SystemHealth_UsesMonitoringReadModel_WhenAvailable()
     {
         var now = new DateTime(2026, 3, 24, 12, 45, 0, DateTimeKind.Utc);
@@ -2058,6 +2501,12 @@ public sealed class AdminControllerTests
             DemoModeEnabled: true,
             IsPersisted: true);
 
+        public Exception? GetSnapshotException { get; set; }
+
+        public Exception? SetTradeMasterException { get; set; }
+
+        public Exception? SetDemoModeException { get; set; }
+
         public List<TradeMasterCall> TradeMasterCalls { get; } = [];
 
         public List<DemoModeCall> DemoModeCalls { get; } = [];
@@ -2067,6 +2516,11 @@ public sealed class AdminControllerTests
         public Task<GlobalExecutionSwitchSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
         {
             GetSnapshotCalls++;
+            if (GetSnapshotException is not null)
+            {
+                throw GetSnapshotException;
+            }
+
             return Task.FromResult(Snapshot);
         }
 
@@ -2077,6 +2531,11 @@ public sealed class AdminControllerTests
             string? correlationId = null,
             CancellationToken cancellationToken = default)
         {
+            if (SetTradeMasterException is not null)
+            {
+                throw SetTradeMasterException;
+            }
+
             TradeMasterCalls.Add(new TradeMasterCall(tradeMasterState, actor, context, correlationId));
             Snapshot = Snapshot with
             {
@@ -2095,6 +2554,11 @@ public sealed class AdminControllerTests
             string? correlationId = null,
             CancellationToken cancellationToken = default)
         {
+            if (SetDemoModeException is not null)
+            {
+                throw SetDemoModeException;
+            }
+
             DemoModeCalls.Add(new DemoModeCall(isEnabled, actor, liveApproval, context, correlationId));
             Snapshot = Snapshot with
             {
@@ -2123,6 +2587,8 @@ public sealed class AdminControllerTests
             Version: 0,
             IsPersisted: false);
 
+        public Exception? GetSnapshotException { get; set; }
+
         public int GetSnapshotCalls { get; private set; }
 
         public List<GlobalSystemStateSetRequest> SetRequests { get; } = [];
@@ -2130,6 +2596,11 @@ public sealed class AdminControllerTests
         public Task<GlobalSystemStateSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
         {
             GetSnapshotCalls++;
+            if (GetSnapshotException is not null)
+            {
+                throw GetSnapshotException;
+            }
+
             return Task.FromResult(Snapshot);
         }
 
@@ -2603,6 +3074,8 @@ public sealed class AdminControllerTests
     {
         public List<bool> ForceRefreshCalls { get; } = [];
 
+        public Exception? SnapshotException { get; set; }
+
         public BinanceTimeSyncSnapshot Snapshot { get; init; } = new(
             new DateTime(2026, 4, 2, 10, 0, 0, DateTimeKind.Utc),
             new DateTime(2026, 4, 2, 10, 0, 0, DateTimeKind.Utc),
@@ -2617,6 +3090,11 @@ public sealed class AdminControllerTests
         public Task<BinanceTimeSyncSnapshot> GetSnapshotAsync(bool forceRefresh = false, CancellationToken cancellationToken = default)
         {
             ForceRefreshCalls.Add(forceRefresh);
+            if (SnapshotException is not null)
+            {
+                throw SnapshotException;
+            }
+
             return Task.FromResult(forceRefresh && ForcedSnapshot is not null ? ForcedSnapshot : Snapshot);
         }
 
@@ -2628,22 +3106,31 @@ public sealed class AdminControllerTests
 
     private sealed class FakeDataLatencyCircuitBreaker : IDataLatencyCircuitBreaker
     {
+        public DegradedModeSnapshot Snapshot { get; set; } = new(
+            DegradedModeStateCode.Stopped,
+            DegradedModeReasonCode.ClockDriftExceeded,
+            SignalFlowBlocked: true,
+            ExecutionFlowBlocked: true,
+            LatestDataTimestampAtUtc: new DateTime(2026, 4, 2, 10, 0, 0, DateTimeKind.Utc),
+            LatestHeartbeatReceivedAtUtc: new DateTime(2026, 4, 2, 10, 0, 2, DateTimeKind.Utc),
+            LatestDataAgeMilliseconds: 2200,
+            LatestClockDriftMilliseconds: 2234,
+            LastStateChangedAtUtc: new DateTime(2026, 4, 2, 10, 0, 3, DateTimeKind.Utc),
+            IsPersisted: true);
+
+        public Exception? GetSnapshotException { get; set; }
+
         public int GetSnapshotCalls { get; private set; }
 
         public Task<DegradedModeSnapshot> GetSnapshotAsync(string? correlationId = null, string? symbol = null, string? timeframe = null, CancellationToken cancellationToken = default)
         {
             GetSnapshotCalls++;
-            return Task.FromResult(new DegradedModeSnapshot(
-                DegradedModeStateCode.Stopped,
-                DegradedModeReasonCode.ClockDriftExceeded,
-                SignalFlowBlocked: true,
-                ExecutionFlowBlocked: true,
-                LatestDataTimestampAtUtc: new DateTime(2026, 4, 2, 10, 0, 0, DateTimeKind.Utc),
-                LatestHeartbeatReceivedAtUtc: new DateTime(2026, 4, 2, 10, 0, 2, DateTimeKind.Utc),
-                LatestDataAgeMilliseconds: 2200,
-                LatestClockDriftMilliseconds: 2234,
-                LastStateChangedAtUtc: new DateTime(2026, 4, 2, 10, 0, 3, DateTimeKind.Utc),
-                IsPersisted: true));
+            if (GetSnapshotException is not null)
+            {
+                throw GetSnapshotException;
+            }
+
+            return Task.FromResult(Snapshot);
         }
 
         public Task<DegradedModeSnapshot> RecordHeartbeatAsync(DataLatencyHeartbeat heartbeat, string? correlationId = null, CancellationToken cancellationToken = default)
@@ -2767,6 +3254,8 @@ public sealed class AdminControllerTests
         }
     }
 }
+
+
 
 
 

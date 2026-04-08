@@ -21,6 +21,7 @@ const refreshScreenshotPath = path.join(diagDirectory, 'settings-refresh.png');
 const savedScreenshotPath = path.join(diagDirectory, 'settings-saved.png');
 const invalidScreenshotPath = path.join(diagDirectory, 'settings-invalid.png');
 const dashboardScreenshotPath = path.join(diagDirectory, 'dashboard-drift-summary.png');
+const adminSettingsScreenshotPath = path.join(diagDirectory, 'admin-settings-page.png');
 
 const browserPathCandidates = [
   'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
@@ -263,6 +264,8 @@ class CdpClient {
     const randomSuffix = crypto.randomUUID().replace(/-/g, '');
     const registrationEmail = `settings.smoke.${randomSuffix}@coinbot.test`;
     const registrationPassword = 'Passw0rd!Smoke1';
+    const adminEmail = `settings.admin.${randomSuffix}@coinbot.test`;
+    const adminPassword = 'Passw0rd!Admin1';
     const updatedTimeZoneId = 'Dateline Standard Time';
 
     process.env.DOTNET_CLI_HOME = path.join(repoRoot, '.dotnet');
@@ -282,7 +285,10 @@ class CdpClient {
         DOTNET_SKIP_FIRST_TIME_EXPERIENCE: process.env.DOTNET_SKIP_FIRST_TIME_EXPERIENCE,
         DOTNET_NOLOGO: process.env.DOTNET_NOLOGO,
         ASPNETCORE_ENVIRONMENT: process.env.ASPNETCORE_ENVIRONMENT,
-        ASPNETCORE_URLS: process.env.ASPNETCORE_URLS
+        ASPNETCORE_URLS: process.env.ASPNETCORE_URLS,
+        IdentitySeed__SuperAdminEmail: adminEmail,
+        IdentitySeed__SuperAdminPassword: adminPassword,
+        IdentitySeed__SuperAdminFullName: 'Settings Smoke Admin'
       }
     );
 
@@ -325,6 +331,7 @@ class CdpClient {
     await client.connect();
     await client.send('Page.enable');
     await client.send('Runtime.enable');
+    await client.send('Network.enable');
 
     await client.navigate(`${baseUrl}/Settings`);
     await client.waitForReady();
@@ -560,6 +567,123 @@ class CdpClient {
       throw new Error('Dashboard drift summary did not render readable text.');
     }
 
+    const userNavigationState = await client.evaluate(`(() => ({
+      adminSettingsLinkVisible: !!Array.from(document.querySelectorAll('a')).find(link => (link.getAttribute('href') || '').toLowerCase().includes('/admin/settings'))
+    }))()`);
+
+    if (userNavigationState.adminSettingsLinkVisible) {
+      throw new Error('Normal user shell should not render an admin global settings shortcut.');
+    }
+
+    await client.send('Network.clearBrowserCookies');
+    await client.navigate(`${baseUrl}/admin/Settings`);
+    await client.waitForReady();
+    await client.waitForLocationContains('/Auth/Login');
+
+    await client.evaluate(`(() => {
+      const setValue = (selector, value) => {
+        const element = document.querySelector(selector);
+        if (!element) throw new Error('Element not found: ' + selector);
+        element.value = value;
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+
+      setValue('input[name="EmailOrUserName"]', ${JSON.stringify(adminEmail)});
+      setValue('input[name="Password"]', ${JSON.stringify(adminPassword)});
+      const form = document.querySelector('form[action$="/Auth/Login"]');
+      if (!form) throw new Error('Admin login form was not found.');
+      form.submit();
+      return true;
+    })()`);
+
+    await client.waitForReady();
+    await client.waitForLocationContains('/admin/Settings');
+    await client.captureScreenshot(adminSettingsScreenshotPath);
+    const adminSettingsState = await client.evaluate(`(() => {
+      const overviewText = document.querySelector('#cb_admin_settings_tab_overview')?.textContent || '';
+      const criticalText = document.querySelector('#cb_admin_settings_tab_critical')?.textContent || '';
+      const activationText = document.querySelector('#cb_admin_settings_tab_activation')?.textContent || '';
+      const pageText = document.body.textContent || '';
+
+      return {
+        pageTitle: document.querySelector('.cb-page-title, .cb-admin-page-title, .cb-admin-section-title')?.innerText?.trim() || '',
+        tabCount: document.querySelectorAll('[id^="cb_admin_settings_tab_link_"]').length,
+        hasOverviewTab: !!document.querySelector('#cb_admin_settings_tab_link_overview'),
+        hasWizardTab: !!document.querySelector('#cb_admin_settings_tab_link_wizard'),
+        hasCriticalTab: !!document.querySelector('#cb_admin_settings_tab_link_critical'),
+        hasSyncTab: !!document.querySelector('#cb_admin_settings_tab_link_sync'),
+        hasActivationTab: !!document.querySelector('#cb_admin_settings_tab_link_activation'),
+        hasDetailsTab: !!document.querySelector('#cb_admin_settings_tab_link_details'),
+        activeTabText: document.querySelector('.cb-admin-settings-nav-link.active')?.innerText?.trim() || '',
+        hasReadOnlyText: overviewText.includes('Canli Snapshot / Salt Okunur'),
+        hasWritableText: criticalText.includes('Yazilabilir Konfigürasyon'),
+        hasActivationPanel: activationText.includes('Sistem Aktivasyon Kontrol Merkezi') || activationText.includes('Aktif edilebilir mi'),
+        hasTimezoneSelect: !!document.querySelector('select[name="Form.PreferredTimeZoneId"]'),
+        hasGlobalSettingsMenuLabel: pageText.includes('Global Ayarlar')
+      };
+    })()`);
+    if (adminSettingsState.tabCount < 6 || !adminSettingsState.hasOverviewTab || !adminSettingsState.hasWizardTab || !adminSettingsState.hasCriticalTab || !adminSettingsState.hasSyncTab || !adminSettingsState.hasActivationTab || !adminSettingsState.hasDetailsTab) {
+      throw new Error('Admin / Settings tabs did not render the expected operational sections.');
+    }
+
+    if (!/Genel Durum/i.test(adminSettingsState.activeTabText)) {
+      throw new Error('Admin / Settings did not open on the expected overview tab.');
+    }
+
+    if (!adminSettingsState.hasReadOnlyText || !adminSettingsState.hasWritableText || !adminSettingsState.hasActivationPanel) {
+      throw new Error('Admin / Settings did not render the expected read-only, writable, and activation cues.');
+    }
+
+    if (adminSettingsState.hasTimezoneSelect) {
+      throw new Error('Admin / Settings should not render the normal user timezone form.');
+    }
+
+    if (!adminSettingsState.hasGlobalSettingsMenuLabel) {
+      throw new Error('Admin shell did not render the Global Ayarlar label.');
+    }
+
+    const adminActivationState = await client.evaluate(`(() => {
+      const activationPane = document.querySelector('#cb_admin_settings_tab_activation');
+      const activationCenter = activationPane?.querySelector('[data-cb-admin-activation-control-center]');
+      return {
+        activationTabText: document.querySelector('#cb_admin_settings_tab_link_activation')?.innerText?.trim() || '',
+        activationTabTarget: document.querySelector('#cb_admin_settings_tab_link_activation')?.getAttribute('href') || '',
+        activationPaneExists: !!activationPane,
+        activationSummaryVisible: (activationPane?.textContent || '').includes('Sistem Aktivasyon Kontrol Merkezi'),
+        activationCenterVisible: !!activationCenter,
+        decisionCode: activationCenter?.getAttribute('data-cb-admin-activation-decision-code') || '',
+        decisionType: activationCenter?.getAttribute('data-cb-admin-activation-decision-type') || '',
+        activatable: activationCenter?.getAttribute('data-cb-admin-activation-activatable') || '',
+        checklistCount: activationPane?.querySelectorAll('[data-cb-admin-activation-check-item]').length || 0,
+        switchCount: activationPane?.querySelectorAll('[data-cb-admin-activation-switch]').length || 0,
+        hasActivateCard: !!activationPane?.querySelector('[data-cb-admin-activation-action-card="activate"]'),
+        hasDeactivateCard: !!activationPane?.querySelector('[data-cb-admin-activation-action-card="deactivate"]'),
+        hasActivateConfirmationInput: !!activationPane?.querySelector('[data-cb-admin-activation-action-card="activate"] input[name="reauthToken"][placeholder="ONAYLA"]'),
+        hasActivateNoopState: !!activationPane?.querySelector('[data-cb-admin-activation-action-card="activate"] .cb-admin-info-strip-meta') && (activationPane?.querySelector('[data-cb-admin-activation-action-card="activate"] .cb-admin-info-strip-meta')?.innerText?.trim() || '') === 'No-op',
+        hasDeactivateConfirmationInput: !!activationPane?.querySelector('[data-cb-admin-activation-action-card="deactivate"] input[name="reauthToken"][placeholder="ONAYLA"]'),
+        hasEmergencySection: !!activationPane?.querySelector('[data-cb-admin-emergency-actions]'),
+        hasCrisisPanelLink: !!activationPane?.querySelector('a[href="#cb_admin_settings_crisis_panel"]')
+      };
+    })()`);
+
+    if (!/Aktivasyon/i.test(adminActivationState.activationTabText)
+        || adminActivationState.activationTabTarget !== '#cb_admin_settings_tab_activation'
+        || !adminActivationState.activationPaneExists
+        || !adminActivationState.activationSummaryVisible
+        || !adminActivationState.activationCenterVisible
+        || !adminActivationState.decisionCode
+        || adminActivationState.checklistCount < 7
+        || adminActivationState.switchCount < 6
+        || !adminActivationState.hasActivateCard
+        || !adminActivationState.hasDeactivateCard
+        || (!adminActivationState.hasActivateConfirmationInput && !adminActivationState.hasActivateNoopState)
+        || !adminActivationState.hasDeactivateConfirmationInput
+        || !adminActivationState.hasEmergencySection
+        || !adminActivationState.hasCrisisPanelLink) {
+      throw new Error('Admin / Settings activation control center did not render the expected guarded surface.');
+    }
+
     const summary = {
       baseUrl,
       anonymousLocation,
@@ -578,12 +702,25 @@ class CdpClient {
       invalidErrorText: String(invalidState.errorText ?? ''),
       dashboardDriftSummaryText: String(dashboardState.summaryText ?? ''),
       dashboardDriftReasonText: String(dashboardState.reasonText ?? ''),
+      userAdminLinkVisible: Boolean(userNavigationState.adminSettingsLinkVisible),
+      adminSettingsTabCount: Number(adminSettingsState.tabCount),
+      adminSettingsActiveTabText: String(adminSettingsState.activeTabText ?? ''),
+      adminSettingsHasReadOnlyText: Boolean(adminSettingsState.hasReadOnlyText),
+      adminSettingsHasWritableText: Boolean(adminSettingsState.hasWritableText),
+      adminSettingsHasActivationPanel: Boolean(adminSettingsState.hasActivationPanel),
+      adminActivationTabText: String(adminActivationState.activationTabText ?? ''),
+      adminActivationPaneVisible: Boolean(adminActivationState.activationPaneExists),
+      adminActivationDecisionCode: String(adminActivationState.decisionCode ?? ''),
+      adminActivationDecisionType: String(adminActivationState.decisionType ?? ''),
+      adminActivationActivatable: String(adminActivationState.activatable ?? ''),
+      adminActivationChecklistCount: Number(adminActivationState.checklistCount ?? 0),
       screenshots: {
         anonymous: anonymousScreenshotPath,
         settings: settingsScreenshotPath,
         saved: savedScreenshotPath,
         invalid: invalidScreenshotPath,
-        dashboard: dashboardScreenshotPath
+        dashboard: dashboardScreenshotPath,
+        adminSettings: adminSettingsScreenshotPath
       },
       logs: {
         webStdOut: webStdOutPath,
@@ -604,6 +741,15 @@ class CdpClient {
     console.log(`AntiforgeryStatus=${summary.antiforgeryStatus}`);
     console.log(`InvalidErrorVisible=${summary.invalidErrorVisible}`);
     console.log(`DashboardDriftSummary=${summary.dashboardDriftSummaryText}`);
+    console.log(`UserAdminLinkVisible=${summary.userAdminLinkVisible}`);
+    console.log(`AdminSettingsTabCount=${summary.adminSettingsTabCount}`);
+    console.log(`AdminSettingsActiveTab=${summary.adminSettingsActiveTabText}`);
+    console.log(`AdminActivationTab=${summary.adminActivationTabText}`);
+    console.log(`AdminActivationPaneVisible=${summary.adminActivationPaneVisible}`);
+    console.log(`AdminActivationDecisionCode=${summary.adminActivationDecisionCode}`);
+    console.log(`AdminActivationDecisionType=${summary.adminActivationDecisionType}`);
+    console.log(`AdminActivationActivatable=${summary.adminActivationActivatable}`);
+    console.log(`AdminActivationChecklistCount=${summary.adminActivationChecklistCount}`);
     console.log(`SummaryPath=${summaryPath}`);
   } finally {
     await client?.close();
@@ -622,6 +768,10 @@ class CdpClient {
   console.error(error?.stack ?? error?.message ?? String(error));
   process.exit(1);
 });
+
+
+
+
 
 
 

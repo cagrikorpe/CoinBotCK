@@ -48,10 +48,13 @@
                         @Html.AntiForgeryToken()
                         <input type="hidden" name="isArmed" value="@(!Model.IsTradeMasterArmed)" />
                         <input type="hidden" name="commandId" value="@(Guid.NewGuid().ToString("N"))" />
-                        <input type="hidden" name="reauthToken" value="" />
                         <div class="form-group mb-0">
                             <label class="cb-form-label">Audit reason</label>
                             <input name="reason" type="text" class="form-control cb-form-control" maxlength="256" required placeholder="TradeMaster degisikligi nedeni" />
+                        </div>
+                        <div class="form-group mt-4 mb-0">
+                            <label class="cb-form-label">Onay ibaresi</label>
+                            <input name="reauthToken" type="text" class="form-control cb-form-control" maxlength="64" required placeholder="ONAYLA" />
                         </div>
                         <button type="submit" class="btn @(Model.IsTradeMasterArmed ? "btn-light-danger" : "btn-light-primary") font-weight-bold mt-5">
                             @(Model.IsTradeMasterArmed ? "Disarm TradeMaster" : "Arm TradeMaster")
@@ -92,7 +95,6 @@
                         @Html.AntiForgeryToken()
                         <input type="hidden" name="isEnabled" value="@(Model.DemoModeEnabled ? "false" : "true")" />
                         <input type="hidden" name="commandId" value="@(Guid.NewGuid().ToString("N"))" />
-                        <input type="hidden" name="reauthToken" value="" />
                         <div class="form-group mb-0">
                             <label class="cb-form-label">Audit reason</label>
                             <input name="reason" type="text" class="form-control cb-form-control" maxlength="256" required placeholder="DemoMode degisikligi nedeni" />
@@ -104,6 +106,10 @@
                                 <input name="liveApprovalReference" type="text" class="form-control cb-form-control" maxlength="128" placeholder="change-ref-001" />
                             </div>
                         }
+                        <div class="form-group mt-4 mb-0">
+                            <label class="cb-form-label">Onay ibaresi</label>
+                            <input name="reauthToken" type="text" class="form-control cb-form-control" maxlength="64" required placeholder="ONAYLA" />
+                        </div>
                         <button type="submit" class="btn @(Model.DemoModeEnabled ? "btn-light-danger" : "btn-light-primary") font-weight-bold mt-5">
                             @(Model.DemoModeEnabled ? "Disable DemoMode" : "Enable DemoMode")
                         </button>

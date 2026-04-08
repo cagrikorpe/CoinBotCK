@@ -54,7 +54,6 @@
             <form asp-area="Admin" asp-controller="Admin" asp-action="SetGlobalSystemState" method="post" class="mt-6" data-cb-reauth-required="true">
                 @Html.AntiForgeryToken()
                 <input type="hidden" name="commandId" value="@(Guid.NewGuid().ToString("N"))" />
-                <input type="hidden" name="reauthToken" value="" />
 
                 <div class="form-row">
                     <div class="form-group col-lg-4">
@@ -85,6 +84,12 @@
                 <div class="form-group mt-4 mb-0">
                     <label class="cb-form-label">Audit reason</label>
                     <input name="reason" type="text" class="form-control cb-form-control" maxlength="256" required placeholder="Global state degisikligi nedeni" />
+                </div>
+
+                <div class="form-group mt-4 mb-0">
+                    <label class="cb-form-label">Onay ibaresi</label>
+                    <input name="reauthToken" type="text" class="form-control cb-form-control" maxlength="64" required placeholder="ONAYLA" />
+                    <span class="cb-helper-text mt-3 d-block">Global state degisikligi ONAYLA ibaresi olmadan uygulanmaz.</span>
                 </div>
 
                 <div class="cb-admin-inline-actions mt-5">

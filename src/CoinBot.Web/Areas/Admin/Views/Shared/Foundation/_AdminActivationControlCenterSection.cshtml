@@ -1,0 +1,251 @@
+@model CoinBot.Web.ViewModels.Admin.AdminActivationControlCenterViewModel
+@{
+    var canEditGlobalPolicy = ViewData["AdminCanEditGlobalPolicy"] is bool canEditValue && canEditValue;
+    var tradeMasterSwitch = Model.CriticalSwitches.First(item => item.Key == "trade-master");
+    var killSwitch = Model.CriticalSwitches.First(item => item.Key == "kill-switch");
+    var softHalt = Model.CriticalSwitches.First(item => item.Key == "soft-halt");
+    var emergencyStop = Model.CriticalSwitches.First(item => item.Key == "emergency-stop");
+}
+
+<section id="cb_admin_settings_activation" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section"
+         data-cb-admin-activation-control-center
+         data-cb-admin-activation-activatable="@(Model.IsActivatable ? "true" : "false")"
+         data-cb-admin-activation-decision-code="@Model.LastDecision.Code"
+         data-cb-admin-activation-decision-type="@Model.LastDecision.TypeLabel">
+    <div class="card-body">
+        <div class="cb-admin-section-kicker">Sistem Aktivasyon Kontrol Merkezi</div>
+        <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
+            <div>
+                <div class="cb-admin-section-title">Tek merkezden ac / kapat, once readiness'i dogrula</div>
+                <p class="cb-admin-section-description">Aktivasyon oncesi readiness checklist, son allow/block karari ve acil durum aksiyonlari tek merkezde toplanir. Unknown durumlar pass sayilmaz.</p>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+            {
+                Label = Model.StatusLabel,
+                Tone = Model.StatusTone,
+                IconText = "AC"
+            })
+        </div>
+
+        <div class="cb-admin-summary-grid mt-6">
+            <div class="cb-admin-summary-card" data-cb-admin-activation-summary-card="state">
+                <span class="cb-admin-summary-label">Sistem durumu</span>
+                <strong>@(Model.IsCurrentlyActive ? "Aktif" : "Pasif")</strong>
+                <small>@Model.Guidance</small>
+            </div>
+            <div class="cb-admin-summary-card" data-cb-admin-activation-summary-card="activatable">
+                <span class="cb-admin-summary-label">Aktif edilebilir mi</span>
+                <strong>@(Model.IsActivatable ? "Evet" : "Hayir")</strong>
+                <small>@Model.StatusLabel</small>
+            </div>
+            <div class="cb-admin-summary-card" data-cb-admin-activation-summary-card="mode">
+                <span class="cb-admin-summary-label">Calisma modu</span>
+                <strong>@Model.CurrentModeLabel</strong>
+                <small>@Model.CurrentModeSummary</small>
+            </div>
+            <div class="cb-admin-summary-card" data-cb-admin-activation-summary-card="decision-type">
+                <span class="cb-admin-summary-label">Son karar tipi</span>
+                <strong>@Model.LastDecision.TypeLabel</strong>
+                <small>@Model.LastDecision.Source</small>
+            </div>
+            <div class="cb-admin-summary-card" data-cb-admin-activation-summary-card="decision-code">
+                <span class="cb-admin-summary-label">Son karar reason</span>
+                <strong>@Model.LastDecision.Code</strong>
+                <small>@Model.LastDecision.Summary</small>
+            </div>
+            <div class="cb-admin-summary-card" data-cb-admin-activation-summary-card="decision-time">
+                <span class="cb-admin-summary-label">Karar zamani</span>
+                <strong>@Model.LastDecision.EvaluatedAtUtcLabel</strong>
+                <small>@Model.LastDecision.StateSummary</small>
+            </div>
+        </div>
+
+        <div class="cb-admin-info-strip @(Model.IsActivatable ? "cb-admin-info-strip-healthy" : "cb-admin-info-strip-danger") mt-6">
+            <div>
+                <div class="cb-admin-info-strip-title">Son block / allow reason</div>
+                <div class="cb-admin-info-strip-text"><strong>@Model.LastDecision.Code</strong> - @Model.LastDecision.Summary</div>
+            </div>
+            <span class="cb-admin-info-strip-meta">@Model.LastDecision.TypeLabel</span>
+        </div>
+
+        <section class="mt-8" data-cb-admin-activation-switches>
+            <div class="cb-admin-section-title">Kritik switch'ler</div>
+            <p class="cb-admin-section-description">TradeMaster, pilot activation, mode ve acil durdurma yuzeyleri ayni yerde gorunur. Bu bloklar runtime snapshot ve persisted state ayrimini acik sekilde gosterir.</p>
+            <div class="cb-admin-settings-switch-grid mt-6">
+                @foreach (var item in Model.CriticalSwitches)
+                {
+                    <div class="cb-admin-summary-card" data-cb-admin-activation-switch="@item.Key">
+                        <span class="cb-admin-summary-label">@item.Label</span>
+                        <strong>@item.Value</strong>
+                        <small>@item.Summary</small>
+                        <div class="cb-admin-page-meta mt-4">
+                            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+                            {
+                                Label = item.Value,
+                                Tone = item.Tone,
+                                IconText = item.Label.Length >= 2 ? item.Label[..2].ToUpperInvariant() : item.Label.ToUpperInvariant()
+                            })
+                        </div>
+                    </div>
+                }
+            </div>
+        </section>
+
+        <section class="mt-8" data-cb-admin-activation-checklist>
+            <div class="cb-admin-section-title">Readiness checklist</div>
+            <p class="cb-admin-section-description">Aktivasyon oncesi zorunlu kapilar burada pass / fail / unknown olarak görünür. Unknown durum aktivasyon izni vermez.</p>
+            <div class="cb-admin-summary-grid mt-6">
+                @foreach (var item in Model.ReadinessChecklist)
+                {
+                    <div class="cb-admin-summary-card"
+                         data-cb-admin-activation-check-item
+                         data-cb-admin-activation-check-key="@item.Key"
+                         data-cb-admin-activation-check-status="@item.StatusCode"
+                         data-cb-admin-activation-check-reason-code="@item.ReasonCode">
+                        <span class="cb-admin-summary-label">@item.Label</span>
+                        <strong>@item.StatusLabel</strong>
+                        <small>@item.Summary</small>
+                        <div class="cb-admin-page-meta mt-4">
+                            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+                            {
+                                Label = item.StatusLabel,
+                                Tone = item.Tone,
+                                IconText = item.Key.Length >= 2 ? item.Key[..2].ToUpperInvariant() : item.Key.ToUpperInvariant()
+                            })
+                            <span class="cb-helper-text mt-3 d-block">@item.ReasonCode · @item.SourceHint</span>
+                        </div>
+                    </div>
+                }
+            </div>
+        </section>
+
+        @if (Model.BlockingItems.Count > 0)
+        {
+            <div class="cb-admin-info-strip cb-admin-info-strip-danger mt-8" data-cb-admin-activation-blocker-list>
+                <div>
+                    <div class="cb-admin-info-strip-title">Aktivasyon verilemiyor</div>
+                    <div class="cb-admin-info-strip-text">
+                        <ul class="mb-0 pl-6">
+                            @foreach (var item in Model.BlockingItems)
+                            {
+                                <li><strong>@item.ReasonCode</strong> - @item.Summary</li>
+                            }
+                        </ul>
+                    </div>
+                </div>
+                <span class="cb-admin-info-strip-meta">Blocked</span>
+            </div>
+        }
+
+        <section class="mt-8" data-cb-admin-activation-actions>
+            <div class="cb-admin-section-title">Aktif et / kapat</div>
+            <p class="cb-admin-section-description">Bu formlar state-changing ve audit-etkili komutlardir. Aktivasyon only readiness pass durumunda izin alir; kapatma her zaman fail-closed uygulanir.</p>
+
+            @if (canEditGlobalPolicy)
+            {
+                <div class="cb-admin-settings-switch-grid mt-6">
+                    <div class="cb-admin-summary-card" data-cb-admin-activation-action-card="activate">
+                        <span class="cb-admin-summary-label">Sistemi aktive et</span>
+                        <strong>@(Model.IsActivatable ? "Ready" : "Blocked")</strong>
+                        <small>TradeMaster'i armed duruma getirir. Readiness fail veya unknown ise backend komutu reddeder.</small>
+                        @if (!tradeMasterSwitch.Value.Equals("Armed", StringComparison.OrdinalIgnoreCase))
+                        {
+                            <form asp-area="Admin" asp-controller="Admin" asp-action="ActivateSystem" method="post" class="mt-5" data-cb-reauth-required="true">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="commandId" value="@(Guid.NewGuid().ToString("N"))" />
+                                <div class="form-group mb-0">
+                                    <label class="cb-form-label">Audit reason</label>
+                                    <input name="reason" type="text" class="form-control cb-form-control" maxlength="256" required placeholder="Aktivasyon nedeni" />
+                                </div>
+                                <div class="form-group mt-4 mb-0" data-cb-admin-activation-confirm>
+                                    <label class="cb-form-label">Onay ibaresi</label>
+                                    <input name="reauthToken" type="text" class="form-control cb-form-control" maxlength="64" required placeholder="ONAYLA" />
+                                    <span class="cb-helper-text mt-3 d-block">Bu kritik komut server-side olarak ONAYLA ibaresi olmadan uygulanmaz.</span>
+                                </div>
+                                <button type="submit" class="btn btn-light-primary font-weight-bold mt-5" @(Model.IsActivatable ? null : "disabled")>
+                                    Sistemi aktive et
+                                </button>
+                            </form>
+                        }
+                        else
+                        {
+                            <div class="cb-admin-info-strip cb-admin-info-strip-healthy mt-5">
+                                <div>
+                                    <div class="cb-admin-info-strip-title">TradeMaster armed</div>
+                                    <div class="cb-admin-info-strip-text">Sistem zaten armed durumda. Readiness bozulursa son karar karti block reason'i gunceller.</div>
+                                </div>
+                                <span class="cb-admin-info-strip-meta">No-op</span>
+                            </div>
+                        }
+                    </div>
+
+                    <div class="cb-admin-summary-card" data-cb-admin-activation-action-card="deactivate">
+                        <span class="cb-admin-summary-label">Sistemi kapat</span>
+                        <strong>Fail-closed</strong>
+                        <small>Readiness istemez; TradeMaster'i disarm ederek execution yolunu guvenli sekilde kapatir.</small>
+                        <form asp-area="Admin" asp-controller="Admin" asp-action="DeactivateSystem" method="post" class="mt-5" data-cb-reauth-required="true">
+                            @Html.AntiForgeryToken()
+                            <input type="hidden" name="commandId" value="@(Guid.NewGuid().ToString("N"))" />
+                            <div class="form-group mb-0">
+                                <label class="cb-form-label">Audit reason</label>
+                                <input name="reason" type="text" class="form-control cb-form-control" maxlength="256" required placeholder="Kapatma nedeni" />
+                            </div>
+                            <div class="form-group mt-4 mb-0" data-cb-admin-deactivation-confirm>
+                                <label class="cb-form-label">Onay ibaresi</label>
+                                <input name="reauthToken" type="text" class="form-control cb-form-control" maxlength="64" required placeholder="ONAYLA" />
+                                <span class="cb-helper-text mt-3 d-block">Fail-closed kapatma server-side olarak ONAYLA ibaresi olmadan uygulanmaz.</span>
+                            </div>
+                            <button type="submit" class="btn btn-light-danger font-weight-bold mt-5">
+                                Sistemi kapat
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6">
+                    <div>
+                        <div class="cb-admin-info-strip-title">Read-only visibility</div>
+                        <div class="cb-admin-info-strip-text">Bu rolde aktivasyon kararini gorebilirsiniz; state-changing komutlar policy bazli olarak kapali tutulur.</div>
+                    </div>
+                    <span class="cb-admin-info-strip-meta">Read-only</span>
+                </div>
+            }
+        </section>
+
+        <section class="mt-8" data-cb-admin-emergency-actions>
+            <div class="cb-admin-section-title">Acil durum aksiyonlari</div>
+            <p class="cb-admin-section-description">Kill switch, soft halt ve emergency stop durumu aktivasyon merkezinden gorunur. Destructive crisis komutlari ayrica impact preview ile calisir.</p>
+            <div class="cb-admin-summary-grid mt-6">
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Kill switch</span>
+                    <strong>@killSwitch.Value</strong>
+                    <small>@killSwitch.Summary</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Soft halt</span>
+                    <strong>@softHalt.Value</strong>
+                    <small>@softHalt.Summary</small>
+                </div>
+                <div class="cb-admin-summary-card">
+                    <span class="cb-admin-summary-label">Emergency stop</span>
+                    <strong>@emergencyStop.Value</strong>
+                    <small>@emergencyStop.Summary</small>
+                </div>
+            </div>
+            <div class="cb-admin-inline-actions mt-6">
+                <a href="#cb_admin_settings_crisis_panel" class="btn btn-light-danger font-weight-bold">Emergency / soft halt paneli</a>
+                <a asp-area="Admin" asp-controller="Admin" asp-action="SystemStateHistory" class="btn btn-light-warning font-weight-bold">State history</a>
+                <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-primary font-weight-bolder">Audit / trace</a>
+            </div>
+            <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-5">
+                <div>
+                    <div class="cb-admin-info-strip-title">Audit etkili degisiklik</div>
+                    <div class="cb-admin-info-strip-text">Emergency ve fail-closed komutlar re-auth, CSRF ve audit envelope ile korunur. Impact preview olmadan crisis execute acilmaz.</div>
+                </div>
+                <span class="cb-admin-info-strip-meta">Destructive</span>
+            </div>
+        </section>
+    </div>
+</section>

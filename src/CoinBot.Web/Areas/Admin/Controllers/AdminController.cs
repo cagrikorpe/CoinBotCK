@@ -56,6 +56,7 @@ public sealed class AdminController : Controller
     private const string CrisisPreviewTempDataKey = "AdminCrisisEscalationPreviewState";
     private const string StrategyTemplateSuccessTempDataKey = "AdminStrategyTemplateSuccess";
     private const string StrategyTemplateErrorTempDataKey = "AdminStrategyTemplateError";
+    private const string CriticalActionConfirmationPhrase = "ONAYLA";
     private static readonly JsonSerializerOptions PolicyJsonSerializerOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true
@@ -1369,25 +1370,32 @@ public sealed class AdminController : Controller
             activeNav: "Settings",
             breadcrumbItems: new[] { "Super Admin", "Platform", "Global Ayarlar" });
 
-        ViewData[ExecutionSwitchSnapshotViewDataKey] = await globalExecutionSwitchService.GetSnapshotAsync(cancellationToken);
-        ViewData[GlobalSystemStateSnapshotViewDataKey] = await globalSystemStateService.GetSnapshotAsync(cancellationToken);
+        var operationalContext = await LoadSettingsOperationalContextAsync(cancellationToken);
+
+        ViewData[ExecutionSwitchSnapshotViewDataKey] = operationalContext.ExecutionSnapshot;
+        ViewData[GlobalSystemStateSnapshotViewDataKey] = operationalContext.GlobalSystemStateSnapshot;
         ViewData[GlobalPolicySnapshotViewDataKey] = await LoadGlobalPolicySnapshotAsync(cancellationToken);
         if (logCenterRetentionService is not null)
         {
-            ViewData[AdminLogCenterRetentionSnapshotViewDataKey] = await logCenterRetentionService.GetSnapshotAsync(cancellationToken);
+            try
+            {
+                ViewData[AdminLogCenterRetentionSnapshotViewDataKey] = await logCenterRetentionService.GetSnapshotAsync(cancellationToken);
+            }
+            catch
+            {
+                ViewData[AdminLogCenterRetentionSnapshotViewDataKey] = null;
+            }
         }
 
-        var clockDriftSnapshot = await binanceTimeSyncService.GetSnapshotAsync(cancellationToken: cancellationToken);
-        var driftGuardSnapshot = await dataLatencyCircuitBreaker.GetSnapshotAsync(HttpContext.TraceIdentifier, cancellationToken: cancellationToken);
-        ViewData[ClockDriftSnapshotViewDataKey] = BuildClockDriftInfoViewModel(clockDriftSnapshot);
-        ViewData[DriftGuardSnapshotViewDataKey] = BuildMarketDriftGuardInfoViewModel(driftGuardSnapshot);
+        ViewData[ClockDriftSnapshotViewDataKey] = operationalContext.ClockDriftViewModel;
+        ViewData[DriftGuardSnapshotViewDataKey] = operationalContext.DriftGuardViewModel;
         ViewData[CanRefreshClockDriftViewDataKey] = CanRefreshClockDrift();
         ViewData[CrisisPreviewViewDataKey] = LoadCrisisPreviewViewModelFromTempData();
-        ViewData[PilotOrderNotionalSummaryViewDataKey] = ResolvePilotOrderNotionalSummary();
-        ViewData[PilotOrderNotionalToneViewDataKey] = ResolvePilotOrderNotionalTone();
+        ViewData[PilotOrderNotionalSummaryViewDataKey] = operationalContext.PilotOrderNotionalSummary;
+        ViewData[PilotOrderNotionalToneViewDataKey] = operationalContext.PilotOrderNotionalTone;
         ViewData[AdminCanEditGlobalPolicyViewDataKey] = CanEditGlobalPolicy();
 
-        return View();
+        return View(operationalContext.ActivationControlCenter);
     }
 
     [HttpPost]
@@ -1415,6 +1423,327 @@ public sealed class AdminController : Controller
     [HttpPost]
     [Authorize(Policy = ApplicationPolicies.PlatformAdministration)]
     [ValidateAntiForgeryToken]
+    public async Task<IActionResult> ActivateSystem(
+        string? reason,
+        string? commandId,
+        string? reauthToken,
+        CancellationToken cancellationToken)
+    {
+        var mfaResult = await EnforcePlatformAdminMfaAsync(
+            "Admin.Settings.Activation.Activate",
+            ExecutionSwitchErrorTempDataKey,
+            nameof(Settings),
+            null,
+            cancellationToken);
+
+        if (mfaResult is not null)
+        {
+            return mfaResult;
+        }
+
+        if (!CanEditGlobalPolicy())
+        {
+            TempData[ExecutionSwitchErrorTempDataKey] = "ActivationRoleReadOnly: Bu rolde sistem aktivasyonu uygulanamaz.";
+            return RedirectToAction(nameof(Settings));
+        }
+
+        var confirmationResult = EnforceCriticalActionConfirmation(
+            reauthToken,
+            ExecutionSwitchErrorTempDataKey,
+            nameof(Settings),
+            null);
+
+        if (confirmationResult is not null)
+        {
+            return confirmationResult;
+        }
+
+        var normalizedReason = NormalizeRequiredReason(reason);
+
+        if (normalizedReason is null)
+        {
+            TempData[ExecutionSwitchErrorTempDataKey] = "Audit reason zorunludur.";
+            return RedirectToAction(nameof(Settings));
+        }
+
+        var actorUserId = ResolveAdminUserId();
+        var correlationId = HttpContext.TraceIdentifier;
+        var resolvedCommandId = ResolveCommandId(commandId);
+        var operationalContext = await LoadSettingsOperationalContextAsync(cancellationToken);
+        var requestedSummary = BuildActivationControlCenterSummary(operationalContext.ActivationControlCenter);
+        var payloadHash = CreatePayloadHash($"ActivateSystem|{normalizedReason}|{operationalContext.ActivationControlCenter.LastDecision.Code}");
+        var commandStartResult = await adminCommandRegistry.TryStartAsync(
+            new AdminCommandStartRequest(
+                resolvedCommandId,
+                "Admin.Settings.Activation.Activate",
+                actorUserId,
+                "ActivationControlCenter.System",
+                payloadHash,
+                correlationId),
+            cancellationToken);
+
+        if (!await HandleCommandStartResultAsync(
+                commandStartResult,
+                actorUserId,
+                "Admin.Settings.Activation.Activate",
+                "ActivationControlCenter",
+                "System",
+                requestedSummary,
+                normalizedReason,
+                ExecutionSwitchSuccessTempDataKey,
+                ExecutionSwitchErrorTempDataKey,
+                cancellationToken))
+        {
+            return RedirectToAction(nameof(Settings));
+        }
+
+        if (!operationalContext.ActivationControlCenter.IsActivatable)
+        {
+            var blockedMessage = BuildActivationControlFailureMessage(operationalContext.ActivationControlCenter);
+
+            await adminAuditLogService.WriteAsync(
+                BuildAdminAuditLogWriteRequest(
+                    actorUserId,
+                    "Admin.Settings.Activation.ActivateBlocked",
+                    "ActivationControlCenter",
+                    "System",
+                    BuildExecutionSwitchSummary(operationalContext.ExecutionSnapshot),
+                    requestedSummary,
+                    normalizedReason,
+                    correlationId),
+                cancellationToken);
+
+            await adminCommandRegistry.CompleteAsync(
+                new AdminCommandCompletionRequest(
+                    resolvedCommandId,
+                    payloadHash,
+                    AdminCommandStatus.Failed,
+                    blockedMessage,
+                    correlationId),
+                cancellationToken);
+
+            TempData[ExecutionSwitchErrorTempDataKey] = blockedMessage;
+            return RedirectToAction(nameof(Settings));
+        }
+
+        try
+        {
+            var updatedSnapshot = await globalExecutionSwitchService.SetTradeMasterStateAsync(
+                TradeMasterSwitchState.Armed,
+                ResolveExecutionActor(),
+                BuildSwitchContext("ActivationCenter.Activate", normalizedReason, resolvedCommandId),
+                correlationId,
+                cancellationToken);
+            var successMessage = operationalContext.ExecutionSnapshot.IsTradeMasterArmed
+                ? "Sistem zaten armed durumdaydi; activation center allow karari korunuyor."
+                : $"Sistem aktive edildi. Mode={updatedSnapshot.EffectiveEnvironment}; Decision={operationalContext.ActivationControlCenter.LastDecision.Code}.";
+
+            await adminAuditLogService.WriteAsync(
+                BuildAdminAuditLogWriteRequest(
+                    actorUserId,
+                    "Admin.Settings.Activation.Activate",
+                    "ActivationControlCenter",
+                    "System",
+                    BuildExecutionSwitchSummary(operationalContext.ExecutionSnapshot),
+                    BuildExecutionSwitchSummary(updatedSnapshot),
+                    normalizedReason,
+                    correlationId),
+                cancellationToken);
+
+            await adminCommandRegistry.CompleteAsync(
+                new AdminCommandCompletionRequest(
+                    resolvedCommandId,
+                    payloadHash,
+                    AdminCommandStatus.Completed,
+                    successMessage,
+                    correlationId),
+                cancellationToken);
+
+            TempData[ExecutionSwitchSuccessTempDataKey] = successMessage;
+        }
+        catch (Exception exception)
+        {
+            var failureMessage = BuildActivationCommandFailureMessage(
+                "ActivationApplyRejected",
+                exception.Message,
+                "Aktivasyon komutu backend state degisikligini tamamlayamadi.");
+
+            await adminAuditLogService.WriteAsync(
+                BuildAdminAuditLogWriteRequest(
+                    actorUserId,
+                    "Admin.Settings.Activation.ActivateFailed",
+                    "ActivationControlCenter",
+                    "System",
+                    BuildExecutionSwitchSummary(operationalContext.ExecutionSnapshot),
+                    requestedSummary,
+                    normalizedReason,
+                    correlationId),
+                cancellationToken);
+
+            await adminCommandRegistry.CompleteAsync(
+                new AdminCommandCompletionRequest(
+                    resolvedCommandId,
+                    payloadHash,
+                    AdminCommandStatus.Failed,
+                    failureMessage,
+                    correlationId),
+                cancellationToken);
+
+            TempData[ExecutionSwitchErrorTempDataKey] = failureMessage;
+        }
+
+        return RedirectToAction(nameof(Settings));
+    }
+
+    [HttpPost]
+    [Authorize(Policy = ApplicationPolicies.PlatformAdministration)]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> DeactivateSystem(
+        string? reason,
+        string? commandId,
+        string? reauthToken,
+        CancellationToken cancellationToken)
+    {
+        var mfaResult = await EnforcePlatformAdminMfaAsync(
+            "Admin.Settings.Activation.Deactivate",
+            ExecutionSwitchErrorTempDataKey,
+            nameof(Settings),
+            null,
+            cancellationToken);
+
+        if (mfaResult is not null)
+        {
+            return mfaResult;
+        }
+
+        if (!CanEditGlobalPolicy())
+        {
+            TempData[ExecutionSwitchErrorTempDataKey] = "ActivationRoleReadOnly: Bu rolde sistem kapatma komutu uygulanamaz.";
+            return RedirectToAction(nameof(Settings));
+        }
+
+        var confirmationResult = EnforceCriticalActionConfirmation(
+            reauthToken,
+            ExecutionSwitchErrorTempDataKey,
+            nameof(Settings),
+            null);
+
+        if (confirmationResult is not null)
+        {
+            return confirmationResult;
+        }
+
+        var normalizedReason = NormalizeRequiredReason(reason);
+
+        if (normalizedReason is null)
+        {
+            TempData[ExecutionSwitchErrorTempDataKey] = "Audit reason zorunludur.";
+            return RedirectToAction(nameof(Settings));
+        }
+
+        var actorUserId = ResolveAdminUserId();
+        var correlationId = HttpContext.TraceIdentifier;
+        var resolvedCommandId = ResolveCommandId(commandId);
+        var previousSnapshot = await LoadExecutionSwitchSnapshotSafeAsync(cancellationToken);
+        var requestedSummary = $"DeactivateSystem | {BuildExecutionSwitchSummary(previousSnapshot)}";
+        var payloadHash = CreatePayloadHash($"DeactivateSystem|{normalizedReason}|{previousSnapshot.IsTradeMasterArmed}");
+        var commandStartResult = await adminCommandRegistry.TryStartAsync(
+            new AdminCommandStartRequest(
+                resolvedCommandId,
+                "Admin.Settings.Activation.Deactivate",
+                actorUserId,
+                "ActivationControlCenter.System",
+                payloadHash,
+                correlationId),
+            cancellationToken);
+
+        if (!await HandleCommandStartResultAsync(
+                commandStartResult,
+                actorUserId,
+                "Admin.Settings.Activation.Deactivate",
+                "ActivationControlCenter",
+                "System",
+                requestedSummary,
+                normalizedReason,
+                ExecutionSwitchSuccessTempDataKey,
+                ExecutionSwitchErrorTempDataKey,
+                cancellationToken))
+        {
+            return RedirectToAction(nameof(Settings));
+        }
+
+        try
+        {
+            var updatedSnapshot = await globalExecutionSwitchService.SetTradeMasterStateAsync(
+                TradeMasterSwitchState.Disarmed,
+                ResolveExecutionActor(),
+                BuildSwitchContext("ActivationCenter.Deactivate", normalizedReason, resolvedCommandId),
+                correlationId,
+                cancellationToken);
+            var successMessage = previousSnapshot.IsTradeMasterArmed
+                ? "Sistem fail-closed kapatildi. TradeMaster disarmed olarak kaydedildi."
+                : "Sistem zaten pasifti; TradeMaster disarmed durumu korundu.";
+
+            await adminAuditLogService.WriteAsync(
+                BuildAdminAuditLogWriteRequest(
+                    actorUserId,
+                    "Admin.Settings.Activation.Deactivate",
+                    "ActivationControlCenter",
+                    "System",
+                    BuildExecutionSwitchSummary(previousSnapshot),
+                    BuildExecutionSwitchSummary(updatedSnapshot),
+                    normalizedReason,
+                    correlationId),
+                cancellationToken);
+
+            await adminCommandRegistry.CompleteAsync(
+                new AdminCommandCompletionRequest(
+                    resolvedCommandId,
+                    payloadHash,
+                    AdminCommandStatus.Completed,
+                    successMessage,
+                    correlationId),
+                cancellationToken);
+
+            TempData[ExecutionSwitchSuccessTempDataKey] = successMessage;
+        }
+        catch (Exception exception)
+        {
+            var failureMessage = BuildActivationCommandFailureMessage(
+                "DeactivateApplyRejected",
+                exception.Message,
+                "Sistem kapatma komutu backend state degisikligini tamamlayamadi.");
+
+            await adminAuditLogService.WriteAsync(
+                BuildAdminAuditLogWriteRequest(
+                    actorUserId,
+                    "Admin.Settings.Activation.DeactivateFailed",
+                    "ActivationControlCenter",
+                    "System",
+                    BuildExecutionSwitchSummary(previousSnapshot),
+                    requestedSummary,
+                    normalizedReason,
+                    correlationId),
+                cancellationToken);
+
+            await adminCommandRegistry.CompleteAsync(
+                new AdminCommandCompletionRequest(
+                    resolvedCommandId,
+                    payloadHash,
+                    AdminCommandStatus.Failed,
+                    failureMessage,
+                    correlationId),
+                cancellationToken);
+
+            TempData[ExecutionSwitchErrorTempDataKey] = failureMessage;
+        }
+
+        return RedirectToAction(nameof(Settings));
+    }
+
+    [HttpPost]
+    [Authorize(Policy = ApplicationPolicies.PlatformAdministration)]
+    [ValidateAntiForgeryToken]
     public async Task<IActionResult> SetTradeMasterState(
         bool isArmed,
         string? reason,
@@ -1434,7 +1763,17 @@ public sealed class AdminController : Controller
             return mfaResult;
         }
 
-        _ = reauthToken;
+        var confirmationResult = EnforceCriticalActionConfirmation(
+            reauthToken,
+            ExecutionSwitchErrorTempDataKey,
+            nameof(Settings),
+            null);
+
+        if (confirmationResult is not null)
+        {
+            return confirmationResult;
+        }
+
         var normalizedReason = NormalizeRequiredReason(reason);
 
         if (normalizedReason is null)
@@ -1563,7 +1902,17 @@ public sealed class AdminController : Controller
             return mfaResult;
         }
 
-        _ = reauthToken;
+        var confirmationResult = EnforceCriticalActionConfirmation(
+            reauthToken,
+            ExecutionSwitchErrorTempDataKey,
+            nameof(Settings),
+            null);
+
+        if (confirmationResult is not null)
+        {
+            return confirmationResult;
+        }
+
         var normalizedReason = NormalizeRequiredReason(reason);
 
         if (normalizedReason is null)
@@ -1706,7 +2055,17 @@ public sealed class AdminController : Controller
             return mfaResult;
         }
 
-        _ = reauthToken;
+        var confirmationResult = EnforceCriticalActionConfirmation(
+            reauthToken,
+            GlobalSystemStateErrorTempDataKey,
+            nameof(Settings),
+            null);
+
+        if (confirmationResult is not null)
+        {
+            return confirmationResult;
+        }
+
         var normalizedReason = NormalizeRequiredReason(reason);
 
         if (normalizedReason is null)
@@ -2732,6 +3091,186 @@ public sealed class AdminController : Controller
             cancellationToken);
     }
 
+    private async Task<AdminSettingsOperationalContext> LoadSettingsOperationalContextAsync(CancellationToken cancellationToken)
+    {
+        var executionSnapshot = await LoadExecutionSwitchSnapshotSafeAsync(cancellationToken);
+        var globalSystemStateSnapshot = await LoadGlobalSystemStateSnapshotSafeAsync(cancellationToken);
+        var clockDriftSnapshot = await LoadClockDriftSnapshotSafeAsync(cancellationToken);
+        var driftGuardSnapshot = await LoadDriftGuardSnapshotSafeAsync(cancellationToken);
+        var pilotOrderNotionalSummary = ResolvePilotOrderNotionalSummary();
+        var pilotOrderNotionalTone = ResolvePilotOrderNotionalTone();
+        var clockDriftViewModel = BuildClockDriftInfoViewModel(clockDriftSnapshot);
+        var driftGuardViewModel = BuildMarketDriftGuardInfoViewModel(driftGuardSnapshot);
+        var activationControlCenter = AdminActivationControlCenterComposer.Compose(
+            executionSnapshot,
+            globalSystemStateSnapshot,
+            clockDriftSnapshot,
+            driftGuardSnapshot,
+            pilotOptionsValue,
+            pilotOrderNotionalSummary,
+            pilotOrderNotionalTone,
+            DateTime.UtcNow);
+
+        return new AdminSettingsOperationalContext(
+            executionSnapshot,
+            globalSystemStateSnapshot,
+            clockDriftSnapshot,
+            driftGuardSnapshot,
+            clockDriftViewModel,
+            driftGuardViewModel,
+            pilotOrderNotionalSummary,
+            pilotOrderNotionalTone,
+            activationControlCenter);
+    }
+
+    private async Task<GlobalExecutionSwitchSnapshot> LoadExecutionSwitchSnapshotSafeAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await globalExecutionSwitchService.GetSnapshotAsync(cancellationToken);
+        }
+        catch
+        {
+            return new GlobalExecutionSwitchSnapshot(
+                TradeMasterSwitchState.Disarmed,
+                DemoModeEnabled: true,
+                IsPersisted: false);
+        }
+    }
+
+    private async Task<GlobalSystemStateSnapshot> LoadGlobalSystemStateSnapshotSafeAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await globalSystemStateService.GetSnapshotAsync(cancellationToken);
+        }
+        catch
+        {
+            return new GlobalSystemStateSnapshot(
+                GlobalSystemStateKind.Degraded,
+                "SYSTEM_STATE_UNAVAILABLE",
+                "Global system state snapshot unavailable.",
+                "AdminPortal.Settings",
+                HttpContext.TraceIdentifier,
+                IsManualOverride: false,
+                ExpiresAtUtc: null,
+                UpdatedAtUtc: null,
+                UpdatedByUserId: null,
+                UpdatedFromIp: null,
+                Version: 0,
+                IsPersisted: false);
+        }
+    }
+
+    private async Task<BinanceTimeSyncSnapshot> LoadClockDriftSnapshotSafeAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await binanceTimeSyncService.GetSnapshotAsync(cancellationToken: cancellationToken);
+        }
+        catch
+        {
+            return new BinanceTimeSyncSnapshot(
+                DateTime.UtcNow,
+                ExchangeServerTimeUtc: null,
+                OffsetMilliseconds: 0,
+                RoundTripMilliseconds: null,
+                LastSynchronizedAtUtc: null,
+                StatusCode: "Unavailable",
+                FailureReason: "Server-time sync snapshot unavailable.");
+        }
+    }
+
+    private async Task<DegradedModeSnapshot> LoadDriftGuardSnapshotSafeAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await dataLatencyCircuitBreaker.GetSnapshotAsync(HttpContext.TraceIdentifier, cancellationToken: cancellationToken);
+        }
+        catch
+        {
+            return new DegradedModeSnapshot(
+                DegradedModeStateCode.Stopped,
+                DegradedModeReasonCode.MarketDataUnavailable,
+                SignalFlowBlocked: true,
+                ExecutionFlowBlocked: true,
+                LatestDataTimestampAtUtc: null,
+                LatestHeartbeatReceivedAtUtc: null,
+                LatestDataAgeMilliseconds: null,
+                LatestClockDriftMilliseconds: null,
+                LastStateChangedAtUtc: null,
+                IsPersisted: false);
+        }
+    }
+
+    private static string BuildActivationControlCenterSummary(AdminActivationControlCenterViewModel model)
+    {
+        return string.Join(
+            "; ",
+            $"Status={model.StatusLabel}",
+            $"IsActive={model.IsCurrentlyActive}",
+            $"IsActivatable={model.IsActivatable}",
+            $"DecisionType={model.LastDecision.TypeLabel}",
+            $"DecisionCode={model.LastDecision.Code}",
+            $"DecisionSource={model.LastDecision.Source}",
+            $"Mode={model.CurrentModeLabel}");
+    }
+
+    private static string BuildActivationControlFailureMessage(AdminActivationControlCenterViewModel model)
+    {
+        return $"{model.LastDecision.Code}: {SanitizeOperationalMessage(model.LastDecision.Summary, "Aktivasyon karari bloklandi.")}";
+    }
+
+    private static string BuildActivationCommandFailureMessage(string code, string? message, string fallbackMessage)
+    {
+        return $"{code}: {SanitizeOperationalMessage(message, fallbackMessage)}";
+    }
+
+    private IActionResult? EnforceCriticalActionConfirmation(
+        string? reauthToken,
+        string errorTempDataKey,
+        string redirectAction,
+        object? routeValues)
+    {
+        var normalizedConfirmation = NormalizeOptionalInput(reauthToken, 64);
+
+        if (string.Equals(normalizedConfirmation, CriticalActionConfirmationPhrase, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        TempData[errorTempDataKey] =
+            $"CriticalActionConfirmationRequired: Bu kritik islem icin {CriticalActionConfirmationPhrase} ibaresi zorunludur.";
+
+        return RedirectToAction(redirectAction, routeValues);
+    }
+
+    private static string SanitizeOperationalMessage(string? message, string fallbackMessage)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return fallbackMessage;
+        }
+
+        var normalizedMessage = message
+            .Replace("\r", " ", StringComparison.Ordinal)
+            .Replace("\n", " ", StringComparison.Ordinal)
+            .Trim();
+
+        return Truncate(normalizedMessage, 256) ?? fallbackMessage;
+    }
+
+    private sealed record AdminSettingsOperationalContext(
+        GlobalExecutionSwitchSnapshot ExecutionSnapshot,
+        GlobalSystemStateSnapshot GlobalSystemStateSnapshot,
+        BinanceTimeSyncSnapshot ClockDriftSnapshot,
+        DegradedModeSnapshot DriftGuardSnapshot,
+        ClockDriftInfoViewModel ClockDriftViewModel,
+        MarketDriftGuardInfoViewModel DriftGuardViewModel,
+        string PilotOrderNotionalSummary,
+        string PilotOrderNotionalTone,
+        AdminActivationControlCenterViewModel ActivationControlCenter);
+
     private static string BuildStrategyTemplateFailureMessage(StrategyTemplateCatalogException exception)
     {
         return SanitizeStrategyTemplateMessage($"{exception.FailureCode}: {exception.Message}");
@@ -3467,6 +4006,7 @@ public sealed class AdminController : Controller
             : value[..maxLength];
     }
 }
+
 
 
 

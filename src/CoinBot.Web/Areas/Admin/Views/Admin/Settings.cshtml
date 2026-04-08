@@ -1,4 +1,6 @@
+@model CoinBot.Web.ViewModels.Admin.AdminActivationControlCenterViewModel
 @{
+    var activationCenter = Model;
     var executionSnapshot = (CoinBot.Application.Abstractions.Execution.GlobalExecutionSwitchSnapshot)ViewData["AdminExecutionSwitchSnapshot"]!;
     var globalSystemStateSnapshot = (CoinBot.Application.Abstractions.Administration.GlobalSystemStateSnapshot)ViewData["AdminGlobalSystemStateSnapshot"]!;
     var crisisPreview = ViewData["AdminCrisisEscalationPreview"] as CoinBot.Web.ViewModels.Admin.AdminCrisisEscalationPreviewViewModel;
@@ -7,66 +9,38 @@
     var clockDrift = ViewData["AdminClockDriftSnapshot"] as CoinBot.Web.ViewModels.Settings.ClockDriftInfoViewModel;
     var driftGuard = ViewData["AdminDriftGuardSnapshot"] as CoinBot.Web.ViewModels.Settings.MarketDriftGuardInfoViewModel;
     var retentionSnapshot = ViewData["AdminLogCenterRetentionSnapshot"] as CoinBot.Application.Abstractions.Administration.LogCenterRetentionSnapshot;
+    var readinessItems = activationCenter.ReadinessChecklist.ToDictionary(item => item.Key, StringComparer.OrdinalIgnoreCase);
+    var configStateItem = readinessItems["config-state"];
+    var tradingModeItem = readinessItems["trading-mode"];
+    var globalStateItem = readinessItems["global-system-state"];
+    var timeSyncItem = readinessItems["server-time-sync"];
+    var readinessGateItem = readinessItems["readiness-gate"];
+    var pilotActivationItem = readinessItems["pilot-activation"];
+    var pilotNotionalItem = readinessItems["pilot-notional-cap"];
     var hasRuntimeSnapshots = clockDrift is not null && driftGuard is not null;
-    var driftGuardLooksHealthy = driftGuard is not null && driftGuard.StateLabel.Contains("Normal", StringComparison.OrdinalIgnoreCase);
-    var hasClockDriftFailure = !string.IsNullOrWhiteSpace(clockDrift?.FailureReason);
-    var runtimeFailureSummary = hasClockDriftFailure
-        ? clockDrift!.FailureReason!
-        : driftGuard is not null && !driftGuardLooksHealthy
-            ? driftGuard.ReasonLabel
-            : "Son hata kaydi yok.";
-    var activationBlockers = new System.Collections.Generic.List<string>();
-
-    if (!executionSnapshot.IsTradeMasterArmed)
-    {
-        activationBlockers.Add("TradeMaster arm edilmemis.");
-    }
-
-    if (executionSnapshot.DemoModeEnabled)
-    {
-        activationBlockers.Add("DemoMode acik; canli execution yolu kapali.");
-    }
-
-    if (globalSystemStateSnapshot.IsExecutionBlocked)
-    {
-        activationBlockers.Add($"Global system state {globalSystemStateSnapshot.State} olarak gorunuyor.");
-    }
-
-    if (!hasRuntimeSnapshots)
-    {
-        activationBlockers.Add("Runtime sync snapshot verisi eksik.");
-    }
-    else
-    {
-        if (hasClockDriftFailure)
-        {
-            activationBlockers.Add("Server-time sync son denemede hata verdi.");
-        }
-
-        if (!driftGuardLooksHealthy)
-        {
-            activationBlockers.Add($"Drift guard durumu {driftGuard!.StateLabel} olarak gorunuyor.");
-        }
-    }
-
-    var activationReady = activationBlockers.Count == 0;
-    var activationTone = activationReady ? "healthy" : activationBlockers.Count == 1 ? "warning" : "critical";
-    var activationSummaryLabel = activationReady ? "Aktivasyona uygun" : $"{activationBlockers.Count} kontrol eksik";
-    var liveSnapshotStatus = hasRuntimeSnapshots ? (activationReady ? "Hazir" : "Dikkat") : "Eksik";
-    var liveSnapshotTone = hasRuntimeSnapshots ? (activationReady ? "healthy" : "warning") : "critical";
-    var criticalControlsStatus = canEditGlobalPolicy ? "Hazir" : "Salt okunur";
-    var criticalControlsTone = canEditGlobalPolicy ? "healthy" : "info";
-    var executionStepStatus = executionSnapshot.IsTradeMasterArmed && !executionSnapshot.DemoModeEnabled ? "Hazir" : "Dikkat";
-    var executionStepTone = executionSnapshot.IsTradeMasterArmed && !executionSnapshot.DemoModeEnabled ? "healthy" : "warning";
-    var systemStateStepStatus = globalSystemStateSnapshot.IsExecutionBlocked ? "Dikkat" : "Hazir";
-    var systemStateStepTone = globalSystemStateSnapshot.IsExecutionBlocked ? "warning" : "healthy";
-    var runtimeSyncStepStatus = hasRuntimeSnapshots ? (hasClockDriftFailure || !driftGuardLooksHealthy ? "Dikkat" : "Hazir") : "Eksik";
-    var runtimeSyncStepTone = hasRuntimeSnapshots ? (hasClockDriftFailure || !driftGuardLooksHealthy ? "warning" : "healthy") : "critical";
-    var riskStepStatus = canEditGlobalPolicy ? "Gozden gecir" : "Salt okunur";
-    var riskStepTone = canEditGlobalPolicy ? "warning" : "info";
-    var activationGuidance = activationReady
-        ? "Execution hard gate, global state ve runtime sync sinyalleri aktivasyon icin uygun gorunuyor."
-        : "Sistemi aktife almadan once asagidaki eksik kontrolleri kapatin.";
+    var runtimeHealthy = timeSyncItem.IsPassing && readinessGateItem.IsPassing;
+    var runtimeFailureSummary = activationCenter.LastDecision.Summary;
+    var activationBlockers = activationCenter.BlockingItems.Select(item => item.Summary).ToArray();
+    var activationReady = activationCenter.IsActivatable;
+    var activationTone = activationCenter.StatusTone;
+    var activationSummaryLabel = activationCenter.StatusLabel;
+    var liveSnapshotStatus = runtimeHealthy ? "Hazir" : hasRuntimeSnapshots ? "Dikkat" : "Eksik";
+    var liveSnapshotTone = runtimeHealthy ? "healthy" : hasRuntimeSnapshots ? "warning" : "critical";
+    var criticalControlsStatus = canEditGlobalPolicy ? (configStateItem.IsPassing ? "Hazir" : "Dikkat") : "Salt okunur";
+    var criticalControlsTone = canEditGlobalPolicy ? (configStateItem.IsPassing ? "healthy" : configStateItem.Tone) : "info";
+    var executionStepStatus = activationCenter.IsActivatable
+        ? executionSnapshot.IsTradeMasterArmed ? "Armed" : "Hazir"
+        : "Dikkat";
+    var executionStepTone = activationCenter.IsActivatable
+        ? executionSnapshot.IsTradeMasterArmed ? "healthy" : "warning"
+        : "critical";
+    var systemStateStepStatus = globalStateItem.IsPassing ? "Hazir" : globalStateItem.StatusLabel;
+    var systemStateStepTone = globalStateItem.Tone;
+    var runtimeSyncStepStatus = runtimeHealthy ? "Hazir" : timeSyncItem.StatusCode == "unknown" || readinessGateItem.StatusCode == "unknown" ? "Eksik" : "Dikkat";
+    var runtimeSyncStepTone = runtimeHealthy ? "healthy" : timeSyncItem.StatusCode == "unknown" || readinessGateItem.StatusCode == "unknown" ? "critical" : "warning";
+    var riskStepStatus = pilotNotionalItem.IsPassing ? (canEditGlobalPolicy ? "Hazir" : "Salt okunur") : "Dikkat";
+    var riskStepTone = canEditGlobalPolicy ? pilotNotionalItem.Tone : "info";
+    var activationGuidance = activationCenter.Guidance;
     var headerModel = new AdminPageHeaderViewModel
     {
         Eyebrow = "System Settings",
@@ -550,59 +524,9 @@
                 </div>
 
                 <div class="tab-pane fade" id="cb_admin_settings_tab_activation" role="tabpanel" aria-labelledby="cb_admin_settings_tab_link_activation">
-                    <section id="cb_admin_settings_activation" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
-                        <div class="card-body">
-                            <div class="cb-admin-section-kicker">Aktivasyon</div>
-                            <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
-                                <div>
-                                    <div class="cb-admin-section-title">Sistemi guvenli sekilde acmadan once son kontrol</div>
-                                    <p class="cb-admin-section-description">Ready / not-ready ozetini, blocker listesini ve emergency erisim yolunu bu sekmede net sekilde gorun. Sistem acma akisi burada kaybolmaz.</p>
-                                </div>
-                                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
-                                {
-                                    Label = activationSummaryLabel,
-                                    Tone = activationTone,
-                                    IconText = "AC"
-                                })
-                            </div>
+                    @await Html.PartialAsync("Foundation/_AdminActivationControlCenterSection", Model)
 
-                            <div class="cb-admin-summary-grid mt-6">
-                                <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Aktivasyon durumu</span><strong>@(activationReady ? "Aktive edilebilir" : "Eksik kontrol var")</strong><small>@activationGuidance</small></div>
-                                <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Demo / test durumu</span><strong>@(executionSnapshot.DemoModeEnabled ? "Demo / Test" : "Live yolu acilabilir")</strong><small>Effective environment: @executionSnapshot.EffectiveEnvironment</small></div>
-                                <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Son block reason</span><strong>@runtimeFailureSummary</strong><small>Global state: @globalSystemStateSnapshot.State</small></div>
-                                <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Emergency erisim</span><strong>@(crisisPreview is null ? "Preview hazir degil" : crisisPreview.Level.ToString())</strong><small>Soft halt / flatten erisimi asagidaki detay panelinde tutulur.</small></div>
-                            </div>
-
-                            @if (activationReady)
-                            {
-                                <div class="cb-admin-info-strip cb-admin-info-strip-healthy mt-6">
-                                    <div>
-                                        <div class="cb-admin-info-strip-title">Aktivasyona uygun gorunuyor</div>
-                                        <div class="cb-admin-info-strip-text">TradeMaster, global state ve runtime sync sinyalleri bu ekranin gordugu kadariyla hazir. Son karari vermeden once risk / policy ve emergency yolunu tekrar gozden gecirin.</div>
-                                    </div>
-                                    <span class="cb-admin-info-strip-meta">Ready</span>
-                                </div>
-                            }
-                            else
-                            {
-                                <div class="cb-admin-info-strip cb-admin-info-strip-danger mt-6">
-                                    <div>
-                                        <div class="cb-admin-info-strip-title">Aktivasyon oncesi eksikler</div>
-                                        <div class="cb-admin-info-strip-text"><ul class="mb-0 pl-6">@foreach (var blocker in activationBlockers) { <li>@blocker</li> }</ul></div>
-                                    </div>
-                                    <span class="cb-admin-info-strip-meta">Blocked</span>
-                                </div>
-                            }
-
-                            <div class="cb-admin-inline-actions mt-6">
-                                <a href="#cb_admin_settings_tab_critical" data-toggle="tab" role="tab" class="btn btn-light-primary font-weight-bold">Kritik ayarlari ac</a>
-                                <a href="#cb_admin_settings_tab_sync" data-toggle="tab" role="tab" class="btn btn-light-warning font-weight-bold">Runtime sync'e git</a>
-                                <a asp-area="Admin" asp-controller="Admin" asp-action="SystemHealth" class="btn btn-light-primary font-weight-bold">System health</a>
-                            </div>
-                        </div>
-                    </section>
-
-                    <details class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+                    <details id="cb_admin_settings_crisis_panel" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
                         <summary class="card-body font-weight-bolder">Emergency / soft halt panelini goster</summary>
                         <div class="px-8 pb-8 pt-2">
                             <div class="cb-helper-text mb-5">Crisis escalation kontrolleri yalniz acil mudahale gerektiginde acilmalidir.</div>
