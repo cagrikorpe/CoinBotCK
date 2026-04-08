@@ -1,80 +1,464 @@
+@model AdminOperationsCenterViewModel
+@using System.Linq
+@using CoinBot.Application.Abstractions.Administration
+@using CoinBot.Application.Abstractions.Execution
+@using CoinBot.Web.ViewModels.Foundation
 @{
     var headerModel = new AdminPageHeaderViewModel
     {
-        Eyebrow = "Platform Overview",
-        Title = "Super Admin command center",
-        Description = "Release oncesi canli operasyon yuzeylerine tek noktadan gecis veren, sahte metrik yerine gercek route'lari one cikaran admin giris ekrani.",
-        StatusBadge = new AdminBadgeViewModel { Label = "Live Routes", Tone = "healthy", IconText = "OV" },
+        Eyebrow = "Super Admin Ops",
+        Title = "Operasyon Merkezi",
+        Description = "Runtime sagligi, user/bot governance, exchange credential durumu ve global policy limitleri tek merkezde okunur.",
+        StatusBadge = new AdminBadgeViewModel { Label = Model.IsAccessible ? "Super Admin" : "Blocked", Tone = Model.IsAccessible ? "role" : "critical", IconText = Model.IsAccessible ? "SA" : "BL" },
         MetaBadges = new[]
         {
-            new AdminBadgeViewModel { Label = "Super Admin", Tone = "role", IconText = "SA" },
-            new AdminBadgeViewModel { Label = "Real Navigation", Tone = "info", IconText = "RT" },
-            new AdminBadgeViewModel { Label = "No Fake Data", Tone = "warning", IconText = "ND" },
-            new AdminBadgeViewModel { Label = "Readiness Hub", Tone = "degraded", IconText = "RH" }
+            new AdminBadgeViewModel { Label = "Fail-closed", Tone = "critical", IconText = "FC" },
+            new AdminBadgeViewModel { Label = "Read-model", Tone = "info", IconText = "RM" },
+            new AdminBadgeViewModel { Label = "Audit aware", Tone = "warning", IconText = "AU" }
         },
         SecondaryActionText = "Audit / trace",
         SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin" }),
-        PrimaryActionText = "System health",
-        PrimaryActionHref = Url.Action("SystemHealth", "Admin", new { area = "Admin" })
+        PrimaryActionText = "Global Ayarlar",
+        PrimaryActionHref = Url.Action("Settings", "Admin", new { area = "Admin" })
     };
 
-    var commandCards = new[]
+    var activationModel = ViewData["AdminActivationControlCenter"] as AdminActivationControlCenterViewModel;
+    var executionSnapshot = ViewData["AdminExecutionSwitchSnapshot"] as GlobalExecutionSwitchSnapshot;
+    var globalSystemStateSnapshot = ViewData["AdminGlobalSystemStateSnapshot"] as GlobalSystemStateSnapshot;
+    var crisisPreview = ViewData["AdminCrisisEscalationPreview"] as AdminCrisisEscalationPreviewViewModel;
+    var runtimeCenter = Model.RuntimeHealthCenter;
+    var userBotCenter = Model.UserBotGovernanceCenter;
+    var exchangeCenter = Model.ExchangeGovernanceCenter;
+    var policyCenter = Model.PolicyGovernanceCenter;
+    var rolloutCenter = ViewData["AdminRolloutClosureCenter"] as AdminRolloutClosureCenterViewModel;
+
+    AdminBadgeViewModel Badge(string label, string tone, string iconText) => new() { Label = label, Tone = tone, IconText = iconText };
+    string InfoTone(string tone) => tone.ToLowerInvariant() switch { "healthy" => "success", "warning" => "warning", "degraded" => "warning", "critical" => "critical", _ => "info" };
+    string ShortIcon(string value)
     {
-        new { Eyebrow = "Runtime", Title = "System health", Description = "Sentinel, redis probe, clock drift, cooldown ve worker heartbeat read-modeli.", ActionText = "Aç", ActionHref = Url.Action("SystemHealth", "Admin", new { area = "Admin" }), Tone = "healthy" },
-        new { Eyebrow = "Observability", Title = "Audit / log center", Description = "Correlation trace, decision/execution zinciri ve masked export akisi.", ActionText = "Aç", ActionHref = Url.Action("Audit", "Admin", new { area = "Admin" }), Tone = "info" },
-        new { Eyebrow = "Governance", Title = "Approvals", Description = "Approval, reject, expiry ve audit/history zinciri.", ActionText = "Aç", ActionHref = Url.Action("Approvals", "Admin", new { area = "Admin" }), Tone = "warning" },
-        new { Eyebrow = "Governance", Title = "Incidents", Description = "Incident timeline, anomaly ve crisis baglantilari.", ActionText = "Aç", ActionHref = Url.Action("Incidents", "Admin", new { area = "Admin" }), Tone = "critical" },
-        new { Eyebrow = "Identity", Title = "Users", Description = "Gercek user HQ, credential summary ve validation history.", ActionText = "Aç", ActionHref = Url.Action("Users", "Admin", new { area = "Admin" }), Tone = "neutral" },
-        new { Eyebrow = "Control", Title = "Settings", Description = "Execution hard gate, crisis, retention ve symbol restriction yonetimi.", ActionText = "Aç", ActionHref = Url.Action("Settings", "Admin", new { area = "Admin" }), Tone = "warning" }
-    };
+        if (string.IsNullOrWhiteSpace(value)) return "NA";
+        var tokens = value.Split(new[] { ' ', '/', '-', '_' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Take(2).Select(item => item[..1].ToUpperInvariant()).ToArray();
+        return tokens.Length == 0 ? value[..Math.Min(2, value.Length)].ToUpperInvariant() : string.Concat(tokens);
+    }
 }
 
-<div class="row">
+<div class="row" data-cb-super-admin-operations-center>
     <div class="col-12">
-        <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-dashboard-card">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
             <div class="card-body">
                 @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
-                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
-                {
-                    Tone = "info",
-                    Title = "Operasyon giris noktasi",
-                    Message = "Bu sayfa sabit KPI veya demo kart gostermek yerine, canli admin yuzeylerine hizli ve guvenli gecis sunar.",
-                    Meta = "No fake metrics"
-                })
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel { Tone = Model.IsAccessible ? "info" : "critical", Title = Model.AccessTitle, Message = Model.AccessSummary, Meta = $"Refreshed {Model.RefreshedAtUtcLabel}" })
+                <div class="cb-admin-summary-grid mt-6" data-cb-admin-operations-summary>
+                    @foreach (var card in Model.SummaryCards)
+                    {
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">@card.Label</span>
+                            <strong>@card.Value</strong>
+                            <small>@card.Summary</small>
+                            <div class="cb-admin-page-meta mt-4">@await Html.PartialAsync("Foundation/_AdminBadge", Badge(card.Value, card.Tone, ShortIcon(card.Label)))</div>
+                        </div>
+                    }
+                </div>
             </div>
         </div>
     </div>
 
-    @foreach (var card in commandCards)
+    @if (!Model.IsAccessible)
     {
-        var buttonClass = card.Tone switch
-        {
-            "critical" => "btn-light-danger",
-            "warning" => "btn-light-warning",
-            "info" => "btn-light-info",
-            _ => "btn-light-primary"
-        };
-        <div class="col-xl-4 col-md-6">
-            <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-panel-card">
+        <div class="col-12">
+            @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel { Tone = "critical", Title = "Super Admin gerekli", Message = "Runtime, governance ve global policy read-model verileri fail-closed saklandi. Bu yuzey yalnizca Super Admin ile acilir.", Meta = "Access blocked" })
+        </div>
+    }
+    else
+    {
+        <div class="col-12">
+            <div class="card card-custom gutter-b cb-card cb-admin-card">
                 <div class="card-body">
-                    <div class="cb-admin-section-kicker">@card.Eyebrow</div>
-                    <div class="cb-admin-section-title">@card.Title</div>
-                    <p class="cb-admin-section-description">@card.Description</p>
-                    <div class="cb-admin-inline-actions mt-5">
-                        <a href="@card.ActionHref" class="btn @buttonClass font-weight-bold">@card.ActionText</a>
+                    <div class="cb-admin-section-kicker">Operasyon Merkezleri</div>
+                    <div class="cb-admin-section-title">Bes merkez, tek super-admin ekrani</div>
+                    <p class="cb-admin-section-description">Ilk bakista runtime sagligi okunur; sonra governance, credential, policy ve rollout closure yuzeyleri ayrisir. Kritik write aksiyonlari yalnizca guarded bloklarda acilir.</p>
+                    <ul class="nav nav-pills cb-admin-settings-nav mt-6" id="cb_admin_operations_tab_nav" role="tablist" data-cb-admin-operations-tab-nav>
+                        <li class="nav-item mr-3 mb-3"><a class="nav-link cb-admin-settings-nav-link active" id="cb_admin_operations_tab_link_runtime" data-toggle="tab" href="#cb_admin_operations_tab_runtime" role="tab" aria-selected="true">Runtime &amp; Health</a></li>
+                        <li class="nav-item mr-3 mb-3"><a class="nav-link cb-admin-settings-nav-link" id="cb_admin_operations_tab_link_user_bot" data-toggle="tab" href="#cb_admin_operations_tab_user_bot" role="tab" aria-selected="false">User / Bot Governance</a></li>
+                        <li class="nav-item mr-3 mb-3"><a class="nav-link cb-admin-settings-nav-link" id="cb_admin_operations_tab_link_exchange" data-toggle="tab" href="#cb_admin_operations_tab_exchange" role="tab" aria-selected="false">Exchange / Credential</a></li>
+                        <li class="nav-item mb-3"><a class="nav-link cb-admin-settings-nav-link" id="cb_admin_operations_tab_link_policy" data-toggle="tab" href="#cb_admin_operations_tab_policy" role="tab" aria-selected="false">Policy / Limit Governance</a></li>
+                        <li class="nav-item mb-3"><a class="nav-link cb-admin-settings-nav-link" id="cb_admin_operations_tab_link_rollout" data-toggle="tab" href="#cb_admin_operations_tab_rollout" role="tab" aria-selected="false">Rollout Closure</a></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12">
+            <div class="tab-content" id="cb_admin_operations_tab_content" data-cb-admin-operations-tab-content>
+                <div class="tab-pane fade show active" id="cb_admin_operations_tab_runtime" role="tabpanel" data-cb-admin-operations-center="runtime">
+                    <section class="card card-custom gutter-b cb-card cb-admin-card">
+                        <div class="card-body">
+                            <div class="cb-admin-section-kicker">SA-3A</div>
+                            <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
+                                <div>
+                                    <div class="cb-admin-section-title">Runtime &amp; Health Center</div>
+                                    <p class="cb-admin-section-description">Worker, exchange sync, clock drift, market freshness ve degraded mode sinyalleri tek operatif ozetle izlenir.</p>
+                                </div>
+                                @await Html.PartialAsync("Foundation/_AdminBadge", Badge(runtimeCenter.StatusLabel, runtimeCenter.StatusTone, "RH"))
+                            </div>
+                            @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel { Tone = InfoTone(runtimeCenter.StatusTone), Title = "Operasyon ozeti", Message = runtimeCenter.Summary, Meta = runtimeCenter.RetrySummary })
+                            <div class="cb-admin-summary-grid mt-6" data-cb-admin-runtime-center>
+                                @foreach (var signal in runtimeCenter.Signals)
+                                {
+                                    <div class="cb-admin-summary-card" data-cb-admin-runtime-signal="@signal.Key">
+                                        <span class="cb-admin-summary-label">@signal.Label</span>
+                                        <strong>@signal.Value</strong>
+                                        <small>@signal.Summary</small>
+                                        <div class="cb-admin-page-meta mt-4">@await Html.PartialAsync("Foundation/_AdminBadge", Badge(signal.Code, signal.Tone, ShortIcon(signal.Label)))</div>
+                                    </div>
+                                }
+                            </div>
+                            <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-6"><div><div class="cb-admin-info-strip-title">Son hata / retry sinyali</div><div class="cb-admin-info-strip-text">@runtimeCenter.LastFailureSummary</div></div><span class="cb-admin-info-strip-meta">@runtimeCenter.RetrySummary</span></div>
+                        </div>
+                    </section>
+                    <div class="row">
+                        <div class="col-xl-7">
+                            @await Html.PartialAsync("Foundation/_AdminSystemHealthFreshnessStrip")
+                            @await Html.PartialAsync("Foundation/_AdminSystemHealthKpis")
+                            @await Html.PartialAsync("Foundation/_AdminWorkerHealthList")
+                        </div>
+                        <div class="col-xl-5">
+                            @await Html.PartialAsync("Foundation/_AdminMarketDataCacheHealthCard")
+                            @await Html.PartialAsync("Foundation/_AdminMarketScannerCard")
+                            <section class="card card-custom gutter-b cb-card cb-admin-card">
+                                <div class="card-body">
+                                    <div class="cb-admin-section-kicker">Follow-up</div>
+                                    <div class="cb-admin-section-title">Detay rotalari</div>
+                                    <p class="cb-admin-section-description">Derin inceleme icin mevcut read-model ekranlari kullanilir. Bu merkez yalnizca ozet ve guarded aksiyon girisi sunar.</p>
+                                    <div class="cb-admin-inline-actions mt-5">
+                                        <a asp-area="Admin" asp-controller="Admin" asp-action="SystemHealth" class="btn btn-primary font-weight-bolder">System health</a>
+                                        <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-light-primary font-weight-bold">Audit / trace</a>
+                                        <a asp-area="Admin" asp-controller="Admin" asp-action="Settings" class="btn btn-light-warning font-weight-bold">Global Ayarlar</a>
+                                    </div>
+                                </div>
+                            </section>
+                        </div>
                     </div>
+
+                    @if (activationModel is not null)
+                    {
+                        @await Html.PartialAsync("Foundation/_AdminActivationControlCenterSection", activationModel)
+                    }
+                </div>
+
+                <div class="tab-pane fade" id="cb_admin_operations_tab_user_bot" role="tabpanel" data-cb-admin-operations-center="user-bot">
+                    <section class="card card-custom gutter-b cb-card cb-admin-card">
+                        <div class="card-body">
+                            <div class="cb-admin-section-kicker">SA-3B</div>
+                            <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
+                                <div>
+                                    <div class="cb-admin-section-title">User / Bot Governance Center</div>
+                                    <p class="cb-admin-section-description">Problemli kullanicilar ve botlar owner scope, stale/cooldown/error sinyalleri ve mevcut status semantigi ile ayrisir.</p>
+                                </div>
+                                @await Html.PartialAsync("Foundation/_AdminBadge", Badge("Governance", userBotCenter.ProblemBots.Count > 0 ? "warning" : "healthy", "UG"))
+                            </div>
+                            @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel { Tone = userBotCenter.ProblemBots.Count > 0 || userBotCenter.ProblemUsers.Count > 0 ? "warning" : "success", Title = "Problem segmentasyonu", Message = userBotCenter.Summary, Meta = "Owner scope visible" })
+                            <div class="cb-admin-summary-grid mt-6">
+                                @foreach (var card in userBotCenter.SummaryCards)
+                                {
+                                    <div class="cb-admin-summary-card">
+                                        <span class="cb-admin-summary-label">@card.Label</span>
+                                        <strong>@card.Value</strong>
+                                        <small>@card.Summary</small>
+                                        <div class="cb-admin-page-meta mt-4">@await Html.PartialAsync("Foundation/_AdminBadge", Badge(card.Value, card.Tone, ShortIcon(card.Label)))</div>
+                                    </div>
+                                }
+                            </div>
+                            <div class="row mt-4">
+                                <div class="col-xl-5">
+                                    <div class="cb-admin-table-header"><div><div class="cb-admin-section-kicker">Users</div><div class="cb-admin-section-title">Review gerektiren kullanicilar</div><p class="cb-admin-section-description mb-0">MFA, trading mode, last activity ve status tonlariyla secilir.</p></div><a asp-area="Admin" asp-controller="Admin" asp-action="Users" class="btn btn-light-primary font-weight-bold">Kullanicilar</a></div>
+                                    @if (userBotCenter.ProblemUsers.Count == 0)
+                                    {
+                                        @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel { Tone = "success", Title = "Problemli kullanici yok", Message = "Secili snapshot icinde review gerektiren kullanici sinyali gorunmuyor.", Meta = "Users clean" })
+                                    }
+                                    else
+                                    {
+                                        <div class="table-responsive cb-admin-table-wrap mt-4"><table class="table table-borderless cb-admin-table mb-0" data-cb-admin-problem-users><thead><tr><th>Kullanici</th><th>Durum</th><th>Ozet</th><th>Flags</th></tr></thead><tbody>
+                                            @foreach (var row in userBotCenter.ProblemUsers)
+                                            {
+                                                <tr data-cb-admin-problem-user-row="@row.Key"><td><strong>@row.Label</strong><div class="text-muted small">@row.OwnerLabel</div></td><td>@await Html.PartialAsync("Foundation/_AdminBadge", Badge(row.StatusLabel, row.Tone, "US"))</td><td><div>@row.Summary</div><div class="text-muted small">@row.Meta</div></td><td><div class="cb-admin-badge-stack">@foreach (var flag in row.Flags) { @await Html.PartialAsync("Foundation/_AdminBadge", Badge(flag, row.Tone, ShortIcon(flag))) }</div></td></tr>
+                                            }
+                                        </tbody></table></div>
+                                    }
+                                </div>
+                                <div class="col-xl-7">
+                                    <div class="cb-admin-table-header"><div><div class="cb-admin-section-kicker">Bots</div><div class="cb-admin-section-title">Problemli bot segmenti</div><p class="cb-admin-section-description mb-0">Stale, cooldown, blocked, repeated error ve owner bilgisi ayni tabloda gosterilir.</p></div><a asp-area="Admin" asp-controller="Admin" asp-action="BotOperations" class="btn btn-light-warning font-weight-bold">Bot Operasyonlari</a></div>
+                                    @if (userBotCenter.ProblemBots.Count == 0)
+                                    {
+                                        @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel { Tone = "success", Title = "Problemli bot yok", Message = "Secili snapshot icinde stale, cooldown veya repeated failure bot gorunmuyor.", Meta = "Bots clean" })
+                                    }
+                                    else
+                                    {
+                                        <div class="table-responsive cb-admin-table-wrap mt-4"><table class="table table-borderless cb-admin-table mb-0" data-cb-admin-problem-bots><thead><tr><th>Bot</th><th>Owner</th><th>Durum</th><th>Operasyon ozeti</th><th>Flags</th></tr></thead><tbody>
+                                            @foreach (var row in userBotCenter.ProblemBots)
+                                            {
+                                                <tr data-cb-admin-problem-bot-row="@row.Key"><td><strong>@row.Label</strong></td><td>@row.OwnerLabel</td><td>@await Html.PartialAsync("Foundation/_AdminBadge", Badge(row.StatusLabel, row.Tone, "BT"))</td><td><div>@row.Summary</div><div class="text-muted small">@row.Meta</div></td><td><div class="cb-admin-badge-stack">@foreach (var flag in row.Flags) { @await Html.PartialAsync("Foundation/_AdminBadge", Badge(flag, row.Tone, ShortIcon(flag))) }</div></td></tr>
+                                            }
+                                        </tbody></table></div>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+                <div class="tab-pane fade" id="cb_admin_operations_tab_exchange" role="tabpanel" data-cb-admin-operations-center="exchange">
+                    <section class="card card-custom gutter-b cb-card cb-admin-card">
+                        <div class="card-body">
+                            <div class="cb-admin-section-kicker">SA-3C</div>
+                            <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
+                                <div>
+                                    <div class="cb-admin-section-title">Exchange / Credential Governance</div>
+                                    <p class="cb-admin-section-description">Credential inventory maskeli fingerprint, validation state, environment scope ve capability ozetleriyle guvenli sekilde okunur.</p>
+                                </div>
+                                @await Html.PartialAsync("Foundation/_AdminBadge", Badge("Masked inventory", "info", "EX"))
+                            </div>
+                            @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel { Tone = "info", Title = "Secret reveal yok", Message = exchangeCenter.Summary, Meta = "Masked only" })
+                            <div class="cb-admin-summary-grid mt-6">
+                                @foreach (var card in exchangeCenter.SummaryCards)
+                                {
+                                    <div class="cb-admin-summary-card">
+                                        <span class="cb-admin-summary-label">@card.Label</span>
+                                        <strong>@card.Value</strong>
+                                        <small>@card.Summary</small>
+                                        <div class="cb-admin-page-meta mt-4">@await Html.PartialAsync("Foundation/_AdminBadge", Badge(card.Value, card.Tone, ShortIcon(card.Label)))</div>
+                                    </div>
+                                }
+                            </div>
+                            @if (exchangeCenter.Accounts.Count == 0)
+                            {
+                                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel { Tone = "warning", Title = "Credential inventory bos", Message = "Unknown durum operatif olarak healthy sayilmaz. Onboarding veya validation pipeline'i audit edilmeli.", Meta = "No data" })
+                            }
+                            else
+                            {
+                                <div class="table-responsive cb-admin-table-wrap mt-6"><table class="table table-borderless cb-admin-table mb-0" data-cb-admin-credential-inventory><thead><tr><th>Owner</th><th>Hesap</th><th>Validation</th><th>Scope</th><th>Access</th><th>Fingerprint</th><th>Son durum</th></tr></thead><tbody>
+                                    @foreach (var row in exchangeCenter.Accounts)
+                                    {
+                                        <tr data-cb-admin-credential-row="@row.ExchangeAccountId"><td>@row.OwnerLabel</td><td><strong>@row.DisplayLabel</strong><div class="text-muted small">@row.CapabilityLabel</div></td><td>@await Html.PartialAsync("Foundation/_AdminBadge", Badge(row.ValidationLabel, row.Tone, "VL"))<div class="text-muted small mt-2">@row.LastValidationLabel</div></td><td><div>@row.EnvironmentLabel</div><div class="text-muted small">@row.Summary</div></td><td>@row.AccessLabel</td><td class="cb-mono">@row.FingerprintLabel</td><td><div>@row.LastFailureSummary</div></td></tr>
+                                    }
+                                </tbody></table></div>
+                            }
+                            <div class="cb-admin-inline-actions mt-6">
+                                <a asp-area="Admin" asp-controller="Admin" asp-action="ExchangeAccounts" class="btn btn-primary font-weight-bolder">Exchange Hesaplari</a>
+                                <a asp-area="Admin" asp-controller="Admin" asp-action="Users" class="btn btn-light-primary font-weight-bold">Kullanici owner scope</a>
+                                <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-light-warning font-weight-bold">Validation audit</a>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+
+                <div class="tab-pane fade" id="cb_admin_operations_tab_policy" role="tabpanel" data-cb-admin-operations-center="policy">
+                    <section class="card card-custom gutter-b cb-card cb-admin-card">
+                        <div class="card-body">
+                            <div class="cb-admin-section-kicker">SA-3D</div>
+                            <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
+                                <div>
+                                    <div class="cb-admin-section-title">Policy / Limit Governance</div>
+                                    <p class="cb-admin-section-description">Global defaults, pilot scope, retention ve emergency override etkileri ayni policy merkezi icinde okunur.</p>
+                                </div>
+                                @await Html.PartialAsync("Foundation/_AdminBadge", Badge("Policy", "warning", "PL"))
+                            </div>
+                            @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel { Tone = "warning", Title = "Effective value ozeti", Message = policyCenter.Summary, Meta = "Global + override" })
+                            <div class="cb-admin-summary-grid mt-6">
+                                @foreach (var card in policyCenter.SummaryCards)
+                                {
+                                    <div class="cb-admin-summary-card">
+                                        <span class="cb-admin-summary-label">@card.Label</span>
+                                        <strong>@card.Value</strong>
+                                        <small>@card.Summary</small>
+                                        <div class="cb-admin-page-meta mt-4">@await Html.PartialAsync("Foundation/_AdminBadge", Badge(card.Value, card.Tone, ShortIcon(card.Label)))</div>
+                                    </div>
+                                }
+                            </div>
+                            <div class="row mt-4" data-cb-admin-policy-governance>
+                                <div class="col-xl-6"><section class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section"><div class="card-body"><div class="cb-admin-section-kicker">Global defaults</div><div class="cb-admin-section-title">Efektif guard ve autonomy degerleri</div><p class="cb-admin-section-description">Global default, approval mode ve execution guard sinirlari write aksiyonlarindan ayrik sekilde ozetlenir.</p><div class="cb-admin-profile-list mt-5">@foreach (var item in policyCenter.GlobalDefaults) { <div class="cb-admin-profile-row"><span>@item.Label</span><strong>@item.Value</strong></div><div class="cb-helper-text mb-4">@item.Summary</div> }</div></div></section></div>
+                                <div class="col-xl-6"><section class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section"><div class="card-body"><div class="cb-admin-section-kicker">Pilot scope</div><div class="cb-admin-section-title">Pilot ve cooldown gorunurlugu</div><p class="cb-admin-section-description">Pilot aktivasyon, notional cap ve cooldown degerleri override kaynagi gibi okunur.</p><div class="cb-admin-profile-list mt-5">@foreach (var item in policyCenter.PilotScope) { <div class="cb-admin-profile-row"><span>@item.Label</span><strong>@item.Value</strong></div><div class="cb-helper-text mb-4">@item.Summary</div> }</div></div></section></div>
+                            </div>
+                            <div class="row">
+                                <div class="col-xl-6"><section class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section"><div class="card-body"><div class="cb-admin-section-kicker">Retention</div><div class="cb-admin-section-title">Log ve audit saklama yuzeyi</div><p class="cb-admin-section-description">Retention snapshot yoksa unknown healthy sayilmaz; bu blok fail-closed bilgi verir.</p><div class="cb-admin-profile-list mt-5">@foreach (var item in policyCenter.Retention) { <div class="cb-admin-profile-row"><span>@item.Label</span><strong>@item.Value</strong></div><div class="cb-helper-text mb-4">@item.Summary</div> }</div></div></section></div>
+                                <div class="col-xl-6"><section class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section"><div class="card-body"><div class="cb-admin-section-kicker">Emergency policy</div><div class="cb-admin-section-title">Global stop / halt etkisi</div><p class="cb-admin-section-description">Emergency stop, soft halt ve aktivasyon karari ayni blokta gorunur; celiski gizlenmez.</p><div class="cb-admin-profile-list mt-5">@foreach (var item in policyCenter.EmergencyPolicy) { <div class="cb-admin-profile-row"><span>@item.Label</span><strong>@item.Value</strong></div><div class="cb-helper-text mb-4">@item.Summary</div> }</div></div></section></div>
+                            </div>
+                        </div>
+                    </section>
+                    @if (executionSnapshot is not null)
+                    {
+                        @await Html.PartialAsync("Foundation/_AdminGlobalExecutionSwitchSection", executionSnapshot)
+                    }
+
+                    @if (globalSystemStateSnapshot is not null)
+                    {
+                        @await Html.PartialAsync("Foundation/_AdminGlobalSystemStateSection", globalSystemStateSnapshot)
+                    }
+
+                    <details class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+                        <summary class="card-body font-weight-bolder">Risk / Policy detaylarini goster</summary>
+                        <div class="px-8 pb-8 pt-2">
+                            @await Html.PartialAsync("Foundation/_AdminRiskPolicyDefaultsSection")
+                        </div>
+                    </details>
+
+                    <details class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+                        <summary class="card-body font-weight-bolder">Emergency / crisis panelini goster</summary>
+                        <div class="px-8 pb-8 pt-2">
+                            @await Html.PartialAsync("Foundation/_AdminCrisisEscalationSection", crisisPreview)
+                        </div>
+                    </details>
+
+                    <details class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+                        <summary class="card-body font-weight-bolder">Logging / retention detaylarini goster</summary>
+                        <div class="px-8 pb-8 pt-2">
+                            @await Html.PartialAsync("Foundation/_AdminLoggingRetentionSection")
+                        </div>
+                    </details>
+                </div>
+
+                <div class="tab-pane fade" id="cb_admin_operations_tab_rollout" role="tabpanel" data-cb-admin-operations-center="rollout">
+                    <section class="card card-custom gutter-b cb-card cb-admin-card" data-cb-admin-rollout-closure>
+                        <div class="card-body">
+                            <div class="cb-admin-section-kicker">SA-5</div>
+                            <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
+                                <div>
+                                    <div class="cb-admin-section-title">System Activation / Rollout Closure</div>
+                                    <p class="cb-admin-section-description">Rollout asamalari, zorunlu kapilar, go-live checklist, blocker reason'lar ve rollback guidance tek merkezde fail-closed okunur.</p>
+                                </div>
+                                @if (rolloutCenter is not null)
+                                {
+                                    @await Html.PartialAsync("Foundation/_AdminBadge", Badge(rolloutCenter.StatusLabel, rolloutCenter.StatusTone, "RC"))
+                                }
+                            </div>
+
+                            @if (rolloutCenter is null)
+                            {
+                                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel { Tone = "critical", Title = "Rollout center unavailable", Message = "Rollout closure read-model yuklenemedi; ekran fail-closed bloklandi.", Meta = "No data" })
+                            }
+                            else
+                            {
+                                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel { Tone = InfoTone(rolloutCenter.StatusTone), Title = "Rollout ozeti", Message = rolloutCenter.Summary, Meta = $"Refreshed {rolloutCenter.RefreshedAtUtcLabel}" })
+                                <div class="cb-admin-summary-grid mt-6" data-cb-admin-rollout-stage-grid>
+                                    @foreach (var stage in rolloutCenter.Stages)
+                                    {
+                                        <div class="cb-admin-summary-card" data-cb-admin-rollout-stage="@stage.Key">
+                                            <span class="cb-admin-summary-label">@stage.Label</span>
+                                            <strong>@stage.StatusLabel</strong>
+                                            <small>@stage.Summary</small>
+                                            <div class="cb-admin-page-meta mt-4 d-flex flex-wrap gap-2 align-items-center">
+                                                @await Html.PartialAsync("Foundation/_AdminBadge", Badge(stage.StatusLabel, stage.Tone, ShortIcon(stage.Label)))
+                                                <span class="text-muted small">@stage.EvaluatedAtUtcLabel</span>
+                                            </div>
+                                            <div class="text-muted small mt-3">Blockers: @stage.BlockingReasons</div>
+                                            <div class="text-muted small">Changed by: @stage.ChangedBy</div>
+                                        </div>
+                                    }
+                                </div>
+
+                                <div class="row mt-4">
+                                    <div class="col-xl-6">
+                                        <section class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+                                            <div class="card-body">
+                                                <div class="cb-admin-section-kicker">Mandatory gates</div>
+                                                <div class="cb-admin-section-title">Zorunlu kapilar</div>
+                                                <p class="cb-admin-section-description">Kanit eksigi pass sayilmaz. Build, test, smoke, readiness ve continuity ayni listede fail-closed degerlendirilir.</p>
+                                                <div class="cb-admin-profile-list mt-5">
+                                                    @foreach (var item in rolloutCenter.MandatoryGates)
+                                                    {
+                                                        <div class="cb-admin-profile-row" data-cb-admin-rollout-gate="@item.Key"><span>@item.Label</span><strong>@item.StatusLabel</strong></div>
+                                                        <div class="cb-helper-text mb-4">@item.ReasonCode · @item.Summary <span class="text-muted">(@item.SourceLabel)</span></div>
+                                                    }
+                                                </div>
+                                            </div>
+                                        </section>
+                                    </div>
+                                    <div class="col-xl-6">
+                                        <section class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+                                            <div class="card-body">
+                                                <div class="cb-admin-section-kicker">Go-live checklist</div>
+                                                <div class="cb-admin-section-title">Canliya cikis kontrol listesi</div>
+                                                <p class="cb-admin-section-description">TradeMaster, pilot scope, environment, notional ve incident/audit gorunurlugu tek checklist ile izlenir.</p>
+                                                <div class="cb-admin-profile-list mt-5">
+                                                    @foreach (var item in rolloutCenter.GoLiveChecklist)
+                                                    {
+                                                        <div class="cb-admin-profile-row" data-cb-admin-rollout-check="@item.Key"><span>@item.Label</span><strong>@item.StatusLabel</strong></div>
+                                                        <div class="cb-helper-text mb-4">@item.ReasonCode · @item.Summary <span class="text-muted">(@item.SourceLabel)</span></div>
+                                                    }
+                                                </div>
+                                            </div>
+                                        </section>
+                                    </div>
+                                </div>
+
+                                @if (rolloutCenter.BlockingReasons.Count == 0)
+                                {
+                                    @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel { Tone = "success", Title = "Blocker yok", Message = "Bu read-model snapshot icinde rollout blocker reason gorunmuyor.", Meta = "Ready to review" })
+                                }
+                                else
+                                {
+                                    <section class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section" data-cb-admin-rollout-blockers>
+                                        <div class="card-body">
+                                            <div class="cb-admin-section-kicker">Block reasons</div>
+                                            <div class="cb-admin-section-title">Neden acamiyorum?</div>
+                                            <p class="cb-admin-section-description">Environment mismatch, evidence missing, stale continuity, pilot scope ve emergency state blocker'lari tek listede toplanir.</p>
+                                            <div class="cb-admin-profile-list mt-5">
+                                                @foreach (var item in rolloutCenter.BlockingReasons)
+                                                {
+                                                    <div class="cb-admin-profile-row" data-cb-admin-rollout-blocker="@item.ReasonCode"><span>@item.Label</span><strong>@item.ReasonCode</strong></div>
+                                                    <div class="cb-helper-text mb-4">@item.Summary <span class="text-muted">(@item.SourceLabel)</span></div>
+                                                }
+                                            </div>
+                                        </div>
+                                    </section>
+                                }
+
+                                <div class="row mt-4">
+                                    <div class="col-xl-6">
+                                        <section class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+                                            <div class="card-body">
+                                                <div class="cb-admin-section-kicker">Incident / audit / trace</div>
+                                                <div class="cb-admin-section-title">Ilgili kanit yuzeyleri</div>
+                                                <p class="cb-admin-section-description">Last decision, critical audit, incident trace ve rollback referanslari rollout karariyla ayni panelde baglanir.</p>
+                                                <div class="cb-admin-profile-list mt-5">
+                                                    @foreach (var link in rolloutCenter.RelatedLinks)
+                                                    {
+                                                        <div class="cb-admin-profile-row" data-cb-admin-rollout-link="@link.Label"><span>@link.Label</span><strong>@link.Meta</strong></div>
+                                                        <div class="cb-helper-text mb-3">@link.Summary</div>
+                                                        @if (!string.IsNullOrWhiteSpace(link.Href))
+                                                        {
+                                                            <div class="mb-4"><a href="@link.Href" class="btn btn-light-primary font-weight-bold">Ac</a></div>
+                                                        }
+                                                    }
+                                                </div>
+                                            </div>
+                                        </section>
+                                    </div>
+                                    <div class="col-xl-6">
+                                        <section class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section" data-cb-admin-rollout-actions>
+                                            <div class="card-body">
+                                                <div class="cb-admin-section-kicker">Actions / rollback</div>
+                                                <div class="cb-admin-section-title">Refresh, rollback ve emergency netligi</div>
+                                                <p class="cb-admin-section-description">Yeni business flow kurulmaz; mevcut guarded aktivasyon, crisis ve audit yuzeyleri rollout ekranina baglanir.</p>
+                                                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel { Tone = rolloutCenter.StatusTone.Equals("critical", StringComparison.OrdinalIgnoreCase) ? "critical" : "warning", Title = "Rollback guidance", Message = rolloutCenter.RollbackSummary, Meta = rolloutCenter.EmergencySummary })
+                                                <div class="cb-admin-inline-actions mt-5">
+                                                    <a asp-area="Admin" asp-controller="Admin" asp-action="Settings" asp-fragment="cb_admin_settings_activation" class="btn btn-primary font-weight-bolder">Aktivasyon merkezi</a>
+                                                    <a asp-area="Admin" asp-controller="Admin" asp-action="Settings" asp-fragment="cb_admin_settings_crisis_panel" class="btn btn-light-danger font-weight-bold">Emergency / rollback</a>
+                                                    <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-light-warning font-weight-bold">Incident / audit</a>
+                                                    <a asp-area="Admin" asp-controller="Admin" asp-action="SystemHealth" class="btn btn-light-primary font-weight-bold">Health / readiness</a>
+                                                </div>
+                                            </div>
+                                        </section>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </section>
                 </div>
             </div>
         </div>
     }
-
-    <div class="col-12">
-        @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
-        {
-            Tone = "warning",
-            Title = "Release readiness notu",
-            Message = "Admin landing uzerinde sahte incident, job veya KPI gostergesi tutulmuyor. Izleme, governance ve ayar degisiklikleri kendi read-model ekranlarinda acilir.",
-            Meta = "Fail-closed UX"
-        })
-    </div>
 </div>
+
+
+
+

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Security.Claims;
@@ -43,6 +44,7 @@ public sealed class AdminController : Controller
     private const string GlobalPolicySuccessTempDataKey = "AdminGlobalPolicySuccess";
     private const string GlobalPolicyErrorTempDataKey = "AdminGlobalPolicyError";
     private const string AdminLogCenterRetentionSnapshotViewDataKey = "AdminLogCenterRetentionSnapshot";
+    private const string RolloutClosureCenterViewDataKey = "AdminRolloutClosureCenter";
     private const string ClockDriftSnapshotViewDataKey = "AdminClockDriftSnapshot";
     private const string DriftGuardSnapshotViewDataKey = "AdminDriftGuardSnapshot";
     private const string CanRefreshClockDriftViewDataKey = "AdminCanRefreshClockDrift";
@@ -71,6 +73,7 @@ public sealed class AdminController : Controller
     private readonly ICrisisEscalationService? crisisEscalationService;
     private readonly ICriticalUserOperationAuthorizer criticalUserOperationAuthorizer;
     private readonly IStrategyTemplateCatalogService strategyTemplateCatalogService;
+    private readonly ILogCenterReadModelService? logCenterReadModelService;
     private readonly ILogCenterRetentionService? logCenterRetentionService;
     private readonly IGlobalPolicyEngine? globalPolicyEngine;
     private readonly IGlobalExecutionSwitchService globalExecutionSwitchService;
@@ -97,6 +100,7 @@ public sealed class AdminController : Controller
         IApprovalWorkflowService? approvalWorkflowService = null,
         IAdminGovernanceReadModelService? adminGovernanceReadModelService = null,
         IAdminMonitoringReadModelService? adminMonitoringReadModelService = null,
+        ILogCenterReadModelService? logCenterReadModelService = null,
         ILogCenterRetentionService? logCenterRetentionService = null,
         IGlobalPolicyEngine? globalPolicyEngine = null,
         ICrisisEscalationService? crisisEscalationService = null,
@@ -118,6 +122,7 @@ public sealed class AdminController : Controller
         this.approvalWorkflowService = approvalWorkflowService;
         this.adminGovernanceReadModelService = adminGovernanceReadModelService;
         this.adminMonitoringReadModelService = adminMonitoringReadModelService;
+        this.logCenterReadModelService = logCenterReadModelService;
         this.logCenterRetentionService = logCenterRetentionService;
         this.globalPolicyEngine = globalPolicyEngine;
         this.crisisEscalationService = crisisEscalationService;
@@ -409,15 +414,73 @@ public sealed class AdminController : Controller
         return View();
     }
 
-    public IActionResult Overview()
+    public async Task<IActionResult> Overview(CancellationToken cancellationToken)
     {
         ApplyShellMeta(
-            title: "Genel Bakış",
-            description: "Kullanıcı, exchange, bot, AI, alarm ve worker özetini tek ekranda toplayan operasyon dashboard'u.",
+            title: "Operasyon Merkezi",
+            description: "Runtime sagligi, user/bot governance, exchange credential durumu ve global policy limitlerini super-admin omurgasinda toplayan operasyon merkezi.",
             activeNav: "Overview",
-            breadcrumbItems: new[] { "Super Admin", "Genel Bakış" });
+            breadcrumbItems: new[] { "Super Admin", "Operasyon Merkezi" });
 
-        return View();
+        var evaluatedAtUtc = DateTime.UtcNow;
+
+        if (!CanEditGlobalPolicy())
+        {
+            ViewData[RolloutClosureCenterViewDataKey] = AdminOperationsCenterComposer.CreateAccessDeniedRolloutClosureCenter(evaluatedAtUtc);
+            return View(AdminOperationsCenterComposer.CreateAccessDenied(evaluatedAtUtc));
+        }
+
+        var operationalContext = await LoadSettingsOperationalContextAsync(cancellationToken);
+        var monitoringDashboard = await LoadMonitoringDashboardSnapshotAsync(cancellationToken);
+        var usersSnapshot = await adminWorkspaceReadModelService.GetUsersAsync(null, null, null, cancellationToken);
+        var botOperationsSnapshot = await adminWorkspaceReadModelService.GetBotOperationsAsync(null, null, null, cancellationToken);
+        var credentialSummaries = await apiCredentialValidationService.ListAdminSummariesAsync(cancellationToken: cancellationToken);
+        var globalPolicySnapshot = await LoadGlobalPolicySnapshotAsync(cancellationToken);
+        var retentionSnapshot = await LoadLogCenterRetentionSnapshotSafeAsync(cancellationToken);
+        var rolloutLogSnapshot = await LoadRolloutLogCenterSnapshotSafeAsync(cancellationToken);
+        var rolloutEvidence = LoadRolloutEvidenceInputs();
+
+        ViewData[MonitoringDashboardSnapshotViewDataKey] = monitoringDashboard;
+        ViewData[ExecutionSwitchSnapshotViewDataKey] = operationalContext.ExecutionSnapshot;
+        ViewData[GlobalSystemStateSnapshotViewDataKey] = operationalContext.GlobalSystemStateSnapshot;
+        ViewData[GlobalPolicySnapshotViewDataKey] = globalPolicySnapshot;
+        ViewData[AdminLogCenterRetentionSnapshotViewDataKey] = retentionSnapshot;
+        ViewData[ClockDriftSnapshotViewDataKey] = operationalContext.ClockDriftViewModel;
+        ViewData[DriftGuardSnapshotViewDataKey] = operationalContext.DriftGuardViewModel;
+        ViewData[CanRefreshClockDriftViewDataKey] = CanRefreshClockDrift();
+        ViewData[CrisisPreviewViewDataKey] = LoadCrisisPreviewViewModelFromTempData();
+        ViewData[PilotOrderNotionalSummaryViewDataKey] = operationalContext.PilotOrderNotionalSummary;
+        ViewData[PilotOrderNotionalToneViewDataKey] = operationalContext.PilotOrderNotionalTone;
+        ViewData["AdminActivationControlCenter"] = operationalContext.ActivationControlCenter;
+        ViewData[RolloutClosureCenterViewDataKey] = AdminOperationsCenterComposer.BuildRolloutClosureCenter(
+            operationalContext.ActivationControlCenter,
+            operationalContext.ExecutionSnapshot,
+            operationalContext.GlobalSystemStateSnapshot,
+            operationalContext.DriftGuardSnapshot,
+            monitoringDashboard,
+            credentialSummaries,
+            globalPolicySnapshot,
+            pilotOptionsValue,
+            rolloutLogSnapshot,
+            retentionSnapshot,
+            rolloutEvidence,
+            evaluatedAtUtc);
+
+        var model = AdminOperationsCenterComposer.Compose(
+            operationalContext.ActivationControlCenter,
+            monitoringDashboard,
+            operationalContext.ClockDriftSnapshot,
+            operationalContext.DriftGuardSnapshot,
+            usersSnapshot,
+            botOperationsSnapshot,
+            credentialSummaries,
+            globalPolicySnapshot,
+            pilotOptionsValue,
+            retentionSnapshot,
+            operationalContext.GlobalSystemStateSnapshot,
+            evaluatedAtUtc);
+
+        return View(model);
     }
 
     [Authorize(Policy = ApplicationPolicies.IdentityAdministration)]
@@ -998,35 +1061,137 @@ public sealed class AdminController : Controller
         return View("SystemHealth");
     }
 
-    [Authorize(Policy = ApplicationPolicies.AuditRead)]
+        [Authorize(Policy = ApplicationPolicies.AuditRead)]
     public async Task<IActionResult> Audit(
         string? query,
         string? correlationId,
         string? decisionId,
         string? executionAttemptId,
         string? userId,
-        CancellationToken cancellationToken)
+        string? symbol,
+        string? outcome,
+        string? reasonCode,
+        string? focus,
+        int take = 120,
+        CancellationToken cancellationToken = default)
     {
         ApplyShellMeta(
-            title: "Audit & Log Merkezi",
-            description: "Platform genelindeki audit, security, runtime, AI, trading ve admin action loglarını gelişmiş filtreler ve trace detay sayfalarıyla izleyen global log merkezi.",
+            title: "Incident / Audit / Decision Center",
+            description: "Decision, execution, admin audit, approval ve incident zincirini reason code ve outcome filtreleriyle tek merkezde geriye donuk okutan operasyon ekranı.",
             activeNav: "Audit",
-            breadcrumbItems: new[] { "Super Admin", "Gözlem", "Audit & Log" });
+            breadcrumbItems: new[] { "Super Admin", "Gozlem", "Incident / Audit / Decision" });
 
-        var normalizedQuery = NormalizeOptionalInput(query, 128);
-        ViewData["AdminTraceQuery"] = normalizedQuery;
+        var normalizedTake = NormalizeAuditTake(take);
+        var request = new LogCenterQueryRequest(
+            NormalizeOptionalInput(query, 128),
+            NormalizeOptionalInput(correlationId, 128),
+            NormalizeOptionalInput(decisionId, 64),
+            NormalizeOptionalInput(executionAttemptId, 64),
+            NormalizeOptionalInput(userId, 450),
+            NormalizeOptionalInput(symbol, 32),
+            Status: null,
+            FromUtc: null,
+            ToUtc: null,
+            Take: normalizedTake);
+        var normalizedOutcome = NormalizeOptionalInput(outcome, 32);
+        var normalizedReasonCode = NormalizeOptionalInput(reasonCode, 128);
+        var normalizedFocus = NormalizeOptionalInput(focus, 128);
+        var evaluatedAtUtc = DateTime.UtcNow;
 
-        var traces = await traceService.SearchAsync(
-            new AdminTraceSearchRequest(
-                normalizedQuery,
-                NormalizeOptionalInput(correlationId, 128),
-                NormalizeOptionalInput(decisionId, 64),
-                NormalizeOptionalInput(executionAttemptId, 64),
-                NormalizeOptionalInput(userId, 450),
-                Take: 50),
+        var snapshot = logCenterReadModelService is null
+            ? new LogCenterPageSnapshot(
+                request,
+                new LogCenterSummarySnapshot(0, 0, 0, 0, 0, 0, 0, 0, 0, null),
+                await LoadLogCenterRetentionSnapshotSafeAsync(cancellationToken) ?? new LogCenterRetentionSnapshot(false, 0, 0, 0, 0, 0, 0, null, null),
+                Array.Empty<LogCenterEntrySnapshot>(),
+                true,
+                "Log center read-model unavailable.")
+            : await logCenterReadModelService.GetPageAsync(request, cancellationToken);
+
+        var draftModel = AdminIncidentAuditDecisionCenterComposer.Compose(
+            snapshot,
+            normalizedOutcome,
+            normalizedReasonCode,
+            normalizedFocus,
+            traceDetail: null,
+            approvalDetail: null,
+            incidentDetail: null,
+            evaluatedAtUtc);
+
+        var traceDetail = await LoadAuditTraceDetailAsync(draftModel.Detail, cancellationToken);
+        var approvalDetail = await LoadAuditApprovalDetailAsync(draftModel.Detail, cancellationToken);
+        var incidentDetail = await LoadAuditIncidentDetailAsync(draftModel.Detail, cancellationToken);
+
+        var model = AdminIncidentAuditDecisionCenterComposer.Compose(
+            snapshot,
+            normalizedOutcome,
+            normalizedReasonCode,
+            normalizedFocus,
+            traceDetail,
+            approvalDetail,
+            incidentDetail,
+            evaluatedAtUtc);
+
+        return View(model);
+    }
+
+    private static int NormalizeAuditTake(int take)
+    {
+        return take is >= 25 and <= 200
+            ? take
+            : 120;
+    }
+
+    private async Task<AdminTraceDetailSnapshot?> LoadAuditTraceDetailAsync(
+        AdminIncidentAuditDecisionDetailViewModel detail,
+        CancellationToken cancellationToken)
+    {
+        if (!detail.HasSelection ||
+            string.Equals(detail.CorrelationId, "Unavailable", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return await traceService.GetDetailAsync(
+            detail.CorrelationId,
+            NormalizeUnavailableReference(detail.DecisionId),
+            NormalizeUnavailableReference(detail.ExecutionAttemptId),
             cancellationToken);
+    }
 
-        return View(traces);
+    private async Task<ApprovalQueueDetailSnapshot?> LoadAuditApprovalDetailAsync(
+        AdminIncidentAuditDecisionDetailViewModel detail,
+        CancellationToken cancellationToken)
+    {
+        if (approvalWorkflowService is null ||
+            !detail.HasSelection ||
+            string.Equals(detail.ApprovalReference, "Unavailable", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return await approvalWorkflowService.GetDetailAsync(detail.ApprovalReference, cancellationToken);
+    }
+
+    private async Task<IncidentDetailSnapshot?> LoadAuditIncidentDetailAsync(
+        AdminIncidentAuditDecisionDetailViewModel detail,
+        CancellationToken cancellationToken)
+    {
+        if (adminGovernanceReadModelService is null ||
+            !detail.HasSelection ||
+            string.Equals(detail.IncidentReference, "Unavailable", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return await adminGovernanceReadModelService.GetIncidentDetailAsync(detail.IncidentReference, cancellationToken);
+    }
+
+    private static string? NormalizeUnavailableReference(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) || string.Equals(value, "Unavailable", StringComparison.OrdinalIgnoreCase)
+            ? null
+            : value;
     }
 
     [Authorize(Policy = ApplicationPolicies.AuditRead)]
@@ -3452,6 +3617,339 @@ public sealed class AdminController : Controller
         }
     }
 
+    private async Task<LogCenterRetentionSnapshot?> LoadLogCenterRetentionSnapshotSafeAsync(CancellationToken cancellationToken)
+    {
+        if (logCenterRetentionService is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await logCenterRetentionService.GetSnapshotAsync(cancellationToken);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task<LogCenterPageSnapshot?> LoadRolloutLogCenterSnapshotSafeAsync(CancellationToken cancellationToken)
+    {
+        if (logCenterReadModelService is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await logCenterReadModelService.GetPageAsync(
+                new LogCenterQueryRequest(
+                    Query: null,
+                    CorrelationId: null,
+                    DecisionId: null,
+                    ExecutionAttemptId: null,
+                    UserId: null,
+                    Symbol: null,
+                    Status: null,
+                    FromUtc: null,
+                    ToUtc: null,
+                    Take: 40),
+                cancellationToken);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static IReadOnlyCollection<AdminRolloutEvidenceInput> LoadRolloutEvidenceInputs()
+    {
+        var repositoryRoot = ResolveRepositoryRootPath();
+        var diagnosticsRoot = System.IO.Path.Combine(repositoryRoot, ".diag");
+        var evidence = new List<AdminRolloutEvidenceInput>();
+
+        AddBooleanRolloutEvidence(evidence, "build-clean", "Build temiz", System.IO.Path.Combine(diagnosticsRoot, "rollout-closure", "build-summary.json"), "dotnet build CoinBot.sln", "BuildClean", "BuildFailed");
+        AddBooleanRolloutEvidence(evidence, "unit-tests-clean", "Unit test temiz", System.IO.Path.Combine(diagnosticsRoot, "rollout-closure", "unit-summary.json"), "dotnet test CoinBot.UnitTests", "UnitTestsClean", "UnitTestsFailed");
+        AddSettingsSmokeEvidence(evidence, System.IO.Path.Combine(diagnosticsRoot, "settings-browser-smoke", "settings-browser-smoke-summary.json"));
+        AddPilotLifecycleEvidence(evidence, FindLatestPilotLifecycleSummaryPath(diagnosticsRoot));
+        AddUiLiveKillSwitchEvidence(evidence, System.IO.Path.Combine(diagnosticsRoot, "ui-live-browser-smoke", "ui-live-runtime-smoke-summary.json"));
+
+        return evidence;
+    }
+
+    private static void AddBooleanRolloutEvidence(ICollection<AdminRolloutEvidenceInput> evidence, string key, string label, string summaryPath, string sourceLabel, string successReasonCode, string failureReasonCode)
+    {
+        if (string.IsNullOrWhiteSpace(summaryPath) || !System.IO.File.Exists(summaryPath))
+        {
+            return;
+        }
+
+        using var document = TryLoadJsonDocument(summaryPath!);
+        if (document is null)
+        {
+            evidence.Add(new AdminRolloutEvidenceInput(key, label, false, "EvidenceMalformed", $"{label} icin kanit dosyasi okunamadi.", sourceLabel, System.IO.File.GetLastWriteTimeUtc(summaryPath)));
+            return;
+        }
+
+        var root = document.RootElement;
+        var succeeded = TryReadBoolean(root, "Succeeded");
+        var reasonCode = TryReadString(root, "ReasonCode") ?? (succeeded == true ? successReasonCode : failureReasonCode);
+        var summary = TryReadString(root, "Summary") ?? $"{label} sonucu okunamadi.";
+        var occurredAtUtc = TryReadDateTime(root, "OccurredAtUtc") ?? System.IO.File.GetLastWriteTimeUtc(summaryPath);
+
+        evidence.Add(new AdminRolloutEvidenceInput(key, label, succeeded == true, reasonCode, summary, sourceLabel, occurredAtUtc));
+    }
+
+    private static void AddSettingsSmokeEvidence(ICollection<AdminRolloutEvidenceInput> evidence, string summaryPath)
+    {
+        if (string.IsNullOrWhiteSpace(summaryPath) || !System.IO.File.Exists(summaryPath))
+        {
+            return;
+        }
+
+        using var document = TryLoadJsonDocument(summaryPath!);
+        if (document is null)
+        {
+            evidence.Add(new AdminRolloutEvidenceInput("ui-smoke-clean", "UI smoke temiz", false, "UiSmokeEvidenceMalformed", "Settings browser smoke ozeti okunamadi; rollout UI kaniti dogrulanamadi.", "SettingsBrowserSmoke", System.IO.File.GetLastWriteTimeUtc(summaryPath)));
+            return;
+        }
+
+        var root = document.RootElement;
+        var tabCount = TryReadInt32(root, "adminOverviewTabCount") ?? 0;
+        var stageCount = TryReadInt32(root, "adminOverviewRolloutStageCount") ?? 0;
+        var gateCount = TryReadInt32(root, "adminOverviewRolloutGateCount") ?? 0;
+        var checklistCount = TryReadInt32(root, "adminOverviewRolloutChecklistCount") ?? 0;
+        var hasRolloutClosure = TryReadBoolean(root, "adminOverviewHasRolloutClosure") == true;
+        var hasRolloutActions = TryReadBoolean(root, "adminOverviewHasRolloutActions") == true;
+        var hasRolloutLinks = TryReadBoolean(root, "adminOverviewHasRolloutLinks") == true;
+        var activationVisible = TryReadBoolean(root, "adminActivationPaneVisible") == true;
+        var auditVisible = TryReadBoolean(root, "adminAuditVisible") == true;
+        var isPassing = tabCount >= 5 && stageCount >= 5 && gateCount >= 8 && checklistCount >= 8 && hasRolloutClosure && hasRolloutActions && hasRolloutLinks && activationVisible && auditVisible;
+        var summary = isPassing
+            ? "Settings browser smoke rollout closure, activation ve audit yuzeylerini dogruladi."
+            : $"Overview rollout smoke incomplete. Tabs={tabCount}; Stages={stageCount}; Gates={gateCount}; Checklist={checklistCount}; Activation={activationVisible}; Audit={auditVisible}.";
+
+        evidence.Add(new AdminRolloutEvidenceInput("ui-smoke-clean", "UI smoke temiz", isPassing, isPassing ? "UiSmokeClean" : "UiSmokeRolloutSurfaceMissing", summary, "SettingsBrowserSmoke", System.IO.File.GetLastWriteTimeUtc(summaryPath)));
+    }
+
+    private static void AddPilotLifecycleEvidence(ICollection<AdminRolloutEvidenceInput> evidence, string? summaryPath)
+    {
+        if (string.IsNullOrWhiteSpace(summaryPath) || !System.IO.File.Exists(summaryPath))
+        {
+            return;
+        }
+
+        using var document = TryLoadJsonDocument(summaryPath!);
+        if (document is null)
+        {
+            evidence.Add(new AdminRolloutEvidenceInput("pilot-lifecycle-clean", "Pilot lifecycle smoke temiz", false, "PilotLifecycleEvidenceMalformed", "Pilot lifecycle smoke ozeti okunamadi.", "PilotLifecycleRuntimeSmoke", System.IO.File.GetLastWriteTimeUtc(summaryPath)));
+            return;
+        }
+
+        var root = document.RootElement;
+        var brokerSubmitReached = TryReadBoolean(root, "BrokerSubmitReached") == true;
+        var cleanupApplied = TryReadBoolean(root, "CleanupApplied") == true;
+        var openExecutionOrderCount = TryReadInt32(root, "ScopeOpenExecutionOrderCount") ?? int.MaxValue;
+        var openPositionCount = TryReadInt32(root, "ScopeOpenPositionCount") ?? int.MaxValue;
+        var executionTraceCount = TryReadInt32(root, "ExecutionTraceCount") ?? 0;
+        var finalOrderState = TryReadNestedString(root, "FinalOrder", "State") ?? "Unavailable";
+        var isPassing = brokerSubmitReached && cleanupApplied && openExecutionOrderCount == 0 && openPositionCount == 0 && executionTraceCount >= 1 && string.Equals(finalOrderState, "Filled", StringComparison.OrdinalIgnoreCase);
+        var summary = isPassing
+            ? "Pilot lifecycle smoke broker submit, reconciliation ve cleanup closure ile basarili tamamlandi."
+            : $"Pilot lifecycle smoke clean degil. BrokerSubmitReached={brokerSubmitReached}; FinalOrder={finalOrderState}; OpenOrders={openExecutionOrderCount}; OpenPositions={openPositionCount}; ExecutionTraces={executionTraceCount}.";
+
+        evidence.Add(new AdminRolloutEvidenceInput("pilot-lifecycle-clean", "Pilot lifecycle smoke temiz", isPassing, isPassing ? "PilotLifecycleClean" : "PilotLifecycleFailed", summary, "PilotLifecycleRuntimeSmoke", System.IO.File.GetLastWriteTimeUtc(summaryPath)));
+    }
+
+    private static void AddUiLiveKillSwitchEvidence(ICollection<AdminRolloutEvidenceInput> evidence, string summaryPath)
+    {
+        if (string.IsNullOrWhiteSpace(summaryPath) || !System.IO.File.Exists(summaryPath))
+        {
+            return;
+        }
+
+        using var document = TryLoadJsonDocument(summaryPath!);
+        if (document is null)
+        {
+            evidence.Add(new AdminRolloutEvidenceInput("kill-switch-tested", "Kill switch test edildi", false, "KillSwitchEvidenceMalformed", "Ui live smoke ozeti okunamadi; kill switch reject kaniti yok.", "UiLiveBrowserSmoke", System.IO.File.GetLastWriteTimeUtc(summaryPath)));
+            return;
+        }
+
+        var root = document.RootElement;
+        var latestRejectCode = TryReadNestedString(root, "Ui", "home", "latestRejectCode");
+        var tradeMasterCode = TryReadNestedString(root, "Ui", "home", "tradeMasterCode");
+        var isPassing = string.Equals(latestRejectCode, "TradeMasterDisarmed", StringComparison.OrdinalIgnoreCase) && string.Equals(tradeMasterCode, "Disarmed", StringComparison.OrdinalIgnoreCase);
+        var summary = isPassing
+            ? "Ui live smoke kill switch reject reasonini TradeMasterDisarmed olarak dogruladi."
+            : $"Kill switch smoke kaniti yetersiz. LatestRejectCode={latestRejectCode ?? "Unavailable"}; TradeMasterCode={tradeMasterCode ?? "Unavailable"}.";
+
+        evidence.Add(new AdminRolloutEvidenceInput("kill-switch-tested", "Kill switch test edildi", isPassing, isPassing ? "KillSwitchTested" : "KillSwitchEvidenceFailed", summary, "UiLiveBrowserSmoke", System.IO.File.GetLastWriteTimeUtc(summaryPath)));
+    }
+
+    private static string ResolveRepositoryRootPath()
+    {
+        foreach (var candidate in new[] { System.IO.Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
+        {
+            var current = new System.IO.DirectoryInfo(candidate);
+
+            while (current is not null)
+            {
+                if (System.IO.File.Exists(System.IO.Path.Combine(current.FullName, "CoinBot.sln")))
+                {
+                    return current.FullName;
+                }
+
+                current = current.Parent;
+            }
+        }
+
+        return System.IO.Directory.GetCurrentDirectory();
+    }
+
+    private static string? FindLatestPilotLifecycleSummaryPath(string diagnosticsRoot)
+    {
+        var pilotRoot = System.IO.Path.Combine(diagnosticsRoot, "pilot-lifecycle-runtime-smoke");
+        if (!System.IO.Directory.Exists(pilotRoot))
+        {
+            return null;
+        }
+
+        return System.IO.Directory.EnumerateFiles(pilotRoot, "pilot-lifecycle-runtime-smoke-summary.json", System.IO.SearchOption.AllDirectories)
+            .Select(path => new FileInfo(path))
+            .OrderByDescending(file => file.LastWriteTimeUtc)
+            .Select(file => file.FullName)
+            .FirstOrDefault();
+    }
+
+    private static JsonDocument? TryLoadJsonDocument(string path)
+    {
+        try
+        {
+            return JsonDocument.Parse(System.IO.File.ReadAllText(path));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? TryReadString(JsonElement element, string propertyName)
+    {
+        return TryGetPropertyIgnoreCase(element, propertyName, out var value)
+            ? value.ValueKind switch
+            {
+                JsonValueKind.String => value.GetString(),
+                JsonValueKind.Number => value.GetRawText(),
+                JsonValueKind.True => bool.TrueString,
+                JsonValueKind.False => bool.FalseString,
+                _ => null
+            }
+            : null;
+    }
+
+    private static bool? TryReadBoolean(JsonElement element, string propertyName)
+    {
+        if (!TryGetPropertyIgnoreCase(element, propertyName, out var value))
+        {
+            return null;
+        }
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.String when bool.TryParse(value.GetString(), out var parsed) => parsed,
+            _ => null
+        };
+    }
+
+    private static int? TryReadInt32(JsonElement element, string propertyName)
+    {
+        if (!TryGetPropertyIgnoreCase(element, propertyName, out var value))
+        {
+            return null;
+        }
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.Number when value.TryGetInt32(out var parsed) => parsed,
+            JsonValueKind.String when int.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) => parsed,
+            _ => null
+        };
+    }
+
+    private static DateTime? TryReadDateTime(JsonElement element, string propertyName)
+    {
+        if (!TryGetPropertyIgnoreCase(element, propertyName, out var value))
+        {
+            return null;
+        }
+
+        if (value.ValueKind == JsonValueKind.String && DateTime.TryParse(value.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var parsed))
+        {
+            return parsed.ToUniversalTime();
+        }
+
+        return null;
+    }
+
+    private static string? TryReadNestedString(JsonElement element, params string[] path)
+    {
+        if (!TryResolveElement(element, path, out var value))
+        {
+            return null;
+        }
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString(),
+            JsonValueKind.Number => value.GetRawText(),
+            JsonValueKind.True => bool.TrueString,
+            JsonValueKind.False => bool.FalseString,
+            _ => null
+        };
+    }
+
+    private static bool TryResolveElement(JsonElement element, IReadOnlyList<string> path, out JsonElement value)
+    {
+        value = element;
+
+        foreach (var segment in path)
+        {
+            if (!TryGetPropertyIgnoreCase(value, segment, out value))
+            {
+                value = default;
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool TryGetPropertyIgnoreCase(JsonElement element, string propertyName, out JsonElement value)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            if (element.TryGetProperty(propertyName, out value))
+            {
+                return true;
+            }
+
+            foreach (var property in element.EnumerateObject())
+            {
+                if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = property.Value;
+                    return true;
+                }
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
     private static RiskPolicySnapshot? TryParsePolicySnapshot(string policyJson, out string? errorMessage)
     {
         try
@@ -4006,6 +4504,10 @@ public sealed class AdminController : Controller
             : value[..maxLength];
     }
 }
+
+
+
+
 
 
 

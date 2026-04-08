@@ -225,11 +225,11 @@ public sealed class AdminControllerTests
     }
 
     [Fact]
-    public void Overview_SetsProductLevelShellDescription()
+    public async Task Overview_SetsProductLevelShellDescription()
     {
         var controller = CreateController(new FakeGlobalExecutionSwitchService());
 
-        var result = controller.Overview();
+        var result = await controller.Overview(CancellationToken.None);
 
         Assert.IsType<ViewResult>(result);
         var pageDescription = controller.ViewData["PageDescription"]?.ToString() ?? string.Empty;
@@ -238,6 +238,89 @@ public sealed class AdminControllerTests
         Assert.DoesNotContain("placeholder", pageDescription, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task Overview_WhenSuperAdmin_LoadsOperationsCenterModelAndSnapshots()
+    {
+        var now = new DateTime(2026, 4, 8, 12, 0, 0, DateTimeKind.Utc);
+        var workspaceService = new FakeAdminWorkspaceReadModelService
+        {
+            UsersSnapshot = new AdminUsersPageSnapshot(null, null, null, Array.Empty<AdminStatTileSnapshot>(), [new AdminUserListItemSnapshot("user-1", "Ops User", "ops.user", null, "Active", "healthy", "MFA On", "healthy", "SuperAdmin", "Demo", "healthy", 1, 1, now.AddMinutes(-5), "5m ago", "healthy")], now),
+            BotOperationsSnapshot = new AdminBotOperationsPageSnapshot(null, null, null, Array.Empty<AdminStatTileSnapshot>(), [new AdminBotOperationSnapshot("bot-1", "Mean Reverter", "user-1", "Ops User", "Running", "healthy", "Demo", "healthy", "mean-revert", "Normal", "healthy", "Loop ok", string.Empty, 0, 0)], now)
+        };
+        var monitoringService = new FakeAdminMonitoringReadModelService(MonitoringDashboardSnapshot.Empty(now));
+        var credentialService = new FakeApiCredentialValidationService
+        {
+            Summaries = [new ApiCredentialAdminSummary(Guid.NewGuid(), "user-1", "Binance", "Primary", false, "fp-****-7890", "Valid", "Env=Testnet;Spot=True;Futures=True;Trade=True", now, null)]
+        };
+        var retentionService = new FakeLogCenterRetentionService();
+        var policyEngine = new FakeGlobalPolicyEngine(CreatePolicySnapshot(now));
+        var logCenterReadModelService = new FakeLogCenterReadModelService();
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            workspaceReadModelService: workspaceService,
+            monitoringReadModelService: monitoringService,
+            apiCredentialValidationService: credentialService,
+            logCenterReadModelService: logCenterReadModelService,
+            logCenterRetentionService: retentionService,
+            globalPolicyEngine: policyEngine,
+            pilotOptions: new BotExecutionPilotOptions { PilotActivationEnabled = true, MaxPilotOrderNotional = "250" });
+
+        var result = await controller.Overview(CancellationToken.None);
+
+        var viewResult = Assert.IsType<ViewResult>(result);
+        var model = Assert.IsType<AdminOperationsCenterViewModel>(viewResult.Model);
+        Assert.True(model.IsAccessible);
+        Assert.NotEmpty(model.RuntimeHealthCenter.Signals);
+        Assert.NotEmpty(model.UserBotGovernanceCenter.SummaryCards);
+        Assert.NotEmpty(model.ExchangeGovernanceCenter.SummaryCards);
+        Assert.NotEmpty(model.PolicyGovernanceCenter.SummaryCards);
+        Assert.NotNull(controller.ViewData["AdminActivationControlCenter"]);
+        var rolloutModel = Assert.IsType<AdminRolloutClosureCenterViewModel>(controller.ViewData["AdminRolloutClosureCenter"]);
+        Assert.Equal(5, rolloutModel.Stages.Count);
+        Assert.Equal(8, rolloutModel.MandatoryGates.Count);
+        Assert.True(rolloutModel.RelatedLinks.Count >= 4);
+        Assert.NotNull(logCenterReadModelService.CapturedRequest);
+        Assert.Equal(1, monitoringService.GetSnapshotCalls);
+        Assert.Equal(1, workspaceService.GetUsersCalls);
+        Assert.Equal(1, workspaceService.GetBotOperationsCalls);
+        Assert.Equal(1, credentialService.ListAdminSummariesCalls);
+        Assert.Equal(1, retentionService.GetSnapshotCalls);
+        Assert.Equal(1, policyEngine.GetSnapshotCalls);
+    }
+    [Fact]
+    public async Task Overview_WhenRoleIsNotSuperAdmin_ReturnsFailClosedModelWithoutLoadingOperationalQueries()
+    {
+        var workspaceService = new FakeAdminWorkspaceReadModelService();
+        var monitoringService = new FakeAdminMonitoringReadModelService();
+        var credentialService = new FakeApiCredentialValidationService();
+        var retentionService = new FakeLogCenterRetentionService();
+        var policyEngine = new FakeGlobalPolicyEngine();
+        var logCenterReadModelService = new FakeLogCenterReadModelService();
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            workspaceReadModelService: workspaceService,
+            monitoringReadModelService: monitoringService,
+            apiCredentialValidationService: credentialService,
+            logCenterReadModelService: logCenterReadModelService,
+            logCenterRetentionService: retentionService,
+            globalPolicyEngine: policyEngine,
+            roles: [ApplicationRoles.OpsAdmin]);
+
+        var result = await controller.Overview(CancellationToken.None);
+
+        var viewResult = Assert.IsType<ViewResult>(result);
+        var model = Assert.IsType<AdminOperationsCenterViewModel>(viewResult.Model);
+        Assert.False(model.IsAccessible);
+        var rolloutModel = Assert.IsType<AdminRolloutClosureCenterViewModel>(controller.ViewData["AdminRolloutClosureCenter"]);
+        Assert.False(rolloutModel.IsAccessible);
+        Assert.Null(logCenterReadModelService.CapturedRequest);
+        Assert.Equal(0, monitoringService.GetSnapshotCalls);
+        Assert.Equal(0, workspaceService.GetUsersCalls);
+        Assert.Equal(0, workspaceService.GetBotOperationsCalls);
+        Assert.Equal(0, credentialService.ListAdminSummariesCalls);
+        Assert.Equal(0, retentionService.GetSnapshotCalls);
+        Assert.Equal(0, policyEngine.GetSnapshotCalls);
+    }
     [Fact]
     public async Task AdminWorkspaceScreens_LoadRealSnapshots_AndAvoidPlaceholderData()
     {
@@ -561,6 +644,15 @@ public sealed class AdminControllerTests
 
         Assert.Equal(ApplicationPolicies.AdminPortalAccess, authorize.Policy);
     }
+
+    [Fact]
+    public void Audit_Action_RequiresAuditReadPolicy()
+    {
+        var method = typeof(AdminController).GetMethods().Single(item => item.Name == nameof(AdminController.Audit));
+        var authorize = Assert.Single(method.GetCustomAttributes(typeof(AuthorizeAttribute), inherit: true).Cast<AuthorizeAttribute>());
+
+        Assert.Equal(ApplicationPolicies.AuditRead, authorize.Policy);
+    }
     [Fact]
     public async Task UserDetail_WhenSnapshotMissing_RendersProductNotFoundState_With404Status()
     {
@@ -795,7 +887,7 @@ public sealed class AdminControllerTests
         var result = await controller.ActivateSystem(
             reason: "Controlled activation",
             commandId: "cmd-activate-001",
-            reauthToken: "reauth-hook",
+            reauthToken: "ONAYLA",
             cancellationToken: CancellationToken.None);
 
         var redirectResult = Assert.IsType<RedirectToActionResult>(result);
@@ -859,7 +951,7 @@ public sealed class AdminControllerTests
         var result = await controller.ActivateSystem(
             reason: "Controlled activation",
             commandId: "cmd-activate-002",
-            reauthToken: null,
+            reauthToken: "ONAYLA",
             cancellationToken: CancellationToken.None);
 
         var redirectResult = Assert.IsType<RedirectToActionResult>(result);
@@ -963,7 +1055,7 @@ public sealed class AdminControllerTests
         var result = await controller.DeactivateSystem(
             reason: "Controlled shutdown",
             commandId: "cmd-deactivate-001",
-            reauthToken: "reauth-hook",
+            reauthToken: "ONAYLA",
             cancellationToken: CancellationToken.None);
 
         var redirectResult = Assert.IsType<RedirectToActionResult>(result);
@@ -1035,7 +1127,7 @@ public sealed class AdminControllerTests
             isArmed: true,
             reason: "Controlled enablement",
             commandId: "cmd-trade-001",
-            reauthToken: "reauth-hook",
+            reauthToken: "ONAYLA",
             cancellationToken: CancellationToken.None);
 
         var redirectResult = Assert.IsType<RedirectToActionResult>(result);
@@ -1074,7 +1166,7 @@ public sealed class AdminControllerTests
             isArmed: true,
             reason: "   ",
             commandId: "cmd-missing-reason",
-            reauthToken: null,
+            reauthToken: "ONAYLA",
             cancellationToken: CancellationToken.None);
 
         var redirectResult = Assert.IsType<RedirectToActionResult>(result);
@@ -1173,7 +1265,7 @@ public sealed class AdminControllerTests
             isEnabled: false,
             reason: "Planned live window",
             commandId: "cmd-demo-001",
-            reauthToken: "reauth-hook",
+            reauthToken: "ONAYLA",
             liveApprovalReference: "chg-9001",
             cancellationToken: CancellationToken.None);
 
@@ -1277,7 +1369,7 @@ public sealed class AdminControllerTests
             message: "Exchange sync freeze",
             expiresAtUtc: new DateTime(2026, 3, 24, 23, 0, 0, DateTimeKind.Utc),
             commandId: "cmd-gs-001",
-            reauthToken: "reauth-hook",
+            reauthToken: "ONAYLA",
             cancellationToken: CancellationToken.None);
 
         var redirectResult = Assert.IsType<RedirectToActionResult>(result);
@@ -1319,7 +1411,7 @@ public sealed class AdminControllerTests
             isArmed: true,
             reason: "Retry same command",
             commandId: "cmd-trade-002",
-            reauthToken: null,
+            reauthToken: "ONAYLA",
             cancellationToken: CancellationToken.None);
 
         var redirectResult = Assert.IsType<RedirectToActionResult>(result);
@@ -1333,35 +1425,191 @@ public sealed class AdminControllerTests
     }
 
     [Fact]
-    public async Task Audit_ReturnsTraceRows_FromReadModelSearch()
+    public async Task Audit_ReturnsDecisionCenterModel_FromLogCenterReadModel()
     {
+        var now = new DateTime(2026, 4, 8, 12, 0, 0, DateTimeKind.Utc);
+        var logCenterReadModelService = new FakeLogCenterReadModelService
+        {
+            Snapshot = new LogCenterPageSnapshot(
+                new LogCenterQueryRequest("corr-admin-1", "corr-admin-1", null, null, null, null, null, null, null, 120),
+                new LogCenterSummarySnapshot(1, 0, 0, 1, 0, 0, 0, 0, 1, now),
+                new LogCenterRetentionSnapshot(true, 45, 45, 90, 180, 180, 250, now, "Retention completed"),
+                [
+                    new LogCenterEntrySnapshot(
+                        "AdminAuditLog",
+                        "Admin.Settings:GlobalSystemState:Singleton:audit-1",
+                        "Admin.Settings.GlobalSystemState.Update",
+                        "warning",
+                        "Warning",
+                        "corr-admin-1",
+                        null,
+                        null,
+                        null,
+                        null,
+                        "super-admin",
+                        null,
+                        "Global system state update",
+                        "Maintenance override applied.",
+                        "Singleton",
+                        now,
+                        ["GlobalSystemState", "Maintenance"],
+                        """{\"ActorUserId\":\"super-admin\",\"OldValueSummary\":\"State=Active\",\"NewValueSummary\":\"State=Maintenance\",\"Reason\":\"Maintenance\"}""")
+                ],
+                false,
+                null)
+        };
         var controller = CreateController(
             new FakeGlobalExecutionSwitchService(),
+            logCenterReadModelService: logCenterReadModelService);
+
+        var result = await controller.Audit("corr-admin-1", "corr-admin-1", null, null, null, null, null, null, null, 120, CancellationToken.None);
+
+        var viewResult = Assert.IsType<ViewResult>(result);
+        var model = Assert.IsType<AdminIncidentAuditDecisionCenterViewModel>(viewResult.Model);
+        Assert.Single(model.Rows);
+        Assert.Equal("Admin.Settings:GlobalSystemState:Singleton:audit-1", model.Detail.Reference);
+        Assert.Equal("super-admin", model.Detail.ChangedBy);
+        Assert.Equal("State=Active", model.Detail.BeforeSummary);
+        Assert.Equal("State=Maintenance", model.Detail.AfterSummary);
+        Assert.Equal("corr-admin-1", logCenterReadModelService.CapturedRequest?.CorrelationId);
+    }
+
+    [Fact]
+    public async Task Audit_LoadsTraceApprovalAndIncidentDetails_ForFocusedEntry()
+    {
+        var now = new DateTime(2026, 4, 8, 12, 5, 0, DateTimeKind.Utc);
+        var approvalDetail = new ApprovalQueueDetailSnapshot(
+            "APR-audit-1",
+            ApprovalQueueOperationType.GlobalSystemStateUpdate,
+            ApprovalQueueStatus.Pending,
+            IncidentSeverity.Warning,
+            "Maintenance approval",
+            "Awaiting final approval",
+            "GlobalSystemState",
+            "Singleton",
+            "requestor-1",
+            "Maintenance required",
+            "{\"state\":\"Maintenance\"}",
+            2,
+            1,
+            now.AddHours(1),
+            "corr-audit-1",
+            "cmd-audit-1",
+            "dec-audit-1",
+            "exe-audit-1",
+            "INC-audit-1",
+            null,
+            null,
+            now,
+            now,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            [
+                new ApprovalActionSnapshot(1, ApprovalActionType.Approved, "approver-1", "Looks good", "corr-audit-1", "cmd-audit-1", "dec-audit-1", "exe-audit-1", now)
+            ]);
+        var incidentDetail = new IncidentDetailSnapshot(
+            "INC-audit-1",
+            IncidentSeverity.Warning,
+            IncidentStatus.PendingApproval,
+            "Maintenance incident",
+            "Pending approval for maintenance",
+            "Detailed incident",
+            ApprovalQueueOperationType.GlobalSystemStateUpdate,
+            "GlobalSystemState",
+            "Singleton",
+            "corr-audit-1",
+            "cmd-audit-1",
+            "dec-audit-1",
+            "exe-audit-1",
+            "APR-audit-1",
+            null,
+            null,
+            "requestor-1",
+            now,
+            null,
+            null,
+            null,
+            [
+                new IncidentEventSnapshot(IncidentEventType.ApprovalQueued, "Approval queued", "requestor-1", "corr-audit-1", "cmd-audit-1", "dec-audit-1", "exe-audit-1", "APR-audit-1", null, null, null, now)
+            ]);
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            logCenterReadModelService: new FakeLogCenterReadModelService
+            {
+                Snapshot = new LogCenterPageSnapshot(
+                    new LogCenterQueryRequest(null, null, null, null, null, null, null, null, null, 120),
+                    new LogCenterSummarySnapshot(2, 1, 1, 0, 0, 0, 1, 0, 1, now),
+                    new LogCenterRetentionSnapshot(true, 45, 45, 90, 180, 180, 250, now, "Retention completed"),
+                    [
+                        new LogCenterEntrySnapshot(
+                            "ApprovalQueue",
+                            "APR-audit-1",
+                            "Pending",
+                            "warning",
+                            "Warning",
+                            "corr-audit-1",
+                            "dec-audit-1",
+                            "exe-audit-1",
+                            "INC-audit-1",
+                            "APR-audit-1",
+                            "requestor-1",
+                            null,
+                            "Maintenance approval",
+                            "Awaiting final approval",
+                            "requestor-1",
+                            now,
+                            ["GlobalSystemState"],
+                            """{\"ApprovalReference\":\"APR-audit-1\",\"Status\":\"Pending\",\"RequestedByUserId\":\"requestor-1\"}"""),
+                        new LogCenterEntrySnapshot(
+                            "AdminAuditLog",
+                            "Admin.Settings.GlobalSystemState.Update:audit-link",
+                            "Admin.Settings.GlobalSystemState.Update",
+                            "warning",
+                            "Warning",
+                            "corr-audit-1",
+                            null,
+                            null,
+                            "INC-audit-1",
+                            "APR-audit-1",
+                            "super-admin",
+                            null,
+                            "Global system state update",
+                            "Maintenance pending approval.",
+                            "Singleton",
+                            now.AddMinutes(1),
+                            ["GlobalSystemState"],
+                            """{\"ActorUserId\":\"super-admin\",\"OldValueSummary\":\"State=Active\",\"NewValueSummary\":\"State=MaintenancePending\"}""")
+                    ],
+                    false,
+                    null)
+            },
             traceService: new FakeTraceService
             {
-                SearchResults =
-                [
-                    new AdminTraceListItem(
-                        "corr-admin-1",
-                        "user-01",
-                        "BTCUSDT",
-                        "1m",
-                        "StrategyVersion:abc",
-                        "Persisted",
-                        null,
-                        "Binance.PrivateRest",
-                        1,
-                        1,
-                        new DateTime(2026, 3, 24, 12, 0, 0, DateTimeKind.Utc))
-                ]
-            });
+                DetailSnapshot = new AdminTraceDetailSnapshot(
+                    "corr-audit-1",
+                    [
+                        new DecisionTraceSnapshot(Guid.NewGuid(), Guid.NewGuid(), "corr-audit-1", "dec-audit-1", "requestor-1", "BTCUSDT", "1m", "StrategyVersion:test", "Entry", 52, "Allow", null, 11, "{}", now, DecisionReasonType: "Allow", DecisionReasonCode: "Allowed", DecisionSummary: "Decision allowed.", DecisionAtUtc: now)
+                    ],
+                    [
+                        new ExecutionTraceSnapshot(Guid.NewGuid(), Guid.NewGuid(), "corr-audit-1", "exe-audit-1", "cmd-audit-1", "requestor-1", "Binance.PrivateRest", "/fapi/v1/order", "{}", "{}", 200, "OK", 22, now.AddMinutes(1))
+                    ])
+            },
+            approvalWorkflowService: new FakeApprovalWorkflowService { Detail = approvalDetail },
+            governanceReadModelService: new FakeAdminGovernanceReadModelService { IncidentDetail = incidentDetail });
 
-        var result = await controller.Audit("corr-admin-1", null, null, null, null, CancellationToken.None);
+        var result = await controller.Audit(null, null, null, null, null, null, null, null, "APR-audit-1", 120, CancellationToken.None);
+
         var viewResult = Assert.IsType<ViewResult>(result);
-        var model = Assert.IsAssignableFrom<IReadOnlyCollection<AdminTraceListItem>>(viewResult.Model);
-
-        Assert.Single(model);
-        Assert.Equal("corr-admin-1", model.Single().CorrelationId);
+        var model = Assert.IsType<AdminIncidentAuditDecisionCenterViewModel>(viewResult.Model);
+        Assert.Equal("APR-audit-1", model.Detail.Reference);
+        Assert.Single(model.Detail.ApprovalHistory);
+        Assert.Single(model.Detail.IncidentTimeline);
+        Assert.Equal(2, model.Detail.DecisionExecutionTrace.Count);
+        Assert.Single(model.Detail.AdminAuditTrail);
     }
 
     [Fact]
@@ -2075,7 +2323,7 @@ public sealed class AdminControllerTests
             message: "Approval queue test",
             expiresAtUtc: new DateTime(2026, 3, 24, 23, 0, 0, DateTimeKind.Utc),
             commandId: "cmd-gs-approval-1",
-            reauthToken: "reauth-hook",
+            reauthToken: "ONAYLA",
             cancellationToken: CancellationToken.None);
 
         var redirectResult = Assert.IsType<RedirectToActionResult>(result);
@@ -2254,6 +2502,7 @@ public sealed class AdminControllerTests
         FakeAdminCommandRegistry? commandRegistry = null,
         FakeAdminAuditLogService? auditLogService = null,
         FakeTraceService? traceService = null,
+        FakeLogCenterReadModelService? logCenterReadModelService = null,
         FakeApiCredentialValidationService? apiCredentialValidationService = null,
         FakeAdminWorkspaceReadModelService? workspaceReadModelService = null,
         FakeStrategyTemplateCatalogService? strategyTemplateCatalogService = null,
@@ -2301,6 +2550,7 @@ public sealed class AdminControllerTests
             adminCommandRegistry: commandRegistry ?? new FakeAdminCommandRegistry(),
             adminAuditLogService: auditLogService ?? new FakeAdminAuditLogService(),
             traceService: traceService ?? new FakeTraceService(),
+            logCenterReadModelService: logCenterReadModelService ?? new FakeLogCenterReadModelService(),
             binanceTimeSyncService: timeSyncService ?? new FakeBinanceTimeSyncService(),
             dataLatencyCircuitBreaker: dataLatencyCircuitBreaker ?? new FakeDataLatencyCircuitBreaker(),
             apiCredentialValidationService: apiCredentialValidationService ?? new FakeApiCredentialValidationService(),
@@ -2755,6 +3005,25 @@ public sealed class AdminControllerTests
         }
     }
 
+    private sealed class FakeLogCenterReadModelService : ILogCenterReadModelService
+    {
+        public LogCenterPageSnapshot Snapshot { get; set; } = new(
+            new LogCenterQueryRequest(null, null, null, null, null, null, null, null, null, 120),
+            new LogCenterSummarySnapshot(0, 0, 0, 0, 0, 0, 0, 0, 0, null),
+            new LogCenterRetentionSnapshot(true, 45, 45, 90, 180, 180, 250, null, null),
+            Array.Empty<LogCenterEntrySnapshot>(),
+            false,
+            null);
+
+        public LogCenterQueryRequest? CapturedRequest { get; private set; }
+
+        public Task<LogCenterPageSnapshot> GetPageAsync(LogCenterQueryRequest request, CancellationToken cancellationToken = default)
+        {
+            CapturedRequest = request;
+            return Task.FromResult(Snapshot);
+        }
+    }
+
     private sealed class FakeTraceService : ITraceService
     {
         public IReadOnlyCollection<AdminTraceListItem> SearchResults { get; set; } = Array.Empty<AdminTraceListItem>();
@@ -2791,6 +3060,8 @@ public sealed class AdminControllerTests
     {
         public IReadOnlyCollection<ApiCredentialAdminSummary> Summaries { get; set; } = Array.Empty<ApiCredentialAdminSummary>();
 
+        public int ListAdminSummariesCalls { get; private set; }
+
         public Task UpsertStoredCredentialAsync(ApiCredentialStoreMirrorRequest request, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
@@ -2803,6 +3074,7 @@ public sealed class AdminControllerTests
 
         public Task<IReadOnlyCollection<ApiCredentialAdminSummary>> ListAdminSummariesAsync(int take = 100, CancellationToken cancellationToken = default)
         {
+            ListAdminSummariesCalls++;
             return Task.FromResult(Summaries);
         }
     }
@@ -2823,8 +3095,13 @@ public sealed class AdminControllerTests
 
         public AdminNotificationsPageSnapshot NotificationsSnapshot { get; set; } = AdminNotificationsPageSnapshot.Empty(DateTime.UtcNow);
 
+        public int GetUsersCalls { get; private set; }
+
+        public int GetBotOperationsCalls { get; private set; }
+
         public Task<AdminUsersPageSnapshot> GetUsersAsync(string? query = null, string? status = null, string? mfa = null, CancellationToken cancellationToken = default)
         {
+            GetUsersCalls++;
             return Task.FromResult(UsersSnapshot);
         }
 
@@ -2835,6 +3112,7 @@ public sealed class AdminControllerTests
 
         public Task<AdminBotOperationsPageSnapshot> GetBotOperationsAsync(string? query = null, string? status = null, string? mode = null, CancellationToken cancellationToken = default)
         {
+            GetBotOperationsCalls++;
             return Task.FromResult(BotOperationsSnapshot);
         }
 
@@ -3012,6 +3290,8 @@ public sealed class AdminControllerTests
     {
         public MonitoringDashboardSnapshot Snapshot { get; set; } = MonitoringDashboardSnapshot.Empty(new DateTime(2026, 3, 24, 12, 0, 0, DateTimeKind.Utc));
 
+        public int GetSnapshotCalls { get; private set; }
+
         public FakeAdminMonitoringReadModelService()
         {
         }
@@ -3023,6 +3303,7 @@ public sealed class AdminControllerTests
 
         public Task<MonitoringDashboardSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
         {
+            GetSnapshotCalls++;
             return Task.FromResult(Snapshot);
         }
     }
@@ -3195,6 +3476,7 @@ public sealed class AdminControllerTests
     private sealed class FakeGlobalPolicyEngine : IGlobalPolicyEngine
     {
         public GlobalPolicySnapshot Snapshot { get; set; } = GlobalPolicySnapshot.CreateDefault(new DateTime(2026, 3, 24, 12, 0, 0, DateTimeKind.Utc));
+        public int GetSnapshotCalls { get; private set; }
         public List<GlobalPolicyUpdateRequest> UpdateRequests { get; } = [];
         public List<GlobalPolicyRollbackRequest> RollbackRequests { get; } = [];
 
@@ -3209,6 +3491,7 @@ public sealed class AdminControllerTests
 
         public Task<GlobalPolicySnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
         {
+            GetSnapshotCalls++;
             return Task.FromResult(Snapshot);
         }
 
@@ -3254,6 +3537,15 @@ public sealed class AdminControllerTests
         }
     }
 }
+
+
+
+
+
+
+
+
+
 
 
 

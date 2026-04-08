@@ -22,6 +22,8 @@ const savedScreenshotPath = path.join(diagDirectory, 'settings-saved.png');
 const invalidScreenshotPath = path.join(diagDirectory, 'settings-invalid.png');
 const dashboardScreenshotPath = path.join(diagDirectory, 'dashboard-drift-summary.png');
 const adminSettingsScreenshotPath = path.join(diagDirectory, 'admin-settings-page.png');
+const adminOverviewScreenshotPath = path.join(diagDirectory, 'admin-overview-page.png');
+const adminAuditScreenshotPath = path.join(diagDirectory, 'admin-audit-page.png');
 
 const browserPathCandidates = [
   'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
@@ -575,6 +577,30 @@ class CdpClient {
       throw new Error('Normal user shell should not render an admin global settings shortcut.');
     }
 
+    await client.navigate(`${baseUrl}/admin/Overview`);
+    await client.waitForReady();
+
+    const userOverviewState = await client.evaluate(`(() => ({
+      location: window.location.href,
+      hasOperationsCenter: !!document.querySelector('[data-cb-super-admin-operations-center]')
+    }))()`);
+
+    if (userOverviewState.location.toLowerCase().includes('/admin/overview') && userOverviewState.hasOperationsCenter) {
+      throw new Error('Normal user should not be able to access the super admin operations center.');
+    }
+
+    await client.navigate(`${baseUrl}/admin/Audit`);
+    await client.waitForReady();
+
+    const userAuditState = await client.evaluate(`(() => ({
+      location: window.location.href,
+      hasDecisionCenter: !!document.querySelector('[data-cb-admin-decision-center]')
+    }))()`);
+
+    if (userAuditState.location.toLowerCase().includes('/admin/audit') && userAuditState.hasDecisionCenter) {
+      throw new Error('Normal user should not be able to access the incident / audit / decision center.');
+    }
+
     await client.send('Network.clearBrowserCookies');
     await client.navigate(`${baseUrl}/admin/Settings`);
     await client.waitForReady();
@@ -684,6 +710,101 @@ class CdpClient {
       throw new Error('Admin / Settings activation control center did not render the expected guarded surface.');
     }
 
+    await client.navigate(`${baseUrl}/admin/Overview`);
+    await client.waitForReady();
+    await client.waitForLocationContains('/admin/Overview');
+    await client.captureScreenshot(adminOverviewScreenshotPath);
+
+    const adminOverviewState = await client.evaluate(`(() => {
+      const runtimeText = document.querySelector('#cb_admin_operations_tab_runtime')?.textContent || '';
+      const userBotText = document.querySelector('#cb_admin_operations_tab_user_bot')?.textContent || '';
+      const exchangeText = document.querySelector('#cb_admin_operations_tab_exchange')?.textContent || '';
+      const policyText = document.querySelector('#cb_admin_operations_tab_policy')?.textContent || '';
+      const rolloutText = document.querySelector('#cb_admin_operations_tab_rollout')?.textContent || '';
+      return {
+        tabCount: document.querySelectorAll('[id^="cb_admin_operations_tab_link_"]').length,
+        activeTabText: document.querySelector('#cb_admin_operations_tab_nav .nav-link.active')?.innerText?.trim() || '',
+        summaryCount: document.querySelectorAll('[data-cb-admin-operations-summary] .cb-admin-summary-card').length,
+        runtimeSignalCount: document.querySelectorAll('[data-cb-admin-runtime-signal]').length,
+        hasActivationCenter: !!document.querySelector('[data-cb-admin-activation-control-center]'),
+        hasCredentialInventory: !!document.querySelector('[data-cb-admin-credential-inventory]') || exchangeText.includes('Credential inventory bos'),
+        hasPolicyGovernance: !!document.querySelector('[data-cb-admin-policy-governance]'),
+        hasRolloutClosure: !!document.querySelector('[data-cb-admin-rollout-closure]'),
+        rolloutStageCount: document.querySelectorAll('[data-cb-admin-rollout-stage]').length,
+        rolloutGateCount: document.querySelectorAll('[data-cb-admin-rollout-gate]').length,
+        rolloutChecklistCount: document.querySelectorAll('[data-cb-admin-rollout-check]').length,
+        rolloutBlockerCount: document.querySelectorAll('[data-cb-admin-rollout-blocker]').length,
+        hasRolloutActions: !!document.querySelector('[data-cb-admin-rollout-actions]'),
+        hasRolloutLinks: document.querySelectorAll('[data-cb-admin-rollout-link]').length >= 3,
+        hasRolloutBlockSurface: !!document.querySelector('[data-cb-admin-rollout-blockers]') || rolloutText.includes('Blocker yok'),
+        hasRuntimeCenter: runtimeText.includes('Runtime & Health Center'),
+        hasUserBotCenter: userBotText.includes('User / Bot Governance Center'),
+        hasExchangeCenter: exchangeText.includes('Exchange / Credential Governance'),
+        hasPolicyCenter: policyText.includes('Policy / Limit Governance'),
+        hasRolloutCenter: rolloutText.includes('System Activation / Rollout Closure') || rolloutText.includes('Rollout ozeti')
+      };
+    })()`);
+
+    if (adminOverviewState.tabCount < 5
+        || !/Runtime/i.test(adminOverviewState.activeTabText)
+        || adminOverviewState.summaryCount < 4
+        || adminOverviewState.runtimeSignalCount < 6
+        || !adminOverviewState.hasActivationCenter
+        || !adminOverviewState.hasCredentialInventory
+        || !adminOverviewState.hasPolicyGovernance
+        || !adminOverviewState.hasRuntimeCenter
+        || !adminOverviewState.hasUserBotCenter
+        || !adminOverviewState.hasExchangeCenter
+        || !adminOverviewState.hasPolicyCenter
+        || !adminOverviewState.hasRolloutClosure
+        || adminOverviewState.rolloutStageCount < 5
+        || adminOverviewState.rolloutGateCount < 8
+        || adminOverviewState.rolloutChecklistCount < 8
+        || !adminOverviewState.hasRolloutActions
+        || !adminOverviewState.hasRolloutLinks
+        || !adminOverviewState.hasRolloutBlockSurface
+        || !adminOverviewState.hasRolloutCenter) {
+      throw new Error('Admin / Overview did not render the expected rollout closure center.');
+    }
+
+    await client.navigate(`${baseUrl}/admin/Audit`);
+    await client.waitForReady();
+    await client.waitForLocationContains('/admin/Audit');
+    await client.captureScreenshot(adminAuditScreenshotPath);
+
+    const adminAuditState = await client.evaluate(`(() => {
+      const pageText = document.body.textContent || '';
+      const detailText = document.querySelector('[data-cb-admin-decision-detail]')?.textContent || '';
+      const rowCount = document.querySelectorAll('[data-cb-admin-decision-row]').length;
+      return {
+        hasDecisionCenter: !!document.querySelector('[data-cb-admin-decision-center]'),
+        hasOutcomeFilter: !!document.querySelector('#cb_admin_audit_filter_outcome'),
+        hasReasonCodeFilter: !!document.querySelector('#cb_admin_audit_filter_reason_code'),
+        summaryCardCount: document.querySelectorAll('[data-cb-admin-decision-summary] .cb-admin-summary-card').length,
+        rowCount,
+        detailVisible: !!document.querySelector('[data-cb-admin-decision-detail]'),
+        detailHasEmptyState: /Secili kayit yok/i.test(detailText),
+        detailHasDecisionCode: !!document.querySelector('[data-cb-admin-decision-code]'),
+        hasBeforeAfter: !!document.querySelector('[data-cb-admin-before]') && !!document.querySelector('[data-cb-admin-after]'),
+        hasTraceSection: !!document.querySelector('[data-cb-admin-trace-section]'),
+        hasApprovalHistory: !!document.querySelector('[data-cb-admin-approval-history]'),
+        hasIncidentTimeline: !!document.querySelector('[data-cb-admin-incident-timeline]'),
+        hasAuditTrail: !!document.querySelector('[data-cb-admin-audit-trail]'),
+        pageTitle: document.querySelector('.cb-page-title, .cb-admin-page-title, .cb-admin-section-title')?.innerText?.trim() || '',
+        hasUnavailableFallback: pageText.includes('Unavailable')
+      };
+    })()`);
+
+    if (!adminAuditState.hasDecisionCenter
+        || !adminAuditState.hasOutcomeFilter
+        || !adminAuditState.hasReasonCodeFilter
+        || adminAuditState.summaryCardCount < 4
+        || !adminAuditState.detailVisible
+        || (adminAuditState.rowCount === 0 && !adminAuditState.detailHasEmptyState)
+        || (adminAuditState.rowCount > 0 && (!adminAuditState.detailHasDecisionCode || !adminAuditState.hasBeforeAfter || !adminAuditState.hasTraceSection || !adminAuditState.hasApprovalHistory || !adminAuditState.hasIncidentTimeline || !adminAuditState.hasAuditTrail))) {
+      throw new Error('Admin / Audit did not render the expected incident / audit / decision center surface.');
+    }
+
     const summary = {
       baseUrl,
       anonymousLocation,
@@ -714,13 +835,36 @@ class CdpClient {
       adminActivationDecisionType: String(adminActivationState.decisionType ?? ''),
       adminActivationActivatable: String(adminActivationState.activatable ?? ''),
       adminActivationChecklistCount: Number(adminActivationState.checklistCount ?? 0),
+      userOverviewDenied: !String(userOverviewState.location ?? '').toLowerCase().includes('/admin/overview') || !Boolean(userOverviewState.hasOperationsCenter),
+      userAuditDenied: !String(userAuditState.location ?? '').toLowerCase().includes('/admin/audit') || !Boolean(userAuditState.hasDecisionCenter),
+      adminOverviewTabCount: Number(adminOverviewState.tabCount ?? 0),
+      adminOverviewActiveTabText: String(adminOverviewState.activeTabText ?? ''),
+      adminOverviewRuntimeSignalCount: Number(adminOverviewState.runtimeSignalCount ?? 0),
+      adminOverviewHasActivationCenter: Boolean(adminOverviewState.hasActivationCenter),
+      adminOverviewHasCredentialInventory: Boolean(adminOverviewState.hasCredentialInventory),
+      adminOverviewHasPolicyGovernance: Boolean(adminOverviewState.hasPolicyGovernance),
+      adminOverviewHasRolloutClosure: Boolean(adminOverviewState.hasRolloutClosure),
+      adminOverviewRolloutStageCount: Number(adminOverviewState.rolloutStageCount ?? 0),
+      adminOverviewRolloutGateCount: Number(adminOverviewState.rolloutGateCount ?? 0),
+      adminOverviewRolloutChecklistCount: Number(adminOverviewState.rolloutChecklistCount ?? 0),
+      adminOverviewRolloutBlockerCount: Number(adminOverviewState.rolloutBlockerCount ?? 0),
+      adminOverviewHasRolloutActions: Boolean(adminOverviewState.hasRolloutActions),
+      adminOverviewHasRolloutLinks: Boolean(adminOverviewState.hasRolloutLinks),
+      adminAuditVisible: Boolean(adminAuditState.hasDecisionCenter),
+      adminAuditOutcomeFilterVisible: Boolean(adminAuditState.hasOutcomeFilter),
+      adminAuditReasonCodeFilterVisible: Boolean(adminAuditState.hasReasonCodeFilter),
+      adminAuditSummaryCardCount: Number(adminAuditState.summaryCardCount ?? 0),
+      adminAuditRowCount: Number(adminAuditState.rowCount ?? 0),
+      adminAuditDetailVisible: Boolean(adminAuditState.detailVisible),
       screenshots: {
         anonymous: anonymousScreenshotPath,
         settings: settingsScreenshotPath,
         saved: savedScreenshotPath,
         invalid: invalidScreenshotPath,
         dashboard: dashboardScreenshotPath,
-        adminSettings: adminSettingsScreenshotPath
+        adminSettings: adminSettingsScreenshotPath,
+        adminOverview: adminOverviewScreenshotPath,
+        adminAudit: adminAuditScreenshotPath
       },
       logs: {
         webStdOut: webStdOutPath,
@@ -749,7 +893,15 @@ class CdpClient {
     console.log(`AdminActivationDecisionCode=${summary.adminActivationDecisionCode}`);
     console.log(`AdminActivationDecisionType=${summary.adminActivationDecisionType}`);
     console.log(`AdminActivationActivatable=${summary.adminActivationActivatable}`);
-    console.log(`AdminActivationChecklistCount=${summary.adminActivationChecklistCount}`);
+        console.log(`AdminActivationChecklistCount=${summary.adminActivationChecklistCount}`);
+    console.log(`UserAuditDenied=${summary.userAuditDenied}`);
+    console.log(`AdminOverviewRolloutClosure=${summary.adminOverviewHasRolloutClosure}`);
+    console.log(`AdminOverviewRolloutStageCount=${summary.adminOverviewRolloutStageCount}`);
+    console.log(`AdminOverviewRolloutGateCount=${summary.adminOverviewRolloutGateCount}`);
+    console.log(`AdminOverviewRolloutChecklistCount=${summary.adminOverviewRolloutChecklistCount}`);
+    console.log(`AdminAuditVisible=${summary.adminAuditVisible}`);
+    console.log(`AdminAuditSummaryCardCount=${summary.adminAuditSummaryCardCount}`);
+    console.log(`AdminAuditRowCount=${summary.adminAuditRowCount}`);
     console.log(`SummaryPath=${summaryPath}`);
   } finally {
     await client?.close();
@@ -768,6 +920,16 @@ class CdpClient {
   console.error(error?.stack ?? error?.message ?? String(error));
   process.exit(1);
 });
+
+
+
+
+
+
+
+
+
+
 
 
 

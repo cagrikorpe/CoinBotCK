@@ -6,7 +6,7 @@
 
     var navigation = new[]
     {
-        new { Group = "Overview", Key = "Overview", Label = "Genel Bakış", Initials = "GV", Action = "Overview", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } },
+        new { Group = "Overview", Key = "Overview", Label = "Operasyon Merkezi", Initials = "GV", Action = "Overview", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } },
         new { Group = "Overview", Key = "Search", Label = "Global Search", Initials = "GS", Action = "Search", Badge = (AdminBadgeViewModel?)new AdminBadgeViewModel { Label = "Trace", Tone = "info" }, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } },
         new { Group = "Identity", Key = "Users", Label = "Kullanıcılar", Initials = "US", Action = "Users", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "OpsAdmin" } },
         new { Group = "Identity", Key = "UserDetail", Label = "Kullanıcı Detayı", Initials = "UD", Action = "UserDetail", Badge = (AdminBadgeViewModel?)new AdminBadgeViewModel { Label = "Drawer", Tone = "neutral" }, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } },
@@ -101,5 +101,6 @@
         </div>
     </div>
 </div>
+
 
 

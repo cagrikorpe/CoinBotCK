@@ -1,56 +1,179 @@
-@model IReadOnlyCollection<CoinBot.Application.Abstractions.Administration.AdminTraceListItem>
+@model CoinBot.Web.ViewModels.Admin.AdminIncidentAuditDecisionCenterViewModel
 @using CoinBot.Web.ViewModels.Admin
 @{
-    var query = ViewData["AdminTraceQuery"] as string;
+    string BuildFocusHref(string focusReference)
+    {
+        return Url.Action("Audit", "Admin", new
+        {
+            area = "Admin",
+            query = Model.Filters.Query,
+            correlationId = Model.Filters.CorrelationId,
+            decisionId = Model.Filters.DecisionId,
+            executionAttemptId = Model.Filters.ExecutionAttemptId,
+            userId = Model.Filters.UserId,
+            symbol = Model.Filters.Symbol,
+            outcome = Model.Filters.Outcome,
+            reasonCode = Model.Filters.ReasonCode,
+            take = Model.Filters.Take,
+            focus = focusReference
+        }) ?? "#";
+    }
+
+    string? traceDetailHref = Model.Detail.HasSelection && !string.Equals(Model.Detail.CorrelationId, "Unavailable", StringComparison.OrdinalIgnoreCase)
+        ? Url.Action("TraceDetail", "Admin", new
+        {
+            area = "Admin",
+            correlationId = Model.Detail.CorrelationId,
+            decisionId = string.Equals(Model.Detail.DecisionId, "Unavailable", StringComparison.OrdinalIgnoreCase) ? null : Model.Detail.DecisionId,
+            executionAttemptId = string.Equals(Model.Detail.ExecutionAttemptId, "Unavailable", StringComparison.OrdinalIgnoreCase) ? null : Model.Detail.ExecutionAttemptId
+        })
+        : null;
+    string? incidentDetailHref = Model.Detail.HasSelection && !string.Equals(Model.Detail.IncidentReference, "Unavailable", StringComparison.OrdinalIgnoreCase)
+        ? Url.Action("IncidentDetail", "Admin", new { area = "Admin", incidentReference = Model.Detail.IncidentReference })
+        : null;
+    string? approvalDetailHref = Model.Detail.HasSelection && !string.Equals(Model.Detail.ApprovalReference, "Unavailable", StringComparison.OrdinalIgnoreCase)
+        ? Url.Action("ApprovalDetail", "Admin", new { area = "Admin", approvalReference = Model.Detail.ApprovalReference })
+        : null;
+
     var headerModel = new AdminPageHeaderViewModel
     {
-        Eyebrow = "Correlation Trace",
-        Title = "Audit & Log Merkezi",
-        Description = "CorrelationId, OrderId, DecisionId ve ExecutionAttemptId tabanli decision/execution trace read-modeli; signal -> decision -> risk -> execution zinciri masked admin gorunumuyle izlenir.",
-        StatusBadge = new AdminBadgeViewModel { Label = "Trace Index", Tone = "info", IconText = "TR" },
+        Eyebrow = "Observability / Governance",
+        Title = "Incident / Audit / Decision Center",
+        Description = "Allow, block, retry ve skip kararlarini admin audit, approval ve incident zinciriyle birlikte tek merkezde okutur.",
+        StatusBadge = new AdminBadgeViewModel { Label = Model.HasError ? "Degraded" : "Read Model", Tone = Model.HasError ? "critical" : "info", IconText = "ID" },
         MetaBadges = new[]
         {
             new AdminBadgeViewModel { Label = "Masked", Tone = "healthy", IconText = "MS" },
-            new AdminBadgeViewModel { Label = "Read Model", Tone = "warning", IconText = "RM" },
-            new AdminBadgeViewModel { Label = "Focused Trace", Tone = "neutral", IconText = "FT" }
+            new AdminBadgeViewModel { Label = "Audit bound", Tone = "warning", IconText = "AU" },
+            new AdminBadgeViewModel { Label = "Fail closed", Tone = "critical", IconText = "FC" }
         },
-        SecondaryActionText = "Sistem sağlığı",
-        SecondaryActionHref = Url.Action("SystemHealth", "Admin", new { area = "Admin" }),
-        PrimaryActionText = "Global search",
-        PrimaryActionHref = Url.Action("Search", "Admin", new { area = "Admin" })
+        SecondaryActionText = "Approval merkezi",
+        SecondaryActionHref = Url.Action("Approvals", "Admin", new { area = "Admin" }),
+        PrimaryActionText = "Incident merkezi",
+        PrimaryActionHref = Url.Action("Incidents", "Admin", new { area = "Admin" })
     };
 }
 
-<div class="row">
+<div class="row" data-cb-admin-decision-center>
     <div class="col-12">
         <div class="card card-custom gutter-b cb-card cb-admin-card">
             <div class="card-body">
                 @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
-
                 @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
                 {
-                    Tone = "info",
-                    Title = "Correlation zinciri admin read-modeli",
-                    Message = "Liste snapshot/read-model verisinden beslenir. Canli trading path veya agir trace sorgusu admin UI'ya bind edilmez.",
-                    Meta = string.IsNullOrWhiteSpace(query) ? "Recent traces" : $"Query={query}"
+                    Tone = Model.HasError ? "critical" : "info",
+                    Title = "Tek merkez decision / audit / incident gorunumu",
+                    Message = "Outcome, reason code, changed by, before/after ve approval/incident zinciri ayni admin sayfasinda okunur.",
+                    Meta = $"Refresh={Model.RefreshedAtUtcLabel}"
                 })
+
+                @if (Model.HasError)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-danger mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Read-model unavailable</div>
+                            <div class="cb-admin-info-strip-text">@(Model.ErrorMessage ?? "Incident / audit / decision verisi alinamadi.")</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Blocked</span>
+                    </div>
+                }
+
+                <div class="cb-admin-summary-grid mt-6" data-cb-admin-decision-summary>
+                    @foreach (var card in Model.SummaryCards)
+                    {
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">@card.Label</span>
+                            <strong>@card.Value</strong>
+                            <small>@card.Summary</small>
+                        </div>
+                    }
+                </div>
             </div>
         </div>
     </div>
 
     <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-table-header mb-4">
+                    <div>
+                        <div class="cb-admin-section-kicker">Filter</div>
+                        <div class="cb-admin-section-title">Outcome, reason code ve scope filtreleri</div>
+                        <p class="cb-admin-section-description mb-0">Allow, block, retry ve skip ayrimi tek toolbar uzerinden daraltilir. Bos reason code sessiz gecilmez; Unavailable olarak gorunur.</p>
+                    </div>
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+                    {
+                        Label = Model.Filters.HasActiveFilters ? "Filtered" : "All rows",
+                        Tone = Model.Filters.HasActiveFilters ? "warning" : "healthy",
+                        IconText = "FL"
+                    })
+                </div>
+
+                <form asp-area="Admin" asp-controller="Admin" asp-action="Audit" method="get" class="row">
+                    <div class="col-md-3 mb-4">
+                        <label class="form-label">Query</label>
+                        <input name="query" class="form-control" value="@Model.Filters.Query" maxlength="128" placeholder="Correlation / action / summary" />
+                    </div>
+                    <div class="col-md-3 mb-4">
+                        <label class="form-label">CorrelationId</label>
+                        <input name="correlationId" class="form-control" value="@Model.Filters.CorrelationId" maxlength="128" placeholder="corr-..." />
+                    </div>
+                    <div class="col-md-2 mb-4">
+                        <label class="form-label">DecisionId</label>
+                        <input name="decisionId" class="form-control" value="@Model.Filters.DecisionId" maxlength="64" placeholder="dec-..." />
+                    </div>
+                    <div class="col-md-2 mb-4">
+                        <label class="form-label">ExecutionId</label>
+                        <input name="executionAttemptId" class="form-control" value="@Model.Filters.ExecutionAttemptId" maxlength="64" placeholder="exe-..." />
+                    </div>
+                    <div class="col-md-2 mb-4">
+                        <label class="form-label">User</label>
+                        <input name="userId" class="form-control" value="@Model.Filters.UserId" maxlength="450" placeholder="user-id" />
+                    </div>
+                    <div class="col-md-3 mb-4">
+                        <label class="form-label">Symbol / scope</label>
+                        <input name="symbol" class="form-control" value="@Model.Filters.Symbol" maxlength="32" placeholder="BTCUSDT / Global" />
+                    </div>
+                    <div class="col-md-3 mb-4">
+                        <label class="form-label">Outcome</label>
+                        <select id="cb_admin_audit_filter_outcome" name="outcome" class="form-control">
+                            <option value="">Tum outcome'lar</option>
+                            <option value="Allow" selected="@(string.Equals(Model.Filters.Outcome, "Allow", StringComparison.OrdinalIgnoreCase))">Allow</option>
+                            <option value="Block" selected="@(string.Equals(Model.Filters.Outcome, "Block", StringComparison.OrdinalIgnoreCase))">Block</option>
+                            <option value="Retry" selected="@(string.Equals(Model.Filters.Outcome, "Retry", StringComparison.OrdinalIgnoreCase))">Retry</option>
+                            <option value="Skip" selected="@(string.Equals(Model.Filters.Outcome, "Skip", StringComparison.OrdinalIgnoreCase))">Skip</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3 mb-4">
+                        <label class="form-label">Reason code</label>
+                        <input id="cb_admin_audit_filter_reason_code" name="reasonCode" class="form-control" value="@Model.Filters.ReasonCode" maxlength="128" placeholder="Allowed / RiskVeto / ..." />
+                    </div>
+                    <div class="col-md-1 mb-4">
+                        <label class="form-label">Take</label>
+                        <input name="take" type="number" min="25" max="200" class="form-control" value="@Model.Filters.Take" />
+                    </div>
+                    <div class="col-md-2 mb-4 d-flex align-items-end gap-2">
+                        <button type="submit" class="btn btn-primary font-weight-bolder">Uygula</button>
+                        <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-light font-weight-bold">Temizle</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-7">
         <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-table-card">
             <div class="card-body">
                 <div class="cb-admin-table-header">
                     <div>
-                        <div class="cb-admin-section-kicker">Trace List</div>
-                        <div class="cb-admin-section-title">Correlation trace listesi</div>
-                        <p class="cb-admin-section-description mb-0">Decision sayisi, execution sayisi, kullanici ve provider son dokunusunu tek satirda gorursunuz.</p>
+                        <div class="cb-admin-section-kicker">Decision explorer</div>
+                        <div class="cb-admin-section-title">Outcome normalize edilmis kayit listesi</div>
+                        <p class="cb-admin-section-description mb-0">Allow / block / retry / skip ayrimi, reason code ve actor bilgisi tek satirda gorunur.</p>
                     </div>
                     @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
                     {
-                        Label = $"{Model.Count} row",
-                        Tone = Model.Count > 0 ? "healthy" : "warning",
+                        Label = $"{Model.Rows.Count} row",
+                        Tone = Model.Rows.Count > 0 ? "healthy" : "warning",
                         IconText = "LS"
                     })
                 </div>
@@ -59,44 +182,51 @@
                     <table class="table table-borderless cb-admin-table mb-0">
                         <thead>
                             <tr>
-                                <th>CorrelationId</th>
-                                <th>User</th>
-                                <th>Symbol</th>
-                                <th>Decision</th>
-                                <th>Execution</th>
-                                <th>Provider</th>
-                                <th>LastUpdatedAtUtc</th>
+                                <th>Outcome</th>
+                                <th>Kind</th>
+                                <th>Reason</th>
+                                <th>ChangedBy</th>
+                                <th>When</th>
+                                <th>Scope</th>
+                                <th>Summary</th>
                                 <th>Aksiyon</th>
                             </tr>
                         </thead>
                         <tbody>
-                            @if (Model.Count == 0)
+                            @if (Model.Rows.Count == 0)
                             {
                                 <tr>
-                                    <td colspan="8" class="text-muted">Trace bulunamadi. Query, CorrelationId, OrderId, DecisionId, ExecutionAttemptId veya UserId ile tekrar deneyin.</td>
+                                    <td colspan="8" class="text-muted">@Model.EmptyStateMessage</td>
                                 </tr>
                             }
                             else
                             {
-                                foreach (var row in Model)
+                                foreach (var row in Model.Rows)
                                 {
-                                    <tr>
-                                        <td><strong>@row.CorrelationId</strong></td>
-                                        <td>@(row.UserId ?? "-")</td>
-                                        <td>@((row.Symbol is null ? "-" : $"{row.Symbol} / {row.Timeframe ?? "?"}"))</td>
+                                    var isSelected = Model.Detail.HasSelection && string.Equals(Model.Detail.Reference, row.Reference, StringComparison.OrdinalIgnoreCase);
+                                    <tr data-cb-admin-decision-row data-cb-admin-decision-outcome="@row.OutcomeLabel" class="@(isSelected ? "cb-admin-row-selected" : string.Empty)">
                                         <td>
-                                            <div>@(row.DecisionOutcome ?? "-")</div>
-                                            <small class="text-muted">Count=@row.DecisionCount @(string.IsNullOrWhiteSpace(row.VetoReasonCode) ? string.Empty : $"| Veto={row.VetoReasonCode}")</small>
+                                            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+                                            {
+                                                Label = row.OutcomeLabel,
+                                                Tone = row.OutcomeTone,
+                                                IconText = row.OutcomeLabel[..1]
+                                            })
                                         </td>
-                                        <td>@row.ExecutionCount</td>
-                                        <td>@(row.LatestExecutionProvider ?? "-")</td>
-                                        <td>@row.LastUpdatedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
                                         <td>
-                                            <a asp-area="Admin"
-                                               asp-controller="Admin"
-                                               asp-action="TraceDetail"
-                                               asp-route-correlationId="@row.CorrelationId"
-                                               class="btn btn-xs btn-light-primary font-weight-bold">Detay</a>
+                                            <div><strong>@row.Kind</strong></div>
+                                            <small class="text-muted">@row.StatusLabel</small>
+                                        </td>
+                                        <td>
+                                            <div>@row.ReasonCode</div>
+                                            <small class="text-muted">@row.ReasonType</small>
+                                        </td>
+                                        <td>@row.ChangedBy</td>
+                                        <td>@row.OccurredAtUtcLabel</td>
+                                        <td>@row.ScopeLabel</td>
+                                        <td>@row.Summary</td>
+                                        <td>
+                                            <a href="@BuildFocusHref(row.Reference)" class="btn btn-xs btn-light-primary font-weight-bold">Detay</a>
                                         </td>
                                     </tr>
                                 }
@@ -104,6 +234,221 @@
                         </tbody>
                     </table>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-5">
+        <div class="card card-custom gutter-b cb-card cb-admin-card" data-cb-admin-decision-detail>
+            <div class="card-body">
+                <div class="cb-admin-table-header mb-4">
+                    <div>
+                        <div class="cb-admin-section-kicker">Detail</div>
+                        <div class="cb-admin-section-title">Karar zinciri detayi</div>
+                        <p class="cb-admin-section-description mb-0">Last decision, reason code, changed by, when, before/after, approval history ve incident timeline ayni panelde gorunur.</p>
+                    </div>
+                </div>
+
+                @if (!Model.Detail.HasSelection)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-warning">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Secili kayit yok</div>
+                            <div class="cb-admin-info-strip-text">@Model.Detail.Summary</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Empty</span>
+                    </div>
+                }
+                else
+                {
+                    <div class="cb-inline-stack mb-4">
+                        @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = Model.Detail.OutcomeLabel, Tone = Model.Detail.OutcomeTone, IconText = "OC" })
+                        @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = Model.Detail.Kind, Tone = "neutral", IconText = "KD" })
+                        @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = Model.Detail.ReasonCode, Tone = "warning", IconText = "RC" })
+                    </div>
+
+                    <div class="cb-admin-summary-grid">
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">LastDecision</span>
+                            <strong>@Model.Detail.OutcomeLabel</strong>
+                            <small>@Model.Detail.StatusLabel</small>
+                        </div>
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">ChangedBy</span>
+                            <strong>@Model.Detail.ChangedBy</strong>
+                            <small>@Model.Detail.ScopeLabel</small>
+                        </div>
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">When</span>
+                            <strong>@Model.Detail.OccurredAtUtcLabel</strong>
+                            <small>@Model.Detail.Reference</small>
+                        </div>
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">ReasonType</span>
+                            <strong>@Model.Detail.ReasonType</strong>
+                            <small data-cb-admin-decision-code>@Model.Detail.ReasonCode</small>
+                        </div>
+                    </div>
+
+                    <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Decision summary</div>
+                            <div class="cb-admin-info-strip-text">@Model.Detail.Summary</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">@(string.Equals(Model.Detail.OutcomeLabel, "Unknown", StringComparison.OrdinalIgnoreCase) ? "Review" : Model.Detail.OutcomeLabel)</span>
+                    </div>
+
+                    <div class="table-responsive cb-admin-table-wrap mt-5">
+                        <table class="table table-borderless cb-admin-table mb-0">
+                            <tbody>
+                                <tr>
+                                    <th>Before</th>
+                                    <td data-cb-admin-before>@Model.Detail.BeforeSummary</td>
+                                </tr>
+                                <tr>
+                                    <th>After</th>
+                                    <td data-cb-admin-after>@Model.Detail.AfterSummary</td>
+                                </tr>
+                                <tr>
+                                    <th>CorrelationId</th>
+                                    <td>@Model.Detail.CorrelationId</td>
+                                </tr>
+                                <tr>
+                                    <th>DecisionId</th>
+                                    <td>@Model.Detail.DecisionId</td>
+                                </tr>
+                                <tr>
+                                    <th>ExecutionAttemptId</th>
+                                    <td>@Model.Detail.ExecutionAttemptId</td>
+                                </tr>
+                                <tr>
+                                    <th>IncidentReference</th>
+                                    <td>@Model.Detail.IncidentReference</td>
+                                </tr>
+                                <tr>
+                                    <th>ApprovalReference</th>
+                                    <td>@Model.Detail.ApprovalReference</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="d-flex flex-wrap gap-2 mt-5">
+                        @if (!string.IsNullOrWhiteSpace(traceDetailHref))
+                        {
+                            <a href="@traceDetailHref" class="btn btn-light-info font-weight-bold">Trace detail</a>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(approvalDetailHref))
+                        {
+                            <a href="@approvalDetailHref" class="btn btn-light-primary font-weight-bold">Approval detail</a>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(incidentDetailHref))
+                        {
+                            <a href="@incidentDetailHref" class="btn btn-light-warning font-weight-bold">Incident detail</a>
+                        }
+                    </div>
+
+                    <div class="mt-6" data-cb-admin-trace-section>
+                        <div class="cb-admin-section-kicker">Execution trace</div>
+                        <div class="cb-admin-section-title">Decision / execution trail</div>
+                        <p class="cb-admin-section-description">Kararin signal, decision ve execution ayaklari zaman sirali gorunur.</p>
+                        @if (Model.Detail.DecisionExecutionTrace.Count == 0)
+                        {
+                            <div class="text-muted">Trace detail bu kayit icin mevcut degil.</div>
+                        }
+                        else
+                        {
+                            foreach (var item in Model.Detail.DecisionExecutionTrace)
+                            {
+                                <div class="border-left border-primary pl-4 ml-2 mb-4" data-cb-admin-trace-item>
+                                    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                                        @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = item.Kind, Tone = item.Tone, IconText = "TR" })
+                                        <strong>@item.Title</strong>
+                                    </div>
+                                    <div>@item.Summary</div>
+                                    <div class="text-muted">@item.OccurredAtUtcLabel · Actor=@item.ChangedBy · @item.Meta</div>
+                                </div>
+                            }
+                        }
+                    </div>
+
+                    <div class="mt-6" data-cb-admin-approval-history>
+                        <div class="cb-admin-section-kicker">Approval history</div>
+                        <div class="cb-admin-section-title">Approval zinciri</div>
+                        <p class="cb-admin-section-description">Kim onayladi veya reddetti, hangi adimda ve ne zaman gorunur.</p>
+                        @if (Model.Detail.ApprovalHistory.Count == 0)
+                        {
+                            <div class="text-muted">Approval history bu secim icin bagli degil.</div>
+                        }
+                        else
+                        {
+                            foreach (var item in Model.Detail.ApprovalHistory)
+                            {
+                                <div class="border-left border-primary pl-4 ml-2 mb-4" data-cb-admin-approval-item>
+                                    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                                        @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = item.Kind, Tone = item.Tone, IconText = "AP" })
+                                        <strong>@item.Title</strong>
+                                    </div>
+                                    <div>@item.Summary</div>
+                                    <div class="text-muted">@item.OccurredAtUtcLabel · Actor=@item.ChangedBy · @item.Meta</div>
+                                </div>
+                            }
+                        }
+                    </div>
+
+                    <div class="mt-6" data-cb-admin-incident-timeline>
+                        <div class="cb-admin-section-kicker">Incident timeline</div>
+                        <div class="cb-admin-section-title">Incident olay zinciri</div>
+                        <p class="cb-admin-section-description">Block, retry, approval ve recovery olaylari zaman sirali gorunur.</p>
+                        @if (Model.Detail.IncidentTimeline.Count == 0)
+                        {
+                            <div class="text-muted">Incident timeline bu secim icin bagli degil.</div>
+                        }
+                        else
+                        {
+                            foreach (var item in Model.Detail.IncidentTimeline)
+                            {
+                                <div class="border-left border-primary pl-4 ml-2 mb-4" data-cb-admin-incident-item>
+                                    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                                        @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = item.Kind, Tone = item.Tone, IconText = "IN" })
+                                        <strong>@item.Title</strong>
+                                    </div>
+                                    <div>@item.Summary</div>
+                                    <div class="text-muted">@item.OccurredAtUtcLabel · Actor=@item.ChangedBy · @item.Meta</div>
+                                </div>
+                            }
+                        }
+                    </div>
+
+                    <div class="mt-6" data-cb-admin-audit-trail>
+                        <div class="cb-admin-section-kicker">Admin audit log</div>
+                        <div class="cb-admin-section-title">Ilgili admin degisiklikleri</div>
+                        <p class="cb-admin-section-description">ChangedBy / Before / After zinciri ayni correlation veya incident bagina gore secilir.</p>
+                        @if (Model.Detail.AdminAuditTrail.Count == 0)
+                        {
+                            <div class="text-muted">Bagli ek admin degisikligi bulunamadi.</div>
+                        }
+                        else
+                        {
+                            foreach (var item in Model.Detail.AdminAuditTrail)
+                            {
+                                <div class="border-left border-primary pl-4 ml-2 mb-4" data-cb-admin-audit-item>
+                                    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                                        @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = item.Kind, Tone = item.Tone, IconText = "AU" })
+                                        <strong>@item.Title</strong>
+                                    </div>
+                                    <div>@item.Summary</div>
+                                    <div class="text-muted">@item.OccurredAtUtcLabel · Actor=@item.ChangedBy · @item.Meta</div>
+                                </div>
+                            }
+                        }
+                    </div>
+
+                    <details class="mt-6" data-cb-admin-raw-json>
+                        <summary class="text-muted">Masked payload</summary>
+                        <pre class="mt-3 mb-0"><code>@Model.Detail.RawJson</code></pre>
+                    </details>
+                }
             </div>
         </div>
     </div>
