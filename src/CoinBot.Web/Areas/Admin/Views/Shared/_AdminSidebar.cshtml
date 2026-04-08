@@ -22,8 +22,8 @@
         new { Group = "Governance", Key = "Incidents", Label = "Incident Merkezi", Initials = "IN", Action = "Incidents", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } },
         new { Group = "Governance", Key = "ConfigHistory", Label = "Config History", Initials = "CH", Action = "ConfigHistory", Badge = (AdminBadgeViewModel?)new AdminBadgeViewModel { Label = "Version", Tone = "info" }, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } },
         new { Group = "Governance", Key = "SystemStateHistory", Label = "State History", Initials = "SH", Action = "SystemStateHistory", Badge = (AdminBadgeViewModel?)new AdminBadgeViewModel { Label = "Timeline", Tone = "warning" }, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } },
-        new { Group = "Platform", Key = "SupportTools", Label = "Destek Araçları", Initials = "SP", Action = "SupportTools", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } },
-        new { Group = "Platform", Key = "Settings", Label = "Global Ayarlar", Initials = "GL", Action = "Settings", Badge = (AdminBadgeViewModel?)new AdminBadgeViewModel { Label = currentRoleKey == "SuperAdmin" ? "Write" : "Read", Tone = currentRoleKey == "SuperAdmin" ? "critical" : "info" }, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } }
+        new { Group = "Platform", Key = "Settings", Label = "Global Ayarlar", Initials = "GL", Action = "Settings", Badge = (AdminBadgeViewModel?)new AdminBadgeViewModel { Label = currentRoleKey == "SuperAdmin" ? "Write" : "Read", Tone = currentRoleKey == "SuperAdmin" ? "critical" : "info" }, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } },
+        new { Group = "Platform", Key = "SupportTools", Label = "Destek Araçları", Initials = "SP", Action = "SupportTools", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } }
     };
 
     var visibleNavigation = navigation.Where(item => item.VisibleTo.Contains(currentRoleKey)).ToArray();
@@ -101,4 +101,5 @@
         </div>
     </div>
 </div>
+
 

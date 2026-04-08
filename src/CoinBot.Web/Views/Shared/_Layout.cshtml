@@ -13,6 +13,13 @@
         ?? (isAuthenticated ? "Authenticated" : "Guest");
     var initialsSource = string.Concat(displayName.Where(char.IsLetterOrDigit).Take(2)).ToUpperInvariant();
     var userInitials = string.IsNullOrWhiteSpace(initialsSource) ? "CB" : initialsSource;
+    var isAdminGlobalSettingsVisible = User.IsInRole("SuperAdmin") || User.IsInRole("OpsAdmin") || User.IsInRole("SecurityAuditor");
+    var currentArea = ViewContext.RouteData.Values["area"]?.ToString() ?? string.Empty;
+    var currentController = ViewContext.RouteData.Values["controller"]?.ToString() ?? string.Empty;
+    var currentAction = ViewContext.RouteData.Values["action"]?.ToString() ?? string.Empty;
+    var isAdminGlobalSettingsActive = string.Equals(currentArea, "Admin", StringComparison.OrdinalIgnoreCase)
+        && string.Equals(currentController, "Admin", StringComparison.OrdinalIgnoreCase)
+        && string.Equals(currentAction, "Settings", StringComparison.OrdinalIgnoreCase);
 
     var navigation = new[]
     {
@@ -128,6 +135,24 @@
                                     </li>
                                 }
                             }
+                            @if (isAdminGlobalSettingsVisible)
+                            {
+                                <li class="menu-section">
+                                    <h4 class="menu-text">Admin</h4>
+                                    <i class="menu-icon ki ki-bold-more-hor icon-md"></i>
+                                </li>
+                                <li class="menu-item @(isAdminGlobalSettingsActive ? "menu-item-active" : string.Empty)" aria-haspopup="true">
+                                    <a asp-area="Admin" asp-controller="Admin" asp-action="Settings" class="menu-link">
+                                        <span class="menu-icon">
+                                            <span class="cb-menu-icon @(isAdminGlobalSettingsActive ? "is-active" : string.Empty)">GL</span>
+                                        </span>
+                                        <span class="menu-text">Global Ayarlar</span>
+                                        <span class="menu-label">
+                                            <span class="cb-badge cb-badge-warning">Admin</span>
+                                        </span>
+                                    </a>
+                                </li>
+                            }
                         </ul>
                     </div>
                 </div>
@@ -213,6 +238,13 @@
                                                     <span class="navi-text">Ayarlar</span>
                                                     <span class="cb-badge cb-badge-info">User</span>
                                                 </a>
+                                                @if (isAdminGlobalSettingsVisible)
+                                                {
+                                                    <a asp-area="Admin" asp-controller="Admin" asp-action="Settings" class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75">
+                                                        <span class="navi-text">Global Ayarlar</span>
+                                                        <span class="cb-badge cb-badge-warning">Admin</span>
+                                                    </a>
+                                                }
                                                 <form asp-controller="Auth" asp-action="Logout" method="post" class="px-4 py-3">
                                                     <button type="submit" class="btn btn-link p-0 d-flex w-100 justify-content-between align-items-center text-white-75">
                                                         <span class="navi-text">Logout</span>
@@ -286,3 +318,4 @@
     @await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>
+

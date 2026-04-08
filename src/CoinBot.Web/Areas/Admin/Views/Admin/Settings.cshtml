@@ -6,6 +6,8 @@
     var canRefreshClockDrift = ViewData["AdminCanRefreshClockDrift"] is bool canRefreshClockDriftValue && canRefreshClockDriftValue;
     var clockDrift = ViewData["AdminClockDriftSnapshot"] as CoinBot.Web.ViewModels.Settings.ClockDriftInfoViewModel;
     var driftGuard = ViewData["AdminDriftGuardSnapshot"] as CoinBot.Web.ViewModels.Settings.MarketDriftGuardInfoViewModel;
+    var retentionSnapshot = ViewData["AdminLogCenterRetentionSnapshot"] as CoinBot.Application.Abstractions.Administration.LogCenterRetentionSnapshot;
+    var runtimeFailureSummary = clockDrift?.FailureReason ?? driftGuard?.ReasonLabel ?? "Son hata kaydi yok.";
     var headerModel = new AdminPageHeaderViewModel
     {
         Eyebrow = "System Settings",
@@ -170,7 +172,108 @@
     </div>
     <div class="col-xl-9 col-lg-8">
         <div class="cb-admin-settings-shell">
+            <section id="cb_admin_settings_live_snapshot" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+                <div class="card-body">
+                    <div class="cb-admin-section-kicker">Canlı Snapshot / Read-only</div>
+                    <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
+                        <div>
+                            <div class="cb-admin-section-title">Operasyon özeti</div>
+                            <p class="cb-admin-section-description">Bu kartlar runtime snapshot verisidir. Form alanı değildir; write aksiyonları aşağıdaki guarded bloklarda kalır.</p>
+                        </div>
+                        @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+                        {
+                            Label = "Live snapshot",
+                            Tone = "info",
+                            IconText = "RO"
+                        })
+                    </div>
+
+                    <div class="cb-admin-summary-grid mt-6">
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">Execution switch durumu</span>
+                            <strong>@(executionSnapshot.IsTradeMasterArmed ? "TradeMaster Armed" : "TradeMaster Disarmed")</strong>
+                            <small>DemoMode: @(executionSnapshot.DemoModeEnabled ? "Enabled" : "Disabled") · Persisted: @(executionSnapshot.IsPersisted ? "Yes" : "No")</small>
+                        </div>
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">Global system state</span>
+                            <strong>@globalSystemStateSnapshot.State</strong>
+                            <small>@globalSystemStateSnapshot.ReasonCode · @(globalSystemStateSnapshot.UpdatedAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss 'UTC'") ?? "n/a")</small>
+                        </div>
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">Clock drift state</span>
+                            <strong>@(clockDrift?.StatusLabel ?? "n/a")</strong>
+                            <small>Last sync: @(clockDrift?.LastSyncLabel ?? "n/a") · Refresh cadence: @(clockDrift?.RefreshCadenceLabel ?? "n/a")</small>
+                        </div>
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">Drift guard state</span>
+                            <strong>@(driftGuard?.StateLabel ?? "n/a")</strong>
+                            <small>@(driftGuard?.ReasonLabel ?? "Reason yok") · Last state change: @(driftGuard?.LastStateChangedLabel ?? "n/a")</small>
+                        </div>
+                    </div>
+
+                    <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Read-only canlı görünürlük</div>
+                            <div class="cb-admin-info-strip-text">Runtime sync, drift guard ve execution snapshot burada okunur. Kullanıcı timezone ayarı veya user settings ekranı bu blokları değiştirmez.</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Live</span>
+                    </div>
+
+                    <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-5">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Son hata özeti</div>
+                            <div class="cb-admin-info-strip-text">@runtimeFailureSummary</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Ops</span>
+                    </div>
+                </div>
+            </section>
+
+            <section id="cb_admin_settings_controls" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+                <div class="card-body">
+                    <div class="cb-admin-section-kicker">Kritik Aksiyon</div>
+                    <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
+                        <div>
+                            <div class="cb-admin-section-title">Yazılabilir konfigürasyon ve guarded POST aksiyonları</div>
+                            <p class="cb-admin-section-description">Aşağıdaki execution, system state, crisis ve policy blokları persisted config veya audit-etkili aksiyon üretir. Yetkisiz rollerde aynı yüzey read-only olarak kalır.</p>
+                        </div>
+                        @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+                        {
+                            Label = canEditGlobalPolicy ? "Write enabled" : "Read-only",
+                            Tone = canEditGlobalPolicy ? "critical" : "info",
+                            IconText = canEditGlobalPolicy ? "WR" : "RO"
+                        })
+                    </div>
+
+                    <div class="cb-admin-summary-grid mt-6">
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">Yazılabilir konfigürasyon</span>
+                            <strong>@(canEditGlobalPolicy ? "Platform admin controls açık" : "Config read-only")</strong>
+                            <small>TradeMaster, DemoMode, global system state, crisis escalation ve policy defaults guarded POST ile değişir.</small>
+                        </div>
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">Anlık refresh</span>
+                            <strong>@(canRefreshClockDrift ? "Runtime sync refresh açık" : "Refresh read-only")</strong>
+                            <small>Server-time sync refresh persisted config değildir; anlık operasyon aksiyonudur.</small>
+                        </div>
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">Audit etkili değişiklik</span>
+                            <strong>MFA + anti-forgery + reason</strong>
+                            <small>Critical write zinciri audit reason, re-auth hook ve correlation ile kaydedilir.</small>
+                        </div>
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">Düşük öncelikli bloklar</span>
+                            <strong>@(retentionSnapshot is null ? "Retention snapshot yok" : "Logging / retention görünür")</strong>
+                            <small>Uzun read-only bloklar sayfanın altına taşındı; yanlış tıklamayı azaltır.</small>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             @await Html.PartialAsync("Foundation/_AdminGlobalExecutionSwitchSection", executionSnapshot)
+            @await Html.PartialAsync("Foundation/_AdminGlobalSystemStateSection", globalSystemStateSnapshot)
+
+
 
             @if (clockDrift is not null && driftGuard is not null)
             {
@@ -271,10 +374,11 @@
                 </section>
             }
 
-            @await Html.PartialAsync("Foundation/_AdminGlobalSystemStateSection", globalSystemStateSnapshot)
             @await Html.PartialAsync("Foundation/_AdminCrisisEscalationSection", crisisPreview)
             @await Html.PartialAsync("Foundation/_AdminLoggingRetentionSection")
             @await Html.PartialAsync("Foundation/_AdminRiskPolicyDefaultsSection")
         </div>
     </div>
 </div>
+
+
