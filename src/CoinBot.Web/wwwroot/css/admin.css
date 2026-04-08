@@ -1685,7 +1685,8 @@ body[data-cb-shell='admin-auth'] {
 }
 
 .cb-admin-settings-nav-link:hover,
-.cb-admin-settings-nav-link.is-active {
+.cb-admin-settings-nav-link.is-active,
+.cb-admin-settings-nav-link.active {
   color: var(--cb-text-primary);
   border-color: rgba(109, 93, 246, 0.28);
   background: rgba(109, 93, 246, 0.12);

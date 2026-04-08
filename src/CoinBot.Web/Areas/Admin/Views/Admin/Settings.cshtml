@@ -7,18 +7,77 @@
     var clockDrift = ViewData["AdminClockDriftSnapshot"] as CoinBot.Web.ViewModels.Settings.ClockDriftInfoViewModel;
     var driftGuard = ViewData["AdminDriftGuardSnapshot"] as CoinBot.Web.ViewModels.Settings.MarketDriftGuardInfoViewModel;
     var retentionSnapshot = ViewData["AdminLogCenterRetentionSnapshot"] as CoinBot.Application.Abstractions.Administration.LogCenterRetentionSnapshot;
-    var runtimeFailureSummary = clockDrift?.FailureReason ?? driftGuard?.ReasonLabel ?? "Son hata kaydi yok.";
+    var hasRuntimeSnapshots = clockDrift is not null && driftGuard is not null;
+    var driftGuardLooksHealthy = driftGuard is not null && driftGuard.StateLabel.Contains("Normal", StringComparison.OrdinalIgnoreCase);
+    var hasClockDriftFailure = !string.IsNullOrWhiteSpace(clockDrift?.FailureReason);
+    var runtimeFailureSummary = hasClockDriftFailure
+        ? clockDrift!.FailureReason!
+        : driftGuard is not null && !driftGuardLooksHealthy
+            ? driftGuard.ReasonLabel
+            : "Son hata kaydi yok.";
+    var activationBlockers = new System.Collections.Generic.List<string>();
+
+    if (!executionSnapshot.IsTradeMasterArmed)
+    {
+        activationBlockers.Add("TradeMaster arm edilmemis.");
+    }
+
+    if (executionSnapshot.DemoModeEnabled)
+    {
+        activationBlockers.Add("DemoMode acik; canli execution yolu kapali.");
+    }
+
+    if (globalSystemStateSnapshot.IsExecutionBlocked)
+    {
+        activationBlockers.Add($"Global system state {globalSystemStateSnapshot.State} olarak gorunuyor.");
+    }
+
+    if (!hasRuntimeSnapshots)
+    {
+        activationBlockers.Add("Runtime sync snapshot verisi eksik.");
+    }
+    else
+    {
+        if (hasClockDriftFailure)
+        {
+            activationBlockers.Add("Server-time sync son denemede hata verdi.");
+        }
+
+        if (!driftGuardLooksHealthy)
+        {
+            activationBlockers.Add($"Drift guard durumu {driftGuard!.StateLabel} olarak gorunuyor.");
+        }
+    }
+
+    var activationReady = activationBlockers.Count == 0;
+    var activationTone = activationReady ? "healthy" : activationBlockers.Count == 1 ? "warning" : "critical";
+    var activationSummaryLabel = activationReady ? "Aktivasyona uygun" : $"{activationBlockers.Count} kontrol eksik";
+    var liveSnapshotStatus = hasRuntimeSnapshots ? (activationReady ? "Hazir" : "Dikkat") : "Eksik";
+    var liveSnapshotTone = hasRuntimeSnapshots ? (activationReady ? "healthy" : "warning") : "critical";
+    var criticalControlsStatus = canEditGlobalPolicy ? "Hazir" : "Salt okunur";
+    var criticalControlsTone = canEditGlobalPolicy ? "healthy" : "info";
+    var executionStepStatus = executionSnapshot.IsTradeMasterArmed && !executionSnapshot.DemoModeEnabled ? "Hazir" : "Dikkat";
+    var executionStepTone = executionSnapshot.IsTradeMasterArmed && !executionSnapshot.DemoModeEnabled ? "healthy" : "warning";
+    var systemStateStepStatus = globalSystemStateSnapshot.IsExecutionBlocked ? "Dikkat" : "Hazir";
+    var systemStateStepTone = globalSystemStateSnapshot.IsExecutionBlocked ? "warning" : "healthy";
+    var runtimeSyncStepStatus = hasRuntimeSnapshots ? (hasClockDriftFailure || !driftGuardLooksHealthy ? "Dikkat" : "Hazir") : "Eksik";
+    var runtimeSyncStepTone = hasRuntimeSnapshots ? (hasClockDriftFailure || !driftGuardLooksHealthy ? "warning" : "healthy") : "critical";
+    var riskStepStatus = canEditGlobalPolicy ? "Gozden gecir" : "Salt okunur";
+    var riskStepTone = canEditGlobalPolicy ? "warning" : "info";
+    var activationGuidance = activationReady
+        ? "Execution hard gate, global state ve runtime sync sinyalleri aktivasyon icin uygun gorunuyor."
+        : "Sistemi aktife almadan once asagidaki eksik kontrolleri kapatin.";
     var headerModel = new AdminPageHeaderViewModel
     {
         Eyebrow = "System Settings",
         Title = "Global Ayarlar",
-        Description = "Kullanıcı ayarlarından ayrı tutulan; feature flag, retention, AI rollout, maintenance ve varsayılan politika alanlarını güvenli admin diliyle toplayan global ayarlar yüzeyi.",
+        Description = "Sistem genel ayarlari, canli durum ozeti ve kritik operasyon kontrolleri.",
         StatusBadge = new AdminBadgeViewModel { Label = "System Scope", Tone = "warning", IconText = "GS" },
         MetaBadges = new[]
         {
             new AdminBadgeViewModel { Label = "Read-model", Tone = "info", IconText = "RM" },
             new AdminBadgeViewModel { Label = "Audit Bound", Tone = "critical", IconText = "AU" },
-            new AdminBadgeViewModel { Label = "Re-auth Ready", Tone = "warning", IconText = "RA" }
+            new AdminBadgeViewModel { Label = "Admin Only", Tone = "warning", IconText = "AO" }
         },
         SecondaryActionText = "Support tools",
         SecondaryActionHref = Url.Action("SupportTools", "Admin", new { area = "Admin" }),
@@ -172,213 +231,428 @@
     </div>
     <div class="col-xl-9 col-lg-8">
         <div class="cb-admin-settings-shell">
-            <section id="cb_admin_settings_live_snapshot" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
-                <div class="card-body">
-                    <div class="cb-admin-section-kicker">Canlı Snapshot / Read-only</div>
-                    <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
-                        <div>
-                            <div class="cb-admin-section-title">Operasyon özeti</div>
-                            <p class="cb-admin-section-description">Bu kartlar runtime snapshot verisidir. Form alanı değildir; write aksiyonları aşağıdaki guarded bloklarda kalır.</p>
-                        </div>
-                        @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
-                        {
-                            Label = "Live snapshot",
-                            Tone = "info",
-                            IconText = "RO"
-                        })
-                    </div>
-
-                    <div class="cb-admin-summary-grid mt-6">
-                        <div class="cb-admin-summary-card">
-                            <span class="cb-admin-summary-label">Execution switch durumu</span>
-                            <strong>@(executionSnapshot.IsTradeMasterArmed ? "TradeMaster Armed" : "TradeMaster Disarmed")</strong>
-                            <small>DemoMode: @(executionSnapshot.DemoModeEnabled ? "Enabled" : "Disabled") · Persisted: @(executionSnapshot.IsPersisted ? "Yes" : "No")</small>
-                        </div>
-                        <div class="cb-admin-summary-card">
-                            <span class="cb-admin-summary-label">Global system state</span>
-                            <strong>@globalSystemStateSnapshot.State</strong>
-                            <small>@globalSystemStateSnapshot.ReasonCode · @(globalSystemStateSnapshot.UpdatedAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss 'UTC'") ?? "n/a")</small>
-                        </div>
-                        <div class="cb-admin-summary-card">
-                            <span class="cb-admin-summary-label">Clock drift state</span>
-                            <strong>@(clockDrift?.StatusLabel ?? "n/a")</strong>
-                            <small>Last sync: @(clockDrift?.LastSyncLabel ?? "n/a") · Refresh cadence: @(clockDrift?.RefreshCadenceLabel ?? "n/a")</small>
-                        </div>
-                        <div class="cb-admin-summary-card">
-                            <span class="cb-admin-summary-label">Drift guard state</span>
-                            <strong>@(driftGuard?.StateLabel ?? "n/a")</strong>
-                            <small>@(driftGuard?.ReasonLabel ?? "Reason yok") · Last state change: @(driftGuard?.LastStateChangedLabel ?? "n/a")</small>
-                        </div>
-                    </div>
-
-                    <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6">
-                        <div>
-                            <div class="cb-admin-info-strip-title">Read-only canlı görünürlük</div>
-                            <div class="cb-admin-info-strip-text">Runtime sync, drift guard ve execution snapshot burada okunur. Kullanıcı timezone ayarı veya user settings ekranı bu blokları değiştirmez.</div>
-                        </div>
-                        <span class="cb-admin-info-strip-meta">Live</span>
-                    </div>
-
-                    <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-5">
-                        <div>
-                            <div class="cb-admin-info-strip-title">Son hata özeti</div>
-                            <div class="cb-admin-info-strip-text">@runtimeFailureSummary</div>
-                        </div>
-                        <span class="cb-admin-info-strip-meta">Ops</span>
-                    </div>
-                </div>
-            </section>
-
-            <section id="cb_admin_settings_controls" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
-                <div class="card-body">
-                    <div class="cb-admin-section-kicker">Kritik Aksiyon</div>
-                    <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
-                        <div>
-                            <div class="cb-admin-section-title">Yazılabilir konfigürasyon ve guarded POST aksiyonları</div>
-                            <p class="cb-admin-section-description">Aşağıdaki execution, system state, crisis ve policy blokları persisted config veya audit-etkili aksiyon üretir. Yetkisiz rollerde aynı yüzey read-only olarak kalır.</p>
-                        </div>
-                        @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
-                        {
-                            Label = canEditGlobalPolicy ? "Write enabled" : "Read-only",
-                            Tone = canEditGlobalPolicy ? "critical" : "info",
-                            IconText = canEditGlobalPolicy ? "WR" : "RO"
-                        })
-                    </div>
-
-                    <div class="cb-admin-summary-grid mt-6">
-                        <div class="cb-admin-summary-card">
-                            <span class="cb-admin-summary-label">Yazılabilir konfigürasyon</span>
-                            <strong>@(canEditGlobalPolicy ? "Platform admin controls açık" : "Config read-only")</strong>
-                            <small>TradeMaster, DemoMode, global system state, crisis escalation ve policy defaults guarded POST ile değişir.</small>
-                        </div>
-                        <div class="cb-admin-summary-card">
-                            <span class="cb-admin-summary-label">Anlık refresh</span>
-                            <strong>@(canRefreshClockDrift ? "Runtime sync refresh açık" : "Refresh read-only")</strong>
-                            <small>Server-time sync refresh persisted config değildir; anlık operasyon aksiyonudur.</small>
-                        </div>
-                        <div class="cb-admin-summary-card">
-                            <span class="cb-admin-summary-label">Audit etkili değişiklik</span>
-                            <strong>MFA + anti-forgery + reason</strong>
-                            <small>Critical write zinciri audit reason, re-auth hook ve correlation ile kaydedilir.</small>
-                        </div>
-                        <div class="cb-admin-summary-card">
-                            <span class="cb-admin-summary-label">Düşük öncelikli bloklar</span>
-                            <strong>@(retentionSnapshot is null ? "Retention snapshot yok" : "Logging / retention görünür")</strong>
-                            <small>Uzun read-only bloklar sayfanın altına taşındı; yanlış tıklamayı azaltır.</small>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            @await Html.PartialAsync("Foundation/_AdminGlobalExecutionSwitchSection", executionSnapshot)
-            @await Html.PartialAsync("Foundation/_AdminGlobalSystemStateSection", globalSystemStateSnapshot)
-
-
-
-            @if (clockDrift is not null && driftGuard is not null)
-            {
-                <section id="cb_admin_settings_clock_sync" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
-                    <div class="card-body">
-                        <div class="cb-admin-section-kicker">Runtime Sync Ops</div>
-                        <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
-                            <div>
-                                <div class="cb-admin-section-title">Binance server-time sync ve drift guard</div>
-                                <p class="cb-admin-section-description">Normal kullanıcı timezone seçimi yalnız display içindir. Signed REST server-time sync, drift threshold ve market-data guard değerlendirmesi bu operasyon panelinde izlenir.</p>
-                            </div>
-                            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
-                            {
-                                Label = canRefreshClockDrift ? "Write" : "Read-only",
-                                Tone = canRefreshClockDrift ? "warning" : "info",
-                                IconText = canRefreshClockDrift ? "RW" : "RO"
-                            })
-                        </div>
-
-                        <div class="cb-admin-settings-switch-grid mt-6">
-                            <div class="cb-admin-summary-card">
-                                <span class="cb-admin-summary-label">Server-time sync</span>
-                                <strong>@clockDrift.StatusLabel</strong>
-                                <small>Signed REST timestamp ofseti ve last sync burada izlenir.</small>
-                                <div class="table-responsive mt-5">
-                                    <table class="table table-borderless mb-0">
-                                        <tbody>
-                                            <tr><td class="font-weight-bolder">Local app time</td><td>@clockDrift.LocalAppTimeLabel</td></tr>
-                                            <tr><td class="font-weight-bolder">Exchange server time</td><td>@clockDrift.ExchangeServerTimeLabel</td></tr>
-                                            <tr><td class="font-weight-bolder">Measured offset</td><td>@clockDrift.OffsetLabel</td></tr>
-                                            <tr><td class="font-weight-bolder">Measured drift</td><td>@clockDrift.DriftLabel</td></tr>
-                                            <tr><td class="font-weight-bolder">Last sync</td><td>@clockDrift.LastSyncLabel</td></tr>
-                                            <tr><td class="font-weight-bolder">Round trip</td><td>@clockDrift.RoundTripLabel</td></tr>
-                                            <tr><td class="font-weight-bolder">Refresh cadence</td><td>@clockDrift.RefreshCadenceLabel</td></tr>
-                                        </tbody>
-                                    </table>
+            <div class="tab-content" id="cb_admin_settings_tab_content">
+                <div class="tab-pane fade show active" id="cb_admin_settings_tab_overview" role="tabpanel" aria-labelledby="cb_admin_settings_tab_link_overview">
+                    <section id="cb_admin_settings_live_snapshot" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+                        <div class="card-body">
+                            <div class="cb-admin-section-kicker">Genel Durum</div>
+                            <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
+                                <div>
+                                    <div class="cb-admin-section-title">Sistemin hazirlik ozeti</div>
+                                    <p class="cb-admin-section-description">Sistemin anlik saglik ve hazir olma ozetini gosterir. Bu sekme yalnizca salt okunur canli gorunurluk ve bir sonraki adimi gosterir.</p>
                                 </div>
-
-                                @if (!string.IsNullOrWhiteSpace(clockDrift.FailureReason))
+                                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
                                 {
-                                    <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-5">
-                                        <div>
-                                            <div class="cb-admin-info-strip-title">Last sync failure</div>
-                                            <div class="cb-admin-info-strip-text">@clockDrift.FailureReason</div>
-                                        </div>
-                                        <span class="cb-admin-info-strip-meta">Retry aware</span>
-                                    </div>
-                                }
+                                    Label = activationSummaryLabel,
+                                    Tone = activationTone,
+                                    IconText = "OV"
+                                })
+                            </div>
 
+                            <div class="cb-admin-summary-grid mt-6">
+                                <div class="cb-admin-summary-card">
+                                    <span class="cb-admin-summary-label">Sistem durumu</span>
+                                    <strong>@globalSystemStateSnapshot.State</strong>
+                                    <small>@globalSystemStateSnapshot.ReasonCode</small>
+                                </div>
+                                <div class="cb-admin-summary-card">
+                                    <span class="cb-admin-summary-label">Execution durumu</span>
+                                    <strong>@(executionSnapshot.IsTradeMasterArmed ? "Armed" : "Disarmed")</strong>
+                                    <small>DemoMode: @(executionSnapshot.DemoModeEnabled ? "Enabled" : "Disabled")</small>
+                                </div>
+                                <div class="cb-admin-summary-card">
+                                    <span class="cb-admin-summary-label">Clock drift</span>
+                                    <strong>@(clockDrift?.StatusLabel ?? "n/a")</strong>
+                                    <small>@(clockDrift?.DriftLabel ?? "n/a")</small>
+                                </div>
+                                <div class="cb-admin-summary-card">
+                                    <span class="cb-admin-summary-label">Last sync</span>
+                                    <strong>@(clockDrift?.LastSyncLabel ?? "n/a")</strong>
+                                    <small>@(clockDrift?.RefreshCadenceLabel ?? "Refresh bilgisi yok")</small>
+                                </div>
+                                <div class="cb-admin-summary-card">
+                                    <span class="cb-admin-summary-label">Aktivasyona uygunluk</span>
+                                    <strong>@activationSummaryLabel</strong>
+                                    <small>@activationGuidance</small>
+                                </div>
+                                <div class="cb-admin-summary-card">
+                                    <span class="cb-admin-summary-label">Son block reason</span>
+                                    <strong>@runtimeFailureSummary</strong>
+                                    <small>@(activationReady ? "Hazir gorunuyor" : "Eksik kontrol var")</small>
+                                </div>
+                            </div>
+
+                            <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6">
+                                <div>
+                                    <div class="cb-admin-info-strip-title">Su an yapman gereken</div>
+                                    <div class="cb-admin-info-strip-text">@(activationReady ? "Kurulum sihirbazini kisa bir son kontrolden gecirip Aktivasyon sekmesine ilerleyin." : "Once Kurulum Sihirbazi ve Kritik Ayarlar sekmelerindeki eksikleri kapatip sonra Aktivasyon sekmesine donun.")</div>
+                                </div>
+                                <span class="cb-admin-info-strip-meta">Next</span>
+                            </div>
+
+                            <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-5">
+                                <div>
+                                    <div class="cb-admin-info-strip-title">Canli Snapshot / Salt Okunur</div>
+                                    <div class="cb-admin-info-strip-text">Buradaki kartlar runtime snapshot'tir. User settings, browser timezone veya normal kullanici ayarlari bu verileri degistirmez.</div>
+                                </div>
+                                <span class="cb-admin-info-strip-meta">Live</span>
+                            </div>
+
+                            <div class="cb-admin-inline-actions mt-6">
+                                <a class="btn btn-light-primary font-weight-bold" data-toggle="tab" href="#cb_admin_settings_tab_wizard" role="tab">Kurulum sihirbazi</a>
+                                <a class="btn btn-light-warning font-weight-bold" data-toggle="tab" href="#cb_admin_settings_tab_critical" role="tab">Kritik ayarlar</a>
+                                <a class="btn btn-light-danger font-weight-bold" data-toggle="tab" href="#cb_admin_settings_tab_activation" role="tab">Aktivasyon</a>
+                                <a asp-area="Admin" asp-controller="Admin" asp-action="SystemHealth" class="btn btn-primary font-weight-bolder">System health</a>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+
+                <div class="tab-pane fade" id="cb_admin_settings_tab_wizard" role="tabpanel" aria-labelledby="cb_admin_settings_tab_link_wizard">
+                    <section id="cb_admin_settings_quick_start" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+                        <div class="card-body">
+                            <div class="cb-admin-section-kicker">Kurulum Sihirbazi</div>
+                            <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
+                                <div>
+                                    <div class="cb-admin-section-title">Ilk ayarlari dogru sirayla tamamlayin</div>
+                                    <p class="cb-admin-section-description">Ilk ayarlari dogru sirayla tamamlamaniz icin rehberlik eder. Her adim ilgili sekmeye yonlendirir; backend workflow uretmez.</p>
+                                </div>
+                                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+                                {
+                                    Label = activationReady ? "Hazir" : "Checklist",
+                                    Tone = activationReady ? "healthy" : "warning",
+                                    IconText = "WZ"
+                                })
+                            </div>
+
+                            <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6">
+                                <div>
+                                    <div class="cb-admin-info-strip-title">Rehber akis</div>
+                                    <div class="cb-admin-info-strip-text">Bu liste once ne yapacaginizi gosterir. Her adim durum rozeti ve ilgili sekmeye kisayol tasir.</div>
+                                </div>
+                                <span class="cb-admin-info-strip-meta">Guide</span>
+                            </div>
+
+                            <div class="cb-admin-summary-grid mt-6">
+                                <div class="cb-admin-summary-card">
+                                    <span class="cb-admin-summary-label">1. Canli Durumu Kontrol Et</span>
+                                    <strong>@liveSnapshotStatus</strong>
+                                    <small>Sistem snapshot, son sync ve son hata ozetini once burada kontrol edin.</small>
+                                    <div class="cb-admin-page-meta mt-4">@await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = liveSnapshotStatus, Tone = liveSnapshotTone, IconText = "01" })</div>
+                                    <a href="#cb_admin_settings_tab_overview" data-toggle="tab" role="tab" class="btn btn-light-primary font-weight-bold mt-5">Genel durum</a>
+                                </div>
+                                <div class="cb-admin-summary-card">
+                                    <span class="cb-admin-summary-label">2. Kritik Kontrolleri Gozden Gecir</span>
+                                    <strong>@criticalControlsStatus</strong>
+                                    <small>Yazilabilir config, audit etkisi ve guarded POST alanlarini ayri okuyun.</small>
+                                    <div class="cb-admin-page-meta mt-4">@await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = criticalControlsStatus, Tone = criticalControlsTone, IconText = "02" })</div>
+                                    <a href="#cb_admin_settings_tab_critical" data-toggle="tab" role="tab" class="btn btn-light-primary font-weight-bold mt-5">Kritik ayarlar</a>
+                                </div>
+                                <div class="cb-admin-summary-card">
+                                    <span class="cb-admin-summary-label">3. Execution Hard Gate'i Dogrula</span>
+                                    <strong>@executionStepStatus</strong>
+                                    <small>TradeMaster ve DemoMode dogru pozisyonda olmadan aktivasyon yolunu acmayin.</small>
+                                    <div class="cb-admin-page-meta mt-4">@await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = executionStepStatus, Tone = executionStepTone, IconText = "03" })</div>
+                                    <a href="#cb_admin_settings_tab_critical" data-toggle="tab" role="tab" class="btn btn-light-primary font-weight-bold mt-5">Execution gate</a>
+                                </div>
+                                <div class="cb-admin-summary-card">
+                                    <span class="cb-admin-summary-label">4. Global System State'i Ayarla</span>
+                                    <strong>@systemStateStepStatus</strong>
+                                    <small>Sistemin genel calisma modu uygun degilse execution fail-closed kalir.</small>
+                                    <div class="cb-admin-page-meta mt-4">@await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = systemStateStepStatus, Tone = systemStateStepTone, IconText = "04" })</div>
+                                    <a href="#cb_admin_settings_tab_critical" data-toggle="tab" role="tab" class="btn btn-light-primary font-weight-bold mt-5">System state</a>
+                                </div>
+                                <div class="cb-admin-summary-card">
+                                    <span class="cb-admin-summary-label">5. Runtime Sync Islemlerini Calistir</span>
+                                    <strong>@runtimeSyncStepStatus</strong>
+                                    <small>Server-time sync ve drift guard sinyalleri aktivasyon oncesi temiz gorunmelidir.</small>
+                                    <div class="cb-admin-page-meta mt-4">@await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = runtimeSyncStepStatus, Tone = runtimeSyncStepTone, IconText = "05" })</div>
+                                    <a href="#cb_admin_settings_tab_sync" data-toggle="tab" role="tab" class="btn btn-light-primary font-weight-bold mt-5">Senkronizasyon</a>
+                                </div>
+                                <div class="cb-admin-summary-card">
+                                    <span class="cb-admin-summary-label">6. Risk / Policy Limitlerini Kontrol Et</span>
+                                    <strong>@riskStepStatus</strong>
+                                    <small>Global policy ve symbol restriction limitlerini son kez gozden gecirin.</small>
+                                    <div class="cb-admin-page-meta mt-4">@await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = riskStepStatus, Tone = riskStepTone, IconText = "06" })</div>
+                                    <a href="#cb_admin_settings_tab_critical" data-toggle="tab" role="tab" class="btn btn-light-primary font-weight-bold mt-5">Risk / policy</a>
+                                </div>
+                                <div class="cb-admin-summary-card">
+                                    <span class="cb-admin-summary-label">7. Aktivasyon Oncesi Son Kontrol</span>
+                                    <strong>@(activationReady ? "Hazir" : "Eksik")</strong>
+                                    <small>Aktivasyon sekmesi son blocker listesi ve emergency erisim yolunu bir araya getirir.</small>
+                                    <div class="cb-admin-page-meta mt-4">@await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel { Label = activationReady ? "Hazir" : "Eksik", Tone = activationTone, IconText = "07" })</div>
+                                    <a href="#cb_admin_settings_tab_activation" data-toggle="tab" role="tab" class="btn btn-light-primary font-weight-bold mt-5">Aktivasyon</a>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+
+                <div class="tab-pane fade" id="cb_admin_settings_tab_critical" role="tabpanel" aria-labelledby="cb_admin_settings_tab_link_critical">
+                    <section id="cb_admin_settings_controls" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+                        <div class="card-body">
+                            <div class="cb-admin-section-kicker">Kritik Ayarlar</div>
+                            <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
+                                <div>
+                                    <div class="cb-admin-section-title">Aktivasyon oncesi kontrol edilmesi gereken temel konfigürasyonlar</div>
+                                    <p class="cb-admin-section-description">Sistemi acmadan once gereken write etkili alanlar burada toplanir. Salt okunur bilgi ile degistirilebilir alanlar karistirilmaz.</p>
+                                </div>
+                                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+                                {
+                                    Label = canEditGlobalPolicy ? "Write enabled" : "Read-only",
+                                    Tone = canEditGlobalPolicy ? "critical" : "info",
+                                    IconText = canEditGlobalPolicy ? "WR" : "RO"
+                                })
+                            </div>
+
+                            <div class="cb-admin-summary-grid mt-6">
+                                <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Kritik kontroller</span><strong>@criticalControlsStatus</strong><small>Yazilabilir config ve guarded POST aksiyonlari bu sekmede toplandi.</small></div>
+                                <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Execution hard gate</span><strong>@executionStepStatus</strong><small>TradeMaster ve DemoMode backend hard gate olarak calisir.</small></div>
+                                <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Global system state</span><strong>@systemStateStepStatus</strong><small>Global calisma modu fail-closed execution davranisini belirler.</small></div>
+                                <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Risk / policy limits</span><strong>@riskStepStatus</strong><small>Uzun restriction tablolari asagidaki collapse icinde tutulur.</small></div>
+                            </div>
+
+                            <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-6">
+                                <div>
+                                    <div class="cb-admin-info-strip-title">Yazilabilir Konfigürasyon</div>
+                                    <div class="cb-admin-info-strip-text">Bu sekmedeki degisiklikler audit etkili, anti-forgery korumali ve MFA bagli kritik operasyon degisiklikleridir.</div>
+                                </div>
+                                <span class="cb-admin-info-strip-meta">Audit</span>
+                            </div>
+                        </div>
+                    </section>
+
+                    @await Html.PartialAsync("Foundation/_AdminGlobalExecutionSwitchSection", executionSnapshot)
+                    @await Html.PartialAsync("Foundation/_AdminGlobalSystemStateSection", globalSystemStateSnapshot)
+
+                    <details class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+                        <summary class="card-body font-weight-bolder">Risk / Policy limitlerini goster</summary>
+                        <div class="px-8 pb-8 pt-2">
+                            <div class="cb-helper-text mb-5">Risk / Policy Engine uzun restriction tablolarini ana gorunumu bogmamak icin varsayilan olarak kapali tutar.</div>
+                            @await Html.PartialAsync("Foundation/_AdminRiskPolicyDefaultsSection")
+                        </div>
+                    </details>
+                </div>
+
+                <div class="tab-pane fade" id="cb_admin_settings_tab_sync" role="tabpanel" aria-labelledby="cb_admin_settings_tab_link_sync">
+                    <section id="cb_admin_settings_quick_actions" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+                        <div class="card-body">
+                            <div class="cb-admin-section-kicker">Senkronizasyon ve Islemler</div>
+                            <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
+                                <div>
+                                    <div class="cb-admin-section-title">Canli senkron ve hizli operasyon aksiyonlari</div>
+                                    <p class="cb-admin-section-description">Runtime sync, server time refresh ve hizli kontrol aksiyonlari tek blokta tutulur. Anlik refresh ile persisted config yazimi ayri kalir.</p>
+                                </div>
+                                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+                                {
+                                    Label = canRefreshClockDrift ? "Refresh ready" : "Read-only",
+                                    Tone = canRefreshClockDrift ? "warning" : "info",
+                                    IconText = "QA"
+                                })
+                            </div>
+
+                            <div class="cb-admin-inline-actions mt-6">
                                 @if (canRefreshClockDrift)
                                 {
-                                    <form asp-area="Admin" asp-controller="Admin" asp-action="RefreshClockDrift" method="post" class="mt-5">
+                                    <form asp-area="Admin" asp-controller="Admin" asp-action="RefreshClockDrift" method="post" class="d-inline-block">
                                         @Html.AntiForgeryToken()
-                                        <button type="submit" class="btn btn-light-warning font-weight-bold">Server time sync yenile</button>
+                                        <button type="submit" class="btn btn-light-warning font-weight-bold">Server time refresh</button>
                                     </form>
                                 }
-                                else
-                                {
-                                    <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
-                                        <div>
-                                            <div class="cb-admin-info-strip-title">Read-only sync visibility</div>
-                                            <div class="cb-admin-info-strip-text">Ops rolu bu paneli izler; refresh aksiyonu policy bazli olarak platform admin kapsaminda tutulur.</div>
-                                        </div>
-                                        <span class="cb-admin-info-strip-meta">Ops</span>
-                                    </div>
-                                }
+                                <a class="btn btn-light-primary font-weight-bold" data-toggle="tab" href="#cb_admin_settings_tab_critical" role="tab">Execution hard gate</a>
+                                <a class="btn btn-light-primary font-weight-bold" data-toggle="tab" href="#cb_admin_settings_tab_critical" role="tab">Global system state</a>
+                                <a class="btn btn-light-danger font-weight-bold" data-toggle="tab" href="#cb_admin_settings_tab_activation" role="tab">Emergency / soft halt</a>
+                                <a asp-area="Admin" asp-controller="Admin" asp-action="SystemHealth" class="btn btn-primary font-weight-bolder">Health / control refresh</a>
                             </div>
 
-                            <div class="cb-admin-summary-card">
-                                <span class="cb-admin-summary-label">Market-data drift guard</span>
-                                <strong>@driftGuard.StateLabel</strong>
-                                <small>Execution gate bloklayan freshness ve drift kararinin backend snapshot'i.</small>
-                                <div class="table-responsive mt-5">
-                                    <table class="table table-borderless mb-0">
-                                        <tbody>
-                                            <tr><td class="font-weight-bolder">Source</td><td>@driftGuard.SourceLabel</td></tr>
-                                            <tr><td class="font-weight-bolder">Threshold</td><td>@driftGuard.ThresholdLabel</td></tr>
-                                            <tr><td class="font-weight-bolder">Readable reason</td><td>@driftGuard.ReasonLabel</td></tr>
-                                            <tr><td class="font-weight-bolder">Latest heartbeat</td><td>@driftGuard.LatestHeartbeatLabel</td></tr>
-                                            <tr><td class="font-weight-bolder">Latest data timestamp</td><td>@driftGuard.LatestDataTimestampLabel</td></tr>
-                                            <tr><td class="font-weight-bolder">Latest data age</td><td>@driftGuard.LatestDataAgeLabel</td></tr>
-                                            <tr><td class="font-weight-bolder">Latest drift</td><td>@driftGuard.LatestDriftLabel</td></tr>
-                                            <tr><td class="font-weight-bolder">Last state change</td><td>@driftGuard.LastStateChangedLabel</td></tr>
-                                        </tbody>
-                                    </table>
+                            <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6">
+                                <div>
+                                    <div class="cb-admin-info-strip-title">Kritik Aksiyon</div>
+                                    <div class="cb-admin-info-strip-text">Bu sekmedeki refresh ve sync butonlari runtime operasyon aksiyonudur. Persisted config degisikligi degildir.</div>
                                 </div>
-
-                                <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-5">
-                                    <div>
-                                        <div class="cb-admin-info-strip-title">Retry expectation</div>
-                                        <div class="cb-admin-info-strip-text">@driftGuard.RetryExpectation</div>
-                                    </div>
-                                    <span class="cb-admin-info-strip-meta">Fail-closed</span>
-                                </div>
+                                <span class="cb-admin-info-strip-meta">Runtime</span>
                             </div>
                         </div>
-                    </div>
-                </section>
-            }
+                    </section>
 
-            @await Html.PartialAsync("Foundation/_AdminCrisisEscalationSection", crisisPreview)
-            @await Html.PartialAsync("Foundation/_AdminLoggingRetentionSection")
-            @await Html.PartialAsync("Foundation/_AdminRiskPolicyDefaultsSection")
+                    @if (clockDrift is not null && driftGuard is not null)
+                    {
+                        <section id="cb_admin_settings_clock_sync" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+                            <div class="card-body">
+                                <div class="cb-admin-section-kicker">Runtime Sync Ops</div>
+                                <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
+                                    <div>
+                                        <div class="cb-admin-section-title">Server-time sync ve drift guard snapshot'i</div>
+                                        <p class="cb-admin-section-description">Canli senkronizasyon, saat offset'i ve market-data drift kararini read-only snapshot olarak gosterir. Refresh aksiyonu policy bazli olarak korunur.</p>
+                                    </div>
+                                    @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+                                    {
+                                        Label = canRefreshClockDrift ? "Write" : "Read-only",
+                                        Tone = canRefreshClockDrift ? "warning" : "info",
+                                        IconText = canRefreshClockDrift ? "RW" : "RO"
+                                    })
+                                </div>
+
+                                <div class="cb-admin-settings-switch-grid mt-6">
+                                    <div class="cb-admin-summary-card">
+                                        <span class="cb-admin-summary-label">Server-time sync</span>
+                                        <strong>@clockDrift.StatusLabel</strong>
+                                        <small>Last sync: @clockDrift.LastSyncLabel</small>
+                                        <div class="table-responsive mt-5">
+                                            <table class="table table-borderless mb-0"><tbody>
+                                                <tr><td class="font-weight-bolder">Local app time</td><td>@clockDrift.LocalAppTimeLabel</td></tr>
+                                                <tr><td class="font-weight-bolder">Exchange server time</td><td>@clockDrift.ExchangeServerTimeLabel</td></tr>
+                                                <tr><td class="font-weight-bolder">Measured offset</td><td>@clockDrift.OffsetLabel</td></tr>
+                                                <tr><td class="font-weight-bolder">Measured drift</td><td>@clockDrift.DriftLabel</td></tr>
+                                                <tr><td class="font-weight-bolder">Refresh cadence</td><td>@clockDrift.RefreshCadenceLabel</td></tr>
+                                            </tbody></table>
+                                        </div>
+                                        @if (!string.IsNullOrWhiteSpace(clockDrift.FailureReason))
+                                        {
+                                            <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-5">
+                                                <div><div class="cb-admin-info-strip-title">Last sync failure</div><div class="cb-admin-info-strip-text">@clockDrift.FailureReason</div></div>
+                                                <span class="cb-admin-info-strip-meta">Retry aware</span>
+                                            </div>
+                                        }
+                                    </div>
+                                    <div class="cb-admin-summary-card">
+                                        <span class="cb-admin-summary-label">Drift guard</span>
+                                        <strong>@driftGuard.StateLabel</strong>
+                                        <small>@driftGuard.ReasonLabel</small>
+                                        <div class="table-responsive mt-5">
+                                            <table class="table table-borderless mb-0"><tbody>
+                                                <tr><td class="font-weight-bolder">Source</td><td>@driftGuard.SourceLabel</td></tr>
+                                                <tr><td class="font-weight-bolder">Threshold</td><td>@driftGuard.ThresholdLabel</td></tr>
+                                                <tr><td class="font-weight-bolder">Latest heartbeat</td><td>@driftGuard.LatestHeartbeatLabel</td></tr>
+                                                <tr><td class="font-weight-bolder">Latest data age</td><td>@driftGuard.LatestDataAgeLabel</td></tr>
+                                                <tr><td class="font-weight-bolder">Last state change</td><td>@driftGuard.LastStateChangedLabel</td></tr>
+                                            </tbody></table>
+                                        </div>
+                                        <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-5">
+                                            <div><div class="cb-admin-info-strip-title">Retry expectation</div><div class="cb-admin-info-strip-text">@driftGuard.RetryExpectation</div></div>
+                                            <span class="cb-admin-info-strip-meta">Fail-closed</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+                    }
+                    else
+                    {
+                        <section id="cb_admin_settings_clock_sync" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+                            <div class="card-body">
+                                <div class="cb-admin-section-kicker">Runtime Sync Ops</div>
+                                <div class="cb-admin-section-title">Snapshot bekleniyor</div>
+                                <p class="cb-admin-section-description mb-0">Clock drift veya drift guard snapshot'i henuz gelmedi. Worker warmup ve runtime sync kontrol edilmeden aktivasyon yolu acilmamalidir.</p>
+                            </div>
+                        </section>
+                    }
+                </div>
+
+                <div class="tab-pane fade" id="cb_admin_settings_tab_activation" role="tabpanel" aria-labelledby="cb_admin_settings_tab_link_activation">
+                    <section id="cb_admin_settings_activation" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+                        <div class="card-body">
+                            <div class="cb-admin-section-kicker">Aktivasyon</div>
+                            <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
+                                <div>
+                                    <div class="cb-admin-section-title">Sistemi guvenli sekilde acmadan once son kontrol</div>
+                                    <p class="cb-admin-section-description">Ready / not-ready ozetini, blocker listesini ve emergency erisim yolunu bu sekmede net sekilde gorun. Sistem acma akisi burada kaybolmaz.</p>
+                                </div>
+                                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+                                {
+                                    Label = activationSummaryLabel,
+                                    Tone = activationTone,
+                                    IconText = "AC"
+                                })
+                            </div>
+
+                            <div class="cb-admin-summary-grid mt-6">
+                                <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Aktivasyon durumu</span><strong>@(activationReady ? "Aktive edilebilir" : "Eksik kontrol var")</strong><small>@activationGuidance</small></div>
+                                <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Demo / test durumu</span><strong>@(executionSnapshot.DemoModeEnabled ? "Demo / Test" : "Live yolu acilabilir")</strong><small>Effective environment: @executionSnapshot.EffectiveEnvironment</small></div>
+                                <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Son block reason</span><strong>@runtimeFailureSummary</strong><small>Global state: @globalSystemStateSnapshot.State</small></div>
+                                <div class="cb-admin-summary-card"><span class="cb-admin-summary-label">Emergency erisim</span><strong>@(crisisPreview is null ? "Preview hazir degil" : crisisPreview.Level.ToString())</strong><small>Soft halt / flatten erisimi asagidaki detay panelinde tutulur.</small></div>
+                            </div>
+
+                            @if (activationReady)
+                            {
+                                <div class="cb-admin-info-strip cb-admin-info-strip-healthy mt-6">
+                                    <div>
+                                        <div class="cb-admin-info-strip-title">Aktivasyona uygun gorunuyor</div>
+                                        <div class="cb-admin-info-strip-text">TradeMaster, global state ve runtime sync sinyalleri bu ekranin gordugu kadariyla hazir. Son karari vermeden once risk / policy ve emergency yolunu tekrar gozden gecirin.</div>
+                                    </div>
+                                    <span class="cb-admin-info-strip-meta">Ready</span>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="cb-admin-info-strip cb-admin-info-strip-danger mt-6">
+                                    <div>
+                                        <div class="cb-admin-info-strip-title">Aktivasyon oncesi eksikler</div>
+                                        <div class="cb-admin-info-strip-text"><ul class="mb-0 pl-6">@foreach (var blocker in activationBlockers) { <li>@blocker</li> }</ul></div>
+                                    </div>
+                                    <span class="cb-admin-info-strip-meta">Blocked</span>
+                                </div>
+                            }
+
+                            <div class="cb-admin-inline-actions mt-6">
+                                <a href="#cb_admin_settings_tab_critical" data-toggle="tab" role="tab" class="btn btn-light-primary font-weight-bold">Kritik ayarlari ac</a>
+                                <a href="#cb_admin_settings_tab_sync" data-toggle="tab" role="tab" class="btn btn-light-warning font-weight-bold">Runtime sync'e git</a>
+                                <a asp-area="Admin" asp-controller="Admin" asp-action="SystemHealth" class="btn btn-light-primary font-weight-bold">System health</a>
+                            </div>
+                        </div>
+                    </section>
+
+                    <details class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+                        <summary class="card-body font-weight-bolder">Emergency / soft halt panelini goster</summary>
+                        <div class="px-8 pb-8 pt-2">
+                            <div class="cb-helper-text mb-5">Crisis escalation kontrolleri yalniz acil mudahale gerektiginde acilmalidir.</div>
+                            @await Html.PartialAsync("Foundation/_AdminCrisisEscalationSection", crisisPreview)
+                        </div>
+                    </details>
+                </div>
+
+                <div class="tab-pane fade" id="cb_admin_settings_tab_details" role="tabpanel" aria-labelledby="cb_admin_settings_tab_link_details">
+                    <section id="cb_admin_settings_details" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+                        <div class="card-body">
+                            <div class="cb-admin-section-kicker">Gecmis ve Detaylar</div>
+                            <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
+                                <div>
+                                    <div class="cb-admin-section-title">Loglar, gecmis kayitlar ve ileri seviye teknik bilgiler</div>
+                                    <p class="cb-admin-section-description">Uzun tablolar ve dusuk oncelikli teknik detaylar ana gorunumu bogmamak icin bu sekmede tutulur.</p>
+                                </div>
+                                @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+                                {
+                                    Label = "Details",
+                                    Tone = "info",
+                                    IconText = "DT"
+                                })
+                            </div>
+
+                            <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6">
+                                <div>
+                                    <div class="cb-admin-info-strip-title">Dusuk oncelikli detaylar</div>
+                                    <div class="cb-admin-info-strip-text">Config history, state history, audit ve system health baglantilari burada toplanir; ilk aktivasyon akisinda ust sekmeler kullanilmalidir.</div>
+                                </div>
+                                <span class="cb-admin-info-strip-meta">History</span>
+                            </div>
+
+                            <div class="cb-admin-inline-actions mt-6">
+                                <a asp-area="Admin" asp-controller="Admin" asp-action="ConfigHistory" class="btn btn-light-primary font-weight-bold">Config history</a>
+                                <a asp-area="Admin" asp-controller="Admin" asp-action="SystemStateHistory" class="btn btn-light-warning font-weight-bold">State history</a>
+                                <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-primary font-weight-bolder">Audit / trace</a>
+                                <a asp-area="Admin" asp-controller="Admin" asp-action="SystemHealth" class="btn btn-light-primary font-weight-bold">System health</a>
+                            </div>
+                        </div>
+                    </section>
+
+                    <details class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section" open>
+                        <summary class="card-body font-weight-bolder">Logging / retention ozetini goster</summary>
+                        <div class="px-8 pb-8 pt-2">
+                            @await Html.PartialAsync("Foundation/_AdminLoggingRetentionSection")
+                        </div>
+                    </details>
+                </div>
+            </div>
         </div>
     </div>
 </div>
-
-

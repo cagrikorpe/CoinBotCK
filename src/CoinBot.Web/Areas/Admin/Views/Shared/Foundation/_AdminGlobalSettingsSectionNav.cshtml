@@ -1,32 +1,30 @@
 <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-nav-card">
     <div class="card-body">
-        <div class="cb-admin-section-kicker">Section Navigation</div>
-        <div class="cb-admin-section-title">Global settings bölümleri</div>
-        <p class="cb-admin-section-description">Canlı snapshot, kritik aksiyon ve düşük öncelikli varsayılan bloklar ayrı tutulur; kullanıcı ayarları ile karışmaz.</p>
+        <div class="cb-admin-section-kicker">Sekmeli Gezinme</div>
+        <div class="cb-admin-section-title">Global settings akisi</div>
+        <p class="cb-admin-section-description">Bu sayfa uzun bir dump yerine sekmeli operasyon akisi olarak duzenlendi. Ilk bakista yalnizca gerekli sekme ve ozet gorunur.</p>
 
-        <div class="cb-admin-settings-nav mt-5">
-            <a class="cb-admin-settings-nav-link is-active" href="#cb_admin_settings_live_snapshot">Canlı Snapshot</a>
-            <a class="cb-admin-settings-nav-link" href="#cb_admin_settings_controls">Kritik Kontroller</a>
-            <a class="cb-admin-settings-nav-link cb-admin-settings-nav-link-danger" href="#cb_admin_settings_execution">Execution Hard Gate</a>
-            <a class="cb-admin-settings-nav-link" href="#cb_admin_settings_global_state">Global System State</a>
-            <a class="cb-admin-settings-nav-link" href="#cb_admin_settings_clock_sync">Runtime Sync Ops</a>
-            <a class="cb-admin-settings-nav-link cb-admin-settings-nav-link-danger" href="#cb_admin_settings_crisis">Crisis Escalation</a>
-            <a class="cb-admin-settings-nav-link" href="#cb_admin_settings_logging">Logging / Retention</a>
-            <a class="cb-admin-settings-nav-link" href="#cb_admin_settings_risk">Risk / Policy Engine</a>
+        <div class="cb-admin-settings-nav nav nav-pills flex-column mt-5" role="tablist" aria-orientation="vertical">
+            <a class="nav-link cb-admin-settings-nav-link is-active active" id="cb_admin_settings_tab_link_overview" data-toggle="tab" href="#cb_admin_settings_tab_overview" role="tab" aria-controls="cb_admin_settings_tab_overview" aria-selected="true">Genel Durum</a>
+            <a class="nav-link cb-admin-settings-nav-link" id="cb_admin_settings_tab_link_wizard" data-toggle="tab" href="#cb_admin_settings_tab_wizard" role="tab" aria-controls="cb_admin_settings_tab_wizard" aria-selected="false">Kurulum Sihirbazi</a>
+            <a class="nav-link cb-admin-settings-nav-link" id="cb_admin_settings_tab_link_critical" data-toggle="tab" href="#cb_admin_settings_tab_critical" role="tab" aria-controls="cb_admin_settings_tab_critical" aria-selected="false">Kritik Ayarlar</a>
+            <a class="nav-link cb-admin-settings-nav-link" id="cb_admin_settings_tab_link_sync" data-toggle="tab" href="#cb_admin_settings_tab_sync" role="tab" aria-controls="cb_admin_settings_tab_sync" aria-selected="false">Senkronizasyon ve Islemler</a>
+            <a class="nav-link cb-admin-settings-nav-link cb-admin-settings-nav-link-danger" id="cb_admin_settings_tab_link_activation" data-toggle="tab" href="#cb_admin_settings_tab_activation" role="tab" aria-controls="cb_admin_settings_tab_activation" aria-selected="false">Aktivasyon</a>
+            <a class="nav-link cb-admin-settings-nav-link" id="cb_admin_settings_tab_link_details" data-toggle="tab" href="#cb_admin_settings_tab_details" role="tab" aria-controls="cb_admin_settings_tab_details" aria-selected="false">Gecmis ve Detaylar</a>
         </div>
 
         <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-6">
             <div>
-                <div class="cb-admin-info-strip-title">Critical command envelope</div>
-                <div class="cb-admin-info-strip-text">Kritik alanlar antiforgery, audit reason, re-auth hook ve idempotency command envelope ile calisir.</div>
+                <div class="cb-admin-info-strip-title">Kritik alan ayrimi</div>
+                <div class="cb-admin-info-strip-text">Salt okunur snapshot, yazilabilir konfigürasyon ve audit etkili komutlar sekmeler icinde ayri tutulur. Aktivasyon ve emergency yolu ayri sekmede gorunur.</div>
             </div>
             <span class="cb-admin-info-strip-meta">Guarded</span>
         </div>
 
         <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
             <div>
-                <div class="cb-admin-info-strip-title">Live vs editable ayrımı</div>
-                <div class="cb-admin-info-strip-text">Snapshot kartları read-only görünür. Yazılabilir form ve refresh aksiyonları yalnız ilgili guarded bölümlerde tutulur.</div>
+                <div class="cb-admin-info-strip-title">Onerilen akis</div>
+                <div class="cb-admin-info-strip-text">Genel Durum ile baslayin, Kurulum Sihirbazi ile eksikleri kapatin, sonra Kritik Ayarlar ve Aktivasyon sekmelerine gecin.</div>
             </div>
             <span class="cb-admin-info-strip-meta">Ops</span>
         </div>
