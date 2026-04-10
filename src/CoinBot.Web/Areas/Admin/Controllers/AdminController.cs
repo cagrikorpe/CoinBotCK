@@ -444,6 +444,7 @@ public sealed class AdminController : Controller
         var retentionSnapshot = await LoadLogCenterRetentionSnapshotSafeAsync(cancellationToken);
         var rolloutLogSnapshot = await LoadRolloutLogCenterSnapshotSafeAsync(cancellationToken);
         var rolloutEvidence = LoadRolloutEvidenceInputs();
+        var canRefreshClockDrift = CanRefreshClockDrift();
 
         ViewData[MonitoringDashboardSnapshotViewDataKey] = monitoringDashboard;
         ViewData[ExecutionSwitchSnapshotViewDataKey] = operationalContext.ExecutionSnapshot;
@@ -452,7 +453,7 @@ public sealed class AdminController : Controller
         ViewData[AdminLogCenterRetentionSnapshotViewDataKey] = retentionSnapshot;
         ViewData[ClockDriftSnapshotViewDataKey] = operationalContext.ClockDriftViewModel;
         ViewData[DriftGuardSnapshotViewDataKey] = operationalContext.DriftGuardViewModel;
-        ViewData[CanRefreshClockDriftViewDataKey] = CanRefreshClockDrift();
+        ViewData[CanRefreshClockDriftViewDataKey] = canRefreshClockDrift;
         ViewData[CrisisPreviewViewDataKey] = LoadCrisisPreviewViewModelFromTempData();
         ViewData[PilotOrderNotionalSummaryViewDataKey] = operationalContext.PilotOrderNotionalSummary;
         ViewData[PilotOrderNotionalToneViewDataKey] = operationalContext.PilotOrderNotionalTone;
@@ -484,6 +485,7 @@ public sealed class AdminController : Controller
             retentionSnapshot,
             operationalContext.ExecutionSnapshot,
             operationalContext.GlobalSystemStateSnapshot,
+            canRefreshClockDrift,
             evaluatedAtUtc);
 
         return View(model);
@@ -4533,6 +4535,9 @@ public sealed class AdminController : Controller
             : value[..maxLength];
     }
 }
+
+
+
 
 
 

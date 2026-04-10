@@ -8,14 +8,16 @@
     var monitoring = Model.PrimaryFlow.Monitoring;
     var advanced = Model.PrimaryFlow.Advanced;
     var activationModel = ViewData["AdminActivationControlCenter"] as AdminActivationControlCenterViewModel;
-    var canRefreshClockDrift = ViewData["AdminCanRefreshClockDrift"] as bool? ?? false;
     var executionSuccess = TempData["AdminExecutionSwitchSuccess"]?.ToString();
     var executionError = TempData["AdminExecutionSwitchError"]?.ToString();
     var clockDriftSuccess = TempData["AdminClockDriftSuccess"]?.ToString();
     var clockDriftError = TempData["AdminClockDriftError"]?.ToString();
     var currentModeIsDemo = string.Equals(setup.Items.FirstOrDefault(item => item.Key == "environment")?.Value, "Demo", StringComparison.OrdinalIgnoreCase);
-    var activateDisabled = activationModel is null || !activationModel.IsActivatable || activationModel.IsCurrentlyActive;
-    var deactivateDisabled = activationModel is null || !activationModel.IsCurrentlyActive;
+    var setupConnectionTestAction = setup.Actions.FirstOrDefault(item => item.Key == "connection-test") ?? new AdminSuperAdminFlowActionViewModel("connection-test", "Baglantiyi Test Et", true, string.Empty, string.Empty);
+    var activationPrepareAction = activation.Actions.FirstOrDefault(item => item.Key == "prepare") ?? new AdminSuperAdminFlowActionViewModel("prepare", "Sistemi Hazirla", true, string.Empty, string.Empty);
+    var activateAction = activation.Actions.FirstOrDefault(item => item.Key == "activate") ?? new AdminSuperAdminFlowActionViewModel("activate", "Sistemi Aktif Et", true, string.Empty, string.Empty);
+    var deactivateAction = activation.Actions.FirstOrDefault(item => item.Key == "deactivate") ?? new AdminSuperAdminFlowActionViewModel("deactivate", "Sistemi Kapat", true, string.Empty, string.Empty);
+    var monitoringRefreshAction = monitoring.Actions.FirstOrDefault(item => item.Key == "refresh") ?? new AdminSuperAdminFlowActionViewModel("refresh", "Yenile", true, string.Empty, string.Empty);
     var headerModel = new AdminPageHeaderViewModel
     {
         Eyebrow = "Super Admin",
@@ -49,6 +51,10 @@
             .ToArray();
 
         return tokens.Length == 0 ? value[..Math.Min(2, value.Length)].ToUpperInvariant() : string.Concat(tokens);
+    }
+    string ActionReason(string? blockedReason, string fallbackReason)
+    {
+        return string.IsNullOrWhiteSpace(blockedReason) ? fallbackReason : blockedReason!;
     }
 }
 
@@ -122,7 +128,7 @@
 
         <div class="col-12">
             <div class="tab-content" id="cb_super_admin_flow_tab_content">
-                <div class="tab-pane fade show active" id="cb_super_admin_flow_tab_setup" role="tabpanel" data-cb-super-admin-flow-section="setup">
+                <div class="tab-pane fade show active" id="cb_super_admin_flow_tab_setup" role="tabpanel" data-cb-super-admin-flow-section="setup" data-cb-super-admin-flow-visible="@setup.IsVisible.ToString().ToLowerInvariant()" data-cb-super-admin-flow-accessible="@setup.IsAccessible.ToString().ToLowerInvariant()">
                     <section class="card card-custom gutter-b cb-card cb-admin-card">
                         <div class="card-body">
                             <div class="cb-admin-section-kicker">1. Sistem Kurulumu</div>
@@ -198,16 +204,16 @@
                                     <form asp-area="Admin" asp-controller="Admin" asp-action="RefreshClockDrift" method="post" class="mt-5">
                                         @Html.AntiForgeryToken()
                                         <input type="hidden" name="returnTarget" value="Overview" />
-                                        <button type="submit" class="btn btn-light-warning font-weight-bolder" @(canRefreshClockDrift ? null : "disabled")>Baglantiyi Test Et</button>
+                                        <button type="submit" class="btn btn-light-warning font-weight-bolder" data-cb-super-admin-action-enabled="@setupConnectionTestAction.IsEnabled.ToString().ToLowerInvariant()" @(!setupConnectionTestAction.IsEnabled ? "disabled" : null)>Baglantiyi Test Et</button>
                                     </form>
-                                    <div class="cb-helper-text mt-6">Exchange bagli degil veya worker calismiyor ise ana blocker tek satir mesaj olarak bu ekranda kalir.</div>
+                                    <div class="cb-helper-text mt-6" data-cb-super-admin-action-reason="connection-test">@(setupConnectionTestAction.IsEnabled ? "Exchange bagli degil veya worker calismiyor ise ana blocker tek satir mesaj olarak bu ekranda kalir." : ActionReason(setupConnectionTestAction.BlockedReason, "Bu rolde baglanti testi acik degil"))</div>
                                 </div>
                             </section>
                         </div>
                     </div>
                 </div>
 
-                <div class="tab-pane fade" id="cb_super_admin_flow_tab_activation" role="tabpanel" data-cb-super-admin-flow-section="activation">
+                <div class="tab-pane fade" id="cb_super_admin_flow_tab_activation" role="tabpanel" data-cb-super-admin-flow-section="activation" data-cb-super-admin-flow-visible="@activation.IsVisible.ToString().ToLowerInvariant()" data-cb-super-admin-flow-accessible="@activation.IsAccessible.ToString().ToLowerInvariant()">
                     <section class="card card-custom gutter-b cb-card cb-admin-card" data-cb-super-admin-activation-panel>
                         <div class="card-body">
                             <div class="cb-admin-section-kicker">2. Sistemi Aktiflestir</div>
@@ -238,8 +244,9 @@
                                     <form asp-area="Admin" asp-controller="Admin" asp-action="RefreshClockDrift" method="post" class="mt-5">
                                         @Html.AntiForgeryToken()
                                         <input type="hidden" name="returnTarget" value="Overview" />
-                                        <button type="submit" class="btn btn-light-warning font-weight-bolder" @(canRefreshClockDrift ? null : "disabled")>Sistemi Hazirla</button>
+                                        <button type="submit" class="btn btn-light-warning font-weight-bolder" data-cb-super-admin-action-enabled="@activationPrepareAction.IsEnabled.ToString().ToLowerInvariant()" @(!activationPrepareAction.IsEnabled ? "disabled" : null)>Sistemi Hazirla</button>
                                     </form>
+                                    <div class="cb-helper-text mt-4" data-cb-super-admin-action-reason="prepare">@(activationPrepareAction.IsEnabled ? activationPrepareAction.Summary : ActionReason(activationPrepareAction.BlockedReason, "Bu rolde hazirlik yenilemesi acik degil"))</div>
                                 </div>
                             </section>
                         </div>
@@ -260,8 +267,9 @@
                                             <label class="font-weight-bold">Onay ibaresi</label>
                                             <input type="text" name="reauthToken" class="form-control" maxlength="32" placeholder="ONAYLA" />
                                         </div>
-                                        <button type="submit" class="btn btn-primary font-weight-bolder" @((activateDisabled ? "disabled" : null))>Sistemi Aktif Et</button>
+                                        <button type="submit" class="btn btn-primary font-weight-bolder" data-cb-super-admin-action-enabled="@activateAction.IsEnabled.ToString().ToLowerInvariant()" @(!activateAction.IsEnabled ? "disabled" : null)>Sistemi Aktif Et</button>
                                     </form>
+                                    <div class="cb-helper-text mt-4" data-cb-super-admin-action-reason="activate">@(activateAction.IsEnabled ? activateAction.Summary : ActionReason(activateAction.BlockedReason, "Sistem aktive edilmeye hazir degil"))</div>
                                 </div>
                             </section>
                         </div>
@@ -282,8 +290,9 @@
                                             <label class="font-weight-bold">Onay ibaresi</label>
                                             <input type="text" name="reauthToken" class="form-control" maxlength="32" placeholder="ONAYLA" />
                                         </div>
-                                        <button type="submit" class="btn btn-light-danger font-weight-bolder" @((deactivateDisabled ? "disabled" : null))>Sistemi Kapat</button>
+                                        <button type="submit" class="btn btn-light-danger font-weight-bolder" data-cb-super-admin-action-enabled="@deactivateAction.IsEnabled.ToString().ToLowerInvariant()" @(!deactivateAction.IsEnabled ? "disabled" : null)>Sistemi Kapat</button>
                                     </form>
+                                    <div class="cb-helper-text mt-4" data-cb-super-admin-action-reason="deactivate">@(deactivateAction.IsEnabled ? deactivateAction.Summary : ActionReason(deactivateAction.BlockedReason, "Sistem zaten kapali"))</div>
                                 </div>
                             </section>
                         </div>
@@ -304,7 +313,7 @@
                     </section>
                 </div>
 
-                <div class="tab-pane fade" id="cb_super_admin_flow_tab_monitoring" role="tabpanel" data-cb-super-admin-flow-section="monitoring">
+                <div class="tab-pane fade" id="cb_super_admin_flow_tab_monitoring" role="tabpanel" data-cb-super-admin-flow-section="monitoring" data-cb-super-admin-flow-visible="@monitoring.IsVisible.ToString().ToLowerInvariant()" data-cb-super-admin-flow-accessible="@monitoring.IsAccessible.ToString().ToLowerInvariant()">
                     <section class="card card-custom gutter-b cb-card cb-admin-card" data-cb-super-admin-monitoring-panel>
                         <div class="card-body">
                             <div class="cb-admin-section-kicker">3. Sistemi Izle</div>
@@ -326,8 +335,9 @@
                                 <form asp-area="Admin" asp-controller="Admin" asp-action="RefreshClockDrift" method="post" class="d-inline-block mr-3">
                                     @Html.AntiForgeryToken()
                                     <input type="hidden" name="returnTarget" value="Overview" />
-                                    <button type="submit" class="btn btn-light-warning font-weight-bolder" @(canRefreshClockDrift ? null : "disabled")>Yenile</button>
+                                    <button type="submit" class="btn btn-light-warning font-weight-bolder" data-cb-super-admin-action-enabled="@monitoringRefreshAction.IsEnabled.ToString().ToLowerInvariant()" @(!monitoringRefreshAction.IsEnabled ? "disabled" : null)>Yenile</button>
                                 </form>
+                                <span class="cb-helper-text mr-4" data-cb-super-admin-action-reason="refresh">@(monitoringRefreshAction.IsEnabled ? monitoringRefreshAction.Summary : ActionReason(monitoringRefreshAction.BlockedReason, "Bu rolde izleme yenilemesi acik degil"))</span>
                                 <a asp-area="Admin" asp-controller="Admin" asp-action="Settings" asp-fragment="cb_admin_settings_crisis_panel" class="btn btn-danger font-weight-bolder">Acil Durdur</a>
                                 <a href="#cb_super_admin_flow_tab_activation" class="btn btn-light-primary font-weight-bold" data-toggle="tab">Sistemi Kapat</a>
                             </div>
@@ -335,7 +345,7 @@
                     </section>
                 </div>
 
-                <div class="tab-pane fade" id="cb_super_admin_flow_tab_advanced" role="tabpanel" data-cb-super-admin-flow-section="advanced">
+                <div class="tab-pane fade" id="cb_super_admin_flow_tab_advanced" role="tabpanel" data-cb-super-admin-flow-section="advanced" data-cb-super-admin-flow-visible="@advanced.IsVisible.ToString().ToLowerInvariant()" data-cb-super-admin-flow-accessible="@advanced.IsAccessible.ToString().ToLowerInvariant()">
                     <section class="card card-custom gutter-b cb-card cb-admin-card" data-cb-super-admin-advanced-links>
                         <div class="card-body">
                             <div class="cb-admin-section-kicker">4. Gelismis</div>
@@ -386,6 +396,7 @@
         </script>
     }
 </div>
+
 
 
 

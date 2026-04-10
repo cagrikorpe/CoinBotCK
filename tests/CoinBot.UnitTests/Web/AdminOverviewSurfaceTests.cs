@@ -23,6 +23,10 @@ public sealed class AdminOverviewSurfaceTests
         Assert.Contains("cb_super_admin_flow_tab_link_monitoring", content, StringComparison.Ordinal);
         Assert.Contains("cb_super_admin_flow_tab_link_advanced", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-super-admin-setup-form", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-super-admin-flow-visible=\"@setup.IsVisible.ToString().ToLowerInvariant()\"", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-super-admin-flow-accessible=\"@setup.IsAccessible.ToString().ToLowerInvariant()\"", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-super-admin-action-reason=\"activate\"", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-super-admin-action-reason=\"refresh\"", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-super-admin-activation-panel", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-super-admin-monitoring-panel", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-super-admin-advanced-links", content, StringComparison.Ordinal);
@@ -75,3 +79,4 @@ public sealed class AdminOverviewSurfaceTests
         return directory.FullName;
     }
 }
+

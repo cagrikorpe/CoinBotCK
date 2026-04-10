@@ -1,3 +1,4 @@
+using System.Linq;
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Exchange;
@@ -38,11 +39,18 @@ public sealed class AdminOperationsCenterComposerTests
             null,
             new GlobalExecutionSwitchSnapshot(TradeMasterSwitchState.Disarmed, true, true),
             new GlobalSystemStateSnapshot(GlobalSystemStateKind.Active, "SYSTEM_ACTIVE", null, "AdminPortal", null, false, null, new DateTime(2026, 4, 8, 11, 59, 0, DateTimeKind.Utc), "super-admin", "ip:masked", 1, true),
+            true,
             new DateTime(2026, 4, 8, 12, 1, 0, DateTimeKind.Utc));
 
         Assert.True(model.IsAccessible);
         Assert.Equal("critical", model.RuntimeHealthCenter.StatusTone);
         Assert.Equal("Blocked", model.PrimaryFlow.Setup.StatusLabel);
+        Assert.True(model.PrimaryFlow.Setup.IsVisible);
+        Assert.True(model.PrimaryFlow.Setup.IsAccessible);
+        var activateAction = Assert.Single(model.PrimaryFlow.Activation.Actions, item => item.Key == "activate");
+        var activationActionDebug = string.Join(" | ", model.PrimaryFlow.Activation.Actions.Select(item => $"{item.Key}:{item.IsEnabled}:{item.BlockedReason}"));
+        Assert.False(activateAction.IsEnabled, activationActionDebug);
+        Assert.Equal("Exchange bagli degil", activateAction.BlockedReason);
         Assert.Equal("Exchange bagli degil", model.PrimaryFlow.Setup.PrimaryMessage);
         Assert.Contains(model.RuntimeHealthCenter.Signals, item => item.Code == "WorkerHeartbeatUnavailable");
         var credential = Assert.Single(model.ExchangeGovernanceCenter.Accounts);
@@ -83,6 +91,7 @@ public sealed class AdminOperationsCenterComposerTests
             null,
             new GlobalExecutionSwitchSnapshot(TradeMasterSwitchState.Disarmed, true, true),
             new GlobalSystemStateSnapshot(GlobalSystemStateKind.Active, "SYSTEM_ACTIVE", null, "AdminPortal", null, false, null, new DateTime(2026, 4, 8, 11, 59, 0, DateTimeKind.Utc), "super-admin", "ip:masked", 1, true),
+            true,
             new DateTime(2026, 4, 8, 12, 1, 0, DateTimeKind.Utc));
 
         Assert.Equal("Blocked", model.PrimaryFlow.Setup.StatusLabel);
@@ -121,9 +130,14 @@ public sealed class AdminOperationsCenterComposerTests
             null,
             new GlobalExecutionSwitchSnapshot(TradeMasterSwitchState.Disarmed, true, true),
             new GlobalSystemStateSnapshot(GlobalSystemStateKind.FullHalt, "FULL_HALT", null, "AdminPortal", null, false, null, new DateTime(2026, 4, 8, 11, 59, 0, DateTimeKind.Utc), "super-admin", "ip:masked", 1, true),
+            true,
             new DateTime(2026, 4, 8, 12, 1, 0, DateTimeKind.Utc));
 
         Assert.Equal("EmergencyStopActive", model.PrimaryFlow.Activation.StatusLabel);
+        var activateAction = Assert.Single(model.PrimaryFlow.Activation.Actions, item => item.Key == "activate");
+        var activationActionDebug = string.Join(" | ", model.PrimaryFlow.Activation.Actions.Select(item => $"{item.Key}:{item.IsEnabled}:{item.BlockedReason}"));
+        Assert.False(activateAction.IsEnabled, activationActionDebug);
+        Assert.Equal("Acil durdurma aktif", activateAction.BlockedReason);
         Assert.Equal("Acil durdurma aktif", model.PrimaryFlow.Activation.PrimaryMessage);
         Assert.Equal("EmergencyStopActive", model.PrimaryFlow.Monitoring.StatusLabel);
     }
@@ -305,6 +319,12 @@ public sealed class AdminOperationsCenterComposerTests
         new DateTime(2026, 4, 8, 11, 59, 10, DateTimeKind.Utc),
         isPersisted);
 }
+
+
+
+
+
+
 
 
 

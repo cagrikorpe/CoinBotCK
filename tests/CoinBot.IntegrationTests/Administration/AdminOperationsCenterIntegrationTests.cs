@@ -84,6 +84,7 @@ public sealed class AdminOperationsCenterIntegrationTests
             null,
             switchSnapshot,
             stateSnapshot,
+            true,
             new DateTime(2026, 4, 8, 12, 0, 30, DateTimeKind.Utc));
 
         Assert.True(operationsModel.IsAccessible);
@@ -135,5 +136,8 @@ public sealed class AdminOperationsCenterIntegrationTests
         public override DateTimeOffset GetUtcNow() => now;
     }
 }
+
+
+
 
 

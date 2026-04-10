@@ -197,6 +197,7 @@ public static class AdminOperationsCenterComposer
         LogCenterRetentionSnapshot? retentionSnapshot,
         GlobalExecutionSwitchSnapshot executionSnapshot,
         GlobalSystemStateSnapshot globalSystemStateSnapshot,
+        bool canRefreshOperationalState,
         DateTime evaluatedAtUtc)
     {
         var runtimeCenter = BuildRuntimeHealthCenter(
@@ -236,6 +237,7 @@ public static class AdminOperationsCenterComposer
                 botOperationsSnapshot,
                 executionSnapshot,
                 globalSystemStateSnapshot,
+                canRefreshOperationalState,
                 evaluatedAtUtc));
     }
 
@@ -1943,6 +1945,8 @@ public static class AdminOperationsCenterComposer
         return value?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss 'UTC'") ?? "n/a";
     }
 }
+
+
 
 
 

@@ -17,7 +17,10 @@ public sealed record AdminSuperAdminFlowSectionViewModel(
     string Tone,
     string Summary,
     string PrimaryMessage,
-    IReadOnlyCollection<AdminSuperAdminFlowItemViewModel> Items);
+    bool IsVisible,
+    bool IsAccessible,
+    IReadOnlyCollection<AdminSuperAdminFlowItemViewModel> Items,
+    IReadOnlyCollection<AdminSuperAdminFlowActionViewModel> Actions);
 
 public sealed record AdminSuperAdminFlowItemViewModel(
     string Key,
@@ -26,6 +29,13 @@ public sealed record AdminSuperAdminFlowItemViewModel(
     string Tone,
     string Summary,
     string? Href = null);
+
+public sealed record AdminSuperAdminFlowActionViewModel(
+    string Key,
+    string Label,
+    bool IsEnabled,
+    string BlockedReason,
+    string Summary);
 
 public static class AdminSuperAdminPrimaryFlowComposer
 {
@@ -38,6 +48,8 @@ public static class AdminSuperAdminPrimaryFlowComposer
             "critical",
             "Bu sade super admin akisi yalnizca Super Admin rolu ile acilir.",
             "Super Admin gerekli",
+            false,
+            false,
             new[]
             {
                 new AdminSuperAdminFlowItemViewModel(
@@ -46,7 +58,8 @@ public static class AdminSuperAdminPrimaryFlowComposer
                     "Blocked",
                     "critical",
                     $"Fail-closed. Refreshed {FormatUtc(evaluatedAtUtc)}")
-            });
+            },
+            Array.Empty<AdminSuperAdminFlowActionViewModel>());
 
         return new AdminSuperAdminPrimaryFlowViewModel(
             blockedSection with { Key = "setup", Label = "Sistem Kurulumu" },
@@ -62,6 +75,7 @@ public static class AdminSuperAdminPrimaryFlowComposer
         AdminBotOperationsPageSnapshot botOperationsSnapshot,
         GlobalExecutionSwitchSnapshot executionSnapshot,
         GlobalSystemStateSnapshot globalSystemStateSnapshot,
+        bool canRefreshOperationalState,
         DateTime evaluatedAtUtc)
     {
         var workerSignal = runtimeCenter.Signals.FirstOrDefault(item => string.Equals(item.Key, "worker-health", StringComparison.OrdinalIgnoreCase));
@@ -88,6 +102,8 @@ public static class AdminSuperAdminPrimaryFlowComposer
                     ? "Ortam secimi, exchange baglantisi, worker ve temel hazirlik kapilari temiz gorunuyor."
                     : "Kurulum eksigi var; kaydetmeden once tek satir blocker mesajini giderin.",
                 setupMessage,
+                true,
+                true,
                 new[]
                 {
                     new AdminSuperAdminFlowItemViewModel("environment", "Ortam", activationControlCenter.CurrentModeLabel, activationControlCenter.CurrentModeLabel.Equals("Live", StringComparison.OrdinalIgnoreCase) ? "warning" : "info", activationControlCenter.CurrentModeSummary),
@@ -95,7 +111,8 @@ public static class AdminSuperAdminPrimaryFlowComposer
                     new AdminSuperAdminFlowItemViewModel("worker", "Worker", workerReady ? "Ready" : "Blocked", workerReady ? "healthy" : "critical", workerReady ? "Worker heartbeat gorunuyor." : "Worker calismiyor veya heartbeat gorunmuyor."),
                     new AdminSuperAdminFlowItemViewModel("system-ready", "Sistem hazirligi", activationControlCenter.IsActivatable ? "Ready" : "Blocked", activationControlCenter.IsActivatable ? "healthy" : "critical", activationControlCenter.IsActivatable ? "Temel aktivasyon checklist'i temiz." : "Sistem aktivasyona hazir degil."),
                     new AdminSuperAdminFlowItemViewModel("checked-at", "Son kontrol", FormatUtc(evaluatedAtUtc), "info", "Read-model ozetinin son degerlendirme zamani")
-                }),
+                },
+                BuildSetupActions(canRefreshOperationalState)),
             new AdminSuperAdminFlowSectionViewModel(
                 "activation",
                 "Sistemi Aktiflestir",
@@ -115,6 +132,8 @@ public static class AdminSuperAdminPrimaryFlowComposer
                     _ => "Aktivasyon once eksikleri kapatip tekrar degerlendirme ister."
                 },
                 activationMessage,
+                true,
+                true,
                 new[]
                 {
                     new AdminSuperAdminFlowItemViewModel("environment", "Ortam ozeti", activationControlCenter.CurrentModeLabel, activationControlCenter.CurrentModeLabel.Equals("Live", StringComparison.OrdinalIgnoreCase) ? "warning" : "info", activationControlCenter.CurrentModeSummary),
@@ -123,7 +142,8 @@ public static class AdminSuperAdminPrimaryFlowComposer
                     new AdminSuperAdminFlowItemViewModel("trade-master", "TradeMaster", ResolveSwitchValue(activationControlCenter, "trade-master", "Disarmed"), ResolveSwitchTone(activationControlCenter, "trade-master", "critical"), ResolveSwitchSummary(activationControlCenter, "trade-master", "TradeMaster kapali.")),
                     new AdminSuperAdminFlowItemViewModel("system-active", "Sistem aktif mi", activationControlCenter.IsCurrentlyActive ? "Active" : "Stopped", activationControlCenter.IsCurrentlyActive ? "healthy" : "warning", activationControlCenter.LastDecision.Summary),
                     new AdminSuperAdminFlowItemViewModel("decision", "Son karar", activationControlCenter.LastDecision.Code, activationControlCenter.LastDecision.Tone, activationControlCenter.LastDecision.EvaluatedAtUtcLabel)
-                }),
+                },
+                BuildActivationActions(activationControlCenter, exchangeReady, workerReady, emergencyActive, canRefreshOperationalState)),
             new AdminSuperAdminFlowSectionViewModel(
                 "monitoring",
                 "Sistemi Izle",
@@ -143,6 +163,8 @@ public static class AdminSuperAdminPrimaryFlowComposer
                     _ => "Izleme sinyalleri eksik; sistem guvenli sekilde bloke gorunur."
                 },
                 monitoringMessage,
+                true,
+                true,
                 new[]
                 {
                     new AdminSuperAdminFlowItemViewModel("status", "Sistem durumu", monitoringStatus, monitoringStatus switch { "Active" => "healthy", "Stopped" => "warning", _ => "critical" }, activationControlCenter.Guidance),
@@ -151,7 +173,8 @@ public static class AdminSuperAdminPrimaryFlowComposer
                     new AdminSuperAdminFlowItemViewModel("last-operation", "Son islem zamani", activationControlCenter.LastDecision.EvaluatedAtUtcLabel, "info", "Son aktivasyon/readiness karari"),
                     new AdminSuperAdminFlowItemViewModel("last-error", "Son hata", string.IsNullOrWhiteSpace(lastErrorSummary) ? "Yok" : lastErrorSummary, string.IsNullOrWhiteSpace(lastErrorSummary) || string.Equals(lastErrorSummary, "Yok", StringComparison.OrdinalIgnoreCase) ? "healthy" : "warning", runtimeCenter.LastFailureSummary),
                     new AdminSuperAdminFlowItemViewModel("last-stop", "Son durdurma nedeni", lastStopSummary, lastStopSummary.Equals("Yok", StringComparison.OrdinalIgnoreCase) ? "healthy" : "warning", globalSystemStateSnapshot.ReasonCode)
-                }),
+                },
+                BuildMonitoringActions(canRefreshOperationalState)),
             new AdminSuperAdminFlowSectionViewModel(
                 "advanced",
                 "Gelismis",
@@ -159,6 +182,8 @@ public static class AdminSuperAdminPrimaryFlowComposer
                 "info",
                 "Teknik denetim, audit, trace ve rollout detaylari ana akistan ayrik tutulur.",
                 "Detaylar sadece gerektiginde acilir.",
+                true,
+                true,
                 new[]
                 {
                     new AdminSuperAdminFlowItemViewModel("global-settings", "Global Ayarlar", "Ac", "info", "Tum teknik ayarlar ve guarded config formlari", "/admin/Settings"),
@@ -166,7 +191,53 @@ public static class AdminSuperAdminPrimaryFlowComposer
                     new AdminSuperAdminFlowItemViewModel("incidents", "Incidents", "Ac", "warning", "Incident detaylari ve timeline", "/admin/Incidents"),
                     new AdminSuperAdminFlowItemViewModel("health", "Health detaylari", "Ac", "info", "Runtime health ve dependency detaylari", "/admin/SystemHealth"),
                     new AdminSuperAdminFlowItemViewModel("history", "Config / State History", "Ac", "info", "Degisim gecmisi ve rollout izleri", "/admin/ConfigHistory")
-                }));
+                },
+                Array.Empty<AdminSuperAdminFlowActionViewModel>()));
+    }
+
+    private static IReadOnlyCollection<AdminSuperAdminFlowActionViewModel> BuildSetupActions(bool canRefreshOperationalState)
+    {
+        return
+        [
+            new AdminSuperAdminFlowActionViewModel("save-continue", "Kaydet ve Devam Et", true, string.Empty, "Ortam secimi guarded save aksiyonu ile uygulanir."),
+            new AdminSuperAdminFlowActionViewModel("connection-test", "Baglantiyi Test Et", canRefreshOperationalState, canRefreshOperationalState ? string.Empty : "Bu rolde baglanti testi acik degil", "Baglanti testi read-model snapshot'ini yeniler.")
+        ];
+    }
+
+    private static IReadOnlyCollection<AdminSuperAdminFlowActionViewModel> BuildActivationActions(
+        AdminActivationControlCenterViewModel activationControlCenter,
+        bool exchangeReady,
+        bool workerReady,
+        bool emergencyActive,
+        bool canRefreshOperationalState)
+    {
+        var activateEnabled = activationControlCenter.IsActivatable && exchangeReady && workerReady && !activationControlCenter.IsCurrentlyActive && !emergencyActive;
+        var activateBlockedReason = activateEnabled
+            ? string.Empty
+            : activationControlCenter.IsCurrentlyActive
+                ? "Sistem zaten aktif"
+                : BuildActivationMessage(activationControlCenter, exchangeReady, workerReady, emergencyActive);
+        var deactivateEnabled = activationControlCenter.IsCurrentlyActive && !emergencyActive;
+        var deactivateBlockedReason = deactivateEnabled
+            ? string.Empty
+            : emergencyActive
+                ? "Acil durdurma aktif"
+                : "Sistem zaten kapali";
+
+        return
+        [
+            new AdminSuperAdminFlowActionViewModel("prepare", "Sistemi Hazirla", canRefreshOperationalState, canRefreshOperationalState ? string.Empty : "Bu rolde hazirlik yenilemesi acik degil", "Readiness ozetini yeniden degerlendirir."),
+            new AdminSuperAdminFlowActionViewModel("activate", "Sistemi Aktif Et", activateEnabled, activateBlockedReason, "Aktivasyon komutu guarded ve audit'li calisir."),
+            new AdminSuperAdminFlowActionViewModel("deactivate", "Sistemi Kapat", deactivateEnabled, deactivateBlockedReason, "Guvenli kapatma komutu guarded ve audit'li calisir.")
+        ];
+    }
+
+    private static IReadOnlyCollection<AdminSuperAdminFlowActionViewModel> BuildMonitoringActions(bool canRefreshOperationalState)
+    {
+        return
+        [
+            new AdminSuperAdminFlowActionViewModel("refresh", "Yenile", canRefreshOperationalState, canRefreshOperationalState ? string.Empty : "Bu rolde izleme yenilemesi acik degil", "Monitoring ozetini yeniden yukler.")
+        ];
     }
 
     private static bool HasReadyExchange(AdminOperationsExchangeGovernanceCenterViewModel exchangeCenter, string currentModeLabel)
@@ -244,7 +315,7 @@ public static class AdminSuperAdminPrimaryFlowComposer
 
         return activationControlCenter.IsActivatable
             ? "Ready"
-            : "Sistem hazir degil";
+            : "Kurulum eksik";
     }
 
     private static string BuildActivationMessage(AdminActivationControlCenterViewModel activationControlCenter, bool exchangeReady, bool workerReady, bool emergencyActive)
@@ -293,7 +364,7 @@ public static class AdminSuperAdminPrimaryFlowComposer
 
         return executionSnapshot.IsTradeMasterArmed
             ? "Sistem calisiyor"
-            : (string.Equals(runtimeCenter.StatusTone, "critical", StringComparison.OrdinalIgnoreCase) ? "Izleme sinyali bloklu" : "Sistem kapali");
+            : (string.Equals(runtimeCenter.StatusTone, "critical", StringComparison.OrdinalIgnoreCase) ? "Sistem durumu okunamiyor" : "Sistem kapali");
     }
 
     private static string ResolveActivationBlockedSummary(AdminActivationControlCenterViewModel activationControlCenter)
@@ -378,3 +449,4 @@ public static class AdminSuperAdminPrimaryFlowComposer
         return utcDateTime.ToUniversalTime().ToString("yyyy-MM-dd HH:mm 'UTC'");
     }
 }
+

@@ -717,19 +717,55 @@ class CdpClient {
     await client.captureScreenshot(adminOverviewScreenshotPath);
 
     const adminOverviewState = await client.evaluate(`(() => {
-      const pageText = document.body.textContent || '';
+      const pageText = (document.body.textContent || '').toLowerCase();
+      const initialActiveTabText = document.querySelector('#cb_super_admin_flow_tab_nav .nav-link.active')?.innerText?.trim() || '';
+      const showTab = key => {
+        const link = document.querySelector('[data-cb-super-admin-flow-tab-link="' + key + '"]');
+        if (!link) {
+          return false;
+        }
+
+        if (window.jQuery && window.jQuery.fn && window.jQuery.fn.tab) {
+          window.jQuery(link).tab('show');
+        } else {
+          link.click();
+        }
+
+        const target = link.getAttribute('href');
+        const pane = target ? document.querySelector(target) : null;
+        return link.classList.contains('active') && !!pane;
+      };
+
+      const setupTabOpens = showTab('setup');
+      const activationTabOpens = showTab('activation');
+      const monitoringTabOpens = showTab('monitoring');
+      const advancedTabOpens = showTab('advanced');
       const setupText = document.querySelector('#cb_super_admin_flow_tab_setup')?.textContent || '';
       const activationText = document.querySelector('#cb_super_admin_flow_tab_activation')?.textContent || '';
       const monitoringText = document.querySelector('#cb_super_admin_flow_tab_monitoring')?.textContent || '';
       const advancedText = document.querySelector('#cb_super_admin_flow_tab_advanced')?.textContent || '';
+      const activateButton = document.querySelector('[data-cb-super-admin-activation-action="activate"] button[type="submit"]');
+      const activateReason = document.querySelector('[data-cb-super-admin-action-reason="activate"]')?.innerText?.trim() || '';
+      const jargonTokens = [
+        'evidence missing',
+        'degraded chain',
+        'continuity snapshot unavailable',
+        'rollout blocker unresolved',
+        'audit visibility insufficient'
+      ];
       return {
         tabCount: document.querySelectorAll('[data-cb-super-admin-flow-tab-link]').length,
+        initialActiveTabText,
         activeTabText: document.querySelector('#cb_super_admin_flow_tab_nav .nav-link.active')?.innerText?.trim() || '',
         hasSimpleFlow: !!document.querySelector('[data-cb-super-admin-simple-flow]'),
         hasSetupSection: !!document.querySelector('[data-cb-super-admin-flow-section="setup"]'),
         hasActivationSection: !!document.querySelector('[data-cb-super-admin-flow-section="activation"]'),
         hasMonitoringSection: !!document.querySelector('[data-cb-super-admin-flow-section="monitoring"]'),
         hasAdvancedSection: !!document.querySelector('[data-cb-super-admin-flow-section="advanced"]'),
+        setupAccessible: document.querySelector('[data-cb-super-admin-flow-section="setup"]')?.getAttribute('data-cb-super-admin-flow-accessible') === 'true',
+        activationAccessible: document.querySelector('[data-cb-super-admin-flow-section="activation"]')?.getAttribute('data-cb-super-admin-flow-accessible') === 'true',
+        monitoringAccessible: document.querySelector('[data-cb-super-admin-flow-section="monitoring"]')?.getAttribute('data-cb-super-admin-flow-accessible') === 'true',
+        advancedAccessible: document.querySelector('[data-cb-super-admin-flow-section="advanced"]')?.getAttribute('data-cb-super-admin-flow-accessible') === 'true',
         setupCardCount: document.querySelectorAll('#cb_super_admin_flow_tab_setup .cb-admin-summary-card').length,
         monitoringCardCount: document.querySelectorAll('#cb_super_admin_flow_tab_monitoring .cb-admin-summary-card').length,
         advancedLinkCount: document.querySelectorAll('#cb_super_admin_flow_tab_advanced a[href]').length,
@@ -744,17 +780,31 @@ class CdpClient {
         hasDeactivateAction: activationText.includes('Sistemi Kapat'),
         hasMonitoringRefresh: monitoringText.includes('Yenile'),
         hasMonitoringEmergency: monitoringText.includes('Acil Durdur'),
-        hasTechnicalCentersVisible: pageText.includes('Runtime & Health Center') || pageText.includes('User / Bot Governance Center') || pageText.includes('Exchange / Credential Governance') || pageText.includes('Policy / Limit Governance')
+        hasMonitoringStopSummary: monitoringText.includes('Son durdurma nedeni'),
+        setupTabOpens,
+        activationTabOpens,
+        monitoringTabOpens,
+        advancedTabOpens,
+        activateDisabled: !!activateButton?.disabled,
+        activateReason,
+        activateReasonLineCount: activateReason ? (activateReason.indexOf(String.fromCharCode(10)) >= 0 ? 2 : 1) : 0,
+        hasTechnicalCentersVisible: pageText.includes('runtime & health center') || pageText.includes('user / bot governance center') || pageText.includes('exchange / credential governance') || pageText.includes('policy / limit governance'),
+        hasTechnicalJargon: jargonTokens.some(token => pageText.includes(token) || activateReason.toLowerCase().includes(token)),
+        advancedTextVisible: advancedText.includes('Audit') && advancedText.includes('Incidents')
       };
     })()`);
 
     if (adminOverviewState.tabCount < 4
-        || !/Sistem Kurulumu/i.test(adminOverviewState.activeTabText)
+        || !/Sistem Kurulumu/i.test(adminOverviewState.initialActiveTabText)
         || !adminOverviewState.hasSimpleFlow
         || !adminOverviewState.hasSetupSection
         || !adminOverviewState.hasActivationSection
         || !adminOverviewState.hasMonitoringSection
         || !adminOverviewState.hasAdvancedSection
+        || !adminOverviewState.setupAccessible
+        || !adminOverviewState.activationAccessible
+        || !adminOverviewState.monitoringAccessible
+        || !adminOverviewState.advancedAccessible
         || adminOverviewState.setupCardCount < 5
         || adminOverviewState.monitoringCardCount < 6
         || adminOverviewState.advancedLinkCount < 4
@@ -769,9 +819,20 @@ class CdpClient {
         || !adminOverviewState.hasDeactivateAction
         || !adminOverviewState.hasMonitoringRefresh
         || !adminOverviewState.hasMonitoringEmergency
-        || adminOverviewState.hasTechnicalCentersVisible) {
-      throw new Error('Admin / Overview did not render the expected simple super admin flow.');
+        || !adminOverviewState.hasMonitoringStopSummary
+        || !adminOverviewState.setupTabOpens
+        || !adminOverviewState.activationTabOpens
+        || !adminOverviewState.monitoringTabOpens
+        || !adminOverviewState.advancedTabOpens
+        || !adminOverviewState.activateDisabled
+        || !adminOverviewState.activateReason
+        || adminOverviewState.activateReasonLineCount !== 1
+        || !adminOverviewState.advancedTextVisible
+        || adminOverviewState.hasTechnicalCentersVisible
+        || adminOverviewState.hasTechnicalJargon) {
+      throw new Error('Admin / Overview did not render the expected always-open super admin flow.');
     }
+
 
     await client.navigate(`${baseUrl}/admin/Audit`);
     await client.waitForReady();
@@ -844,7 +905,7 @@ class CdpClient {
       userOverviewDenied: !String(userOverviewState.location ?? '').toLowerCase().includes('/admin/overview') || !Boolean(userOverviewState.hasOperationsCenter),
       userAuditDenied: !String(userAuditState.location ?? '').toLowerCase().includes('/admin/audit') || !Boolean(userAuditState.hasDecisionCenter),
       adminOverviewTabCount: Number(adminOverviewState.tabCount ?? 0),
-      adminOverviewActiveTabText: String(adminOverviewState.activeTabText ?? ''),
+      adminOverviewActiveTabText: String(adminOverviewState.initialActiveTabText ?? adminOverviewState.activeTabText ?? ''),
       adminOverviewHasSimpleFlow: Boolean(adminOverviewState.hasSimpleFlow),
       adminOverviewHasSetupSection: Boolean(adminOverviewState.hasSetupSection),
       adminOverviewHasActivationSection: Boolean(adminOverviewState.hasActivationSection),
@@ -853,6 +914,13 @@ class CdpClient {
       adminOverviewSetupCardCount: Number(adminOverviewState.setupCardCount ?? 0),
       adminOverviewMonitoringCardCount: Number(adminOverviewState.monitoringCardCount ?? 0),
       adminOverviewAdvancedLinkCount: Number(adminOverviewState.advancedLinkCount ?? 0),
+      adminOverviewSetupTabOpens: Boolean(adminOverviewState.setupTabOpens),
+      adminOverviewActivationTabOpens: Boolean(adminOverviewState.activationTabOpens),
+      adminOverviewMonitoringTabOpens: Boolean(adminOverviewState.monitoringTabOpens),
+      adminOverviewAdvancedTabOpens: Boolean(adminOverviewState.advancedTabOpens),
+      adminOverviewActivateDisabled: Boolean(adminOverviewState.activateDisabled),
+      adminOverviewActivateReason: String(adminOverviewState.activateReason ?? ''),
+      adminOverviewHasTechnicalJargon: Boolean(adminOverviewState.hasTechnicalJargon),
       adminAuditVisible: Boolean(adminAuditState.hasDecisionCenter),
       adminAuditOutcomeFilterVisible: Boolean(adminAuditState.hasOutcomeFilter),
       adminAuditReasonCodeFilterVisible: Boolean(adminAuditState.hasReasonCodeFilter),
@@ -902,6 +970,12 @@ class CdpClient {
     console.log(`AdminOverviewSetupCardCount=${summary.adminOverviewSetupCardCount}`);
     console.log(`AdminOverviewMonitoringCardCount=${summary.adminOverviewMonitoringCardCount}`);
     console.log(`AdminOverviewAdvancedLinkCount=${summary.adminOverviewAdvancedLinkCount}`);
+    console.log(`AdminOverviewSetupTabOpens=${summary.adminOverviewSetupTabOpens}`);
+    console.log(`AdminOverviewActivationTabOpens=${summary.adminOverviewActivationTabOpens}`);
+    console.log(`AdminOverviewMonitoringTabOpens=${summary.adminOverviewMonitoringTabOpens}`);
+    console.log(`AdminOverviewAdvancedTabOpens=${summary.adminOverviewAdvancedTabOpens}`);
+    console.log(`AdminOverviewActivateDisabled=${summary.adminOverviewActivateDisabled}`);
+    console.log(`AdminOverviewActivateReason=${summary.adminOverviewActivateReason}`);
     console.log(`AdminAuditVisible=${summary.adminAuditVisible}`);
     console.log(`AdminAuditSummaryCardCount=${summary.adminAuditSummaryCardCount}`);
     console.log(`AdminAuditRowCount=${summary.adminAuditRowCount}`);
@@ -923,6 +997,11 @@ class CdpClient {
   console.error(error?.stack ?? error?.message ?? String(error));
   process.exit(1);
 });
+
+
+
+
+
 
 
 
