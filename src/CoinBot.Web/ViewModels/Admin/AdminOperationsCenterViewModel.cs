@@ -18,7 +18,8 @@ public sealed record AdminOperationsCenterViewModel(
     AdminOperationsRuntimeHealthCenterViewModel RuntimeHealthCenter,
     AdminOperationsUserBotGovernanceCenterViewModel UserBotGovernanceCenter,
     AdminOperationsExchangeGovernanceCenterViewModel ExchangeGovernanceCenter,
-    AdminOperationsPolicyGovernanceCenterViewModel PolicyGovernanceCenter);
+    AdminOperationsPolicyGovernanceCenterViewModel PolicyGovernanceCenter,
+    AdminSuperAdminPrimaryFlowViewModel PrimaryFlow);
 
 public sealed record AdminOperationsSummaryCardViewModel(
     string Label,
@@ -179,7 +180,8 @@ public static class AdminOperationsCenterComposer
                 Array.Empty<AdminOperationsPolicyItemViewModel>(),
                 Array.Empty<AdminOperationsPolicyItemViewModel>(),
                 Array.Empty<AdminOperationsPolicyItemViewModel>(),
-                Array.Empty<AdminOperationsPolicyItemViewModel>()));
+                Array.Empty<AdminOperationsPolicyItemViewModel>()),
+            PrimaryFlow: AdminSuperAdminPrimaryFlowComposer.CreateAccessDenied(evaluatedAtUtc));
     }
 
     public static AdminOperationsCenterViewModel Compose(
@@ -193,6 +195,7 @@ public static class AdminOperationsCenterComposer
         GlobalPolicySnapshot globalPolicySnapshot,
         BotExecutionPilotOptions pilotOptions,
         LogCenterRetentionSnapshot? retentionSnapshot,
+        GlobalExecutionSwitchSnapshot executionSnapshot,
         GlobalSystemStateSnapshot globalSystemStateSnapshot,
         DateTime evaluatedAtUtc)
     {
@@ -225,7 +228,15 @@ public static class AdminOperationsCenterComposer
             RuntimeHealthCenter: runtimeCenter,
             UserBotGovernanceCenter: userBotCenter,
             ExchangeGovernanceCenter: exchangeCenter,
-            PolicyGovernanceCenter: policyCenter);
+            PolicyGovernanceCenter: policyCenter,
+            PrimaryFlow: AdminSuperAdminPrimaryFlowComposer.Compose(
+                activationControlCenter,
+                runtimeCenter,
+                exchangeCenter,
+                botOperationsSnapshot,
+                executionSnapshot,
+                globalSystemStateSnapshot,
+                evaluatedAtUtc));
     }
 
     private static IReadOnlyCollection<AdminOperationsSummaryCardViewModel> BuildSummaryCards(
@@ -1932,5 +1943,7 @@ public static class AdminOperationsCenterComposer
         return value?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss 'UTC'") ?? "n/a";
     }
 }
+
+
 
 

@@ -370,7 +370,7 @@ class CdpClient {
       return true;
     })()`);
 
-    await client.waitForReady();
+        await client.waitForReady();
     await client.waitForLocationContains('/Auth/Login');
 
     await client.navigate(`${baseUrl}/Settings`);
@@ -396,7 +396,8 @@ class CdpClient {
 
     await client.waitForReady();
     await client.waitForLocationContains('/Settings');
-    await client.captureScreenshot(settingsScreenshotPath);    const settingsPageState = await client.evaluate(`(() => {
+    await client.captureScreenshot(settingsScreenshotPath);
+    const settingsPageState = await client.evaluate(`(() => {
       const select = document.querySelector('select[name="Form.PreferredTimeZoneId"]');
       const token = document.querySelector('input[name="__RequestVerificationToken"]');
       const refreshButton = document.querySelector('form[action$="/Settings/RefreshClockDrift"] button[type="submit"]');
@@ -716,55 +717,60 @@ class CdpClient {
     await client.captureScreenshot(adminOverviewScreenshotPath);
 
     const adminOverviewState = await client.evaluate(`(() => {
-      const runtimeText = document.querySelector('#cb_admin_operations_tab_runtime')?.textContent || '';
-      const userBotText = document.querySelector('#cb_admin_operations_tab_user_bot')?.textContent || '';
-      const exchangeText = document.querySelector('#cb_admin_operations_tab_exchange')?.textContent || '';
-      const policyText = document.querySelector('#cb_admin_operations_tab_policy')?.textContent || '';
-      const rolloutText = document.querySelector('#cb_admin_operations_tab_rollout')?.textContent || '';
+      const pageText = document.body.textContent || '';
+      const setupText = document.querySelector('#cb_super_admin_flow_tab_setup')?.textContent || '';
+      const activationText = document.querySelector('#cb_super_admin_flow_tab_activation')?.textContent || '';
+      const monitoringText = document.querySelector('#cb_super_admin_flow_tab_monitoring')?.textContent || '';
+      const advancedText = document.querySelector('#cb_super_admin_flow_tab_advanced')?.textContent || '';
       return {
-        tabCount: document.querySelectorAll('[id^="cb_admin_operations_tab_link_"]').length,
-        activeTabText: document.querySelector('#cb_admin_operations_tab_nav .nav-link.active')?.innerText?.trim() || '',
-        summaryCount: document.querySelectorAll('[data-cb-admin-operations-summary] .cb-admin-summary-card').length,
-        runtimeSignalCount: document.querySelectorAll('[data-cb-admin-runtime-signal]').length,
-        hasActivationCenter: !!document.querySelector('[data-cb-admin-activation-control-center]'),
-        hasCredentialInventory: !!document.querySelector('[data-cb-admin-credential-inventory]') || exchangeText.includes('Credential inventory bos'),
-        hasPolicyGovernance: !!document.querySelector('[data-cb-admin-policy-governance]'),
-        hasRolloutClosure: !!document.querySelector('[data-cb-admin-rollout-closure]'),
-        rolloutStageCount: document.querySelectorAll('[data-cb-admin-rollout-stage]').length,
-        rolloutGateCount: document.querySelectorAll('[data-cb-admin-rollout-gate]').length,
-        rolloutChecklistCount: document.querySelectorAll('[data-cb-admin-rollout-check]').length,
-        rolloutBlockerCount: document.querySelectorAll('[data-cb-admin-rollout-blocker]').length,
-        hasRolloutActions: !!document.querySelector('[data-cb-admin-rollout-actions]'),
-        hasRolloutLinks: document.querySelectorAll('[data-cb-admin-rollout-link]').length >= 3,
-        hasRolloutBlockSurface: !!document.querySelector('[data-cb-admin-rollout-blockers]') || rolloutText.includes('Blocker yok'),
-        hasRuntimeCenter: runtimeText.includes('Runtime & Health Center'),
-        hasUserBotCenter: userBotText.includes('User / Bot Governance Center'),
-        hasExchangeCenter: exchangeText.includes('Exchange / Credential Governance'),
-        hasPolicyCenter: policyText.includes('Policy / Limit Governance'),
-        hasRolloutCenter: rolloutText.includes('System Activation / Rollout Closure') || rolloutText.includes('Rollout ozeti')
+        tabCount: document.querySelectorAll('[data-cb-super-admin-flow-tab-link]').length,
+        activeTabText: document.querySelector('#cb_super_admin_flow_tab_nav .nav-link.active')?.innerText?.trim() || '',
+        hasSimpleFlow: !!document.querySelector('[data-cb-super-admin-simple-flow]'),
+        hasSetupSection: !!document.querySelector('[data-cb-super-admin-flow-section="setup"]'),
+        hasActivationSection: !!document.querySelector('[data-cb-super-admin-flow-section="activation"]'),
+        hasMonitoringSection: !!document.querySelector('[data-cb-super-admin-flow-section="monitoring"]'),
+        hasAdvancedSection: !!document.querySelector('[data-cb-super-admin-flow-section="advanced"]'),
+        setupCardCount: document.querySelectorAll('#cb_super_admin_flow_tab_setup .cb-admin-summary-card').length,
+        monitoringCardCount: document.querySelectorAll('#cb_super_admin_flow_tab_monitoring .cb-admin-summary-card').length,
+        advancedLinkCount: document.querySelectorAll('#cb_super_admin_flow_tab_advanced a[href]').length,
+        hasSetupForm: !!document.querySelector('[data-cb-super-admin-setup-form]'),
+        hasActivationPanel: !!document.querySelector('[data-cb-super-admin-activation-panel]'),
+        hasMonitoringPanel: !!document.querySelector('[data-cb-super-admin-monitoring-panel]'),
+        hasAdvancedLinks: !!document.querySelector('[data-cb-super-admin-advanced-links]'),
+        hasConnectionTest: setupText.includes('Baglantiyi Test Et'),
+        hasSaveAndContinue: setupText.includes('Kaydet ve Devam Et'),
+        hasPrepareAction: activationText.includes('Sistemi Hazirla'),
+        hasActivateAction: activationText.includes('Sistemi Aktif Et'),
+        hasDeactivateAction: activationText.includes('Sistemi Kapat'),
+        hasMonitoringRefresh: monitoringText.includes('Yenile'),
+        hasMonitoringEmergency: monitoringText.includes('Acil Durdur'),
+        hasTechnicalCentersVisible: pageText.includes('Runtime & Health Center') || pageText.includes('User / Bot Governance Center') || pageText.includes('Exchange / Credential Governance') || pageText.includes('Policy / Limit Governance')
       };
     })()`);
 
-    if (adminOverviewState.tabCount < 5
-        || !/Runtime/i.test(adminOverviewState.activeTabText)
-        || adminOverviewState.summaryCount < 4
-        || adminOverviewState.runtimeSignalCount < 6
-        || !adminOverviewState.hasActivationCenter
-        || !adminOverviewState.hasCredentialInventory
-        || !adminOverviewState.hasPolicyGovernance
-        || !adminOverviewState.hasRuntimeCenter
-        || !adminOverviewState.hasUserBotCenter
-        || !adminOverviewState.hasExchangeCenter
-        || !adminOverviewState.hasPolicyCenter
-        || !adminOverviewState.hasRolloutClosure
-        || adminOverviewState.rolloutStageCount < 5
-        || adminOverviewState.rolloutGateCount < 8
-        || adminOverviewState.rolloutChecklistCount < 8
-        || !adminOverviewState.hasRolloutActions
-        || !adminOverviewState.hasRolloutLinks
-        || !adminOverviewState.hasRolloutBlockSurface
-        || !adminOverviewState.hasRolloutCenter) {
-      throw new Error('Admin / Overview did not render the expected rollout closure center.');
+    if (adminOverviewState.tabCount < 4
+        || !/Sistem Kurulumu/i.test(adminOverviewState.activeTabText)
+        || !adminOverviewState.hasSimpleFlow
+        || !adminOverviewState.hasSetupSection
+        || !adminOverviewState.hasActivationSection
+        || !adminOverviewState.hasMonitoringSection
+        || !adminOverviewState.hasAdvancedSection
+        || adminOverviewState.setupCardCount < 5
+        || adminOverviewState.monitoringCardCount < 6
+        || adminOverviewState.advancedLinkCount < 4
+        || !adminOverviewState.hasSetupForm
+        || !adminOverviewState.hasActivationPanel
+        || !adminOverviewState.hasMonitoringPanel
+        || !adminOverviewState.hasAdvancedLinks
+        || !adminOverviewState.hasConnectionTest
+        || !adminOverviewState.hasSaveAndContinue
+        || !adminOverviewState.hasPrepareAction
+        || !adminOverviewState.hasActivateAction
+        || !adminOverviewState.hasDeactivateAction
+        || !adminOverviewState.hasMonitoringRefresh
+        || !adminOverviewState.hasMonitoringEmergency
+        || adminOverviewState.hasTechnicalCentersVisible) {
+      throw new Error('Admin / Overview did not render the expected simple super admin flow.');
     }
 
     await client.navigate(`${baseUrl}/admin/Audit`);
@@ -839,17 +845,14 @@ class CdpClient {
       userAuditDenied: !String(userAuditState.location ?? '').toLowerCase().includes('/admin/audit') || !Boolean(userAuditState.hasDecisionCenter),
       adminOverviewTabCount: Number(adminOverviewState.tabCount ?? 0),
       adminOverviewActiveTabText: String(adminOverviewState.activeTabText ?? ''),
-      adminOverviewRuntimeSignalCount: Number(adminOverviewState.runtimeSignalCount ?? 0),
-      adminOverviewHasActivationCenter: Boolean(adminOverviewState.hasActivationCenter),
-      adminOverviewHasCredentialInventory: Boolean(adminOverviewState.hasCredentialInventory),
-      adminOverviewHasPolicyGovernance: Boolean(adminOverviewState.hasPolicyGovernance),
-      adminOverviewHasRolloutClosure: Boolean(adminOverviewState.hasRolloutClosure),
-      adminOverviewRolloutStageCount: Number(adminOverviewState.rolloutStageCount ?? 0),
-      adminOverviewRolloutGateCount: Number(adminOverviewState.rolloutGateCount ?? 0),
-      adminOverviewRolloutChecklistCount: Number(adminOverviewState.rolloutChecklistCount ?? 0),
-      adminOverviewRolloutBlockerCount: Number(adminOverviewState.rolloutBlockerCount ?? 0),
-      adminOverviewHasRolloutActions: Boolean(adminOverviewState.hasRolloutActions),
-      adminOverviewHasRolloutLinks: Boolean(adminOverviewState.hasRolloutLinks),
+      adminOverviewHasSimpleFlow: Boolean(adminOverviewState.hasSimpleFlow),
+      adminOverviewHasSetupSection: Boolean(adminOverviewState.hasSetupSection),
+      adminOverviewHasActivationSection: Boolean(adminOverviewState.hasActivationSection),
+      adminOverviewHasMonitoringSection: Boolean(adminOverviewState.hasMonitoringSection),
+      adminOverviewHasAdvancedSection: Boolean(adminOverviewState.hasAdvancedSection),
+      adminOverviewSetupCardCount: Number(adminOverviewState.setupCardCount ?? 0),
+      adminOverviewMonitoringCardCount: Number(adminOverviewState.monitoringCardCount ?? 0),
+      adminOverviewAdvancedLinkCount: Number(adminOverviewState.advancedLinkCount ?? 0),
       adminAuditVisible: Boolean(adminAuditState.hasDecisionCenter),
       adminAuditOutcomeFilterVisible: Boolean(adminAuditState.hasOutcomeFilter),
       adminAuditReasonCodeFilterVisible: Boolean(adminAuditState.hasReasonCodeFilter),
@@ -883,7 +886,7 @@ class CdpClient {
     console.log(`SavedPreferredTimeZoneId=${summary.savedPreferredTimeZoneId}`);
     console.log(`ReloadedPreferredTimeZoneId=${summary.reloadedPreferredTimeZoneId}`);
     console.log(`AntiforgeryStatus=${summary.antiforgeryStatus}`);
-    console.log(`InvalidErrorVisible=${summary.invalidErrorVisible}`);
+        console.log(`InvalidErrorVisible=${summary.invalidErrorVisible}`);
     console.log(`DashboardDriftSummary=${summary.dashboardDriftSummaryText}`);
     console.log(`UserAdminLinkVisible=${summary.userAdminLinkVisible}`);
     console.log(`AdminSettingsTabCount=${summary.adminSettingsTabCount}`);
@@ -895,10 +898,10 @@ class CdpClient {
     console.log(`AdminActivationActivatable=${summary.adminActivationActivatable}`);
         console.log(`AdminActivationChecklistCount=${summary.adminActivationChecklistCount}`);
     console.log(`UserAuditDenied=${summary.userAuditDenied}`);
-    console.log(`AdminOverviewRolloutClosure=${summary.adminOverviewHasRolloutClosure}`);
-    console.log(`AdminOverviewRolloutStageCount=${summary.adminOverviewRolloutStageCount}`);
-    console.log(`AdminOverviewRolloutGateCount=${summary.adminOverviewRolloutGateCount}`);
-    console.log(`AdminOverviewRolloutChecklistCount=${summary.adminOverviewRolloutChecklistCount}`);
+    console.log(`AdminOverviewHasSimpleFlow=${summary.adminOverviewHasSimpleFlow}`);
+    console.log(`AdminOverviewSetupCardCount=${summary.adminOverviewSetupCardCount}`);
+    console.log(`AdminOverviewMonitoringCardCount=${summary.adminOverviewMonitoringCardCount}`);
+    console.log(`AdminOverviewAdvancedLinkCount=${summary.adminOverviewAdvancedLinkCount}`);
     console.log(`AdminAuditVisible=${summary.adminAuditVisible}`);
     console.log(`AdminAuditSummaryCardCount=${summary.adminAuditSummaryCardCount}`);
     console.log(`AdminAuditRowCount=${summary.adminAuditRowCount}`);
@@ -920,20 +923,6 @@ class CdpClient {
   console.error(error?.stack ?? error?.message ?? String(error));
   process.exit(1);
 });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

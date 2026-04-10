@@ -19,6 +19,8 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ViewFeatures;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace CoinBot.UnitTests.Web;
 
@@ -270,6 +272,11 @@ public sealed class AdminControllerTests
         var viewResult = Assert.IsType<ViewResult>(result);
         var model = Assert.IsType<AdminOperationsCenterViewModel>(viewResult.Model);
         Assert.True(model.IsAccessible);
+        Assert.Equal("Sistem Kurulumu", model.PrimaryFlow.Setup.Label);
+        Assert.Equal("Sistemi Aktiflestir", model.PrimaryFlow.Activation.Label);
+        Assert.Equal("Sistemi Izle", model.PrimaryFlow.Monitoring.Label);
+        Assert.Equal("Gelismis", model.PrimaryFlow.Advanced.Label);
+        Assert.True(model.PrimaryFlow.Advanced.Items.Count >= 4);
         Assert.NotEmpty(model.RuntimeHealthCenter.Signals);
         Assert.NotEmpty(model.UserBotGovernanceCenter.SummaryCards);
         Assert.NotEmpty(model.ExchangeGovernanceCenter.SummaryCards);
@@ -311,6 +318,8 @@ public sealed class AdminControllerTests
         var viewResult = Assert.IsType<ViewResult>(result);
         var model = Assert.IsType<AdminOperationsCenterViewModel>(viewResult.Model);
         Assert.False(model.IsAccessible);
+        Assert.Equal("Blocked", model.PrimaryFlow.Setup.StatusLabel);
+        Assert.Equal("Blocked", model.PrimaryFlow.Activation.StatusLabel);
         var rolloutModel = Assert.IsType<AdminRolloutClosureCenterViewModel>(controller.ViewData["AdminRolloutClosureCenter"]);
         Assert.False(rolloutModel.IsAccessible);
         Assert.Null(logCenterReadModelService.CapturedRequest);
@@ -674,7 +683,9 @@ public sealed class AdminControllerTests
         Assert.Null(viewResult.Model);
     }
 
-        [Fact]
+
+
+    [Fact]
     public async Task Settings_LoadsOperationalSnapshots_AndMarksOpsAdminAsReadOnly()
     {
         var executionSnapshot = new GlobalExecutionSwitchSnapshot(
@@ -761,11 +772,11 @@ public sealed class AdminControllerTests
             timeSyncService: timeSyncService,
             roles: [ApplicationRoles.SuperAdmin]);
 
-        var result = await controller.RefreshClockDrift(CancellationToken.None);
+        var result = await controller.RefreshClockDrift(returnTarget: nameof(AdminController.Overview), cancellationToken: CancellationToken.None);
 
         var redirectResult = Assert.IsType<RedirectToActionResult>(result);
 
-        Assert.Equal(nameof(AdminController.Settings), redirectResult.ActionName);
+        Assert.Equal(nameof(AdminController.Overview), redirectResult.ActionName);
         Assert.Equal([true], timeSyncService.ForceRefreshCalls);
         Assert.Equal("Binance server time sync yenilendi. Son probe drift 600 ms. Market heartbeat drift guard snapshot'i ayri izlenir.", controller.TempData["AdminClockDriftSuccess"]);
     }
@@ -775,12 +786,12 @@ public sealed class AdminControllerTests
     {
         var authorizeAttribute = Assert.Single(
             typeof(AdminController)
-                .GetMethod(nameof(AdminController.RefreshClockDrift), [typeof(CancellationToken)])!
+                .GetMethod(nameof(AdminController.RefreshClockDrift), [typeof(string), typeof(CancellationToken)])!
                 .GetCustomAttributes(typeof(AuthorizeAttribute), inherit: true)
                 .Cast<AuthorizeAttribute>());
         var antiForgeryAttribute = Assert.Single(
             typeof(AdminController)
-                .GetMethod(nameof(AdminController.RefreshClockDrift), [typeof(CancellationToken)])!
+                .GetMethod(nameof(AdminController.RefreshClockDrift), [typeof(string), typeof(CancellationToken)])!
                 .GetCustomAttributes(typeof(ValidateAntiForgeryTokenAttribute), inherit: true)
                 .Cast<ValidateAntiForgeryTokenAttribute>());
 
@@ -1077,12 +1088,12 @@ public sealed class AdminControllerTests
     {
         var authorizeAttribute = Assert.Single(
             typeof(AdminController)
-                .GetMethod(nameof(AdminController.ActivateSystem), [typeof(string), typeof(string), typeof(string), typeof(CancellationToken)])!
+                .GetMethod(nameof(AdminController.ActivateSystem), [typeof(string), typeof(string), typeof(string), typeof(string), typeof(CancellationToken)])!
                 .GetCustomAttributes(typeof(AuthorizeAttribute), inherit: true)
                 .Cast<AuthorizeAttribute>());
         var antiForgeryAttribute = Assert.Single(
             typeof(AdminController)
-                .GetMethod(nameof(AdminController.ActivateSystem), [typeof(string), typeof(string), typeof(string), typeof(CancellationToken)])!
+                .GetMethod(nameof(AdminController.ActivateSystem), [typeof(string), typeof(string), typeof(string), typeof(string), typeof(CancellationToken)])!
                 .GetCustomAttributes(typeof(ValidateAntiForgeryTokenAttribute), inherit: true)
                 .Cast<ValidateAntiForgeryTokenAttribute>());
 
@@ -1095,12 +1106,12 @@ public sealed class AdminControllerTests
     {
         var authorizeAttribute = Assert.Single(
             typeof(AdminController)
-                .GetMethod(nameof(AdminController.DeactivateSystem), [typeof(string), typeof(string), typeof(string), typeof(CancellationToken)])!
+                .GetMethod(nameof(AdminController.DeactivateSystem), [typeof(string), typeof(string), typeof(string), typeof(string), typeof(CancellationToken)])!
                 .GetCustomAttributes(typeof(AuthorizeAttribute), inherit: true)
                 .Cast<AuthorizeAttribute>());
         var antiForgeryAttribute = Assert.Single(
             typeof(AdminController)
-                .GetMethod(nameof(AdminController.DeactivateSystem), [typeof(string), typeof(string), typeof(string), typeof(CancellationToken)])!
+                .GetMethod(nameof(AdminController.DeactivateSystem), [typeof(string), typeof(string), typeof(string), typeof(string), typeof(CancellationToken)])!
                 .GetCustomAttributes(typeof(ValidateAntiForgeryTokenAttribute), inherit: true)
                 .Cast<ValidateAntiForgeryTokenAttribute>());
 
@@ -1267,13 +1278,14 @@ public sealed class AdminControllerTests
             commandId: "cmd-demo-001",
             reauthToken: "ONAYLA",
             liveApprovalReference: "chg-9001",
+            returnTarget: nameof(AdminController.Overview),
             cancellationToken: CancellationToken.None);
 
         var redirectResult = Assert.IsType<RedirectToActionResult>(result);
         var call = Assert.Single(switchService.DemoModeCalls);
         var completion = Assert.Single(commandRegistry.CompletionRequests);
 
-        Assert.Equal(nameof(AdminController.Settings), redirectResult.ActionName);
+        Assert.Equal(nameof(AdminController.Overview), redirectResult.ActionName);
         Assert.False(call.IsEnabled);
         Assert.NotNull(call.LiveApproval);
         Assert.Equal("chg-9001", call.LiveApproval!.ApprovalReference);
@@ -2916,6 +2928,7 @@ public sealed class AdminControllerTests
         }
     }
 
+
     private sealed class FakeApprovalWorkflowService : IApprovalWorkflowService
     {
         public ApprovalQueueDetailSnapshot EnqueueResult { get; set; } = CreateApprovalDetailSnapshot("APR-default");
@@ -3537,6 +3550,11 @@ public sealed class AdminControllerTests
         }
     }
 }
+
+
+
+
+
 
 
 

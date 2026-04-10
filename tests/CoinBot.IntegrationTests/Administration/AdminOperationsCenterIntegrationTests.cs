@@ -68,6 +68,9 @@ public sealed class AdminOperationsCenterIntegrationTests
             "healthy",
             new DateTime(2026, 4, 8, 12, 0, 30, DateTimeKind.Utc));
 
+        var switchSnapshot = await switchService.GetSnapshotAsync();
+        var stateSnapshot = await stateService.GetSnapshotAsync();
+
         var operationsModel = AdminOperationsCenterComposer.Compose(
             activationModel,
             MonitoringDashboardSnapshot.Empty(new DateTime(2026, 4, 8, 12, 0, 30, DateTimeKind.Utc)),
@@ -79,10 +82,14 @@ public sealed class AdminOperationsCenterIntegrationTests
             GlobalPolicySnapshot.CreateDefault(new DateTime(2026, 4, 8, 12, 0, 30, DateTimeKind.Utc)),
             new BotExecutionPilotOptions { PilotActivationEnabled = true, MaxPilotOrderNotional = "250" },
             null,
-            await stateService.GetSnapshotAsync(),
+            switchSnapshot,
+            stateSnapshot,
             new DateTime(2026, 4, 8, 12, 0, 30, DateTimeKind.Utc));
 
         Assert.True(operationsModel.IsAccessible);
+        Assert.Equal("Blocked", operationsModel.PrimaryFlow.Setup.StatusLabel);
+        Assert.Equal("Exchange bagli degil", operationsModel.PrimaryFlow.Setup.PrimaryMessage);
+        Assert.Equal("Blocked", operationsModel.PrimaryFlow.Monitoring.StatusLabel);
         Assert.Equal("critical", operationsModel.RuntimeHealthCenter.StatusTone);
         Assert.Contains(operationsModel.RuntimeHealthCenter.Signals, item => item.Code == "WorkerHeartbeatUnavailable");
         Assert.Contains(operationsModel.SummaryCards, item => item.Label == "CanActivate" && item.Value == "true");
@@ -128,3 +135,5 @@ public sealed class AdminOperationsCenterIntegrationTests
         public override DateTimeOffset GetUtcNow() => now;
     }
 }
+
+

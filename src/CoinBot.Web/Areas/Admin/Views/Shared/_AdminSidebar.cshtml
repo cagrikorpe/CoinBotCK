@@ -26,7 +26,19 @@
         new { Group = "Platform", Key = "SupportTools", Label = "Destek Araçları", Initials = "SP", Action = "SupportTools", Badge = (AdminBadgeViewModel?)null, VisibleTo = new[] { "SuperAdmin", "OpsAdmin", "SecurityAuditor" } }
     };
 
-    var visibleNavigation = navigation.Where(item => item.VisibleTo.Contains(currentRoleKey)).ToArray();
+    var primaryFlowNavigation = currentRoleKey == "SuperAdmin"
+        ? new (string Key, string Label, string Fragment, string Initials)[]
+        {
+            ("setup", "Sistem Kurulumu", "cb_super_admin_flow_tab_setup", "K1"),
+            ("activation", "Sistemi Aktiflestir", "cb_super_admin_flow_tab_activation", "AK"),
+            ("monitoring", "Sistemi Izle", "cb_super_admin_flow_tab_monitoring", "IZ"),
+            ("advanced", "Gelismis", "cb_super_admin_flow_tab_advanced", "GL")
+        }
+        : Array.Empty<(string Key, string Label, string Fragment, string Initials)>();
+
+    var visibleNavigation = navigation.Where(item =>
+        item.VisibleTo.Contains(currentRoleKey) &&
+        !(currentRoleKey == "SuperAdmin" && string.Equals(item.Key, "Overview", StringComparison.OrdinalIgnoreCase))).ToArray();
     var hiddenCount = navigation.Length - visibleNavigation.Length;
 }
 <div class="aside aside-left aside-fixed d-flex flex-column flex-row-auto cb-shell-aside cb-admin-aside" id="kt_aside">
@@ -65,12 +77,33 @@
                 @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = hiddenCount + " gizli bölüm", Tone = "warning", IconText = "HD" })
             }
         </div>
-        <small>Menu görünürlüğü admin claim/policy wiring ile hizalıdır. Write aksiyonları ayrıca server-side policy ve antiforgery ile korunur.</small>
+        <small>Super admin ana akis ustte tutulur. Write aksiyonlari server-side policy, MFA ve antiforgery ile korunmaya devam eder.</small>
     </div>
 
     <div class="aside-menu-wrapper flex-column-fluid" id="kt_aside_menu_wrapper">
         <div id="kt_aside_menu" class="aside-menu my-4" data-menu-vertical="1" data-menu-scroll="1" data-menu-dropdown-timeout="500">
             <ul class="menu-nav cb-menu-nav cb-admin-menu-nav">
+                @if (primaryFlowNavigation.Length > 0)
+                {
+                    <li class="menu-section">
+                        <h4 class="menu-text">Ana Akis</h4>
+                        <i class="menu-icon ki ki-bold-more-hor icon-md"></i>
+                    </li>
+
+                    @foreach (var item in primaryFlowNavigation)
+                    {
+                        var isActive = string.Equals(activeNav, "Overview", StringComparison.OrdinalIgnoreCase) && string.Equals(item.Key, "setup", StringComparison.OrdinalIgnoreCase);
+                        <li class="menu-item @(isActive ? "menu-item-active" : string.Empty)" aria-haspopup="true" data-cb-super-admin-primary-link="@item.Key">
+                            <a asp-area="Admin" asp-controller="Admin" asp-action="Overview" asp-fragment="@item.Fragment" class="menu-link">
+                                <span class="menu-icon">
+                                    <span class="cb-menu-icon cb-admin-menu-icon @(isActive ? "is-active" : string.Empty)">@item.Initials</span>
+                                </span>
+                                <span class="menu-text">@item.Label</span>
+                            </a>
+                        </li>
+                    }
+                }
+
                 @foreach (var navSection in visibleNavigation.GroupBy(item => item.Group))
                 {
                     <li class="menu-section">
@@ -101,6 +134,3 @@
         </div>
     </div>
 </div>
-
-
-

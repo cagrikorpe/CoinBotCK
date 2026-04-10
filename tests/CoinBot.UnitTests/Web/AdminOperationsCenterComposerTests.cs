@@ -36,11 +36,14 @@ public sealed class AdminOperationsCenterComposerTests
             GlobalPolicySnapshot.CreateDefault(new DateTime(2026, 4, 8, 12, 0, 0, DateTimeKind.Utc)),
             new BotExecutionPilotOptions { PilotActivationEnabled = true, MaxPilotOrderNotional = "250" },
             null,
+            new GlobalExecutionSwitchSnapshot(TradeMasterSwitchState.Disarmed, true, true),
             new GlobalSystemStateSnapshot(GlobalSystemStateKind.Active, "SYSTEM_ACTIVE", null, "AdminPortal", null, false, null, new DateTime(2026, 4, 8, 11, 59, 0, DateTimeKind.Utc), "super-admin", "ip:masked", 1, true),
             new DateTime(2026, 4, 8, 12, 1, 0, DateTimeKind.Utc));
 
         Assert.True(model.IsAccessible);
         Assert.Equal("critical", model.RuntimeHealthCenter.StatusTone);
+        Assert.Equal("Blocked", model.PrimaryFlow.Setup.StatusLabel);
+        Assert.Equal("Exchange bagli degil", model.PrimaryFlow.Setup.PrimaryMessage);
         Assert.Contains(model.RuntimeHealthCenter.Signals, item => item.Code == "WorkerHeartbeatUnavailable");
         var credential = Assert.Single(model.ExchangeGovernanceCenter.Accounts);
         Assert.Equal("fp-****-7890", credential.FingerprintLabel);
@@ -78,14 +81,51 @@ public sealed class AdminOperationsCenterComposerTests
             GlobalPolicySnapshot.CreateDefault(new DateTime(2026, 4, 8, 12, 0, 0, DateTimeKind.Utc)),
             new BotExecutionPilotOptions { PilotActivationEnabled = true, MaxPilotOrderNotional = "250" },
             null,
+            new GlobalExecutionSwitchSnapshot(TradeMasterSwitchState.Disarmed, true, true),
             new GlobalSystemStateSnapshot(GlobalSystemStateKind.Active, "SYSTEM_ACTIVE", null, "AdminPortal", null, false, null, new DateTime(2026, 4, 8, 11, 59, 0, DateTimeKind.Utc), "super-admin", "ip:masked", 1, true),
             new DateTime(2026, 4, 8, 12, 1, 0, DateTimeKind.Utc));
 
+        Assert.Equal("Blocked", model.PrimaryFlow.Setup.StatusLabel);
+        Assert.Equal("Exchange bagli degil", model.PrimaryFlow.Setup.PrimaryMessage);
         var problemUser = Assert.Single(model.UserBotGovernanceCenter.ProblemUsers);
         Assert.Contains("MfaReview", problemUser.Flags);
         var problemBot = Assert.Single(model.UserBotGovernanceCenter.ProblemBots);
         Assert.Contains("BotCooldown", problemBot.Flags);
         Assert.Contains("BotStale", problemBot.Flags);
+    }
+
+    [Fact]
+    public void Compose_WhenEmergencyStopIsActive_UsesSimpleEmergencyStopStatus()
+    {
+        var activationModel = CreateActivationModel() with
+        {
+            CriticalSwitches =
+            [
+                new AdminActivationSwitchViewModel("trade-master", "TradeMaster", "Disarmed", "critical", "Switch kapali."),
+                new AdminActivationSwitchViewModel("kill-switch", "Kill switch", "Ready", "healthy", "Kill switch hazir."),
+                new AdminActivationSwitchViewModel("soft-halt", "Soft halt", "Clear", "healthy", "No halt."),
+                new AdminActivationSwitchViewModel("emergency-stop", "Emergency stop", "Active", "critical", "Emergency stop aktif.")
+            ]
+        };
+
+        var model = AdminOperationsCenterComposer.Compose(
+            activationModel,
+            CreateMonitoringSnapshot(),
+            CreateClockSnapshot(),
+            CreateDriftSnapshot(),
+            AdminUsersPageSnapshot.Empty(new DateTime(2026, 4, 8, 12, 0, 0, DateTimeKind.Utc)),
+            AdminBotOperationsPageSnapshot.Empty(new DateTime(2026, 4, 8, 12, 0, 0, DateTimeKind.Utc)),
+            [new ApiCredentialAdminSummary(Guid.NewGuid(), "user-1", "Binance", "Primary", false, "fp-****-7890", "Valid", "Env=Testnet;Spot=True;Futures=True;Trade=True", new DateTime(2026, 4, 8, 11, 30, 0, DateTimeKind.Utc), null)],
+            GlobalPolicySnapshot.CreateDefault(new DateTime(2026, 4, 8, 12, 0, 0, DateTimeKind.Utc)),
+            new BotExecutionPilotOptions { PilotActivationEnabled = true, MaxPilotOrderNotional = "250" },
+            null,
+            new GlobalExecutionSwitchSnapshot(TradeMasterSwitchState.Disarmed, true, true),
+            new GlobalSystemStateSnapshot(GlobalSystemStateKind.FullHalt, "FULL_HALT", null, "AdminPortal", null, false, null, new DateTime(2026, 4, 8, 11, 59, 0, DateTimeKind.Utc), "super-admin", "ip:masked", 1, true),
+            new DateTime(2026, 4, 8, 12, 1, 0, DateTimeKind.Utc));
+
+        Assert.Equal("EmergencyStopActive", model.PrimaryFlow.Activation.StatusLabel);
+        Assert.Equal("Acil durdurma aktif", model.PrimaryFlow.Activation.PrimaryMessage);
+        Assert.Equal("EmergencyStopActive", model.PrimaryFlow.Monitoring.StatusLabel);
     }
 
     [Fact]
@@ -265,5 +305,8 @@ public sealed class AdminOperationsCenterComposerTests
         new DateTime(2026, 4, 8, 11, 59, 10, DateTimeKind.Utc),
         isPersisted);
 }
+
+
+
 
 

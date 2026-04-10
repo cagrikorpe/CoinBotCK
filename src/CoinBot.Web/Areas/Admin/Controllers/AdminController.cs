@@ -58,6 +58,8 @@ public sealed class AdminController : Controller
     private const string CrisisPreviewTempDataKey = "AdminCrisisEscalationPreviewState";
     private const string StrategyTemplateSuccessTempDataKey = "AdminStrategyTemplateSuccess";
     private const string StrategyTemplateErrorTempDataKey = "AdminStrategyTemplateError";
+
+
     private const string CriticalActionConfirmationPhrase = "ONAYLA";
     private static readonly JsonSerializerOptions PolicyJsonSerializerOptions = new(JsonSerializerDefaults.Web)
     {
@@ -83,6 +85,7 @@ public sealed class AdminController : Controller
     private readonly DataLatencyGuardOptions dataLatencyGuardOptions;
     private readonly BinancePrivateDataOptions privateDataOptions;
     private readonly ITraceService traceService;
+
     private readonly BotExecutionPilotOptions pilotOptionsValue;
 
     public AdminController(
@@ -95,6 +98,7 @@ public sealed class AdminController : Controller
         IDataLatencyCircuitBreaker dataLatencyCircuitBreaker,
         IApiCredentialValidationService apiCredentialValidationService,
         IAdminWorkspaceReadModelService adminWorkspaceReadModelService,
+
         IStrategyTemplateCatalogService strategyTemplateCatalogService,
         ICriticalUserOperationAuthorizer criticalUserOperationAuthorizer,
         IApprovalWorkflowService? approvalWorkflowService = null,
@@ -117,6 +121,7 @@ public sealed class AdminController : Controller
         this.dataLatencyCircuitBreaker = dataLatencyCircuitBreaker;
         this.apiCredentialValidationService = apiCredentialValidationService;
         this.adminWorkspaceReadModelService = adminWorkspaceReadModelService;
+
         this.strategyTemplateCatalogService = strategyTemplateCatalogService;
         this.criticalUserOperationAuthorizer = criticalUserOperationAuthorizer;
         this.approvalWorkflowService = approvalWorkflowService;
@@ -417,10 +422,10 @@ public sealed class AdminController : Controller
     public async Task<IActionResult> Overview(CancellationToken cancellationToken)
     {
         ApplyShellMeta(
-            title: "Operasyon Merkezi",
-            description: "Runtime sagligi, user/bot governance, exchange credential durumu ve global policy limitlerini super-admin omurgasinda toplayan operasyon merkezi.",
+            title: "Super Admin Ana Akis",
+            description: "Kurulumu kontrol et, sistemi aktiflestir, calismayi izle ve teknik detaylara yalnizca gerektiginde gir.",
             activeNav: "Overview",
-            breadcrumbItems: new[] { "Super Admin", "Operasyon Merkezi" });
+            breadcrumbItems: new[] { "Super Admin", "Ana Akis" });
 
         var evaluatedAtUtc = DateTime.UtcNow;
 
@@ -477,6 +482,7 @@ public sealed class AdminController : Controller
             globalPolicySnapshot,
             pilotOptionsValue,
             retentionSnapshot,
+            operationalContext.ExecutionSnapshot,
             operationalContext.GlobalSystemStateSnapshot,
             evaluatedAtUtc);
 
@@ -523,6 +529,7 @@ public sealed class AdminController : Controller
         ViewData["AdminEntityLabel"] = snapshot?.DisplayName ?? (string.IsNullOrWhiteSpace(id) ? "Kullanıcı bulunamadı" : $"Kullanıcı {id}");
         return View();
     }
+
 
     [Authorize(Policy = ApplicationPolicies.AuditRead)]
     public async Task<IActionResult> ExchangeAccounts(CancellationToken cancellationToken)
@@ -1566,8 +1573,9 @@ public sealed class AdminController : Controller
     [HttpPost]
     [Authorize(Policy = ApplicationPolicies.PlatformAdministration)]
     [ValidateAntiForgeryToken]
-    public async Task<IActionResult> RefreshClockDrift(CancellationToken cancellationToken)
+    public async Task<IActionResult> RefreshClockDrift(string? returnTarget = null, CancellationToken cancellationToken = default)
     {
+        var redirectAction = ResolveOperationalFlowReturnAction(returnTarget);
         var refreshedSnapshot = await binanceTimeSyncService.GetSnapshotAsync(forceRefresh: true, cancellationToken);
 
         if (string.Equals(refreshedSnapshot.StatusCode, "Synchronized", StringComparison.OrdinalIgnoreCase))
@@ -1582,7 +1590,7 @@ public sealed class AdminController : Controller
                 "Binance server time sync yenilenemedi. Son basarili offset kullanılmaya devam ediyor.";
         }
 
-        return RedirectToAction(nameof(Settings));
+        return RedirectToAction(redirectAction);
     }
 
     [HttpPost]
@@ -1592,12 +1600,14 @@ public sealed class AdminController : Controller
         string? reason,
         string? commandId,
         string? reauthToken,
-        CancellationToken cancellationToken)
+        string? returnTarget = null,
+        CancellationToken cancellationToken = default)
     {
+        var redirectAction = ResolveOperationalFlowReturnAction(returnTarget);
         var mfaResult = await EnforcePlatformAdminMfaAsync(
             "Admin.Settings.Activation.Activate",
             ExecutionSwitchErrorTempDataKey,
-            nameof(Settings),
+            redirectAction,
             null,
             cancellationToken);
 
@@ -1609,13 +1619,13 @@ public sealed class AdminController : Controller
         if (!CanEditGlobalPolicy())
         {
             TempData[ExecutionSwitchErrorTempDataKey] = "ActivationRoleReadOnly: Bu rolde sistem aktivasyonu uygulanamaz.";
-            return RedirectToAction(nameof(Settings));
+            return RedirectToAction(redirectAction);
         }
 
         var confirmationResult = EnforceCriticalActionConfirmation(
             reauthToken,
             ExecutionSwitchErrorTempDataKey,
-            nameof(Settings),
+            redirectAction,
             null);
 
         if (confirmationResult is not null)
@@ -1628,7 +1638,7 @@ public sealed class AdminController : Controller
         if (normalizedReason is null)
         {
             TempData[ExecutionSwitchErrorTempDataKey] = "Audit reason zorunludur.";
-            return RedirectToAction(nameof(Settings));
+            return RedirectToAction(redirectAction);
         }
 
         var actorUserId = ResolveAdminUserId();
@@ -1659,7 +1669,7 @@ public sealed class AdminController : Controller
                 ExecutionSwitchErrorTempDataKey,
                 cancellationToken))
         {
-            return RedirectToAction(nameof(Settings));
+            return RedirectToAction(redirectAction);
         }
 
         if (!operationalContext.ActivationControlCenter.IsActivatable)
@@ -1688,7 +1698,7 @@ public sealed class AdminController : Controller
                 cancellationToken);
 
             TempData[ExecutionSwitchErrorTempDataKey] = blockedMessage;
-            return RedirectToAction(nameof(Settings));
+            return RedirectToAction(redirectAction);
         }
 
         try
@@ -1757,7 +1767,7 @@ public sealed class AdminController : Controller
             TempData[ExecutionSwitchErrorTempDataKey] = failureMessage;
         }
 
-        return RedirectToAction(nameof(Settings));
+        return RedirectToAction(redirectAction);
     }
 
     [HttpPost]
@@ -1767,12 +1777,14 @@ public sealed class AdminController : Controller
         string? reason,
         string? commandId,
         string? reauthToken,
-        CancellationToken cancellationToken)
+        string? returnTarget = null,
+        CancellationToken cancellationToken = default)
     {
+        var redirectAction = ResolveOperationalFlowReturnAction(returnTarget);
         var mfaResult = await EnforcePlatformAdminMfaAsync(
             "Admin.Settings.Activation.Deactivate",
             ExecutionSwitchErrorTempDataKey,
-            nameof(Settings),
+            redirectAction,
             null,
             cancellationToken);
 
@@ -1784,13 +1796,13 @@ public sealed class AdminController : Controller
         if (!CanEditGlobalPolicy())
         {
             TempData[ExecutionSwitchErrorTempDataKey] = "ActivationRoleReadOnly: Bu rolde sistem kapatma komutu uygulanamaz.";
-            return RedirectToAction(nameof(Settings));
+            return RedirectToAction(redirectAction);
         }
 
         var confirmationResult = EnforceCriticalActionConfirmation(
             reauthToken,
             ExecutionSwitchErrorTempDataKey,
-            nameof(Settings),
+            redirectAction,
             null);
 
         if (confirmationResult is not null)
@@ -1803,7 +1815,7 @@ public sealed class AdminController : Controller
         if (normalizedReason is null)
         {
             TempData[ExecutionSwitchErrorTempDataKey] = "Audit reason zorunludur.";
-            return RedirectToAction(nameof(Settings));
+            return RedirectToAction(redirectAction);
         }
 
         var actorUserId = ResolveAdminUserId();
@@ -1834,7 +1846,7 @@ public sealed class AdminController : Controller
                 ExecutionSwitchErrorTempDataKey,
                 cancellationToken))
         {
-            return RedirectToAction(nameof(Settings));
+            return RedirectToAction(redirectAction);
         }
 
         try
@@ -1903,7 +1915,7 @@ public sealed class AdminController : Controller
             TempData[ExecutionSwitchErrorTempDataKey] = failureMessage;
         }
 
-        return RedirectToAction(nameof(Settings));
+        return RedirectToAction(redirectAction);
     }
 
     [HttpPost]
@@ -2053,12 +2065,14 @@ public sealed class AdminController : Controller
         string? commandId,
         string? reauthToken,
         string? liveApprovalReference,
-        CancellationToken cancellationToken)
+        string? returnTarget = null,
+        CancellationToken cancellationToken = default)
     {
+        var redirectAction = ResolveOperationalFlowReturnAction(returnTarget);
         var mfaResult = await EnforcePlatformAdminMfaAsync(
             "Admin.Settings.DemoMode.Update",
             ExecutionSwitchErrorTempDataKey,
-            nameof(Settings),
+            redirectAction,
             null,
             cancellationToken);
 
@@ -2070,7 +2084,7 @@ public sealed class AdminController : Controller
         var confirmationResult = EnforceCriticalActionConfirmation(
             reauthToken,
             ExecutionSwitchErrorTempDataKey,
-            nameof(Settings),
+            redirectAction,
             null);
 
         if (confirmationResult is not null)
@@ -2083,7 +2097,7 @@ public sealed class AdminController : Controller
         if (normalizedReason is null)
         {
             TempData[ExecutionSwitchErrorTempDataKey] = "Audit reason zorunludur.";
-            return RedirectToAction(nameof(Settings));
+            return RedirectToAction(redirectAction);
         }
 
         var actorUserId = ResolveAdminUserId();
@@ -2115,7 +2129,7 @@ public sealed class AdminController : Controller
                 ExecutionSwitchErrorTempDataKey,
                 cancellationToken))
         {
-            return RedirectToAction(nameof(Settings));
+            return RedirectToAction(redirectAction);
         }
 
         var previousSnapshot = await globalExecutionSwitchService.GetSnapshotAsync(cancellationToken);
@@ -2192,7 +2206,7 @@ public sealed class AdminController : Controller
             TempData[ExecutionSwitchErrorTempDataKey] = exception.Message;
         }
 
-        return RedirectToAction(nameof(Settings));
+        return RedirectToAction(redirectAction);
     }
 
     [HttpPost]
@@ -3717,18 +3731,26 @@ public sealed class AdminController : Controller
 
         var root = document.RootElement;
         var tabCount = TryReadInt32(root, "adminOverviewTabCount") ?? 0;
-        var stageCount = TryReadInt32(root, "adminOverviewRolloutStageCount") ?? 0;
-        var gateCount = TryReadInt32(root, "adminOverviewRolloutGateCount") ?? 0;
-        var checklistCount = TryReadInt32(root, "adminOverviewRolloutChecklistCount") ?? 0;
-        var hasRolloutClosure = TryReadBoolean(root, "adminOverviewHasRolloutClosure") == true;
-        var hasRolloutActions = TryReadBoolean(root, "adminOverviewHasRolloutActions") == true;
-        var hasRolloutLinks = TryReadBoolean(root, "adminOverviewHasRolloutLinks") == true;
+        var hasSimpleFlow = TryReadBoolean(root, "adminOverviewHasSimpleFlow") == true;
+        var hasSetupSection = TryReadBoolean(root, "adminOverviewHasSetupSection") == true;
+        var hasActivationSection = TryReadBoolean(root, "adminOverviewHasActivationSection") == true;
+        var hasMonitoringSection = TryReadBoolean(root, "adminOverviewHasMonitoringSection") == true;
+        var hasAdvancedSection = TryReadBoolean(root, "adminOverviewHasAdvancedSection") == true;
+        var advancedLinkCount = TryReadInt32(root, "adminOverviewAdvancedLinkCount") ?? 0;
         var activationVisible = TryReadBoolean(root, "adminActivationPaneVisible") == true;
         var auditVisible = TryReadBoolean(root, "adminAuditVisible") == true;
-        var isPassing = tabCount >= 5 && stageCount >= 5 && gateCount >= 8 && checklistCount >= 8 && hasRolloutClosure && hasRolloutActions && hasRolloutLinks && activationVisible && auditVisible;
+        var isPassing = tabCount >= 4 &&
+                        hasSimpleFlow &&
+                        hasSetupSection &&
+                        hasActivationSection &&
+                        hasMonitoringSection &&
+                        hasAdvancedSection &&
+                        advancedLinkCount >= 4 &&
+                        activationVisible &&
+                        auditVisible;
         var summary = isPassing
-            ? "Settings browser smoke rollout closure, activation ve audit yuzeylerini dogruladi."
-            : $"Overview rollout smoke incomplete. Tabs={tabCount}; Stages={stageCount}; Gates={gateCount}; Checklist={checklistCount}; Activation={activationVisible}; Audit={auditVisible}.";
+            ? "Settings browser smoke sade super admin akis, activation ve audit yuzeylerini dogruladi."
+            : $"Overview sade akis smoke incomplete. Tabs={tabCount}; Setup={hasSetupSection}; Activation={hasActivationSection}; Monitoring={hasMonitoringSection}; Advanced={hasAdvancedSection}; AdvancedLinks={advancedLinkCount}; Activation={activationVisible}; Audit={auditVisible}.";
 
         evidence.Add(new AdminRolloutEvidenceInput("ui-smoke-clean", "UI smoke temiz", isPassing, isPassing ? "UiSmokeClean" : "UiSmokeRolloutSurfaceMissing", summary, "SettingsBrowserSmoke", System.IO.File.GetLastWriteTimeUtc(summaryPath)));
     }
@@ -4013,6 +4035,7 @@ public sealed class AdminController : Controller
             ? normalizedValue
             : normalizedValue[..maxLength];
     }
+
 
     private static string ResolveCommandId(string? commandId)
     {
@@ -4455,6 +4478,12 @@ public sealed class AdminController : Controller
         return RedirectToAction(redirectAction, routeValues);
     }
 
+    private static string ResolveOperationalFlowReturnAction(string? returnTarget)
+    {
+        return string.Equals(returnTarget, nameof(Overview), StringComparison.OrdinalIgnoreCase)
+            ? nameof(Overview)
+            : nameof(Settings);
+    }
     private static string NormalizeAdminReturnUrl(string? returnUrl)
     {
         var normalizedValue = string.IsNullOrWhiteSpace(returnUrl)
@@ -4504,6 +4533,13 @@ public sealed class AdminController : Controller
             : value[..maxLength];
     }
 }
+
+
+
+
+
+
+
 
 
 

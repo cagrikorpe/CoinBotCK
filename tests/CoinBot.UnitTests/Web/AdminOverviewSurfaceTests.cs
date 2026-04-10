@@ -5,7 +5,7 @@ namespace CoinBot.UnitTests.Web;
 public sealed class AdminOverviewSurfaceTests
 {
     [Fact]
-    public void AdminOverviewView_RendersFiveOperationalCentersIncludingRolloutClosure()
+    public void AdminOverviewView_RendersFourPrimaryFlowTabs_AndKeepsTechnicalCentersOutOfMainSurface()
     {
         var content = File.ReadAllText(Path.Combine(
             ResolveRepositoryRoot(),
@@ -17,24 +17,27 @@ public sealed class AdminOverviewSurfaceTests
             "Admin",
             "Overview.cshtml"));
 
-        Assert.Contains("cb_admin_operations_tab_link_runtime", content, StringComparison.Ordinal);
-        Assert.Contains("cb_admin_operations_tab_link_user_bot", content, StringComparison.Ordinal);
-        Assert.Contains("cb_admin_operations_tab_link_exchange", content, StringComparison.Ordinal);
-        Assert.Contains("cb_admin_operations_tab_link_policy", content, StringComparison.Ordinal);
-        Assert.Contains("cb_admin_operations_tab_link_rollout", content, StringComparison.Ordinal);
-        Assert.Contains("_AdminActivationControlCenterSection", content, StringComparison.Ordinal);
-        Assert.Contains("_AdminSystemHealthFreshnessStrip", content, StringComparison.Ordinal);
-        Assert.Contains("_AdminGlobalExecutionSwitchSection", content, StringComparison.Ordinal);
-        Assert.Contains("_AdminRiskPolicyDefaultsSection", content, StringComparison.Ordinal);
-        Assert.Contains("data-cb-admin-rollout-closure", content, StringComparison.Ordinal);
-        Assert.Contains("data-cb-admin-rollout-gate", content, StringComparison.Ordinal);
-        Assert.Contains("data-cb-admin-rollout-check", content, StringComparison.Ordinal);
-        Assert.Contains("data-cb-admin-rollout-actions", content, StringComparison.Ordinal);
-        Assert.Contains("Super Admin gerekli", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-super-admin-simple-flow", content, StringComparison.Ordinal);
+        Assert.Contains("cb_super_admin_flow_tab_link_setup", content, StringComparison.Ordinal);
+        Assert.Contains("cb_super_admin_flow_tab_link_activation", content, StringComparison.Ordinal);
+        Assert.Contains("cb_super_admin_flow_tab_link_monitoring", content, StringComparison.Ordinal);
+        Assert.Contains("cb_super_admin_flow_tab_link_advanced", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-super-admin-setup-form", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-super-admin-activation-panel", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-super-admin-monitoring-panel", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-super-admin-advanced-links", content, StringComparison.Ordinal);
+        Assert.Contains("Sistem Kurulumu", content, StringComparison.Ordinal);
+        Assert.Contains("Sistemi Aktiflestir", content, StringComparison.Ordinal);
+        Assert.Contains("Sistemi Izle", content, StringComparison.Ordinal);
+        Assert.Contains("Gelismis", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("Runtime &amp; Health Center", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("User / Bot Governance Center", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("Exchange / Credential Governance", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("Policy / Limit Governance", content, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void AdminSidebar_UsesOperationalCenterLabel()
+    public void AdminSidebar_ContainsSuperAdminPrimaryFlowLabels()
     {
         var content = File.ReadAllText(Path.Combine(
             ResolveRepositoryRoot(),
@@ -46,8 +49,12 @@ public sealed class AdminOverviewSurfaceTests
             "Shared",
             "_AdminSidebar.cshtml"));
 
-        Assert.Contains("Label = \"Operasyon Merkezi\"", content, StringComparison.Ordinal);
-        Assert.Contains("Action = \"Overview\"", content, StringComparison.Ordinal);
+        Assert.Contains("Ana Akis", content, StringComparison.Ordinal);
+        Assert.Contains("Sistem Kurulumu", content, StringComparison.Ordinal);
+        Assert.Contains("Sistemi Aktiflestir", content, StringComparison.Ordinal);
+        Assert.Contains("Sistemi Izle", content, StringComparison.Ordinal);
+        Assert.Contains("Gelismis", content, StringComparison.Ordinal);
+        Assert.Contains("asp-fragment=\"@item.Fragment\"", content, StringComparison.Ordinal);
     }
 
     private static string ResolveRepositoryRoot()
