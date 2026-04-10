@@ -93,7 +93,7 @@ public class AuthController : Controller
         }
 
         await signInManager.RefreshSignInAsync(user);
-        return RedirectToLocal(model.ReturnUrl);
+        return await RedirectToPostAuthEntryAsync(model.ReturnUrl, user);
     }
 
     [HttpGet]
@@ -256,7 +256,7 @@ public class AuthController : Controller
             return View(model);
         }
 
-        return RedirectToLocal(model.ReturnUrl);
+        return await RedirectToPostAuthEntryAsync(model.ReturnUrl, user);
     }
 
     [HttpPost]
@@ -284,14 +284,37 @@ public class AuthController : Controller
             : await userManager.FindByNameAsync(normalizedValue);
     }
 
+    private async Task<IActionResult> RedirectToPostAuthEntryAsync(string? returnUrl, ApplicationUser user)
+    {
+        var roles = await userManager.GetRolesAsync(user);
+
+        if (roles.Contains(ApplicationRoles.SuperAdmin, StringComparer.Ordinal) && !IsAdminLocalUrl(returnUrl))
+        {
+            return RedirectToAction("Overview", "Admin", new { area = "Admin" });
+        }
+
+        return RedirectToLocal(returnUrl);
+    }
+
     private IActionResult RedirectToLocal(string? returnUrl)
     {
+        if (User.HasClaim(ApplicationClaimTypes.Permission, ApplicationPermissions.PlatformAdministration) && !IsAdminLocalUrl(returnUrl))
+        {
+            return RedirectToAction("Overview", "Admin", new { area = "Admin" });
+        }
+
         if (!string.IsNullOrWhiteSpace(returnUrl) && Url.IsLocalUrl(returnUrl))
         {
             return LocalRedirect(returnUrl);
         }
 
         return RedirectToAction("Index", "Home");
+    }
+
+    private static bool IsAdminLocalUrl(string? returnUrl)
+    {
+        return !string.IsNullOrWhiteSpace(returnUrl) &&
+               returnUrl.StartsWith("/Admin", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<IdentityResult> SynchronizePermissionClaimsAsync(ApplicationUser user)

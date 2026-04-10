@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 
 namespace CoinBot.Web.Controllers;
 
+[RedirectSuperAdminToAdminOverview]
 [Authorize]
 public sealed class NotificationsController : Controller
 {

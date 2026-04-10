@@ -589,7 +589,6 @@ class CdpClient {
     if (userOverviewState.location.toLowerCase().includes('/admin/overview') && userOverviewState.hasOperationsCenter) {
       throw new Error('Normal user should not be able to access the super admin operations center.');
     }
-
     await client.navigate(`${baseUrl}/admin/Audit`);
     await client.waitForReady();
 
@@ -753,6 +752,15 @@ class CdpClient {
         'rollout blocker unresolved',
         'audit visibility insufficient'
       ];
+      const mainFlowText = (setupText + ' ' + activationText + ' ' + monitoringText).toLowerCase();
+      const technicalDetailTokens = [
+        'audit ve trace',
+        'incident',
+        'rollout kanit',
+        'diagnostik',
+        'before/after',
+        'timeline'
+      ];
       return {
         tabCount: document.querySelectorAll('[data-cb-super-admin-flow-tab-link]').length,
         initialActiveTabText,
@@ -790,7 +798,8 @@ class CdpClient {
         activateReasonLineCount: activateReason ? (activateReason.indexOf(String.fromCharCode(10)) >= 0 ? 2 : 1) : 0,
         hasTechnicalCentersVisible: pageText.includes('runtime & health center') || pageText.includes('user / bot governance center') || pageText.includes('exchange / credential governance') || pageText.includes('policy / limit governance'),
         hasTechnicalJargon: jargonTokens.some(token => pageText.includes(token) || activateReason.toLowerCase().includes(token)),
-        advancedTextVisible: advancedText.includes('Audit') && advancedText.includes('Incidents')
+        mainFlowHasTechnicalDetails: technicalDetailTokens.some(token => mainFlowText.includes(token)),
+        advancedTextVisible: advancedText.includes('Audit ve Trace') && advancedText.includes('Incidents') && advancedText.includes('Loglar / Diagnostik') && advancedText.includes('Rollout Kanitlari')
       };
     })()`);
 
@@ -805,9 +814,9 @@ class CdpClient {
         || !adminOverviewState.activationAccessible
         || !adminOverviewState.monitoringAccessible
         || !adminOverviewState.advancedAccessible
-        || adminOverviewState.setupCardCount < 5
-        || adminOverviewState.monitoringCardCount < 6
-        || adminOverviewState.advancedLinkCount < 4
+        || adminOverviewState.setupCardCount < 3
+        || adminOverviewState.monitoringCardCount < 4
+        || adminOverviewState.advancedLinkCount < 6
         || !adminOverviewState.hasSetupForm
         || !adminOverviewState.hasActivationPanel
         || !adminOverviewState.hasMonitoringPanel
@@ -829,10 +838,38 @@ class CdpClient {
         || adminOverviewState.activateReasonLineCount !== 1
         || !adminOverviewState.advancedTextVisible
         || adminOverviewState.hasTechnicalCentersVisible
-        || adminOverviewState.hasTechnicalJargon) {
+        || adminOverviewState.hasTechnicalJargon
+        || adminOverviewState.mainFlowHasTechnicalDetails) {
       throw new Error('Admin / Overview did not render the expected always-open super admin flow.');
     }
 
+    await client.navigate(`${baseUrl}/Settings`);
+    await client.waitForReady();
+
+    const superAdminUserFlowState = await client.evaluate(`(() => ({
+      location: window.location.href,
+      hasOperationsCenter: !!document.querySelector('[data-cb-super-admin-simple-flow]'),
+      hasUserSettingsForm: !!document.querySelector('select[name="Form.PreferredTimeZoneId"]')
+    }))()`);
+
+    const superAdminRedirectLocation = superAdminUserFlowState.location.toLowerCase();
+    if ((!superAdminRedirectLocation.endsWith('/admin') && !superAdminRedirectLocation.includes('/admin/overview'))
+        || !superAdminUserFlowState.hasOperationsCenter
+        || superAdminUserFlowState.hasUserSettingsForm) {
+      throw new Error(`Super admin should be redirected away from the normal user settings flow. Location=${superAdminUserFlowState.location}; HasOps=${superAdminUserFlowState.hasOperationsCenter}; HasUserSettingsForm=${superAdminUserFlowState.hasUserSettingsForm}`);
+    }
+    await client.navigate(`${baseUrl}/Settings/Mfa`);
+    await client.waitForReady();
+
+    const superAdminMfaState = await client.evaluate(`(() => ({
+      location: window.location.href,
+      hasAuthenticatorSetup: document.body.textContent.includes('Authenticator kurulumu')
+    }))()`);
+
+    if (!String(superAdminMfaState.location ?? '').toLowerCase().includes('/settings/mfa')
+        || !superAdminMfaState.hasAuthenticatorSetup) {
+      throw new Error(`Super admin MFA page should remain reachable. Location=${superAdminMfaState.location}; HasSetup=${superAdminMfaState.hasAuthenticatorSetup}`);
+    }
 
     await client.navigate(`${baseUrl}/admin/Audit`);
     await client.waitForReady();
@@ -904,6 +941,8 @@ class CdpClient {
       adminActivationChecklistCount: Number(adminActivationState.checklistCount ?? 0),
       userOverviewDenied: !String(userOverviewState.location ?? '').toLowerCase().includes('/admin/overview') || !Boolean(userOverviewState.hasOperationsCenter),
       userAuditDenied: !String(userAuditState.location ?? '').toLowerCase().includes('/admin/audit') || !Boolean(userAuditState.hasDecisionCenter),
+      superAdminMfaAccessible: String(superAdminMfaState.location ?? '').toLowerCase().includes('/settings/mfa') && Boolean(superAdminMfaState.hasAuthenticatorSetup),
+      superAdminUserFlowRedirected: Boolean(superAdminUserFlowState.hasOperationsCenter) && !Boolean(superAdminUserFlowState.hasUserSettingsForm) && (() => { const location = String(superAdminUserFlowState.location ?? '').toLowerCase(); return location.endsWith('/admin') || location.includes('/admin/overview'); })(),
       adminOverviewTabCount: Number(adminOverviewState.tabCount ?? 0),
       adminOverviewActiveTabText: String(adminOverviewState.initialActiveTabText ?? adminOverviewState.activeTabText ?? ''),
       adminOverviewHasSimpleFlow: Boolean(adminOverviewState.hasSimpleFlow),
@@ -966,6 +1005,8 @@ class CdpClient {
     console.log(`AdminActivationActivatable=${summary.adminActivationActivatable}`);
         console.log(`AdminActivationChecklistCount=${summary.adminActivationChecklistCount}`);
     console.log(`UserAuditDenied=${summary.userAuditDenied}`);
+    console.log(`SuperAdminMfaAccessible=${summary.superAdminMfaAccessible}`);
+    console.log(`SuperAdminUserFlowRedirected=${summary.superAdminUserFlowRedirected}`);
     console.log(`AdminOverviewHasSimpleFlow=${summary.adminOverviewHasSimpleFlow}`);
     console.log(`AdminOverviewSetupCardCount=${summary.adminOverviewSetupCardCount}`);
     console.log(`AdminOverviewMonitoringCardCount=${summary.adminOverviewMonitoringCardCount}`);
@@ -997,6 +1038,10 @@ class CdpClient {
   console.error(error?.stack ?? error?.message ?? String(error));
   process.exit(1);
 });
+
+
+
+
 
 
 

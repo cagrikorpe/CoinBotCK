@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace CoinBot.Web.Controllers;
 
+[RedirectSuperAdminToAdminOverview]
 [Authorize(Policy = ApplicationPolicies.TradeOperations)]
 public sealed class PositionsController(
     IUserDashboardPortfolioReadModelService userDashboardPortfolioReadModelService) : Controller

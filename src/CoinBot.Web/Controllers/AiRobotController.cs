@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace CoinBot.Web.Controllers;
 
+[RedirectSuperAdminToAdminOverview]
 [Authorize]
 public sealed class AiRobotController(
     IUserDashboardLiveReadModelService userDashboardLiveReadModelService,

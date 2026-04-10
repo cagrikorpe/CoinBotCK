@@ -76,6 +76,51 @@ public sealed class AuthControllerTests
         Assert.Contains(userClaims, claim => claim.Type == ApplicationClaimTypes.Permission && claim.Value == ApplicationPermissions.RiskManagement);
         Assert.Contains(userClaims, claim => claim.Type == ApplicationClaimTypes.Permission && claim.Value == ApplicationPermissions.ExchangeManagement);
     }
+    [Fact]
+    public async Task Login_WhenSuperAdminTargetsUserFlow_RedirectsToAdminOverview()
+    {
+        var userManager = new TestUserManager();
+        var signInManager = new TestSignInManager(userManager)
+        {
+            PasswordSignInResult = IdentitySignInResult.Success
+        };
+        var user = userManager.SeedUser("super.admin@coinbot.test", roles: [ApplicationRoles.SuperAdmin]);
+        var controller = CreateController(userManager, signInManager);
+
+        var result = await controller.Login(new LoginViewModel
+        {
+            EmailOrUserName = user.Email!,
+            Password = "Passw0rd!",
+            ReturnUrl = "/Settings"
+        });
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal("Overview", redirectResult.ActionName);
+        Assert.Equal("Admin", redirectResult.ControllerName);
+        Assert.Equal("Admin", redirectResult.RouteValues!["area"]);
+    }
+
+    [Fact]
+    public async Task Login_WhenSuperAdminTargetsAdminRoute_PreservesLocalRedirect()
+    {
+        var userManager = new TestUserManager();
+        var signInManager = new TestSignInManager(userManager)
+        {
+            PasswordSignInResult = IdentitySignInResult.Success
+        };
+        var user = userManager.SeedUser("super.admin@coinbot.test", roles: [ApplicationRoles.SuperAdmin]);
+        var controller = CreateController(userManager, signInManager);
+
+        var result = await controller.Login(new LoginViewModel
+        {
+            EmailOrUserName = user.Email!,
+            Password = "Passw0rd!",
+            ReturnUrl = "/Admin/Admin/Settings"
+        });
+
+        var redirectResult = Assert.IsType<LocalRedirectResult>(result);
+        Assert.Equal("/Admin/Admin/Settings", redirectResult.Url);
+    }
 
     [Fact]
     public async Task Logout_SignsOutAndRedirectsToLogin()

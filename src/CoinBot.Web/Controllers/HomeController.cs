@@ -18,6 +18,7 @@ using Microsoft.Extensions.Options;
 
 namespace CoinBot.Web.Controllers;
 
+[RedirectSuperAdminToAdminOverview]
 [Authorize]
 public class HomeController(
     IUserExchangeCommandCenterService userExchangeCommandCenterService,

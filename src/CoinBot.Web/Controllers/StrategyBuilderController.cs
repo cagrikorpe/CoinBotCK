@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace CoinBot.Web.Controllers;
 
+[RedirectSuperAdminToAdminOverview]
 [Authorize(Policy = ApplicationPolicies.TradeOperations)]
 public class StrategyBuilderController(
     IStrategyTemplateCatalogService templateCatalogService,

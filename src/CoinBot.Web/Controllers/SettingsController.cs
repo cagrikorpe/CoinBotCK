@@ -24,6 +24,7 @@ public sealed class SettingsController : Controller
     }
 
     [HttpGet]
+    [RedirectSuperAdminToAdminOverview]
     public async Task<IActionResult> Index(CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
@@ -45,6 +46,7 @@ public sealed class SettingsController : Controller
 
     [HttpPost]
     [ValidateAntiForgeryToken]
+    [RedirectSuperAdminToAdminOverview]
     public async Task<IActionResult> Index(
         [Bind(Prefix = "Form")] TimeZoneSettingsInputModel form,
         CancellationToken cancellationToken)

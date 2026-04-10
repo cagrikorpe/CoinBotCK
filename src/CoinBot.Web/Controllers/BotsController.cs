@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace CoinBot.Web.Controllers;
 
+[RedirectSuperAdminToAdminOverview]
 [Authorize(Policy = ApplicationPolicies.TradeOperations)]
 public class BotsController(
     IBotManagementService botManagementService,

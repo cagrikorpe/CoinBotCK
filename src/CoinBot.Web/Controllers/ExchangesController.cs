@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace CoinBot.Web.Controllers;
 
+[RedirectSuperAdminToAdminOverview]
 [Authorize(Policy = ApplicationPolicies.ExchangeManagement)]
 public sealed class ExchangesController(IUserExchangeCommandCenterService userExchangeCommandCenterService) : Controller
 {
