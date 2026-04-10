@@ -44,7 +44,7 @@ public sealed class AdminOperationsCenterComposerTests
 
         Assert.True(model.IsAccessible);
         Assert.Equal("critical", model.RuntimeHealthCenter.StatusTone);
-        Assert.Equal("Blocked", model.PrimaryFlow.Setup.StatusLabel);
+        Assert.Equal("Eksik", model.PrimaryFlow.Setup.StatusLabel);
         Assert.True(model.PrimaryFlow.Setup.IsVisible);
         Assert.True(model.PrimaryFlow.Setup.IsAccessible);
         var activateAction = Assert.Single(model.PrimaryFlow.Activation.Actions, item => item.Key == "activate");
@@ -94,7 +94,7 @@ public sealed class AdminOperationsCenterComposerTests
             true,
             new DateTime(2026, 4, 8, 12, 1, 0, DateTimeKind.Utc));
 
-        Assert.Equal("Blocked", model.PrimaryFlow.Setup.StatusLabel);
+        Assert.Equal("Eksik", model.PrimaryFlow.Setup.StatusLabel);
         Assert.Equal("Exchange bagli degil", model.PrimaryFlow.Setup.PrimaryMessage);
         var problemUser = Assert.Single(model.UserBotGovernanceCenter.ProblemUsers);
         Assert.Contains("MfaReview", problemUser.Flags);
@@ -133,13 +133,13 @@ public sealed class AdminOperationsCenterComposerTests
             true,
             new DateTime(2026, 4, 8, 12, 1, 0, DateTimeKind.Utc));
 
-        Assert.Equal("EmergencyStopActive", model.PrimaryFlow.Activation.StatusLabel);
+        Assert.Equal("Acil durdurma aktif", model.PrimaryFlow.Activation.StatusLabel);
         var activateAction = Assert.Single(model.PrimaryFlow.Activation.Actions, item => item.Key == "activate");
         var activationActionDebug = string.Join(" | ", model.PrimaryFlow.Activation.Actions.Select(item => $"{item.Key}:{item.IsEnabled}:{item.BlockedReason}"));
         Assert.False(activateAction.IsEnabled, activationActionDebug);
         Assert.Equal("Acil durdurma aktif", activateAction.BlockedReason);
         Assert.Equal("Acil durdurma aktif", model.PrimaryFlow.Activation.PrimaryMessage);
-        Assert.Equal("EmergencyStopActive", model.PrimaryFlow.Monitoring.StatusLabel);
+        Assert.Equal("Acil durdurma aktif", model.PrimaryFlow.Monitoring.StatusLabel);
     }
 
     [Fact]
@@ -319,6 +319,7 @@ public sealed class AdminOperationsCenterComposerTests
         new DateTime(2026, 4, 8, 11, 59, 10, DateTimeKind.Utc),
         isPersisted);
 }
+
 
 
 

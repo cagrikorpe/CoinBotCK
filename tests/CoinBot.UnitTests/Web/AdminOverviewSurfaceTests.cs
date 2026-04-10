@@ -34,10 +34,14 @@ public sealed class AdminOverviewSurfaceTests
         Assert.Contains("Sistemi Aktiflestir", content, StringComparison.Ordinal);
         Assert.Contains("Sistemi Izle", content, StringComparison.Ordinal);
         Assert.Contains("Gelismis", content, StringComparison.Ordinal);
+        Assert.Contains("Islem notu", content, StringComparison.Ordinal);
+        Assert.Contains("Audit, incidents, health, loglar, trace ve rollout kanitlari", content, StringComparison.Ordinal);
         Assert.DoesNotContain("Runtime &amp; Health Center", content, StringComparison.Ordinal);
         Assert.DoesNotContain("User / Bot Governance Center", content, StringComparison.Ordinal);
         Assert.DoesNotContain("Exchange / Credential Governance", content, StringComparison.Ordinal);
         Assert.DoesNotContain("Policy / Limit Governance", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("Son karar", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("Audit reason", content, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -79,4 +83,3 @@ public sealed class AdminOverviewSurfaceTests
         return directory.FullName;
     }
 }
-

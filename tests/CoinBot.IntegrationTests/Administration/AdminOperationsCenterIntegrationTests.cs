@@ -88,9 +88,9 @@ public sealed class AdminOperationsCenterIntegrationTests
             new DateTime(2026, 4, 8, 12, 0, 30, DateTimeKind.Utc));
 
         Assert.True(operationsModel.IsAccessible);
-        Assert.Equal("Blocked", operationsModel.PrimaryFlow.Setup.StatusLabel);
+        Assert.Equal("Eksik", operationsModel.PrimaryFlow.Setup.StatusLabel);
         Assert.Equal("Exchange bagli degil", operationsModel.PrimaryFlow.Setup.PrimaryMessage);
-        Assert.Equal("Blocked", operationsModel.PrimaryFlow.Monitoring.StatusLabel);
+        Assert.Equal("Eksik", operationsModel.PrimaryFlow.Monitoring.StatusLabel);
         Assert.Equal("critical", operationsModel.RuntimeHealthCenter.StatusTone);
         Assert.Contains(operationsModel.RuntimeHealthCenter.Signals, item => item.Code == "WorkerHeartbeatUnavailable");
         Assert.Contains(operationsModel.SummaryCards, item => item.Label == "CanActivate" && item.Value == "true");
@@ -136,6 +136,7 @@ public sealed class AdminOperationsCenterIntegrationTests
         public override DateTimeOffset GetUtcNow() => now;
     }
 }
+
 
 
 
