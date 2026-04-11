@@ -109,6 +109,128 @@ public sealed class BotsControllerTests
         Assert.Equal("2026-04-02 11:58:00 Coordinated Universal Time", row.ContinuityGapStartedText);
         Assert.Equal("2026-04-02 11:59:00 Coordinated Universal Time", row.ContinuityGapLastSeenText);
         Assert.Equal("2026-04-02 11:59:30 Coordinated Universal Time", row.ContinuityRecoveryText);
+        Assert.Equal("PAUSED", row.PilotStateLabel);
+        Assert.Equal("warning", row.PilotStateTone);
+        Assert.Equal("Bot kapali.", row.PilotStateSummary);
+    }
+
+    [Fact]
+    public async Task Index_MapsShadowOnlyDecisions_ToShadowBadge()
+    {
+        var managementService = new FakeBotManagementService
+        {
+            PageSnapshot = new BotManagementPageSnapshot(
+                [
+                    new BotManagementBotSnapshot(
+                        Guid.NewGuid(),
+                        "Pilot Shadow",
+                        "strategy-shadow",
+                        "Strategy Shadow",
+                        true,
+                        "BTCUSDT",
+                        0.001m,
+                        Guid.NewGuid(),
+                        "Pilot Futures",
+                        true,
+                        true,
+                        1m,
+                        "ISOLATED",
+                        true,
+                        0,
+                        0,
+                        "Succeeded",
+                        null,
+                        "N/A",
+                        null,
+                        null,
+                        null,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        DateTime.UtcNow,
+                        LastShadowFinalAction: "ShadowOnly",
+                        LastShadowNoSubmitReason: "ShadowModeActive",
+                        LastShadowEvaluatedAtUtc: new DateTime(2026, 4, 2, 12, 5, 0, DateTimeKind.Utc))
+                ])
+        };
+        var controller = CreateController(managementService, new FakeBotPilotControlService(), new FakeUserSettingsService(), "user-bot-shadow", "trace-bot-shadow");
+
+        var result = await controller.Index(CancellationToken.None);
+
+        var viewResult = Assert.IsType<ViewResult>(result);
+        var model = Assert.IsType<BotManagementIndexViewModel>(viewResult.Model);
+        var row = Assert.Single(model.Bots);
+        Assert.Equal("SHADOW", row.PilotStateLabel);
+        Assert.Equal("info", row.PilotStateTone);
+        Assert.Equal("Karar var, emir gonderimi yok.", row.PilotStateSummary);
+    }
+
+    [Fact]
+    public async Task Index_MapsSubmittedOrders_ToLiveBadge()
+    {
+        var managementService = new FakeBotManagementService
+        {
+            PageSnapshot = new BotManagementPageSnapshot(
+                [
+                    new BotManagementBotSnapshot(
+                        Guid.NewGuid(),
+                        "Pilot Live",
+                        "strategy-live",
+                        "Strategy Live",
+                        true,
+                        "BTCUSDT",
+                        0.001m,
+                        Guid.NewGuid(),
+                        "Pilot Futures",
+                        true,
+                        true,
+                        1m,
+                        "ISOLATED",
+                        true,
+                        0,
+                        1,
+                        "Succeeded",
+                        null,
+                        "Submitted",
+                        null,
+                        null,
+                        null,
+                        true,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        DateTime.UtcNow,
+                        DateTime.UtcNow)
+                ])
+        };
+        var controller = CreateController(managementService, new FakeBotPilotControlService(), new FakeUserSettingsService(), "user-bot-live", "trace-bot-live");
+
+        var result = await controller.Index(CancellationToken.None);
+
+        var viewResult = Assert.IsType<ViewResult>(result);
+        var model = Assert.IsType<BotManagementIndexViewModel>(viewResult.Model);
+        var row = Assert.Single(model.Bots);
+        Assert.Equal("LIVE", row.PilotStateLabel);
+        Assert.Equal("critical", row.PilotStateTone);
+        Assert.Equal("Emir gonderimi acik.", row.PilotStateSummary);
     }
 
     [Fact]
@@ -444,4 +566,7 @@ public sealed class BotsControllerTests
         }
     }
 }
+
+
+
 

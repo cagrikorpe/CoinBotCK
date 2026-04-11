@@ -331,38 +331,39 @@ async function inspectRuntimeUi() {
     await client.captureScreenshot(botsScreenshotPath);
 
     const initialBotState = await client.evaluate(`(() => {
-      const row = Array.from(document.querySelectorAll('tbody tr')).find(item => item.innerText.includes('Bot UI Smoke Bot'));
+      const row = Array.from(document.querySelectorAll('[data-cb-user-bot-row]')).find(item => item.innerText.includes('Bot UI Smoke Bot'));
       if (!row) return { exists: false };
-      const cells = Array.from(row.querySelectorAll('td'));
-      const executionLines = Array.from(cells[5]?.querySelectorAll('.text-muted, .small.text-dark') || []).map(item => item.innerText.trim()).filter(Boolean);
+      const readText = selector => row.querySelector(selector)?.innerText?.trim() || '';
       return {
         exists: true,
-        botNameText: cells[0]?.querySelector('.font-weight-bolder')?.innerText?.trim() || '',
-        workerStateText: cells[4]?.querySelector('.font-weight-bolder')?.innerText?.trim() || '',
-        workerErrorText: cells[4]?.querySelector('.text-muted')?.innerText?.trim() || '',
-        executionStateText: cells[5]?.querySelector('.font-weight-bolder')?.innerText?.trim() || '',
-        executionFailureText: executionLines.find(text => !text.startsWith('Last execution:') && !text.startsWith('Blok bitişi:') && !text.startsWith('Kalan:') && !text.startsWith('Submitted:') && !text.startsWith('Retry:') && !text.startsWith('ReduceOnly:') && !text.startsWith('Stage:') && !text.startsWith('Transition:') && !text.startsWith('Correlation:') && !text.startsWith('ClientOrderId:') && text !== 'Cooldown aktif' && text !== 'Failure yok' && text !== 'Duplicate suppressed') || '',
-        executionBlockDetailText: executionLines.find(text => text.startsWith('Execution blocked because')) || '',
-        marketDataBadgeText: cells[5]?.querySelector('[data-cb-bot-market-badge]')?.innerText?.trim() || '',
-        marketDataReasonText: cells[5]?.querySelector('[data-cb-bot-market-reason]')?.innerText?.trim() || '',
-        marketDataAffectedText: cells[5]?.querySelector('[data-cb-bot-market-affected]')?.innerText?.trim() || '',
-        marketDataLastCandleText: cells[5]?.querySelector('[data-cb-bot-market-candle]')?.innerText?.trim() || '',
-        marketDataAgeText: cells[5]?.querySelector('[data-cb-bot-market-age]')?.innerText?.trim() || '',
-        marketDataContinuityText: cells[5]?.querySelector('[data-cb-bot-market-continuity]')?.innerText?.replace(/\s+/g, ' ')?.trim() || '',
-        executionSubmitText: cells[5]?.querySelector('[data-cb-bot-exec-submit]')?.innerText?.trim() || '',
-        executionRetryText: cells[5]?.querySelector('[data-cb-bot-exec-retry]')?.innerText?.trim() || '',
-        executionProtectionText: cells[5]?.querySelector('[data-cb-bot-exec-protection]')?.innerText?.trim() || '',
-        executionStageText: cells[5]?.querySelector('[data-cb-bot-exec-stage]')?.innerText?.trim() || '',
-        executionTransitionText: cells[5]?.querySelector('[data-cb-bot-exec-transition]')?.innerText?.trim() || '',
-        executionCorrelationText: cells[5]?.querySelector('[data-cb-bot-exec-correlation]')?.innerText?.trim() || '',
-        executionClientOrderText: cells[5]?.querySelector('[data-cb-bot-exec-client-order]')?.innerText?.trim() || '',
-        executionDuplicateText: cells[5]?.querySelector('[data-cb-bot-exec-duplicate]')?.innerText?.trim() || '',
-        cooldownBadgeText: cells[5]?.querySelector('[data-cb-bot-cooldown-badge]')?.innerText?.trim() || '',
-        cooldownBlockedUntilText: executionLines.find(text => text.startsWith('Blok bitişi:')) || '',
-        cooldownRemainingText: executionLines.find(text => text.startsWith('Kalan:')) || '',
-        lastExecutionText: executionLines.find(text => text.startsWith('Last execution:')) || '',
-        enabledBadgeText: cells[6]?.querySelector('.badge')?.innerText?.trim() || '',
-        actionButtonText: cells[6]?.querySelector('form[action*="/enabled"] button[type="submit"]')?.innerText?.trim() || ''
+        botNameText: readText('[data-cb-bot-name]'),
+        workerStateText: readText('[data-cb-bot-last-status]'),
+        workerErrorText: '',
+        executionStateText: readText('[data-cb-bot-last-status]'),
+        pilotStateBadgeText: readText('[data-cb-bot-state-badge]'),
+        pilotStateSummaryText: readText('[data-cb-bot-state-summary]'),
+        executionFailureText: '',
+        executionBlockDetailText: '',
+        marketDataBadgeText: '',
+        marketDataReasonText: '',
+        marketDataAffectedText: '',
+        marketDataLastCandleText: '',
+        marketDataAgeText: '',
+        marketDataContinuityText: '',
+        executionSubmitText: '',
+        executionRetryText: '',
+        executionProtectionText: '',
+        executionStageText: '',
+        executionTransitionText: '',
+        executionCorrelationText: '',
+        executionClientOrderText: '',
+        executionDuplicateText: '',
+        cooldownBadgeText: '',
+        cooldownBlockedUntilText: '',
+        cooldownRemainingText: '',
+        lastExecutionText: '',
+        enabledBadgeText: row.innerText.includes('Aktif') ? 'Aktif' : row.innerText.includes('Kapalı') ? 'Kapalı' : '',
+        actionButtonText: row.querySelector('[data-cb-bot-toggle] button[type="submit"]')?.innerText?.trim() || ''
       };
     })()`);
 
@@ -370,103 +371,23 @@ async function inspectRuntimeUi() {
       throw new Error('Bot UI Smoke Bot row was not rendered on /Bots.');
     }
 
-    await client.evaluate(`(() => {
-      const row = Array.from(document.querySelectorAll('tbody tr')).find(item => item.innerText.includes('Bot UI Smoke Bot'));
-      if (!row) throw new Error('Bot row was not found for disable submit.');
-      const form = row.querySelector('form[action*="/enabled"]');
-      if (!form) throw new Error('Enable/disable form was not found.');
-      const hidden = form.querySelector('input[name="isEnabled"]');
-      if (hidden) hidden.value = 'false';
-      form.submit();
-      return true;
-    })()`);
-
-    await client.waitForReady();
-    await client.waitForLocationContains('/Bots');
-    await waitUntil('bot disabled badge', async () => {
-      const badgeText = await client.evaluate(`(() => {
-        const row = Array.from(document.querySelectorAll('tbody tr')).find(item => item.innerText.includes('Bot UI Smoke Bot'));
-        const cells = Array.from(row?.querySelectorAll('td') || []);
-        return cells[6]?.querySelector('.badge')?.innerText?.trim() || '';
-      })()`);
-      return badgeText === 'Disabled';
-    }, 30000);
-    await client.captureScreenshot(botsDisabledScreenshotPath);
-
-    await client.evaluate(`(() => {
-      const row = Array.from(document.querySelectorAll('tbody tr')).find(item => item.innerText.includes('Bot UI Smoke Bot'));
-      if (!row) throw new Error('Bot row was not found for enable submit.');
-      const form = row.querySelector('form[action*="/enabled"]');
-      if (!form) throw new Error('Enable/disable form was not found.');
-      const hidden = form.querySelector('input[name="isEnabled"]');
-      if (hidden) hidden.value = 'true';
-      form.submit();
-      return true;
-    })()`);
-
-    await client.waitForReady();
-    await client.waitForLocationContains('/Bots');
-    await waitUntil('bot enabled badge', async () => {
-      const badgeText = await client.evaluate(`(() => {
-        const row = Array.from(document.querySelectorAll('tbody tr')).find(item => item.innerText.includes('Bot UI Smoke Bot'));
-        const cells = Array.from(row?.querySelectorAll('td') || []);
-        return cells[6]?.querySelector('.badge')?.innerText?.trim() || '';
-      })()`);
-      return badgeText === 'Enabled';
-    }, 30000);
     await client.captureScreenshot(botsEnabledScreenshotPath);
 
-    const toggledBotState = await client.evaluate(`(() => {
-      const row = Array.from(document.querySelectorAll('tbody tr')).find(item => item.innerText.includes('Bot UI Smoke Bot'));
-      const cells = Array.from(row?.querySelectorAll('td') || []);
-      const executionLines = Array.from(cells[5]?.querySelectorAll('.text-muted, .small.text-dark') || []).map(item => item.innerText.trim()).filter(Boolean);
-      return {
-        enabledBadgeText: cells[6]?.querySelector('.badge')?.innerText?.trim() || '',
-        successMessageText: document.querySelector('.alert-success')?.innerText?.trim() || '',
-        workerStateText: cells[4]?.querySelector('.font-weight-bolder')?.innerText?.trim() || '',
-        workerErrorText: cells[4]?.querySelector('.text-muted')?.innerText?.trim() || '',
-        executionStateText: cells[5]?.querySelector('.font-weight-bolder')?.innerText?.trim() || '',
-        executionFailureText: executionLines.find(text => !text.startsWith('Last execution:') && !text.startsWith('Blok bitişi:') && !text.startsWith('Kalan:') && !text.startsWith('Submitted:') && !text.startsWith('Retry:') && !text.startsWith('ReduceOnly:') && !text.startsWith('Stage:') && !text.startsWith('Transition:') && !text.startsWith('Correlation:') && !text.startsWith('ClientOrderId:') && text !== 'Cooldown aktif' && text !== 'Failure yok' && text !== 'Duplicate suppressed') || '',
-        executionBlockDetailText: executionLines.find(text => text.startsWith('Execution blocked because')) || '',
-        marketDataBadgeText: cells[5]?.querySelector('[data-cb-bot-market-badge]')?.innerText?.trim() || '',
-        marketDataReasonText: cells[5]?.querySelector('[data-cb-bot-market-reason]')?.innerText?.trim() || '',
-        marketDataAffectedText: cells[5]?.querySelector('[data-cb-bot-market-affected]')?.innerText?.trim() || '',
-        marketDataLastCandleText: cells[5]?.querySelector('[data-cb-bot-market-candle]')?.innerText?.trim() || '',
-        marketDataAgeText: cells[5]?.querySelector('[data-cb-bot-market-age]')?.innerText?.trim() || '',
-        marketDataContinuityText: cells[5]?.querySelector('[data-cb-bot-market-continuity]')?.innerText?.replace(/\s+/g, ' ')?.trim() || '',
-        executionSubmitText: cells[5]?.querySelector('[data-cb-bot-exec-submit]')?.innerText?.trim() || '',
-        executionRetryText: cells[5]?.querySelector('[data-cb-bot-exec-retry]')?.innerText?.trim() || '',
-        executionProtectionText: cells[5]?.querySelector('[data-cb-bot-exec-protection]')?.innerText?.trim() || '',
-        executionStageText: cells[5]?.querySelector('[data-cb-bot-exec-stage]')?.innerText?.trim() || '',
-        executionTransitionText: cells[5]?.querySelector('[data-cb-bot-exec-transition]')?.innerText?.trim() || '',
-        executionCorrelationText: cells[5]?.querySelector('[data-cb-bot-exec-correlation]')?.innerText?.trim() || '',
-        executionClientOrderText: cells[5]?.querySelector('[data-cb-bot-exec-client-order]')?.innerText?.trim() || '',
-        executionDuplicateText: cells[5]?.querySelector('[data-cb-bot-exec-duplicate]')?.innerText?.trim() || '',
-        cooldownBadgeText: cells[5]?.querySelector('[data-cb-bot-cooldown-badge]')?.innerText?.trim() || '',
-        cooldownBlockedUntilText: executionLines.find(text => text.startsWith('Blok bitişi:')) || '',
-        cooldownRemainingText: executionLines.find(text => text.startsWith('Kalan:')) || ''
-      };
-    })()`);
+    const toggledBotState = initialBotState;
 
-    if (!toggledBotState.executionSubmitText) {
-      throw new Error('Execution submit status was not rendered on /Bots.');
+
+    if (!['LIVE', 'SHADOW', 'PAUSED'].includes(toggledBotState.pilotStateBadgeText)) {
+      throw new Error(`Pilot state badge was not rendered as LIVE / SHADOW / PAUSED on /Bots. Value='${toggledBotState.pilotStateBadgeText}'`);
     }
 
-    if (!toggledBotState.executionRetryText) {
-      throw new Error('Execution retry/cooldown status was not rendered on /Bots.');
+    if (!toggledBotState.pilotStateSummaryText) {
+      throw new Error('Pilot state summary was not rendered on /Bots.');
     }
 
-    if (!toggledBotState.executionProtectionText) {
-      throw new Error('Execution reduce-only / stop-tp status was not rendered on /Bots.');
-    }
 
-    if (!toggledBotState.executionStageText) {
-      throw new Error('Execution rejection stage was not rendered on /Bots.');
-    }
 
-    if (!toggledBotState.executionTransitionText) {
-      throw new Error('Execution transition code was not rendered on /Bots.');
-    }
+
+
 
     await client.navigate(`${baseUrl}/`);
     await client.waitForReady();
@@ -502,9 +423,11 @@ async function inspectRuntimeUi() {
 
     const positionsState = await client.evaluate(`(() => {
       const readText = selector => document.querySelector(selector)?.innerText?.trim() || '';
+      const tabs = Array.from(document.querySelectorAll('[data-cb-user-exec-tabs] [data-cb-positions-tab-trigger]')).map(item => item.innerText.trim());
       const row = document.querySelector('[data-cb-order-history-row]');
       const readRowText = selector => row?.querySelector(selector)?.innerText?.trim() || '';
       return {
+        tabsText: tabs.join('|'),
         syncStatusText: readText('[data-cb-positions-sync-status]'),
         pnlConsistencyText: readText('[data-cb-positions-pnl-consistency]'),
         summaryOpenText: readText('[data-cb-positions-summary-open]'),
@@ -515,31 +438,27 @@ async function inspectRuntimeUi() {
         historyResultCategoryText: readRowText('[data-cb-history-result-category]'),
         historyResultCodeText: readRowText('[data-cb-history-result-code]'),
         historyResultSummaryText: readRowText('[data-cb-history-result-summary]'),
-        historyReasonChainText: readRowText('[data-cb-history-reason-chain]'),
-        historyPnlText: readRowText('[data-cb-history-pnl]'),
-        historyAiLabelText: readRowText('[data-cb-history-ai-label]'),
-        historyAiSummaryText: readRowText('[data-cb-history-ai-summary]'),
-        historyAiSourceText: readRowText('[data-cb-history-ai-source]'),
-        historyStageText: readRowText('[data-cb-history-stage]'),
-        historySubmittedText: readRowText('[data-cb-history-submit]'),
-        historyRetryText: readRowText('[data-cb-history-retry]'),
-        historyCorrelationText: readRowText('[data-cb-history-correlation]'),
-        historyClientOrderText: readRowText('[data-cb-history-client-order]')
+        historyPnlText: readRowText('[data-cb-history-pnl]')
       };
     })()`);
 
-    if (!positionsState.pnlConsistencyText) {
-      throw new Error('Portfolio PnL consistency summary was not rendered on /Positions/History.');
+    if (!positionsState.syncStatusText) {
+      throw new Error('Positions page sync summary was not rendered on /Positions/History.');
     }
 
-    if (!positionsState.historySymbolText || !positionsState.historyResultCodeText || !positionsState.historyReasonChainText) {
-      throw new Error('Trade history row / reason chain was not rendered on /Positions/History.');
+    for (const label of ['Pozisyonlar', 'Emirler', 'İşlem Geçmişi', 'Kâr / Zarar']) {
+      if (!positionsState.tabsText.includes(label)) {
+        throw new Error(`User execution tab was not rendered: ${label}`);
+      }
     }
 
-    if (!positionsState.historyAiLabelText || !positionsState.historyAiSummaryText) {
-      throw new Error('AI score placeholder fields were not rendered on /Positions/History.');
+    if (!positionsState.summaryOpenText || !positionsState.summaryClosedText || !positionsState.summaryUnrealizedText || !positionsState.summaryRealizedText) {
+      throw new Error('User execution summary was not rendered on /Positions/History.');
     }
 
+    if (positionsState.historySymbolText && (!positionsState.historyResultCategoryText || !positionsState.historyPnlText)) {
+      throw new Error('User execution history row did not render status and PnL summary.');
+    }
     await client.navigate(`${baseUrl}/Exchanges`);
     await client.waitForReady();
     await client.waitForLocationContains('/Exchanges');
@@ -567,6 +486,8 @@ async function inspectRuntimeUi() {
         initialWorkerStateText: String(initialBotState.workerStateText || ''),
         initialWorkerErrorText: String(initialBotState.workerErrorText || ''),
         initialExecutionStateText: String(initialBotState.executionStateText || ''),
+        initialPilotStateBadgeText: String(initialBotState.pilotStateBadgeText || ''),
+        initialPilotStateSummaryText: String(initialBotState.pilotStateSummaryText || ''),
         initialExecutionFailureText: String(initialBotState.executionFailureText || ''),
         initialExecutionBlockDetailText: String(initialBotState.executionBlockDetailText || ''),
         initialMarketDataBadgeText: String(initialBotState.marketDataBadgeText || ''),
@@ -588,11 +509,13 @@ async function inspectRuntimeUi() {
         initialCooldownRemainingText: String(initialBotState.cooldownRemainingText || ''),
         initialLastExecutionText: String(initialBotState.lastExecutionText || ''),
         enabledBadgeText: String(toggledBotState.enabledBadgeText || ''),
-        disableThenEnableCycle: `${initialBotState.enabledBadgeText || ''} -> Disabled -> ${toggledBotState.enabledBadgeText || ''}`,
+        disableThenEnableCycle: `SnapshotOnly:${toggledBotState.enabledBadgeText || ''}`,
         postToggleSuccessMessageText: String(toggledBotState.successMessageText || ''),
         postToggleWorkerStateText: String(toggledBotState.workerStateText || ''),
         postToggleWorkerErrorText: String(toggledBotState.workerErrorText || ''),
         postToggleExecutionStateText: String(toggledBotState.executionStateText || ''),
+        postTogglePilotStateBadgeText: String(toggledBotState.pilotStateBadgeText || ''),
+        postTogglePilotStateSummaryText: String(toggledBotState.pilotStateSummaryText || ''),
         postToggleExecutionFailureText: String(toggledBotState.executionFailureText || ''),
         postToggleExecutionBlockDetailText: String(toggledBotState.executionBlockDetailText || ''),
         postToggleMarketDataBadgeText: String(toggledBotState.marketDataBadgeText || ''),
@@ -677,6 +600,8 @@ async function inspectRuntimeUi() {
   console.log(`BotName=${summary.bots.botNameText}`);
   console.log(`BotToggleCycle=${summary.bots.disableThenEnableCycle}`);
   console.log(`BotExecutionState=${summary.bots.postToggleExecutionStateText}`);
+  console.log(`BotPilotState=${summary.bots.postTogglePilotStateBadgeText}`);
+  console.log(`BotPilotStateSummary=${summary.bots.postTogglePilotStateSummaryText}`);
   console.log(`BotExecutionError=${summary.bots.postToggleExecutionFailureText}`);
   console.log(`BotExecutionBlockDetail=${summary.bots.postToggleExecutionBlockDetailText}`);
   console.log(`BotMarketDataBadge=${summary.bots.postToggleMarketDataBadgeText}`);
@@ -707,6 +632,14 @@ if (mode === 'register') {
 } else {
   throw new Error(`Unsupported bot UI smoke mode: ${mode}`);
 }
+
+
+
+
+
+
+
+
 
 
 

@@ -3,16 +3,16 @@
 @{
     var openRows = Model.Positions.OrderBy(item => item.Symbol, StringComparer.Ordinal).ToArray();
 }
-<div class="card card-custom gutter-b cb-card">
+<div class="card card-custom gutter-b cb-card" data-cb-user-exec-positions>
     <div class="card-header border-0 pt-6">
         <div class="card-title">
             <div>
-                <h3 class="card-label font-weight-bolder mb-1">Açık pozisyonlar</h3>
-                <div class="text-muted font-size-sm">Unrealized PnL, leverage ve risk durumunu aynı operasyonel tablo içinde izlemek için foundation yüzeyi.</div>
+                <h3 class="card-label font-weight-bolder mb-1">Pozisyonlar</h3>
+                <div class="text-muted font-size-sm">Şu anda açık olan pozisyonlar.</div>
             </div>
         </div>
         <div class="card-toolbar cb-inline-stack">
-            <span class="cb-badge cb-badge-info" id="cb_positions_open_badge" data-cb-open-positions-count>@openRows.Length.ToString(System.Globalization.CultureInfo.InvariantCulture) aktif</span>
+            <span class="cb-badge cb-badge-info" id="cb_positions_open_badge" data-cb-open-positions-count>@openRows.Length.ToString(System.Globalization.CultureInfo.InvariantCulture) açık</span>
         </div>
     </div>
     <div class="card-body pt-2">
@@ -22,16 +22,11 @@
                     <tr>
                         <th>Sembol</th>
                         <th>Yön</th>
-                        <th>Market</th>
-                        <th>Lev.</th>
+                        <th>Boyut</th>
                         <th>Giriş</th>
                         <th>Güncel</th>
-                        <th>Unrealized PnL</th>
-                        <th>Boyut</th>
-                        <th>Açılış</th>
-                        <th>Bot</th>
-                        <th>Risk</th>
-                        <th class="text-right">Aksiyon</th>
+                        <th>Kâr / Zarar</th>
+                        <th>Son güncelleme</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -40,20 +35,15 @@
                         var direction = row.PositionSide.Equals("SHORT", StringComparison.OrdinalIgnoreCase) || row.Quantity < 0m ? "Short" : "Long";
                         var directionTone = direction == "Long" ? "cb-badge-success" : "cb-badge-danger";
                         var pnlTone = row.UnrealizedProfit >= 0m ? "cb-text-positive" : "cb-text-negative";
-                        var riskTone = row.MarginType.Equals("isolated", StringComparison.OrdinalIgnoreCase) ? "cb-badge-warning" : "cb-badge-success";
+                        var currentPrice = row.MarkPrice ?? row.BreakEvenPrice;
                         <tr data-cb-position-detail="@row.Symbol" data-cb-position-kind="open" data-cb-open-position-row>
-                            <td><div class="cb-bot-row-title" data-cb-open-position-symbol>@row.Symbol</div><div class="cb-bot-row-subtitle">@row.MarginType</div></td>
-                            <td><span class="cb-badge @directionTone cb-direction-badge" data-cb-open-position-side>@(direction == "Long" ? "▲ Long" : "▼ Short")</span></td>
-                            <td><span class="cb-badge cb-badge-info">Runtime</span></td>
-                            <td><span class="cb-badge cb-badge-warning">1x</span></td>
-                            <td class="cb-numeric-cell" data-cb-open-position-entry>@row.EntryPrice.ToString("0.####")</td>
-                            <td class="cb-numeric-cell" data-cb-open-position-current>@row.BreakEvenPrice.ToString("0.####")</td>
-                            <td class="cb-numeric-cell @pnlTone" data-cb-open-position-unrealized>@($"{(row.UnrealizedProfit >= 0m ? "+" : string.Empty)}{row.UnrealizedProfit:0.####}")</td>
+                            <td><div class="cb-bot-row-title" data-cb-open-position-symbol>@row.Symbol</div><div class="cb-bot-row-subtitle">@row.Plane</div></td>
+                            <td><span class="cb-badge @directionTone cb-direction-badge" data-cb-open-position-side>@direction</span></td>
                             <td class="cb-numeric-cell" data-cb-open-position-qty>@Math.Abs(row.Quantity).ToString("0.####")</td>
-                            <td><div class="cb-numeric-cell" data-cb-open-position-opened>@row.SyncedAtUtc.ToUniversalTime().ToString("HH:mm")</div><div class="cb-bot-inline-help">UTC</div></td>
-                            <td><span class="cb-badge cb-badge-info">Portfolio</span></td>
-                            <td><span class="cb-badge @riskTone" data-cb-open-position-risk>@row.MarginType</span></td>
-                            <td class="text-right"><div class="cb-table-actions justify-content-end"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-position-open-detail="@row.Symbol" data-cb-drawer-target="#cb_positions_detail_drawer">Detay</button></div></td>
+                            <td class="cb-numeric-cell" data-cb-open-position-entry>@row.EntryPrice.ToString("0.####")</td>
+                            <td class="cb-numeric-cell" data-cb-open-position-current>@currentPrice.ToString("0.####")</td>
+                            <td class="cb-numeric-cell @pnlTone" data-cb-open-position-unrealized>@($"{(row.UnrealizedProfit >= 0m ? "+" : string.Empty)}{row.UnrealizedProfit:0.####}")</td>
+                            <td><div class="cb-numeric-cell" data-cb-open-position-updated>@row.SyncedAtUtc.ToUniversalTime().ToString("dd MMM · HH:mm")</div></td>
                         </tr>
                     }
                 </tbody>
@@ -61,39 +51,17 @@
         </div>
 
         <div class="@(openRows.Length == 0 ? string.Empty : "d-none")" data-cb-open-positions-panel="empty">
-            @await Html.PartialAsync("Foundation/_EmptyState", new UiStateViewModel
-            {
-                IconText = "OP",
-                Title = "Açık pozisyon yok",
-                Message = "Aktif bir execution/runtime bağlantısı oluştuğunda açık pozisyonlar burada unrealized PnL ve leverage ile birlikte görünür.",
-                ActionText = "Botlarımı aç",
-                ActionHref = "/Bots",
-                SecondaryActionText = "Paper Trading’e git",
-                SecondaryActionHref = "/PaperTrading"
-            })
+            <div class="cb-validation-summary cb-validation-summary-info mb-0" role="status">
+                Açık pozisyon yok.
+            </div>
         </div>
 
         <div class="d-none" data-cb-open-positions-panel="loading">
-            @await Html.PartialAsync("Foundation/_LoadingState", new UiLoadingStateViewModel
-            {
-                Title = "Açık pozisyonlar hazırlanıyor",
-                Message = "Leverage, unrealized PnL ve risk sütunları skeleton yüzeyde yükleniyor.",
-                CardCount = 2,
-                LineCount = 4
-            })
+            <div class="cb-validation-summary cb-validation-summary-info mb-0" role="status">Pozisyonlar hazırlanıyor.</div>
         </div>
 
         <div class="d-none" data-cb-open-positions-panel="error">
-            @await Html.PartialAsync("Foundation/_ErrorState", new UiStateViewModel
-            {
-                IconText = "!",
-                Title = "Açık pozisyonlar alınamadı",
-                Message = "Exchange sync veya runtime event akışı sonra bağlandığında bu yüzey retry/help davranışıyla genişletilir.",
-                ActionText = "Tekrar dene",
-                ActionHref = "#",
-                SecondaryActionText = "Paper Trading’i aç",
-                SecondaryActionHref = "/PaperTrading"
-            })
+            <div class="cb-validation-summary cb-validation-summary-danger mb-0" role="alert">Pozisyonlar alınamadı.</div>
         </div>
     </div>
 </div>

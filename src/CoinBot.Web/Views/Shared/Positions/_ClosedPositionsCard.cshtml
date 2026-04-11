@@ -4,15 +4,15 @@
     var closedRows = Model.TradeHistory
         .Where(item => item.FinalState is "Filled" or "Cancelled" or "Rejected" or "Failed")
         .OrderByDescending(item => item.LastUpdatedAtUtc)
-        .Take(12)
+        .Take(8)
         .ToArray();
 }
-<div class="card card-custom gutter-b cb-card">
+<div class="card card-custom gutter-b cb-card" data-cb-user-exec-history>
     <div class="card-header border-0 pt-6">
         <div class="card-title">
             <div>
-                <h3 class="card-label font-weight-bolder mb-1">Kapalı pozisyonlar</h3>
-                <div class="text-muted font-size-sm">History review odaklı kapalı pozisyonlar listesi realized PnL ve kapanış nedeni ile birlikte gösterilir.</div>
+                <h3 class="card-label font-weight-bolder mb-1">İşlem Geçmişi</h3>
+                <div class="text-muted font-size-sm">Kapanan veya tamamlanan işlemler.</div>
             </div>
         </div>
     </div>
@@ -23,14 +23,9 @@
                     <tr>
                         <th>Sembol</th>
                         <th>Yön</th>
-                        <th>Lev.</th>
-                        <th>Giriş / Çıkış</th>
-                        <th>Realized PnL</th>
-                        <th>Kapanış nedeni</th>
-                        <th>Süre</th>
-                        <th>Bot</th>
+                        <th>Sonuç</th>
+                        <th>Kâr / Zarar</th>
                         <th>Kapanış</th>
-                        <th class="text-right">Aksiyon</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -47,16 +42,11 @@
                         };
                         var pnlTone = row.RealizedPnl >= 0m ? "cb-text-positive" : "cb-text-negative";
                         <tr data-cb-position-detail="@row.OrderId.ToString("N")" data-cb-position-kind="closed" data-cb-closed-position-row>
-                            <td><div class="cb-bot-row-title" data-cb-closed-position-symbol>@row.Symbol</div><div class="cb-bot-row-subtitle">@row.Timeframe</div></td>
+                            <td><div class="cb-bot-row-title" data-cb-closed-position-symbol>@row.Symbol</div><div class="cb-bot-row-subtitle">@row.Plane</div></td>
                             <td><span class="cb-badge @sideTone cb-direction-badge" data-cb-closed-position-side>@row.Side</span></td>
-                            <td><span class="cb-badge cb-badge-neutral">—</span></td>
-                            <td class="cb-mono" data-cb-closed-position-price>@($"{row.AverageFillPrice?.ToString("0.####") ?? "-"} / {row.AverageFillPrice?.ToString("0.####") ?? "-"}")</td>
+                            <td><span class="cb-badge @resultTone" data-cb-closed-position-result>@row.ExecutionResultCategory</span></td>
                             <td class="cb-mono @pnlTone" data-cb-closed-position-realized>@($"{(row.RealizedPnl >= 0m ? "+" : string.Empty)}{row.RealizedPnl:0.####}")</td>
-                            <td><span class="cb-badge @resultTone" data-cb-closed-position-result>@row.ExecutionResultCode</span></td>
-                            <td><div class="cb-mono">@((row.ClosedAtUtc ?? row.LastUpdatedAtUtc).ToUniversalTime().ToString("HH:mm"))</div><div class="cb-bot-inline-help">UTC</div></td>
-                            <td><span class="cb-badge cb-badge-info">History</span></td>
                             <td><div class="cb-mono" data-cb-closed-position-updated>@row.LastUpdatedAtUtc.ToUniversalTime().ToString("dd MMM · HH:mm")</div></td>
-                            <td class="text-right"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-position-open-detail="@row.OrderId.ToString("N")" data-cb-drawer-target="#cb_positions_detail_drawer">Detay</button></td>
                         </tr>
                     }
                 </tbody>
@@ -64,37 +54,15 @@
         </div>
 
         <div class="@(closedRows.Length == 0 ? string.Empty : "d-none")" data-cb-closed-positions-panel="empty">
-            @await Html.PartialAsync("Foundation/_EmptyState", new UiStateViewModel
-            {
-                IconText = "CP",
-                Title = "Kapalı pozisyon yok",
-                Message = "History verisi geldiğinde realized PnL ve kapanış nedenleri bu bölümde review odaklı gösterilir.",
-                ActionText = "Strategy Builder’ı aç",
-                ActionHref = "/StrategyBuilder"
-            })
+            <div class="cb-validation-summary cb-validation-summary-info mb-0" role="status">Henüz işlem geçmişi yok.</div>
         </div>
 
         <div class="d-none" data-cb-closed-positions-panel="loading">
-            @await Html.PartialAsync("Foundation/_LoadingState", new UiLoadingStateViewModel
-            {
-                Title = "Kapalı pozisyon history hazırlanıyor",
-                Message = "Realized PnL ve kapanış nedeni satırları yükleniyor.",
-                CardCount = 2,
-                LineCount = 4
-            })
+            <div class="cb-validation-summary cb-validation-summary-info mb-0" role="status">İşlem geçmişi hazırlanıyor.</div>
         </div>
 
         <div class="d-none" data-cb-closed-positions-panel="error">
-            @await Html.PartialAsync("Foundation/_ErrorState", new UiStateViewModel
-            {
-                IconText = "!",
-                Title = "Kapalı pozisyon history alınamadı",
-                Message = "History yüzeyi hata aldığında kullanıcıyı retry ve yardım akışına taşıyan kontrollü UI görünümü gösterilir.",
-                ActionText = "Tekrar dene",
-                ActionHref = "#",
-                SecondaryActionText = "Backtest’e git",
-                SecondaryActionHref = "/Backtest"
-            })
+            <div class="cb-validation-summary cb-validation-summary-danger mb-0" role="alert">İşlem geçmişi alınamadı.</div>
         </div>
     </div>
 </div>

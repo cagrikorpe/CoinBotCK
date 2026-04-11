@@ -55,7 +55,10 @@ public sealed record BotManagementBotSnapshot(
     int? LastExecutionStaleThresholdMilliseconds = null,
     DateTime? LastExecutionContinuityGapStartedAtUtc = null,
     DateTime? LastExecutionContinuityGapLastSeenAtUtc = null,
-    DateTime? LastExecutionContinuityRecoveredAtUtc = null);
+    DateTime? LastExecutionContinuityRecoveredAtUtc = null,
+    string? LastShadowFinalAction = null,
+    string? LastShadowNoSubmitReason = null,
+    DateTime? LastShadowEvaluatedAtUtc = null);
 
 public sealed record BotManagementEditorSnapshot(
     Guid? BotId,
@@ -102,4 +105,5 @@ public sealed record BotManagementSaveResult(
     bool IsEnabled,
     string? FailureCode,
     string? FailureReason);
+
 

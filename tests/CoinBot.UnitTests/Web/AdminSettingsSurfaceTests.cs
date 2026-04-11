@@ -145,7 +145,9 @@ public sealed class AdminSettingsSurfaceTests
 
         Assert.DoesNotContain("cb_admin_settings_tab_content", content, StringComparison.Ordinal);
         Assert.DoesNotContain("Sistem Aktivasyon Kontrol Merkezi", content, StringComparison.Ordinal);
-        Assert.Contains("Super Admin/Ops Global Ayarlar", content, StringComparison.Ordinal);
+        Assert.Contains("Günlük kullanım tercihlerinizi", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("Super Admin/Ops Global Ayarlar", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("drift guard", content, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string ResolveRepositoryRoot()

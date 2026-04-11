@@ -2,8 +2,8 @@
 @{
     ViewData["Title"] = "Ayarlar";
     ViewData["ActiveNav"] = "Settings";
-    ViewData["PageDescription"] = "Kullanıcı saat dilimi tercihini bu ekrandan yönetir; operasyonel sync ve drift guard alanları Super Admin/Ops scope'undadır.";
-    ViewData["BreadcrumbItems"] = new[] { "System", "Ayarlar" };
+    ViewData["PageDescription"] = "Günlük kullanım tercihlerinizi buradan yönetin.";
+    ViewData["BreadcrumbItems"] = new[] { "CoinBot", "Ayarlar" };
 }
 
 <div class="row">
@@ -12,9 +12,9 @@
             <div class="card-body">
                 <div class="cb-page-header">
                     <div>
-                        <div class="cb-page-eyebrow">User Settings</div>
+                        <div class="cb-page-eyebrow">Ayarlar</div>
                         <h2 class="cb-page-title">Saat dilimi</h2>
-                        <p class="cb-page-description">Dashboard ve bot yüzeylerindeki zaman gösterimleri bu tercihe göre render edilir.</p>
+                        <p class="cb-page-description">Zaman gösterimi ve hesap güvenliği burada yönetilir.</p>
                     </div>
                     <div class="cb-toolbar">
                         <a asp-controller="Settings" asp-action="Mfa" class="btn btn-light-primary font-weight-bold">2FA yönetimi</a>
@@ -31,8 +31,8 @@
                     <div class="cb-validation-summary cb-validation-summary-danger mt-6">@errorMessage</div>
                 }
 
-                <div class="cb-validation-summary cb-validation-summary-warning mt-6">
-                    Binance server-time sync, drift guard threshold ve operasyonel sync aksiyonlari bu ekranda yonetilmez. Bu alanlar Super Admin/Ops Global Ayarlar yuzeyinde read-only veya policy bazli olarak aciktir.
+                <div class="cb-validation-summary cb-validation-summary-info mt-6">
+                    Bu ekranda yalnız size ait kullanım tercihleri bulunur.
                 </div>
 
                 <form asp-controller="Settings" asp-action="Index" method="post" class="mt-6" novalidate>
@@ -48,12 +48,12 @@
                             }
                         </select>
                         <span asp-validation-for="Form.PreferredTimeZoneId" class="text-danger small"></span>
-                        <div class="cb-helper-text mt-2">Bu seçim yalnız display timezone içindir; signed REST server-time sync ve market-data drift guard değerlendirmesi kullanıcı ayarından ayrı operasyon katmanında yürür.</div>
+                        <div class="cb-helper-text mt-2">Bu seçim yalnız ekranda görünen zaman bilgisini etkiler.</div>
                     </div>
 
                     <div class="cb-auth-action-row mt-8">
                         <button type="submit" class="btn btn-primary font-weight-bolder">Kaydet</button>
-                        <a asp-controller="Home" asp-action="Index" class="btn btn-light-primary font-weight-bold">Dashboard</a>
+                        <a asp-controller="Home" asp-action="Index" class="btn btn-light-primary font-weight-bold">Ana Sayfa</a>
                     </div>
                 </form>
             </div>

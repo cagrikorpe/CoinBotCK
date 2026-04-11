@@ -123,7 +123,7 @@ function Invoke-SqlRows {
             $reader.Dispose()
         }
 
-        return $rows
+        Write-Output -NoEnumerate $rows
     }
     finally {
         $connection.Dispose()
@@ -406,21 +406,40 @@ try {
         return $null
     } | Out-Null
 
-    Wait-Until -Name 'first bot execution order' -TimeoutSeconds 180 -Condition {
-        $orders = Get-SmokeOrders -ConnectionString $connectionString -BotId $botId
-        if ($orders.Count -ge 1) { return $orders }
-        return $null
-    } | Out-Null
-
-    $summary.Orders = Wait-Until -Name 'second bot execution order' -TimeoutSeconds 180 -Condition {
-        $currentOrders = Get-SmokeOrders -ConnectionString $connectionString -BotId $botId
-        if ($currentOrders.Count -ge 2) { return $currentOrders }
-        return $null
+    $firstObservedOrders = $null
+    try {
+        $firstObservedOrders = Wait-Until -Name 'first bot execution order' -TimeoutSeconds 180 -Condition {
+            $orders = @(Get-SmokeOrders -ConnectionString $connectionString -BotId $botId)
+            if ($orders.Count -ge 1) { return $orders }
+            return $null
+        }
+    }
+    catch {
+        $firstObservedOrders = @(Get-SmokeOrders -ConnectionString $connectionString -BotId $botId)
     }
 
-    $summary.AttemptCount = $summary.Orders.Count
-    $summary.Attempt1 = if ($summary.Orders.Count -ge 1) { $summary.Orders[0] } else { $null }
-    $summary.Attempt2 = if ($summary.Orders.Count -ge 2) { $summary.Orders[1] } else { $null }
+    $firstObservedOrders = @($firstObservedOrders | ForEach-Object { $_ })
+    if (@($firstObservedOrders).Count -ge 1) {
+        try {
+            $summary.Orders = Wait-Until -Name 'second bot execution order' -TimeoutSeconds 180 -Condition {
+                $currentOrders = @(Get-SmokeOrders -ConnectionString $connectionString -BotId $botId)
+                if ($currentOrders.Count -ge 2) { return $currentOrders }
+                return $null
+            }
+        }
+        catch {
+            $summary.Orders = @($firstObservedOrders)
+        }
+    }
+    else {
+        $summary.Orders = @()
+    }
+    $summary.Orders = @($summary.Orders | ForEach-Object { $_ })
+
+    $summary.AttemptCount = @($summary.Orders).Count
+    $summary.Attempt1 = if (@($summary.Orders).Count -ge 1) { $summary.Orders[0] } else { $null }
+    $summary.Attempt2 = if (@($summary.Orders).Count -ge 2) { $summary.Orders[1] } else { $null }
+    $summary.OrderCaptureState = if ($summary.AttemptCount -ge 1) { 'OrdersObserved' } else { 'NoOrderObserved' }
     $summary.BotRuntimeSnapshot = Get-SmokeBotSnapshot -ConnectionString $connectionString -BotId $botId
     $summary.SignalRuntimeSnapshot = Get-SmokeSignalSnapshot -ConnectionString $connectionString -StrategyId $strategyId
     $summary.DriftSnapshotAfterAttempts = Get-ClockDriftSnapshot -ConnectionString $connectionString
@@ -442,6 +461,7 @@ try {
     Write-Host ('SmokeDatabaseName=' + $smokeDatabaseName)
     Write-Host ('RegisteredUserId=' + $summary.RegisteredUserId)
     Write-Host ('AttemptCount=' + $summary.AttemptCount)
+    Write-Host ('OrderCaptureState=' + $summary.OrderCaptureState)
     if ($summary.Attempt1) {
         Write-Host ('Attempt1FailureCode=' + $summary.Attempt1.FailureCode)
         Write-Host ('Attempt1FailureDetail=' + $summary.Attempt1.FailureDetail)
@@ -498,6 +518,8 @@ finally {
         [System.Security.Cryptography.CryptographicOperations]::ZeroMemory($randomKeyBytes)
     }
 }
+
+
 
 
 

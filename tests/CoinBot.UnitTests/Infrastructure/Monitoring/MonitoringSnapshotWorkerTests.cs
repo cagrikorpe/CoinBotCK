@@ -97,6 +97,7 @@ public sealed class MonitoringSnapshotWorkerTests
                 .GetRequiredService<IDataScopeContextAccessor>()
                 .BeginScope(userId: "user-monitoring", hasIsolationBypass: true);
             var dbContext = seedScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var exchangeAccountId = Guid.NewGuid();
             dbContext.BackgroundJobStates.Add(new BackgroundJobState
             {
                 Id = Guid.NewGuid(),
@@ -107,10 +108,19 @@ public sealed class MonitoringSnapshotWorkerTests
                 ConsecutiveFailureCount = 2,
                 LastErrorCode = "WorkerDown"
             });
+            dbContext.ExchangeAccounts.Add(new ExchangeAccount
+            {
+                Id = exchangeAccountId,
+                OwnerUserId = "user-monitoring",
+                ExchangeName = "Binance",
+                DisplayName = "Binance",
+                CredentialStatus = ExchangeCredentialStatus.Active,
+                IsReadOnly = false
+            });
             dbContext.ExchangeAccountSyncStates.Add(new ExchangeAccountSyncState
             {
                 Id = Guid.NewGuid(),
-                ExchangeAccountId = Guid.NewGuid(),
+                ExchangeAccountId = exchangeAccountId,
                 OwnerUserId = "user-monitoring",
                 PrivateStreamConnectionState = ExchangePrivateStreamConnectionState.Disconnected,
                 LastPrivateStreamEventAtUtc = now.UtcDateTime.AddMinutes(-10),
@@ -139,6 +149,228 @@ public sealed class MonitoringSnapshotWorkerTests
         Assert.Contains(alertCoordinator.Notifications, notification => notification.Title == "PrivateStreamDisconnected");
     }
 
+    [Fact]
+    public async Task RunColdCycleAsync_DoesNotMarkJobOrchestrationDown_WhenTradeMasterDisarmed()
+    {
+        var now = new DateTimeOffset(2026, 4, 11, 16, 25, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(now);
+        var databaseRoot = new InMemoryDatabaseRoot();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton(timeProvider);
+        services.AddSingleton<TimeProvider>(timeProvider);
+        services.AddSingleton(databaseRoot);
+        services.AddSingleton<IMonitoringTelemetryCollector, FakeMonitoringTelemetryCollector>();
+        services.AddSingleton<IRedisLatencyProbe, FakeRedisLatencyProbe>();
+        services.AddSingleton<IBinanceExchangeInfoClient>(new FakeExchangeInfoClient(now.UtcDateTime));
+        services.AddSingleton<IAlertService, FakeAlertService>();
+        services.AddSingleton<IOptions<DataLatencyGuardOptions>>(Options.Create(new DataLatencyGuardOptions()));
+        services.AddScoped<IDataScopeContextAccessor, FakeDataScopeContextAccessor>();
+        services.AddScoped<IDataScopeContext>(serviceProvider => serviceProvider.GetRequiredService<IDataScopeContextAccessor>());
+        services.AddDbContext<ApplicationDbContext>(options =>
+            options.UseInMemoryDatabase("MonitoringSnapshotWorkerTradeMasterDisarmedJobTests", databaseRoot));
+        services.AddScoped<IDataLatencyCircuitBreaker, DataLatencyCircuitBreaker>();
+
+        await using var provider = services.BuildServiceProvider();
+        await using (var seedScope = provider.CreateAsyncScope())
+        {
+            using var systemScope = seedScope.ServiceProvider
+                .GetRequiredService<IDataScopeContextAccessor>()
+                .BeginScope(userId: "user-monitoring", hasIsolationBypass: true);
+            var dbContext = seedScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            dbContext.BackgroundJobStates.Add(new BackgroundJobState
+            {
+                Id = Guid.NewGuid(),
+                JobType = "BotExecution",
+                JobKey = "pilot-bot",
+                Status = BackgroundJobStatus.Running,
+                LastHeartbeatAtUtc = now.UtcDateTime.AddMinutes(-10),
+                ConsecutiveFailureCount = 59,
+                LastErrorCode = "TradeMasterDisarmed"
+            });
+            await dbContext.SaveChangesAsync();
+        }
+
+        var worker = new MonitoringSnapshotWorker(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<IMonitoringTelemetryCollector>(),
+            provider.GetRequiredService<IRedisLatencyProbe>(),
+            provider.GetRequiredService<IBinanceExchangeInfoClient>(),
+            provider.GetRequiredService<IOptions<DataLatencyGuardOptions>>(),
+            timeProvider,
+            NullLogger<MonitoringSnapshotWorker>.Instance);
+
+        await worker.RunColdCycleAsync();
+
+        await using var scope = provider.CreateAsyncScope();
+        var verifyDbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var heartbeat = await verifyDbContext.WorkerHeartbeats
+            .AsNoTracking()
+            .SingleAsync(entity => entity.WorkerKey == "job-orchestration");
+
+        Assert.Equal(MonitoringHealthState.Healthy, heartbeat.HealthState);
+        Assert.Equal(MonitoringFreshnessTier.Hot, heartbeat.FreshnessTier);
+        Assert.Equal(0, heartbeat.ConsecutiveFailureCount);
+        Assert.Equal(now.UtcDateTime, heartbeat.LastHeartbeatAtUtc);
+        Assert.Equal("TradeMasterDisarmed", heartbeat.LastErrorCode);
+    }
+    [Fact]
+    public async Task RunColdCycleAsync_UsesLatestPrivateStreamHeartbeatPerAccountPlane()
+    {
+        var now = new DateTimeOffset(2026, 4, 11, 15, 30, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(now);
+        var databaseRoot = new InMemoryDatabaseRoot();
+        var services = new ServiceCollection();
+        var accountId = Guid.NewGuid();
+        services.AddLogging();
+        services.AddSingleton(timeProvider);
+        services.AddSingleton<TimeProvider>(timeProvider);
+        services.AddSingleton(databaseRoot);
+        services.AddSingleton<IMonitoringTelemetryCollector, FakeMonitoringTelemetryCollector>();
+        services.AddSingleton<IRedisLatencyProbe, FakeRedisLatencyProbe>();
+        services.AddSingleton<IBinanceExchangeInfoClient>(new FakeExchangeInfoClient(now.UtcDateTime));
+        services.AddSingleton<IAlertService, FakeAlertService>();
+        services.AddSingleton<IOptions<DataLatencyGuardOptions>>(Options.Create(new DataLatencyGuardOptions()));
+        services.AddScoped<IDataScopeContextAccessor, FakeDataScopeContextAccessor>();
+        services.AddScoped<IDataScopeContext>(serviceProvider => serviceProvider.GetRequiredService<IDataScopeContextAccessor>());
+        services.AddDbContext<ApplicationDbContext>(options =>
+            options.UseInMemoryDatabase("MonitoringSnapshotWorkerLatestPrivateStreamTests", databaseRoot));
+        services.AddScoped<IDataLatencyCircuitBreaker, DataLatencyCircuitBreaker>();
+
+        await using var provider = services.BuildServiceProvider();
+        await using (var seedScope = provider.CreateAsyncScope())
+        {
+            using var systemScope = seedScope.ServiceProvider
+                .GetRequiredService<IDataScopeContextAccessor>()
+                .BeginScope(userId: "user-monitoring", hasIsolationBypass: true);
+            var dbContext = seedScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            dbContext.ExchangeAccounts.Add(new ExchangeAccount
+            {
+                Id = accountId,
+                OwnerUserId = "user-monitoring",
+                ExchangeName = "Binance",
+                DisplayName = "Binance",
+                CredentialStatus = ExchangeCredentialStatus.Active,
+                IsReadOnly = false
+            });
+            dbContext.ExchangeAccountSyncStates.AddRange(
+                new ExchangeAccountSyncState
+                {
+                    Id = Guid.NewGuid(),
+                    ExchangeAccountId = accountId,
+                    OwnerUserId = "user-monitoring",
+                    Plane = ExchangeDataPlane.Futures,
+                    PrivateStreamConnectionState = ExchangePrivateStreamConnectionState.Connected,
+                    LastPrivateStreamEventAtUtc = now.UtcDateTime.AddMinutes(-10),
+                    LastStateReconciledAtUtc = now.UtcDateTime.AddMinutes(-10)
+                },
+                new ExchangeAccountSyncState
+                {
+                    Id = Guid.NewGuid(),
+                    ExchangeAccountId = accountId,
+                    OwnerUserId = "user-monitoring",
+                    Plane = ExchangeDataPlane.Futures,
+                    PrivateStreamConnectionState = ExchangePrivateStreamConnectionState.Connected,
+                    LastPrivateStreamEventAtUtc = now.UtcDateTime.AddSeconds(-5),
+                    LastStateReconciledAtUtc = now.UtcDateTime.AddSeconds(-5)
+                });
+            await dbContext.SaveChangesAsync();
+        }
+
+        var worker = new MonitoringSnapshotWorker(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<IMonitoringTelemetryCollector>(),
+            provider.GetRequiredService<IRedisLatencyProbe>(),
+            provider.GetRequiredService<IBinanceExchangeInfoClient>(),
+            provider.GetRequiredService<IOptions<DataLatencyGuardOptions>>(),
+            timeProvider,
+            NullLogger<MonitoringSnapshotWorker>.Instance);
+
+        await worker.RunColdCycleAsync();
+
+        await using var scope = provider.CreateAsyncScope();
+        var verifyDbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var heartbeat = await verifyDbContext.WorkerHeartbeats
+            .AsNoTracking()
+            .SingleAsync(entity => entity.WorkerKey == "exchange-private-stream");
+
+        Assert.Equal(MonitoringHealthState.Healthy, heartbeat.HealthState);
+        Assert.Equal(now.UtcDateTime.AddSeconds(-5), heartbeat.LastHeartbeatAtUtc);
+    }
+    [Fact]
+    public async Task RunColdCycleAsync_UsesRecentPrivatePlaneSyncAsConnectedHeartbeat()
+    {
+        var now = new DateTimeOffset(2026, 4, 11, 16, 10, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(now);
+        var databaseRoot = new InMemoryDatabaseRoot();
+        var services = new ServiceCollection();
+        var accountId = Guid.NewGuid();
+        services.AddLogging();
+        services.AddSingleton(timeProvider);
+        services.AddSingleton<TimeProvider>(timeProvider);
+        services.AddSingleton(databaseRoot);
+        services.AddSingleton<IMonitoringTelemetryCollector, FakeMonitoringTelemetryCollector>();
+        services.AddSingleton<IRedisLatencyProbe, FakeRedisLatencyProbe>();
+        services.AddSingleton<IBinanceExchangeInfoClient>(new FakeExchangeInfoClient(now.UtcDateTime));
+        services.AddSingleton<IAlertService, FakeAlertService>();
+        services.AddSingleton<IOptions<DataLatencyGuardOptions>>(Options.Create(new DataLatencyGuardOptions()));
+        services.AddScoped<IDataScopeContextAccessor, FakeDataScopeContextAccessor>();
+        services.AddScoped<IDataScopeContext>(serviceProvider => serviceProvider.GetRequiredService<IDataScopeContextAccessor>());
+        services.AddDbContext<ApplicationDbContext>(options =>
+            options.UseInMemoryDatabase("MonitoringSnapshotWorkerPrivatePlaneSyncHeartbeatTests", databaseRoot));
+        services.AddScoped<IDataLatencyCircuitBreaker, DataLatencyCircuitBreaker>();
+
+        await using var provider = services.BuildServiceProvider();
+        await using (var seedScope = provider.CreateAsyncScope())
+        {
+            using var systemScope = seedScope.ServiceProvider
+                .GetRequiredService<IDataScopeContextAccessor>()
+                .BeginScope(userId: "user-monitoring", hasIsolationBypass: true);
+            var dbContext = seedScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            dbContext.ExchangeAccounts.Add(new ExchangeAccount
+            {
+                Id = accountId,
+                OwnerUserId = "user-monitoring",
+                ExchangeName = "Binance",
+                DisplayName = "Binance",
+                CredentialStatus = ExchangeCredentialStatus.Active,
+                IsReadOnly = false
+            });
+            dbContext.ExchangeAccountSyncStates.Add(new ExchangeAccountSyncState
+            {
+                Id = Guid.NewGuid(),
+                ExchangeAccountId = accountId,
+                OwnerUserId = "user-monitoring",
+                Plane = ExchangeDataPlane.Futures,
+                PrivateStreamConnectionState = ExchangePrivateStreamConnectionState.Connected,
+                LastPrivateStreamEventAtUtc = now.UtcDateTime.AddMinutes(-10),
+                LastBalanceSyncedAtUtc = now.UtcDateTime.AddSeconds(-5),
+                LastPositionSyncedAtUtc = now.UtcDateTime.AddSeconds(-4),
+                LastStateReconciledAtUtc = now.UtcDateTime.AddSeconds(-3)
+            });
+            await dbContext.SaveChangesAsync();
+        }
+
+        var worker = new MonitoringSnapshotWorker(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<IMonitoringTelemetryCollector>(),
+            provider.GetRequiredService<IRedisLatencyProbe>(),
+            provider.GetRequiredService<IBinanceExchangeInfoClient>(),
+            provider.GetRequiredService<IOptions<DataLatencyGuardOptions>>(),
+            timeProvider,
+            NullLogger<MonitoringSnapshotWorker>.Instance);
+
+        await worker.RunColdCycleAsync();
+
+        await using var scope = provider.CreateAsyncScope();
+        var verifyDbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var heartbeat = await verifyDbContext.WorkerHeartbeats
+            .AsNoTracking()
+            .SingleAsync(entity => entity.WorkerKey == "exchange-private-stream");
+
+        Assert.Equal(MonitoringHealthState.Healthy, heartbeat.HealthState);
+        Assert.Equal(now.UtcDateTime.AddSeconds(-3), heartbeat.LastHeartbeatAtUtc);
+    }
     private sealed class FakeExchangeInfoClient(DateTime serverTimeUtc) : IBinanceExchangeInfoClient
     {
         public Task<IReadOnlyCollection<SymbolMetadataSnapshot>> GetSymbolMetadataAsync(

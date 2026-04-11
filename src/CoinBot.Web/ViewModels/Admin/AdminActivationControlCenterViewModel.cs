@@ -363,7 +363,6 @@ public static class AdminActivationControlCenterComposer
     private static AdminActivationReadinessItemViewModel BuildServerTimeItem(BinanceTimeSyncSnapshot snapshot)
     {
         if (snapshot.HasSynchronizedOffset &&
-            string.Equals(snapshot.StatusCode, "Synchronized", StringComparison.OrdinalIgnoreCase) &&
             string.IsNullOrWhiteSpace(snapshot.FailureReason))
         {
             return CreateReadinessItem(

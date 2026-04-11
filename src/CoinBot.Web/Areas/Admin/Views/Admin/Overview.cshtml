@@ -12,6 +12,15 @@
     var executionError = TempData["AdminExecutionSwitchError"]?.ToString();
     var clockDriftSuccess = TempData["AdminClockDriftSuccess"]?.ToString();
     var clockDriftError = TempData["AdminClockDriftError"]?.ToString();
+    var setupSuccess = TempData["AdminSetupSuccess"]?.ToString();
+    var setupError = TempData["AdminSetupError"]?.ToString();
+    var setupStatusItems = setup.Items.Where(item => !string.Equals(item.Key, "environment", StringComparison.OrdinalIgnoreCase)).Take(3).ToArray();
+    var activationStatusItemKeys = new[] { "system-active", "trade-master", "environment" };
+    var activationStatusItems = activationStatusItemKeys
+        .Select(key => activation.Items.FirstOrDefault(item => string.Equals(item.Key, key, StringComparison.OrdinalIgnoreCase)))
+        .Where(item => item is not null)
+        .Cast<AdminSuperAdminFlowItemViewModel>()
+        .ToArray();
     var currentModeIsDemo = string.Equals(setup.Items.FirstOrDefault(item => item.Key == "environment")?.Value, "Demo", StringComparison.OrdinalIgnoreCase);
     var setupConnectionTestAction = setup.Actions.FirstOrDefault(item => item.Key == "connection-test") ?? new AdminSuperAdminFlowActionViewModel("connection-test", "Baglantiyi Test Et", true, string.Empty, string.Empty);
     var activationPrepareAction = activation.Actions.FirstOrDefault(item => item.Key == "prepare") ?? new AdminSuperAdminFlowActionViewModel("prepare", "Sistemi Hazirla", true, string.Empty, string.Empty);
@@ -55,6 +64,14 @@
     string ActionReason(string? blockedReason, string fallbackReason)
     {
         return string.IsNullOrWhiteSpace(blockedReason) ? fallbackReason : blockedReason!;
+    }
+
+    string ActivationDisplayValue(AdminSuperAdminFlowItemViewModel item)
+    {
+        return string.Equals(item.Key, "system-active", StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(item.Value, "Durduruldu", StringComparison.OrdinalIgnoreCase)
+            ? "Kapali"
+            : item.Value;
     }
 }
 
@@ -132,202 +149,193 @@
                     <section class="card card-custom gutter-b cb-card cb-admin-card">
                         <div class="card-body">
                             <div class="cb-admin-section-kicker">1. Sistem Kurulumu</div>
-                            <div class="cb-admin-section-title">Ortam, baglanti ve temel hazirlik</div>
-                            <p class="cb-admin-section-description">Bu adimda yalnizca ortam secimi, exchange hazirligi, worker durumu ve baglanti testi gorunur.</p>
-                            @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel { Tone = StripTone(setup.Tone), Title = setup.StatusLabel, Message = setup.PrimaryMessage, Meta = setup.Summary })
-                            <div class="cb-admin-summary-grid mt-6">
-                                @foreach (var item in setup.Items)
+                            <div class="cb-admin-section-title">Ortam ve Binance baglantisi</div>
+                            <p class="cb-admin-section-description">Ortamı secin, Binance API bilgilerini girin, baglantiyi test edin.</p>
+                            @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel { Tone = StripTone(setup.Tone), Title = setup.StatusLabel, Message = setup.PrimaryMessage, Meta = "Durum" })
+                            <div class="cb-admin-summary-grid mt-6" data-cb-super-admin-setup-status>
+                                @foreach (var item in setupStatusItems)
                                 {
                                     <div class="cb-admin-summary-card">
                                         <span class="cb-admin-summary-label">@item.Label</span>
                                         <strong>@item.Value</strong>
                                         <small>@item.Summary</small>
-                                        <div class="cb-admin-page-meta mt-4">@await Html.PartialAsync("Foundation/_AdminBadge", Badge(item.Value, item.Tone, ShortIcon(item.Label)))</div>
                                     </div>
                                 }
+                                <div class="cb-admin-summary-card" data-cb-super-admin-setup-system-status>
+                                    <span class="cb-admin-summary-label">Sistem hazir mi</span>
+                                    <strong>@setup.StatusLabel</strong>
+                                    <small>@setup.PrimaryMessage</small>
+                                </div>
                             </div>
                         </div>
                     </section>
 
-                    <div class="row">
-                        <div class="col-xl-7">
-                            <section class="card card-custom gutter-b cb-card cb-admin-card" data-cb-super-admin-setup-form>
-                                <div class="card-body">
-                                    <div class="cb-admin-section-kicker">Ortam secimi</div>
-                                    <div class="cb-admin-section-title">Demo / Live secimini kaydet</div>
-                                    <p class="cb-admin-section-description">Demo/Live secimi yalnizca super admin tarafinda kalir. Live acilisi icin approval reference zorunludur.</p>
-                                    <form asp-area="Admin" asp-controller="Admin" asp-action="SetDemoMode" method="post" class="mt-5">
-                                        @Html.AntiForgeryToken()
-                                        <input type="hidden" name="returnTarget" value="Overview" />
-                                        <div class="form-group">
-                                            <label class="font-weight-bold d-block">Ortam</label>
-                                            <div class="d-flex flex-wrap gap-4">
-                                                <label class="radio radio-outline radio-outline-2x radio-primary mr-6">
-                                                    <input type="radio" name="isEnabled" value="true" @(currentModeIsDemo ? "checked" : null) />
-                                                    <span></span>
-                                                    Demo / Testnet
-                                                </label>
-                                                <label class="radio radio-outline radio-outline-2x radio-warning">
-                                                    <input type="radio" name="isEnabled" value="false" @(!currentModeIsDemo ? "checked" : null) />
-                                                    <span></span>
-                                                    Live
-                                                </label>
-                                            </div>
-                                        </div>
-                                        <div class="form-group">
-                                            <label class="font-weight-bold">Islem notu</label>
-                                            <input type="text" name="reason" class="form-control" maxlength="256" placeholder="Ortam degisikligi nedeni" />
-                                        </div>
-                                        <div class="form-group">
-                                            <label class="font-weight-bold">Live izin referansi</label>
-                                            <input type="text" name="liveApprovalReference" class="form-control" maxlength="128" placeholder="Live seciliyorsa zorunlu" />
-                                            <small class="form-text text-muted">Live seciliyse approval reference olmadan islem engellenir.</small>
-                                        </div>
-                                        <div class="form-group mb-6">
-                                            <label class="font-weight-bold">Onay ibaresi</label>
-                                            <input type="text" name="reauthToken" class="form-control" maxlength="32" placeholder="ONAYLA" />
-                                        </div>
-                                        <div class="cb-admin-inline-actions">
-                                            <button type="submit" class="btn btn-primary font-weight-bolder">Kaydet ve Devam Et</button>
-                                            <a asp-area="Admin" asp-controller="Admin" asp-action="ExchangeAccounts" class="btn btn-light-primary font-weight-bold">Exchange Hesaplari</a>
-                                        </div>
-                                    </form>
+                    <section class="card card-custom gutter-b cb-card cb-admin-card" data-cb-super-admin-setup-form data-cb-super-admin-connection-test-form>
+                        <div class="card-body">
+                            <div class="cb-admin-section-kicker">Binance Baglanti Ayarlari</div>
+                            <div class="cb-admin-section-title">API bilgileri</div>
+                            <p class="cb-admin-section-description">Secret key kaydedilir; ekranda tekrar gosterilmez.</p>
+                            @if (!string.IsNullOrWhiteSpace(setupSuccess))
+                            {
+                                <div class="mb-5" role="status" aria-live="polite" data-cb-super-admin-setup-result="success">
+                                    @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel { Tone = "success", Title = "Durum", Message = setupSuccess!, Meta = "Kurulum" })
                                 </div>
-                            </section>
-                        </div>
-                        <div class="col-xl-5">
-                            <section class="card card-custom gutter-b cb-card cb-admin-card" data-cb-super-admin-connection-test-form>
-                                <div class="card-body">
-                                    <div class="cb-admin-section-kicker">Baglanti testi</div>
-                                    <div class="cb-admin-section-title">Server time ve worker gorunurlugunu yenile</div>
-                                    <p class="cb-admin-section-description">Bu buton baglanti ozetini yeniler. Detay gerekirse Gelismis ekranina gecin.</p>
-                                    <form asp-area="Admin" asp-controller="Admin" asp-action="RefreshClockDrift" method="post" class="mt-5">
-                                        @Html.AntiForgeryToken()
-                                        <input type="hidden" name="returnTarget" value="Overview" />
-                                        <button type="submit" class="btn btn-light-warning font-weight-bolder" data-cb-super-admin-action-enabled="@setupConnectionTestAction.IsEnabled.ToString().ToLowerInvariant()" @(!setupConnectionTestAction.IsEnabled ? "disabled" : null)>Baglantiyi Test Et</button>
-                                    </form>
-                                    <div class="cb-helper-text mt-6" data-cb-super-admin-action-reason="connection-test">@(setupConnectionTestAction.IsEnabled ? "Exchange bagli degil veya worker calismiyorsa blocker bu ekranda tek satir kalir." : ActionReason(setupConnectionTestAction.BlockedReason, "Bu rolde baglanti testi acik degil"))</div>
-                                </div>
-                            </section>
-                        </div>
-                    </div>
-                </div>
+                            }
 
+                            @if (!string.IsNullOrWhiteSpace(setupError))
+                            {
+                                <div class="mb-5" role="alert" data-cb-super-admin-setup-result="error">
+                                    @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel { Tone = "warning", Title = "Durum", Message = setupError!, Meta = "Kurulum" })
+                                </div>
+                            }
+
+                            <form asp-area="Admin" asp-controller="Admin" asp-action="ConnectBinanceForSetup" method="post" class="mt-5" autocomplete="off">
+                                @Html.AntiForgeryToken()
+                                <div class="form-group">
+                                    <label class="font-weight-bold d-block">Ortam</label>
+                                    <div class="d-flex flex-wrap gap-4">
+                                        <label class="radio radio-outline radio-outline-2x radio-primary mr-6">
+                                            <input type="radio" name="isDemo" value="true" @(currentModeIsDemo ? "checked" : null) />
+                                            <span></span>
+                                            Demo
+                                        </label>
+                                        <label class="radio radio-outline radio-outline-2x radio-warning">
+                                            <input type="radio" name="isDemo" value="false" @(!currentModeIsDemo ? "checked" : null) />
+                                            <span></span>
+                                            Live
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label class="font-weight-bold" for="setupConnectionName">Baglanti Adi</label>
+                                    <input id="setupConnectionName" type="text" name="connectionName" class="form-control" maxlength="96" value="Binance" autocomplete="off" />
+                                </div>
+                                <div class="form-group">
+                                    <label class="font-weight-bold" for="setupApiKey">API Key</label>
+                                    <input id="setupApiKey" type="text" name="apiKey" class="form-control" maxlength="256" autocomplete="off" required />
+                                </div>
+                                <div class="form-group">
+                                    <label class="font-weight-bold" for="setupApiSecret">Secret Key</label>
+                                    <input id="setupApiSecret" type="password" name="apiSecret" class="form-control" maxlength="256" autocomplete="new-password" required />
+                                </div>
+                                <div class="cb-admin-inline-actions mt-6">
+                                    <button type="submit" name="setupCommand" value="test" class="btn btn-light-primary font-weight-bold" data-cb-super-admin-action-enabled="@setupConnectionTestAction.IsEnabled.ToString().ToLowerInvariant()" @(!setupConnectionTestAction.IsEnabled ? "disabled" : null)>Baglantiyi Test Et</button>
+                                    <button type="submit" name="setupCommand" value="save" class="btn btn-primary font-weight-bolder">Kaydet ve Devam Et</button>
+                                </div>
+                                @if (!setupConnectionTestAction.IsEnabled)
+                                {
+                                    <div class="cb-helper-text mt-4" data-cb-super-admin-action-reason="connection-test">@ActionReason(setupConnectionTestAction.BlockedReason, "Baglanti testi acik degil")</div>
+                                }
+                            </form>
+                        </div>
+                    </section>
+                </div>
                 <div class="tab-pane fade" id="cb_super_admin_flow_tab_activation" role="tabpanel" data-cb-super-admin-flow-section="activation" data-cb-super-admin-flow-visible="@activation.IsVisible.ToString().ToLowerInvariant()" data-cb-super-admin-flow-accessible="@activation.IsAccessible.ToString().ToLowerInvariant()">
                     <section class="card card-custom gutter-b cb-card cb-admin-card" data-cb-super-admin-activation-panel>
                         <div class="card-body">
                             <div class="cb-admin-section-kicker">2. Sistemi Aktiflestir</div>
-                            <div class="cb-admin-section-title">Hazirla, aktif et, kapat veya acil durdur</div>
-                            <p class="cb-admin-section-description">Bu adimda tek satir operasyon mesaji ve kontrollu aksiyonlar gorunur.</p>
-                            @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel { Tone = StripTone(activation.Tone), Title = activation.StatusLabel, Message = activation.PrimaryMessage, Meta = activation.Summary })
-                            <div class="cb-admin-summary-grid mt-6">
-                                @foreach (var item in activation.Items)
+                            <div class="cb-admin-section-title">Ac, kapat veya acil durdur</div>
+                            <p class="cb-admin-section-description">Bu ekranda yalnizca sistem durumu, TradeMaster, ortam ve ana aksiyonlar gorunur.</p>
+                            @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel { Tone = StripTone(activation.Tone), Title = activation.StatusLabel, Message = activation.PrimaryMessage, Meta = "Durum" })
+                            <div class="cb-admin-summary-grid mt-6" data-cb-super-admin-activation-status>
+                                @foreach (var item in activationStatusItems)
                                 {
-                                    <div class="cb-admin-summary-card">
+                                    <div class="cb-admin-summary-card" data-cb-super-admin-activation-status-item="@item.Key">
                                         <span class="cb-admin-summary-label">@item.Label</span>
-                                        <strong>@item.Value</strong>
+                                        <strong>@ActivationDisplayValue(item)</strong>
                                         <small>@item.Summary</small>
-                                        <div class="cb-admin-page-meta mt-4">@await Html.PartialAsync("Foundation/_AdminBadge", Badge(item.Value, item.Tone, ShortIcon(item.Label)))</div>
                                     </div>
                                 }
                             </div>
                         </div>
                     </section>
 
-                    <div class="row">
-                        <div class="col-xl-4">
-                            <section class="card card-custom gutter-b cb-card cb-admin-card" data-cb-super-admin-prepare-card>
-                                <div class="card-body">
-                                    <div class="cb-admin-section-kicker">Hazirlik</div>
-                                    <div class="cb-admin-section-title">Sistemi Hazirla</div>
-                                    <p class="cb-admin-section-description">Durumu yenileyin; blocker kalmadiysa aktif et adimina gecin.</p>
-                                    <form asp-area="Admin" asp-controller="Admin" asp-action="RefreshClockDrift" method="post" class="mt-5">
-                                        @Html.AntiForgeryToken()
-                                        <input type="hidden" name="returnTarget" value="Overview" />
-                                        <button type="submit" class="btn btn-light-warning font-weight-bolder" data-cb-super-admin-action-enabled="@activationPrepareAction.IsEnabled.ToString().ToLowerInvariant()" @(!activationPrepareAction.IsEnabled ? "disabled" : null)>Sistemi Hazirla</button>
-                                    </form>
-                                    <div class="cb-helper-text mt-4" data-cb-super-admin-action-reason="prepare">@(activationPrepareAction.IsEnabled ? activationPrepareAction.Summary : ActionReason(activationPrepareAction.BlockedReason, "Bu rolde hazirlik yenilemesi acik degil"))</div>
-                                </div>
-                            </section>
-                        </div>
-                        <div class="col-xl-4">
-                            <section class="card card-custom gutter-b cb-card cb-admin-card" data-cb-super-admin-activation-action="activate">
-                                <div class="card-body">
-                                    <div class="cb-admin-section-kicker">Aktivasyon</div>
-                                    <div class="cb-admin-section-title">Sistemi Aktif Et</div>
-                                    <p class="cb-admin-section-description">Eksik varsa buton pasif kalir; once tek satir blocker mesajini giderin.</p>
-                                    <form asp-area="Admin" asp-controller="Admin" asp-action="ActivateSystem" method="post" class="mt-5">
-                                        @Html.AntiForgeryToken()
-                                        <input type="hidden" name="returnTarget" value="Overview" />
-                                        <div class="form-group">
-                                            <label class="font-weight-bold">Islem notu</label>
-                                            <input type="text" name="reason" class="form-control" maxlength="256" placeholder="Aktivasyon nedeni" />
-                                        </div>
-                                        <div class="form-group mb-6">
-                                            <label class="font-weight-bold">Onay ibaresi</label>
-                                            <input type="text" name="reauthToken" class="form-control" maxlength="32" placeholder="ONAYLA" />
-                                        </div>
-                                        <button type="submit" class="btn btn-primary font-weight-bolder" data-cb-super-admin-action-enabled="@activateAction.IsEnabled.ToString().ToLowerInvariant()" @(!activateAction.IsEnabled ? "disabled" : null)>Sistemi Aktif Et</button>
-                                    </form>
-                                    <div class="cb-helper-text mt-4" data-cb-super-admin-action-reason="activate">@(activateAction.IsEnabled ? activateAction.Summary : ActionReason(activateAction.BlockedReason, "Sistem aktive edilmeye hazir degil"))</div>
-                                </div>
-                            </section>
-                        </div>
-                        <div class="col-xl-4">
-                            <section class="card card-custom gutter-b cb-card cb-admin-card" data-cb-super-admin-activation-action="deactivate">
-                                <div class="card-body">
-                                    <div class="cb-admin-section-kicker">Guvenli kapatma</div>
-                                    <div class="cb-admin-section-title">Sistemi Kapat</div>
-                                    <p class="cb-admin-section-description">Normal kapatma icin bu aksiyonu kullanin. Acil durum icin ayri acil durdur baglantisi asagidadir.</p>
-                                    <form asp-area="Admin" asp-controller="Admin" asp-action="DeactivateSystem" method="post" class="mt-5">
-                                        @Html.AntiForgeryToken()
-                                        <input type="hidden" name="returnTarget" value="Overview" />
-                                        <div class="form-group">
-                                            <label class="font-weight-bold">Islem notu</label>
-                                            <input type="text" name="reason" class="form-control" maxlength="256" placeholder="Kapatma nedeni" />
-                                        </div>
-                                        <div class="form-group mb-6">
-                                            <label class="font-weight-bold">Onay ibaresi</label>
-                                            <input type="text" name="reauthToken" class="form-control" maxlength="32" placeholder="ONAYLA" />
-                                        </div>
-                                        <button type="submit" class="btn btn-light-danger font-weight-bolder" data-cb-super-admin-action-enabled="@deactivateAction.IsEnabled.ToString().ToLowerInvariant()" @(!deactivateAction.IsEnabled ? "disabled" : null)>Sistemi Kapat</button>
-                                    </form>
-                                    <div class="cb-helper-text mt-4" data-cb-super-admin-action-reason="deactivate">@(deactivateAction.IsEnabled ? deactivateAction.Summary : ActionReason(deactivateAction.BlockedReason, "Sistem zaten kapali"))</div>
-                                </div>
-                            </section>
-                        </div>
-                    </div>
+                    <section class="card card-custom gutter-b cb-card cb-admin-card" data-cb-super-admin-activation-actions>
+                        <div class="card-body">
+                            <div class="cb-admin-section-kicker">Aksiyonlar</div>
+                            <div class="cb-admin-section-title">Sade kontrol</div>
+                            <p class="cb-admin-section-description">Eksik varsa aksiyon pasif kalir ve nedeni tek satir gorunur.</p>
+                            <div class="cb-admin-inline-actions mt-6">
+                                <form asp-area="Admin" asp-controller="Admin" asp-action="RefreshClockDrift" method="post" class="d-inline-block mr-3">
+                                    @Html.AntiForgeryToken()
+                                    <input type="hidden" name="returnTarget" value="Overview" />
+                                    <button type="submit" class="btn btn-light-primary font-weight-bold" data-cb-super-admin-action-enabled="@activationPrepareAction.IsEnabled.ToString().ToLowerInvariant()" @(!activationPrepareAction.IsEnabled ? "disabled" : null)>Sistemi Hazirla</button>
+                                </form>
 
-                    <section class="card card-custom gutter-b cb-card cb-admin-card" data-cb-super-admin-emergency-panel>
-                        <div class="card-body d-flex flex-wrap align-items-start justify-content-between gap-4">
-                            <div>
-                                <div class="cb-admin-section-kicker">Acil durum</div>
-                                <div class="cb-admin-section-title">Acil durdur görünur ve ayrik kalir</div>
-                                <p class="cb-admin-section-description mb-0">Panik aninda mevcut acil durdur yuzeyini kullanin. Acil durdurma aktifse sistem yeniden acilmaz.</p>
+                                <span data-cb-super-admin-activation-action="activate">
+                                    @if (!activateAction.IsEnabled)
+                                    {
+                                        <button type="submit" class="btn btn-primary font-weight-bolder" data-cb-super-admin-action-enabled="false" disabled>Sistemi Aktif Et</button>
+                                    }
+                                    else
+                                    {
+                                        <details class="d-inline-block mr-3">
+                                            <summary class="btn btn-primary font-weight-bolder">Sistemi Aktif Et</summary>
+                                            <form asp-area="Admin" asp-controller="Admin" asp-action="ActivateSystem" method="post" class="mt-4">
+                                                @Html.AntiForgeryToken()
+                                                <input type="hidden" name="returnTarget" value="Overview" />
+                                                <div class="form-group">
+                                                    <label class="font-weight-bold">Not</label>
+                                                    <input type="text" name="reason" class="form-control" maxlength="256" placeholder="Aktivasyon nedeni" />
+                                                </div>
+                                                <div class="form-group mb-4">
+                                                    <label class="font-weight-bold">Onay</label>
+                                                    <input type="text" name="reauthToken" class="form-control" maxlength="32" placeholder="ONAYLA" />
+                                                </div>
+                                                <button type="submit" class="btn btn-primary font-weight-bolder" data-cb-super-admin-action-enabled="true">Sistemi Aktif Et</button>
+                                            </form>
+                                        </details>
+                                    }
+                                </span>
+
+                                <span data-cb-super-admin-activation-action="deactivate">
+                                    @if (!deactivateAction.IsEnabled)
+                                    {
+                                        <button type="submit" class="btn btn-light-danger font-weight-bolder" data-cb-super-admin-action-enabled="false" disabled>Sistemi Kapat</button>
+                                    }
+                                    else
+                                    {
+                                        <details class="d-inline-block mr-3">
+                                            <summary class="btn btn-light-danger font-weight-bolder">Sistemi Kapat</summary>
+                                            <form asp-area="Admin" asp-controller="Admin" asp-action="DeactivateSystem" method="post" class="mt-4">
+                                                @Html.AntiForgeryToken()
+                                                <input type="hidden" name="returnTarget" value="Overview" />
+                                                <div class="form-group">
+                                                    <label class="font-weight-bold">Not</label>
+                                                    <input type="text" name="reason" class="form-control" maxlength="256" placeholder="Kapatma nedeni" />
+                                                </div>
+                                                <div class="form-group mb-4">
+                                                    <label class="font-weight-bold">Onay</label>
+                                                    <input type="text" name="reauthToken" class="form-control" maxlength="32" placeholder="ONAYLA" />
+                                                </div>
+                                                <button type="submit" class="btn btn-light-danger font-weight-bolder" data-cb-super-admin-action-enabled="true">Sistemi Kapat</button>
+                                            </form>
+                                        </details>
+                                    }
+                                </span>
+
+                                <a asp-area="Admin" asp-controller="Admin" asp-action="Settings" asp-fragment="cb_admin_settings_crisis_panel" class="btn btn-light-danger font-weight-bolder" data-cb-super-admin-emergency-panel>Acil Durdur</a>
                             </div>
-                            <div class="cb-admin-inline-actions">
-                                <a asp-area="Admin" asp-controller="Admin" asp-action="Settings" asp-fragment="cb_admin_settings_crisis_panel" class="btn btn-danger font-weight-bolder">Acil Durdur</a>
-                                <a asp-area="Admin" asp-controller="Admin" asp-action="Settings" asp-fragment="cb_admin_settings_tab_activation" class="btn btn-light-warning font-weight-bold">Aktivasyon detaylari</a>
-                            </div>
+                            <div class="cb-helper-text mt-4" data-cb-super-admin-action-reason="prepare">@(activationPrepareAction.IsEnabled ? activationPrepareAction.Summary : ActionReason(activationPrepareAction.BlockedReason, "Sistem hazir degil"))</div>
+                            <div class="cb-helper-text mt-2" data-cb-super-admin-action-reason="activate">@(activateAction.IsEnabled ? activateAction.Summary : ActionReason(activateAction.BlockedReason, "Sistem aktive edilmeye hazir degil"))</div>
+                            <div class="cb-helper-text mt-2" data-cb-super-admin-action-reason="deactivate">@(deactivateAction.IsEnabled ? deactivateAction.Summary : ActionReason(deactivateAction.BlockedReason, "Sistem zaten kapali"))</div>
                         </div>
                     </section>
                 </div>
-
                 <div class="tab-pane fade" id="cb_super_admin_flow_tab_monitoring" role="tabpanel" data-cb-super-admin-flow-section="monitoring" data-cb-super-admin-flow-visible="@monitoring.IsVisible.ToString().ToLowerInvariant()" data-cb-super-admin-flow-accessible="@monitoring.IsAccessible.ToString().ToLowerInvariant()">
                     <section class="card card-custom gutter-b cb-card cb-admin-card" data-cb-super-admin-monitoring-panel>
                         <div class="card-body">
                             <div class="cb-admin-section-kicker">3. Sistemi Izle</div>
-                            <div class="cb-admin-section-title">Kisa operasyon ozeti</div>
-                            <p class="cb-admin-section-description">Bu adim yalnizca sistem acik mi, ortam ne, son hata ne ve son durdurma nedeni ne sorularina cevap verir.</p>
+                            <div class="cb-admin-section-title">Durum</div>
+                            <p class="cb-admin-section-description">Sistem calisiyor mu, son hata ne ve calisan bot sayisi kac sorularina kisa cevap verir.</p>
                             @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel { Tone = StripTone(monitoring.Tone), Title = monitoring.StatusLabel, Message = monitoring.PrimaryMessage, Meta = monitoring.Summary })
-                            <div class="cb-admin-summary-grid mt-6">
+                            <div class="cb-admin-summary-grid mt-6" data-cb-super-admin-monitoring-summary>
                                 @foreach (var item in monitoring.Items)
                                 {
                                     <div class="cb-admin-summary-card">
                                         <span class="cb-admin-summary-label">@item.Label</span>
                                         <strong>@item.Value</strong>
                                         <small>@item.Summary</small>
-                                        <div class="cb-admin-page-meta mt-4">@await Html.PartialAsync("Foundation/_AdminBadge", Badge(item.Value, item.Tone, ShortIcon(item.Label)))</div>
                                     </div>
                                 }
                             </div>
@@ -337,9 +345,8 @@
                                     <input type="hidden" name="returnTarget" value="Overview" />
                                     <button type="submit" class="btn btn-light-warning font-weight-bolder" data-cb-super-admin-action-enabled="@monitoringRefreshAction.IsEnabled.ToString().ToLowerInvariant()" @(!monitoringRefreshAction.IsEnabled ? "disabled" : null)>Yenile</button>
                                 </form>
-                                <span class="cb-helper-text mr-4" data-cb-super-admin-action-reason="refresh">@(monitoringRefreshAction.IsEnabled ? monitoringRefreshAction.Summary : ActionReason(monitoringRefreshAction.BlockedReason, "Bu rolde izleme yenilemesi acik degil"))</span>
-                                <a asp-area="Admin" asp-controller="Admin" asp-action="Settings" asp-fragment="cb_admin_settings_crisis_panel" class="btn btn-danger font-weight-bolder">Acil Durdur</a>
-                                <a href="#cb_super_admin_flow_tab_activation" class="btn btn-light-primary font-weight-bold" data-toggle="tab">Sistemi Kapat</a>
+                                <span class="cb-helper-text mr-4" data-cb-super-admin-action-reason="refresh">@(monitoringRefreshAction.IsEnabled ? monitoringRefreshAction.Summary : ActionReason(monitoringRefreshAction.BlockedReason, "Sistem hazir degil"))</span>
+                                <a asp-area="Admin" asp-controller="Admin" asp-action="Settings" asp-fragment="cb_admin_settings_crisis_panel" class="btn btn-light-danger font-weight-bolder">Acil Durdur</a>
                             </div>
                         </div>
                     </section>
@@ -352,16 +359,15 @@
                             <div class="cb-admin-section-title">Teknik detaylar ana akistan ayrik</div>
                             <p class="cb-admin-section-description">Audit, incidents, health, loglar, trace ve rollout kanitlari yalnizca gerektiginde acilir.</p>
                             @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel { Tone = "info", Title = advanced.StatusLabel, Message = advanced.PrimaryMessage, Meta = advanced.Summary })
-                            <div class="cb-admin-summary-grid mt-6">
+                            <div class="d-flex flex-column mt-6" data-cb-super-admin-advanced-list>
                                 @foreach (var item in advanced.Items)
                                 {
-                                    <div class="cb-admin-summary-card">
-                                        <span class="cb-admin-summary-label">@item.Label</span>
-                                        <strong>@item.Value</strong>
-                                        <small>@item.Summary</small>
-                                        <div class="cb-admin-inline-actions mt-5">
-                                            <a href="@item.Href" class="btn btn-light-primary font-weight-bold">Ac</a>
+                                    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center border-bottom py-4" data-cb-super-admin-advanced-link="@item.Key">
+                                        <div>
+                                            <div class="font-weight-bold">@item.Label</div>
+                                            <div class="text-muted small">@item.Summary</div>
                                         </div>
+                                        <a href="@item.Href" class="btn btn-light-primary font-weight-bold mt-3 mt-lg-0">Ac</a>
                                     </div>
                                 }
                             </div>
@@ -401,12 +407,4 @@
 </script>
     }
 </div>
-
-
-
-
-
-
-
-
 

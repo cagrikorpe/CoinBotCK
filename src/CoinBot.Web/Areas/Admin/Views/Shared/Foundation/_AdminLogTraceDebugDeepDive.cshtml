@@ -1,0 +1,156 @@
+@model CoinBot.Web.ViewModels.Admin.AdminIncidentAuditDecisionCenterViewModel
+@using CoinBot.Web.ViewModels.Admin
+@{
+    var traceCount = Model.Detail.DecisionExecutionTrace.Count;
+    var approvalCount = Model.Detail.ApprovalHistory.Count;
+    var incidentCount = Model.Detail.IncidentTimeline.Count;
+    var auditCount = Model.Detail.AdminAuditTrail.Count;
+    var selectedSummary = Model.Detail.HasSelection ? Model.Detail.Summary : "Kayıt seçilince detay görünür.";
+    var traceHref = Model.Detail.HasSelection && !string.Equals(Model.Detail.CorrelationId, "Unavailable", StringComparison.OrdinalIgnoreCase)
+        ? Url.Action("TraceDetail", "Admin", new
+        {
+            area = "Admin",
+            correlationId = Model.Detail.CorrelationId,
+            decisionId = string.Equals(Model.Detail.DecisionId, "Unavailable", StringComparison.OrdinalIgnoreCase) ? null : Model.Detail.DecisionId,
+            executionAttemptId = string.Equals(Model.Detail.ExecutionAttemptId, "Unavailable", StringComparison.OrdinalIgnoreCase) ? null : Model.Detail.ExecutionAttemptId
+        })
+        : Url.Action("Search", "Admin", new { area = "Admin", query = Model.Filters.Query });
+    var executionHref = (Url.Action("Audit", "Admin", new { area = "Admin", query = "Execution", outcome = Model.Filters.Outcome, take = Model.Filters.Take }) ?? "/admin/Audit?query=Execution") + "#cb_admin_log_trace_debug";
+    var idempotencyHref = (Url.Action("Audit", "Admin", new { area = "Admin", query = "Idempotency", take = Model.Filters.Take }) ?? "/admin/Audit?query=Idempotency") + "#cb_admin_log_trace_debug";
+    var rebuildHref = Url.Action("Jobs", "Admin", new { area = "Admin" }) ?? "/admin/Jobs";
+    var healthHref = Url.Action("SystemHealth", "Admin", new { area = "Admin" }) ?? "/admin/SystemHealth";
+    var diagnosticsHref = Url.Action("SupportTools", "Admin", new { area = "Admin", query = Model.Filters.Query }) ?? "/admin/SupportTools";
+}
+
+<div class="card card-custom gutter-b cb-card cb-admin-card" id="cb_admin_log_trace_debug" data-cb-admin-log-trace-debug>
+    <div class="card-body">
+        <div class="cb-admin-table-header mb-4">
+            <div>
+                <div class="cb-admin-section-kicker">Gelişmiş</div>
+                <div class="cb-admin-section-title">Log / Trace / Debug</div>
+                <p class="cb-admin-section-description mb-0">Ana akıştan ayrı teknik inceleme alanı. Audit, trace, debug, idempotency, rebuild, kök neden ve sağlık detayları burada kalır.</p>
+            </div>
+            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+            {
+                Label = Model.HasError ? "Blocked" : "Hazır",
+                Tone = Model.HasError ? "critical" : "info",
+                IconText = "LT"
+            })
+        </div>
+
+        <div class="nav nav-tabs cb-tabs cb-tabs-headerless" role="tablist" data-cb-admin-log-trace-tabs>
+            <a class="cb-tab active" data-toggle="tab" href="#cb_admin_log_trace_tab_audit" role="tab" data-cb-admin-log-trace-tab="audit">Detaylı audit</a>
+            <a class="cb-tab" data-toggle="tab" href="#cb_admin_log_trace_tab_trace" role="tab" data-cb-admin-log-trace-tab="trace">Trace</a>
+            <a class="cb-tab" data-toggle="tab" href="#cb_admin_log_trace_tab_execution" role="tab" data-cb-admin-log-trace-tab="execution-debugger">Execution debugger</a>
+            <a class="cb-tab" data-toggle="tab" href="#cb_admin_log_trace_tab_idempotency" role="tab" data-cb-admin-log-trace-tab="idempotency">Idempotency</a>
+            <a class="cb-tab" data-toggle="tab" href="#cb_admin_log_trace_tab_rebuild" role="tab" data-cb-admin-log-trace-tab="rebuild">Rebuild</a>
+            <a class="cb-tab" data-toggle="tab" href="#cb_admin_log_trace_tab_root_cause" role="tab" data-cb-admin-log-trace-tab="root-cause">Root cause</a>
+            <a class="cb-tab" data-toggle="tab" href="#cb_admin_log_trace_tab_health" role="tab" data-cb-admin-log-trace-tab="health">Health</a>
+            <a class="cb-tab" data-toggle="tab" href="#cb_admin_log_trace_tab_diagnostics" role="tab" data-cb-admin-log-trace-tab="diagnostics">Diagnostik</a>
+        </div>
+
+        <div class="tab-content mt-5">
+            <section class="tab-pane fade show active" id="cb_admin_log_trace_tab_audit" role="tabpanel" data-cb-admin-detailed-audit>
+                <div class="cb-admin-summary-grid">
+                    <div class="cb-admin-summary-card">
+                        <span class="cb-admin-summary-label">ChangedBy</span>
+                        <strong>@Model.Detail.ChangedBy</strong>
+                        <small>@Model.Detail.OccurredAtUtcLabel</small>
+                    </div>
+                    <div class="cb-admin-summary-card">
+                        <span class="cb-admin-summary-label">Before</span>
+                        <strong>@Model.Detail.BeforeSummary</strong>
+                        <small>Önceki değer</small>
+                    </div>
+                    <div class="cb-admin-summary-card">
+                        <span class="cb-admin-summary-label">After</span>
+                        <strong>@Model.Detail.AfterSummary</strong>
+                        <small>Sonraki değer</small>
+                    </div>
+                    <div class="cb-admin-summary-card">
+                        <span class="cb-admin-summary-label">Audit trail</span>
+                        <strong>@auditCount</strong>
+                        <small>Bağlı admin kaydı</small>
+                    </div>
+                </div>
+            </section>
+
+            <section class="tab-pane fade" id="cb_admin_log_trace_tab_trace" role="tabpanel" data-cb-admin-trace-chain>
+                <div class="cb-admin-info-strip cb-admin-info-strip-info">
+                    <div>
+                        <div class="cb-admin-info-strip-title">Trace zinciri</div>
+                        <div class="cb-admin-info-strip-text">Correlation=@Model.Detail.CorrelationId · Decision=@Model.Detail.DecisionId · Execution=@Model.Detail.ExecutionAttemptId</div>
+                    </div>
+                    <span class="cb-admin-info-strip-meta">@traceCount kayıt</span>
+                </div>
+                <a href="@traceHref" class="btn btn-light-info font-weight-bold mt-4">Trace detayına git</a>
+            </section>
+
+            <section class="tab-pane fade" id="cb_admin_log_trace_tab_execution" role="tabpanel" data-cb-admin-execution-debugger>
+                <div class="cb-admin-info-strip cb-admin-info-strip-warning">
+                    <div>
+                        <div class="cb-admin-info-strip-title">Execution debugger</div>
+                        <div class="cb-admin-info-strip-text">Outcome=@Model.Detail.OutcomeLabel · Reason=@Model.Detail.ReasonCode · Status=@Model.Detail.StatusLabel</div>
+                    </div>
+                    <span class="cb-admin-info-strip-meta">Debug</span>
+                </div>
+                <a href="@executionHref" class="btn btn-light-warning font-weight-bold mt-4">Execution kayıtlarını ara</a>
+            </section>
+
+            <section class="tab-pane fade" id="cb_admin_log_trace_tab_idempotency" role="tabpanel" data-cb-admin-idempotency-tab>
+                <div class="cb-admin-info-strip cb-admin-info-strip-info">
+                    <div>
+                        <div class="cb-admin-info-strip-title">Idempotency</div>
+                        <div class="cb-admin-info-strip-text">Duplicate, suppressed, retry ve command id izlerini audit read-model üzerinden arar.</div>
+                    </div>
+                    <span class="cb-admin-info-strip-meta">Search</span>
+                </div>
+                <a href="@idempotencyHref" class="btn btn-light-primary font-weight-bold mt-4">Idempotency kayıtlarını ara</a>
+            </section>
+
+            <section class="tab-pane fade" id="cb_admin_log_trace_tab_rebuild" role="tabpanel" data-cb-admin-rebuild-tab>
+                <div class="cb-admin-info-strip cb-admin-info-strip-info">
+                    <div>
+                        <div class="cb-admin-info-strip-title">Rebuild</div>
+                        <div class="cb-admin-info-strip-text">Job ve rebuild sinyalleri için mevcut worker/job yüzeyine gider.</div>
+                    </div>
+                    <span class="cb-admin-info-strip-meta">Jobs</span>
+                </div>
+                <a href="@rebuildHref" class="btn btn-light-primary font-weight-bold mt-4">Job / rebuild yüzeyine git</a>
+            </section>
+
+            <section class="tab-pane fade" id="cb_admin_log_trace_tab_root_cause" role="tabpanel" data-cb-admin-incident-root-cause>
+                <div class="cb-admin-info-strip cb-admin-info-strip-warning">
+                    <div>
+                        <div class="cb-admin-info-strip-title">Incident root cause</div>
+                        <div class="cb-admin-info-strip-text">@selectedSummary</div>
+                    </div>
+                    <span class="cb-admin-info-strip-meta">@Model.Detail.ReasonCode</span>
+                </div>
+                <div class="text-muted mt-3">Incident timeline=@incidentCount · Approval history=@approvalCount</div>
+            </section>
+
+            <section class="tab-pane fade" id="cb_admin_log_trace_tab_health" role="tabpanel" data-cb-admin-health-details>
+                <div class="cb-admin-info-strip cb-admin-info-strip-info">
+                    <div>
+                        <div class="cb-admin-info-strip-title">Health detayları</div>
+                        <div class="cb-admin-info-strip-text">Worker, runtime ve dependency sağlık detayları ayrı health ekranında tutulur.</div>
+                    </div>
+                    <span class="cb-admin-info-strip-meta">Health</span>
+                </div>
+                <a href="@healthHref" class="btn btn-light-info font-weight-bold mt-4">Health detaylarına git</a>
+            </section>
+
+            <section class="tab-pane fade" id="cb_admin_log_trace_tab_diagnostics" role="tabpanel" data-cb-admin-diagnostics-summary>
+                <div class="cb-admin-info-strip cb-admin-info-strip-info">
+                    <div>
+                        <div class="cb-admin-info-strip-title">Diagnostik özetler</div>
+                        <div class="cb-admin-info-strip-text">Destek araması ve log odaklı diagnostik yüzeyler Gelişmiş altında kalır.</div>
+                    </div>
+                    <span class="cb-admin-info-strip-meta">Support</span>
+                </div>
+                <a href="@diagnosticsHref" class="btn btn-light-primary font-weight-bold mt-4">Diagnostik yüzeye git</a>
+            </section>
+        </div>
+    </div>
+</div>

@@ -93,6 +93,10 @@
     </div>
 
     <div class="col-12">
+        @await Html.PartialAsync("Foundation/_AdminLogTraceDebugDeepDive", Model)
+    </div>
+
+    <div class="col-12">
         <div class="card card-custom gutter-b cb-card cb-admin-card">
             <div class="card-body">
                 <div class="cb-admin-table-header mb-4">
@@ -453,3 +457,4 @@
         </div>
     </div>
 </div>
+

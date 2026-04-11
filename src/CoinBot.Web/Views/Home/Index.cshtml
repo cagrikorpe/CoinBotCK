@@ -1,119 +1,73 @@
-@using System.Text.Json
 @using CoinBot.Application.Abstractions.ExchangeCredentials
 @model CoinBot.Web.ViewModels.Home.DashboardViewModel
 @{
-    ViewData["Title"] = "Dashboard";
+    ViewData["Title"] = "Ana Sayfa";
     ViewData["ActiveNav"] = "Dashboard";
-    ViewData["PageDescription"] = "Operasyonel dashboard; realtime market fiyat kutuları, guard özeti, AI history ve gerçek execution verisini aynı yüzeyde toplar.";
-    ViewData["BreadcrumbItems"] = new[] { "Control Surface", "Dashboard" };
-    var marketSymbolsJson = JsonSerializer.Serialize(Model.MarketTickers.Select(item => item.Symbol));
+    ViewData["PageDescription"] = "Günlük kullanım için kısa özet.";
+    ViewData["BreadcrumbItems"] = new[] { "CoinBot", "Ana Sayfa" };
+
     var exchangeSnapshot = ViewData["DashboardExchangeSnapshot"] as UserExchangeCommandCenterSnapshot;
     var latestExchangeAccount = exchangeSnapshot?.Accounts.FirstOrDefault();
-    var exchangeStatusLabel = latestExchangeAccount?.CredentialStatusLabel ?? "Bagli hesap yok";
-    var exchangeStatusTone = latestExchangeAccount?.CredentialStatusTone ?? "neutral";
-    var exchangeSummaryText = latestExchangeAccount is null
-        ? "Binance API key baglantisi yapilmadi. Kayit ve validation sonucu Command Center'da ve bu kartta gorunur."
-        : !string.IsNullOrWhiteSpace(latestExchangeAccount.LastFailureReason)
-            ? latestExchangeAccount.LastFailureReason
-            : $"{latestExchangeAccount.PermissionSummary} · {latestExchangeAccount.EnvironmentLabel}";
-    var exchangeActionText = latestExchangeAccount is null ? "Binance bagla" : "Command Center";
-    var exchangeBadgeClass = exchangeStatusTone == "healthy"
-        ? "cb-badge-success"
-        : exchangeStatusTone == "warning"
-            ? "cb-badge-warning"
-            : exchangeStatusTone == "critical"
-                ? "cb-badge-danger"
-                : "cb-badge-neutral";
-    var exchangeBannerStyle = exchangeStatusTone switch
-    {
-        "healthy" => "background:#ecfdf3;border:1px solid #95d5b2;color:#0f5132;padding:14px 16px;border-radius:12px;margin-top:24px;",
-        "warning" => "background:#fff8e1;border:1px solid #f5d48a;color:#6b4f00;padding:14px 16px;border-radius:12px;margin-top:24px;",
-        "critical" => "background:#fff1f2;border:1px solid #f2a8b5;color:#7a1f2f;padding:14px 16px;border-radius:12px;margin-top:24px;",
-        _ => "background:#eef7ff;border:1px solid #a9d4ff;color:#0b4f7a;padding:14px 16px;border-radius:12px;margin-top:24px;"
-    };
+    var exchangeReady = latestExchangeAccount?.CredentialStatusTone == "healthy";
+    var exchangeStatus = exchangeReady ? "Hazır" : "Eksik";
+    var exchangeSummary = exchangeReady
+        ? "Binance bağlantısı hazır"
+        : "Exchange bağlı değil";
+    var activeBotCount = Model.OperationsSummary.EnabledBotCount;
+    var botStatus = activeBotCount > 0 ? "Aktif" : "Eksik";
+    var botSummary = activeBotCount > 0 ? $"{activeBotCount} bot aktif" : "Henüz aktif bot yok";
+    var latestOrder = Model.RecentOrders.FirstOrDefault();
+    var latestOrderText = latestOrder is null ? "Son işlem yok" : latestOrder.Time;
+    var lastErrorText = !string.IsNullOrWhiteSpace(Model.OperationsSummary.LastJobErrorCode)
+        ? "Worker çalışmıyor"
+        : !string.IsNullOrWhiteSpace(Model.OperationsSummary.LastExecutionFailureCode)
+            ? "Sistem hazır değil"
+            : "Son hata yok";
+    var primaryController = exchangeReady ? "Bots" : "Exchanges";
+    var primaryActionText = exchangeReady ? "Botlarımı aç" : "Binance bağlantısını aç";
 }
 
-@section Scripts {
-    <script src="https://cdn.jsdelivr.net/npm/%40microsoft/signalr@9.0.0/dist/browser/signalr.min.js"></script>
-    <script src="~/js/dashboard-ui.js" asp-append-version="true"></script>
-}
-
-<div class="row"
-     data-cb-market-dashboard
-     data-cb-market-hub-url="@Model.MarketDataHubPath"
-     data-cb-market-symbols='@marketSymbolsJson'
-     data-cb-display-timezone-id="@Model.DisplayTimeZoneJavaScriptId"
-     data-cb-display-timezone-label="@Model.DisplayTimeZoneLabel">
-    <div class="col-12">
-        <div class="card card-custom gutter-b cb-card cb-dashboard-hero-card">
+<div class="row" data-cb-user-shell-home>
+    <div class="col-xl-7 col-lg-9">
+        <div class="card card-custom gutter-b cb-card">
             <div class="card-body">
-                <div class="cb-page-header">
+                <div class="cb-page-header align-items-start">
                     <div>
-                        <div class="cb-page-eyebrow">Operations Dashboard</div>
-                        <h2 class="cb-page-title">Trading kontrol yüzeyi</h2>
-                        <p class="cb-page-description">Placeholder yerine gerçek order, fill, PnL, AI shadow ve control-state verileri bu dashboard'ta birleşir.</p>
+                        <div class="cb-page-eyebrow">Ana Sayfa</div>
+                        <h2 class="cb-page-title">Günlük özet</h2>
+                        <p class="cb-page-description">Botlarınızı ve işlemlerinizi buradan takip edin.</p>
                     </div>
                     <div class="cb-toolbar">
-                        <span class="cb-badge @exchangeBadgeClass">@exchangeStatusLabel</span>
-                        <button type="button" class="btn btn-light-primary font-weight-bold">Yenile</button>
-                        <a asp-controller="Exchanges" asp-action="Index" class="btn btn-primary font-weight-bolder">@exchangeActionText</a>
+                        <a asp-controller="@primaryController" asp-action="Index" class="btn btn-primary font-weight-bolder">@primaryActionText</a>
+                        <a asp-controller="Positions" asp-action="Index" class="btn btn-light-primary font-weight-bold">İşlemler</a>
                     </div>
                 </div>
 
-                @await Html.PartialAsync("Dashboard/_FreshnessBar")
+                <div class="cb-permission-list mt-8" data-cb-user-shell-summary>
+                    <div class="cb-permission-item">
+                        <span>Binance</span>
+                        <strong>@exchangeStatus</strong>
+                    </div>
+                    <div class="cb-field-feedback mb-4">@exchangeSummary</div>
 
-                <div data-cb-dashboard-exchange-status="true" style="@exchangeBannerStyle">
-                    <div><strong>Son Binance durumu: @exchangeStatusLabel</strong></div>
-                    <div class="mt-2">@exchangeSummaryText</div>
-                </div>
+                    <div class="cb-permission-item">
+                        <span>Botlar</span>
+                        <strong>@botStatus</strong>
+                    </div>
+                    <div class="cb-field-feedback mb-4">@botSummary</div>
 
-                <div class="cb-auth-summary-card cb-auth-summary-card-stacked mt-6">
-                    <div class="cb-auth-summary-label">Binance baglanti durumu</div>
-                    <div class="cb-auth-summary-value">@exchangeStatusLabel</div>
-                    <div class="cb-auth-summary-text">@exchangeSummaryText</div>
-                    @if (latestExchangeAccount is not null)
-                    {
-                        <div class="cb-permission-list mt-4">
-                            <div class="cb-permission-item">
-                                <span>Fingerprint</span>
-                                <strong>@latestExchangeAccount.MaskedFingerprint</strong>
-                            </div>
-                            <div class="cb-permission-item">
-                                <span>Son validation</span>
-                                <strong>@latestExchangeAccount.LastValidatedLabel</strong>
-                            </div>
-                        </div>
-                    }
+                    <div class="cb-permission-item">
+                        <span>Son işlem</span>
+                        <strong>@latestOrderText</strong>
+                    </div>
+                    <div class="cb-field-feedback mb-4">İşlem geçmişini İşlemler ekranında görebilirsiniz.</div>
+
+                    <div class="cb-permission-item">
+                        <span>Son hata</span>
+                        <strong>@lastErrorText</strong>
+                    </div>
                 </div>
             </div>
         </div>
-    </div>
-
-    <div class="col-12">
-        @await Html.PartialAsync("Dashboard/_MarketTickerCards", Model.MarketTickers)
-    </div>
-
-    <div class="col-12">
-        @await Html.PartialAsync("Dashboard/_KpiCards")
-    </div>
-
-    <div class="col-12">
-        @await Html.PartialAsync("Dashboard/_OperationsSummaryCard", Model)
-    </div>
-
-    <div class="col-xl-7">
-        @await Html.PartialAsync("Dashboard/_EquityCurveCard", Model)
-    </div>
-
-    <div class="col-xl-5">
-        @await Html.PartialAsync("Dashboard/_AiFeedCard", Model)
-    </div>
-
-    <div class="col-12">
-        @await Html.PartialAsync("Dashboard/_RecentOrdersCard", Model)
-    </div>
-
-    <div class="col-12">
-        @await Html.PartialAsync("Dashboard/_OpenPositionsTable", Model)
     </div>
 </div>

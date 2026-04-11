@@ -87,6 +87,18 @@ public sealed class BotManagementService(
                 botIds.Contains(entity.BotId.Value))
             .OrderByDescending(entity => entity.CreatedDate)
             .ToListAsync(cancellationToken);
+        List<AiShadowDecision> latestShadowDecisions = botIds.Length == 0
+            ? []
+            : await dbContext.AiShadowDecisions
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.OwnerUserId == ownerUserId &&
+                    botIds.Contains(entity.BotId) &&
+                    !entity.IsDeleted)
+                .OrderByDescending(entity => entity.EvaluatedAtUtc)
+                .ThenByDescending(entity => entity.CreatedDate)
+                .ToListAsync(cancellationToken);
 
         var strategiesByKey = strategies.ToDictionary(entity => entity.StrategyKey, StringComparer.Ordinal);
         var publishedStrategyIdSet = await LoadRuntimeReadyStrategyIdSetAsync(strategies, cancellationToken);
@@ -100,6 +112,11 @@ public sealed class BotManagementService(
         var ordersByBotId = latestOrders
             .Where(entity => entity.BotId.HasValue)
             .GroupBy(entity => entity.BotId!.Value)
+            .ToDictionary(
+                group => group.Key,
+                group => group.First());
+        var shadowDecisionsByBotId = latestShadowDecisions
+            .GroupBy(entity => entity.BotId)
             .ToDictionary(
                 group => group.Key,
                 group => group.First());
@@ -153,6 +170,7 @@ public sealed class BotManagementService(
 
                 statesByBotId.TryGetValue(bot.Id, out var state);
                 ordersByBotId.TryGetValue(bot.Id, out var order);
+                shadowDecisionsByBotId.TryGetValue(bot.Id, out var shadowDecision);
                 var cooldownBlockedUntilUtc = ResolveCooldownBlockedUntilUtc(bot, order, utcNow);
                 var cooldownRemainingSeconds = ResolveCooldownRemainingSeconds(cooldownBlockedUntilUtc, utcNow);
                 LastExecutionTransitionSnapshot? lastExecutionTransition = null;
@@ -265,7 +283,10 @@ public sealed class BotManagementService(
                     staleThresholdMilliseconds,
                     NormalizeUtcNullable(degradedModeState?.LatestContinuityGapStartedAtUtc),
                     NormalizeUtcNullable(degradedModeState?.LatestContinuityGapLastSeenAtUtc),
-                    lastExecutionContinuityRecoveredAtUtc);
+                    lastExecutionContinuityRecoveredAtUtc,
+                    shadowDecision?.FinalAction,
+                    shadowDecision?.NoSubmitReason,
+                    NormalizeUtcNullable(shadowDecision?.EvaluatedAtUtc));
             })
             .ToArray();
 
@@ -1038,4 +1059,8 @@ public sealed class BotManagementService(
             .ToArray();
     }
 }
+
+
+
+
 

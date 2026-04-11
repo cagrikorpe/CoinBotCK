@@ -31,6 +31,22 @@ public sealed class AdminActivationControlCenterComposerTests
     }
 
     [Fact]
+    public void Compose_WhenServerTimeSyncIsCached_ReturnsActivatable()
+    {
+        var model = AdminActivationControlCenterComposer.Compose(
+            CreateExecutionSnapshot(),
+            CreateSystemStateSnapshot(),
+            CreateTimeSyncSnapshot(statusCode: "Cached"),
+            CreateDriftGuardSnapshot(),
+            CreatePilotOptions(),
+            "250",
+            "healthy",
+            new DateTime(2026, 4, 8, 10, 2, 0, DateTimeKind.Utc));
+
+        Assert.True(model.IsActivatable);
+        Assert.Contains(model.ReadinessChecklist, item => item.ReasonCode == "ServerTimeSynchronized" && item.StatusCode == "pass");
+    }
+    [Fact]
     public void Compose_WhenStateSnapshotIsMissing_FailsClosedWithUnknownDecision()
     {
         var model = AdminActivationControlCenterComposer.Compose(

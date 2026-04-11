@@ -271,50 +271,96 @@ public sealed class MonitoringSnapshotWorker(
             })
             .FirstOrDefaultAsync(cancellationToken);
 
+        var isJobOrchestrationIdle = string.Equals(latestJobHeartbeat?.LastErrorCode, "TradeMasterDisarmed", StringComparison.Ordinal);
+        var jobOrchestrationHeartbeatAtUtc = isJobOrchestrationIdle
+            ? utcNow
+            : latestJobHeartbeat?.LastHeartbeatAtUtc ?? utcNow;
         var jobOrchestrationHeartbeat = await UpsertWorkerHeartbeatAsync(
             dbContext,
             key: "job-orchestration",
             workerName: "Job Orchestration",
-            healthState: ResolveJobOrchestrationState(latestJobHeartbeat, utcNow),
+            healthState: isJobOrchestrationIdle ? MonitoringHealthState.Healthy : ResolveJobOrchestrationState(latestJobHeartbeat, utcNow),
             circuitBreakerState: MapCircuitBreakerState(dataLatencySnapshot),
-            lastHeartbeatAtUtc: latestJobHeartbeat?.LastHeartbeatAtUtc ?? utcNow,
-            consecutiveFailureCount: latestJobHeartbeat?.ConsecutiveFailureCount ?? 0,
+            lastHeartbeatAtUtc: jobOrchestrationHeartbeatAtUtc,
+            consecutiveFailureCount: isJobOrchestrationIdle ? 0 : latestJobHeartbeat?.ConsecutiveFailureCount ?? 0,
             lastErrorCode: latestJobHeartbeat?.LastErrorCode,
-            lastErrorMessage: latestJobHeartbeat is null ? "No job heartbeat available." : $"Latest job heartbeat from {latestJobHeartbeat.JobType}/{latestJobHeartbeat.JobKey}.",
+            lastErrorMessage: latestJobHeartbeat is null
+                ? "No job heartbeat available."
+                : isJobOrchestrationIdle
+                    ? "Job orchestration idle while TradeMaster is disarmed."
+                    : $"Latest job heartbeat from {latestJobHeartbeat.JobType}/{latestJobHeartbeat.JobKey}.",
             utcNow: utcNow,
             cancellationToken: cancellationToken);
         await TrySendWorkerHeartbeatAlertAsync(jobOrchestrationHeartbeat, "WorkerNotHealthy", cancellationToken);
 
-        var exchangeHeartbeats = await dbContext.ExchangeAccountSyncStates
-            .AsNoTracking()
-            .IgnoreQueryFilters()
-            .Where(entity => entity.LastPrivateStreamEventAtUtc.HasValue || entity.LastListenKeyRenewedAtUtc.HasValue)
+        var exchangeHeartbeatRows = await (
+            from entity in dbContext.ExchangeAccountSyncStates.AsNoTracking().IgnoreQueryFilters()
+            join account in dbContext.ExchangeAccounts.AsNoTracking().IgnoreQueryFilters()
+                on entity.ExchangeAccountId equals account.Id
+            where
+                !entity.IsDeleted &&
+                !account.IsDeleted &&
+                account.CredentialStatus == ExchangeCredentialStatus.Active &&
+                !account.IsReadOnly &&
+                (entity.LastPrivateStreamEventAtUtc.HasValue ||
+                 entity.LastListenKeyRenewedAtUtc.HasValue ||
+                 entity.LastListenKeyStartedAtUtc.HasValue ||
+                 entity.LastBalanceSyncedAtUtc.HasValue ||
+                 entity.LastPositionSyncedAtUtc.HasValue ||
+                 entity.LastStateReconciledAtUtc.HasValue)
+            select new
+            {
+                entity.ExchangeAccountId,
+                entity.Plane,
+                entity.PrivateStreamConnectionState,
+                entity.LastPrivateStreamEventAtUtc,
+                entity.LastListenKeyRenewedAtUtc,
+                entity.LastListenKeyStartedAtUtc,
+                entity.LastBalanceSyncedAtUtc,
+                entity.LastPositionSyncedAtUtc,
+                entity.LastStateReconciledAtUtc,
+                entity.ConsecutiveStreamFailureCount,
+                entity.LastErrorCode
+            })
+            .ToListAsync(cancellationToken);
+        var exchangeHeartbeats = exchangeHeartbeatRows
             .Select(entity => new ExchangePrivateStreamHeartbeatProjection(
                 entity.ExchangeAccountId,
                 entity.Plane,
                 entity.PrivateStreamConnectionState,
-                entity.LastPrivateStreamEventAtUtc ?? entity.LastListenKeyRenewedAtUtc ?? entity.LastStateReconciledAtUtc ?? utcNow,
+                ResolveExchangePrivateStreamHeartbeatAt(
+                    entity.LastPrivateStreamEventAtUtc,
+                    entity.LastListenKeyRenewedAtUtc,
+                    entity.LastListenKeyStartedAtUtc,
+                    entity.LastBalanceSyncedAtUtc,
+                    entity.LastPositionSyncedAtUtc,
+                    entity.LastStateReconciledAtUtc,
+                    utcNow),
                 entity.ConsecutiveStreamFailureCount,
                 entity.LastErrorCode))
-            .ToListAsync(cancellationToken);
-        var latestExchangeHeartbeat = exchangeHeartbeats
+            .ToArray();
+        var latestExchangeHeartbeats = exchangeHeartbeats
+            .GroupBy(entity => new { entity.ExchangeAccountId, entity.Plane })
+            .Select(group => group.OrderByDescending(entity => entity.HeartbeatAtUtc).First())
+            .ToArray();
+        var latestExchangeHeartbeat = latestExchangeHeartbeats
             .OrderByDescending(entity => GetExchangeStreamSeverity(entity.PrivateStreamConnectionState, utcNow, entity.HeartbeatAtUtc))
             .ThenBy(entity => entity.HeartbeatAtUtc)
             .FirstOrDefault();
-        var exchangeStreamHeartbeatAtUtc = exchangeHeartbeats.Count == 0
+        var exchangeStreamHeartbeatAtUtc = latestExchangeHeartbeats.Length == 0
             ? utcNow
-            : exchangeHeartbeats.Min(entity => entity.HeartbeatAtUtc);
+            : latestExchangeHeartbeats.Min(entity => entity.HeartbeatAtUtc);
 
         var exchangePrivateStreamHeartbeat = await UpsertWorkerHeartbeatAsync(
             dbContext,
             key: "exchange-private-stream",
             workerName: "Exchange Private Stream",
-            healthState: ResolveExchangeStreamState(exchangeHeartbeats, utcNow),
+            healthState: ResolveExchangeStreamState(latestExchangeHeartbeats, utcNow),
             circuitBreakerState: MapCircuitBreakerState(dataLatencySnapshot),
             lastHeartbeatAtUtc: exchangeStreamHeartbeatAtUtc,
             consecutiveFailureCount: latestExchangeHeartbeat?.ConsecutiveStreamFailureCount ?? 0,
             lastErrorCode: latestExchangeHeartbeat?.LastErrorCode,
-            lastErrorMessage: BuildExchangeStreamHeartbeatDetail(exchangeHeartbeats),
+            lastErrorMessage: BuildExchangeStreamHeartbeatDetail(latestExchangeHeartbeats),
             utcNow: utcNow,
             cancellationToken: cancellationToken);
         await TrySendWorkerHeartbeatAlertAsync(exchangePrivateStreamHeartbeat, "PrivateStreamDisconnected", cancellationToken);
@@ -725,6 +771,39 @@ public sealed class MonitoringSnapshotWorker(
             : "Live";
 
         return $"{runtimeLabel}/{planeLabel}";
+    }
+
+    private static DateTime ResolveExchangePrivateStreamHeartbeatAt(
+        DateTime? lastPrivateStreamEventAtUtc,
+        DateTime? lastListenKeyRenewedAtUtc,
+        DateTime? lastListenKeyStartedAtUtc,
+        DateTime? lastBalanceSyncedAtUtc,
+        DateTime? lastPositionSyncedAtUtc,
+        DateTime? lastStateReconciledAtUtc,
+        DateTime utcNow)
+    {
+        var latest = MaxUtc(lastPrivateStreamEventAtUtc, lastListenKeyRenewedAtUtc);
+        latest = MaxUtc(latest, lastListenKeyStartedAtUtc);
+        latest = MaxUtc(latest, lastBalanceSyncedAtUtc);
+        latest = MaxUtc(latest, lastPositionSyncedAtUtc);
+        latest = MaxUtc(latest, lastStateReconciledAtUtc);
+
+        return latest ?? utcNow;
+    }
+
+    private static DateTime? MaxUtc(DateTime? current, DateTime? candidate)
+    {
+        if (!candidate.HasValue)
+        {
+            return current;
+        }
+
+        if (!current.HasValue || candidate.Value > current.Value)
+        {
+            return candidate.Value;
+        }
+
+        return current;
     }
 
     private static MonitoringHealthState GetExchangeStreamSeverity(

@@ -1,19 +1,52 @@
-<div class="card card-custom gutter-b cb-card">
+@using CoinBot.Application.Abstractions.Dashboard
+@model UserDashboardPortfolioSnapshot
+@{
+    var totalTone = Model.TotalPnl >= 0m ? "cb-text-positive" : "cb-text-negative";
+    var balanceRows = Model.Balances.OrderBy(item => item.Asset, StringComparer.Ordinal).Take(6).ToArray();
+}
+<div class="card card-custom gutter-b cb-card" data-cb-user-exec-pnl>
     <div class="card-header border-0 pt-6">
         <div class="card-title">
             <div>
-                <h3 class="card-label font-weight-bolder mb-1">Kısa yardım</h3>
-                <div class="text-muted font-size-sm">Pozisyon ve emir history ekranını hızlı okumak için kısa açıklamalar.</div>
+                <h3 class="card-label font-weight-bolder mb-1">Kâr / Zarar</h3>
+                <div class="text-muted font-size-sm">Açık ve kapanmış işlemlerin kısa sonucu.</div>
             </div>
         </div>
     </div>
-    <div class="card-body pt-2" id="positions-help">
-        <div class="cb-notice cb-notice-info mb-4">Unrealized PnL açık pozisyonların o anki etkisini, realized PnL ise kapanmış işlemlerin net sonucunu gösterir.</div>
-        <div class="cb-notice cb-notice-warning mb-4">Open position ile order history aynı şey değildir; biri aktif maruziyeti, diğeri gerçekleşen emir akışını gösterir.</div>
+    <div class="card-body pt-2">
         <div class="cb-stat-list">
-            <div class="cb-stat-row"><span class="cb-stat-label">Long / Short</span><span>Yön, renk + ikon + badge birlikte okunur.</span></div>
-            <div class="cb-stat-row"><span class="cb-stat-label">Leverage</span><span>Spot işlemlerde dash/secondary, futures işlemlerde etiket ile görünür.</span></div>
-            <div class="cb-stat-row"><span class="cb-stat-label">Neden açıldı / kapandı</span><span>Strategy signal, AI önerisi ve risk onayı gibi ürün diline uygun reason bloklarıdır.</span></div>
+            <div class="cb-stat-row"><span class="cb-stat-label">Toplam</span><span class="cb-mono @totalTone">@($"{(Model.TotalPnl >= 0m ? "+" : string.Empty)}{Model.TotalPnl:0.####}")</span></div>
+            <div class="cb-stat-row"><span class="cb-stat-label">Açık</span><span class="cb-mono">@($"{(Model.UnrealizedPnl >= 0m ? "+" : string.Empty)}{Model.UnrealizedPnl:0.####}")</span></div>
+            <div class="cb-stat-row"><span class="cb-stat-label">Geçmiş</span><span class="cb-mono">@($"{(Model.RealizedPnl >= 0m ? "+" : string.Empty)}{Model.RealizedPnl:0.####}")</span></div>
         </div>
+    </div>
+</div>
+
+<div class="card card-custom gutter-b cb-card" data-cb-user-exec-portfolio>
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Portföy Özeti</h3>
+                <div class="text-muted font-size-sm">Bağlı hesaplardan gelen kısa varlık özeti.</div>
+            </div>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        @if (balanceRows.Length == 0)
+        {
+            <div class="cb-validation-summary cb-validation-summary-info mb-0" role="status">Portföy verisi yok.</div>
+        }
+        else
+        {
+            <div class="cb-stat-list">
+                @foreach (var row in balanceRows)
+                {
+                    <div class="cb-stat-row">
+                        <span class="cb-stat-label">@row.Asset</span>
+                        <span class="cb-mono">@row.WalletBalance.ToString("0.####")</span>
+                    </div>
+                }
+            </div>
+        }
     </div>
 </div>

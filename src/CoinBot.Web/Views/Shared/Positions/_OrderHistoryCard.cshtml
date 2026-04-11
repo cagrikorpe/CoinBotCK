@@ -1,22 +1,14 @@
 @using CoinBot.Application.Abstractions.Dashboard
 @model UserDashboardPortfolioSnapshot
 @{
-    var historyRows = Model.TradeHistory.OrderByDescending(item => item.LastUpdatedAtUtc).ToArray();
+    var historyRows = Model.TradeHistory.OrderByDescending(item => item.LastUpdatedAtUtc).Take(10).ToArray();
 }
-<div class="card card-custom gutter-b cb-card">
+<div class="card card-custom gutter-b cb-card" data-cb-user-exec-orders>
     <div class="card-header border-0 pt-6">
         <div class="card-title">
             <div>
-                <h3 class="card-label font-weight-bolder mb-1">Emir geçmişi</h3>
-                <div class="text-muted font-size-sm">Filled, partial, canceled ve rejected gibi order lifecycle placeholder yüzeyleri operasyonel history tablosunda gösterilir.</div>
-            </div>
-        </div>
-        <div class="card-toolbar cb-inline-stack">
-            <div class="cb-chip-group cb-chip-group-sm" data-cb-toggle-group>
-                <button type="button" class="cb-chip is-active" data-cb-toggle-active>Tümü</button>
-                <button type="button" class="cb-chip" data-cb-toggle-active>Filled</button>
-                <button type="button" class="cb-chip" data-cb-toggle-active>Partial</button>
-                <button type="button" class="cb-chip" data-cb-toggle-active>Canceled</button>
+                <h3 class="card-label font-weight-bolder mb-1">Emirler</h3>
+                <div class="text-muted font-size-sm">Son emir durumları.</div>
             </div>
         </div>
     </div>
@@ -25,17 +17,12 @@
             <table class="table table-borderless cb-table mb-0">
                 <thead>
                     <tr>
-                        <th>Tarih/Saat</th>
+                        <th>Zaman</th>
                         <th>Sembol</th>
-                        <th>Side</th>
                         <th>Yön</th>
-                        <th>Qty</th>
-                        <th>Fiyat</th>
-                        <th>Order Type</th>
-                        <th>Status</th>
-                        <th>Sonuç</th>
-                        <th>Bot</th>
-                        <th class="text-right">Aksiyon</th>
+                        <th>Miktar</th>
+                        <th>Durum</th>
+                        <th>Kâr / Zarar</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -50,38 +37,32 @@
                             "Rejected" or "Failed" => "cb-badge-danger",
                             _ => "cb-badge-info"
                         };
+                        var statusLabel = row.ExecutionResultCategory switch
+                        {
+                            "Filled" => "Tamamlandı",
+                            "Partial" => "Kısmi",
+                            "Canceled" => "İptal",
+                            "Rejected" or "Failed" => "Başarısız",
+                            _ => "Bekliyor"
+                        };
+                        var pnlTone = row.RealizedPnl >= 0m ? "cb-text-positive" : "cb-text-negative";
                         <tr data-cb-order-history-row="@row.OrderId.ToString("N")">
                             <td>
                                 <div class="cb-bot-row-title cb-numeric" data-cb-history-opened-date>@row.OpenedAtUtc.ToUniversalTime().ToString("dd MMM")</div>
-                                <div class="cb-bot-row-subtitle" data-cb-history-opened-time>@row.OpenedAtUtc.ToUniversalTime().ToString("HH:mm") UTC</div>
+                                <div class="cb-bot-row-subtitle" data-cb-history-opened-time>@row.OpenedAtUtc.ToUniversalTime().ToString("HH:mm")</div>
                             </td>
                             <td>
                                 <div class="cb-bot-row-title" data-cb-history-symbol>@row.Symbol</div>
-                                <div class="cb-bot-row-subtitle" data-cb-history-timeframe>@row.Timeframe</div>
-                                <div class="cb-bot-inline-help" data-cb-history-correlation>@row.CorrelationId</div>
-                                <div class="cb-bot-inline-help" data-cb-history-client-order>@(row.ClientOrderId ?? "ClientOrderId=n/a")</div>
+                                <div class="cb-bot-row-subtitle">@row.Plane</div>
                             </td>
                             <td><span class="cb-badge @sideTone" data-cb-history-side>@row.Side</span></td>
-                            <td><span class="cb-badge @sideTone">@(row.Side.Equals("Buy", StringComparison.OrdinalIgnoreCase) ? "Long" : "Short")</span></td>
                             <td class="cb-numeric-cell" data-cb-history-quantity>@row.Quantity.ToString("0.####")</td>
-                            <td class="cb-numeric-cell" data-cb-history-fill-price>@(row.AverageFillPrice?.ToString("0.####") ?? "-")</td>
-                            <td><span class="cb-badge cb-badge-info">@row.FinalState</span></td>
-                            <td><span class="cb-badge @statusTone" data-cb-history-result-category>@row.ExecutionResultCategory</span></td>
                             <td>
-                                <span class="cb-badge cb-badge-neutral" data-cb-history-result-code>@row.ExecutionResultCode</span>
-                                <div class="cb-bot-inline-help" data-cb-history-result-summary>@row.ExecutionResultSummary</div>
-                                <div class="cb-bot-inline-help" data-cb-history-reason-chain>@row.ReasonChainSummary</div>
-                                <div class="cb-bot-inline-help" data-cb-history-pnl>Realized @($"{(row.RealizedPnl >= 0m ? "+" : string.Empty)}{row.RealizedPnl:0.####}") · Unrealized @(row.UnrealizedPnlContribution?.ToString("0.####") ?? "0") · Fee @(row.FeeAmountInQuote?.ToString("0.####") ?? "0")</div>
-                                <div class="cb-bot-inline-help" data-cb-history-ai-label>@row.AiScoreLabel</div>
-                                <div class="cb-bot-inline-help" data-cb-history-ai-summary>@row.AiScoreSummary</div>
+                                <span class="cb-badge @statusTone" data-cb-history-result-category>@statusLabel</span>
+                                <div class="cb-bot-inline-help" data-cb-history-result-code>@statusLabel</div>
+                                <div class="cb-bot-inline-help" data-cb-history-result-summary>@(string.IsNullOrWhiteSpace(row.ExecutionResultSummary) ? "Sonuç hazır" : statusLabel)</div>
                             </td>
-                            <td>
-                                <span class="cb-badge cb-badge-info" data-cb-history-stage>@row.RejectionStage</span>
-                                <div class="cb-bot-inline-help" data-cb-history-submit>Submitted: @(row.SubmittedToBroker ? "Yes" : "No")</div>
-                                <div class="cb-bot-inline-help" data-cb-history-retry>Retry: @(row.RetryEligible ? "Yes" : "No") · Cooldown: @(row.CooldownApplied ? "Yes" : "No")</div>
-                                <div class="cb-bot-inline-help" data-cb-history-ai-source>@row.AiScoreSource · Placeholder=@(row.AiScoreIsPlaceholder ? "Yes" : "No")</div>
-                            </td>
-                            <td class="text-right"><button type="button" class="btn btn-xs btn-light-primary font-weight-bold" data-cb-position-open-detail="@row.OrderId.ToString("N")" data-cb-drawer-target="#cb_positions_detail_drawer">Detay</button></td>
+                            <td class="cb-numeric-cell @pnlTone" data-cb-history-pnl>@($"{(row.RealizedPnl >= 0m ? "+" : string.Empty)}{row.RealizedPnl:0.####}")</td>
                         </tr>
                     }
                 </tbody>
@@ -89,37 +70,15 @@
         </div>
 
         <div class="@(historyRows.Length == 0 ? string.Empty : "d-none")" data-cb-order-history-panel="empty">
-            @await Html.PartialAsync("Foundation/_EmptyState", new UiStateViewModel
-            {
-                IconText = "OH",
-                Title = "Henüz emir geçmişi yok",
-                Message = "Execution event history bağlandığında filled, partial, canceled ve rejected satırları burada görünür.",
-                ActionText = "Botlarım’a git",
-                ActionHref = "/Bots"
-            })
+            <div class="cb-validation-summary cb-validation-summary-info mb-0" role="status">Henüz emir yok.</div>
         </div>
 
         <div class="d-none" data-cb-order-history-panel="loading">
-            @await Html.PartialAsync("Foundation/_LoadingState", new UiLoadingStateViewModel
-            {
-                Title = "Emir geçmişi hazırlanıyor",
-                Message = "Order lifecycle ve status badge satırları skeleton olarak yükleniyor.",
-                CardCount = 2,
-                LineCount = 4
-            })
+            <div class="cb-validation-summary cb-validation-summary-info mb-0" role="status">Emirler hazırlanıyor.</div>
         </div>
 
         <div class="d-none" data-cb-order-history-panel="error">
-            @await Html.PartialAsync("Foundation/_ErrorState", new UiStateViewModel
-            {
-                IconText = "!",
-                Title = "Emir geçmişi alınamadı",
-                Message = "History tabı hata aldığında kullanıcıyı retry ve yardım akışına taşıyan kontrollü UI görünümü gösterilir.",
-                ActionText = "Tekrar dene",
-                ActionHref = "#",
-                SecondaryActionText = "Bildirimler için hazır ol",
-                SecondaryActionHref = "#"
-            })
+            <div class="cb-validation-summary cb-validation-summary-danger mb-0" role="alert">Emirler alınamadı.</div>
         </div>
     </div>
 </div>

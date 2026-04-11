@@ -1,6 +1,8 @@
 using System.Net;
 using System.Text;
 using CoinBot.Application.Abstractions.Exchange;
+using CoinBot.Application.Abstractions.ExchangeCredentials;
+using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Exchange;
 using CoinBot.Infrastructure.MarketData;
 using Microsoft.Extensions.Options;
@@ -20,6 +22,35 @@ public sealed class BinanceCredentialProbeClientTests
 
         Assert.False(snapshot.HasIpRestrictionIssue);
         Assert.Equal("API key, secret veya gerekli izinler doğrulanamadı.", snapshot.SafeFailureReason);
+    }
+
+    [Fact]
+    public async Task ProbeAsync_WhenDemoFuturesRequested_UsesTestnetFuturesEndpointAndSkipsSpotProbe()
+    {
+        using var spotHandler = new StubHttpMessageHandler(HttpStatusCode.BadRequest, """{"code":-2015,"msg":"Invalid API-key, IP, or permissions for action."}""");
+        using var futuresHandler = new StubHttpMessageHandler(HttpStatusCode.OK, """{"canTrade":true}""");
+        var client = CreateClient(
+            spotHandler,
+            futuresHandler,
+            new FakeTimeSyncService(),
+            spotRestBaseUrl: "https://api.binance.com",
+            futuresRestBaseUrl: "https://fapi.binance.com");
+
+        var snapshot = await client.ProbeAsync(
+            "api-key",
+            "api-secret",
+            ExecutionEnvironment.Demo,
+            ExchangeTradeModeSelection.Futures);
+
+        Assert.Equal(0, spotHandler.RequestCount);
+        Assert.Equal(1, futuresHandler.RequestCount);
+        Assert.Equal("testnet.binancefuture.com", futuresHandler.LastRequestUri?.Host);
+        Assert.True(snapshot.IsKeyValid);
+        Assert.True(snapshot.SupportsFutures);
+        Assert.False(snapshot.SupportsSpot);
+        Assert.Equal("Demo", snapshot.FuturesEnvironmentScope);
+        Assert.False(snapshot.HasIpRestrictionIssue);
+        Assert.False(snapshot.HasTimestampSkew);
     }
 
     [Fact]
@@ -71,21 +102,25 @@ public sealed class BinanceCredentialProbeClientTests
     private static BinanceCredentialProbeClient CreateClient(
         StubHttpMessageHandler spotHandler,
         StubHttpMessageHandler futuresHandler,
-        IBinanceTimeSyncService timeSyncService)
+        IBinanceTimeSyncService timeSyncService,
+        string spotRestBaseUrl = "https://testnet.binance.vision",
+        string futuresRestBaseUrl = "https://testnet.binancefuture.com")
     {
         return new BinanceCredentialProbeClient(
             new StubHttpClientFactory(
-                new HttpClient(spotHandler) { BaseAddress = new Uri("https://testnet.binance.vision") },
-                new HttpClient(futuresHandler) { BaseAddress = new Uri("https://testnet.binancefuture.com") }),
+                new HttpClient(spotHandler) { BaseAddress = new Uri(spotRestBaseUrl) },
+                new HttpClient(futuresHandler) { BaseAddress = new Uri(futuresRestBaseUrl) }),
             Options.Create(new BinanceMarketDataOptions
             {
-                RestBaseUrl = "https://testnet.binance.vision",
-                WebSocketBaseUrl = "wss://stream.testnet.binance.vision"
+                RestBaseUrl = futuresRestBaseUrl,
+                WebSocketBaseUrl = "wss://fstream.binancefuture.com"
             }),
             Options.Create(new BinancePrivateDataOptions
             {
-                RestBaseUrl = "https://testnet.binancefuture.com",
-                WebSocketBaseUrl = "wss://fstream.binancefuture.com"
+                RestBaseUrl = futuresRestBaseUrl,
+                WebSocketBaseUrl = "wss://fstream.binancefuture.com",
+                SpotRestBaseUrl = spotRestBaseUrl,
+                SpotWebSocketBaseUrl = "wss://stream.binance.com:9443"
             }),
             TimeProvider.System,
             timeSyncService);
@@ -105,9 +140,12 @@ public sealed class BinanceCredentialProbeClientTests
     {
         public int RequestCount { get; private set; }
 
+        public Uri? LastRequestUri { get; private set; }
+
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             RequestCount++;
+            LastRequestUri = request.RequestUri;
             return Task.FromResult(new HttpResponseMessage(statusCode)
             {
                 Content = new StringContent(responseBody, Encoding.UTF8, "application/json")

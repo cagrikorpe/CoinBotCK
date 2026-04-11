@@ -93,7 +93,8 @@ public sealed record ConnectUserBinanceCredentialRequest(
     ExecutionEnvironment RequestedEnvironment,
     ExchangeTradeModeSelection RequestedTradeMode,
     string Actor,
-    string? CorrelationId = null);
+    string? CorrelationId = null,
+    string? DisplayName = null);
 
 public sealed record ConnectUserBinanceCredentialResult(
     Guid ExchangeAccountId,

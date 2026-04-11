@@ -1,6 +1,10 @@
 @using CoinBot.Application.Abstractions.Dashboard
 @model UserDashboardPortfolioSnapshot
 @{
+    ViewData["Title"] = "İşlemler";
+    ViewData["ActiveNav"] = "Positions";
+    ViewData["PageDescription"] = "Pozisyon, emir ve kâr zarar durumunuzu sade şekilde izleyin.";
+    ViewData["BreadcrumbItems"] = new[] { "CoinBot", "İşlemler" };
     var defaultTab = (ViewData["DefaultTab"]?.ToString() ?? "positions").ToLowerInvariant();
 }
 
@@ -8,33 +12,19 @@
     <script src="~/js/positions-foundation.js" asp-append-version="true"></script>
 }
 
-<div class="row" data-cb-positions-page data-cb-positions-scenario="active" data-cb-positions-default-tab="@defaultTab">
+<div class="row" data-cb-positions-page data-cb-user-exec-page data-cb-positions-scenario="active" data-cb-positions-default-tab="@defaultTab">
     <div class="col-12">
         <div class="card card-custom gutter-b cb-card">
             <div class="card-body">
                 <div class="cb-page-header">
                     <div>
-                        <div class="cb-page-eyebrow">Execution Monitor</div>
-                        <h2 class="cb-page-title">Pozisyonlar ve emir geçmişi yüzeyi</h2>
-                        <p class="cb-page-description">Açık ve kapalı pozisyonları, leverage ve PnL özetini, emir geçmişini ve neden açıldı / neden kapandı bilgisini aynı operasyonel foundation ekranda toplar.</p>
+                        <div class="cb-page-eyebrow">İşlemler</div>
+                        <h2 class="cb-page-title">İşlemler</h2>
+                        <p class="cb-page-description">Açık pozisyon, emir ve kâr zarar durumunuzu kısa özetle takip edin.</p>
                     </div>
                     <div class="cb-toolbar">
                         <span class="cb-badge cb-badge-info" data-cb-positions-sync-status>@Model.SyncStatusLabel</span>
                         <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-positions-refresh>Yenile</button>
-                        <button type="button" class="btn btn-primary font-weight-bolder" data-cb-position-open-detail="btc-open" data-cb-drawer-target="#cb_positions_detail_drawer">Detay drawer örneği</button>
-                    </div>
-                </div>
-
-                <div class="cb-section mt-6">
-                    <div class="cb-section-title">Durum Senaryoları</div>
-                    <p class="cb-page-description mt-2 mb-0" data-cb-positions-pnl-consistency>@Model.PnlConsistencySummary</p>
-                    <div class="cb-chip-group mt-4" data-cb-toggle-group>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-positions-scenario-trigger="empty">İlk kullanım / boş durum</button>
-                        <button type="button" class="cb-chip is-active" data-cb-toggle-active data-cb-positions-scenario-trigger="active">Açık pozisyon var</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-positions-scenario-trigger="history">History yoğun</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-positions-scenario-trigger="waiting">Veri bekleniyor</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-positions-scenario-trigger="loading">Loading</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-positions-scenario-trigger="error">Error</button>
                     </div>
                 </div>
             </div>
@@ -49,33 +39,36 @@
         @await Html.PartialAsync("Positions/_Toolbar")
     </div>
 
-    <div class="col-xl-9" data-cb-positions-panel="content">
+    <div class="col-12" data-cb-positions-panel="content">
         <div class="card card-custom gutter-b cb-card">
             <div class="card-body pb-2">
-                <div class="cb-tabs cb-tabs-headerless">
+                <div class="cb-tabs cb-tabs-headerless" data-cb-user-exec-tabs>
                     <button type="button" class="cb-tab is-active" data-cb-positions-tab-trigger="positions">Pozisyonlar</button>
-                    <button type="button" class="cb-tab" data-cb-positions-tab-trigger="history">Emir Geçmişi</button>
+                    <button type="button" class="cb-tab" data-cb-positions-tab-trigger="orders">Emirler</button>
+                    <button type="button" class="cb-tab" data-cb-positions-tab-trigger="history">İşlem Geçmişi</button>
+                    <button type="button" class="cb-tab" data-cb-positions-tab-trigger="pnl">Kâr / Zarar</button>
                 </div>
             </div>
         </div>
 
         <div data-cb-positions-tab-panel="positions">
             @await Html.PartialAsync("Positions/_OpenPositionsCard", Model)
-            @await Html.PartialAsync("Positions/_ClosedPositionsCard", Model)
+        </div>
+
+        <div class="d-none" data-cb-positions-tab-panel="orders">
+            @await Html.PartialAsync("Positions/_OrderHistoryCard", Model)
         </div>
 
         <div class="d-none" data-cb-positions-tab-panel="history">
-            @await Html.PartialAsync("Positions/_OrderHistoryCard", Model)
+            @await Html.PartialAsync("Positions/_ClosedPositionsCard", Model)
         </div>
-    </div>
 
-    <div class="col-xl-3" data-cb-positions-panel="content">
-        @await Html.PartialAsync("Positions/_HelpCard")
+        <div class="d-none" data-cb-positions-tab-panel="pnl">
+            @await Html.PartialAsync("Positions/_HelpCard", Model)
+        </div>
     </div>
 
     <div class="col-12">
         @await Html.PartialAsync("Positions/_StatePanels")
     </div>
 </div>
-
-@await Html.PartialAsync("Positions/_DetailDrawer")

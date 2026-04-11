@@ -1,9 +1,9 @@
 @model CoinBot.Web.ViewModels.Exchanges.UserExchangeCommandCenterPageViewModel
 @{
-    ViewData["Title"] = "Borsalarım";
-    ViewData["ActiveNav"] = "Exchanges";
-    ViewData["PageDescription"] = "Binance command center; credential özeti, permission görünürlüğü, validation history ve sync durumu tek kullanıcı yüzeyinde toplanır.";
-    ViewData["BreadcrumbItems"] = new[] { "Integrations", "Borsalarım" };
+    ViewData["Title"] = "Binance Bağlantısı";
+    ViewData["ActiveNav"] = "Settings";
+    ViewData["PageDescription"] = "API bilgilerinizi kaydedip bağlantıyı doğrulayın.";
+    ViewData["BreadcrumbItems"] = new[] { "CoinBot", "Binance Bağlantısı" };
 }
 
 @await Html.PartialAsync("Exchanges/_UserExchangeCommandCenter", Model)

@@ -243,6 +243,30 @@ class CdpClient {
   }
 }
 
+async function setInputValueSecurely(client, selector, value) {
+  await client.evaluate(`(() => {
+    const element = document.querySelector(${JSON.stringify(selector)});
+    if (!element) throw new Error('Element not found for secure input.');
+    element.focus();
+    element.value = '';
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  })()`);
+
+  if (value) {
+    await client.send('Input.insertText', { text: value });
+  }
+
+  await client.evaluate(`(() => {
+    const element = document.querySelector(${JSON.stringify(selector)});
+    if (!element) throw new Error('Element not found after secure input.');
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  })()`);
+}
+
 (async () => {
   const originalEnvironment = {
     ASPNETCORE_ENVIRONMENT: process.env.ASPNETCORE_ENVIRONMENT,
@@ -269,6 +293,19 @@ class CdpClient {
     const adminEmail = `settings.admin.${randomSuffix}@coinbot.test`;
     const adminPassword = 'Passw0rd!Admin1';
     const updatedTimeZoneId = 'Dateline Standard Time';
+    const testBinanceApiKey = process.env.TEST_BINANCE_API_KEY || '';
+    const testBinanceApiSecret = process.env.TEST_BINANCE_API_SECRET || '';
+    const testBinanceMode = String(process.env.TEST_BINANCE_IS_DEMO || 'true').toLowerCase();
+    const testBinanceIsDemo = !['false', '0', 'live'].includes(testBinanceMode);
+    const shouldRunBinanceSetupProbe = Boolean(testBinanceApiKey && testBinanceApiSecret);
+    let adminOverviewBinanceSetupState = {
+      attempted: false,
+      skippedReason: shouldRunBinanceSetupProbe ? '' : 'TEST_BINANCE_API_KEY/TEST_BINANCE_API_SECRET not set',
+      resultKind: '',
+      resultText: '',
+      successVisible: false,
+      errorVisible: false
+    };
 
     process.env.DOTNET_CLI_HOME = path.join(repoRoot, '.dotnet');
     process.env.DOTNET_SKIP_FIRST_TIME_EXPERIENCE = '1';
@@ -404,7 +441,7 @@ class CdpClient {
       const guardThresholdCell = Array.from(document.querySelectorAll('td')).find(cell => cell.innerText.trim() === 'Threshold')?.nextElementSibling;
       const guardReasonCell = Array.from(document.querySelectorAll('td')).find(cell => cell.innerText.trim() === 'Readable reason')?.nextElementSibling;
       const helperText = Array.from(document.querySelectorAll('.cb-helper-text')).map(node => node.innerText.trim()).join(' | ');
-      const opsNoticeText = Array.from(document.querySelectorAll('.cb-validation-summary-warning')).map(node => node.innerText.trim()).join(' | ');
+      const opsNoticeText = Array.from(document.querySelectorAll('.cb-validation-summary-info, .cb-validation-summary-warning')).map(node => node.innerText.trim()).join(' | ');
       return {
         selectExists: !!select,
         optionCount: select ? select.options.length : 0,
@@ -438,12 +475,15 @@ class CdpClient {
       throw new Error('Operational drift guard fields should not be rendered on the normal user settings page.');
     }
 
-    if (!/display timezone/i.test(settingsPageState.helperText)) {
+    if (!/zaman bilgisini/i.test(settingsPageState.helperText)) {
       throw new Error('Display-only timezone helper text was not rendered on /Settings.');
     }
+    if (!/kullanım tercihleri/i.test(settingsPageState.opsNoticeText)) {
+      throw new Error('User settings scope notice was not rendered on /Settings.');
+    }
 
-    if (!/Super Admin\/Ops/i.test(settingsPageState.opsNoticeText)) {
-      throw new Error('Ops scope notice was not rendered on /Settings.');
+    if (/Super Admin|Global Ayarlar|drift guard|server-time/i.test(settingsPageState.opsNoticeText)) {
+      throw new Error('Normal user settings page should not surface admin operational jargon.');
     }
 
     await client.evaluate(`(() => {
@@ -556,23 +596,37 @@ class CdpClient {
     await client.waitForReady();
     await client.waitForLocationContains('/');
     await client.captureScreenshot(dashboardScreenshotPath);
-
     const dashboardState = await client.evaluate(`(() => {
-      const summary = document.querySelector('[data-cb-ops-drift-summary]');
-      const reason = document.querySelector('[data-cb-ops-drift-reason]');
+      const pageText = document.body.textContent || '';
+      const primaryNavLabels = Array.from(document.querySelectorAll('.cb-menu-nav .menu-link .menu-text'))
+        .map(item => item.innerText.trim())
+        .filter(Boolean);
       return {
-        summaryText: summary ? summary.innerText.trim() : '',
-        reasonText: reason ? reason.innerText.trim() : ''
+        hasUserShellHome: !!document.querySelector('[data-cb-user-shell-home]'),
+        primaryNavLabels,
+        primaryNavCount: primaryNavLabels.length,
+        hasHome: primaryNavLabels.includes('Ana Sayfa'),
+        hasBots: primaryNavLabels.includes('Botlarım'),
+        hasTrades: primaryNavLabels.includes('İşlemler'),
+        hasSettings: primaryNavLabels.includes('Ayarlar'),
+        adminSettingsLinkVisible: !!Array.from(document.querySelectorAll('a')).find(link => (link.getAttribute('href') || '').toLowerCase().includes('/admin/settings')),
+        hasAdminOperationsText: pageText.includes('Operations Dashboard') || pageText.includes('TradeMaster') || pageText.includes('PilotActivation') || pageText.includes('Global Ayarlar'),
+        hasDailySummary: pageText.includes('Günlük özet')
       };
     })()`);
 
-    if (!dashboardState.summaryText || !dashboardState.reasonText) {
-      throw new Error('Dashboard drift summary did not render readable text.');
+    if (!dashboardState.hasUserShellHome
+        || dashboardState.primaryNavCount !== 4
+        || !dashboardState.hasHome
+        || !dashboardState.hasBots
+        || !dashboardState.hasTrades
+        || !dashboardState.hasSettings
+        || !dashboardState.hasDailySummary
+        || dashboardState.hasAdminOperationsText) {
+      throw new Error('User shell did not render the expected ultra soft 4-item flow.');
     }
 
-    const userNavigationState = await client.evaluate(`(() => ({
-      adminSettingsLinkVisible: !!Array.from(document.querySelectorAll('a')).find(link => (link.getAttribute('href') || '').toLowerCase().includes('/admin/settings'))
-    }))()`);
+    const userNavigationState = { adminSettingsLinkVisible: Boolean(dashboardState.adminSettingsLinkVisible) };
 
     if (userNavigationState.adminSettingsLinkVisible) {
       throw new Error('Normal user shell should not render an admin global settings shortcut.');
@@ -745,6 +799,8 @@ class CdpClient {
       const advancedText = document.querySelector('#cb_super_admin_flow_tab_advanced')?.textContent || '';
       const activateButton = document.querySelector('[data-cb-super-admin-activation-action="activate"] button[type="submit"]');
       const activateReason = document.querySelector('[data-cb-super-admin-action-reason="activate"]')?.innerText?.trim() || '';
+      const primaryNavLabels = Array.from(document.querySelectorAll('[data-cb-super-admin-primary-link] .menu-text')).map(item => item.innerText.trim()).filter(Boolean);
+      const sidebarTexts = Array.from(document.querySelectorAll('.cb-admin-menu-nav .menu-text')).map(item => item.innerText.trim()).filter(Boolean);
       const jargonTokens = [
         'evidence missing',
         'degraded chain',
@@ -760,6 +816,14 @@ class CdpClient {
         'diagnostik',
         'before/after',
         'timeline'
+      ];
+      const monitoringTechnicalTokens = [
+        'incident timeline',
+        'trace',
+        'health breakdown',
+        'debug',
+        'evidence',
+        'audit timeline'
       ];
       return {
         tabCount: document.querySelectorAll('[data-cb-super-admin-flow-tab-link]').length,
@@ -779,16 +843,29 @@ class CdpClient {
         advancedLinkCount: document.querySelectorAll('#cb_super_admin_flow_tab_advanced a[href]').length,
         hasSetupForm: !!document.querySelector('[data-cb-super-admin-setup-form]'),
         hasActivationPanel: !!document.querySelector('[data-cb-super-admin-activation-panel]'),
+        activationStatusCount: document.querySelectorAll('#cb_super_admin_flow_tab_activation [data-cb-super-admin-activation-status-item]').length,
+        hasActivationActionsPanel: !!document.querySelector('[data-cb-super-admin-activation-actions]'),
+        activationHasEmergency: activationText.includes('Acil Durdur'),
+        activationHasTechnicalJargon: ['checklist', 'blocker', 'evidence', 'timeline', 'aktivasyon detaylari', 'readiness'].some(token => activationText.toLowerCase().includes(token)),
         hasMonitoringPanel: !!document.querySelector('[data-cb-super-admin-monitoring-panel]'),
         hasAdvancedLinks: !!document.querySelector('[data-cb-super-admin-advanced-links]'),
         hasConnectionTest: setupText.includes('Baglantiyi Test Et'),
         hasSaveAndContinue: setupText.includes('Kaydet ve Devam Et'),
+        hasSetupApiKey: !!document.querySelector('#setupApiKey'),
+        hasSetupSecretKey: !!document.querySelector('#setupApiSecret'),
+        hasSetupConnectionName: !!document.querySelector('#setupConnectionName'),
+        setupHasTechnicalSetupFields: setupText.includes('Live izin referansi') || setupText.includes('Onay ibaresi') || setupText.includes('fingerprint') || setupText.includes('permission'),
         hasPrepareAction: activationText.includes('Sistemi Hazirla'),
         hasActivateAction: activationText.includes('Sistemi Aktif Et'),
         hasDeactivateAction: activationText.includes('Sistemi Kapat'),
         hasMonitoringRefresh: monitoringText.includes('Yenile'),
         hasMonitoringEmergency: monitoringText.includes('Acil Durdur'),
         hasMonitoringStopSummary: monitoringText.includes('Son durdurma nedeni'),
+        hasMonitoringRunningBotCount: monitoringText.includes('Calisan bot sayisi'),
+        hasMonitoringLastOperationTime: monitoringText.includes('Son islem zamani'),
+        hasMonitoringLastErrorSummary: monitoringText.includes('Son hata'),
+        monitoringHasShutdownAction: monitoringText.includes('Sistemi Kapat'),
+        monitoringHasTechnicalDetails: monitoringTechnicalTokens.some(token => monitoringText.toLowerCase().includes(token)),
         setupTabOpens,
         activationTabOpens,
         monitoringTabOpens,
@@ -799,7 +876,15 @@ class CdpClient {
         hasTechnicalCentersVisible: pageText.includes('runtime & health center') || pageText.includes('user / bot governance center') || pageText.includes('exchange / credential governance') || pageText.includes('policy / limit governance'),
         hasTechnicalJargon: jargonTokens.some(token => pageText.includes(token) || activateReason.toLowerCase().includes(token)),
         mainFlowHasTechnicalDetails: technicalDetailTokens.some(token => mainFlowText.includes(token)),
-        advancedTextVisible: advancedText.includes('Audit ve Trace') && advancedText.includes('Incidents') && advancedText.includes('Loglar / Diagnostik') && advancedText.includes('Rollout Kanitlari')
+        primaryNavCount: primaryNavLabels.length,
+        primaryNavLabels,
+        primaryNavHasSetup: primaryNavLabels.includes('Sistem Kurulumu'),
+        primaryNavHasActivation: primaryNavLabels.includes('Sistemi Aktiflestir'),
+        primaryNavHasMonitoring: primaryNavLabels.includes('Sistemi Izle'),
+        primaryNavHasUsers: primaryNavLabels.includes('Kullanicilar'),
+        primaryNavHasAdvanced: primaryNavLabels.includes('Gelismis'),
+        sidebarHasTechnicalEntries: sidebarTexts.some(text => ['Global Search', 'Exchange Hesapları', 'Bot Operasyonları', 'Strategy/AI İzleme', 'Audit & Log Merkezi', 'Incident Merkezi', 'Global Ayarlar'].includes(text)),
+        advancedTextVisible: advancedText.includes('Audit ve Trace') && advancedText.includes('Incidents') && advancedText.includes('Loglar / Diagnostik') && advancedText.includes('Rollout Kanitlari') && advancedText.includes('Trace arama') && advancedText.includes('Execution debugger') && advancedText.includes('Idempotency / rebuild')
       };
     })()`);
 
@@ -815,32 +900,106 @@ class CdpClient {
         || !adminOverviewState.monitoringAccessible
         || !adminOverviewState.advancedAccessible
         || adminOverviewState.setupCardCount < 3
-        || adminOverviewState.monitoringCardCount < 4
+        || adminOverviewState.monitoringCardCount !== 6
         || adminOverviewState.advancedLinkCount < 6
         || !adminOverviewState.hasSetupForm
         || !adminOverviewState.hasActivationPanel
+        || adminOverviewState.activationStatusCount !== 3
+        || !adminOverviewState.hasActivationActionsPanel
+        || !adminOverviewState.activationHasEmergency
+        || adminOverviewState.activationHasTechnicalJargon
         || !adminOverviewState.hasMonitoringPanel
         || !adminOverviewState.hasAdvancedLinks
         || !adminOverviewState.hasConnectionTest
         || !adminOverviewState.hasSaveAndContinue
+        || !adminOverviewState.hasSetupApiKey
+        || !adminOverviewState.hasSetupSecretKey
+        || !adminOverviewState.hasSetupConnectionName
+        || adminOverviewState.setupHasTechnicalSetupFields
         || !adminOverviewState.hasPrepareAction
         || !adminOverviewState.hasActivateAction
         || !adminOverviewState.hasDeactivateAction
         || !adminOverviewState.hasMonitoringRefresh
         || !adminOverviewState.hasMonitoringEmergency
         || !adminOverviewState.hasMonitoringStopSummary
+        || !adminOverviewState.hasMonitoringRunningBotCount
+        || !adminOverviewState.hasMonitoringLastOperationTime
+        || !adminOverviewState.hasMonitoringLastErrorSummary
+        || adminOverviewState.monitoringHasShutdownAction
+        || adminOverviewState.monitoringHasTechnicalDetails
         || !adminOverviewState.setupTabOpens
         || !adminOverviewState.activationTabOpens
         || !adminOverviewState.monitoringTabOpens
         || !adminOverviewState.advancedTabOpens
-        || !adminOverviewState.activateDisabled
-        || !adminOverviewState.activateReason
-        || adminOverviewState.activateReasonLineCount !== 1
+        || (adminOverviewState.activateDisabled && (!adminOverviewState.activateReason || adminOverviewState.activateReasonLineCount !== 1))
         || !adminOverviewState.advancedTextVisible
         || adminOverviewState.hasTechnicalCentersVisible
         || adminOverviewState.hasTechnicalJargon
-        || adminOverviewState.mainFlowHasTechnicalDetails) {
+        || adminOverviewState.mainFlowHasTechnicalDetails
+        || adminOverviewState.primaryNavCount !== 5
+        || !adminOverviewState.primaryNavHasSetup
+        || !adminOverviewState.primaryNavHasActivation
+        || !adminOverviewState.primaryNavHasMonitoring
+        || !adminOverviewState.primaryNavHasUsers
+        || !adminOverviewState.primaryNavHasAdvanced
+        || adminOverviewState.sidebarHasTechnicalEntries) {
       throw new Error('Admin / Overview did not render the expected always-open super admin flow.');
+    }
+
+    if (shouldRunBinanceSetupProbe) {
+      await client.evaluate(`(() => {
+        const link = document.querySelector('[data-cb-super-admin-flow-tab-link="setup"]');
+        if (!link) throw new Error('Setup tab link was not found.');
+        if (window.jQuery && window.jQuery.fn && window.jQuery.fn.tab) {
+          window.jQuery(link).tab('show');
+        } else {
+          link.click();
+        }
+
+        const selectedMode = document.querySelector('input[name="isDemo"][value="${testBinanceIsDemo ? 'true' : 'false'}"]');
+        if (!selectedMode) throw new Error('Setup environment option was not found.');
+        selectedMode.checked = true;
+        selectedMode.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      })()`);
+
+      await setInputValueSecurely(client, '#setupConnectionName', 'Smoke Binance');
+      await setInputValueSecurely(client, '#setupApiKey', testBinanceApiKey);
+      await setInputValueSecurely(client, '#setupApiSecret', testBinanceApiSecret);
+
+      await client.evaluate(`(() => {
+        const form = document.querySelector('[data-cb-super-admin-setup-form] form');
+        if (!form) throw new Error('Setup form was not found.');
+        const button = form.querySelector('button[name="setupCommand"][value="test"]');
+        if (!button) throw new Error('Setup test button was not found.');
+        if (button.disabled) throw new Error('Setup test button was disabled.');
+        if (form.requestSubmit) {
+          form.requestSubmit(button);
+        } else {
+          button.click();
+        }
+        return true;
+      })()`);
+
+      await client.waitForReady(90000);
+      await client.waitForLocationContains('/admin/Overview', 90000);
+
+      adminOverviewBinanceSetupState = await client.evaluate(`(() => {
+        const result = document.querySelector('[data-cb-super-admin-setup-result]');
+        const resultText = result ? result.innerText.trim() : '';
+        return {
+          attempted: true,
+          skippedReason: '',
+          resultKind: result?.getAttribute('data-cb-super-admin-setup-result') || '',
+          resultText,
+          successVisible: result?.getAttribute('data-cb-super-admin-setup-result') === 'success' && /API erisimi basarili|Binance baglantisi dogrulandi/i.test(resultText),
+          errorVisible: result?.getAttribute('data-cb-super-admin-setup-result') === 'error'
+        };
+      })()`);
+
+      if (!adminOverviewBinanceSetupState.successVisible) {
+        throw new Error(`Binance setup connection test did not surface the success message. Result=${adminOverviewBinanceSetupState.resultKind}; Message=${adminOverviewBinanceSetupState.resultText}`);
+      }
     }
 
     await client.navigate(`${baseUrl}/Settings`);
@@ -925,8 +1084,8 @@ class CdpClient {
       antiforgeryStatus: Number(antiforgeryResult.status),
       invalidErrorVisible: Boolean(invalidState.hasError),
       invalidErrorText: String(invalidState.errorText ?? ''),
-      dashboardDriftSummaryText: String(dashboardState.summaryText ?? ''),
-      dashboardDriftReasonText: String(dashboardState.reasonText ?? ''),
+      userShellHomeVisible: Boolean(dashboardState.hasUserShellHome),
+      userShellPrimaryNavLabels: Array.isArray(dashboardState.primaryNavLabels) ? dashboardState.primaryNavLabels.join(' | ') : '',
       userAdminLinkVisible: Boolean(userNavigationState.adminSettingsLinkVisible),
       adminSettingsTabCount: Number(adminSettingsState.tabCount),
       adminSettingsActiveTabText: String(adminSettingsState.activeTabText ?? ''),
@@ -952,6 +1111,7 @@ class CdpClient {
       adminOverviewHasAdvancedSection: Boolean(adminOverviewState.hasAdvancedSection),
       adminOverviewSetupCardCount: Number(adminOverviewState.setupCardCount ?? 0),
       adminOverviewMonitoringCardCount: Number(adminOverviewState.monitoringCardCount ?? 0),
+      adminOverviewMonitoringHasTechnicalDetails: Boolean(adminOverviewState.monitoringHasTechnicalDetails),
       adminOverviewAdvancedLinkCount: Number(adminOverviewState.advancedLinkCount ?? 0),
       adminOverviewSetupTabOpens: Boolean(adminOverviewState.setupTabOpens),
       adminOverviewActivationTabOpens: Boolean(adminOverviewState.activationTabOpens),
@@ -960,6 +1120,13 @@ class CdpClient {
       adminOverviewActivateDisabled: Boolean(adminOverviewState.activateDisabled),
       adminOverviewActivateReason: String(adminOverviewState.activateReason ?? ''),
       adminOverviewHasTechnicalJargon: Boolean(adminOverviewState.hasTechnicalJargon),
+      adminOverviewPrimaryNavCount: Number(adminOverviewState.primaryNavCount ?? 0),
+      adminOverviewPrimaryNavLabels: Array.isArray(adminOverviewState.primaryNavLabels) ? adminOverviewState.primaryNavLabels.join(' | ') : '',
+      adminOverviewBinanceSetupAttempted: Boolean(adminOverviewBinanceSetupState.attempted),
+      adminOverviewBinanceSetupSkippedReason: String(adminOverviewBinanceSetupState.skippedReason ?? ''),
+      adminOverviewBinanceSetupResultKind: String(adminOverviewBinanceSetupState.resultKind ?? ''),
+      adminOverviewBinanceSetupResultText: String(adminOverviewBinanceSetupState.resultText ?? ''),
+      adminOverviewBinanceSetupSuccessVisible: Boolean(adminOverviewBinanceSetupState.successVisible),
       adminAuditVisible: Boolean(adminAuditState.hasDecisionCenter),
       adminAuditOutcomeFilterVisible: Boolean(adminAuditState.hasOutcomeFilter),
       adminAuditReasonCodeFilterVisible: Boolean(adminAuditState.hasReasonCodeFilter),
@@ -994,7 +1161,7 @@ class CdpClient {
     console.log(`ReloadedPreferredTimeZoneId=${summary.reloadedPreferredTimeZoneId}`);
     console.log(`AntiforgeryStatus=${summary.antiforgeryStatus}`);
         console.log(`InvalidErrorVisible=${summary.invalidErrorVisible}`);
-    console.log(`DashboardDriftSummary=${summary.dashboardDriftSummaryText}`);
+    console.log(`UserShellHomeVisible=${summary.userShellHomeVisible}`);
     console.log(`UserAdminLinkVisible=${summary.userAdminLinkVisible}`);
     console.log(`AdminSettingsTabCount=${summary.adminSettingsTabCount}`);
     console.log(`AdminSettingsActiveTab=${summary.adminSettingsActiveTabText}`);
@@ -1010,6 +1177,7 @@ class CdpClient {
     console.log(`AdminOverviewHasSimpleFlow=${summary.adminOverviewHasSimpleFlow}`);
     console.log(`AdminOverviewSetupCardCount=${summary.adminOverviewSetupCardCount}`);
     console.log(`AdminOverviewMonitoringCardCount=${summary.adminOverviewMonitoringCardCount}`);
+    console.log(`AdminOverviewMonitoringHasTechnicalDetails=${summary.adminOverviewMonitoringHasTechnicalDetails}`);
     console.log(`AdminOverviewAdvancedLinkCount=${summary.adminOverviewAdvancedLinkCount}`);
     console.log(`AdminOverviewSetupTabOpens=${summary.adminOverviewSetupTabOpens}`);
     console.log(`AdminOverviewActivationTabOpens=${summary.adminOverviewActivationTabOpens}`);
@@ -1017,6 +1185,11 @@ class CdpClient {
     console.log(`AdminOverviewAdvancedTabOpens=${summary.adminOverviewAdvancedTabOpens}`);
     console.log(`AdminOverviewActivateDisabled=${summary.adminOverviewActivateDisabled}`);
     console.log(`AdminOverviewActivateReason=${summary.adminOverviewActivateReason}`);
+    console.log(`AdminOverviewPrimaryNavCount=${summary.adminOverviewPrimaryNavCount}`);
+    console.log(`AdminOverviewPrimaryNavLabels=${summary.adminOverviewPrimaryNavLabels}`);
+    console.log(`AdminOverviewBinanceSetupAttempted=${summary.adminOverviewBinanceSetupAttempted}`);
+    console.log(`AdminOverviewBinanceSetupSuccessVisible=${summary.adminOverviewBinanceSetupSuccessVisible}`);
+    console.log(`AdminOverviewBinanceSetupResultKind=${summary.adminOverviewBinanceSetupResultKind}`);
     console.log(`AdminAuditVisible=${summary.adminAuditVisible}`);
     console.log(`AdminAuditSummaryCardCount=${summary.adminAuditSummaryCardCount}`);
     console.log(`AdminAuditRowCount=${summary.adminAuditRowCount}`);
@@ -1038,20 +1211,4 @@ class CdpClient {
   console.error(error?.stack ?? error?.message ?? String(error));
   process.exit(1);
 });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 

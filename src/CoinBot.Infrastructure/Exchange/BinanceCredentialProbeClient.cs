@@ -4,6 +4,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using CoinBot.Application.Abstractions.Exchange;
+using CoinBot.Application.Abstractions.ExchangeCredentials;
+using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.MarketData;
 using Microsoft.Extensions.Options;
 
@@ -18,21 +20,51 @@ public sealed class BinanceCredentialProbeClient(
 {
     private const string SpotClientName = "BinanceCredentialProbeSpot";
     private const string FuturesClientName = "BinanceCredentialProbeFutures";
+    private const string LiveSpotProbeBaseUrl = "https://api.binance.com";
+    private const string DemoSpotProbeBaseUrl = "https://testnet.binance.vision";
+    private const string LiveFuturesProbeBaseUrl = "https://fapi.binance.com";
+    private const string DemoFuturesProbeBaseUrl = "https://testnet.binancefuture.com";
     private readonly BinanceMarketDataOptions marketDataOptionsValue = marketDataOptions.Value;
     private readonly BinancePrivateDataOptions privateDataOptionsValue = privateDataOptions.Value;
 
-    public async Task<BinanceCredentialProbeSnapshot> ProbeAsync(
+    public Task<BinanceCredentialProbeSnapshot> ProbeAsync(
         string apiKey,
         string apiSecret,
         CancellationToken cancellationToken = default)
     {
+        return ProbeAsyncCore(apiKey, apiSecret, null, null, cancellationToken);
+    }
+
+    public Task<BinanceCredentialProbeSnapshot> ProbeAsync(
+        string apiKey,
+        string apiSecret,
+        ExecutionEnvironment requestedEnvironment,
+        ExchangeTradeModeSelection requestedTradeMode,
+        CancellationToken cancellationToken = default)
+    {
+        return ProbeAsyncCore(apiKey, apiSecret, requestedEnvironment, requestedTradeMode, cancellationToken);
+    }
+
+    private async Task<BinanceCredentialProbeSnapshot> ProbeAsyncCore(
+        string apiKey,
+        string apiSecret,
+        ExecutionEnvironment? requestedEnvironment,
+        ExchangeTradeModeSelection? requestedTradeMode,
+        CancellationToken cancellationToken)
+    {
         var normalizedApiKey = NormalizeRequired(apiKey, nameof(apiKey));
         var normalizedApiSecret = NormalizeRequired(apiSecret, nameof(apiSecret));
-        var spotEnvironmentScope = InferEnvironmentScope(marketDataOptionsValue.RestBaseUrl);
-        var futuresEnvironmentScope = InferEnvironmentScope(privateDataOptionsValue.RestBaseUrl);
+        var spotProbeBaseUrl = ResolveSpotProbeBaseUrl(requestedEnvironment);
+        var futuresProbeBaseUrl = ResolveFuturesProbeBaseUrl(requestedEnvironment);
+        var spotEnvironmentScope = InferEnvironmentScope(spotProbeBaseUrl);
+        var futuresEnvironmentScope = InferEnvironmentScope(futuresProbeBaseUrl);
 
-        var spotProbe = await ProbeSpotAsync(normalizedApiKey, normalizedApiSecret, cancellationToken);
-        var futuresProbe = await ProbeFuturesAsync(normalizedApiKey, normalizedApiSecret, cancellationToken);
+        var spotProbe = ShouldProbeSpot(requestedTradeMode)
+            ? await ProbeSpotAsync(normalizedApiKey, normalizedApiSecret, spotProbeBaseUrl, cancellationToken)
+            : EndpointProbeResult.NotRequested();
+        var futuresProbe = ShouldProbeFutures(requestedTradeMode)
+            ? await ProbeFuturesAsync(normalizedApiKey, normalizedApiSecret, futuresProbeBaseUrl, cancellationToken)
+            : EndpointProbeResult.NotRequested();
 
         return new BinanceCredentialProbeSnapshot(
             IsKeyValid: spotProbe.IsSuccess || futuresProbe.IsSuccess,
@@ -47,10 +79,10 @@ public sealed class BinanceCredentialProbeClient(
             PermissionSummary: BuildPermissionSummary(spotProbe, futuresProbe, spotEnvironmentScope, futuresEnvironmentScope),
             SafeFailureReason: ResolveSafeFailureReason(spotProbe, futuresProbe));
     }
-
     private async Task<EndpointProbeResult> ProbeSpotAsync(
         string apiKey,
         string apiSecret,
+        string probeBaseUrl,
         CancellationToken cancellationToken)
     {
         var client = httpClientFactory.CreateClient(SpotClientName);
@@ -73,7 +105,7 @@ public sealed class BinanceCredentialProbeClient(
                 SafeFailureReason: "Binance server-time offset üretilemedi.");
         }
 
-        using var request = CreateApiKeyRequest(path, apiKey);
+        using var request = CreateApiKeyRequest(path, apiKey, probeBaseUrl);
         using var response = await client.SendAsync(request, cancellationToken);
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
@@ -110,10 +142,10 @@ public sealed class BinanceCredentialProbeClient(
             supportsSpot: supportsSpot,
             supportsFutures: false);
     }
-
     private async Task<EndpointProbeResult> ProbeFuturesAsync(
         string apiKey,
         string apiSecret,
+        string probeBaseUrl,
         CancellationToken cancellationToken)
     {
         var client = httpClientFactory.CreateClient(FuturesClientName);
@@ -136,7 +168,7 @@ public sealed class BinanceCredentialProbeClient(
                 SafeFailureReason: "Binance server-time offset üretilemedi.");
         }
 
-        using var request = CreateApiKeyRequest(path, apiKey);
+        using var request = CreateApiKeyRequest(path, apiKey, probeBaseUrl);
         using var response = await client.SendAsync(request, cancellationToken);
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
@@ -158,7 +190,6 @@ public sealed class BinanceCredentialProbeClient(
             supportsSpot: false,
             supportsFutures: true);
     }
-
     private async Task<string> CreateSignedPathAsync(
         string resourcePath,
         string apiSecret,
@@ -171,12 +202,61 @@ public sealed class BinanceCredentialProbeClient(
         return $"{resourcePath}?{unsignedQuery}&signature={signature}";
     }
 
-    private static HttpRequestMessage CreateApiKeyRequest(string path, string apiKey)
+    private static HttpRequestMessage CreateApiKeyRequest(string path, string apiKey, string probeBaseUrl)
     {
-        var request = new HttpRequestMessage(HttpMethod.Get, path);
+        var normalizedBaseUrl = probeBaseUrl.EndsWith("/", StringComparison.Ordinal)
+            ? probeBaseUrl
+            : $"{probeBaseUrl}/";
+        var requestUri = new Uri(new Uri(normalizedBaseUrl, UriKind.Absolute), path.TrimStart('/'));
+        var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
         request.Headers.Add("X-MBX-APIKEY", apiKey);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         return request;
+    }
+
+    private string ResolveSpotProbeBaseUrl(ExecutionEnvironment? requestedEnvironment)
+    {
+        return requestedEnvironment switch
+        {
+            ExecutionEnvironment.Demo => DemoSpotProbeBaseUrl,
+            ExecutionEnvironment.Live => LiveSpotProbeBaseUrl,
+            _ => NormalizeBaseUrl(privateDataOptionsValue.SpotRestBaseUrl, marketDataOptionsValue.RestBaseUrl, LiveSpotProbeBaseUrl)
+        };
+    }
+
+    private string ResolveFuturesProbeBaseUrl(ExecutionEnvironment? requestedEnvironment)
+    {
+        return requestedEnvironment switch
+        {
+            ExecutionEnvironment.Demo => DemoFuturesProbeBaseUrl,
+            ExecutionEnvironment.Live => LiveFuturesProbeBaseUrl,
+            _ => NormalizeBaseUrl(privateDataOptionsValue.RestBaseUrl, LiveFuturesProbeBaseUrl)
+        };
+    }
+
+    private static string NormalizeBaseUrl(params string?[] candidates)
+    {
+        foreach (var candidate in candidates)
+        {
+            var normalizedCandidate = candidate?.Trim();
+
+            if (!string.IsNullOrWhiteSpace(normalizedCandidate))
+            {
+                return normalizedCandidate;
+            }
+        }
+
+        return LiveFuturesProbeBaseUrl;
+    }
+
+    private static bool ShouldProbeSpot(ExchangeTradeModeSelection? requestedTradeMode)
+    {
+        return requestedTradeMode is null or ExchangeTradeModeSelection.Spot or ExchangeTradeModeSelection.Both;
+    }
+
+    private static bool ShouldProbeFutures(ExchangeTradeModeSelection? requestedTradeMode)
+    {
+        return requestedTradeMode is null or ExchangeTradeModeSelection.Futures or ExchangeTradeModeSelection.Both;
     }
 
     private static EndpointProbeResult ParseFailure(string responseBody, System.Net.HttpStatusCode statusCode)
@@ -372,6 +452,19 @@ public sealed class BinanceCredentialProbeClient(
         bool HasIpRestrictionIssue,
         string? SafeFailureReason)
     {
+        public static EndpointProbeResult NotRequested()
+        {
+            return new EndpointProbeResult(
+                IsSuccess: false,
+                CanTrade: false,
+                CanWithdraw: null,
+                SupportsSpot: false,
+                SupportsFutures: false,
+                HasTimestampSkew: false,
+                HasIpRestrictionIssue: false,
+                SafeFailureReason: null);
+        }
+
         public static EndpointProbeResult Success(
             bool canTrade,
             bool? canWithdraw,
@@ -390,4 +483,3 @@ public sealed class BinanceCredentialProbeClient(
         }
     }
 }
-

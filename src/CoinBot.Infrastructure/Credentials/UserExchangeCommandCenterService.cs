@@ -145,6 +145,7 @@ public sealed class UserExchangeCommandCenterService(
         var exchangeAccount = await GetOrCreateBinanceAccountAsync(
             normalizedUserId,
             request.ExchangeAccountId,
+            request.DisplayName,
             cancellationToken);
 
         await exchangeCredentialService.StoreAsync(
@@ -164,6 +165,8 @@ public sealed class UserExchangeCommandCenterService(
             probe = await binanceCredentialProbeClient.ProbeAsync(
                 normalizedApiKey,
                 normalizedApiSecret,
+                request.RequestedEnvironment,
+                request.RequestedTradeMode,
                 cancellationToken);
         }
         catch (HttpRequestException)
@@ -298,6 +301,7 @@ public sealed class UserExchangeCommandCenterService(
     private async Task<ExchangeAccount> GetOrCreateBinanceAccountAsync(
         string userId,
         Guid? exchangeAccountId,
+        string? displayName,
         CancellationToken cancellationToken)
     {
         if (exchangeAccountId.HasValue)
@@ -315,6 +319,7 @@ public sealed class UserExchangeCommandCenterService(
                 throw new InvalidOperationException("Only Binance credential connections are supported on this screen.");
             }
 
+            existingAccount.DisplayName = NormalizeDisplayName(displayName, existingAccount.DisplayName);
             return existingAccount;
         }
 
@@ -328,6 +333,7 @@ public sealed class UserExchangeCommandCenterService(
 
         if (account is not null)
         {
+            account.DisplayName = NormalizeDisplayName(displayName, account.DisplayName);
             return account;
         }
 
@@ -335,7 +341,7 @@ public sealed class UserExchangeCommandCenterService(
         {
             OwnerUserId = userId,
             ExchangeName = BinanceExchangeName,
-            DisplayName = BinanceExchangeName,
+            DisplayName = NormalizeDisplayName(displayName, BinanceExchangeName),
             IsReadOnly = true,
             CredentialStatus = ExchangeCredentialStatus.Missing
         };
@@ -576,6 +582,21 @@ public sealed class UserExchangeCommandCenterService(
                 string.Equals(futuresEnvironmentScope, requestedEnvironmentLabel, StringComparison.OrdinalIgnoreCase),
             _ => false
         };
+    }
+
+    private static string NormalizeDisplayName(string? displayName, string? fallback)
+    {
+        var normalizedDisplayName = displayName?.Trim();
+        var normalizedFallback = fallback?.Trim();
+
+        if (!string.IsNullOrWhiteSpace(normalizedDisplayName))
+        {
+            return normalizedDisplayName.Length <= 96
+                ? normalizedDisplayName
+                : normalizedDisplayName[..96];
+        }
+
+        return string.IsNullOrWhiteSpace(normalizedFallback) ? BinanceExchangeName : normalizedFallback;
     }
 
     private static string ResolveDisplayName(ApplicationUser user)

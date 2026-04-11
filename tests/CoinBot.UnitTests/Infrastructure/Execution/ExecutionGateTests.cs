@@ -462,6 +462,103 @@ public sealed class ExecutionGateTests
     }
 
     [Fact]
+    public async Task EnsureExecutionAllowedAsync_BlocksWhenGlobalSystemStateIsSoftHalt()
+    {
+        await using var harness = CreateHarness();
+        await PrimeFreshMarketDataAsync(harness, "corr-gs-soft-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-gs-soft",
+            context: "Execution open",
+            correlationId: "corr-gs-soft-2");
+        await harness.GlobalSystemStateService.SetStateAsync(
+            new GlobalSystemStateSetRequest(
+                GlobalSystemStateKind.SoftHalt,
+                "SOFT_HALT_ACTIVE",
+                "Stabilize execution entry",
+                "AdminPortal.Settings",
+                "corr-gs-soft-3",
+                IsManualOverride: true,
+                ExpiresAtUtc: null,
+                UpdatedByUserId: "super-admin",
+                UpdatedFromIp: "ip:masked"));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            harness.ExecutionGate.EnsureExecutionAllowedAsync(
+                new ExecutionGateRequest(
+                    Actor: "worker-gs-soft",
+                    Action: "TradeExecution.Dispatch",
+                    Target: "bot-gs-soft",
+                    Environment: ExecutionEnvironment.Demo,
+                    Context: "Dispatch during soft halt",
+                    CorrelationId: "corr-gs-soft-4")));
+
+        var auditLog = await harness.DbContext.AuditLogs
+            .SingleAsync(entity => entity.Action == "TradeExecution.Dispatch");
+        var decisionTrace = await harness.DbContext.DecisionTraces.SingleAsync();
+
+        Assert.Contains("SoftHalt", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("Blocked:GlobalSystemSoftHalt", auditLog.Outcome);
+        Assert.Contains("DecisionOutcome=Block", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("DecisionReasonType=GlobalExecutionOff", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("DecisionReasonCode=GlobalSystemSoftHalt", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("GlobalSystemReason=SOFT_HALT_ACTIVE", auditLog.Context, StringComparison.Ordinal);
+        Assert.Equal("Block", decisionTrace.DecisionOutcome);
+        Assert.Equal("GlobalExecutionOff", decisionTrace.DecisionReasonType);
+        Assert.Equal("GlobalSystemSoftHalt", decisionTrace.DecisionReasonCode);
+        Assert.Equal("Execution blocked because global system state is SoftHalt: Stabilize execution entry", decisionTrace.DecisionSummary);
+        Assert.NotNull(decisionTrace.DecisionAtUtc);
+    }
+
+    [Fact]
+    public async Task EnsureExecutionAllowedAsync_BlocksWhenGlobalSystemStateIsFullHalt()
+    {
+        await using var harness = CreateHarness();
+        await PrimeFreshMarketDataAsync(harness, "corr-gs-full-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-gs-full",
+            context: "Execution open",
+            correlationId: "corr-gs-full-2");
+        await harness.GlobalSystemStateService.SetStateAsync(
+            new GlobalSystemStateSetRequest(
+                GlobalSystemStateKind.FullHalt,
+                "EMERGENCY_STOP_ACTIVE",
+                "Emergency stop active",
+                "AdminPortal.Settings",
+                "corr-gs-full-3",
+                IsManualOverride: true,
+                ExpiresAtUtc: null,
+                UpdatedByUserId: "super-admin",
+                UpdatedFromIp: "ip:masked"));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            harness.ExecutionGate.EnsureExecutionAllowedAsync(
+                new ExecutionGateRequest(
+                    Actor: "worker-gs-full",
+                    Action: "TradeExecution.Dispatch",
+                    Target: "bot-gs-full",
+                    Environment: ExecutionEnvironment.Demo,
+                    Context: "Dispatch during full halt",
+                    CorrelationId: "corr-gs-full-4")));
+
+        var auditLog = await harness.DbContext.AuditLogs
+            .SingleAsync(entity => entity.Action == "TradeExecution.Dispatch");
+        var decisionTrace = await harness.DbContext.DecisionTraces.SingleAsync();
+
+        Assert.Contains("FullHalt", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("Blocked:GlobalSystemFullHalt", auditLog.Outcome);
+        Assert.Contains("DecisionOutcome=Block", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("DecisionReasonType=GlobalExecutionOff", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("DecisionReasonCode=GlobalSystemFullHalt", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("GlobalSystemReason=EMERGENCY_STOP_ACTIVE", auditLog.Context, StringComparison.Ordinal);
+        Assert.Equal("Block", decisionTrace.DecisionOutcome);
+        Assert.Equal("GlobalExecutionOff", decisionTrace.DecisionReasonType);
+        Assert.Equal("GlobalSystemFullHalt", decisionTrace.DecisionReasonCode);
+        Assert.Equal("Execution blocked because global system state is FullHalt: Emergency stop active", decisionTrace.DecisionSummary);
+        Assert.NotNull(decisionTrace.DecisionAtUtc);
+    }
+    [Fact]
     public async Task EnsureExecutionAllowedAsync_BlocksWhenMarketDataIsStale()
     {
         await using var harness = CreateHarness();
@@ -958,6 +1055,7 @@ public sealed class ExecutionGateTests
         }
     }
 }
+
 
 
 

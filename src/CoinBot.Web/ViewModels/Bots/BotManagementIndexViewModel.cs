@@ -58,5 +58,9 @@ public sealed record BotManagementRowViewModel(
     string? MarketStaleThresholdText = null,
     string? ContinuityGapStartedText = null,
     string? ContinuityGapLastSeenText = null,
-    string? ContinuityRecoveryText = null);
+    string? ContinuityRecoveryText = null,
+    string PilotStateLabel = "PAUSED",
+    string PilotStateTone = "warning",
+    string PilotStateSummary = "Bot gorunur ama calismaz.");
+
 

@@ -1,70 +1,170 @@
 @using CoinBot.Application.Abstractions.Administration
 @{
     var snapshot = ViewData["AdminUsersPageSnapshot"] as AdminUsersPageSnapshot;
-    var firstUserId = snapshot?.Users.FirstOrDefault()?.UserId;
-    var headerModel = new AdminPageHeaderViewModel
-    {
-        Eyebrow = "Identity Workspace",
-        Title = "Kullanıcılar",
-        Description = "Kullanıcı listesi, filtre barı, güvenlik sinyalleri ve kontrollü admin aksiyonları için operasyonel kullanıcı yönetimi yüzeyi.",
-        StatusBadge = new AdminBadgeViewModel { Label = "User Ops", Tone = "info", IconText = "US" },
-        MetaBadges = new[]
-        {
-            new AdminBadgeViewModel { Label = "Super Admin", Tone = "role", IconText = "SA" },
-            new AdminBadgeViewModel { Label = "Controlled Actions", Tone = "warning", IconText = "CF" }
-        },
-        SecondaryActionText = "Destek araçları",
-        SecondaryActionHref = Url.Action("SupportTools", "Admin", new { area = "Admin" }),
-        PrimaryActionText = "Kullanıcı detayı",
-        PrimaryActionHref = string.IsNullOrWhiteSpace(firstUserId)
-            ? Url.Action("Users", "Admin", new { area = "Admin" })
-            : Url.Action("UserDetail", "Admin", new { area = "Admin", id = firstUserId })
-    };
+    var users = snapshot?.Users ?? Array.Empty<AdminUserListItemSnapshot>();
+    var query = snapshot?.Query ?? string.Empty;
+    var pendingUsers = users
+        .Where(user => user.StatusLabel.Contains("bekliyor", StringComparison.OrdinalIgnoreCase))
+        .ToArray();
+    var successMessage = TempData["AdminUserSuccess"] as string;
+    var errorMessage = TempData["AdminUserError"] as string;
 }
 
-<div class="row">
+<div class="row" data-cb-admin-users-soft-module>
     <div class="col-12">
-        <div class="card card-custom gutter-b cb-card cb-admin-card">
+        <section class="card card-custom gutter-b cb-card cb-admin-card">
             <div class="card-body">
-                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+                <div class="cb-admin-section-kicker">Super Admin</div>
+                <h1 class="cb-admin-section-title mb-2">Kullanıcılar</h1>
+                <p class="cb-admin-section-description mb-0">Kullanıcıları bulun, onay bekleyenleri ayırın ve detaydan güvenlik durumunu kontrol edin.</p>
 
-                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                @if (!string.IsNullOrWhiteSpace(successMessage))
                 {
-                    Tone = "info",
-                    Title = "User management",
-                    Message = "Arama, filtre, durum badge'leri ve gerçek kullanıcı detay sayfası aynı yüzeyde toplanır. Backend paging ve policy enforcement bu akışla hizalanır.",
-                    Meta = "User ops"
-                })
+                    <div class="alert alert-success mt-5 mb-0">@successMessage</div>
+                }
+                @if (!string.IsNullOrWhiteSpace(errorMessage))
+                {
+                    <div class="alert alert-danger mt-5 mb-0">@errorMessage</div>
+                }
 
-                <div class="mt-6">
-                    @await Html.PartialAsync("Foundation/_AdminUsersFilterBar")
+                <div class="cb-admin-inline-actions mt-5" aria-label="Kullanıcı alanları">
+                    <a href="#cb-admin-users-list" class="btn btn-light-primary font-weight-bold">Kullanıcı Listesi</a>
+                    <a href="#cb-admin-users-new" class="btn btn-light-primary font-weight-bold">Yeni Kullanıcı Ekle</a>
+                    <a href="#cb-admin-users-approval" class="btn btn-light-primary font-weight-bold">Kullanıcı Onay</a>
+                    <a href="#cb-admin-users-list" class="btn btn-light-primary font-weight-bold">Kullanıcı Detayı</a>
+                    <a href="#cb-admin-users-role-security" class="btn btn-light-primary font-weight-bold">Rol ve Güvenlik</a>
                 </div>
             </div>
-        </div>
+        </section>
     </div>
 
-    <div class="col-xl-8">
-        @await Html.PartialAsync("Foundation/_AdminUsersTable")
+    <div class="col-12">
+        <section id="cb-admin-users-list" class="card card-custom gutter-b cb-card cb-admin-card" data-cb-admin-users-list>
+            <div class="card-body">
+                <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-4 mb-5">
+                    <div>
+                        <div class="cb-admin-section-kicker">Kullanıcı Listesi</div>
+                        <h2 class="cb-admin-section-title mb-1">Kullanıcılar</h2>
+                        <p class="cb-admin-section-description mb-0">Rol, durum, MFA ve son giriş bilgisini kısa şekilde gösterir.</p>
+                    </div>
+                    <form method="get" asp-area="Admin" asp-controller="Admin" asp-action="Users" class="d-flex align-items-end gap-3" data-cb-admin-users-search>
+                        <div>
+                            <label for="admin-user-query" class="font-weight-bold text-muted mb-1">Kısa arama</label>
+                            <input id="admin-user-query" name="query" value="@query" class="form-control" autocomplete="off" placeholder="Kullanıcı ara" />
+                        </div>
+                        <button type="submit" class="btn btn-primary font-weight-bold">Ara</button>
+                        <a asp-area="Admin" asp-controller="Admin" asp-action="Users" class="btn btn-light font-weight-bold">Temizle</a>
+                    </form>
+                </div>
+
+                @if (!users.Any())
+                {
+                    <div class="cb-admin-empty-state text-center py-8">
+                        <strong>Kullanıcı bulunamadı</strong>
+                        <p class="text-muted mb-0">Arama sonucunda gösterilecek kullanıcı yok.</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-borderless align-middle mb-0">
+                            <thead>
+                                <tr class="text-muted font-size-sm">
+                                    <th>Kullanıcı adı</th>
+                                    <th>Rol</th>
+                                    <th>Durum</th>
+                                    <th>MFA</th>
+                                    <th>Son giriş</th>
+                                    <th class="text-right">Aksiyon</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var user in users)
+                                {
+                                    <tr>
+                                        <td>
+                                            <div class="font-weight-bold">@user.DisplayName</div>
+                                            <div class="text-muted small">@user.UserName</div>
+                                        </td>
+                                        <td>@user.RoleSummary</td>
+                                        <td><span class="badge badge-light">@user.StatusLabel</span></td>
+                                        <td><span class="badge badge-light">@user.MfaLabel</span></td>
+                                        <td>@user.LastActivityLabel</td>
+                                        <td class="text-right">
+                                            <a asp-area="Admin" asp-controller="Admin" asp-action="UserDetail" asp-route-id="@user.UserId" class="btn btn-sm btn-light-primary font-weight-bold" data-cb-admin-users-detail-link>Detay</a>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </section>
     </div>
 
-    <div class="col-xl-4">
-        @await Html.PartialAsync("Foundation/_AdminSecurityHelpCard", new AdminSecurityHelpCardViewModel
-        {
-            Eyebrow = "Admin actions",
-            Title = "Kontrollü kullanıcı aksiyonları",
-                    Description = "Askıya alma, açma ve not akışı yalnız gerçek backend endpoint'lere bağlı kalır.",
-            BadgeLabel = "User Ops",
-            BadgeTone = "warning",
-            Items = new[]
-            {
-                "User detail page",
-                "Audit ve risk ekranlarına yönlendirme",
-                "Destek araçları ve güvenlik incelemesi"
-            },
-            ActionText = "Kullanıcı detayı",
-            ActionHref = string.IsNullOrWhiteSpace(firstUserId)
-                ? Url.Action("Users", "Admin", new { area = "Admin" })
-                : Url.Action("UserDetail", "Admin", new { area = "Admin", id = firstUserId })
-        })
+    <div class="col-lg-6">
+        <section id="cb-admin-users-new" class="card card-custom gutter-b cb-card cb-admin-card" data-cb-admin-users-new>
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Yeni Kullanıcı Ekle</div>
+                <h2 class="cb-admin-section-title mb-2">Yeni kullanıcı</h2>
+                <p class="cb-admin-section-description mb-5">Yeni kullanıcı önce kayıt olur. Onay bekleyen kayıtlar bu alanda görünür.</p>
+                <a asp-area="" asp-controller="Auth" asp-action="Register" class="btn btn-light-primary font-weight-bold">Kayıt ekranı</a>
+            </div>
+        </section>
+    </div>
+
+    <div class="col-lg-6">
+        <section id="cb-admin-users-approval" class="card card-custom gutter-b cb-card cb-admin-card" data-cb-admin-users-approval>
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Kullanıcı Onay</div>
+                <h2 class="cb-admin-section-title mb-2">Onay bekleyenler</h2>
+                <p class="cb-admin-section-description mb-5">Onay bekleyen kullanıcıları ayırır ve detay kontrolüne götürür.</p>
+
+                @if (!pendingUsers.Any())
+                {
+                    <div class="text-muted">Onay bekleyen kullanıcı yok.</div>
+                }
+                else
+                {
+                    <div class="d-flex flex-column gap-3">
+                        @foreach (var user in pendingUsers)
+                        {
+                            <div class="d-flex justify-content-between align-items-center border rounded p-3">
+                                <div>
+                                    <div class="font-weight-bold">@user.DisplayName</div>
+                                    <div class="text-muted small">@user.UserName</div>
+                                </div>
+                                <div class="d-flex align-items-center gap-2">
+                                    <a asp-area="Admin" asp-controller="Admin" asp-action="UserDetail" asp-route-id="@user.UserId" class="btn btn-sm btn-light-primary font-weight-bold">Detaya git</a>
+                                    <form method="post" asp-area="Admin" asp-controller="Admin" asp-action="ApproveUser" class="mb-0" data-cb-admin-users-approve-form>
+                                        @Html.AntiForgeryToken()
+                                        <input type="hidden" name="id" value="@user.UserId" />
+                                        <button type="submit" class="btn btn-sm btn-primary font-weight-bold" data-cb-admin-users-approve>Onayla</button>
+                                    </form>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+
+                <div class="mt-5">
+                    <a asp-area="Admin" asp-controller="Admin" asp-action="Users" asp-route-status="Doğrulama bekliyor" class="btn btn-light font-weight-bold">Onay bekleyenleri göster</a>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <div class="col-12">
+        <section id="cb-admin-users-role-security" class="card card-custom gutter-b cb-card cb-admin-card" data-cb-admin-users-role-security>
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Rol ve Güvenlik</div>
+                <h2 class="cb-admin-section-title mb-2">Detaydan yönet</h2>
+                <p class="cb-admin-section-description mb-0">Rol, MFA, bağlı bot ve exchange durumu kullanıcı detayında sade şekilde görünür.</p>
+            </div>
+        </section>
     </div>
 </div>
+
+
+

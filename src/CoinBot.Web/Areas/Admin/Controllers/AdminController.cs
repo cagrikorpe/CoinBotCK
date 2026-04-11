@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.IO;
+using System.Net.Http;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Security.Claims;
@@ -8,6 +9,7 @@ using System.Text.Json;
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Exchange;
+using CoinBot.Application.Abstractions.ExchangeCredentials;
 using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Application.Abstractions.Policy;
 using CoinBot.Application.Abstractions.Strategies;
@@ -16,11 +18,13 @@ using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
 using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Exchange;
+using CoinBot.Infrastructure.Identity;
 using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.Mfa;
 using CoinBot.Web.ViewModels.Admin;
 using CoinBot.Web.ViewModels.Settings;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 
@@ -50,8 +54,12 @@ public sealed class AdminController : Controller
     private const string CanRefreshClockDriftViewDataKey = "AdminCanRefreshClockDrift";
     private const string ClockDriftSuccessTempDataKey = "AdminClockDriftSuccess";
     private const string ClockDriftErrorTempDataKey = "AdminClockDriftError";
+    private const string SetupSuccessTempDataKey = "AdminSetupSuccess";
+    private const string SetupErrorTempDataKey = "AdminSetupError";
     private const string ApprovalSuccessTempDataKey = "AdminApprovalSuccess";
     private const string ApprovalErrorTempDataKey = "AdminApprovalError";
+    private const string AdminUserSuccessTempDataKey = "AdminUserSuccess";
+    private const string AdminUserErrorTempDataKey = "AdminUserError";
     private const string CrisisPreviewViewDataKey = "AdminCrisisEscalationPreview";
     private const string CrisisSuccessTempDataKey = "AdminCrisisEscalationSuccess";
     private const string CrisisErrorTempDataKey = "AdminCrisisEscalationError";
@@ -85,6 +93,9 @@ public sealed class AdminController : Controller
     private readonly DataLatencyGuardOptions dataLatencyGuardOptions;
     private readonly BinancePrivateDataOptions privateDataOptions;
     private readonly ITraceService traceService;
+    private readonly IBinanceCredentialProbeClient? binanceCredentialProbeClient;
+    private readonly IUserExchangeCommandCenterService? userExchangeCommandCenterService;
+    private readonly UserManager<ApplicationUser>? userManager;
 
     private readonly BotExecutionPilotOptions pilotOptionsValue;
 
@@ -110,7 +121,10 @@ public sealed class AdminController : Controller
         ICrisisEscalationService? crisisEscalationService = null,
         IOptions<BotExecutionPilotOptions>? botExecutionPilotOptions = null,
         IOptions<DataLatencyGuardOptions>? dataLatencyGuardOptions = null,
-        IOptions<BinancePrivateDataOptions>? privateDataOptions = null)
+        IOptions<BinancePrivateDataOptions>? privateDataOptions = null,
+        IBinanceCredentialProbeClient? binanceCredentialProbeClient = null,
+        IUserExchangeCommandCenterService? userExchangeCommandCenterService = null,
+        UserManager<ApplicationUser>? userManager = null)
     {
         this.globalExecutionSwitchService = globalExecutionSwitchService;
         this.globalSystemStateService = globalSystemStateService;
@@ -134,6 +148,9 @@ public sealed class AdminController : Controller
         this.dataLatencyGuardOptions = dataLatencyGuardOptions?.Value ?? new DataLatencyGuardOptions();
         this.privateDataOptions = privateDataOptions?.Value ?? new BinancePrivateDataOptions();
         pilotOptionsValue = botExecutionPilotOptions?.Value ?? new BotExecutionPilotOptions();
+        this.binanceCredentialProbeClient = binanceCredentialProbeClient;
+        this.userExchangeCommandCenterService = userExchangeCommandCenterService;
+        this.userManager = userManager;
     }
 
     [AllowAnonymous]
@@ -532,6 +549,61 @@ public sealed class AdminController : Controller
         return View();
     }
 
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    [Authorize(Policy = ApplicationPolicies.IdentityAdministration)]
+    public async Task<IActionResult> ApproveUser(string? id, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            TempData[AdminUserErrorTempDataKey] = "Kullanıcı seçilmedi.";
+            return RedirectToAction(nameof(Users));
+        }
+
+        if (userManager is null)
+        {
+            TempData[AdminUserErrorTempDataKey] = "Kullanıcı onayı şu an hazır değil.";
+            return RedirectToAction(nameof(UserDetail), new { id });
+        }
+
+        var user = await userManager.FindByIdAsync(id.Trim());
+        if (user is null)
+        {
+            TempData[AdminUserErrorTempDataKey] = "Kullanıcı bulunamadı.";
+            return RedirectToAction(nameof(Users));
+        }
+
+        if (user.EmailConfirmed)
+        {
+            TempData[AdminUserSuccessTempDataKey] = "Kullanıcı zaten onaylı.";
+            return RedirectToAction(nameof(UserDetail), new { id = user.Id });
+        }
+
+        user.EmailConfirmed = true;
+        var result = await userManager.UpdateAsync(user);
+        if (!result.Succeeded)
+        {
+            user.EmailConfirmed = false;
+            TempData[AdminUserErrorTempDataKey] = "Kullanıcı onaylanamadı.";
+            return RedirectToAction(nameof(UserDetail), new { id = user.Id });
+        }
+
+        await adminAuditLogService.WriteAsync(
+            BuildAdminAuditLogWriteRequest(
+                ResolveAdminUserId(),
+                "Admin.Users.Approve",
+                "User",
+                user.Id,
+                oldValueSummary: "Onay bekliyor",
+                newValueSummary: "Onaylı",
+                reason: "Kullanıcı onaylandı.",
+                correlationId: HttpContext.TraceIdentifier),
+            cancellationToken);
+
+        TempData[AdminUserSuccessTempDataKey] = "Kullanıcı onaylandı.";
+        return RedirectToAction(nameof(UserDetail), new { id = user.Id });
+    }
 
     [Authorize(Policy = ApplicationPolicies.AuditRead)]
     public async Task<IActionResult> ExchangeAccounts(CancellationToken cancellationToken)
@@ -1593,6 +1665,69 @@ public sealed class AdminController : Controller
         }
 
         return RedirectToAction(redirectAction);
+    }
+
+    [HttpPost]
+    [Authorize(Policy = ApplicationPolicies.PlatformAdministration)]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> ConnectBinanceForSetup(
+        bool isDemo,
+        string? apiKey,
+        string? apiSecret,
+        string? connectionName,
+        string? setupCommand,
+        CancellationToken cancellationToken = default)
+    {
+        if (userExchangeCommandCenterService is null)
+        {
+            TempData[SetupErrorTempDataKey] = "Sistem hazir degil";
+            return RedirectToAction(nameof(Overview));
+        }
+
+        if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(apiSecret))
+        {
+            TempData[SetupErrorTempDataKey] = "Exchange bagli degil";
+            return RedirectToAction(nameof(Overview));
+        }
+
+        if (string.Equals(setupCommand, "test", StringComparison.OrdinalIgnoreCase))
+        {
+            await TestBinanceForSetupAsync(apiKey, apiSecret, isDemo, cancellationToken);
+            return RedirectToAction(nameof(Overview));
+        }
+
+        try
+        {
+            var result = await userExchangeCommandCenterService.ConnectBinanceAsync(
+                new ConnectUserBinanceCredentialRequest(
+                    ResolveAdminUserId(),
+                    null,
+                    apiKey,
+                    apiSecret,
+                    isDemo ? ExecutionEnvironment.Demo : ExecutionEnvironment.Live,
+                    ExchangeTradeModeSelection.Futures,
+                    ResolveExecutionActor(),
+                    HttpContext.TraceIdentifier,
+                    connectionName),
+                cancellationToken);
+
+            TempData[result.IsValid ? SetupSuccessTempDataKey : SetupErrorTempDataKey] =
+                BuildSetupConnectionMessage(result);
+        }
+        catch (ArgumentException)
+        {
+            TempData[SetupErrorTempDataKey] = "Exchange bagli degil";
+        }
+        catch (InvalidOperationException)
+        {
+            TempData[SetupErrorTempDataKey] = "Sistem hazir degil";
+        }
+        catch
+        {
+            TempData[SetupErrorTempDataKey] = "API erisimi basarisiz";
+        }
+
+        return RedirectToAction(nameof(Overview));
     }
 
     [HttpPost]
@@ -4007,6 +4142,85 @@ public sealed class AdminController : Controller
         return $"admin:{ResolveAdminUserId()}";
     }
 
+    private async Task TestBinanceForSetupAsync(string apiKey, string apiSecret, bool isDemo, CancellationToken cancellationToken)
+    {
+        if (binanceCredentialProbeClient is null)
+        {
+            TempData[SetupErrorTempDataKey] = "Sistem hazir degil";
+            return;
+        }
+
+        try
+        {
+            var probe = await binanceCredentialProbeClient.ProbeAsync(
+                apiKey.Trim(),
+                apiSecret.Trim(),
+                isDemo ? ExecutionEnvironment.Demo : ExecutionEnvironment.Live,
+                ExchangeTradeModeSelection.Futures,
+                cancellationToken);
+            var message = BuildSetupProbeMessage(probe, isDemo);
+            TempData[message == "API erisimi basarili" ? SetupSuccessTempDataKey : SetupErrorTempDataKey] = message;
+        }
+        catch (HttpRequestException)
+        {
+            TempData[SetupErrorTempDataKey] = "Exchange bagli degil";
+        }
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            TempData[SetupErrorTempDataKey] = "Exchange bagli degil";
+        }
+        catch (JsonException)
+        {
+            TempData[SetupErrorTempDataKey] = "API erisimi basarisiz";
+        }
+    }
+
+    private static string BuildSetupProbeMessage(BinanceCredentialProbeSnapshot probe, bool isDemo)
+    {
+        if (!probe.IsKeyValid || probe.HasTimestampSkew || probe.HasIpRestrictionIssue)
+        {
+            return "API erisimi basarisiz";
+        }
+
+        var requestedEnvironmentLabel = isDemo ? "Demo" : "Live";
+
+        if (!string.Equals(probe.FuturesEnvironmentScope, requestedEnvironmentLabel, StringComparison.OrdinalIgnoreCase))
+        {
+            return "Secilen ortam uygun degil";
+        }
+
+        return probe.SupportsFutures ? "API erisimi basarili" : "Futures erisimi dogrulanamadi";
+    }
+    private static string BuildSetupConnectionMessage(ConnectUserBinanceCredentialResult result)
+    {
+        if (result.IsValid)
+        {
+            return "Binance baglantisi dogrulandi";
+        }
+
+        var message = $"{result.SafeFailureReason} {result.UserMessage}";
+
+        if (message.Contains("Futures", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Futures erisimi dogrulanamadi";
+        }
+
+        if (message.Contains("ortam", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("environment", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Secilen ortam uygun degil";
+        }
+
+        if (message.Contains("ulas", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("zaman asimi", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("timeout", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Exchange bagli degil";
+        }
+
+        return "API erisimi basarisiz";
+    }
+
     private static string? NormalizeRequiredReason(string? reason)
     {
         return NormalizeRequiredInput(reason, 256);
@@ -4535,46 +4749,3 @@ public sealed class AdminController : Controller
             : value[..maxLength];
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -4,15 +4,10 @@
 @{
     var selectedAccountId = Model.Form.ExchangeAccountId ?? Model.Snapshot.Accounts.FirstOrDefault()?.ExchangeAccountId;
     var effectiveEnvironment = Model.Snapshot.Environment.EffectiveEnvironment;
-    var demoSelectable = effectiveEnvironment == ExecutionEnvironment.Demo;
-    var liveSelectable = effectiveEnvironment == ExecutionEnvironment.Live;
     var latestAccount = Model.Snapshot.Accounts
         .OrderByDescending(account => account.LastValidatedAtUtc ?? DateTime.MinValue)
         .ThenByDescending(account => account.ExchangeAccountId)
         .FirstOrDefault();
-    var environmentGuardMessage = demoSelectable
-        ? $"Live secimi kilitli. {Model.Snapshot.Environment.ResolutionSourceLabel} · {Model.Snapshot.Environment.ResolutionReason}"
-        : $"Demo secimi kilitli. {Model.Snapshot.Environment.ResolutionSourceLabel} · {Model.Snapshot.Environment.ResolutionReason}";
     var hasFlashMessage = !string.IsNullOrWhiteSpace(Model.SuccessMessage) || !string.IsNullOrWhiteSpace(Model.ErrorMessage);
     var persistedStatusMessage = latestAccount is null
         ? null
@@ -49,14 +44,11 @@
             <div class="card-body">
                 <div class="cb-page-header">
                     <div>
-                        <div class="cb-page-eyebrow">User Command Center</div>
-                        <h2 class="cb-page-title">Binance erişim ve doğrulama merkezi</h2>
-                        <p class="cb-page-description">API key kaydı, environment guard, permission özeti ve son validation geçmişi aynı kullanıcı ekranında toplanır.</p>
+                        <div class="cb-page-eyebrow">Binance</div>
+                        <h2 class="cb-page-title">Binance bağlantısı</h2>
+                        <p class="cb-page-description">API bilgilerinizi kaydedip bağlantıyı doğrulayın.</p>
                     </div>
                     <div class="cb-toolbar">
-                        <span class="cb-badge @(Model.Snapshot.Environment.EffectiveEnvironmentTone == "critical" ? "cb-badge-danger" : Model.Snapshot.Environment.EffectiveEnvironmentTone == "warning" ? "cb-badge-warning" : "cb-badge-info")">
-                            Etkin mod: @Model.Snapshot.Environment.EffectiveEnvironmentLabel
-                        </span>
                         <span class="cb-badge cb-badge-neutral">@Model.Snapshot.DisplayName</span>
                     </div>
                 </div>
@@ -64,22 +56,14 @@
                 <div class="row mt-6">
                     <div class="col-xl-4 mb-6">
                         <div class="cb-auth-summary-card cb-auth-summary-card-stacked h-100">
-                            <div class="cb-auth-summary-label">Environment</div>
-                            <div class="cb-auth-summary-value">@Model.Snapshot.Environment.EffectiveEnvironmentLabel</div>
-                            <div class="cb-auth-summary-text">@Model.Snapshot.Environment.ResolutionSourceLabel · @Model.Snapshot.Environment.ResolutionReason</div>
-                            <div class="cb-permission-list mt-4">
-                                <div class="cb-permission-item">
-                                    <span>Live approval</span>
-                                    <span class="cb-badge @(Model.Snapshot.Environment.HasExplicitLiveApproval ? "cb-badge-success" : "cb-badge-warning")">
-                                        @(Model.Snapshot.Environment.HasExplicitLiveApproval ? "Var" : "Yok")
-                                    </span>
-                                </div>
-                            </div>
+                            <div class="cb-auth-summary-label">Durum</div>
+                            <div class="cb-auth-summary-value">@persistentBannerTitle</div>
+                            <div class="cb-auth-summary-text">Ortam seçimi platform tarafından yönetilir.</div>
                         </div>
                     </div>
                     <div class="col-xl-8 mb-6">
                         <div class="cb-auth-summary-card cb-auth-summary-card-stacked h-100">
-                            <div class="cb-auth-summary-label">Risk ve override</div>
+                            <div class="cb-auth-summary-label">Risk tercihleri</div>
                             <div class="cb-status-toggle-row mt-4">
                                 <span class="cb-status-chip is-active">@Model.Snapshot.RiskOverride.SummaryLabel</span>
                             </div>
@@ -141,27 +125,20 @@
         <div class="card card-custom gutter-b cb-card">
             <div class="card-body">
                 <div class="cb-section-title">Binance API key bağla</div>
-                <p class="cb-page-description">Secret yalnız bu istekte kullanılır, plaintext olarak render edilmez ve başarılı olursa şifreli saklanır.</p>
+                <p class="cb-page-description">Secret yalnız bu istekte kullanılır ve ekranda açık gösterilmez.</p>
 
                 <form asp-area="@Model.SubmitArea" asp-controller="@Model.SubmitController" asp-action="@Model.SubmitAction" method="post" novalidate>
                     @Html.AntiForgeryToken()
                     <input asp-for="Form.ExchangeAccountId" type="hidden" value="@(selectedAccountId?.ToString() ?? string.Empty)" />
                     <div asp-validation-summary="ModelOnly" class="cb-validation-summary cb-validation-summary-danger"></div>
 
+                    <input asp-for="Form.RequestedEnvironment" type="hidden" value="@effectiveEnvironment" />
                     <div class="mb-6">
-                        <label asp-for="Form.RequestedEnvironment" class="cb-form-label">Ortam</label>
-                        <div class="cb-inline-toggle-row">
-                            <label class="cb-choice-pill @(Model.Form.RequestedEnvironment == ExecutionEnvironment.Demo ? "is-selected" : string.Empty) @(demoSelectable ? string.Empty : "is-disabled")">
-                                <input asp-for="Form.RequestedEnvironment" type="radio" value="@ExecutionEnvironment.Demo" disabled="@(demoSelectable ? null : "disabled")" />
-                                Demo
-                            </label>
-                            <label class="cb-choice-pill @(Model.Form.RequestedEnvironment == ExecutionEnvironment.Live ? "is-selected" : string.Empty) @(liveSelectable ? string.Empty : "is-disabled")">
-                                <input asp-for="Form.RequestedEnvironment" type="radio" value="@ExecutionEnvironment.Live" disabled="@(liveSelectable ? null : "disabled")" />
-                                Live
-                            </label>
+                        <label class="cb-form-label">Ortam</label>
+                        <div class="cb-auth-summary-card cb-auth-summary-card-stacked">
+                            <div class="cb-auth-summary-label">Sistem ayarı</div>
+                            <div class="cb-auth-summary-text">Ortam seçimi platform tarafından yönetilir.</div>
                         </div>
-                        <div class="cb-field-feedback">@environmentGuardMessage</div>
-                        <div class="cb-field-feedback">Seçilen ortam, etkin kullanıcı modu ve Binance uç noktası ile birebir eşleşmek zorundadır.</div>
                     </div>
 
                     <div class="mb-6">
@@ -175,7 +152,7 @@
                             <label class="cb-choice-card @(Model.Form.RequestedTradeMode == ExchangeTradeModeSelection.Futures ? "is-selected" : string.Empty)">
                                 <input asp-for="Form.RequestedTradeMode" type="radio" value="@ExchangeTradeModeSelection.Futures" />
                                 <span class="cb-choice-title">Futures</span>
-                                <span class="cb-choice-text">Futures hesabı doğrulanır, environment guard uygulanır.</span>
+                                <span class="cb-choice-text">Futures hesabı ve bağlantı kapsamı doğrulanır.</span>
                             </label>
                             <label class="cb-choice-card @(Model.Form.RequestedTradeMode == ExchangeTradeModeSelection.Both ? "is-selected" : string.Empty)">
                                 <input asp-for="Form.RequestedTradeMode" type="radio" value="@ExchangeTradeModeSelection.Both" />
@@ -198,16 +175,16 @@
                             <button type="button" class="cb-auth-field-action" data-cb-password-toggle data-cb-password-target="#binance_secret_input">Göster</button>
                         </div>
                         <span asp-validation-for="Form.ApiSecret" class="text-danger small"></span>
-                        <div class="cb-field-feedback">Withdrawal izni açık anahtarlar otomatik olarak reddedilir.</div>
+                        <div class="cb-field-feedback">Güvenli olmayan anahtarlar reddedilir.</div>
                     </div>
 
                     <div class="cb-auth-alert cb-auth-alert-warning">
-                        Validation sonucunda en az şu kontroller yapılır: key geçerliliği, trade izni, withdraw guard, environment uyumu, spot/futures kapsamı ve son hata nedeni.
+                        Bağlantı testi tek cümlelik sonuçla gösterilir.
                     </div>
 
                     <div class="cb-auth-action-row mt-8">
                         <button type="submit" class="btn btn-primary font-weight-bolder">Kaydet ve doğrula</button>
-                        <a asp-controller="Exchanges" asp-action="Index" class="btn btn-light-primary font-weight-bold">Command Center</a>
+                        <a asp-controller="Home" asp-action="Index" class="btn btn-light-primary font-weight-bold">Ana Sayfa</a>
                     </div>
                 </form>
             </div>
@@ -233,8 +210,8 @@
             <div class="card-body">
                 <div class="cb-admin-panel-head">
                     <div>
-                        <div class="cb-section-title">Credential summary</div>
-                        <p class="cb-page-description mb-0">Kayıtlı Binance hesapları masked fingerprint, permission summary ve demo/live görünürlüğüyle listelenir.</p>
+                        <div class="cb-section-title">Bağlı hesaplar</div>
+                        <p class="cb-page-description mb-0">Kayıtlı Binance hesapları maskeli özet ve son doğrulama durumuyla listelenir.</p>
                     </div>
                     <span class="cb-badge cb-badge-info">@Model.Snapshot.Accounts.Count hesap</span>
                 </div>
@@ -243,7 +220,7 @@
                 {
                     <div class="cb-auth-summary-card cb-auth-summary-card-stacked mt-6">
                         <div class="cb-auth-summary-label">Henüz Binance hesabı bağlı değil</div>
-                        <div class="cb-auth-summary-text">İlk doğrulama başarılı olduğunda masked fingerprint, permission summary ve validation geçmişi burada görünür.</div>
+                        <div class="cb-auth-summary-text">İlk doğrulama başarılı olduğunda maskeli hesap özeti burada görünür.</div>
                     </div>
                 }
                 else
@@ -254,9 +231,9 @@
                                 <tr>
                                     <th>Hesap</th>
                                     <th>Durum</th>
-                                    <th>Permission</th>
-                                    <th>Environment</th>
-                                    <th>Sync</th>
+                                    <th>İzin</th>
+                                    <th>Ortam</th>
+                                    <th>Durum</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -304,8 +281,8 @@
             <div class="card-body">
                 <div class="cb-admin-panel-head">
                     <div>
-                        <div class="cb-section-title">Validation history</div>
-                        <p class="cb-page-description mb-0">Her doğrulama kaydı güvenli failure reason ve permission özetiyle tutulur.</p>
+                        <div class="cb-section-title">Doğrulama geçmişi</div>
+                        <p class="cb-page-description mb-0">Son doğrulama sonuçları kısa özetle tutulur.</p>
                     </div>
                     <span class="cb-badge cb-badge-neutral">@Model.Snapshot.ValidationHistory.Count kayıt</span>
                 </div>
@@ -313,8 +290,8 @@
                 @if (Model.Snapshot.ValidationHistory.Count == 0)
                 {
                     <div class="cb-auth-summary-card cb-auth-summary-card-stacked mt-6">
-                        <div class="cb-auth-summary-label">Validation geçmişi yok</div>
-                        <div class="cb-auth-summary-text">İlk submit işleminden sonra key geçerliliği, canTrade, canWithdraw, environment uyumu ve son hata nedeni burada görünür.</div>
+                        <div class="cb-auth-summary-label">Doğrulama geçmişi yok</div>
+                        <div class="cb-auth-summary-text">İlk kayıt sonrası son doğrulama sonucu burada görünür.</div>
                     </div>
                 }
                 else
@@ -325,8 +302,8 @@
                                 <tr>
                                     <th>Zaman</th>
                                     <th>Durum</th>
-                                    <th>Permission summary</th>
-                                    <th>Kontroller</th>
+                                    <th>İzin özeti</th>
+                                    <th>Özet</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -344,7 +321,7 @@
                                             </span>
                                             @if (!item.IsEnvironmentMatch)
                                             {
-                                                <div class="text-danger small mt-2">Environment uyumsuz</div>
+                                                <div class="text-danger small mt-2">Ortam uyumsuz</div>
                                             }
                                             @if (!string.IsNullOrWhiteSpace(item.FailureReason))
                                             {
@@ -353,14 +330,11 @@
                                         </td>
                                         <td>
                                             <div class="small">@item.PermissionSummary</div>
-                                            <div class="text-muted small mt-2">Fingerprint: @(item.MaskedFingerprint ?? "Henüz yok")</div>
+                                            <div class="text-muted small mt-2">Maskeli hesap: @(item.MaskedFingerprint ?? "Henüz yok")</div>
                                         </td>
                                         <td>
-                                            <div class="small">Key: @(item.IsKeyValid ? "geçerli" : "geçersiz")</div>
-                                            <div class="small">canTrade: @(item.CanTrade ? "true" : "false")</div>
-                                            <div class="small">canWithdraw: @(item.CanWithdraw ? "true" : "false")</div>
-                                            <div class="small">Spot: @(item.SupportsSpot ? "uyumlu" : "yok")</div>
-                                            <div class="small">Futures: @(item.SupportsFutures ? "uyumlu" : "yok")</div>
+                                            <div class="small">API erişimi: @(item.IsKeyValid ? "başarılı" : "başarısız")</div>
+                                            <div class="small">İşlem izni: @(item.CanTrade ? "hazır" : "eksik")</div>
                                         </td>
                                     </tr>
                                 }

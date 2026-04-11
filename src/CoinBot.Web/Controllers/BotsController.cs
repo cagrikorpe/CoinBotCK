@@ -274,7 +274,10 @@ public class BotsController(
                     : null,
                 item.LastExecutionContinuityRecoveredAtUtc.HasValue
                     ? FormatTimestamp(item.LastExecutionContinuityRecoveredAtUtc, timeZoneInfo)
-                    : null))
+                    : null,
+                ResolvePilotState(item).Label,
+                ResolvePilotState(item).Tone,
+                ResolvePilotState(item).Summary))
             .ToArray();
 
         return new BotManagementIndexViewModel(rows);
@@ -388,6 +391,51 @@ public class BotsController(
             : $"ClientOrderId: {clientOrderId.Trim()}";
     }
 
+    private static (string Label, string Tone, string Summary) ResolvePilotState(BotManagementBotSnapshot snapshot)
+    {
+        if (!snapshot.IsEnabled)
+        {
+            return ("PAUSED", "warning", "Bot kapali.");
+        }
+
+        if (string.Equals(snapshot.LastShadowFinalAction, "ShadowOnly", StringComparison.OrdinalIgnoreCase) &&
+            (!snapshot.LastExecutionUpdatedAtUtc.HasValue ||
+             !snapshot.LastShadowEvaluatedAtUtc.HasValue ||
+             snapshot.LastShadowEvaluatedAtUtc.Value >= snapshot.LastExecutionUpdatedAtUtc.Value))
+        {
+            return ("SHADOW", "info", "Karar var, emir gonderimi yok.");
+        }
+
+        if (snapshot.LastExecutionSubmittedToBroker ||
+            string.Equals(snapshot.LastExecutionState, "Submitted", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(snapshot.LastExecutionState, "PartiallyFilled", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(snapshot.LastExecutionState, "Filled", StringComparison.OrdinalIgnoreCase))
+        {
+            return ("LIVE", "critical", "Emir gonderimi acik.");
+        }
+
+        return ("PAUSED", "warning", ResolvePausedSummary(snapshot));
+    }
+
+    private static string ResolvePausedSummary(BotManagementBotSnapshot snapshot)
+    {
+        var code = snapshot.LastExecutionFailureCode ??
+            snapshot.LastExecutionDecisionReasonCode ??
+            snapshot.LastShadowNoSubmitReason;
+
+        return code switch
+        {
+            "TradeMasterDisarmed" => "TradeMaster kapali.",
+            "LiveExecutionBlockedByDemoMode" or "LiveModeApprovalMissing" => "Live secildi ama izin yok.",
+            "GlobalSystemSoftHalt" => "Soft halt aktif.",
+            "GlobalSystemFullHalt" => "Acil durdurma aktif.",
+            "PilotSymbolNotAllowed" or "PilotConfigurationMissing" or "PilotTestnetEndpointMismatch" => "Pilot siniri disinda.",
+            "UserExecutionPilotNotionalHardCapExceeded" or "UserExecutionPilotNotionalConfigurationMissing" => "Notional siniri asildi.",
+            "ShadowModeActive" => "Karar var, emir gonderimi yok.",
+            _ => "Bot gorunur ama calismaz."
+        };
+    }
+
     private static TimeZoneInfo ResolveTimeZone(string? timeZoneId)
     {
         if (!string.IsNullOrWhiteSpace(timeZoneId))
@@ -421,5 +469,6 @@ public class BotsController(
         return $"{localTimestamp:yyyy-MM-dd HH:mm:ss} {timeZoneInfo.StandardName}";
     }
 }
+
 
 

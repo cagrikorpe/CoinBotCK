@@ -2,42 +2,40 @@
 @model UserDashboardPortfolioSnapshot
 @{
     var openPositionCount = Model.Positions.Count;
-    var closedPositionCount = Model.TradeHistory.Count(item =>
-        item.FinalState is "Filled" or "Cancelled" or "Rejected" or "Failed");
+    var orderCount = Model.TradeHistory.Count;
+    var totalTone = Model.TotalPnl >= 0m ? "cb-text-positive" : "cb-text-negative";
     var unrealizedTone = Model.UnrealizedPnl >= 0m ? "cb-text-positive" : "cb-text-negative";
     var realizedTone = Model.RealizedPnl >= 0m ? "cb-text-positive" : "cb-text-negative";
-    var longCount = Model.Positions.Count(item => item.Quantity >= 0m);
-    var shortCount = Model.Positions.Count(item => item.Quantity < 0m);
+    var portfolioAssetCount = Model.Balances.Count + (Model.SpotHoldings?.Count ?? 0);
+    var pnlStatus = string.IsNullOrWhiteSpace(Model.PnlConsistencySummary) ||
+        Model.PnlConsistencySummary.Contains("unavailable", StringComparison.OrdinalIgnoreCase)
+            ? "Kâr zarar özeti hazır değil"
+            : "Kâr zarar özeti hazır";
 }
-<div class="cb-kpi-grid cb-positions-summary-grid">
+<div class="cb-kpi-grid cb-positions-summary-grid" data-cb-user-exec-summary>
     <div class="cb-stat-card">
-        <div class="cb-stat-label">Açık pozisyon</div>
+        <div class="cb-stat-label">Pozisyonlar</div>
         <div class="cb-stat-value cb-numeric-strong" id="cb_positions_summary_open" data-cb-positions-summary-open>@openPositionCount.ToString("00")</div>
-        <div class="cb-stat-meta">Aktif risk yüzeyi</div>
+        <div class="cb-stat-meta">Açık pozisyon</div>
     </div>
     <div class="cb-stat-card">
-        <div class="cb-stat-label">Kapalı pozisyon</div>
-        <div class="cb-stat-value cb-numeric-strong" id="cb_positions_summary_closed" data-cb-positions-summary-closed>@closedPositionCount.ToString("00")</div>
-        <div class="cb-stat-meta">History review</div>
+        <div class="cb-stat-label">Emirler</div>
+        <div class="cb-stat-value cb-numeric-strong" id="cb_positions_summary_closed" data-cb-positions-summary-closed>@orderCount.ToString("00")</div>
+        <div class="cb-stat-meta">Geçmiş kayıt</div>
     </div>
     <div class="cb-stat-card">
-        <div class="cb-stat-label">Unrealized PnL</div>
-        <div class="cb-stat-value cb-numeric-strong @unrealizedTone" id="cb_positions_summary_unrealized" data-cb-positions-summary-unrealized>@($"{(Model.UnrealizedPnl >= 0m ? "+" : string.Empty)}{Model.UnrealizedPnl:0.####}")</div>
-        <div class="cb-stat-meta">Açık pozisyon etkisi</div>
+        <div class="cb-stat-label">Kâr / Zarar</div>
+        <div class="cb-stat-value cb-numeric-strong @totalTone" data-cb-positions-total-pnl>@($"{(Model.TotalPnl >= 0m ? "+" : string.Empty)}{Model.TotalPnl:0.####}")</div>
+        <div class="cb-stat-meta" data-cb-positions-pnl-consistency>@pnlStatus</div>
+        <div class="text-muted small mt-2">
+            <span class="@unrealizedTone" id="cb_positions_summary_unrealized" data-cb-positions-summary-unrealized>@($"Açık {(Model.UnrealizedPnl >= 0m ? "+" : string.Empty)}{Model.UnrealizedPnl:0.####}")</span>
+            <span class="mx-2">·</span>
+            <span class="@realizedTone" id="cb_positions_summary_realized" data-cb-positions-summary-realized>@($"Geçmiş {(Model.RealizedPnl >= 0m ? "+" : string.Empty)}{Model.RealizedPnl:0.####}")</span>
+        </div>
     </div>
     <div class="cb-stat-card">
-        <div class="cb-stat-label">Realized PnL</div>
-        <div class="cb-stat-value cb-numeric-strong @realizedTone" id="cb_positions_summary_realized" data-cb-positions-summary-realized>@($"{(Model.RealizedPnl >= 0m ? "+" : string.Empty)}{Model.RealizedPnl:0.####}")</div>
-        <div class="cb-stat-meta">Kapanan sonuçlar</div>
-    </div>
-    <div class="cb-stat-card">
-        <div class="cb-stat-label">Long</div>
-        <div class="cb-stat-value cb-numeric-strong" id="cb_positions_summary_long" data-cb-positions-summary-long>@longCount.ToString("00")</div>
-        <div class="cb-stat-meta">Aktif long sayısı</div>
-    </div>
-    <div class="cb-stat-card cb-stat-card-warning">
-        <div class="cb-stat-label">Short</div>
-        <div class="cb-stat-value cb-numeric-strong" id="cb_positions_summary_short" data-cb-positions-summary-short>@shortCount.ToString("00")</div>
-        <div class="cb-stat-meta">Aktif short sayısı</div>
+        <div class="cb-stat-label">Portföy Özeti</div>
+        <div class="cb-stat-value cb-numeric-strong" data-cb-positions-portfolio-assets>@portfolioAssetCount.ToString("00")</div>
+        <div class="cb-stat-meta">Varlık satırı</div>
     </div>
 </div>

@@ -1,115 +1,121 @@
+@using CoinBot.Application.Abstractions.Administration
 @{
     var entityId = ViewData["AdminEntityId"]?.ToString() ?? "usr-unknown";
-    var snapshot = ViewData["AdminUserDetailPageSnapshot"] as CoinBot.Application.Abstractions.Administration.AdminUserDetailPageSnapshot;
-    var headerModel = new AdminPageHeaderViewModel
-    {
-        Eyebrow = "Identity Detail",
-        Title = "Kullanıcı Detayı",
-        Description = "Profil özeti, güvenlik durumu, bot ve exchange summary ile son aktiviteleri operasyon odaklı detay ekranında toplar.",
-        StatusBadge = new AdminBadgeViewModel { Label = entityId, Tone = "neutral", IconText = "ID" },
-        MetaBadges = new[]
-        {
-            new AdminBadgeViewModel { Label = "User Ops", Tone = "info", IconText = "US" },
-            new AdminBadgeViewModel { Label = "Controlled Access", Tone = "warning", IconText = "CF" }
-        },
-        SecondaryActionText = "Kullanıcılara dön",
-        SecondaryActionHref = Url.Action("Users", "Admin", new { area = "Admin" }),
-        PrimaryActionText = snapshot is null ? "Destek araçları" : "Audit / loglar",
-        PrimaryActionHref = snapshot is null
-            ? Url.Action("SupportTools", "Admin", new { area = "Admin", query = entityId })
-            : Url.Action("Audit", "Admin", new { area = "Admin", userId = entityId })
-    };
+    var snapshot = ViewData["AdminUserDetailPageSnapshot"] as AdminUserDetailPageSnapshot;
+    var botCount = snapshot?.Bots.Count ?? 0;
+    var exchangeConnected = (snapshot?.ExchangeAccounts.Count ?? 0) > 0;
+    var approvalPending = snapshot?.StatusLabel.Contains("bekliyor", StringComparison.OrdinalIgnoreCase) == true;
+    var successMessage = TempData["AdminUserSuccess"] as string;
+    var errorMessage = TempData["AdminUserError"] as string;
 }
 
-<div class="row">
+<div class="row" data-cb-admin-user-detail-soft>
     <div class="col-12">
-        <div class="card card-custom gutter-b cb-card cb-admin-card">
+        <section class="card card-custom gutter-b cb-card cb-admin-card">
             <div class="card-body">
-                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
-
-                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
-                {
-                    Tone = "warning",
-                    Title = "Identity detail",
-                    Message = "Gerçek kullanıcı özeti, credential geçmişi, risk override ve audit sinyalleri bu yüzeyde birlikte görünür.",
-                    Meta = "User HQ"
-                })
-
-                @if (snapshot is null)
-                {
-                    @await Html.PartialAsync("Foundation/_AdminEmptyState", new UiStateViewModel
-                    {
-                        Title = "Kullanıcı bulunamadı",
-                        Message = "İstenen kullanıcı kimliği için admin detail snapshot bulunamadı.",
-                        IconText = "ID",
-                        ActionText = "Kullanıcı listesi",
-                        ActionHref = Url.Action("Users", "Admin", new { area = "Admin" }),
-                        SecondaryActionText = "Destek araçları",
-                        SecondaryActionHref = Url.Action("SupportTools", "Admin", new { area = "Admin", query = entityId })
-                    })
-                }
-                else
-                {
-                    <div class="cb-admin-summary-grid cb-admin-user-summary-grid mt-6">
-                        @foreach (var tile in snapshot.SummaryTiles)
+                <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-4">
+                    <div>
+                        <div class="cb-admin-section-kicker">Kullanıcı Detayı</div>
+                        <h1 class="cb-admin-section-title mb-2">Kullanıcı</h1>
+                        <p class="cb-admin-section-description mb-0">Temel bilgiler, rol ve güvenlik durumu burada sade şekilde görünür.</p>
+                        @if (!string.IsNullOrWhiteSpace(successMessage))
                         {
-                            <div class="cb-admin-summary-card">
-                                <span class="cb-admin-summary-label">@tile.Label</span>
-                                <strong>@tile.Value</strong>
-                                <small>@tile.Meta</small>
-                            </div>
+                            <div class="alert alert-success mt-5 mb-0">@successMessage</div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(errorMessage))
+                        {
+                            <div class="alert alert-danger mt-5 mb-0">@errorMessage</div>
                         }
                     </div>
-
-                    <div class="card card-custom gutter-b cb-card cb-admin-card mt-6">
-                        <div class="card-body">
-                            <div class="cb-admin-section-kicker">Related actions</div>
-                            <div class="cb-admin-section-title">İlişkili yüzeyler</div>
-                            <p class="cb-admin-section-description">Kullanıcı için gerçek operasyon, destek ve denetim yüzeyleri kullanılabilir.</p>
-                            <div class="cb-admin-inline-actions mt-5">
-                                <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" asp-route-userId="@entityId" class="btn btn-light-primary font-weight-bold">Audit / loglar</a>
-                                <a asp-area="Admin" asp-controller="Admin" asp-action="SupportTools" asp-route-query="@entityId" class="btn btn-light-primary font-weight-bold">Destek araçları</a>
-                                <a asp-area="Admin" asp-controller="Admin" asp-action="SecurityEvents" asp-route-query="@entityId" class="btn btn-light-primary font-weight-bold">Güvenlik olayları</a>
-                                <a asp-area="Admin" asp-controller="Admin" asp-action="Users" class="btn btn-light-primary font-weight-bold">Kullanıcılar</a>
-                            </div>
-                        </div>
-                    </div>
-                }
+                    <a asp-area="Admin" asp-controller="Admin" asp-action="Users" class="btn btn-light-primary font-weight-bold">Kullanıcılar</a>
+                </div>
             </div>
-        </div>
+        </section>
     </div>
 
-    @if (snapshot is not null)
+    @if (snapshot is null)
     {
-        <div class="col-xl-4">
-            @await Html.PartialAsync("Foundation/_AdminUserProfileSummary")
-            @await Html.PartialAsync("Foundation/_AdminUserSecuritySummary")
-            @await Html.PartialAsync("Foundation/_AdminUserRiskSummary")
+        <div class="col-12">
+            <section class="card card-custom gutter-b cb-card cb-admin-card">
+                <div class="card-body text-center py-8">
+                    <strong>Kullanıcı bulunamadı</strong>
+                    <p class="text-muted mb-5">Bu kullanıcı için gösterilecek bilgi yok.</p>
+                    <a asp-area="Admin" asp-controller="Admin" asp-action="Users" class="btn btn-light-primary font-weight-bold">Kullanıcı listesi</a>
+                </div>
+            </section>
+        </div>
+    }
+    else
+    {
+        <div class="col-xl-7">
+            <section class="card card-custom gutter-b cb-card cb-admin-card">
+                <div class="card-body">
+                    <div class="cb-admin-section-kicker">Temel Bilgiler</div>
+                    <h2 class="cb-admin-section-title mb-5">@snapshot.DisplayName</h2>
 
-            @await Html.PartialAsync("Foundation/_AdminSecurityHelpCard", new AdminSecurityHelpCardViewModel
-            {
-                Eyebrow = "Related actions",
-                Title = "İlişkili yüzeyler",
-                Description = "Kullanıcı için gerçek operasyon, destek ve denetim yüzeyleri kullanılabilir.",
-                BadgeLabel = "User Ops",
-                BadgeTone = "info",
-                Items = new[]
-                {
-                    "Audit ve log inceleme",
-                    "Support lookup",
-                    "Güvenlik olayları"
-                },
-                ActionText = "Audit / loglar",
-                ActionHref = Url.Action("Audit", "Admin", new { area = "Admin", userId = entityId })
-            })
+                    <div class="row">
+                        <div class="col-md-6 mb-5">
+                            <div class="text-muted small font-weight-bold">Kullanıcı adı</div>
+                            <div class="font-weight-bold">@snapshot.UserName</div>
+                        </div>
+                        <div class="col-md-6 mb-5">
+                            <div class="text-muted small font-weight-bold">Görünen ad</div>
+                            <div class="font-weight-bold">@snapshot.DisplayName</div>
+                        </div>
+                        <div class="col-md-6 mb-5" data-cb-admin-user-role-security>
+                            <div class="text-muted small font-weight-bold">Rol</div>
+                            <div class="font-weight-bold">@snapshot.RoleSummary</div>
+                        </div>
+                        <div class="col-md-6 mb-5">
+                            <div class="text-muted small font-weight-bold">Durum</div>
+                            <div class="font-weight-bold">@snapshot.StatusLabel</div>
+                        </div>
+                        <div class="col-md-6 mb-5">
+                            <div class="text-muted small font-weight-bold">MFA</div>
+                            <div class="font-weight-bold">@snapshot.MfaLabel</div>
+                        </div>
+                        <div class="col-md-6 mb-5">
+                            <div class="text-muted small font-weight-bold">Bağlı bot sayısı</div>
+                            <div class="font-weight-bold">@botCount</div>
+                        </div>
+                        <div class="col-md-6 mb-0">
+                            <div class="text-muted small font-weight-bold">Exchange bağlı mı</div>
+                            <div class="font-weight-bold">@(exchangeConnected ? "Hazır" : "Eksik")</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
         </div>
 
-        <div class="col-xl-8">
-            @await Html.PartialAsync("Foundation/_AdminUserBotSummary")
-            @await Html.PartialAsync("Foundation/_AdminUserExchangeSummary")
-            @await Html.PartialAsync("Foundation/_AdminUserCredentialValidationHistory")
-            @await Html.PartialAsync("Foundation/_AdminUserActivityTimeline")
-            @await Html.PartialAsync("Foundation/_AdminUserCriticalLogs")
+        <div class="col-xl-5">
+            <section class="card card-custom gutter-b cb-card cb-admin-card" data-cb-admin-user-security-actions>
+                <div class="card-body">
+                    <div class="cb-admin-section-kicker">Rol ve Güvenlik</div>
+                    <h2 class="cb-admin-section-title mb-2">Güvenlik aksiyonları</h2>
+                    <p class="cb-admin-section-description mb-5">Bu işlemler güvenli onay tamamlanmadan çalışmaz.</p>
+
+                    @if (approvalPending)
+                    {
+                        <form method="post" asp-area="Admin" asp-controller="Admin" asp-action="ApproveUser" class="mb-5" data-cb-admin-user-approve-form>
+                            @Html.AntiForgeryToken()
+                            <input type="hidden" name="id" value="@snapshot.UserId" />
+                            <button type="submit" class="btn btn-primary font-weight-bold" data-cb-admin-user-approve>Onayla</button>
+                        </form>
+                    }
+
+                    <div class="d-flex flex-column gap-3">
+                        <button type="button" class="btn btn-light-danger font-weight-bold text-left" disabled data-cb-admin-user-action="disable">Pasife al</button>
+                        <button type="button" class="btn btn-light-primary font-weight-bold text-left" disabled data-cb-admin-user-action="password-reset">Şifre sıfırla</button>
+                        <button type="button" class="btn btn-light-primary font-weight-bold text-left" disabled data-cb-admin-user-action="mfa-reset">MFA sıfırla</button>
+                    </div>
+
+                    <p class="text-muted small mt-5 mb-0">Bu işlemler ayrı güvenlik onayı gerektirir.</p>
+                </div>
+            </section>
         </div>
     }
 </div>
+
+
+
+

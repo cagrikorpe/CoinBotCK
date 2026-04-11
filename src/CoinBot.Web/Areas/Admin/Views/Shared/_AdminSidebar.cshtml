@@ -27,19 +27,26 @@
     };
 
     var primaryFlowNavigation = currentRoleKey == "SuperAdmin"
-        ? new (string Key, string Label, string Fragment, string Initials)[]
+        ? new (string Key, string Label, string Action, string Fragment, string Initials)[]
         {
-            ("setup", "Sistem Kurulumu", "cb_super_admin_flow_tab_setup", "K1"),
-            ("activation", "Sistemi Aktiflestir", "cb_super_admin_flow_tab_activation", "AK"),
-            ("monitoring", "Sistemi Izle", "cb_super_admin_flow_tab_monitoring", "IZ"),
-            ("advanced", "Gelismis", "cb_super_admin_flow_tab_advanced", "GL")
+            ("setup", "Sistem Kurulumu", "Overview", "cb_super_admin_flow_tab_setup", "KU"),
+            ("activation", "Sistemi Aktiflestir", "Overview", "cb_super_admin_flow_tab_activation", "AK"),
+            ("monitoring", "Sistemi Izle", "Overview", "cb_super_admin_flow_tab_monitoring", "IZ"),
+            ("users", "Kullanicilar", "Users", string.Empty, "US"),
+            ("advanced", "Gelismis", "Overview", "cb_super_admin_flow_tab_advanced", "GL")
         }
-        : Array.Empty<(string Key, string Label, string Fragment, string Initials)>();
+        : Array.Empty<(string Key, string Label, string Action, string Fragment, string Initials)>();
 
     var visibleNavigation = navigation.Where(item =>
         item.VisibleTo.Contains(currentRoleKey) &&
-        !(currentRoleKey == "SuperAdmin" && string.Equals(item.Key, "Overview", StringComparison.OrdinalIgnoreCase))).ToArray();
+        currentRoleKey != "SuperAdmin").ToArray();
     var hiddenCount = navigation.Length - visibleNavigation.Length;
+
+    string BuildPrimaryFlowHref(string action, string fragment)
+    {
+        var href = Url.Action(action, "Admin", new { area = "Admin" }) ?? "#";
+        return string.IsNullOrWhiteSpace(fragment) ? href : href + "#" + fragment;
+    }
 }
 <div class="aside aside-left aside-fixed d-flex flex-column flex-row-auto cb-shell-aside cb-admin-aside" id="kt_aside">
     <div class="brand flex-column-auto cb-shell-brand cb-admin-brand" id="kt_brand">
@@ -47,7 +54,7 @@
             <span class="app-logo-mark cb-admin-logo-mark">A</span>
             <span>
                 <span class="text-white font-size-h4 font-weight-bolder d-block">Super Admin</span>
-                <span class="cb-brand-subtitle">Platform Control Center</span>
+                <span class="cb-brand-subtitle">Sistem yonetimi</span>
             </span>
         </a>
         <button class="brand-toggle btn btn-sm px-0" id="kt_aside_toggle" type="button" aria-label="Sidebar toggle">
@@ -64,21 +71,30 @@
     </div>
 
     <div class="cb-admin-side-meta">
-        <span class="cb-admin-side-meta-label">Scope</span>
-        <strong>@(ViewData["AdminTenantScope"]?.ToString() ?? "Tenant: Global")</strong>
-        <small>@(ViewData["AdminEnvironment"]?.ToString() ?? "Prod Shadow")</small>
+        <span class="cb-admin-side-meta-label">Alan</span>
+        <strong>@(currentRoleKey == "SuperAdmin" ? "Sistem yonetimi" : (ViewData["AdminTenantScope"]?.ToString() ?? "Tenant: Global"))</strong>
+        <small>@(currentRoleKey == "SuperAdmin" ? "Sade ana akis" : (ViewData["AdminEnvironment"]?.ToString() ?? "Prod Shadow"))</small>
     </div>
 
-    <div class="cb-admin-role-visibility-card">
-        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
-            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = currentRoleLabel + " görünümü", Tone = "role", IconText = "RB" })
-            @if (hiddenCount > 0)
-            {
-                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = hiddenCount + " gizli bölüm", Tone = "warning", IconText = "HD" })
-            }
+    @if (currentRoleKey == "SuperAdmin")
+    {
+        <div class="cb-admin-role-visibility-card">
+            <small>Kurulum, aktivasyon ve izleme ilk sirada. Teknik detaylar Gelismis altinda kalir.</small>
         </div>
-        <small>Super admin ana akis ustte tutulur. Write aksiyonlari server-side policy, MFA ve antiforgery ile korunmaya devam eder.</small>
-    </div>
+    }
+    else
+    {
+        <div class="cb-admin-role-visibility-card">
+            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = currentRoleLabel + " görünümü", Tone = "role", IconText = "RB" })
+                @if (hiddenCount > 0)
+                {
+                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = hiddenCount + " gizli bölüm", Tone = "warning", IconText = "HD" })
+                }
+            </div>
+            <small>Rol bazli admin gorunumu korunur.</small>
+        </div>
+    }
 
     <div class="aside-menu-wrapper flex-column-fluid" id="kt_aside_menu_wrapper">
         <div id="kt_aside_menu" class="aside-menu my-4" data-menu-vertical="1" data-menu-scroll="1" data-menu-dropdown-timeout="500">
@@ -92,9 +108,11 @@
 
                     @foreach (var item in primaryFlowNavigation)
                     {
-                        var isActive = string.Equals(activeNav, "Overview", StringComparison.OrdinalIgnoreCase) && string.Equals(item.Key, "setup", StringComparison.OrdinalIgnoreCase);
+                        var isActive =
+                            (string.Equals(item.Action, "Overview", StringComparison.OrdinalIgnoreCase) && string.Equals(activeNav, "Overview", StringComparison.OrdinalIgnoreCase) && string.Equals(item.Key, "setup", StringComparison.OrdinalIgnoreCase)) ||
+                            string.Equals(activeNav, item.Action, StringComparison.OrdinalIgnoreCase);
                         <li class="menu-item @(isActive ? "menu-item-active" : string.Empty)" aria-haspopup="true" data-cb-super-admin-primary-link="@item.Key">
-                            <a asp-area="Admin" asp-controller="Admin" asp-action="Overview" asp-fragment="@item.Fragment" class="menu-link">
+                            <a href="@BuildPrimaryFlowHref(item.Action, item.Fragment)" class="menu-link">
                                 <span class="menu-icon">
                                     <span class="cb-menu-icon cb-admin-menu-icon @(isActive ? "is-active" : string.Empty)">@item.Initials</span>
                                 </span>
@@ -134,3 +152,4 @@
         </div>
     </div>
 </div>
+

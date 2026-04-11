@@ -2,6 +2,7 @@ using System.Security.Claims;
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Exchange;
+using CoinBot.Application.Abstractions.ExchangeCredentials;
 using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Application.Abstractions.Policy;
 using CoinBot.Application.Abstractions.Strategies;
@@ -792,6 +793,136 @@ public sealed class AdminControllerTests
         var antiForgeryAttribute = Assert.Single(
             typeof(AdminController)
                 .GetMethod(nameof(AdminController.RefreshClockDrift), [typeof(string), typeof(CancellationToken)])!
+                .GetCustomAttributes(typeof(ValidateAntiForgeryTokenAttribute), inherit: true)
+                .Cast<ValidateAntiForgeryTokenAttribute>());
+
+        Assert.Equal(ApplicationPolicies.PlatformAdministration, authorizeAttribute.Policy);
+        Assert.NotNull(antiForgeryAttribute);
+    }
+
+    [Fact]
+    public async Task ConnectBinanceForSetup_WhenValid_StoresCredentialAndShowsSimpleSetupMessage()
+    {
+        var exchangeService = new FakeUserExchangeCommandCenterService
+        {
+            Result = new ConnectUserBinanceCredentialResult(
+                Guid.NewGuid(),
+                true,
+                "Aktif",
+                "healthy",
+                "Binance API anahtari kaydedildi ve dogrulandi.",
+                null,
+                "Trade=Y; Withdraw=N; Spot=N; Futures=Y; Env=Demo",
+                "Demo")
+        };
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            userExchangeCommandCenterService: exchangeService,
+            roles: [ApplicationRoles.SuperAdmin]);
+
+        var result = await controller.ConnectBinanceForSetup(
+            isDemo: true,
+            apiKey: "api-key",
+            apiSecret: "api-secret",
+            connectionName: "Pilot Binance",
+            setupCommand: "save",
+            cancellationToken: CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        var request = Assert.Single(exchangeService.ConnectRequests);
+
+        Assert.Equal(nameof(AdminController.Overview), redirectResult.ActionName);
+        Assert.Equal("admin-01", request.UserId);
+        Assert.Null(request.ExchangeAccountId);
+        Assert.Equal(ExecutionEnvironment.Demo, request.RequestedEnvironment);
+        Assert.Equal(ExchangeTradeModeSelection.Futures, request.RequestedTradeMode);
+        Assert.Equal("Pilot Binance", request.DisplayName);
+        Assert.Equal("Binance baglantisi dogrulandi", controller.TempData["AdminSetupSuccess"]);
+        Assert.False(controller.TempData.ContainsKey("AdminSetupError"));
+    }
+
+    [Fact]
+    public async Task ConnectBinanceForSetup_WhenTestCommand_OnlyProbesConnection()
+    {
+        var exchangeService = new FakeUserExchangeCommandCenterService();
+        var probeClient = new FakeBinanceCredentialProbeClient
+        {
+            Snapshot = new BinanceCredentialProbeSnapshot(
+                true,
+                true,
+                false,
+                false,
+                true,
+                false,
+                false,
+                "Demo",
+                "Demo",
+                "Hidden",
+                null)
+        };
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            binanceCredentialProbeClient: probeClient,
+            userExchangeCommandCenterService: exchangeService,
+            roles: [ApplicationRoles.SuperAdmin]);
+
+        var result = await controller.ConnectBinanceForSetup(
+            isDemo: true,
+            apiKey: "api-key",
+            apiSecret: "api-secret",
+            connectionName: "Pilot Binance",
+            setupCommand: "test",
+            cancellationToken: CancellationToken.None);
+
+        Assert.IsType<RedirectToActionResult>(result);
+        Assert.Empty(exchangeService.ConnectRequests);
+        Assert.Equal(1, probeClient.ProbeCalls);
+        Assert.Equal("API erisimi basarili", controller.TempData["AdminSetupSuccess"]);
+    }
+    [Fact]
+    public async Task ConnectBinanceForSetup_WhenInvalid_ReturnsOneLineHumanMessage()
+    {
+        var exchangeService = new FakeUserExchangeCommandCenterService
+        {
+            Result = new ConnectUserBinanceCredentialResult(
+                Guid.NewGuid(),
+                false,
+                "Gecersiz",
+                "critical",
+                "Futures erisimi dogrulanamadi.",
+                "Futures erisimi dogrulanamadi.",
+                "Trade=N; Withdraw=?; Spot=?; Futures=N; Env=Demo",
+                "Demo")
+        };
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            userExchangeCommandCenterService: exchangeService,
+            roles: [ApplicationRoles.SuperAdmin]);
+
+        var result = await controller.ConnectBinanceForSetup(
+            isDemo: true,
+            apiKey: "api-key",
+            apiSecret: "api-secret",
+            connectionName: "Pilot Binance",
+            setupCommand: "save",
+            cancellationToken: CancellationToken.None);
+
+        Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal("Futures erisimi dogrulanamadi", controller.TempData["AdminSetupError"]);
+        Assert.DoesNotContain("\n", controller.TempData["AdminSetupError"]?.ToString() ?? string.Empty, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConnectBinanceForSetup_RequiresPlatformAdministration_AndAntiForgery()
+    {
+        var authorizeAttribute = Assert.Single(
+            typeof(AdminController)
+                .GetMethod(nameof(AdminController.ConnectBinanceForSetup), [typeof(bool), typeof(string), typeof(string), typeof(string), typeof(string), typeof(CancellationToken)])!
+                .GetCustomAttributes(typeof(AuthorizeAttribute), inherit: true)
+                .Cast<AuthorizeAttribute>());
+        var antiForgeryAttribute = Assert.Single(
+            typeof(AdminController)
+                .GetMethod(nameof(AdminController.ConnectBinanceForSetup), [typeof(bool), typeof(string), typeof(string), typeof(string), typeof(string), typeof(CancellationToken)])!
                 .GetCustomAttributes(typeof(ValidateAntiForgeryTokenAttribute), inherit: true)
                 .Cast<ValidateAntiForgeryTokenAttribute>());
 
@@ -2523,6 +2654,8 @@ public sealed class AdminControllerTests
         FakeAdminGovernanceReadModelService? governanceReadModelService = null,
         FakeAdminMonitoringReadModelService? monitoringReadModelService = null,
         FakeLogCenterRetentionService? logCenterRetentionService = null,
+        FakeBinanceCredentialProbeClient? binanceCredentialProbeClient = null,
+        FakeUserExchangeCommandCenterService? userExchangeCommandCenterService = null,
         FakeBinanceTimeSyncService? timeSyncService = null,
         FakeDataLatencyCircuitBreaker? dataLatencyCircuitBreaker = null,
         FakeGlobalPolicyEngine? globalPolicyEngine = null,
@@ -2582,6 +2715,8 @@ public sealed class AdminControllerTests
                 StaleDataThresholdSeconds = 3,
                 StopDataThresholdSeconds = 6
             }),
+            binanceCredentialProbeClient: binanceCredentialProbeClient ?? new FakeBinanceCredentialProbeClient(),
+            userExchangeCommandCenterService: userExchangeCommandCenterService ?? new FakeUserExchangeCommandCenterService(),
             privateDataOptions: Options.Create(new BinancePrivateDataOptions
             {
                 ServerTimeSyncRefreshSeconds = 30
@@ -3069,6 +3204,76 @@ public sealed class AdminControllerTests
         }
     }
 
+    private sealed class FakeBinanceCredentialProbeClient : IBinanceCredentialProbeClient
+    {
+        public BinanceCredentialProbeSnapshot Snapshot { get; set; } = new(
+            true,
+            true,
+            false,
+            false,
+            true,
+            false,
+            false,
+            "Demo",
+            "Demo",
+            "Hidden",
+            null);
+
+        public int ProbeCalls { get; private set; }
+
+        public ExecutionEnvironment? RequestedEnvironment { get; private set; }
+
+        public ExchangeTradeModeSelection? RequestedTradeMode { get; private set; }
+
+        public Task<BinanceCredentialProbeSnapshot> ProbeAsync(string apiKey, string apiSecret, CancellationToken cancellationToken = default)
+        {
+            ProbeCalls++;
+            return Task.FromResult(Snapshot);
+        }
+
+        public Task<BinanceCredentialProbeSnapshot> ProbeAsync(
+            string apiKey,
+            string apiSecret,
+            ExecutionEnvironment requestedEnvironment,
+            ExchangeTradeModeSelection requestedTradeMode,
+            CancellationToken cancellationToken = default)
+        {
+            RequestedEnvironment = requestedEnvironment;
+            RequestedTradeMode = requestedTradeMode;
+            return ProbeAsync(apiKey, apiSecret, cancellationToken);
+        }
+    }
+    private sealed class FakeUserExchangeCommandCenterService : IUserExchangeCommandCenterService
+    {
+        public ConnectUserBinanceCredentialResult Result { get; set; } = new(
+            Guid.NewGuid(),
+            true,
+            "Aktif",
+            "healthy",
+            "Baglandi.",
+            null,
+            "Trade=Y; Withdraw=N; Spot=N; Futures=Y; Env=Demo",
+            "Demo");
+
+        public List<ConnectUserBinanceCredentialRequest> ConnectRequests { get; } = [];
+
+        public Task<UserExchangeCommandCenterSnapshot> GetSnapshotAsync(string userId, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(UserExchangeCommandCenterSnapshot.Empty(
+                userId,
+                userId,
+                new UserExchangeEnvironmentSummary(ExecutionEnvironment.Demo, "Demo", "info", "Global", "Demo", false),
+                new UserExchangeRiskOverrideSummary("Tanimsiz", null, null, null, false, false, false, null, null, null, "Eksik", "warning", "Eksik"),
+                DateTime.UtcNow));
+        }
+
+        public Task<ConnectUserBinanceCredentialResult> ConnectBinanceAsync(ConnectUserBinanceCredentialRequest request, CancellationToken cancellationToken = default)
+        {
+            ConnectRequests.Add(request);
+            return Task.FromResult(Result);
+        }
+    }
+
     private sealed class FakeApiCredentialValidationService : IApiCredentialValidationService
     {
         public IReadOnlyCollection<ApiCredentialAdminSummary> Summaries { get; set; } = Array.Empty<ApiCredentialAdminSummary>();
@@ -3550,38 +3755,3 @@ public sealed class AdminControllerTests
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

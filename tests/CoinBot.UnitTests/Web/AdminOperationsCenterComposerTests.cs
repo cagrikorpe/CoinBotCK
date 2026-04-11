@@ -61,6 +61,106 @@ public sealed class AdminOperationsCenterComposerTests
     }
 
     [Fact]
+    public void Compose_WhenValidDemoCredentialIsOutsideFirstDisplayRows_StillMarksSetupReady()
+    {
+        var now = new DateTime(2026, 4, 8, 12, 0, 0, DateTimeKind.Utc);
+        var credentials = Enumerable.Range(0, 12)
+            .Select(index => new ApiCredentialAdminSummary(
+                Guid.NewGuid(),
+                $"user-invalid-{index}",
+                "Binance",
+                $"Invalid {index}",
+                false,
+                $"fp-****-{index:0000}",
+                "Invalid",
+                "Env=Live;Spot=False;Futures=False;Trade=False",
+                now.AddMinutes(-index - 20),
+                "Validation failed"))
+            .Append(new ApiCredentialAdminSummary(
+                Guid.NewGuid(),
+                "user-ready",
+                "Binance",
+                "Demo Primary",
+                false,
+                "fp-****-ready",
+                "Valid",
+                "Env=Demo;Spot=False;Futures=True;Trade=True",
+                now.AddMinutes(-1),
+                null))
+            .ToArray();
+
+        var model = AdminOperationsCenterComposer.Compose(
+            CreateActivationModel(),
+            CreateMonitoringSnapshot(),
+            CreateClockSnapshot(),
+            CreateDriftSnapshot(),
+            AdminUsersPageSnapshot.Empty(now),
+            AdminBotOperationsPageSnapshot.Empty(now),
+            credentials,
+            GlobalPolicySnapshot.CreateDefault(now),
+            new BotExecutionPilotOptions { PilotActivationEnabled = true, MaxPilotOrderNotional = "250" },
+            null,
+            new GlobalExecutionSwitchSnapshot(TradeMasterSwitchState.Disarmed, true, true),
+            new GlobalSystemStateSnapshot(GlobalSystemStateKind.Active, "SYSTEM_ACTIVE", null, "AdminPortal", null, false, null, now.AddMinutes(-1), "super-admin", "ip:masked", 1, true),
+            true,
+            now);
+
+        Assert.Equal("Hazir", model.PrimaryFlow.Setup.PrimaryMessage);
+        Assert.Contains(model.ExchangeGovernanceCenter.Accounts, item => item.OwnerLabel == "user-ready" && item.ValidationLabel == "Valid");
+    }
+
+    [Fact]
+    public void Compose_WhenMarketDataLatencyBlocksActivation_UsesSimpleMarketDataMessage()
+    {
+        var now = new DateTime(2026, 4, 8, 12, 5, 0, DateTimeKind.Utc);
+        var activationModel = CreateActivationModel() with
+        {
+            IsActivatable = false,
+            StatusLabel = "Aktif edilemez",
+            StatusTone = "critical",
+            LastDecision = new AdminActivationDecisionViewModel(
+                "Block",
+                "critical",
+                "MarketDataLatencyBreached",
+                "Piyasa verisi guncel degil",
+                "ActivationControlCenter.Readiness",
+                "2026-04-08 12:05 UTC",
+                "Mode=Demo | TradeMaster=Disarmed"),
+            ReadinessChecklist =
+            [
+                new AdminActivationReadinessItemViewModel(
+                    "readiness-gate",
+                    "Readiness / health gate uygun",
+                    "Fail",
+                    "fail",
+                    "critical",
+                    "MarketDataLatencyBreached",
+                    "Market data stale.",
+                    "DataLatencyCircuitBreaker")
+            ]
+        };
+
+        var model = AdminOperationsCenterComposer.Compose(
+            activationModel,
+            CreateMonitoringSnapshot(),
+            CreateClockSnapshot(),
+            CreateDriftSnapshot(),
+            AdminUsersPageSnapshot.Empty(now),
+            AdminBotOperationsPageSnapshot.Empty(now),
+            [new ApiCredentialAdminSummary(Guid.NewGuid(), "user-1", "Binance", "Demo Primary", false, "fp-****-7890", "Valid", "Env=Testnet;Spot=True;Futures=True;Trade=True", now.AddMinutes(-5), null)],
+            GlobalPolicySnapshot.CreateDefault(now),
+            new BotExecutionPilotOptions { PilotActivationEnabled = true, MaxPilotOrderNotional = "250" },
+            null,
+            new GlobalExecutionSwitchSnapshot(TradeMasterSwitchState.Disarmed, true, true),
+            new GlobalSystemStateSnapshot(GlobalSystemStateKind.Active, "SYSTEM_ACTIVE", null, "AdminPortal", null, false, null, now.AddMinutes(-1), "super-admin", "ip:masked", 1, true),
+            true,
+            now);
+
+        var activateAction = Assert.Single(model.PrimaryFlow.Activation.Actions, item => item.Key == "activate");
+        Assert.Equal("Piyasa verisi guncel degil", model.PrimaryFlow.Setup.PrimaryMessage);
+        Assert.Equal("Piyasa verisi guncel degil", activateAction.BlockedReason);
+    }
+    [Fact]
     public void Compose_SegmentsProblemUsersAndBots_FromExistingSnapshotTones()
     {
         var users = new AdminUsersPageSnapshot(
@@ -140,6 +240,47 @@ public sealed class AdminOperationsCenterComposerTests
         Assert.Equal("Acil durdurma aktif", activateAction.BlockedReason);
         Assert.Equal("Acil durdurma aktif", model.PrimaryFlow.Activation.PrimaryMessage);
         Assert.Equal("Acil durdurma aktif", model.PrimaryFlow.Monitoring.StatusLabel);
+    }
+
+    [Fact]
+    public void Compose_BuildsUltraSoftMonitoringSummary_FromExistingSnapshots()
+    {
+        var now = new DateTime(2026, 4, 8, 12, 0, 0, DateTimeKind.Utc);
+        var bots = new AdminBotOperationsPageSnapshot(
+            null,
+            null,
+            null,
+            Array.Empty<AdminStatTileSnapshot>(),
+            [new AdminBotOperationSnapshot("bot-1", "Mean Reverter", "user-1", "Ops User", "Running", "healthy", "Demo", "healthy", "mean-revert", "Normal", "healthy", "Loop ok", string.Empty, 0, 0),
+             new AdminBotOperationSnapshot("bot-2", "Paused Bot", "user-1", "Ops User", "Durduruldu", "neutral", "Demo", "healthy", "mean-revert", "Normal", "healthy", "Durduruldu", string.Empty, 0, 0)],
+            now);
+
+        var model = AdminOperationsCenterComposer.Compose(
+            CreateActivationModel() with { IsCurrentlyActive = true },
+            CreateMonitoringSnapshot(),
+            CreateClockSnapshot(),
+            CreateDriftSnapshot(),
+            AdminUsersPageSnapshot.Empty(now),
+            bots,
+            [new ApiCredentialAdminSummary(Guid.NewGuid(), "user-1", "Binance", "Primary", false, "fp-****-7890", "Valid", "Env=Testnet;Spot=True;Futures=True;Trade=True", now.AddMinutes(-5), null)],
+            GlobalPolicySnapshot.CreateDefault(now),
+            new BotExecutionPilotOptions { PilotActivationEnabled = true, MaxPilotOrderNotional = "250" },
+            null,
+            new GlobalExecutionSwitchSnapshot(TradeMasterSwitchState.Armed, true, true),
+            new GlobalSystemStateSnapshot(GlobalSystemStateKind.Active, "SYSTEM_ACTIVE", null, "AdminPortal", null, false, null, now.AddMinutes(-1), "super-admin", "ip:masked", 1, true),
+            true,
+            now);
+
+        Assert.Equal("Sistem aktif", model.PrimaryFlow.Monitoring.StatusLabel);
+        Assert.Contains(model.PrimaryFlow.Monitoring.Items, item => item.Key == "status" && item.Value == "Sistem aktif");
+        Assert.Contains(model.PrimaryFlow.Monitoring.Items, item => item.Key == "running-bots" && item.Label == "Calisan bot sayisi" && item.Value == "1");
+        Assert.Contains(model.PrimaryFlow.Monitoring.Items, item => item.Key == "last-error" && item.Label == "Son hata" && !string.IsNullOrWhiteSpace(item.Value));
+        Assert.Contains(model.PrimaryFlow.Monitoring.Items, item => item.Key == "last-stop" && item.Value == "Son durdurma nedeni yok");
+        Assert.Contains(model.PrimaryFlow.Monitoring.Items, item => item.Key == "last-operation" && item.Label == "Son islem zamani" && item.Value == "2026-04-08 12:00 UTC");
+        var monitoringText = string.Join(" ", model.PrimaryFlow.Monitoring.Items.Select(item => $"{item.Label} {item.Value} {item.Summary}"));
+        Assert.DoesNotContain("incident", monitoringText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("trace", monitoringText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("evidence", monitoringText, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -319,15 +460,3 @@ public sealed class AdminOperationsCenterComposerTests
         new DateTime(2026, 4, 8, 11, 59, 10, DateTimeKind.Utc),
         isPersisted);
 }
-
-
-
-
-
-
-
-
-
-
-
-

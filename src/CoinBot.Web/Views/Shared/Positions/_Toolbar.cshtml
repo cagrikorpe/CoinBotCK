@@ -1,71 +1,18 @@
 <div class="card card-custom gutter-b cb-card">
     <div class="card-body">
-        <div class="cb-filter-bar cb-filter-bar-wrap cb-filter-bar-lg">
+        <div class="cb-filter-bar cb-filter-bar-wrap">
             <div class="cb-filter-field cb-filter-field-search">
                 <label class="cb-helper-label">Ara</label>
-                <input type="text" class="form-control cb-form-control" placeholder="Sembol, bot veya order type ara" />
+                <input type="text" class="form-control cb-form-control" placeholder="Sembol veya bot" data-cb-user-exec-search />
             </div>
             <div class="cb-filter-field">
                 <label class="cb-helper-label">Durum</label>
-                <select class="form-control cb-form-control">
+                <select class="form-control cb-form-control" data-cb-user-exec-status-filter>
                     <option>Tümü</option>
                     <option>Açık</option>
                     <option>Kapalı</option>
-                    <option>Filled</option>
-                    <option>Canceled</option>
                 </select>
             </div>
-            <div class="cb-filter-field">
-                <label class="cb-helper-label">Yön</label>
-                <div class="cb-chip-group cb-chip-group-sm" data-cb-toggle-group>
-                    <button type="button" class="cb-chip is-active" data-cb-toggle-active>Tümü</button>
-                    <button type="button" class="cb-chip" data-cb-toggle-active>Long</button>
-                    <button type="button" class="cb-chip" data-cb-toggle-active>Short</button>
-                </div>
-            </div>
-            <div class="cb-filter-field">
-                <label class="cb-helper-label">Market</label>
-                <select class="form-control cb-form-control">
-                    <option>Spot</option>
-                    <option>Futures</option>
-                </select>
-            </div>
-            <div class="cb-filter-field">
-                <label class="cb-helper-label">Bot</label>
-                <select class="form-control cb-form-control">
-                    <option>Tüm botlar</option>
-                    <option>Alpha Spot Pulse</option>
-                    <option>Beta Hedge Runner</option>
-                </select>
-            </div>
-            <div class="cb-filter-field">
-                <label class="cb-helper-label">Sembol</label>
-                <select class="form-control cb-form-control">
-                    <option>Tüm semboller</option>
-                    <option>BTCUSDT</option>
-                    <option>SOLUSDT</option>
-                    <option>ETHUSDT</option>
-                </select>
-            </div>
-            <div class="cb-filter-field">
-                <label class="cb-helper-label">Tarih</label>
-                <input type="text" class="form-control cb-form-control" placeholder="Son 7 gün / özel aralık" />
-            </div>
-            <div class="cb-filter-field">
-                <label class="cb-helper-label">Sıralama</label>
-                <select class="form-control cb-form-control">
-                    <option>En yeni</option>
-                    <option>PnL</option>
-                    <option>Sembol</option>
-                    <option>Durum</option>
-                </select>
-            </div>
-        </div>
-        <div class="cb-chip-group cb-chip-group-sm mt-4">
-            <span class="cb-chip is-active">Futures</span>
-            <span class="cb-chip is-active">Long / Short</span>
-            <span class="cb-chip">Bot: Alpha</span>
-            <span class="cb-chip">Tarih: Son 30 gün</span>
         </div>
     </div>
 </div>

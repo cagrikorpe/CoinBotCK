@@ -205,7 +205,7 @@ public static class AdminOperationsCenterComposer
             clockDriftSnapshot,
             driftGuardSnapshot);
         var userBotCenter = BuildUserBotGovernanceCenter(usersSnapshot, botOperationsSnapshot);
-        var exchangeCenter = BuildExchangeGovernanceCenter(credentialSummaries);
+        var exchangeCenter = BuildExchangeGovernanceCenter(credentialSummaries, activationControlCenter.CurrentModeLabel);
         var policyCenter = BuildPolicyGovernanceCenter(
             activationControlCenter,
             globalPolicySnapshot,
@@ -759,28 +759,40 @@ public static class AdminOperationsCenterComposer
     }
 
     private static AdminOperationsExchangeGovernanceCenterViewModel BuildExchangeGovernanceCenter(
-        IReadOnlyCollection<ApiCredentialAdminSummary> credentialSummaries)
+        IReadOnlyCollection<ApiCredentialAdminSummary> credentialSummaries,
+        string currentModeLabel)
     {
-        var rows = credentialSummaries
+        var allRows = credentialSummaries
             .Select(BuildCredentialRow)
             .OrderByDescending(row => ToneSeverity(row.Tone))
             .ThenBy(row => row.OwnerLabel, StringComparer.OrdinalIgnoreCase)
             .ThenBy(row => row.DisplayLabel, StringComparer.OrdinalIgnoreCase)
-            .Take(10)
             .ToArray();
-        var validationIssueCount = rows.Count(row => !string.Equals(row.ValidationLabel, "Valid", StringComparison.OrdinalIgnoreCase));
-        var writableCount = rows.Count(row => row.AccessLabel.Contains("Writable", StringComparison.OrdinalIgnoreCase));
-        var summary = rows.Length == 0
+        var rows = allRows.Take(10).ToList();
+
+        if (!rows.Any(row => IsReadyExchangeRow(row, currentModeLabel)))
+        {
+            var readyRow = allRows.FirstOrDefault(row => IsReadyExchangeRow(row, currentModeLabel));
+            if (readyRow is not null)
+            {
+                rows.Add(readyRow);
+            }
+        }
+
+        var rowArray = rows.ToArray();
+        var validationIssueCount = rowArray.Count(row => !string.Equals(row.ValidationLabel, "Valid", StringComparison.OrdinalIgnoreCase));
+        var writableCount = rowArray.Count(row => row.AccessLabel.Contains("Writable", StringComparison.OrdinalIgnoreCase));
+        var summary = rowArray.Length == 0
             ? "Credential inventory bos. Unknown durum operatif olarak healthy sayilmaz; user/exchange onboarding audit edilmeli."
-            : $"{rows.Length} credential satiri gosteriliyor. {validationIssueCount} validation issue mevcut, {writableCount} satir write-capable.";
+            : $"{rowArray.Length} credential satiri gosteriliyor. {validationIssueCount} validation issue mevcut, {writableCount} satir write-capable.";
 
         return new AdminOperationsExchangeGovernanceCenterViewModel(
             summary,
             [
                 new AdminOperationsSummaryCardViewModel(
                     "Toplam hesap",
-                    rows.Length.ToString(),
-                    rows.Length > 0 ? "info" : "warning",
+                    rowArray.Length.ToString(),
+                    rowArray.Length > 0 ? "info" : "warning",
                     "Masked credential inventory"),
                 new AdminOperationsSummaryCardViewModel(
                     "Validation issue",
@@ -794,11 +806,21 @@ public static class AdminOperationsCenterComposer
                     "Trade-capable credential sayisi"),
                 new AdminOperationsSummaryCardViewModel(
                     "Readonly",
-                    rows.Count(row => row.AccessLabel.Contains("Read-only", StringComparison.OrdinalIgnoreCase)).ToString(),
+                    rowArray.Count(row => row.AccessLabel.Contains("Read-only", StringComparison.OrdinalIgnoreCase)).ToString(),
                     "info",
                     "Readonly credential'lar order dispatch icin kullanilmaz.")
             ],
-            rows);
+            rowArray);
+    }
+
+    private static bool IsReadyExchangeRow(AdminOperationsCredentialRowViewModel row, string currentModeLabel)
+    {
+        var requiresLive = currentModeLabel.Equals("Live", StringComparison.OrdinalIgnoreCase);
+
+        return string.Equals(row.ValidationLabel, "Valid", StringComparison.OrdinalIgnoreCase) &&
+               (!requiresLive
+                   ? ContainsToken(row.EnvironmentLabel, "Test") || ContainsToken(row.EnvironmentLabel, "Demo")
+                   : ContainsToken(row.EnvironmentLabel, "Live"));
     }
 
     private static AdminOperationsCredentialRowViewModel BuildCredentialRow(ApiCredentialAdminSummary summary)

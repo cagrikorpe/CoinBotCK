@@ -2,220 +2,100 @@
 @{
     ViewData["Title"] = "Botlarım";
     ViewData["ActiveNav"] = "Bots";
-    ViewData["PageDescription"] = "Pilot botlarını listeleyin, düzenleyin ve etkinleştirin.";
-    ViewData["BreadcrumbItems"] = new[] { "Automation", "Botlarım" };
+    ViewData["PageDescription"] = "Botlarınızı kısa ve net şekilde yönetin.";
+    ViewData["BreadcrumbItems"] = new[] { "CoinBot", "Botlarım" };
 }
 
-<div class="row">
+<div class="row" data-cb-user-bots-page>
     <div class="col-12">
-        <div class="card card-custom gutter-b">
-            <div class="card-header border-0 pt-5">
-                <div class="card-title">
+        <div class="card card-custom gutter-b cb-card">
+            <div class="card-body">
+                <div class="cb-page-header align-items-start">
                     <div>
-                        <div class="text-muted font-weight-bold text-uppercase mb-1">Pilot Bots</div>
-                        <h2 class="mb-0">Bot listesi</h2>
+                        <div class="cb-page-eyebrow">Botlarım</div>
+                        <h2 class="cb-page-title">Bot listesi</h2>
+                        <p class="cb-page-description">Botunuzu görün, durumunu anlayın ve açıp kapatın.</p>
+                    </div>
+                    <div class="cb-toolbar">
+                        <a asp-action="Create" class="btn btn-primary font-weight-bolder">Yeni Bot</a>
                     </div>
                 </div>
-                <div class="card-toolbar">
-                    <a asp-action="Create" class="btn btn-primary font-weight-bolder">Yeni Bot</a>
-                </div>
-            </div>
-            <div class="card-body">
+
                 @if (TempData["BotControlSuccess"] is string successMessage)
                 {
-                    <div class="alert alert-success" role="alert">@successMessage</div>
+                    <div class="cb-validation-summary cb-validation-summary-success mt-6" role="alert">@successMessage</div>
                 }
 
                 @if (TempData["BotControlError"] is string errorMessage)
                 {
-                    <div class="alert alert-danger" role="alert">@errorMessage</div>
+                    <div class="cb-validation-summary cb-validation-summary-danger mt-6" role="alert">@errorMessage</div>
                 }
 
                 @if (Model.Bots.Count == 0)
                 {
-                    <div class="alert alert-info mb-0" role="alert">
-                        Henüz pilot bot yok. Yeni bot oluşturarak BTCUSDT testnet pilotunu başlatabilirsiniz.
+                    <div class="cb-validation-summary cb-validation-summary-info mt-6" role="status">
+                        Henüz bot yok. İlk botunuzu oluşturabilirsiniz.
                     </div>
                 }
                 else
                 {
-                    <div class="table-responsive">
-                        <table class="table table-head-custom table-vertical-center">
+                    <div class="table-responsive mt-6">
+                        <table class="table table-borderless mb-0" data-cb-user-bot-list>
                             <thead>
                                 <tr>
                                     <th>Bot</th>
-                                    <th>Strategy</th>
-                                    <th>Exchange</th>
-                                    <th>Pilot</th>
-                                    <th>Worker</th>
-                                    <th>Execution</th>
+                                    <th>Durum</th>
+                                    <th>Strateji</th>
+                                    <th>Symbol</th>
+                                    <th>Son durum</th>
                                     <th class="text-right">Aksiyon</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 @foreach (var bot in Model.Bots)
                                 {
-                                    <tr>
+                                    var stateBadgeClass = bot.PilotStateLabel switch
+                                    {
+                                        "LIVE" => "cb-badge-danger",
+                                        "SHADOW" => "cb-badge-info",
+                                        "PAUSED" => "cb-badge-neutral",
+                                        _ => "cb-badge-neutral"
+                                    };
+                                    var enabledLabel = bot.IsEnabled ? "Aktif" : "Kapalı";
+                                    var toggleText = bot.IsEnabled ? "Kapat" : "Aç";
+
+                                    <tr data-cb-user-bot-row>
                                         <td>
-                                            <div class="font-weight-bolder">@bot.Name</div>
-                                            <div class="text-muted small">Open orders: @bot.OpenOrderCount | Open positions: @bot.OpenPositionCount</div>
-                                            <div class="text-muted small">Updated: @bot.UpdatedAtLabel</div>
+                                            <div class="font-weight-bolder" data-cb-bot-name>@bot.Name</div>
+                                            <div class="text-muted small">@enabledLabel</div>
                                         </td>
                                         <td>
-                                            <div class="font-weight-bolder">@bot.StrategyDisplayName</div>
-                                            <div class="text-muted small">@bot.StrategyKey</div>
+                                            <span class="cb-badge @stateBadgeClass" data-cb-bot-state-badge data-cb-bot-state-value="@bot.PilotStateLabel">@bot.PilotStateLabel</span>
+                                            <div class="text-muted small mt-2" data-cb-bot-state-summary>@bot.PilotStateSummary</div>
+                                        </td>
+                                        <td>
+                                            <div class="font-weight-bolder" data-cb-bot-strategy>@bot.StrategyDisplayName</div>
                                             @if (!bot.HasPublishedStrategyVersion)
                                             {
-                                                <div class="text-danger small">Yayınlanmış strategy versiyonu yok</div>
+                                                <div class="text-muted small">Strateji eksik</div>
                                             }
                                         </td>
                                         <td>
-                                            <div class="font-weight-bolder">@bot.ExchangeAccountDisplayName</div>
-                                            <div class="text-muted small">
-                                                @(bot.ExchangeAccountIsActive ? "Active" : "Inactive") / @(bot.ExchangeAccountIsWritable ? "Writable" : "ReadOnly")
-                                            </div>
+                                            <div class="font-weight-bolder" data-cb-bot-symbol>@bot.Symbol</div>
+                                            <div class="text-muted small">Miktar: @bot.QuantityDisplay</div>
                                         </td>
                                         <td>
-                                            <div class="font-weight-bolder">@bot.Symbol</div>
-                                            <div class="text-muted small">Qty: @bot.QuantityDisplay</div>
-                                            <div class="text-muted small">Lev: @bot.LeverageDisplay | @bot.MarginType</div>
-                                        </td>
-                                        <td>
-                                            <div class="font-weight-bolder">@bot.LastJobStatus</div>
-                                            <div class="text-muted small">@(string.IsNullOrWhiteSpace(bot.LastJobErrorCode) ? "Hata yok" : bot.LastJobErrorCode)</div>
-                                        </td>
-                                        <td>
-                                            <div class="font-weight-bolder">@bot.LastExecutionState</div>
-                                            <div class="text-muted small">@(string.IsNullOrWhiteSpace(bot.LastExecutionFailureCode) ? "Failure yok" : bot.LastExecutionFailureCode)</div>
-                                            <div class="text-muted small" data-cb-bot-exec-submit>@bot.LastExecutionSubmitStatusText</div>
-                                            <div class="text-muted small" data-cb-bot-exec-retry>@bot.LastExecutionRetryText</div>
-                                            <div class="text-muted small" data-cb-bot-exec-protection>@bot.LastExecutionProtectionText</div>
-                                            @if (!string.IsNullOrWhiteSpace(bot.LastExecutionStageText))
-                                            {
-                                                <div class="text-muted small" data-cb-bot-exec-stage>@bot.LastExecutionStageText</div>
-                                            }
-                                            @if (!string.IsNullOrWhiteSpace(bot.LastExecutionTransitionText))
-                                            {
-                                                <div class="text-muted small" data-cb-bot-exec-transition>@bot.LastExecutionTransitionText</div>
-                                            }
-                                            @if (!string.IsNullOrWhiteSpace(bot.LastExecutionCorrelationText))
-                                            {
-                                                <div class="text-muted small" data-cb-bot-exec-correlation>@bot.LastExecutionCorrelationText</div>
-                                            }
-                                            @if (!string.IsNullOrWhiteSpace(bot.LastExecutionClientOrderText))
-                                            {
-                                                <div class="text-muted small" data-cb-bot-exec-client-order>@bot.LastExecutionClientOrderText</div>
-                                            }
-                                            @if (!string.IsNullOrWhiteSpace(bot.LastExecutionDuplicateText))
-                                            {
-                                                <div class="small text-warning" data-cb-bot-exec-duplicate>@bot.LastExecutionDuplicateText</div>
-                                            }
-                                            @if (!string.IsNullOrWhiteSpace(bot.LastExecutionBlockDetail))
-                                            {
-                                                <div class="small text-dark">@bot.LastExecutionBlockDetail</div>
-                                            }
-                                            @if (!string.IsNullOrWhiteSpace(bot.MarketDataBadgeText) ||
-                                                 !string.IsNullOrWhiteSpace(bot.DecisionText) ||
-                                                 !string.IsNullOrWhiteSpace(bot.DecisionSummaryText) ||
-                                                 !string.IsNullOrWhiteSpace(bot.LastCandleAtLabel) ||
-                                                 !string.IsNullOrWhiteSpace(bot.DataAgeText) ||
-                                                 !string.IsNullOrWhiteSpace(bot.ContinuityStateText) ||
-                                                 !string.IsNullOrWhiteSpace(bot.ContinuityGapText) ||
-                                                 !string.IsNullOrWhiteSpace(bot.AffectedMarketText) ||
-                                                 !string.IsNullOrWhiteSpace(bot.StaleReasonText))
-                                            {
-                                                <div class="mt-2 p-2 rounded bg-light" data-cb-bot-market-diagnostics>
-                                                    @if (!string.IsNullOrWhiteSpace(bot.MarketDataBadgeText))
-                                                    {
-                                                        <div class="mb-1">
-                                                            <span class="badge badge-warning" data-cb-bot-market-badge>@bot.MarketDataBadgeText</span>
-                                                        </div>
-                                                    }
-                                                    @if (!string.IsNullOrWhiteSpace(bot.StaleReasonText))
-                                                    {
-                                                        <div class="small text-dark" data-cb-bot-market-reason>Reason: @bot.StaleReasonText</div>
-                                                    }
-                                                    @if (!string.IsNullOrWhiteSpace(bot.DecisionText))
-                                                    {
-                                                        <div class="small text-dark" data-cb-bot-decision>@bot.DecisionText</div>
-                                                    }
-                                                    @if (!string.IsNullOrWhiteSpace(bot.DecisionReasonCodeText))
-                                                    {
-                                                        <div class="text-muted small" data-cb-bot-decision-reason-code>@bot.DecisionReasonCodeText</div>
-                                                    }
-                                                    @if (!string.IsNullOrWhiteSpace(bot.DecisionSummaryText))
-                                                    {
-                                                        <div class="text-muted small" data-cb-bot-decision-summary>@bot.DecisionSummaryText</div>
-                                                    }
-                                                    @if (!string.IsNullOrWhiteSpace(bot.DecisionAtText))
-                                                    {
-                                                        <div class="text-muted small" data-cb-bot-decision-at>Decision at: @bot.DecisionAtText</div>
-                                                    }
-                                                    @if (!string.IsNullOrWhiteSpace(bot.AffectedMarketText))
-                                                    {
-                                                        <div class="text-muted small" data-cb-bot-market-affected>Affected: @bot.AffectedMarketText</div>
-                                                    }
-                                                    @if (!string.IsNullOrWhiteSpace(bot.LastCandleAtLabel))
-                                                    {
-                                                        <div class="text-muted small" data-cb-bot-market-candle>Last candle: @bot.LastCandleAtLabel</div>
-                                                    }
-                                                    @if (!string.IsNullOrWhiteSpace(bot.DataAgeText))
-                                                    {
-                                                        <div class="text-muted small" data-cb-bot-market-age>Data age: @bot.DataAgeText</div>
-                                                    }
-                                                    @if (!string.IsNullOrWhiteSpace(bot.MarketStaleThresholdText))
-                                                    {
-                                                        <div class="text-muted small" data-cb-bot-market-threshold>Stale threshold: @bot.MarketStaleThresholdText</div>
-                                                    }
-                                                    @if (!string.IsNullOrWhiteSpace(bot.ContinuityStateText) || !string.IsNullOrWhiteSpace(bot.ContinuityGapText))
-                                                    {
-                                                        <div class="text-muted small" data-cb-bot-market-continuity>
-                                                            Continuity: @(string.IsNullOrWhiteSpace(bot.ContinuityStateText) ? "N/A" : bot.ContinuityStateText)
-                                                            @if (!string.IsNullOrWhiteSpace(bot.ContinuityGapText))
-                                                            {
-                                                                <text> | Gap: @bot.ContinuityGapText</text>
-                                                            }
-                                                        </div>
-                                                    }
-                                                    @if (!string.IsNullOrWhiteSpace(bot.ContinuityGapStartedText))
-                                                    {
-                                                        <div class="text-muted small" data-cb-bot-market-gap-start>Gap start: @bot.ContinuityGapStartedText</div>
-                                                    }
-                                                    @if (!string.IsNullOrWhiteSpace(bot.ContinuityGapLastSeenText))
-                                                    {
-                                                        <div class="text-muted small" data-cb-bot-market-gap-last-seen>Gap last seen: @bot.ContinuityGapLastSeenText</div>
-                                                    }
-                                                    @if (!string.IsNullOrWhiteSpace(bot.ContinuityRecoveryText))
-                                                    {
-                                                        <div class="text-muted small" data-cb-bot-market-recovery>Recovered: @bot.ContinuityRecoveryText</div>
-                                                    }
-                                                </div>
-                                            }
-                                            @if (bot.IsCooldownActive)
-                                            {
-                                                <div class="mt-2">
-                                                    <span class="badge badge-warning" data-cb-bot-cooldown-badge>Cooldown aktif</span>
-                                                </div>
-                                                <div class="text-muted small">
-                                                    Blok bitişi: @bot.CooldownBlockedUntilLabel
-                                                </div>
-                                                <div class="text-muted small">
-                                                    Kalan: @bot.CooldownRemainingText
-                                                </div>
-                                            }
-                                            <div class="text-muted small">Last execution: @bot.LastExecutionAtLabel</div>
+                                            <div class="font-weight-bolder" data-cb-bot-last-status>@(string.IsNullOrWhiteSpace(bot.LastJobErrorCode) ? bot.LastJobStatus : "Worker çalışmıyor")</div>
+                                            <div class="text-muted small">@bot.UpdatedAtLabel</div>
                                         </td>
                                         <td class="text-right">
                                             <div class="d-inline-flex align-items-center">
-                                                <span class="badge @(bot.IsEnabled ? "badge-success" : "badge-secondary") mr-3">
-                                                    @(bot.IsEnabled ? "Enabled" : "Disabled")
-                                                </span>
-                                                <a asp-action="Edit" asp-route-botId="@bot.BotId" class="btn btn-sm btn-light-primary mr-2">Düzenle</a>
-                                                <form asp-action="SetEnabled" asp-route-botId="@bot.BotId" method="post" class="d-inline">
+                                                <a asp-action="Edit" asp-route-botId="@bot.BotId" class="btn btn-sm btn-light-primary font-weight-bold mr-2" data-cb-bot-detail>Detay</a>
+                                                <form asp-action="SetEnabled" asp-route-botId="@bot.BotId" method="post" class="d-inline" data-cb-bot-toggle>
                                                     @Html.AntiForgeryToken()
                                                     <input type="hidden" name="isEnabled" value="@(!bot.IsEnabled)" />
-                                                    <button type="submit" class="btn btn-sm @(bot.IsEnabled ? "btn-light-danger" : "btn-light-success")">
-                                                        @(bot.IsEnabled ? "Disable" : "Enable")
+                                                    <button type="submit" class="btn btn-sm @(bot.IsEnabled ? "btn-light-danger" : "btn-light-success") font-weight-bold">
+                                                        @toggleText
                                                     </button>
                                                 </form>
                                             </div>
@@ -230,5 +110,3 @@
         </div>
     </div>
 </div>
-
-

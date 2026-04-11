@@ -1,3 +1,4 @@
+using System.Globalization;
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Domain.Enums;
@@ -90,6 +91,11 @@ public static class AdminSuperAdminPrimaryFlowComposer
         var monitoringMessage = BuildMonitoringMessage(executionSnapshot, activationControlCenter, runtimeCenter, emergencyActive, exchangeReady, workerReady);
         var lastErrorSummary = ResolveLastErrorSummary(activationControlCenter, runtimeCenter);
         var lastStopSummary = ResolveLastStopSummary(executionSnapshot, globalSystemStateSnapshot, activationControlCenter);
+        var runningBotCount = CountRunningBots(botOperationsSnapshot);
+        var monitoringDisplayStatus = ResolveMonitoringDisplayStatus(monitoringStatus);
+        var lastErrorDisplay = ResolveLastErrorDisplay(lastErrorSummary);
+        var lastStopDisplay = ResolveLastStopDisplay(lastStopSummary);
+        var lastOperationTimeLabel = ResolveLastOperationTimeLabel(botOperationsSnapshot, runningBotCount);
 
         return new AdminSuperAdminPrimaryFlowViewModel(
             new AdminSuperAdminFlowSectionViewModel(
@@ -143,7 +149,7 @@ public static class AdminSuperAdminPrimaryFlowComposer
             new AdminSuperAdminFlowSectionViewModel(
                 "monitoring",
                 "Sistemi Izle",
-                monitoringStatus,
+                monitoringDisplayStatus,
                 monitoringStatus switch
                 {
                     "Aktif" => "healthy",
@@ -153,20 +159,22 @@ public static class AdminSuperAdminPrimaryFlowComposer
                 },
                 monitoringStatus switch
                 {
-                    "Aktif" => "Sistem calisiyor; yalnizca son hata ve son durdurma nedeni izlenir.",
-                    "Durduruldu" => "Sistem kapali; tekrar acmadan once son hata ve son durdurma nedenini kontrol edin.",
+                    "Aktif" => "Sistem aktif. Sadece kisa durum ozeti gosterilir.",
+                    "Durduruldu" => "Sistem kapali. Son hata ve durdurma nedeni gorunur.",
                     "Acil durdurma aktif" => "Acil durdurma aktif; sistem yeniden acilmaz.",
-                    _ => "Izleme sinyalleri eksik; sistem guvenli sekilde bloke gorunur."
+                    _ => "Sistem hazir degil."
                 },
                 monitoringMessage,
                 true,
                 true,
                 new[]
                 {
-                    new AdminSuperAdminFlowItemViewModel("status", "Sistem durumu", monitoringStatus, monitoringStatus switch { "Aktif" => "healthy", "Durduruldu" => "warning", _ => "critical" }, ResolveMonitoringStatusSummary(monitoringStatus)),
+                    new AdminSuperAdminFlowItemViewModel("status", "Sistem aktif mi", monitoringDisplayStatus, monitoringStatus switch { "Aktif" => "healthy", "Durduruldu" => "warning", _ => "critical" }, ResolveMonitoringStatusSummary(monitoringStatus)),
                     new AdminSuperAdminFlowItemViewModel("environment", "Ortam", activationControlCenter.CurrentModeLabel, activationControlCenter.CurrentModeLabel.Equals("Live", StringComparison.OrdinalIgnoreCase) ? "warning" : "info", activationControlCenter.CurrentModeSummary),
-                    new AdminSuperAdminFlowItemViewModel("last-error", "Son hata", string.IsNullOrWhiteSpace(lastErrorSummary) ? "Yok" : lastErrorSummary, string.IsNullOrWhiteSpace(lastErrorSummary) || string.Equals(lastErrorSummary, "Yok", StringComparison.OrdinalIgnoreCase) ? "healthy" : "warning", "Detay gerekiyorsa Gelismis ekranina gecin."),
-                    new AdminSuperAdminFlowItemViewModel("last-stop", "Son durdurma nedeni", lastStopSummary, lastStopSummary.Equals("Yok", StringComparison.OrdinalIgnoreCase) ? "healthy" : "warning", "Gerekirse Aktivasyon veya Gelismis ekranindan devam edin.")
+                    new AdminSuperAdminFlowItemViewModel("running-bots", "Calisan bot sayisi", runningBotCount.ToString(CultureInfo.InvariantCulture), runningBotCount > 0 ? "healthy" : "warning", runningBotCount > 0 ? "Bot calisiyor." : "Calisan bot yok."),
+                    new AdminSuperAdminFlowItemViewModel("last-error", "Son hata", lastErrorDisplay, string.Equals(lastErrorDisplay, "Son hata yok", StringComparison.OrdinalIgnoreCase) ? "healthy" : "warning", string.Equals(lastErrorDisplay, "Son hata yok", StringComparison.OrdinalIgnoreCase) ? "Sorun gorunmuyor." : "Kisa hata ozeti."),
+                    new AdminSuperAdminFlowItemViewModel("last-stop", "Son durdurma nedeni", lastStopDisplay, string.Equals(lastStopDisplay, "Son durdurma nedeni yok", StringComparison.OrdinalIgnoreCase) ? "healthy" : "warning", string.Equals(lastStopDisplay, "Son durdurma nedeni yok", StringComparison.OrdinalIgnoreCase) ? "Durdurma nedeni yok." : "Kisa durdurma nedeni."),
+                    new AdminSuperAdminFlowItemViewModel("last-operation", "Son islem zamani", lastOperationTimeLabel, runningBotCount > 0 ? "info" : "warning", runningBotCount > 0 ? "Son izleme kaydi." : "Son islem yok.")
                 },
                 BuildMonitoringActions(canRefreshOperationalState)),
             new AdminSuperAdminFlowSectionViewModel(
@@ -180,12 +188,15 @@ public static class AdminSuperAdminPrimaryFlowComposer
                 true,
                 new[]
                 {
-                    new AdminSuperAdminFlowItemViewModel("global-settings", "Global Ayarlar", "Ac", "info", "Tum teknik ayarlar ve guarded config formlari", "/admin/Settings"),
-                    new AdminSuperAdminFlowItemViewModel("audit", "Audit ve Trace", "Ac", "warning", "Karar zinciri, admin aksiyonlari ve before/after", "/admin/Audit"),
-                    new AdminSuperAdminFlowItemViewModel("incidents", "Incidents", "Ac", "warning", "Incident detaylari ve timeline", "/admin/Incidents"),
-                    new AdminSuperAdminFlowItemViewModel("health", "Health detaylari", "Ac", "info", "Runtime health ve dependency detaylari", "/admin/SystemHealth"),
-                    new AdminSuperAdminFlowItemViewModel("logs", "Loglar / Diagnostik", "Ac", "info", "Destek aramalari ve diagnostik linkler", "/admin/SupportTools"),
-                    new AdminSuperAdminFlowItemViewModel("history", "Rollout Kanitlari", "Ac", "info", "Degisim gecmisi ve rollout izleri", "/admin/ConfigHistory")
+                    new AdminSuperAdminFlowItemViewModel("audit", "Audit ve Trace", "Ac", "warning", "Karar zinciri ve admin aksiyonlari", "/admin/Audit"),
+                    new AdminSuperAdminFlowItemViewModel("logs", "Loglar / Diagnostik", "Ac", "info", "Log ve destek aramalari", "/admin/SupportTools"),
+                    new AdminSuperAdminFlowItemViewModel("incidents", "Incidents", "Ac", "warning", "Incident listesi ve detaylari", "/admin/Incidents"),
+                    new AdminSuperAdminFlowItemViewModel("health", "Health detaylari", "Ac", "info", "Worker ve runtime durumu", "/admin/SystemHealth"),
+                    new AdminSuperAdminFlowItemViewModel("trace", "Trace arama", "Ac", "info", "Trace ve correlation aramasi", "/admin/Search"),
+                    new AdminSuperAdminFlowItemViewModel("rollout", "Rollout Kanitlari", "Ac", "info", "Config ve state gecmisi", "/admin/ConfigHistory"),
+                    new AdminSuperAdminFlowItemViewModel("execution-debugger", "Execution debugger", "Ac", "info", "Execution kararlarini auditte ara", "/admin/Audit?query=Execution"),
+                    new AdminSuperAdminFlowItemViewModel("idempotency-rebuild", "Idempotency / rebuild", "Ac", "info", "Job ve rebuild sinyalleri", "/admin/Jobs"),
+                    new AdminSuperAdminFlowItemViewModel("global-settings", "Global Ayarlar", "Ac", "info", "Teknik ayarlar ve guarded formlar", "/admin/Settings")
                 },
                 Array.Empty<AdminSuperAdminFlowActionViewModel>()));
     }
@@ -231,7 +242,7 @@ public static class AdminSuperAdminPrimaryFlowComposer
     {
         return
         [
-            new AdminSuperAdminFlowActionViewModel("refresh", "Yenile", canRefreshOperationalState, canRefreshOperationalState ? string.Empty : "Bu rolde izleme yenilemesi acik degil", "Izleme ozetini yeniler.")
+            new AdminSuperAdminFlowActionViewModel("refresh", "Yenile", canRefreshOperationalState, canRefreshOperationalState ? string.Empty : "Sistem hazir degil", "Izleme ozetini yeniler.")
         ];
     }
 
@@ -301,7 +312,7 @@ public static class AdminSuperAdminPrimaryFlowComposer
 
         return activationControlCenter.IsActivatable
             ? "Hazir"
-            : "Kurulum eksik";
+            : ResolveActivationBlockedSummary(activationControlCenter);
     }
 
     private static string BuildActivationMessage(AdminActivationControlCenterViewModel activationControlCenter, bool exchangeReady, bool workerReady, bool emergencyActive)
@@ -349,8 +360,8 @@ public static class AdminSuperAdminPrimaryFlowComposer
         }
 
         return executionSnapshot.IsTradeMasterArmed
-            ? "Aktif"
-            : (string.Equals(runtimeCenter.StatusTone, "critical", StringComparison.OrdinalIgnoreCase) ? "Eksik" : "Durduruldu");
+            ? "Sistem aktif"
+            : (string.Equals(runtimeCenter.StatusTone, "critical", StringComparison.OrdinalIgnoreCase) ? "Eksik" : "Sistem kapali");
     }
 
     private static string ResolveActivationBlockedSummary(AdminActivationControlCenterViewModel activationControlCenter)
@@ -366,7 +377,8 @@ public static class AdminSuperAdminPrimaryFlowComposer
             "PilotActivationDisabled" => "PilotActivation kapali",
             "LiveModeApprovalMissing" => "Live secildi ama izin yok",
             "ActivationStateUnavailable" => "Sistem hazir degil",
-            "ClockDriftUnavailable" or "ClockDriftExceeded" => "Saat senkronu hazir degil",
+            "ServerTimeSyncUnavailable" or "ClockDriftUnavailable" or "ClockDriftExceeded" => "Saat senkronu hazir degil",
+            "DataLatencyGuardUnavailable" or "MarketDataUnavailable" or "MarketDataLatencyBreached" or "MarketDataLatencyCritical" or "CandleDataGapDetected" => "Piyasa verisi guncel degil",
             _ => "Sistem aktive edilmeye hazir degil"
         };
     }
@@ -482,6 +494,52 @@ public static class AdminSuperAdminPrimaryFlowComposer
         };
     }
 
+    private static int CountRunningBots(AdminBotOperationsPageSnapshot botOperationsSnapshot)
+    {
+        return botOperationsSnapshot.Bots.Count(bot =>
+            string.Equals(bot.StatusTone, "healthy", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(bot.StatusLabel, "Aktif", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(bot.StatusLabel, "Running", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string ResolveMonitoringDisplayStatus(string monitoringStatus)
+    {
+        return monitoringStatus switch
+        {
+            "Aktif" => "Sistem aktif",
+            "Durduruldu" => "Sistem kapali",
+            _ => monitoringStatus
+        };
+    }
+
+    private static string ResolveLastErrorDisplay(string lastErrorSummary)
+    {
+        return string.IsNullOrWhiteSpace(lastErrorSummary) ||
+               string.Equals(lastErrorSummary, "Yok", StringComparison.OrdinalIgnoreCase)
+            ? "Son hata yok"
+            : lastErrorSummary;
+    }
+
+    private static string ResolveLastStopDisplay(string lastStopSummary)
+    {
+        if (string.IsNullOrWhiteSpace(lastStopSummary) ||
+            string.Equals(lastStopSummary, "Yok", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Son durdurma nedeni yok";
+        }
+
+        return string.Equals(lastStopSummary, "Soft halt aktif", StringComparison.OrdinalIgnoreCase)
+            ? "Sistem kapali"
+            : lastStopSummary;
+    }
+
+    private static string ResolveLastOperationTimeLabel(AdminBotOperationsPageSnapshot botOperationsSnapshot, int runningBotCount)
+    {
+        return runningBotCount > 0
+            ? FormatUtc(botOperationsSnapshot.LastRefreshedAtUtc)
+            : "Son islem yok";
+    }
+
     private static bool ContainsToken(string? value, string token)
     {
         return !string.IsNullOrWhiteSpace(value) && value.Contains(token, StringComparison.OrdinalIgnoreCase);
@@ -492,3 +550,7 @@ public static class AdminSuperAdminPrimaryFlowComposer
         return utcDateTime.ToUniversalTime().ToString("yyyy-MM-dd HH:mm 'UTC'");
     }
 }
+
+
+
+
