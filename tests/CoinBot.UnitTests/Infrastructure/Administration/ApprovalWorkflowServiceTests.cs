@@ -49,6 +49,33 @@ public sealed class ApprovalWorkflowServiceTests
     }
 
     [Fact]
+    public async Task EnqueueAsync_AllowsPolicyPayloads_LargerThanLegacyEightKilobytes()
+    {
+        await using var harness = CreateHarness();
+        var utcNow = harness.TimeProvider.GetUtcNow().UtcDateTime;
+        var payloadJson = "{\"policy\":\"" + new string('x', 9000) + "\"}";
+
+        var detail = await harness.Service.EnqueueAsync(
+            new ApprovalQueueEnqueueRequest(
+                ApprovalQueueOperationType.GlobalPolicyUpdate,
+                IncidentSeverity.Warning,
+                "Global policy update",
+                "Symbol restriction request",
+                "requestor-1",
+                "Symbol restriction update",
+                payloadJson,
+                2,
+                utcNow.AddHours(8),
+                "RiskPolicy",
+                "GlobalRiskPolicy",
+                "corr-policy-payload",
+                "cmd-policy-payload"),
+            CancellationToken.None);
+
+        Assert.Equal(ApprovalQueueStatus.Pending, detail.Status);
+        Assert.True(harness.DbContext.ApprovalQueues.Single().PayloadJson.Length > 8192);
+    }
+    [Fact]
     public async Task ApproveAsync_RequiresDistinctApprovers_AndFinalApprovalExecutesStateUpdate()
     {
         await using var harness = CreateHarness();
@@ -113,6 +140,91 @@ public sealed class ApprovalWorkflowServiceTests
         Assert.Equal(AdminCommandStatus.Completed, harness.CommandRegistry.CompletionRequests[0].Status);
     }
 
+    [Fact]
+    public async Task ListPendingAsync_ReturnsPendingApprovalQueues()
+    {
+        await using var harness = CreateHarness();
+        var utcNow = harness.TimeProvider.GetUtcNow().UtcDateTime;
+        var payloadJson = CreateStatePayload("cmd-approval-list", utcNow);
+
+        var queued = await harness.Service.EnqueueAsync(
+            new ApprovalQueueEnqueueRequest(
+                ApprovalQueueOperationType.GlobalPolicyUpdate,
+                IncidentSeverity.Critical,
+                "Symbol restriction update",
+                "Restrictions update",
+                "requestor-1",
+                "Symbol restriction update",
+                payloadJson,
+                2,
+                utcNow.AddHours(8),
+                "RiskPolicy",
+                "GlobalRiskPolicy",
+                "corr-approval-list",
+                "cmd-approval-list"),
+            CancellationToken.None);
+
+        var pending = await harness.Service.ListPendingAsync(50, CancellationToken.None);
+
+        var item = Assert.Single(pending);
+        Assert.Equal(queued.ApprovalReference, item.ApprovalReference);
+        Assert.Equal(ApprovalQueueStatus.Pending, item.Status);
+        Assert.Equal(ApprovalQueueOperationType.GlobalPolicyUpdate, item.OperationType);
+        Assert.Equal("RiskPolicy", item.TargetType);
+        Assert.Equal("GlobalRiskPolicy", item.TargetId);
+    }
+    [Fact]
+    public async Task ApproveAsync_AllowsRequestorToApproveSymbolRestrictionUpdate_WithSingleAdminFlow()
+    {
+        await using var harness = CreateHarness();
+        var utcNow = harness.TimeProvider.GetUtcNow().UtcDateTime;
+        var payloadJson = JsonSerializer.Serialize(
+            new GlobalPolicyUpdateRequest(
+                RiskPolicySnapshot.CreateDefault() with
+                {
+                    SymbolRestrictions = Array.Empty<SymbolRestriction>()
+                },
+                "requestor-1",
+                "Symbol restriction update",
+                "corr-single-admin",
+                "AdminPortal.Settings.SymbolRestrictions"),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        var queued = await harness.Service.EnqueueAsync(
+            new ApprovalQueueEnqueueRequest(
+                ApprovalQueueOperationType.GlobalPolicyUpdate,
+                IncidentSeverity.Critical,
+                "Symbol restriction update",
+                "Restrictions update",
+                "requestor-1",
+                "Symbol restriction update",
+                payloadJson,
+                2,
+                utcNow.AddHours(8),
+                "RiskPolicy",
+                "GlobalRiskPolicy",
+                "corr-single-admin",
+                "cmd-single-admin"),
+            CancellationToken.None);
+
+        Assert.Equal(1, queued.RequiredApprovals);
+
+        var approved = await harness.Service.ApproveAsync(
+            new ApprovalQueueDecisionRequest(
+                queued.ApprovalReference,
+                "requestor-1",
+                "Tek super admin onayi",
+                "corr-single-admin"),
+            CancellationToken.None);
+
+        Assert.Equal(ApprovalQueueStatus.Executed, approved.Status);
+        Assert.Equal(1, approved.RequiredApprovals);
+        Assert.Equal(1, approved.ApprovalCount);
+        Assert.Single(harness.PolicyEngine.UpdateRequests);
+        Assert.Equal("requestor-1", harness.PolicyEngine.UpdateRequests[0].ActorUserId);
+        Assert.Single(harness.CommandRegistry.CompletionRequests);
+        Assert.Equal(AdminCommandStatus.Completed, harness.CommandRegistry.CompletionRequests[0].Status);
+    }
     [Fact]
     public async Task RejectAsync_RequiresReason_AndWritesRejectedOutcome()
     {
@@ -237,7 +349,7 @@ public sealed class ApprovalWorkflowServiceTests
             timeProvider,
             NullLogger<ApprovalWorkflowService>.Instance);
 
-        return new TestHarness(dbContext, service, auditLogService, adminAuditLogService, commandRegistry, timeProvider);
+        return new TestHarness(dbContext, service, auditLogService, adminAuditLogService, commandRegistry, policyEngine, timeProvider);
     }
 
     private sealed class TestDataScopeContext : IDataScopeContext
@@ -294,6 +406,8 @@ public sealed class ApprovalWorkflowServiceTests
     {
         public GlobalPolicySnapshot Snapshot { get; set; } = GlobalPolicySnapshot.CreateDefault(new DateTime(2026, 3, 24, 12, 0, 0, DateTimeKind.Utc));
 
+        public List<GlobalPolicyUpdateRequest> UpdateRequests { get; } = [];
+
         public Task<GlobalPolicySnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
         {
             return Task.FromResult(Snapshot);
@@ -306,7 +420,16 @@ public sealed class ApprovalWorkflowServiceTests
 
         public Task<GlobalPolicySnapshot> UpdateAsync(GlobalPolicyUpdateRequest request, CancellationToken cancellationToken = default)
         {
-            throw new NotSupportedException();
+            UpdateRequests.Add(request);
+            Snapshot = new GlobalPolicySnapshot(
+                request.Policy,
+                Snapshot.CurrentVersion + 1,
+                DateTime.UtcNow,
+                request.ActorUserId,
+                request.Reason,
+                IsPersisted: true,
+                Snapshot.Versions);
+            return Task.FromResult(Snapshot);
         }
 
         public Task<GlobalPolicySnapshot> RollbackAsync(GlobalPolicyRollbackRequest request, CancellationToken cancellationToken = default)
@@ -321,6 +444,7 @@ public sealed class ApprovalWorkflowServiceTests
         FakeAuditLogService auditLogService,
         FakeAdminAuditLogService adminAuditLogService,
         FakeAdminCommandRegistry commandRegistry,
+        FakeGlobalPolicyEngine policyEngine,
         AdjustableTimeProvider timeProvider) : IAsyncDisposable
     {
         public ApplicationDbContext DbContext { get; } = dbContext;
@@ -332,6 +456,8 @@ public sealed class ApprovalWorkflowServiceTests
         public FakeAdminAuditLogService AdminAuditLogService { get; } = adminAuditLogService;
 
         public FakeAdminCommandRegistry CommandRegistry { get; } = commandRegistry;
+
+        public FakeGlobalPolicyEngine PolicyEngine { get; } = policyEngine;
 
         public AdjustableTimeProvider TimeProvider { get; } = timeProvider;
 

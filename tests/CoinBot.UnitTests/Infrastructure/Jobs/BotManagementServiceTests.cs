@@ -1,5 +1,10 @@
 using CoinBot.Application.Abstractions.Bots;
 using CoinBot.Application.Abstractions.DataScope;
+using CoinBot.Application.Abstractions.Strategies;
+using Microsoft.AspNetCore.Identity;
+using CoinBot.UnitTests.Infrastructure.Strategies;
+using CoinBot.Infrastructure.Strategies;
+using CoinBot.Contracts.Common;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Execution;
@@ -7,6 +12,7 @@ using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.Mfa;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Options;
 
 namespace CoinBot.UnitTests.Infrastructure.Jobs;
@@ -212,6 +218,152 @@ public sealed class BotManagementServiceTests
     }
 
     [Fact]
+    public async Task GetPageAsync_UsesLatestFeatureSnapshotDecision_WhenNoExecutionOrderExists()
+    {
+        await using var context = CreateContext();
+        var ownerUserId = "user-feature-veto";
+        var exchangeAccountId = await SeedStrategyAndExchangeAccountAsync(context, ownerUserId, "pilot-feature-veto");
+        var bot = await SeedBotAsync(context, ownerUserId, exchangeAccountId, isEnabled: true);
+        var evaluatedAtUtc = new DateTime(2026, 4, 2, 14, 0, 0, DateTimeKind.Utc);
+        context.BackgroundJobStates.Add(new BackgroundJobState
+        {
+            JobKey = $"bot-execution:{bot.Id:N}",
+            JobType = BackgroundJobTypes.BotExecution,
+            BotId = bot.Id,
+            Status = BackgroundJobStatus.Succeeded,
+            LastStartedAtUtc = evaluatedAtUtc,
+            LastCompletedAtUtc = evaluatedAtUtc.AddSeconds(1),
+            LastHeartbeatAtUtc = evaluatedAtUtc.AddSeconds(1)
+        });
+        context.TradingFeatureSnapshots.Add(new TradingFeatureSnapshot
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = ownerUserId,
+            BotId = bot.Id,
+            ExchangeAccountId = exchangeAccountId,
+            StrategyKey = bot.StrategyKey,
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            EvaluatedAtUtc = evaluatedAtUtc,
+            MarketDataTimestampUtc = evaluatedAtUtc.AddSeconds(-1),
+            FeatureVersion = "test",
+            SnapshotState = FeatureSnapshotState.Ready,
+            MarketDataReasonCode = DegradedModeReasonCode.None,
+            SampleCount = 240,
+            RequiredSampleCount = 200,
+            LastDecisionOutcome = "Blocked",
+            LastDecisionCode = "RiskProfileMissing",
+            LastExecutionState = "Vetoed",
+            FeatureSummary = "State=Ready; LastVeto:RiskProfileMissing",
+            CreatedDate = evaluatedAtUtc,
+            UpdatedDate = evaluatedAtUtc.AddSeconds(1)
+        });
+        await context.SaveChangesAsync();
+        var service = CreateService(context, new FakeTimeProvider(new DateTimeOffset(evaluatedAtUtc.AddSeconds(2))));
+
+        var snapshot = await service.GetPageAsync(ownerUserId);
+        var row = Assert.Single(snapshot.Bots);
+
+        Assert.Equal("Succeeded", row.LastJobStatus);
+        Assert.Equal("Vetoed", row.LastExecutionState);
+        Assert.Equal("Blocked", row.LastExecutionDecisionOutcome);
+        Assert.Equal("RiskVeto", row.LastExecutionDecisionReasonType);
+        Assert.Equal("RiskProfileMissing", row.LastExecutionDecisionReasonCode);
+        Assert.Equal(evaluatedAtUtc, row.LastExecutionDecisionAtUtc);
+        Assert.Equal(evaluatedAtUtc.AddSeconds(-1), row.LastExecutionLastCandleAtUtc);
+        Assert.NotNull(row.LastExecutionUpdatedAtUtc);
+    }
+
+    [Fact]
+    public async Task GetPageAsync_IgnoresOlderExecutionOrderFailure_WhenFeatureSnapshotIsNewer()
+    {
+        await using var context = CreateContext();
+        var ownerUserId = "user-feature-current";
+        var exchangeAccountId = await SeedStrategyAndExchangeAccountAsync(context, ownerUserId, "pilot-feature-current");
+        var bot = await SeedBotAsync(context, ownerUserId, exchangeAccountId, isEnabled: true);
+        var orderId = Guid.NewGuid();
+        var orderCreatedAtUtc = new DateTime(2026, 4, 2, 13, 10, 0, DateTimeKind.Utc);
+        var evaluatedAtUtc = orderCreatedAtUtc.AddMinutes(30);
+
+        context.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = orderId,
+            OwnerUserId = ownerUserId,
+            BotId = bot.Id,
+            StrategyKey = bot.StrategyKey,
+            Symbol = "ETHUSDT",
+            Timeframe = "1m",
+            BaseAsset = "ETH",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.01m,
+            Price = 3000m,
+            State = ExecutionOrderState.Rejected,
+            FailureCode = "PrivatePlaneStale",
+            FailureDetail = "Private account snapshot is stale.",
+            RejectionStage = ExecutionRejectionStage.PreSubmit,
+            SubmittedToBroker = false,
+            RetryEligible = false,
+            CooldownApplied = true,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            CreatedDate = orderCreatedAtUtc,
+            UpdatedDate = orderCreatedAtUtc.AddSeconds(1),
+            LastStateChangedAtUtc = orderCreatedAtUtc.AddSeconds(1)
+        });
+        context.ExecutionOrderTransitions.Add(new ExecutionOrderTransition
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = ownerUserId,
+            ExecutionOrderId = orderId,
+            SequenceNumber = 1,
+            State = ExecutionOrderState.Rejected,
+            EventCode = "PrivatePlaneStale",
+            Detail = "Execution blocked because private account snapshot is stale.",
+            CorrelationId = "corr-stale-order",
+            OccurredAtUtc = orderCreatedAtUtc.AddSeconds(1)
+        });
+        context.TradingFeatureSnapshots.Add(new TradingFeatureSnapshot
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = ownerUserId,
+            BotId = bot.Id,
+            ExchangeAccountId = exchangeAccountId,
+            StrategyKey = bot.StrategyKey,
+            Symbol = "ETHUSDT",
+            Timeframe = "1m",
+            EvaluatedAtUtc = evaluatedAtUtc,
+            MarketDataTimestampUtc = evaluatedAtUtc.AddSeconds(-1),
+            FeatureVersion = "test",
+            SnapshotState = FeatureSnapshotState.Ready,
+            MarketDataReasonCode = DegradedModeReasonCode.None,
+            SampleCount = 240,
+            RequiredSampleCount = 200,
+            LastDecisionOutcome = "None",
+            FeatureSummary = "State=Ready; LastDecision:None",
+            CreatedDate = evaluatedAtUtc,
+            UpdatedDate = evaluatedAtUtc.AddSeconds(1)
+        });
+        await context.SaveChangesAsync();
+        var service = CreateService(context, new FakeTimeProvider(new DateTimeOffset(evaluatedAtUtc.AddSeconds(2))));
+
+        var snapshot = await service.GetPageAsync(ownerUserId);
+        var row = Assert.Single(snapshot.Bots);
+
+        Assert.Null(row.LastExecutionState);
+        Assert.Null(row.LastExecutionFailureCode);
+        Assert.Null(row.LastExecutionDecisionReasonCode);
+        Assert.Null(row.LastExecutionDecisionReasonType);
+        Assert.Null(row.LastExecutionDecisionSummary);
+        Assert.Equal("None", row.LastExecutionDecisionOutcome);
+        Assert.Equal(evaluatedAtUtc, row.LastExecutionDecisionAtUtc);
+        Assert.True(row.LastExecutionUpdatedAtUtc >= evaluatedAtUtc);
+        Assert.Equal(evaluatedAtUtc.AddSeconds(-1), row.LastExecutionLastCandleAtUtc);
+        Assert.False(row.LastExecutionCooldownApplied);
+    }
+
+    [Fact]
     public async Task GetPageAsync_ProjectsSanitizedMarketDataDiagnostics_FromLatestTransitionDetail()
     {
         await using var context = CreateContext();
@@ -341,10 +493,169 @@ public sealed class BotManagementServiceTests
         Assert.Empty(context.TradingBots.Where(entity => entity.OwnerUserId == ownerUserId));
     }
 
+    [Fact]
+    public async Task GetCreateEditorAsync_ReturnsOwnedStrategies_AndAdminSharedTemplates()
+    {
+        var ownerUserId = "normal-user-picker";
+        var databaseName = Guid.NewGuid().ToString("N");
+        var databaseRoot = new InMemoryDatabaseRoot();
+        await using (var seedContext = CreateContext(databaseName: databaseName, databaseRoot: databaseRoot))
+        {
+            await SeedStrategyTemplateAsync(seedContext, "platform-admin", "shared-admin-template", "Shared Admin Template", isPlatformAdminOwner: true);
+            await SeedStrategyTemplateAsync(seedContext, "other-user", "other-private-template", "Other Private Template", isPlatformAdminOwner: false);
+        }
+
+        await using var context = CreateContext(currentUserId: ownerUserId, hasIsolationBypass: false, databaseName: databaseName, databaseRoot: databaseRoot);
+        _ = await SeedStrategyAndExchangeAccountAsync(context, ownerUserId, "own-strategy");
+        var service = CreateService(context);
+
+        var editor = await service.GetCreateEditorAsync(ownerUserId);
+
+        Assert.Contains(editor.StrategyOptions, option => option.StrategyKey == "own-strategy");
+        Assert.Contains(editor.StrategyOptions, option =>
+            option.StrategyKey == "shared-admin-template" &&
+            option.DisplayName.Contains("Shared", StringComparison.Ordinal) &&
+            option.HasPublishedVersion);
+        Assert.DoesNotContain(editor.StrategyOptions, option => option.StrategyKey == "other-private-template");
+    }
+
+    [Fact]
+    public async Task GetCreateEditorAsync_UsesDirectSharedTemplateProjection_WithoutFullCatalogLoad()
+    {
+        var ownerUserId = "normal-user-picker-fast";
+        var databaseName = Guid.NewGuid().ToString("N");
+        var databaseRoot = new InMemoryDatabaseRoot();
+        await using (var seedContext = CreateContext(databaseName: databaseName, databaseRoot: databaseRoot))
+        {
+            await SeedStrategyTemplateAsync(seedContext, "platform-admin", "shared-fast-template", "Shared Fast Template", isPlatformAdminOwner: true);
+        }
+
+        await using var context = CreateContext(currentUserId: ownerUserId, hasIsolationBypass: false, databaseName: databaseName, databaseRoot: databaseRoot);
+        var catalog = new ThrowingTemplateCatalogService();
+        var service = CreateService(context, strategyTemplateCatalogService: catalog);
+
+        var editor = await service.GetCreateEditorAsync(ownerUserId);
+
+        Assert.Contains(editor.StrategyOptions, option => option.StrategyKey == "shared-fast-template");
+        Assert.Equal(0, catalog.ListAsyncCallCount);
+    }
+
+    [Fact]
+    public async Task CreateAsync_UsesOwnedStrategySelection_WithoutMaterialization()
+    {
+        var ownerUserId = "normal-user-own-strategy";
+        await using var context = CreateContext(currentUserId: ownerUserId, hasIsolationBypass: false);
+        var exchangeAccountId = await SeedStrategyAndExchangeAccountAsync(context, ownerUserId, "own-create-strategy");
+        var catalog = new ThrowingTemplateCatalogService();
+        var service = CreateService(context, strategyTemplateCatalogService: catalog);
+
+        var result = await service.CreateAsync(
+            ownerUserId,
+            new BotManagementSaveCommand(
+                "Own Strategy Bot",
+                "own-create-strategy",
+                "BTCUSDT",
+                0.001m,
+                exchangeAccountId,
+                1m,
+                "ISOLATED",
+                false),
+            $"user:{ownerUserId}");
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(0, catalog.GetAsyncCallCount);
+        Assert.Equal(1, await context.TradingStrategies.CountAsync(entity => entity.OwnerUserId == ownerUserId));
+        Assert.Equal(1, await context.TradingStrategyVersions.CountAsync(entity => entity.OwnerUserId == ownerUserId));
+        Assert.Equal("own-create-strategy", await context.TradingBots
+            .Where(entity => entity.OwnerUserId == ownerUserId)
+            .Select(entity => entity.StrategyKey)
+            .SingleAsync());
+    }
+
+    [Fact]
+    public async Task CreateAsync_MaterializesAdminSharedTemplate_ForUserBotBinding_WithoutCircularDependency()
+    {
+        var ownerUserId = "normal-user-bind";
+        var databaseName = Guid.NewGuid().ToString("N");
+        var databaseRoot = new InMemoryDatabaseRoot();
+        await using (var seedContext = CreateContext(databaseName: databaseName, databaseRoot: databaseRoot))
+        {
+            await SeedStrategyTemplateAsync(seedContext, "platform-admin", "shared-bind-template", "Shared Bind Template", isPlatformAdminOwner: true);
+        }
+
+        await using var context = CreateContext(currentUserId: ownerUserId, hasIsolationBypass: false, databaseName: databaseName, databaseRoot: databaseRoot);
+        var exchangeAccountId = await SeedExchangeAccountAsync(context, ownerUserId);
+        var service = CreateService(context);
+
+        var result = await service.CreateAsync(
+            ownerUserId,
+            new BotManagementSaveCommand(
+                "Shared Template Bot",
+                "shared-bind-template",
+                "BTCUSDT",
+                0.001m,
+                exchangeAccountId,
+                1m,
+                "ISOLATED",
+                false),
+            $"user:{ownerUserId}");
+
+        var bot = await context.TradingBots.SingleAsync(entity => entity.OwnerUserId == ownerUserId);
+        var strategy = await context.TradingStrategies.SingleAsync(entity =>
+            entity.OwnerUserId == ownerUserId &&
+            entity.StrategyKey == "shared-bind-template");
+        var version = await context.TradingStrategyVersions.SingleAsync(entity =>
+            entity.OwnerUserId == ownerUserId &&
+            entity.TradingStrategyId == strategy.Id);
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal("shared-bind-template", bot.StrategyKey);
+        Assert.Equal("Shared Bind Template", strategy.DisplayName);
+        Assert.Equal(StrategyVersionStatus.Published, version.Status);
+        Assert.Equal(version.Id, strategy.ActiveTradingStrategyVersionId);
+    }
+
+    [Fact]
+    public async Task CreateAsync_DoesNotMaterializeOtherUserPrivateTemplate()
+    {
+        var ownerUserId = "normal-user-private-block";
+        var databaseName = Guid.NewGuid().ToString("N");
+        var databaseRoot = new InMemoryDatabaseRoot();
+        await using (var seedContext = CreateContext(databaseName: databaseName, databaseRoot: databaseRoot))
+        {
+            await SeedStrategyTemplateAsync(seedContext, "other-user", "other-private-template", "Other Private Template", isPlatformAdminOwner: false);
+        }
+
+        await using var context = CreateContext(currentUserId: ownerUserId, hasIsolationBypass: false, databaseName: databaseName, databaseRoot: databaseRoot);
+        var exchangeAccountId = await SeedExchangeAccountAsync(context, ownerUserId);
+        var service = CreateService(context);
+
+        var result = await service.CreateAsync(
+            ownerUserId,
+            new BotManagementSaveCommand(
+                "Private Leak Bot",
+                "other-private-template",
+                "BTCUSDT",
+                0.001m,
+                exchangeAccountId,
+                1m,
+                "ISOLATED",
+                false),
+            $"user:{ownerUserId}");
+
+        Assert.False(result.IsSuccessful);
+        Assert.Equal("StrategyNotFound", result.FailureCode);
+        Assert.DoesNotContain(context.TradingBots, entity => entity.OwnerUserId == ownerUserId);
+        Assert.DoesNotContain(context.TradingStrategies, entity =>
+            entity.OwnerUserId == ownerUserId &&
+            entity.StrategyKey == "other-private-template");
+    }
+
     private static BotManagementService CreateService(
         ApplicationDbContext context,
         TimeProvider? timeProvider = null,
-        ICriticalUserOperationAuthorizer? criticalUserOperationAuthorizer = null)
+        ICriticalUserOperationAuthorizer? criticalUserOperationAuthorizer = null,
+        IStrategyTemplateCatalogService? strategyTemplateCatalogService = null)
     {
         return new BotManagementService(
             context,
@@ -356,7 +667,11 @@ public sealed class BotManagementServiceTests
             criticalUserOperationAuthorizer ?? new FakeCriticalUserOperationAuthorizer(),
             timeProvider ?? new FakeTimeProvider(),
             Options.Create(CreatePilotOptions()),
-            Options.Create(new DataLatencyGuardOptions()));
+            Options.Create(new DataLatencyGuardOptions()),
+            strategyTemplateCatalogService: strategyTemplateCatalogService ?? new StrategyTemplateCatalogService(
+                new StrategyRuleParser(),
+                new StrategyDefinitionValidator(),
+                context));
     }
 
     private static async Task<Guid> SeedStrategyAndExchangeAccountAsync(ApplicationDbContext context, string ownerUserId, string strategyKey)
@@ -396,6 +711,84 @@ public sealed class BotManagementServiceTests
         return exchangeAccountId;
     }
 
+    private static async Task<Guid> SeedExchangeAccountAsync(ApplicationDbContext context, string ownerUserId)
+    {
+        var exchangeAccountId = Guid.NewGuid();
+        context.ExchangeAccounts.Add(new ExchangeAccount
+        {
+            Id = exchangeAccountId,
+            OwnerUserId = ownerUserId,
+            ExchangeName = "Binance",
+            DisplayName = "Pilot Futures",
+            IsReadOnly = false,
+            CredentialStatus = ExchangeCredentialStatus.Active
+        });
+        await context.SaveChangesAsync();
+
+        return exchangeAccountId;
+    }
+
+    private static async Task SeedStrategyTemplateAsync(
+        ApplicationDbContext context,
+        string ownerUserId,
+        string templateKey,
+        string templateName,
+        bool isPlatformAdminOwner)
+    {
+        if (isPlatformAdminOwner)
+        {
+            context.UserClaims.Add(new IdentityUserClaim<string>
+            {
+                UserId = ownerUserId,
+                ClaimType = ApplicationClaimTypes.Permission,
+                ClaimValue = ApplicationPermissions.PlatformAdministration
+            });
+        }
+
+        var templateId = Guid.NewGuid();
+        var revisionId = Guid.NewGuid();
+        var utcNow = DateTime.UtcNow;
+        var definitionJson = CreateTemplateDefinitionJson(templateKey, templateName);
+        context.TradingStrategyTemplates.Add(new TradingStrategyTemplate
+        {
+            Id = templateId,
+            OwnerUserId = ownerUserId,
+            TemplateKey = templateKey,
+            TemplateName = templateName,
+            Description = $"{templateName} description.",
+            Category = "Custom",
+            SchemaVersion = 2,
+            DefinitionJson = definitionJson,
+            IsActive = true,
+            ActiveTradingStrategyTemplateRevisionId = revisionId,
+            PublishedTradingStrategyTemplateRevisionId = revisionId,
+            LatestTradingStrategyTemplateRevisionId = revisionId,
+            CreatedDate = utcNow,
+            UpdatedDate = utcNow
+        });
+        context.TradingStrategyTemplateRevisions.Add(new TradingStrategyTemplateRevision
+        {
+            Id = revisionId,
+            OwnerUserId = ownerUserId,
+            TradingStrategyTemplateId = templateId,
+            RevisionNumber = 1,
+            SchemaVersion = 2,
+            DefinitionJson = definitionJson,
+            ValidationStatusCode = "Valid",
+            ValidationSummary = "Valid",
+            CreatedDate = utcNow,
+            UpdatedDate = utcNow
+        });
+        await context.SaveChangesAsync();
+    }
+
+    private static string CreateTemplateDefinitionJson(string templateKey, string templateName)
+    {
+        return StrategyContractJson.Reference
+            .Replace("\"templateKey\": \"bollinger-rsi-reversal\"", $"\"templateKey\": \"{templateKey}\"", StringComparison.Ordinal)
+            .Replace("\"templateName\": \"Bollinger RSI Reversal\"", $"\"templateName\": \"{templateName}\"", StringComparison.Ordinal);
+    }
+
     private static async Task<TradingBot> SeedBotAsync(ApplicationDbContext context, string ownerUserId, Guid exchangeAccountId, bool isEnabled)
     {
         var bot = new TradingBot
@@ -415,10 +808,14 @@ public sealed class BotManagementServiceTests
         return bot;
     }
 
-    private static ApplicationDbContext CreateContext(string? currentUserId = null, bool hasIsolationBypass = true)
+    private static ApplicationDbContext CreateContext(
+        string? currentUserId = null,
+        bool hasIsolationBypass = true,
+        string? databaseName = null,
+        InMemoryDatabaseRoot? databaseRoot = null)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+            .UseInMemoryDatabase(databaseName ?? Guid.NewGuid().ToString("N"), databaseRoot)
             .Options;
 
         return new ApplicationDbContext(options, new TestDataScopeContext(currentUserId, hasIsolationBypass));
@@ -453,6 +850,90 @@ public sealed class BotManagementServiceTests
             PerBotCooldownSeconds = 120,
             PerSymbolCooldownSeconds = 60
         };
+    }
+
+    private sealed class ThrowingTemplateCatalogService : IStrategyTemplateCatalogService
+    {
+        public int ListAsyncCallCount { get; private set; }
+
+        public int GetAsyncCallCount { get; private set; }
+
+        public Task<IReadOnlyCollection<StrategyTemplateSnapshot>> ListAsync(CancellationToken cancellationToken = default)
+        {
+            ListAsyncCallCount++;
+            throw new InvalidOperationException("Full catalog load should not be used by bot editor shared template projection.");
+        }
+
+        public Task<IReadOnlyCollection<StrategyTemplateSnapshot>> ListAllAsync(CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<StrategyTemplateSnapshot> GetAsync(string templateKey, CancellationToken cancellationToken = default)
+        {
+            GetAsyncCallCount++;
+            throw new InvalidOperationException("Template lookup should not be used for owned strategy selection.");
+        }
+
+        public Task<StrategyTemplateSnapshot> GetIncludingArchivedAsync(string templateKey, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<StrategyTemplateSnapshot> CreateCustomAsync(
+            string ownerUserId,
+            string templateKey,
+            string templateName,
+            string description,
+            string category,
+            string definitionJson,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<StrategyTemplateSnapshot> CloneAsync(
+            string ownerUserId,
+            string sourceTemplateKey,
+            string templateKey,
+            string templateName,
+            string description,
+            string category,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<StrategyTemplateSnapshot> ReviseAsync(
+            string templateKey,
+            string templateName,
+            string description,
+            string category,
+            string definitionJson,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<StrategyTemplateSnapshot> PublishAsync(
+            string templateKey,
+            int revisionNumber,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<IReadOnlyCollection<StrategyTemplateRevisionSnapshot>> ListRevisionsAsync(
+            string templateKey,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<StrategyTemplateSnapshot> ArchiveAsync(string templateKey, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
     }
 
     private sealed class FakeCriticalUserOperationAuthorizer : ICriticalUserOperationAuthorizer

@@ -1,5 +1,7 @@
 using System.Globalization;
 using CoinBot.Application.Abstractions.Bots;
+using CoinBot.Application.Abstractions.Strategies;
+using CoinBot.Contracts.Common;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Dashboard;
@@ -19,7 +21,8 @@ public sealed class BotManagementService(
     TimeProvider timeProvider,
     IOptions<BotExecutionPilotOptions> options,
     IOptions<DataLatencyGuardOptions> dataLatencyGuardOptions,
-    UserOperationsStreamHub? userOperationsStreamHub = null) : IBotManagementService
+    UserOperationsStreamHub? userOperationsStreamHub = null,
+    IStrategyTemplateCatalogService? strategyTemplateCatalogService = null) : IBotManagementService
 {
     private const string FrozenPilotMarginType = "ISOLATED";
     private const int LastExecutionBlockDetailMaxLength = 240;
@@ -99,6 +102,18 @@ public sealed class BotManagementService(
                 .OrderByDescending(entity => entity.EvaluatedAtUtc)
                 .ThenByDescending(entity => entity.CreatedDate)
                 .ToListAsync(cancellationToken);
+        List<TradingFeatureSnapshot> latestFeatureSnapshots = botIds.Length == 0
+            ? []
+            : await dbContext.TradingFeatureSnapshots
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.OwnerUserId == ownerUserId &&
+                    botIds.Contains(entity.BotId) &&
+                    !entity.IsDeleted)
+                .OrderByDescending(entity => entity.EvaluatedAtUtc)
+                .ThenByDescending(entity => entity.CreatedDate)
+                .ToListAsync(cancellationToken);
 
         var strategiesByKey = strategies.ToDictionary(entity => entity.StrategyKey, StringComparer.Ordinal);
         var publishedStrategyIdSet = await LoadRuntimeReadyStrategyIdSetAsync(strategies, cancellationToken);
@@ -116,6 +131,11 @@ public sealed class BotManagementService(
                 group => group.Key,
                 group => group.First());
         var shadowDecisionsByBotId = latestShadowDecisions
+            .GroupBy(entity => entity.BotId)
+            .ToDictionary(
+                group => group.Key,
+                group => group.First());
+        var featureSnapshotsByBotId = latestFeatureSnapshots
             .GroupBy(entity => entity.BotId)
             .ToDictionary(
                 group => group.Key,
@@ -171,51 +191,57 @@ public sealed class BotManagementService(
                 statesByBotId.TryGetValue(bot.Id, out var state);
                 ordersByBotId.TryGetValue(bot.Id, out var order);
                 shadowDecisionsByBotId.TryGetValue(bot.Id, out var shadowDecision);
-                var cooldownBlockedUntilUtc = ResolveCooldownBlockedUntilUtc(bot, order, utcNow);
+                featureSnapshotsByBotId.TryGetValue(bot.Id, out var featureSnapshot);
+                var currentOrder = IsExecutionOrderCurrentForFeatureSnapshot(order, featureSnapshot) ? order : null;
+                var cooldownBlockedUntilUtc = ResolveCooldownBlockedUntilUtc(bot, currentOrder, utcNow);
                 var cooldownRemainingSeconds = ResolveCooldownRemainingSeconds(cooldownBlockedUntilUtc, utcNow);
                 LastExecutionTransitionSnapshot? lastExecutionTransition = null;
 
-                if (order?.State is ExecutionOrderState.Rejected or ExecutionOrderState.Failed)
+                if (currentOrder?.State is ExecutionOrderState.Rejected or ExecutionOrderState.Failed)
                 {
-                    latestTransitionSnapshotsByOrderId.TryGetValue(order.Id, out lastExecutionTransition);
+                    latestTransitionSnapshotsByOrderId.TryGetValue(currentOrder.Id, out lastExecutionTransition);
                 }
-                else if (order is not null)
+                else if (currentOrder is not null)
                 {
-                    latestTransitionSnapshotsByOrderId.TryGetValue(order.Id, out lastExecutionTransition);
+                    latestTransitionSnapshotsByOrderId.TryGetValue(currentOrder.Id, out lastExecutionTransition);
                 }
 
-                var degradedModeStateId = ResolveDegradedModeStateId(order, lastExecutionTransition);
+                var degradedModeStateId = ResolveDegradedModeStateId(currentOrder, lastExecutionTransition);
                 var degradedModeState = degradedModeStateId.HasValue &&
                     degradedModeStatesById.TryGetValue(degradedModeStateId.Value, out var resolvedDegradedModeState)
                     ? resolvedDegradedModeState
                     : null;
                 var latencyReasonCode = lastExecutionTransition?.Diagnostics.LatencyReasonCode ??
                     degradedModeState?.ReasonCode.ToString();
-                var decisionAtUtc = lastExecutionTransition?.OccurredAtUtc ?? order?.UpdatedDate;
-                var isBlockedDecision = order?.State is ExecutionOrderState.Rejected or ExecutionOrderState.Failed;
-                var decisionReasonCode = order is null
-                    ? null
+                var decisionAtUtc = lastExecutionTransition?.OccurredAtUtc ?? currentOrder?.UpdatedDate ?? featureSnapshot?.EvaluatedAtUtc;
+                var isBlockedDecision = currentOrder?.State is ExecutionOrderState.Rejected or ExecutionOrderState.Failed;
+                var decisionReasonCode = currentOrder is null
+                    ? featureSnapshot?.LastDecisionCode
                     : ExecutionDecisionDiagnostics.ResolveDecisionReasonCode(
                         isBlockedDecision,
-                        order.FailureCode ?? lastExecutionTransition?.EventCode,
+                        currentOrder.FailureCode ?? lastExecutionTransition?.EventCode,
                         latencyReasonCode);
                 var decisionReasonType = decisionReasonCode is null
                     ? null
-                    : ExecutionDecisionDiagnostics.ResolveDecisionReasonType(decisionReasonCode, latencyReasonCode);
+                    : ExecutionDecisionDiagnostics.ResolveDecisionReasonType(
+                        decisionReasonCode,
+                        latencyReasonCode,
+                        strategyDecisionOutcome: featureSnapshot?.LastExecutionState ?? featureSnapshot?.LastDecisionOutcome);
                 var decisionSummary = decisionReasonCode is null
                     ? null
                     : ExecutionDecisionDiagnostics.ResolveDecisionSummary(
-                        isBlockedDecision,
+                        isBlockedDecision || currentOrder is null,
                         decisionReasonType ?? "Other",
                         decisionReasonCode,
-                        lastExecutionTransition?.Diagnostics.BlockDetail ?? order?.FailureDetail);
+                        lastExecutionTransition?.Diagnostics.BlockDetail ?? currentOrder?.FailureDetail);
                 var lastExecutionLastCandleAtUtc = lastExecutionTransition?.Diagnostics.LastCandleAtUtc ??
-                    NormalizeUtcNullable(degradedModeState?.LatestDataTimestampAtUtc);
+                    NormalizeUtcNullable(degradedModeState?.LatestDataTimestampAtUtc) ??
+                    NormalizeUtcNullable(featureSnapshot?.MarketDataTimestampUtc);
                 var lastExecutionDataAgeMilliseconds = lastExecutionTransition?.Diagnostics.DataAgeMilliseconds ??
                     ExecutionDecisionDiagnostics.ResolveDecisionDataAgeMilliseconds(
                         degradedModeState,
                         decisionAtUtc,
-                        order?.FailureDetail);
+                        currentOrder?.FailureDetail);
                 var lastExecutionContinuityGapCount = lastExecutionTransition?.Diagnostics.ContinuityGapCount ??
                     degradedModeState?.LatestContinuityGapCount;
                 var lastExecutionContinuityRecoveredAtUtc = NormalizeUtcNullable(degradedModeState?.LatestContinuityRecoveredAtUtc);
@@ -246,19 +272,19 @@ public sealed class BotManagementService(
                     bot.OpenPositionCount,
                     state?.Status.ToString(),
                     state?.LastErrorCode,
-                    order?.State.ToString(),
-                    order?.FailureCode,
-                    order?.State is ExecutionOrderState.Rejected or ExecutionOrderState.Failed
+                    currentOrder?.State.ToString() ?? featureSnapshot?.LastExecutionState,
+                    currentOrder?.FailureCode ?? featureSnapshot?.LastFailureCode,
+                    currentOrder?.State is ExecutionOrderState.Rejected or ExecutionOrderState.Failed
                         ? lastExecutionTransition?.Diagnostics.BlockDetail
                         : null,
-                    order?.RejectionStage.ToString(),
-                    order?.SubmittedToBroker ?? false,
-                    order?.RetryEligible ?? false,
-                    order?.CooldownApplied ?? false,
-                    order?.ReduceOnly ?? false,
-                    order?.StopLossPrice.HasValue ?? false,
-                    order?.TakeProfitPrice.HasValue ?? false,
-                    order?.DuplicateSuppressed ?? false,
+                    currentOrder?.RejectionStage.ToString(),
+                    currentOrder?.SubmittedToBroker ?? false,
+                    currentOrder?.RetryEligible ?? false,
+                    currentOrder?.CooldownApplied ?? false,
+                    currentOrder?.ReduceOnly ?? false,
+                    currentOrder?.StopLossPrice.HasValue ?? false,
+                    currentOrder?.TakeProfitPrice.HasValue ?? false,
+                    currentOrder?.DuplicateSuppressed ?? false,
                     lastExecutionTransition?.EventCode,
                     NormalizeOptionalExecutionDiagnosticValue(
                         lastExecutionTransition?.CorrelationId,
@@ -266,7 +292,7 @@ public sealed class BotManagementService(
                     lastExecutionTransition?.ClientOrderId,
                     cooldownBlockedUntilUtc,
                     cooldownRemainingSeconds,
-                    order?.UpdatedDate,
+                    currentOrder?.UpdatedDate ?? featureSnapshot?.UpdatedDate,
                     bot.UpdatedDate,
                     lastExecutionLastCandleAtUtc,
                     lastExecutionDataAgeMilliseconds,
@@ -275,7 +301,7 @@ public sealed class BotManagementService(
                     lastExecutionStaleReason,
                     lastExecutionTransition?.Diagnostics.AffectedSymbol,
                     lastExecutionTransition?.Diagnostics.AffectedTimeframe,
-                    order is null ? null : ExecutionDecisionDiagnostics.ResolveDecisionOutcome(isBlockedDecision),
+                    currentOrder is null ? featureSnapshot?.LastDecisionOutcome : ExecutionDecisionDiagnostics.ResolveDecisionOutcome(isBlockedDecision),
                     decisionAtUtc,
                     decisionReasonType,
                     decisionReasonCode,
@@ -378,12 +404,18 @@ public sealed class BotManagementService(
                 authorization.FailureReason);
         }
 
+        var resolvedStrategyKey = await ResolveOrMaterializeStrategyKeyAsync(ownerUserId, command.StrategyKey, cancellationToken);
+        if (resolvedStrategyKey is null)
+        {
+            return new BotManagementSaveResult(null, false, false, false, "StrategyNotFound", "Seçilen strateji bulunamadı.");
+        }
+
         var bot = new TradingBot
         {
             Id = Guid.NewGuid(),
             OwnerUserId = ownerUserId,
             Name = NormalizeRequired(command.Name, nameof(command.Name)),
-            StrategyKey = NormalizeRequired(command.StrategyKey, nameof(command.StrategyKey)),
+            StrategyKey = resolvedStrategyKey,
             Symbol = NormalizeSymbol(command.Symbol),
             Quantity = NormalizeQuantity(command.Quantity),
             ExchangeAccountId = command.ExchangeAccountId,
@@ -458,9 +490,15 @@ public sealed class BotManagementService(
             return validationError with { BotId = botId };
         }
 
+        var resolvedStrategyKey = await ResolveOrMaterializeStrategyKeyAsync(ownerUserId, command.StrategyKey, cancellationToken);
+        if (resolvedStrategyKey is null)
+        {
+            return new BotManagementSaveResult(botId, false, false, bot.IsEnabled, "StrategyNotFound", "Seçilen strateji bulunamadı.");
+        }
+
         var wasEnabled = bot.IsEnabled;
         bot.Name = NormalizeRequired(command.Name, nameof(command.Name));
-        bot.StrategyKey = NormalizeRequired(command.StrategyKey, nameof(command.StrategyKey));
+        bot.StrategyKey = resolvedStrategyKey;
         bot.Symbol = NormalizeSymbol(command.Symbol);
         bot.Quantity = NormalizeQuantity(command.Quantity);
         bot.ExchangeAccountId = command.ExchangeAccountId;
@@ -560,13 +598,7 @@ public sealed class BotManagementService(
             return new BotManagementSaveResult(currentBotId, false, false, false, "StrategyKeyRequired", "Bot için strateji seçimi zorunludur.");
         }
 
-        var strategyExists = await dbContext.TradingStrategies
-            .IgnoreQueryFilters()
-            .AnyAsync(
-                entity => entity.OwnerUserId == ownerUserId &&
-                          entity.StrategyKey == strategyKey &&
-                          !entity.IsDeleted,
-                cancellationToken);
+        var strategyExists = await StrategySelectionExistsAsync(ownerUserId, strategyKey, cancellationToken);
 
         if (!strategyExists)
         {
@@ -634,12 +666,14 @@ public sealed class BotManagementService(
             .ToListAsync(cancellationToken);
 
         var publishedStrategyIdSet = await LoadRuntimeReadyStrategyIdSetAsync(strategies, cancellationToken);
+        var sharedTemplateOptions = await LoadSharedTemplateStrategyOptionsAsync(ownerUserId, strategies, cancellationToken);
 
         var strategyOptions = strategies
             .Select(entity => new BotStrategyOptionSnapshot(
                 entity.StrategyKey,
                 entity.DisplayName,
                 publishedStrategyIdSet.Contains(entity.Id)))
+            .Concat(sharedTemplateOptions)
             .ToArray();
 
         var exchangeAccounts = await dbContext.ExchangeAccounts
@@ -662,6 +696,186 @@ public sealed class BotManagementService(
             .ToArray();
 
         return new BotManagementEditorSnapshot(botId, draft, ResolveSymbolOptions(draft.Symbol), strategyOptions, exchangeAccountOptions);
+    }
+
+    private async Task<bool> StrategySelectionExistsAsync(
+        string ownerUserId,
+        string strategyKey,
+        CancellationToken cancellationToken)
+    {
+        var ownStrategyExists = await dbContext.TradingStrategies
+            .IgnoreQueryFilters()
+            .AnyAsync(
+                entity => entity.OwnerUserId == ownerUserId &&
+                          entity.StrategyKey == strategyKey &&
+                          !entity.IsDeleted,
+                cancellationToken);
+        if (ownStrategyExists)
+        {
+            return true;
+        }
+
+        return await FindAccessibleTemplateAsync(strategyKey, cancellationToken) is not null;
+    }
+
+    private async Task<string?> ResolveOrMaterializeStrategyKeyAsync(
+        string ownerUserId,
+        string strategyKey,
+        CancellationToken cancellationToken)
+    {
+        var normalizedStrategyKey = NormalizeRequired(strategyKey, nameof(strategyKey));
+        var ownStrategy = await dbContext.TradingStrategies
+            .IgnoreQueryFilters()
+            .SingleOrDefaultAsync(
+                entity => entity.OwnerUserId == ownerUserId &&
+                          entity.StrategyKey == normalizedStrategyKey &&
+                          !entity.IsDeleted,
+                cancellationToken);
+        if (ownStrategy is not null)
+        {
+            return ownStrategy.StrategyKey;
+        }
+
+        var template = await FindAccessibleTemplateAsync(normalizedStrategyKey, cancellationToken);
+        if (template is null)
+        {
+            return null;
+        }
+
+        var utcNow = timeProvider.GetUtcNow().UtcDateTime;
+        var strategy = new TradingStrategy
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = ownerUserId,
+            StrategyKey = template.TemplateKey,
+            DisplayName = template.TemplateName,
+            UsesExplicitVersionLifecycle = true,
+            ActiveTradingStrategyVersionId = null,
+            ActiveVersionActivatedAtUtc = null,
+            CreatedDate = utcNow,
+            UpdatedDate = utcNow
+        };
+
+        dbContext.TradingStrategies.Add(strategy);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        var version = new TradingStrategyVersion
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = ownerUserId,
+            TradingStrategyId = strategy.Id,
+            SchemaVersion = template.SchemaVersion,
+            VersionNumber = 1,
+            Status = StrategyVersionStatus.Published,
+            DefinitionJson = template.DefinitionJson,
+            PublishedAtUtc = utcNow,
+            CreatedDate = utcNow,
+            UpdatedDate = utcNow
+        };
+
+        dbContext.TradingStrategyVersions.Add(version);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        strategy.ActiveTradingStrategyVersionId = version.Id;
+        strategy.ActiveVersionActivatedAtUtc = utcNow;
+        strategy.UpdatedDate = utcNow;
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return strategy.StrategyKey;
+    }
+
+    private async Task<IReadOnlyCollection<BotStrategyOptionSnapshot>> LoadSharedTemplateStrategyOptionsAsync(
+        string ownerUserId,
+        IReadOnlyCollection<TradingStrategy> ownerStrategies,
+        CancellationToken cancellationToken)
+    {
+        if (strategyTemplateCatalogService is null)
+        {
+            return Array.Empty<BotStrategyOptionSnapshot>();
+        }
+
+        var ownerStrategyKeys = ownerStrategies
+            .Select(entity => entity.StrategyKey)
+            .ToHashSet(StringComparer.Ordinal);
+        var ownerTemplateKeys = await dbContext.TradingStrategyTemplates
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity => entity.OwnerUserId == ownerUserId && !entity.IsDeleted)
+            .Select(entity => entity.TemplateKey)
+            .ToListAsync(cancellationToken);
+        var ownerTemplateKeySet = ownerTemplateKeys.ToHashSet(StringComparer.Ordinal);
+        try
+        {
+            var platformAdminOwnerIds = await dbContext.UserClaims
+                .AsNoTracking()
+                .Where(claim =>
+                    claim.ClaimType == ApplicationClaimTypes.Permission &&
+                    claim.ClaimValue == ApplicationPermissions.PlatformAdministration)
+                .Select(claim => claim.UserId)
+                .Distinct()
+                .ToListAsync(cancellationToken);
+
+            if (platformAdminOwnerIds.Count == 0)
+            {
+                return Array.Empty<BotStrategyOptionSnapshot>();
+            }
+
+            return await dbContext.TradingStrategyTemplates
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(template =>
+                    platformAdminOwnerIds.Contains(template.OwnerUserId) &&
+                    template.IsActive &&
+                    !template.IsDeleted &&
+                    template.PublishedTradingStrategyTemplateRevisionId.HasValue &&
+                    !ownerStrategyKeys.Contains(template.TemplateKey) &&
+                    !ownerTemplateKeySet.Contains(template.TemplateKey))
+                .Join(
+                    dbContext.TradingStrategyTemplateRevisions
+                        .AsNoTracking()
+                        .IgnoreQueryFilters()
+                        .Where(revision =>
+                            !revision.IsDeleted &&
+                            revision.ValidationStatusCode == "Valid"),
+                    template => template.PublishedTradingStrategyTemplateRevisionId,
+                    revision => (Guid?)revision.Id,
+                    (template, _) => new { template.TemplateKey, template.TemplateName })
+                .OrderBy(template => template.TemplateName)
+                .ThenBy(template => template.TemplateKey)
+                .Select(template => new BotStrategyOptionSnapshot(
+                    template.TemplateKey,
+                    template.TemplateName + " · Shared",
+                    true))
+                .ToArrayAsync(cancellationToken);
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+        {
+            return Array.Empty<BotStrategyOptionSnapshot>();
+        }
+    }
+
+    private async Task<StrategyTemplateSnapshot?> FindAccessibleTemplateAsync(
+        string templateKey,
+        CancellationToken cancellationToken)
+    {
+        if (strategyTemplateCatalogService is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var template = await strategyTemplateCatalogService.GetAsync(templateKey, cancellationToken);
+            return template.IsActive &&
+                   template.PublishedRevisionNumber > 0 &&
+                   template.Validation.IsValid
+                ? template
+                : null;
+        }
+        catch (Exception exception) when (exception is StrategyTemplateCatalogException or StrategyDefinitionValidationException or StrategyRuleParseException or ArgumentException or InvalidOperationException)
+        {
+            return null;
+        }
     }
 
     private async Task<Guid?> ResolveSingleActiveExchangeAccountIdAsync(string ownerUserId, CancellationToken cancellationToken)
@@ -805,6 +1019,25 @@ public sealed class BotManagementService(
     private bool IsAllowedSymbol(string symbol)
     {
         return ResolveSymbolOptions(symbol).Contains(symbol, StringComparer.Ordinal);
+    }
+
+    private static bool IsExecutionOrderCurrentForFeatureSnapshot(ExecutionOrder? order, TradingFeatureSnapshot? featureSnapshot)
+    {
+        if (order is null)
+        {
+            return false;
+        }
+
+        if (featureSnapshot is null)
+        {
+            return true;
+        }
+
+        var orderUpdatedAtUtc = NormalizeUtcNullable(order.LastStateChangedAtUtc) ?? NormalizeUtcNullable(order.CreatedDate);
+        var featureEvaluatedAtUtc = NormalizeUtcNullable(featureSnapshot.EvaluatedAtUtc) ?? NormalizeUtcNullable(featureSnapshot.UpdatedDate);
+
+        return !featureEvaluatedAtUtc.HasValue ||
+            orderUpdatedAtUtc.HasValue && orderUpdatedAtUtc.Value >= featureEvaluatedAtUtc.Value;
     }
 
     private DateTime? ResolveCooldownBlockedUntilUtc(TradingBot bot, ExecutionOrder? latestOrder, DateTime utcNow)

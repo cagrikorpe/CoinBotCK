@@ -63,4 +63,5 @@ public sealed class BotManagementInputModel
 
 public sealed record BotManagementOptionViewModel(
     string Value,
-    string Label);
+    string Label,
+    bool IsReady = true);

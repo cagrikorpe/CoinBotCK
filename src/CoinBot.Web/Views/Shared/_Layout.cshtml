@@ -19,6 +19,7 @@
         new { Group = "Kullanım", Key = "Dashboard", Label = "Ana Sayfa", Initials = "AS", Controller = "Home", Action = "Index", Enabled = true, Badge = (string?)null, BadgeClass = string.Empty },
         new { Group = "Kullanım", Key = "Bots", Label = "Botlarım", Initials = "BT", Controller = "Bots", Action = "Index", Enabled = true, Badge = (string?)null, BadgeClass = string.Empty },
         new { Group = "Kullanım", Key = "Positions", Label = "İşlemler", Initials = "İŞ", Controller = "Positions", Action = "Index", Enabled = true, Badge = (string?)null, BadgeClass = string.Empty },
+        new { Group = "Kullanım", Key = "RiskCenter", Label = "Risk", Initials = "RK", Controller = "RiskCenter", Action = "Index", Enabled = true, Badge = (string?)null, BadgeClass = string.Empty },
         new { Group = "Kullanım", Key = "Settings", Label = "Ayarlar", Initials = "AY", Controller = "Settings", Action = "Index", Enabled = true, Badge = (string?)null, BadgeClass = string.Empty }
     };
 }
@@ -237,6 +238,7 @@
                             <a asp-controller="Home" asp-action="Index" class="nav-link pl-0 pr-5">Ana Sayfa</a>
                             <a asp-controller="Bots" asp-action="Index" class="nav-link pl-0 pr-5">Botlarım</a>
                             <a asp-controller="Positions" asp-action="Index" class="nav-link pl-0 pr-5">İşlemler</a>
+                            <a asp-controller="RiskCenter" asp-action="Index" class="nav-link pl-0 pr-5">Risk</a>
                             <a asp-controller="Settings" asp-action="Index" class="nav-link pl-0 pr-0">Ayarlar</a>
                         </div>
                     </div>

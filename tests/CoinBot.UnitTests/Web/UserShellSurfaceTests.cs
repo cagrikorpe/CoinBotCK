@@ -5,15 +5,17 @@ namespace CoinBot.UnitTests.Web;
 public sealed class UserShellSurfaceTests
 {
     [Fact]
-    public void UserLayout_RendersOnlyFourPrimaryMenuItems_AndHidesAdminOperations()
+    public void UserLayout_RendersPrimaryMenuItems_WithRiskLink_AndHidesAdminOperations()
     {
         var content = ReadRepoFile("src", "CoinBot.Web", "Views", "Shared", "_Layout.cshtml");
 
         Assert.Contains("Label = \"Ana Sayfa\"", content, StringComparison.Ordinal);
         Assert.Contains("Label = \"Botlarım\"", content, StringComparison.Ordinal);
         Assert.Contains("Label = \"İşlemler\"", content, StringComparison.Ordinal);
+        Assert.Contains("Label = \"Risk\"", content, StringComparison.Ordinal);
         Assert.Contains("Label = \"Ayarlar\"", content, StringComparison.Ordinal);
         Assert.Contains("Controller = \"Positions\"", content, StringComparison.Ordinal);
+        Assert.Contains("Controller = \"RiskCenter\"", content, StringComparison.Ordinal);
 
         Assert.DoesNotContain("Label = \"Borsalarım\"", content, StringComparison.Ordinal);
         Assert.DoesNotContain("Strategy Builder", content, StringComparison.Ordinal);

@@ -164,14 +164,24 @@ public sealed class AdminWorkspaceReadModelServiceTests
                                  "templateName": "RSI Reversal"
                                },
                                "entry": {
-                                 "ruleId": "entry-mode",
-                                 "ruleType": "context",
-                                 "path": "context.mode",
-                                 "comparison": "equals",
-                                 "value": "Live",
+                                 "operator": "all",
+                                 "ruleId": "entry-root",
+                                 "ruleType": "group",
                                  "timeframe": "1m",
-                                 "weight": 20,
-                                 "enabled": true
+                                 "weight": 1,
+                                 "enabled": true,
+                                 "rules": [
+                                   {
+                                     "ruleId": "entry-mode",
+                                     "ruleType": "context",
+                                     "path": "context.mode",
+                                     "comparison": "equals",
+                                     "value": "Live",
+                                     "timeframe": "1m",
+                                     "weight": 20,
+                                     "enabled": true
+                                   }
+                                 ]
                                }
                              }
                              """,
@@ -610,14 +620,24 @@ public sealed class AdminWorkspaceReadModelServiceTests
             {
               "schemaVersion": 2,
               "entry": {
-                "path": "context.mode",
-                "comparison": "equals",
-                "value": "Live",
-                "ruleId": "entry-mode",
-                "ruleType": "context",
+                "operator": "all",
+                "ruleId": "entry-root",
+                "ruleType": "group",
                 "timeframe": "{{timeframe}}",
-                "weight": 20,
-                "enabled": true
+                "weight": 1,
+                "enabled": true,
+                "rules": [
+                  {
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Live",
+                    "ruleId": "entry-mode",
+                    "ruleType": "context",
+                    "timeframe": "{{timeframe}}",
+                    "weight": 20,
+                    "enabled": true
+                  }
+                ]
               }
             }
             """;
@@ -636,14 +656,24 @@ public sealed class AdminWorkspaceReadModelServiceTests
                 "templateSource": "Custom"
               },
               "entry": {
-                "path": "context.mode",
-                "comparison": "equals",
-                "value": "Live",
-                "ruleId": "entry-mode",
-                "ruleType": "context",
+                "operator": "all",
+                "ruleId": "entry-root",
+                "ruleType": "group",
                 "timeframe": "{{timeframe}}",
-                "weight": 20,
-                "enabled": true
+                "weight": 1,
+                "enabled": true,
+                "rules": [
+                  {
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Live",
+                    "ruleId": "entry-mode",
+                    "ruleType": "context",
+                    "timeframe": "{{timeframe}}",
+                    "weight": 20,
+                    "enabled": true
+                  }
+                ]
               }
             }
             """;

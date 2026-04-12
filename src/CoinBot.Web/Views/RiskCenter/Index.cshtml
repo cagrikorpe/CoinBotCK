@@ -1,67 +1,66 @@
+@model CoinBot.Web.Controllers.RiskCenterViewModel
+
 @{
     ViewData["Title"] = "Risk Merkezi";
     ViewData["ActiveNav"] = "RiskCenter";
-    ViewData["PageDescription"] = "Trading limitleri, zarar sınırları, işlem pencereleri ve acil aksiyonları tek yerde yöneten UI foundation ekranı.";
+    ViewData["PageDescription"] = "Botların işlem açabilmesi için kullanıcı risk tercihlerini kaydedin.";
     ViewData["BreadcrumbItems"] = new[] { "Trade Lab", "Risk Merkezi" };
 }
 
-@section Scripts {
-    <script src="~/js/risk-center-foundation.js" asp-append-version="true"></script>
-}
-
-<div class="row" data-cb-risk-center data-cb-risk-scenario="stable">
+<div class="row">
     <div class="col-12">
         <div class="card card-custom gutter-b cb-card">
             <div class="card-body">
                 <div class="cb-page-header">
                     <div>
-                        <div class="cb-page-eyebrow">Risk Control Center</div>
-                        <h2 class="cb-page-title">Risk Merkezi politikaları</h2>
-                        <p class="cb-page-description">Leverage, zarar limitleri, coin kısıtları ve emergency action akışlarını aynı operasyonel tasarım dilinde toplayan foundation yüzeyi.</p>
+                        <div class="cb-page-eyebrow">Risk tercihi</div>
+                        <h2 class="cb-page-title">Risk Merkezi</h2>
+                        <p class="cb-page-description">Botların işlem açabilmesi için önce risk limitlerinizi kaydedin.</p>
                     </div>
                     <div class="cb-toolbar">
-                        <span class="cb-badge cb-badge-info">UI-only foundation</span>
-                        <button type="button" class="btn btn-light-primary font-weight-bold">Taslak kaydet</button>
-                        <button type="button" class="btn btn-primary font-weight-bolder">Kaydet</button>
+                        <span class="cb-badge @(Model.HasProfile && !Model.Input.KillSwitchEnabled ? "cb-badge-success" : "cb-badge-warning")">@Model.StatusText</span>
                     </div>
                 </div>
 
-                <div class="cb-section mt-6">
-                    <div class="cb-section-title">Durum Senaryoları</div>
-                    <p class="cb-page-description mt-2 mb-0">Risk profilinin farklı yüzeylerini görmek için senaryoyu değiştirin. Bu seçim gerçek risk motorunu tetiklemez; yalnızca UI foundation yüzeyini günceller.</p>
-                    <div class="cb-chip-group mt-4" data-cb-toggle-group>
-                        <button type="button" class="cb-chip is-active" data-cb-toggle-active data-cb-risk-scenario-trigger="stable">Düşük risk</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-risk-scenario-trigger="balanced">Orta risk</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-risk-scenario-trigger="aggressive">Agresif ayar</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-risk-scenario-trigger="emergency">Emergency mod</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-risk-scenario-trigger="empty">Henüz ayar yok</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-risk-scenario-trigger="loading">Loading</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-risk-scenario-trigger="error">Error</button>
+                @if (TempData["RiskCenterSuccess"] is string successMessage)
+                {
+                    <div class="alert alert-success mt-6 mb-0" role="alert">@successMessage</div>
+                }
+
+                <div class="cb-mini-helper-card mt-6">
+                    <div class="cb-rule-setting-header">
+                        <strong>Durum</strong>
+                        @if (Model.LastUpdatedAtUtc is not null)
+                        {
+                            <span class="text-muted font-size-sm">Son kayıt: @Model.LastUpdatedAtUtc.Value.ToString("yyyy-MM-dd HH:mm") UTC</span>
+                        }
                     </div>
+                    <div class="text-muted font-size-sm mt-2">@Model.StatusSummary</div>
                 </div>
             </div>
         </div>
     </div>
 
-    <div class="col-12" data-cb-risk-panel="content">
-        @await Html.PartialAsync("RiskCenter/_SummaryCards")
+    <div class="col-xl-8">
+        @await Html.PartialAsync("RiskCenter/_PolicyForm", Model)
     </div>
 
-    <div class="col-xl-8" data-cb-risk-panel="content">
-        @await Html.PartialAsync("RiskCenter/_PolicyForm")
-        @await Html.PartialAsync("RiskCenter/_CoinLimitsCard")
-        @await Html.PartialAsync("RiskCenter/_NoTradeHoursCard")
-    </div>
-
-    <div class="col-xl-4" data-cb-risk-panel="content">
-        @await Html.PartialAsync("RiskCenter/_WarningPanel")
-        @await Html.PartialAsync("RiskCenter/_EmergencyActionsCard")
-        @await Html.PartialAsync("RiskCenter/_HelpCard")
-    </div>
-
-    <div class="col-12">
-        @await Html.PartialAsync("RiskCenter/_StatePanels")
+    <div class="col-xl-4">
+        <div class="card card-custom gutter-b cb-card">
+            <div class="card-body">
+                <div class="cb-section-title">Ne yapmalıyım?</div>
+                <p class="text-muted font-size-sm mt-3 mb-4">Limitleri korumacı başlayın. Kaydettikten sonra bot ekranında paused nedeni değişecektir.</p>
+                <div class="cb-rule-setting-list">
+                    <div class="cb-rule-setting-item">
+                        <div class="cb-rule-setting-header"><strong>Kaldıraç</strong><span class="cb-badge cb-badge-info">1x önerilir</span></div>
+                        <div class="text-muted font-size-sm mt-2">İlk testte düşük kaldıraç daha güvenlidir.</div>
+                    </div>
+                    <div class="cb-rule-setting-item">
+                        <div class="cb-rule-setting-header"><strong>Acil durdurma</strong><span class="cb-badge cb-badge-warning">Kapalı tutun</span></div>
+                        <div class="text-muted font-size-sm mt-2">Acil durdurma açık kalırsa bot işlem açmaz.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
-
-@await Html.PartialAsync("RiskCenter/_CoinLimitModal")

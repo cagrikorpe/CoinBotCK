@@ -399,7 +399,7 @@
                     @await Html.PartialAsync("Foundation/_AdminGlobalExecutionSwitchSection", executionSnapshot)
                     @await Html.PartialAsync("Foundation/_AdminGlobalSystemStateSection", globalSystemStateSnapshot)
 
-                    <details class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
+                    <details id="cb_admin_settings_policy_restrictions" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
                         <summary class="card-body font-weight-bolder">Risk / Policy limitlerini goster</summary>
                         <div class="px-8 pb-8 pt-2">
                             <div class="cb-helper-text mb-5">Risk / Policy Engine uzun restriction tablolarini ana gorunumu bogmamak icin varsayilan olarak kapali tutar.</div>
@@ -580,3 +580,53 @@
         </div>
     </div>
 </div>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    function activateSettingsHash() {
+        var currentHash = window.location.hash;
+        if (!currentHash) {
+            return;
+        }
+
+        var target;
+        try {
+            target = document.querySelector(currentHash);
+        } catch (_) {
+            return;
+        }
+
+        if (!target) {
+            return;
+        }
+
+        var tabPane = target.classList && target.classList.contains('tab-pane')
+            ? target
+            : target.closest('.tab-pane');
+
+        if (tabPane && tabPane.id) {
+            var tabLink = document.querySelector('[data-toggle="tab"][href="#' + tabPane.id + '"]');
+            if (tabLink) {
+                if (window.jQuery && window.jQuery.fn && window.jQuery.fn.tab) {
+                    window.jQuery(tabLink).tab('show');
+                } else {
+                    tabLink.click();
+                }
+            }
+        }
+
+        var details = target.closest('details');
+        if (details) {
+            details.open = true;
+        }
+
+        window.setTimeout(function () {
+            if (target.scrollIntoView) {
+                target.scrollIntoView({ block: 'start' });
+            }
+        }, 50);
+    }
+
+    activateSettingsHash();
+    window.addEventListener('hashchange', activateSettingsHash);
+});
+</script>

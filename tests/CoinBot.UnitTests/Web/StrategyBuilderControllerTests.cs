@@ -84,7 +84,7 @@ public sealed class StrategyBuilderControllerTests
         var redirect = Assert.IsType<RedirectToActionResult>(result);
         Assert.Equal(nameof(StrategyBuilderController.Index), redirect.ActionName);
         Assert.Empty(versionService.CreateDraftFromTemplateRequests);
-        Assert.Equal("Template ve hedef strateji seçimi gerekli.", controller.TempData["StrategyBuilderTemplateError"]?.ToString());
+        Assert.Equal("Template ve strateji seçimi gerekli.", controller.TempData["StrategyBuilderTemplateError"]?.ToString());
     }
 
     [Fact]
@@ -127,9 +127,8 @@ public sealed class StrategyBuilderControllerTests
         var request = Assert.Single(versionService.CreateDraftFromTemplateRequests);
         Assert.Equal(strategyId, request.StrategyId);
         Assert.Equal("rsi-reversal", request.TemplateKey);
-        Assert.Contains("Bagimsiz draft olusturuldu", controller.TempData["StrategyBuilderTemplateSuccess"]?.ToString(), StringComparison.Ordinal);
-        Assert.Contains("Clone Core (clone-core)", controller.TempData["StrategyBuilderTemplateSuccess"]?.ToString(), StringComparison.Ordinal);
-        Assert.Contains("SourceRevision=r2", controller.TempData["StrategyBuilderTemplateSuccess"]?.ToString(), StringComparison.Ordinal);
+        Assert.Equal("Strateji güncellendi. Bot ekranında seçebilirsiniz.", controller.TempData["StrategyBuilderTemplateSuccess"]?.ToString());
+        Assert.Contains(versionService.PublishRequests, requestId => requestId == versionService.LastDraftId);
     }
 
     [Fact]
@@ -154,7 +153,7 @@ public sealed class StrategyBuilderControllerTests
         var redirect = Assert.IsType<RedirectToActionResult>(result);
         Assert.Equal(nameof(StrategyBuilderController.Index), redirect.ActionName);
         Assert.Empty(versionService.CreateDraftFromTemplateRequests);
-        Assert.Equal("Hedef strateji bulunamadı veya kullanıcı kapsamı dışında.", controller.TempData["StrategyBuilderTemplateError"]?.ToString());
+        Assert.Equal("Strateji bulunamadı.", controller.TempData["StrategyBuilderTemplateError"]?.ToString());
     }
 
     [Fact]
@@ -179,7 +178,7 @@ public sealed class StrategyBuilderControllerTests
 
         _ = await controller.CreateDraftFromTemplate(strategyId, "archived-template", CancellationToken.None);
 
-        Assert.Equal("TemplateArchived: Strategy template 'archived-template' is archived and cannot be used for clone or publish flows.", controller.TempData["StrategyBuilderTemplateError"]?.ToString());
+        Assert.Equal("Template kullanılamıyor.", controller.TempData["StrategyBuilderTemplateError"]?.ToString());
     }
 
     [Fact]
@@ -204,7 +203,7 @@ public sealed class StrategyBuilderControllerTests
 
         _ = await controller.CreateDraftFromTemplate(strategyId, "missing-template", CancellationToken.None);
 
-        Assert.Equal("TemplateNotFound: Strategy template 'missing-template' was not found.", controller.TempData["StrategyBuilderTemplateError"]?.ToString());
+        Assert.Equal("Template kullanılamıyor.", controller.TempData["StrategyBuilderTemplateError"]?.ToString());
     }
 
     [Fact]
@@ -232,12 +231,7 @@ public sealed class StrategyBuilderControllerTests
 
         _ = await controller.CreateDraftFromTemplate(strategyId, "invalid-template", CancellationToken.None);
 
-        var error = controller.TempData["StrategyBuilderTemplateError"]?.ToString();
-        Assert.NotNull(error);
-        Assert.Contains("InvalidRule", error, StringComparison.Ordinal);
-        Assert.Contains("ReasonA | ReasonB", error, StringComparison.Ordinal);
-        Assert.DoesNotContain("ReasonC", error, StringComparison.Ordinal);
-        Assert.True(error.Length <= 256);
+        Assert.Equal("Strateji taslağı oluşturulamadı.", controller.TempData["StrategyBuilderTemplateError"]?.ToString());
     }
 
     [Fact]
@@ -262,12 +256,31 @@ public sealed class StrategyBuilderControllerTests
 
         _ = await controller.CreateDraftFromTemplate(strategyId, "parse-template", CancellationToken.None);
 
-        var error = controller.TempData["StrategyBuilderTemplateError"]?.ToString();
-        Assert.NotNull(error);
-        Assert.StartsWith("ParseFailed:", error, StringComparison.Ordinal);
-        Assert.True(error.Length <= 256);
+        Assert.Equal("Strateji taslağı oluşturulamadı.", controller.TempData["StrategyBuilderTemplateError"]?.ToString());
     }
 
+    [Fact]
+    public async Task StartFromTemplate_CreatesOwnedStrategy_AndDraftFromTemplate()
+    {
+        await using var dbContext = CreateDbContext();
+        var templateCatalog = new FakeStrategyTemplateCatalogService();
+        var versionService = new FakeStrategyVersionService();
+        var controller = CreateController(dbContext, templateCatalog, versionService, "builder-user");
+
+        var result = await controller.StartFromTemplate("rsi-reversal", "BTC Ana", CancellationToken.None);
+
+        var redirect = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(StrategyBuilderController.Index), redirect.ActionName);
+        var strategy = await dbContext.TradingStrategies.SingleAsync();
+        Assert.Equal("builder-user", strategy.OwnerUserId);
+        Assert.Equal("BTC Ana", strategy.DisplayName);
+        Assert.Equal("btc-ana", strategy.StrategyKey);
+        var request = Assert.Single(versionService.CreateDraftFromTemplateRequests);
+        Assert.Equal(strategy.Id, request.StrategyId);
+        Assert.Equal("rsi-reversal", request.TemplateKey);
+        Assert.Equal("Strateji oluşturuldu. Bot oluştururken bu stratejiyi seçebilirsiniz.", controller.TempData["StrategyBuilderTemplateSuccess"]?.ToString());
+        Assert.Contains(versionService.PublishRequests, requestId => requestId == versionService.LastDraftId);
+    }
     [Fact]
     public void Controller_RequiresTradeOperations_AndClonePostRequiresAntiForgery()
     {
@@ -275,14 +288,20 @@ public sealed class StrategyBuilderControllerTests
             typeof(StrategyBuilderController)
                 .GetCustomAttributes(typeof(AuthorizeAttribute), inherit: true)
                 .Cast<AuthorizeAttribute>());
-        var antiForgeryAttribute = Assert.Single(
+        var cloneAntiForgeryAttribute = Assert.Single(
             typeof(StrategyBuilderController)
                 .GetMethod(nameof(StrategyBuilderController.CreateDraftFromTemplate), [typeof(Guid), typeof(string), typeof(CancellationToken)])!
                 .GetCustomAttributes(typeof(ValidateAntiForgeryTokenAttribute), inherit: true)
                 .Cast<ValidateAntiForgeryTokenAttribute>());
+        var startAntiForgeryAttribute = Assert.Single(
+            typeof(StrategyBuilderController)
+                .GetMethod(nameof(StrategyBuilderController.StartFromTemplate), [typeof(string), typeof(string), typeof(CancellationToken)])!
+                .GetCustomAttributes(typeof(ValidateAntiForgeryTokenAttribute), inherit: true)
+                .Cast<ValidateAntiForgeryTokenAttribute>());
 
         Assert.Equal(ApplicationPolicies.TradeOperations, authorizeAttribute.Policy);
-        Assert.NotNull(antiForgeryAttribute);
+        Assert.NotNull(cloneAntiForgeryAttribute);
+        Assert.NotNull(startAntiForgeryAttribute);
     }
 
     private static StrategyBuilderController CreateController(
@@ -337,7 +356,13 @@ public sealed class StrategyBuilderControllerTests
 
         public Task<IReadOnlyCollection<StrategyTemplateSnapshot>> ListAsync(CancellationToken cancellationToken = default) => Task.FromResult(ListResult);
         public Task<IReadOnlyCollection<StrategyTemplateSnapshot>> ListAllAsync(CancellationToken cancellationToken = default) => Task.FromResult(ListResult);
-        public Task<StrategyTemplateSnapshot> GetAsync(string templateKey, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<StrategyTemplateSnapshot> GetAsync(string templateKey, CancellationToken cancellationToken = default)
+        {
+            var template = ListResult.SingleOrDefault(item => string.Equals(item.TemplateKey, templateKey, StringComparison.Ordinal));
+            return template is null
+                ? throw new StrategyTemplateCatalogException("TemplateNotFound", $"Strategy template '{templateKey}' was not found.")
+                : Task.FromResult(template);
+        }
         public Task<StrategyTemplateSnapshot> GetIncludingArchivedAsync(string templateKey, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<StrategyTemplateSnapshot> CreateCustomAsync(string ownerUserId, string templateKey, string templateName, string description, string category, string definitionJson, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<StrategyTemplateSnapshot> CloneAsync(string ownerUserId, string sourceTemplateKey, string templateKey, string templateName, string description, string category, CancellationToken cancellationToken = default) => throw new NotSupportedException();
@@ -351,7 +376,9 @@ public sealed class StrategyBuilderControllerTests
     {
         public StrategyVersionSnapshot? NextDraft { get; set; }
         public Exception? NextException { get; set; }
+        public Guid LastDraftId { get; private set; }
         public List<CreateDraftFromTemplateRequest> CreateDraftFromTemplateRequests { get; } = [];
+        public List<Guid> PublishRequests { get; } = [];
 
         public Task<StrategyVersionSnapshot> CreateDraftAsync(Guid strategyId, string definitionJson, CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
@@ -363,7 +390,7 @@ public sealed class StrategyBuilderControllerTests
                 throw NextException;
             }
 
-            return Task.FromResult(NextDraft ?? new StrategyVersionSnapshot(
+            var draft = NextDraft ?? new StrategyVersionSnapshot(
                 Guid.NewGuid(),
                 strategyId,
                 2,
@@ -376,11 +403,28 @@ public sealed class StrategyBuilderControllerTests
                 ValidationStatusCode: "Valid",
                 ValidationSummary: "Ready",
                 TemplateRevisionNumber: 1,
-                TemplateSource: "BuiltIn"));
+                TemplateSource: "BuiltIn");
+
+            LastDraftId = draft.StrategyVersionId;
+            return Task.FromResult(draft);
         }
 
         public Task<StrategyVersionSnapshot> CreateDraftFromVersionAsync(Guid strategyVersionId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<StrategyVersionSnapshot> PublishAsync(Guid strategyVersionId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<StrategyVersionSnapshot> PublishAsync(Guid strategyVersionId, CancellationToken cancellationToken = default)
+        {
+            PublishRequests.Add(strategyVersionId);
+            return Task.FromResult(new StrategyVersionSnapshot(
+                strategyVersionId,
+                Guid.NewGuid(),
+                2,
+                1,
+                StrategyVersionStatus.Published,
+                DateTime.UtcNow,
+                null,
+                ValidationStatusCode: "Valid",
+                ValidationSummary: "Ready"));
+        }
         public Task<StrategyVersionSnapshot> ActivateAsync(Guid strategyVersionId, string? expectedActivationToken = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<StrategyVersionSnapshot?> DeactivateAsync(Guid strategyId, string? expectedActivationToken = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<StrategyVersionSnapshot> ArchiveAsync(Guid strategyVersionId, CancellationToken cancellationToken = default) => throw new NotSupportedException();

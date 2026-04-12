@@ -45,6 +45,7 @@ public sealed class TradingFeatureSnapshotService(
     private const int PmaxAtrPeriod = 10;
     private const int PmaxMaPeriod = 10;
     private const decimal PmaxAtrMultiplier = 3m;
+    private static readonly TimeSpan MaxVetoCarryForwardAge = TimeSpan.FromMinutes(2);
     private readonly BotExecutionPilotOptions pilotOptionsValue = pilotOptions.Value;
 
     public async Task<TradingFeatureSnapshotModel> CaptureAsync(
@@ -72,8 +73,8 @@ public sealed class TradingFeatureSnapshotService(
                 BotId: request.BotId,
                 StrategyKey: normalizedStrategyKey),
             cancellationToken);
-        var latestOrder = await ResolveLatestOrderAsync(normalizedUserId, request.BotId, normalizedSymbol, normalizedTimeframe, cancellationToken);
-        var latestVeto = await ResolveLatestVetoAsync(normalizedUserId, normalizedSymbol, normalizedTimeframe, cancellationToken);
+        var latestOrder = await ResolveLatestOrderAsync(normalizedUserId, request.BotId, normalizedSymbol, normalizedTimeframe, evaluatedAtUtc, cancellationToken);
+        var latestVeto = await ResolveLatestVetoAsync(normalizedUserId, normalizedSymbol, normalizedTimeframe, evaluatedAtUtc, cancellationToken);
         var hasOpenPosition = await ResolveHasOpenPositionAsync(
             normalizedUserId,
             request.BotId,
@@ -356,8 +357,10 @@ public sealed class TradingFeatureSnapshotService(
         Guid botId,
         string symbol,
         string timeframe,
+        DateTime evaluatedAtUtc,
         CancellationToken cancellationToken)
     {
+        var minDecisionAtUtc = evaluatedAtUtc.Subtract(MaxVetoCarryForwardAge);
         return await dbContext.ExecutionOrders
             .IgnoreQueryFilters()
             .AsNoTracking()
@@ -365,6 +368,8 @@ public sealed class TradingFeatureSnapshotService(
                            item.BotId == botId &&
                            item.Symbol == symbol &&
                            item.Timeframe == timeframe &&
+                           item.LastStateChangedAtUtc >= minDecisionAtUtc &&
+                           item.LastStateChangedAtUtc <= evaluatedAtUtc &&
                            !item.IsDeleted)
             .OrderByDescending(item => item.LastStateChangedAtUtc)
             .ThenByDescending(item => item.CreatedDate)
@@ -375,6 +380,7 @@ public sealed class TradingFeatureSnapshotService(
         string userId,
         string symbol,
         string timeframe,
+        DateTime evaluatedAtUtc,
         CancellationToken cancellationToken)
     {
         return await dbContext.TradingStrategySignalVetoes
@@ -383,6 +389,8 @@ public sealed class TradingFeatureSnapshotService(
             .Where(item => item.OwnerUserId == userId &&
                            item.Symbol == symbol &&
                            item.Timeframe == timeframe &&
+                           item.EvaluatedAtUtc >= evaluatedAtUtc.Subtract(MaxVetoCarryForwardAge) &&
+                           item.EvaluatedAtUtc <= evaluatedAtUtc &&
                            !item.IsDeleted)
             .OrderByDescending(item => item.EvaluatedAtUtc)
             .ThenByDescending(item => item.CreatedDate)
@@ -1962,21 +1970,3 @@ public sealed class TradingFeatureSnapshotService(
         FeatureSnapshotQualityReason QualityReasonCode,
         string? MissingFeatureSummary);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

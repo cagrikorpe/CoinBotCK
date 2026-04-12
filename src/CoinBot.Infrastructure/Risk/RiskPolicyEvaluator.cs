@@ -53,6 +53,7 @@ public sealed class RiskPolicyEvaluator(
         try
         {
             var riskProfile = await dbContext.RiskProfiles
+                .IgnoreQueryFilters()
                 .Where(entity => entity.OwnerUserId == normalizedUserId && !entity.IsDeleted)
                 .OrderByDescending(entity => entity.UpdatedDate)
                 .ThenByDescending(entity => entity.CreatedDate)
@@ -661,4 +662,3 @@ public sealed class RiskPolicyEvaluator(
         };
     }
 }
-

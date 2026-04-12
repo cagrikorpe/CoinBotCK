@@ -663,6 +663,19 @@ public sealed class AdminController : Controller
         return View(model);
     }
 
+    [Authorize(Policy = ApplicationPolicies.AdminPortalAccess)]
+    public async Task<IActionResult> StrategyBuilder(string? templateKey, CancellationToken cancellationToken)
+    {
+        ApplyShellMeta(
+            title: "Strategy Builder",
+            description: "Super admin strategy template katalogunu yoneten admin yuzeyi.",
+            activeNav: "StrategyTemplates",
+            breadcrumbItems: new[] { "Super Admin", "Strategy", "Strategy Builder" });
+
+        var model = await BuildStrategyTemplateCatalogPageViewModelAsync(templateKey, cancellationToken);
+        return View(nameof(StrategyTemplates), model);
+    }
+
     [HttpPost]
     [Authorize(Policy = ApplicationPolicies.PlatformAdministration)]
     [ValidateAntiForgeryToken]
@@ -2808,6 +2821,8 @@ public sealed class AdminController : Controller
         string? reauthToken,
         CancellationToken cancellationToken)
     {
+        IActionResult RedirectToSymbolRestrictions() =>
+            RedirectToAction(nameof(Settings), "Admin", new { area = "Admin" }, "cb_admin_settings_policy_restrictions");
         var mfaResult = await EnforcePlatformAdminMfaAsync(
             "Admin.Settings.SymbolRestrictions.Update",
             GlobalPolicyErrorTempDataKey,
@@ -2825,7 +2840,7 @@ public sealed class AdminController : Controller
         if (!CanEditGlobalPolicy())
         {
             TempData[GlobalPolicyErrorTempDataKey] = "Bu rolde symbol restriction degistirilemez.";
-            return RedirectToAction(nameof(Settings));
+            return RedirectToSymbolRestrictions();
         }
 
         var normalizedReason = NormalizeRequiredReason(reason);
@@ -2833,13 +2848,13 @@ public sealed class AdminController : Controller
         if (normalizedReason is null)
         {
             TempData[GlobalPolicyErrorTempDataKey] = "Audit reason zorunludur.";
-            return RedirectToAction(nameof(Settings));
+            return RedirectToSymbolRestrictions();
         }
 
         if (globalPolicyEngine is null)
         {
             TempData[GlobalPolicyErrorTempDataKey] = "Global policy engine is unavailable.";
-            return RedirectToAction(nameof(Settings));
+            return RedirectToSymbolRestrictions();
         }
 
         var actorUserId = ResolveAdminUserId();
@@ -2863,7 +2878,7 @@ public sealed class AdminController : Controller
         catch (Exception exception)
         {
             TempData[GlobalPolicyErrorTempDataKey] = exception.Message;
-            return RedirectToAction(nameof(Settings));
+            return RedirectToSymbolRestrictions();
         }
 
         var updatedPolicy = currentSnapshot.Policy with
@@ -2880,12 +2895,8 @@ public sealed class AdminController : Controller
             "AdminPortal.Settings.SymbolRestrictions",
             ResolveMaskedRemoteIpAddress(),
             ResolveMaskedUserAgent());
-        var queuePayloadJson = approvalWorkflowService is not null
-            ? JsonSerializer.Serialize(policyUpdateRequest, PolicyJsonSerializerOptions)
-            : null;
-        var payloadHash = queuePayloadJson is not null
-            ? CreatePayloadHash(queuePayloadJson)
-            : CreatePayloadHash($"GlobalPolicy|SymbolRestrictions|{normalizedReason}|{requestedSummary}");
+        var policyPayloadJson = JsonSerializer.Serialize(policyUpdateRequest, PolicyJsonSerializerOptions);
+        var payloadHash = CreatePayloadHash(policyPayloadJson);
         var commandStartResult = await adminCommandRegistry.TryStartAsync(
             new AdminCommandStartRequest(
                 resolvedCommandId,
@@ -2908,48 +2919,9 @@ public sealed class AdminController : Controller
                 GlobalPolicyErrorTempDataKey,
                 cancellationToken))
         {
-            return RedirectToAction(nameof(Settings));
+            return RedirectToSymbolRestrictions();
         }
 
-        if (approvalWorkflowService is not null)
-        {
-            try
-            {
-                var approval = await approvalWorkflowService.EnqueueAsync(
-                    new ApprovalQueueEnqueueRequest(
-                        ApprovalQueueOperationType.GlobalPolicyUpdate,
-                        IncidentSeverity.Critical,
-                        "Symbol restriction update",
-                        requestedSummary,
-                        actorUserId,
-                        normalizedReason,
-                        queuePayloadJson!,
-                        RequiredApprovals: 2,
-                        ExpiresAtUtc: DateTime.UtcNow.AddHours(8),
-                        TargetType: "RiskPolicy",
-                        TargetId: "GlobalRiskPolicy",
-                        CorrelationId: correlationId,
-                        CommandId: resolvedCommandId),
-                    cancellationToken);
-
-                TempData[GlobalPolicySuccessTempDataKey] = $"Approval {approval.ApprovalReference} queued. 2 approval(s) required.";
-                return RedirectToAction(nameof(Settings));
-            }
-            catch (Exception exception)
-            {
-                await adminCommandRegistry.CompleteAsync(
-                    new AdminCommandCompletionRequest(
-                        resolvedCommandId,
-                        payloadHash,
-                        AdminCommandStatus.Failed,
-                        Truncate(exception.Message, 512),
-                        correlationId),
-                    cancellationToken);
-
-                TempData[GlobalPolicyErrorTempDataKey] = exception.Message;
-                return RedirectToAction(nameof(Settings));
-            }
-        }
 
         try
         {
@@ -2985,7 +2957,7 @@ public sealed class AdminController : Controller
             TempData[GlobalPolicyErrorTempDataKey] = exception.Message;
         }
 
-        return RedirectToAction(nameof(Settings));
+        return RedirectToSymbolRestrictions();
     }
 
     [HttpPost]

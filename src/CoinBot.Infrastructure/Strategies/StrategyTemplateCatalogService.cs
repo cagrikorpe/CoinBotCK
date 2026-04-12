@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using CoinBot.Application.Abstractions.Auditing;
 using CoinBot.Application.Abstractions.Strategies;
+using CoinBot.Contracts.Common;
 using CoinBot.Domain.Entities;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -299,14 +300,7 @@ public sealed class StrategyTemplateCatalogService(
             return builtInSnapshots;
         }
 
-        var customTemplates = await dbContext.TradingStrategyTemplates
-            .AsNoTracking()
-            .Where(entity => !entity.IsDeleted &&
-                             (includeArchived || entity.IsActive) &&
-                             (!requirePublishedRevision || entity.PublishedTradingStrategyTemplateRevisionId.HasValue))
-            .OrderBy(entity => entity.TemplateName)
-            .ThenBy(entity => entity.TemplateKey)
-            .ToListAsync(cancellationToken);
+        var customTemplates = await LoadVisibleCustomTemplatesAsync(includeArchived, requirePublishedRevision, cancellationToken);
         var revisions = await LoadRevisionsAsync(customTemplates.Select(entity => entity.Id).ToArray(), cancellationToken);
 
         var customSnapshots = customTemplates
@@ -343,12 +337,7 @@ public sealed class StrategyTemplateCatalogService(
                 $"Strategy template '{normalizedTemplateKey}' was not found in the built-in catalog, and template persistence is not available in the current service scope.");
         }
 
-        var template = await dbContext!.TradingStrategyTemplates
-            .AsNoTracking()
-            .SingleOrDefaultAsync(
-                entity => entity.TemplateKey == normalizedTemplateKey &&
-                          !entity.IsDeleted,
-                cancellationToken);
+        var template = await FindVisibleCustomTemplateAsync(normalizedTemplateKey, includeArchived, cancellationToken);
 
         if (template is null)
         {
@@ -921,6 +910,107 @@ public sealed class StrategyTemplateCatalogService(
         return rootObject.ToJsonString(JsonSerializerOptions);
     }
 
+    private async Task<IReadOnlyCollection<TradingStrategyTemplate>> LoadVisibleCustomTemplatesAsync(
+        bool includeArchived,
+        bool requirePublishedRevision,
+        CancellationToken cancellationToken)
+    {
+        EnsurePersistenceAvailable();
+
+        var templatesById = new Dictionary<Guid, TradingStrategyTemplate>();
+        var scopedTemplates = await ApplyTemplateVisibilityPredicate(
+                dbContext!.TradingStrategyTemplates.AsNoTracking(),
+                includeArchived,
+                requirePublishedRevision)
+            .ToListAsync(cancellationToken);
+
+        foreach (var template in scopedTemplates)
+        {
+            templatesById[template.Id] = template;
+        }
+
+        var platformAdminOwnerIds = await LoadPlatformAdminOwnerIdsAsync(cancellationToken);
+        if (platformAdminOwnerIds.Count > 0)
+        {
+            var sharedTemplates = await ApplyTemplateVisibilityPredicate(
+                    dbContext.TradingStrategyTemplates
+                        .AsNoTracking()
+                        .IgnoreQueryFilters()
+                        .Where(entity => platformAdminOwnerIds.Contains(entity.OwnerUserId)),
+                    includeArchived,
+                    requirePublishedRevision)
+                .ToListAsync(cancellationToken);
+
+            foreach (var template in sharedTemplates)
+            {
+                templatesById[template.Id] = template;
+            }
+        }
+
+        return templatesById.Values
+            .OrderBy(template => template.TemplateName, StringComparer.Ordinal)
+            .ThenBy(template => template.TemplateKey, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private async Task<TradingStrategyTemplate?> FindVisibleCustomTemplateAsync(
+        string templateKey,
+        bool includeArchived,
+        CancellationToken cancellationToken)
+    {
+        EnsurePersistenceAvailable();
+
+        var scopedTemplate = await dbContext!.TradingStrategyTemplates
+            .AsNoTracking()
+            .SingleOrDefaultAsync(
+                entity => entity.TemplateKey == templateKey &&
+                          !entity.IsDeleted,
+                cancellationToken);
+        if (scopedTemplate is not null)
+        {
+            return scopedTemplate;
+        }
+
+        var platformAdminOwnerIds = await LoadPlatformAdminOwnerIdsAsync(cancellationToken);
+        if (platformAdminOwnerIds.Count == 0)
+        {
+            return null;
+        }
+
+        return await dbContext.TradingStrategyTemplates
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .SingleOrDefaultAsync(
+                entity => entity.TemplateKey == templateKey &&
+                          platformAdminOwnerIds.Contains(entity.OwnerUserId) &&
+                          !entity.IsDeleted,
+                cancellationToken);
+    }
+
+    private async Task<IReadOnlyCollection<string>> LoadPlatformAdminOwnerIdsAsync(CancellationToken cancellationToken)
+    {
+        EnsurePersistenceAvailable();
+
+        return await dbContext!.UserClaims
+            .AsNoTracking()
+            .Where(claim =>
+                claim.ClaimType == ApplicationClaimTypes.Permission &&
+                claim.ClaimValue == ApplicationPermissions.PlatformAdministration)
+            .Select(claim => claim.UserId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+    }
+
+    private static IQueryable<TradingStrategyTemplate> ApplyTemplateVisibilityPredicate(
+        IQueryable<TradingStrategyTemplate> query,
+        bool includeArchived,
+        bool requirePublishedRevision)
+    {
+        return query.Where(entity =>
+            !entity.IsDeleted &&
+            (includeArchived || entity.IsActive) &&
+            (!requirePublishedRevision || entity.PublishedTradingStrategyTemplateRevisionId.HasValue));
+    }
     private async Task<IReadOnlyCollection<TradingStrategyTemplateRevision>> LoadRevisionsAsync(
         IReadOnlyCollection<Guid> templateIds,
         CancellationToken cancellationToken)
@@ -932,6 +1022,7 @@ public sealed class StrategyTemplateCatalogService(
 
         return await dbContext.TradingStrategyTemplateRevisions
             .AsNoTracking()
+            .IgnoreQueryFilters()
             .Where(entity => templateIds.Contains(entity.TradingStrategyTemplateId) && !entity.IsDeleted)
             .ToListAsync(cancellationToken);
     }

@@ -6,6 +6,7 @@ using CoinBot.Infrastructure.Persistence;
 using CoinBot.Infrastructure.Risk;
 using CoinBot.UnitTests.Infrastructure.Mfa;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace CoinBot.UnitTests.Infrastructure.Risk;
@@ -40,6 +41,37 @@ public sealed class RiskPolicyEvaluatorTests
         Assert.Equal(10100m, result.Snapshot.CurrentEquity);
         Assert.Equal(2100m, result.Snapshot.CurrentGrossExposure);
         Assert.Equal(1, result.Snapshot.OpenPositionCount);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_ResolvesRiskProfile_ByOwnerId_WhenAmbientUserScopeIsMissing()
+    {
+        var databaseName = Guid.NewGuid().ToString("N");
+        var databaseRoot = new InMemoryDatabaseRoot();
+        await using (var seedContext = CreateDbContext(databaseName, databaseRoot, hasIsolationBypass: true))
+        {
+            seedContext.RiskProfiles.Add(CreateRiskProfile("scoped-risk-user", 10m, 60m, 2m));
+            await seedContext.SaveChangesAsync();
+        }
+
+        await using var dbContext = CreateDbContext(databaseName, databaseRoot, userId: null, hasIsolationBypass: false);
+        var evaluator = CreateEvaluator(
+            dbContext,
+            new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero)));
+
+        var result = await evaluator.EvaluateAsync(
+            new RiskPolicyEvaluationRequest(
+                "scoped-risk-user",
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                StrategySignalType.Entry,
+                ExecutionEnvironment.Demo,
+                "BTCUSDT",
+                "1m"));
+
+        Assert.NotEqual(RiskVetoReasonCode.RiskProfileMissing, result.ReasonCode);
+        Assert.NotNull(result.Snapshot.RiskProfileId);
+        Assert.Equal("Risk Profile", result.Snapshot.RiskProfileName);
     }
 
     [Fact]
@@ -462,15 +494,24 @@ public sealed class RiskPolicyEvaluatorTests
             NullLogger<RiskPolicyEvaluator>.Instance);
     }
 
-    private static ApplicationDbContext CreateDbContext()
+    private static ApplicationDbContext CreateDbContext(
+        string? databaseName = null,
+        InMemoryDatabaseRoot? databaseRoot = null,
+        string? userId = null,
+        bool hasIsolationBypass = true)
     {
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
-            .Options;
+        var optionsBuilder = new DbContextOptionsBuilder<ApplicationDbContext>();
+        if (databaseRoot is null)
+        {
+            optionsBuilder.UseInMemoryDatabase(databaseName ?? Guid.NewGuid().ToString("N"));
+        }
+        else
+        {
+            optionsBuilder.UseInMemoryDatabase(databaseName ?? Guid.NewGuid().ToString("N"), databaseRoot);
+        }
 
-        return new ApplicationDbContext(options, new TestDataScopeContext());
+        return new ApplicationDbContext(optionsBuilder.Options, new TestDataScopeContext(userId, hasIsolationBypass));
     }
-
     private static RiskProfile CreateRiskProfile(
         string ownerUserId,
         decimal maxDailyLossPercentage,
@@ -586,10 +627,10 @@ public sealed class RiskPolicyEvaluatorTests
         };
     }
 
-    private sealed class TestDataScopeContext : IDataScopeContext
+    private sealed class TestDataScopeContext(string? userId, bool hasIsolationBypass) : IDataScopeContext
     {
-        public string? UserId => null;
+        public string? UserId => userId;
 
-        public bool HasIsolationBypass => true;
+        public bool HasIsolationBypass => hasIsolationBypass;
     }
 }

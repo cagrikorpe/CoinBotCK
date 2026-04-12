@@ -5,17 +5,19 @@ namespace CoinBot.UnitTests.Web;
 public sealed class ExecutionDecisionViewSelectorTests
 {
     [Fact]
-    public void BotsIndexView_ContainsExecutionDecisionSelectors()
+    public void BotsIndexView_KeepsExecutionDecisionSelectorsOutOfUserMainFlow()
     {
         var content = File.ReadAllText(Path.Combine(ResolveRepositoryRoot(), "src", "CoinBot.Web", "Views", "Bots", "Index.cshtml"));
 
-        Assert.Contains("data-cb-bot-decision", content, StringComparison.Ordinal);
-        Assert.Contains("data-cb-bot-decision-reason-code", content, StringComparison.Ordinal);
-        Assert.Contains("data-cb-bot-decision-summary", content, StringComparison.Ordinal);
-        Assert.Contains("data-cb-bot-market-threshold", content, StringComparison.Ordinal);
-        Assert.Contains("data-cb-bot-market-gap-start", content, StringComparison.Ordinal);
-        Assert.Contains("data-cb-bot-market-gap-last-seen", content, StringComparison.Ordinal);
-        Assert.Contains("data-cb-bot-market-recovery", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-state-badge", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-state-summary", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-cb-bot-decision", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-cb-bot-decision-reason-code", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-cb-bot-decision-summary", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-cb-bot-market-threshold", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-cb-bot-market-gap-start", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-cb-bot-market-gap-last-seen", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-cb-bot-market-recovery", content, StringComparison.Ordinal);
     }
 
     [Fact]

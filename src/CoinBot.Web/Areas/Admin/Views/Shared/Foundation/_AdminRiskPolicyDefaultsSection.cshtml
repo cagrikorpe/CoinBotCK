@@ -69,6 +69,7 @@
             <span class="cb-admin-info-strip-meta">Policy locked</span>
         </div>
 
+
         <div class="cb-admin-summary-grid mt-6">
             <div class="cb-admin-summary-card">
                 <span class="cb-admin-summary-label">Policy key</span>
@@ -280,7 +281,7 @@
                     <div>
                         <div class="cb-admin-section-kicker">Write path</div>
                         <div class="cb-admin-section-title">Manage symbol restrictions</div>
-                        <p class="cb-admin-section-description mb-0">Bu form dogrudan backend `UpdateSymbolRestrictions` endpoint'ine POST eder. Satiri kaldirmak sembolu varsayilan open davranisa dondurur.</p>
+                        <p class="cb-admin-section-description mb-0">State listesi yalnizca restriction modlaridir; sembolu tekrar acmak icin satirdaki Kisitlamayi kaldir butonunu kullanin. Kayit icin audit reason zorunludur; degisiklik dogrudan uygulanir.</p>
                     </div>
                 </div>
 
@@ -324,6 +325,7 @@
                                         <td>
                                             <select name="restrictions[@index].State"
                                                     class="form-control cb-form-control"
+                                                    aria-describedby="symbol_restriction_state_help_@index"
                                                     data-cb-symbol-restriction-state>
                                                 @foreach (var restrictionState in restrictionStates)
                                                 {
@@ -332,6 +334,7 @@
                                                     </option>
                                                 }
                                             </select>
+                                            <small id="symbol_restriction_state_help_@index" class="text-muted d-block mt-2">Open icin satiri kaldirin.</small>
                                         </td>
                                         <td>
                                             <span class="text-muted" data-cb-symbol-restriction-effect>@DescribeRestrictionEffect(restriction.State)</span>
@@ -348,7 +351,7 @@
                                         <td>@(restriction.UpdatedAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "-") UTC</td>
                                         <td>@(restriction.UpdatedByUserId ?? "-")</td>
                                         <td class="text-right">
-                                            <button type="button" class="btn btn-xs btn-light-danger font-weight-bold" data-cb-symbol-restriction-remove>Clear</button>
+                                            <button type="button" class="btn btn-xs btn-light-danger font-weight-bold" data-cb-symbol-restriction-remove>Kisitlamayi kaldir</button>
                                         </td>
                                     </tr>
                                 }
@@ -382,6 +385,7 @@
                                     </option>
                                 }
                             </select>
+                            <small class="text-muted d-block mt-2">Open icin satiri kaldirin.</small>
                         </td>
                         <td>
                             <span class="text-muted" data-cb-symbol-restriction-effect>@DescribeRestrictionEffect(SymbolRestrictionState.Blocked)</span>
@@ -398,18 +402,18 @@
                         <td>On save</td>
                         <td>On save</td>
                         <td class="text-right">
-                            <button type="button" class="btn btn-xs btn-light-danger font-weight-bold" data-cb-symbol-restriction-remove>Clear</button>
+                            <button type="button" class="btn btn-xs btn-light-danger font-weight-bold" data-cb-symbol-restriction-remove>Kisitlamayi kaldir</button>
                         </td>
                     </tr>
                 </template>
 
                 <div class="form-group mt-4 mb-0">
                     <label class="cb-form-label">Audit reason</label>
-                    <input name="reason" type="text" class="form-control cb-form-control" maxlength="256" required placeholder="Restriction degisikligi nedeni" />
+                    <input name="reason" type="text" class="form-control cb-form-control" maxlength="256" required placeholder="Ornek: stale data temizlendi, sembol tekrar aciliyor" />
                 </div>
 
                 <div class="cb-admin-inline-actions mt-5">
-                    <button type="submit" class="btn btn-light-primary font-weight-bold">Apply symbol restrictions</button>
+                    <button type="submit" class="btn btn-light-primary font-weight-bold">Kaydet</button>
                 </div>
             </form>
 

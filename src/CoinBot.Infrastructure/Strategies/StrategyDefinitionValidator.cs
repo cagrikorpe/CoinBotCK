@@ -90,6 +90,13 @@ public sealed class StrategyDefinitionValidator : IStrategyDefinitionValidator
         enabledRuleCount += ValidateNode(document.Exit, "exit", null, ruleIds, failures);
         enabledRuleCount += ValidateNode(document.Risk, "risk", null, ruleIds, failures);
 
+        if (!ContainsRuleGroup(document.Entry) &&
+            !ContainsRuleGroup(document.Exit) &&
+            !ContainsRuleGroup(document.Risk))
+        {
+            failures.Add("MissingRuleGroup:entry-exit-risk");
+        }
+
         if (failures.Count > 0)
         {
             return new StrategyDefinitionValidationSnapshot(
@@ -106,6 +113,17 @@ public sealed class StrategyDefinitionValidator : IStrategyDefinitionValidator
             $"Strategy definition is valid. EnabledRules={enabledRuleCount}.",
             Array.Empty<string>(),
             enabledRuleCount);
+    }
+
+    private static bool ContainsRuleGroup(StrategyRuleNode? node)
+    {
+        return node switch
+        {
+            StrategyRuleGroup group => group.Rules.Count > 0 || group.Rules.Any(ContainsRuleGroup),
+            StrategyRuleCondition => false,
+            null => false,
+            _ => false
+        };
     }
 
     private static int ValidateNode(

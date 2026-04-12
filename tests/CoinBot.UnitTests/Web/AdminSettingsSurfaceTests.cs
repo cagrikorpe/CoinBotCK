@@ -26,6 +26,16 @@ public sealed class AdminSettingsSurfaceTests
         Assert.Contains("Canli Snapshot / Salt Okunur", content, StringComparison.Ordinal);
         Assert.Contains("Yazilabilir Konfigürasyon", content, StringComparison.Ordinal);
         Assert.Contains("_AdminActivationControlCenterSection", content, StringComparison.Ordinal);
+        Assert.Contains("cb_admin_settings_policy_restrictions", content, StringComparison.Ordinal);
+        Assert.Contains("function activateSettingsHash()", content, StringComparison.Ordinal);
+        var riskPolicyContent = File.ReadAllText(Path.Combine(ResolveRepositoryRoot(), "src", "CoinBot.Web", "Areas", "Admin", "Views", "Shared", "Foundation", "_AdminRiskPolicyDefaultsSection.cshtml"));
+        Assert.Contains("Open icin satiri kaldirin.", riskPolicyContent, StringComparison.Ordinal);
+        Assert.Contains("degisiklik dogrudan uygulanir", riskPolicyContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("Approval Merkezi", riskPolicyContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("Onay bekleyen policy degisikligi", riskPolicyContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("kaldirma istegi onaylanmadan", riskPolicyContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("Onay detayini ac", riskPolicyContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("asp-action=\"ApprovalDetail\"", riskPolicyContent, StringComparison.Ordinal);
 
         Assert.True(
             content.IndexOf("cb_admin_settings_tab_overview", StringComparison.Ordinal) < content.IndexOf("cb_admin_settings_tab_critical", StringComparison.Ordinal),

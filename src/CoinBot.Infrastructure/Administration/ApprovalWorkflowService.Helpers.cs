@@ -89,7 +89,7 @@ public sealed partial class ApprovalWorkflowService
             " | ",
             $"Operation={queue.OperationType}",
             $"Status={queue.Status}",
-            $"Approvals={queue.ApprovalCount}/{queue.RequiredApprovals}",
+            $"Approvals={queue.ApprovalCount}/{ResolveRequiredApprovals(queue)}",
             $"Severity={queue.Severity}",
             $"ExpiresAtUtc={queue.ExpiresAtUtc:O}",
             $"Target={(queue.TargetType ?? "none")}/{(queue.TargetId ?? "none")}");
@@ -109,7 +109,7 @@ public sealed partial class ApprovalWorkflowService
             queue.TargetType,
             queue.TargetId,
             queue.RequestedByUserId,
-            queue.RequiredApprovals,
+            ResolveRequiredApprovals(queue),
             queue.ApprovalCount,
             queue.ExpiresAtUtc,
             queue.CorrelationId,
@@ -117,6 +117,21 @@ public sealed partial class ApprovalWorkflowService
             queue.IncidentReference,
             queue.CreatedDate,
             queue.UpdatedDate);
+    }
+
+    private static int ResolveRequiredApprovals(ApprovalQueue queue)
+    {
+        return IsSingleAdminSymbolRestrictionApproval(queue)
+            ? 1
+            : queue.RequiredApprovals;
+    }
+
+    private static bool IsSingleAdminSymbolRestrictionApproval(ApprovalQueue queue)
+    {
+        return queue.OperationType == ApprovalQueueOperationType.GlobalPolicyUpdate &&
+               string.Equals(queue.TargetType, "RiskPolicy", StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(queue.TargetId, "GlobalRiskPolicy", StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(queue.Title, "Symbol restriction update", StringComparison.OrdinalIgnoreCase);
     }
 
     private static ApprovalActionSnapshot MapAction(ApprovalAction action)
@@ -171,6 +186,11 @@ public sealed partial class ApprovalWorkflowService
 
     private static void EnsureCanAct(ApprovalQueue queue, string actorUserId)
     {
+        if (IsSingleAdminSymbolRestrictionApproval(queue))
+        {
+            return;
+        }
+
         if (string.Equals(queue.RequestedByUserId, actorUserId, StringComparison.Ordinal))
         {
             throw new InvalidOperationException("Requestor cannot approve or reject their own approval item.");
@@ -196,7 +216,7 @@ public sealed partial class ApprovalWorkflowService
             NormalizeRequired(request.Summary, 512, nameof(request.Summary)),
             NormalizeRequired(request.RequestedByUserId, 450, nameof(request.RequestedByUserId)),
             NormalizeRequired(request.Reason, 512, nameof(request.Reason)),
-            NormalizeRequired(request.PayloadJson, 8192, nameof(request.PayloadJson)),
+            NormalizeRequired(request.PayloadJson, 32768, nameof(request.PayloadJson)),
             request.RequiredApprovals > 0
                 ? request.RequiredApprovals
                 : throw new ArgumentOutOfRangeException(nameof(request.RequiredApprovals), "Required approvals must be positive."),
@@ -563,7 +583,7 @@ public sealed partial class ApprovalWorkflowService
             queue.RequestedByUserId,
             queue.Reason,
             queue.PayloadJson,
-            queue.RequiredApprovals,
+            ResolveRequiredApprovals(queue),
             queue.ApprovalCount,
             queue.ExpiresAtUtc,
             queue.CorrelationId,

@@ -1,7 +1,9 @@
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Strategies;
+using CoinBot.Contracts.Common;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.Infrastructure.Strategies;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 
@@ -89,6 +91,69 @@ public sealed class StrategyTemplateCatalogServiceTests
         Assert.Contains(listedTemplates, template => template.TemplateKey == "custom-rsi-live" && !template.IsBuiltIn && template.TemplateSource == "Custom");
     }
 
+    [Fact]
+    public async Task CreateCustomAsync_AcceptsReferenceContractJson()
+    {
+        await using var dbContext = CreateDbContext();
+        var service = CreateService(dbContext);
+
+        var created = await service.CreateCustomAsync(
+            "template-owner",
+            "reference-contract-template",
+            "Reference Contract Template",
+            "Reference contract template.",
+            "Custom",
+            StrategyContractJson.Reference);
+
+        Assert.Equal("reference-contract-template", created.TemplateKey);
+        Assert.Equal("Valid", created.Validation.StatusCode);
+        Assert.Equal(12, created.Validation.EnabledRuleCount);
+        Assert.Contains("\"entry-root\"", created.DefinitionJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ReviseAsync_AcceptsReferenceContractJson()
+    {
+        await using var dbContext = CreateDbContext();
+        var service = CreateService(dbContext);
+        _ = await service.CreateCustomAsync(
+            "template-owner",
+            "reference-revise-template",
+            "Reference Revise Template",
+            "Initial template.",
+            "Custom",
+            CreateTemplateDefinitionJson());
+
+        var revised = await service.ReviseAsync(
+            "reference-revise-template",
+            "Reference Revise Template",
+            "Reference contract revision.",
+            "Custom",
+            StrategyContractJson.Reference);
+
+        Assert.Equal("Valid", revised.Validation.StatusCode);
+        Assert.Equal(12, revised.Validation.EnabledRuleCount);
+        Assert.Equal(2, revised.ActiveRevisionNumber);
+    }
+
+    [Fact]
+    public async Task CreateCustomAsync_RejectsInvalidRootProperty_FailClosed()
+    {
+        await using var dbContext = CreateDbContext();
+        var service = CreateService(dbContext);
+        var invalidJson = StrategyContractJson.Reference.Replace("\"entry\": {", "\"signals\": {},\n  \"entry\": {", StringComparison.Ordinal);
+
+        var exception = await Assert.ThrowsAsync<StrategyRuleParseException>(() => service.CreateCustomAsync(
+            "template-owner",
+            "invalid-root-template",
+            "Invalid Root Template",
+            "Invalid root template.",
+            "Custom",
+            invalidJson));
+
+        Assert.Contains("strategy definition.signals", exception.Message, StringComparison.Ordinal);
+        Assert.Empty(await dbContext.TradingStrategyTemplates.ToListAsync());
+    }
     [Fact]
     public async Task CloneAsync_CreatesCustomTemplate_WithSourceTemplateMetadata()
     {
@@ -372,6 +437,54 @@ public sealed class StrategyTemplateCatalogServiceTests
         Assert.Empty(await dbContext.TradingStrategyTemplates.ToListAsync());
     }
 
+    [Fact]
+    public async Task ListAsync_AndGetAsync_ExposePlatformAdminTemplatesAsSharedCatalog()
+    {
+        var databaseName = Guid.NewGuid().ToString("N");
+        var databaseRoot = new InMemoryDatabaseRoot();
+
+        await using (var adminContext = CreateDbContext("platform-admin", hasIsolationBypass: false, databaseName: databaseName, databaseRoot: databaseRoot))
+        {
+            adminContext.UserClaims.Add(new IdentityUserClaim<string>
+            {
+                UserId = "platform-admin",
+                ClaimType = ApplicationClaimTypes.Permission,
+                ClaimValue = ApplicationPermissions.PlatformAdministration
+            });
+            var adminService = CreateService(adminContext);
+            _ = await adminService.CreateCustomAsync(
+                "platform-admin",
+                "shared-admin-template",
+                "Shared Admin Template",
+                "Shared admin template.",
+                "Custom",
+                CreateTemplateDefinitionJson());
+        }
+
+        await using (var otherContext = CreateDbContext("other-user", hasIsolationBypass: false, databaseName: databaseName, databaseRoot: databaseRoot))
+        {
+            var otherService = CreateService(otherContext);
+            _ = await otherService.CreateCustomAsync(
+                "other-user",
+                "other-private-template",
+                "Other Private Template",
+                "Other private template.",
+                "Custom",
+                CreateTemplateDefinitionJson());
+        }
+
+        await using var userContext = CreateDbContext("normal-user", hasIsolationBypass: false, databaseName: databaseName, databaseRoot: databaseRoot);
+        var userService = CreateService(userContext);
+
+        var templates = await userService.ListAsync();
+        var selected = await userService.GetAsync("shared-admin-template");
+
+        Assert.Contains(templates, template => template.TemplateKey == "shared-admin-template" && template.TemplateSource == "Custom");
+        Assert.Equal("shared-admin-template", selected.TemplateKey);
+        Assert.DoesNotContain(templates, template => template.TemplateKey == "other-private-template");
+        var exception = await Assert.ThrowsAsync<StrategyTemplateCatalogException>(() => userService.GetAsync("other-private-template"));
+        Assert.Equal("TemplateNotFound", exception.FailureCode);
+    }
     [Fact]
     public async Task ListAsync_AndGetAsync_DoNotLeakCustomTemplatesAcrossUserScope()
     {

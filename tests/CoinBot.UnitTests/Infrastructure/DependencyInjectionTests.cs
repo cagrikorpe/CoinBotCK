@@ -22,6 +22,7 @@ using CoinBot.Infrastructure.Autonomy;
 using CoinBot.Infrastructure.Credentials;
 using CoinBot.Infrastructure.DemoPortfolio;
 using CoinBot.Infrastructure.Exchange;
+using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Monitoring;
 using CoinBot.Infrastructure.MarketData;
@@ -90,6 +91,7 @@ public sealed class DependencyInjectionTests
         var binanceMarketDataOptions = provider.GetRequiredService<IOptions<BinanceMarketDataOptions>>().Value;
         var historicalGapFillerOptions = provider.GetRequiredService<IOptions<HistoricalGapFillerOptions>>().Value;
         var privateDataOptions = provider.GetRequiredService<IOptions<BinancePrivateDataOptions>>().Value;
+        var pilotOptions = provider.GetRequiredService<IOptions<BotExecutionPilotOptions>>().Value;
         var indicatorOptions = provider.GetRequiredService<IOptions<IndicatorEngineOptions>>().Value;
         var mfaOptions = provider.GetRequiredService<IOptions<MfaOptions>>().Value;
         var credentialSecurityOptions = provider.GetRequiredService<IOptions<CredentialSecurityOptions>>().Value;
@@ -181,7 +183,8 @@ public sealed class DependencyInjectionTests
         Assert.Equal("https://api.binance.com", privateDataOptions.SpotRestBaseUrl);
         Assert.Equal("wss://stream.binance.com:9443", privateDataOptions.SpotWebSocketBaseUrl);
         Assert.Equal(30, privateDataOptions.ListenKeyRenewalIntervalMinutes);
-        Assert.Equal(5, privateDataOptions.ReconciliationIntervalMinutes);
+        Assert.Equal(1, privateDataOptions.ReconciliationIntervalMinutes);
+        Assert.True(privateDataOptions.ReconciliationIntervalMinutes * 60 < pilotOptions.PrivatePlaneFreshnessThresholdSeconds);
         Assert.Equal(30, privateDataOptions.ServerTimeSyncRefreshSeconds);
         Assert.Equal(14, indicatorOptions.RsiPeriod);
         Assert.Equal(12, indicatorOptions.MacdFastPeriod);

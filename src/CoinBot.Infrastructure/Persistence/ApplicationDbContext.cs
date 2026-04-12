@@ -466,7 +466,7 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             .IsRequired();
 
         builder.Property(entity => entity.PayloadJson)
-            .HasMaxLength(8192)
+            .HasMaxLength(32768)
             .IsRequired();
 
         builder.Property(entity => entity.PayloadHash)

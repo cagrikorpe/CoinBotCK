@@ -163,6 +163,130 @@ public sealed class TradingFeatureSnapshotServiceTests
     }
 
     [Fact]
+    public async Task CaptureAsync_DoesNotCarryStaleRiskVeto_FromOldFeatureCycle()
+    {
+        await using var harness = await CreateHarnessAsync("feature-stale-veto-01");
+        var evaluatedAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime;
+        harness.DbContext.TradingStrategySignalVetoes.Add(new TradingStrategySignalVeto
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = harness.UserId,
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategyVersionNumber = 1,
+            StrategySchemaVersion = 2,
+            SignalType = StrategySignalType.Entry,
+            ExecutionEnvironment = ExecutionEnvironment.Demo,
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            IndicatorOpenTimeUtc = evaluatedAtUtc.AddMinutes(-11),
+            IndicatorCloseTimeUtc = evaluatedAtUtc.AddMinutes(-10),
+            IndicatorReceivedAtUtc = evaluatedAtUtc.AddMinutes(-10),
+            EvaluatedAtUtc = evaluatedAtUtc.AddMinutes(-10),
+            ReasonCode = RiskVetoReasonCode.RiskProfileMissing,
+            RiskEvaluationJson = "{}"
+        });
+        await harness.DbContext.SaveChangesAsync();
+        var candles = CreateCandles("BTCUSDT", "1m", evaluatedAtUtc.AddMinutes(-240), 240, 65000m, 3m, 110m);
+
+        await harness.CircuitBreaker.RecordHeartbeatAsync(
+            new DataLatencyHeartbeat(
+                "feature-test",
+                candles[^1].CloseTimeUtc,
+                Symbol: "BTCUSDT",
+                Timeframe: "1m",
+                ExpectedOpenTimeUtc: candles[^1].CloseTimeUtc.AddMilliseconds(1),
+                ContinuityGapCount: 0),
+            cancellationToken: CancellationToken.None);
+
+        var snapshot = await harness.Service.CaptureAsync(
+            new TradingFeatureCaptureRequest(
+                harness.UserId,
+                harness.BotId,
+                "feature-strategy",
+                "BTCUSDT",
+                "1m",
+                evaluatedAtUtc,
+                harness.ExchangeAccountId,
+                ExchangeDataPlane.Futures,
+                HistoricalCandles: candles),
+            CancellationToken.None);
+
+        Assert.Equal("None", snapshot.TradingContext.LastDecisionOutcome);
+        Assert.Null(snapshot.TradingContext.LastDecisionCode);
+        Assert.Null(snapshot.TradingContext.LastVetoReasonCode);
+    }
+
+    [Fact]
+    public async Task CaptureAsync_DoesNotCarryStaleExecutionFailure_FromOldFeatureCycle()
+    {
+        await using var harness = await CreateHarnessAsync("feature-stale-order-01");
+        var evaluatedAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime;
+        harness.DbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = harness.UserId,
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            BotId = harness.BotId,
+            ExchangeAccountId = harness.ExchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            StrategyKey = "feature-strategy",
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.01m,
+            Price = 65000m,
+            ExecutionEnvironment = ExecutionEnvironment.Demo,
+            State = ExecutionOrderState.Rejected,
+            IdempotencyKey = "feature-stale-order",
+            RootCorrelationId = "feature-stale-order",
+            FailureCode = "PrivatePlaneStale",
+            FailureDetail = "old private-plane reject",
+            RejectionStage = ExecutionRejectionStage.PreSubmit,
+            LastStateChangedAtUtc = evaluatedAtUtc.AddMinutes(-10),
+            CreatedDate = evaluatedAtUtc.AddMinutes(-10),
+            UpdatedDate = evaluatedAtUtc.AddMinutes(-10)
+        });
+        await harness.DbContext.SaveChangesAsync();
+        var candles = CreateCandles("BTCUSDT", "1m", evaluatedAtUtc.AddMinutes(-240), 240, 65000m, 3m, 110m);
+
+        await harness.CircuitBreaker.RecordHeartbeatAsync(
+            new DataLatencyHeartbeat(
+                "feature-test",
+                candles[^1].CloseTimeUtc,
+                Symbol: "BTCUSDT",
+                Timeframe: "1m",
+                ExpectedOpenTimeUtc: candles[^1].CloseTimeUtc.AddMilliseconds(1),
+                ContinuityGapCount: 0),
+            cancellationToken: CancellationToken.None);
+
+        var snapshot = await harness.Service.CaptureAsync(
+            new TradingFeatureCaptureRequest(
+                harness.UserId,
+                harness.BotId,
+                "feature-strategy",
+                "BTCUSDT",
+                "1m",
+                evaluatedAtUtc,
+                harness.ExchangeAccountId,
+                ExchangeDataPlane.Futures,
+                HistoricalCandles: candles),
+            CancellationToken.None);
+
+        Assert.Equal("None", snapshot.TradingContext.LastDecisionOutcome);
+        Assert.Null(snapshot.TradingContext.LastDecisionCode);
+        Assert.Null(snapshot.TradingContext.LastExecutionState);
+        Assert.Null(snapshot.TradingContext.LastFailureCode);
+        Assert.DoesNotContain("PrivatePlaneStale", snapshot.FeatureSummary, StringComparison.Ordinal);
+        Assert.DoesNotContain("PrivatePlaneStale", snapshot.TopSignalHints, StringComparison.Ordinal);
+    }
+    [Fact]
     public async Task CaptureAsync_ProducesSameDerivedFields_ForSameInput()
     {
         await using var harness = await CreateHarnessAsync("feature-deterministic-01");
@@ -452,9 +576,3 @@ public sealed class TradingFeatureSnapshotServiceTests
         public Task WriteAsync(CoinBot.Application.Abstractions.Auditing.AuditLogWriteRequest request, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }
-
-
-
-
-
-

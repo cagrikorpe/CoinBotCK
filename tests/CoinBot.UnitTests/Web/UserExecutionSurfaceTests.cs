@@ -5,6 +5,18 @@ namespace CoinBot.UnitTests.Web;
 public sealed class UserExecutionSurfaceTests
 {
     [Fact]
+    public void PositionsFoundationScript_DoesNotOverrideLiveSnapshot_WithDemoScenario()
+    {
+        var root = ResolveRepositoryRoot();
+        var script = File.ReadAllText(Path.Combine(root, "src", "CoinBot.Web", "wwwroot", "js", "positions-foundation.js"));
+        var view = File.ReadAllText(Path.Combine(root, "src", "CoinBot.Web", "Views", "Positions", "Index.cshtml"));
+
+        Assert.Contains("window.location.reload()", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("applyScenario", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("Alpha Spot Pulse", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("data-cb-positions-scenario=\"active\"", view, StringComparison.Ordinal);
+    }
+    [Fact]
     public void PositionsSurface_RendersUltraSoftUserExecutionFlow()
     {
         var root = ResolveRepositoryRoot();

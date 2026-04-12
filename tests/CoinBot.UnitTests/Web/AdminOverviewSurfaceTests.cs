@@ -75,16 +75,22 @@ public sealed class AdminOverviewSurfaceTests
         Assert.Contains("Incidents", content, StringComparison.Ordinal);
         Assert.Contains("Health detaylari", content, StringComparison.Ordinal);
         Assert.Contains("Trace arama", content, StringComparison.Ordinal);
+        Assert.Contains("Stratejiler", content, StringComparison.Ordinal);
+        Assert.Contains("Strateji Builder", content, StringComparison.Ordinal);
         Assert.Contains("Rollout Kanitlari", content, StringComparison.Ordinal);
         Assert.Contains("Execution debugger", content, StringComparison.Ordinal);
         Assert.Contains("Idempotency / rebuild", content, StringComparison.Ordinal);
+        Assert.Contains("Symbol Restrictions", content, StringComparison.Ordinal);
         Assert.Contains("/admin/Audit", content, StringComparison.Ordinal);
         Assert.Contains("/admin/Search", content, StringComparison.Ordinal);
         Assert.Contains("/admin/SystemHealth", content, StringComparison.Ordinal);
+        Assert.Contains("/admin/StrategyTemplates", content, StringComparison.Ordinal);
+        Assert.Contains("/admin/StrategyBuilder", content, StringComparison.Ordinal);
         Assert.Contains("/admin/Incidents", content, StringComparison.Ordinal);
         Assert.Contains("/admin/SupportTools", content, StringComparison.Ordinal);
         Assert.Contains("/admin/ConfigHistory", content, StringComparison.Ordinal);
         Assert.Contains("/admin/Jobs", content, StringComparison.Ordinal);
+        Assert.Contains("/admin/Settings#cb_admin_settings_policy_restrictions", content, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -108,8 +114,11 @@ public sealed class AdminOverviewSurfaceTests
         Assert.Contains("Gelismis", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-super-admin-primary-link=\"@item.Key\"", content, StringComparison.Ordinal);
         Assert.Contains("BuildPrimaryFlowHref(item.Action, item.Fragment)", content, StringComparison.Ordinal);
-        Assert.Contains("currentRoleKey != \"SuperAdmin\"", content, StringComparison.Ordinal);
-        Assert.Contains("Teknik detaylar Gelismis altinda kalir.", content, StringComparison.Ordinal);
+        Assert.Contains("!superAdminPrimaryNavigationKeys.Contains(item.Key)", content, StringComparison.Ordinal);
+        Assert.Contains("Guncellenecek -", content, StringComparison.Ordinal);
+        Assert.Contains("superAdminUpdatePendingKeys", content, StringComparison.Ordinal);
+        Assert.Contains("Ana akis ustte kalir", content, StringComparison.Ordinal);
+        Assert.Contains("Global Ayarlar", content, StringComparison.Ordinal);
         Assert.DoesNotContain("Platform Control Center", content, StringComparison.Ordinal);
     }
 

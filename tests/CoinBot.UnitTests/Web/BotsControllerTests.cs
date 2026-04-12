@@ -234,6 +234,183 @@ public sealed class BotsControllerTests
     }
 
     [Fact]
+    public async Task Index_MapsRiskProfileMissingFeatureDecision_ToPausedReason()
+    {
+        var managementService = new FakeBotManagementService
+        {
+            PageSnapshot = new BotManagementPageSnapshot(
+                [
+                    new BotManagementBotSnapshot(
+                        Guid.NewGuid(),
+                        "Pilot Risk",
+                        "strategy-risk",
+                        "Strategy Risk",
+                        true,
+                        "BTCUSDT",
+                        0.001m,
+                        Guid.NewGuid(),
+                        "Pilot Futures",
+                        true,
+                        true,
+                        1m,
+                        "ISOLATED",
+                        true,
+                        0,
+                        0,
+                        "Succeeded",
+                        null,
+                        "Vetoed",
+                        null,
+                        null,
+                        null,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        DateTime.UtcNow,
+                        DateTime.UtcNow,
+                        LastExecutionDecisionOutcome: "Blocked",
+                        LastExecutionDecisionReasonType: "RiskVeto",
+                        LastExecutionDecisionReasonCode: "RiskProfileMissing",
+                        LastExecutionDecisionSummary: "Risk veto blocked execution.")
+                ])
+        };
+        var controller = CreateController(managementService, new FakeBotPilotControlService(), new FakeUserSettingsService(), "user-bot-risk", "trace-bot-risk");
+
+        var result = await controller.Index(CancellationToken.None);
+
+        var viewResult = Assert.IsType<ViewResult>(result);
+        var model = Assert.IsType<BotManagementIndexViewModel>(viewResult.Model);
+        var row = Assert.Single(model.Bots);
+        Assert.Equal("PAUSED", row.PilotStateLabel);
+        Assert.Equal("Risk tercihi eksik.", row.PilotStateSummary);
+    }
+    [Fact]
+    public async Task Index_MapsAccountEquityUnavailable_ToBalanceUnavailableReason()
+    {
+        var managementService = new FakeBotManagementService
+        {
+            PageSnapshot = new BotManagementPageSnapshot(
+                [
+                    new BotManagementBotSnapshot(
+                        Guid.NewGuid(),
+                        "Pilot Balance Missing",
+                        "strategy-balance",
+                        "Strategy Balance",
+                        true,
+                        "BTCUSDT",
+                        0.001m,
+                        Guid.NewGuid(),
+                        "Pilot Futures",
+                        true,
+                        true,
+                        1m,
+                        "ISOLATED",
+                        true,
+                        0,
+                        0,
+                        "Succeeded",
+                        null,
+                        "N/A",
+                        null,
+                        null,
+                        null,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        DateTime.UtcNow,
+                        DateTime.UtcNow,
+                        LastExecutionDecisionOutcome: "Blocked",
+                        LastExecutionDecisionReasonType: "RiskVeto",
+                        LastExecutionDecisionReasonCode: "AccountEquityUnavailable",
+                        LastExecutionDecisionSummary: "Account equity unavailable.")
+                ])
+        };
+        var controller = CreateController(managementService, new FakeBotPilotControlService(), new FakeUserSettingsService(), "user-bot-balance", "trace-bot-balance");
+
+        var result = await controller.Index(CancellationToken.None);
+
+        var viewResult = Assert.IsType<ViewResult>(result);
+        var model = Assert.IsType<BotManagementIndexViewModel>(viewResult.Model);
+        var row = Assert.Single(model.Bots);
+        Assert.Equal("PAUSED", row.PilotStateLabel);
+        Assert.Equal("Bakiye okunamiyor.", row.PilotStateSummary);
+    }
+    [Fact]
+    public async Task Index_MapsReadyBotWithoutEntrySignal_ToWaitingForSignalReason()
+    {
+        var managementService = new FakeBotManagementService
+        {
+            PageSnapshot = new BotManagementPageSnapshot(
+                [
+                    new BotManagementBotSnapshot(
+                        Guid.NewGuid(),
+                        "Pilot Waiting",
+                        "strategy-waiting",
+                        "Strategy Waiting",
+                        true,
+                        "BTCUSDT",
+                        0.001m,
+                        Guid.NewGuid(),
+                        "Pilot Futures",
+                        true,
+                        true,
+                        1m,
+                        "ISOLATED",
+                        true,
+                        0,
+                        0,
+                        "Succeeded",
+                        null,
+                        "N/A",
+                        null,
+                        null,
+                        null,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        DateTime.UtcNow,
+                        DateTime.UtcNow,
+                        LastExecutionDecisionOutcome: "None")
+                ])
+        };
+        var controller = CreateController(managementService, new FakeBotPilotControlService(), new FakeUserSettingsService(), "user-bot-waiting", "trace-bot-waiting");
+
+        var result = await controller.Index(CancellationToken.None);
+
+        var viewResult = Assert.IsType<ViewResult>(result);
+        var model = Assert.IsType<BotManagementIndexViewModel>(viewResult.Model);
+        var row = Assert.Single(model.Bots);
+        Assert.Equal("PAUSED", row.PilotStateLabel);
+        Assert.Equal("Sinyal bekleniyor.", row.PilotStateSummary);
+    }
+    [Fact]
     public async Task Create_Get_ReturnsEditorView()
     {
         var controller = CreateController(CreateManagementService(), new FakeBotPilotControlService(), new FakeUserSettingsService(), "user-bot-02", "trace-bot-002");
@@ -566,7 +743,3 @@ public sealed class BotsControllerTests
         }
     }
 }
-
-
-
-

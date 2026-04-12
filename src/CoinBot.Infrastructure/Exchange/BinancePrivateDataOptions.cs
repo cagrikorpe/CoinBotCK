@@ -28,7 +28,7 @@ public sealed class BinancePrivateDataOptions
     public int ListenKeyRenewalIntervalMinutes { get; set; } = 30;
 
     [Range(1, 60)]
-    public int ReconciliationIntervalMinutes { get; set; } = 5;
+    public int ReconciliationIntervalMinutes { get; set; } = 1;
 
     [Range(1000, 60000)]
     public int RecvWindowMilliseconds { get; set; } = 5000;

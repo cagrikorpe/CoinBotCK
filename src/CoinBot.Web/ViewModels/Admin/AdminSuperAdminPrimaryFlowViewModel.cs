@@ -193,9 +193,12 @@ public static class AdminSuperAdminPrimaryFlowComposer
                     new AdminSuperAdminFlowItemViewModel("incidents", "Incidents", "Ac", "warning", "Incident listesi ve detaylari", "/admin/Incidents"),
                     new AdminSuperAdminFlowItemViewModel("health", "Health detaylari", "Ac", "info", "Worker ve runtime durumu", "/admin/SystemHealth"),
                     new AdminSuperAdminFlowItemViewModel("trace", "Trace arama", "Ac", "info", "Trace ve correlation aramasi", "/admin/Search"),
+                    new AdminSuperAdminFlowItemViewModel("strategies", "Stratejiler", "Ac", "info", "Template katalogu ve builder", "/admin/StrategyTemplates"),
+                    new AdminSuperAdminFlowItemViewModel("strategy-builder", "Strateji Builder", "Ac", "info", "Template duzenleme yuzeyi", "/admin/StrategyBuilder"),
                     new AdminSuperAdminFlowItemViewModel("rollout", "Rollout Kanitlari", "Ac", "info", "Config ve state gecmisi", "/admin/ConfigHistory"),
                     new AdminSuperAdminFlowItemViewModel("execution-debugger", "Execution debugger", "Ac", "info", "Execution kararlarini auditte ara", "/admin/Audit?query=Execution"),
                     new AdminSuperAdminFlowItemViewModel("idempotency-rebuild", "Idempotency / rebuild", "Ac", "info", "Job ve rebuild sinyalleri", "/admin/Jobs"),
+                    new AdminSuperAdminFlowItemViewModel("symbol-restrictions", "Symbol Restrictions", "Ac", "warning", "Global policy sembol bloklarini yonet", "/admin/Settings#cb_admin_settings_policy_restrictions"),
                     new AdminSuperAdminFlowItemViewModel("global-settings", "Global Ayarlar", "Ac", "info", "Teknik ayarlar ve guarded formlar", "/admin/Settings")
                 },
                 Array.Empty<AdminSuperAdminFlowActionViewModel>()));

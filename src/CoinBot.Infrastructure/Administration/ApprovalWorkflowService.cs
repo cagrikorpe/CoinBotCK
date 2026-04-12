@@ -138,7 +138,8 @@ public sealed partial class ApprovalWorkflowService(
     {
         await ExpirePendingAsync(cancellationToken);
         var queues = await dbContext.ApprovalQueues.AsNoTracking()
-            .Where(entity => entity.Status == ApprovalQueueStatus.Pending)
+            .IgnoreQueryFilters()
+            .Where(entity => !entity.IsDeleted && entity.Status == ApprovalQueueStatus.Pending)
             .OrderByDescending(entity => entity.CreatedDate)
             .Take(Math.Clamp(take, 1, 200))
             .ToListAsync(cancellationToken);
@@ -167,7 +168,7 @@ public sealed partial class ApprovalWorkflowService(
             throw new InvalidOperationException("A different approver is required for each approval step.");
         }
 
-        var finalApproval = queue.ApprovalCount + 1 >= queue.RequiredApprovals;
+        var finalApproval = queue.ApprovalCount + 1 >= ResolveRequiredApprovals(queue);
         queue.ApprovalCount += 1;
         queue.LastActorUserId = normalized.ActorUserId;
         if (finalApproval)

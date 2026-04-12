@@ -26,7 +26,10 @@ public sealed class BotIndexSurfaceTests
         Assert.Contains("LIVE", content, StringComparison.Ordinal);
         Assert.Contains("SHADOW", content, StringComparison.Ordinal);
         Assert.Contains("PAUSED", content, StringComparison.Ordinal);
-        Assert.Contains("Botunuzu görün, durumunu anlayın ve açıp kapatın.", content, StringComparison.Ordinal);
+        Assert.Contains("Botunuzu görün, stratejisini bağlayın ve durumunu anlayın.", content, StringComparison.Ordinal);
+        Assert.Contains("Strateji oluştur", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-start-block-reason", content, StringComparison.Ordinal);
+        Assert.Contains("Strateji hazır değil", content, StringComparison.Ordinal);
 
         Assert.DoesNotContain("data-cb-bot-market-diagnostics", content, StringComparison.Ordinal);
         Assert.DoesNotContain("data-cb-bot-exec-submit", content, StringComparison.Ordinal);
@@ -43,6 +46,28 @@ public sealed class BotIndexSurfaceTests
         Assert.DoesNotContain("Execution", content, StringComparison.Ordinal);
         Assert.DoesNotContain("Worker</th>", content, StringComparison.Ordinal);
         Assert.DoesNotContain("Pilot</th>", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BotsEditorView_RendersStrategyBindingAndNoStrategyMessage()
+    {
+        var content = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Views",
+            "Bots",
+            "Editor.cshtml"));
+
+        Assert.Contains("data-cb-bot-strategy-select", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-no-strategy-message", content, StringComparison.Ordinal);
+        Assert.Contains("Önce strateji oluşturun. Strateji olmadan bot başlatılamaz.", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-enable-block-reason", content, StringComparison.Ordinal);
+        Assert.Contains("Strateji hazır değil.", content, StringComparison.Ordinal);
+        Assert.Contains("Strateji oluştur", content, StringComparison.Ordinal);
+
+        Assert.DoesNotContain("execution analytics", content, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ReasonCode", content, StringComparison.Ordinal);
     }
 
     private static string ResolveRepositoryRoot()

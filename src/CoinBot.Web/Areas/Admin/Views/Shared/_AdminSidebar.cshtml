@@ -1,3 +1,4 @@
+@using System.Collections.Generic
 @using System.Linq
 @{
     var activeNav = ViewData["AdminActiveNav"]?.ToString() ?? "Overview";
@@ -37,10 +38,34 @@
         }
         : Array.Empty<(string Key, string Label, string Action, string Fragment, string Initials)>();
 
+    var superAdminPrimaryNavigationKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "Overview",
+        "Users"
+    };
+    var superAdminUpdatePendingKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "Search",
+        "UserDetail",
+        "ExchangeAccounts",
+        "BotOperations",
+        "StrategyAiMonitoring",
+        "StrategyTemplates",
+        "SystemHealth",
+        "Audit",
+        "SecurityEvents",
+        "Notifications",
+        "Approvals",
+        "Incidents",
+        "ConfigHistory",
+        "SystemStateHistory",
+        "SupportTools"
+    };
+
     var visibleNavigation = navigation.Where(item =>
         item.VisibleTo.Contains(currentRoleKey) &&
-        currentRoleKey != "SuperAdmin").ToArray();
-    var hiddenCount = navigation.Length - visibleNavigation.Length;
+        (currentRoleKey != "SuperAdmin" || !superAdminPrimaryNavigationKeys.Contains(item.Key))).ToArray();
+    var hiddenCount = navigation.Count(item => item.VisibleTo.Contains(currentRoleKey)) - visibleNavigation.Length;
 
     string BuildPrimaryFlowHref(string action, string fragment)
     {
@@ -79,7 +104,7 @@
     @if (currentRoleKey == "SuperAdmin")
     {
         <div class="cb-admin-role-visibility-card">
-            <small>Kurulum, aktivasyon ve izleme ilk sirada. Teknik detaylar Gelismis altinda kalir.</small>
+            <small>Ana akis ustte kalir. Eski teknik menu altta; Guncellenecek etiketi tasiyan sayfalar sirayla toparlanacak.</small>
         </div>
     }
     else
@@ -132,12 +157,14 @@
                     @foreach (var item in navSection)
                     {
                         var isActive = string.Equals(activeNav, item.Key, StringComparison.OrdinalIgnoreCase);
+                        var isUpdatePending = currentRoleKey == "SuperAdmin" && superAdminUpdatePendingKeys.Contains(item.Key);
+                        var displayLabel = isUpdatePending ? $"Guncellenecek - {item.Label}" : item.Label;
                         <li class="menu-item @(isActive ? "menu-item-active" : string.Empty)" aria-haspopup="true">
                             <a asp-area="Admin" asp-controller="Admin" asp-action="@item.Action" class="menu-link">
                                 <span class="menu-icon">
                                     <span class="cb-menu-icon cb-admin-menu-icon @(isActive ? "is-active" : string.Empty)">@item.Initials</span>
                                 </span>
-                                <span class="menu-text">@item.Label</span>
+                                <span class="menu-text">@displayLabel</span>
                                 @if (item.Badge is not null)
                                 {
                                     <span class="menu-label">

@@ -419,6 +419,22 @@ public sealed class AdminControllerTests
     }
 
     [Fact]
+    public async Task StrategyBuilder_AdminAlias_RendersStrategyTemplatesView()
+    {
+        var templateService = new FakeStrategyTemplateCatalogService();
+        templateService.Templates.Add(CreateStrategyTemplateSnapshot("built-in-template", "Built In", isBuiltIn: true));
+        var controller = CreateController(new FakeGlobalExecutionSwitchService(), strategyTemplateCatalogService: templateService);
+
+        var result = await controller.StrategyBuilder("built-in-template", CancellationToken.None);
+
+        var view = Assert.IsType<ViewResult>(result);
+        Assert.Equal(nameof(AdminController.StrategyTemplates), view.ViewName);
+        var model = Assert.IsType<AdminStrategyTemplateCatalogPageViewModel>(view.Model);
+        Assert.Equal("built-in-template", model.SelectedTemplateKey);
+        Assert.Equal("StrategyTemplates", controller.ViewData["AdminActiveNav"]);
+    }
+
+    [Fact]
     public async Task CreateStrategyTemplate_CreatesTemplate_AndWritesAudit()
     {
         var templateService = new FakeStrategyTemplateCatalogService();
@@ -650,6 +666,15 @@ public sealed class AdminControllerTests
     public void StrategyTemplates_UsesAdminPortalAccessPolicy()
     {
         var method = typeof(AdminController).GetMethod(nameof(AdminController.StrategyTemplates), [typeof(string), typeof(CancellationToken)])!;
+        var authorize = Assert.Single(method.GetCustomAttributes(typeof(AuthorizeAttribute), inherit: true).Cast<AuthorizeAttribute>());
+
+        Assert.Equal(ApplicationPolicies.AdminPortalAccess, authorize.Policy);
+    }
+
+    [Fact]
+    public void StrategyBuilder_AdminAlias_UsesAdminPortalAccessPolicy()
+    {
+        var method = typeof(AdminController).GetMethod(nameof(AdminController.StrategyBuilder), [typeof(string), typeof(CancellationToken)])!;
         var authorize = Assert.Single(method.GetCustomAttributes(typeof(AuthorizeAttribute), inherit: true).Cast<AuthorizeAttribute>());
 
         Assert.Equal(ApplicationPolicies.AdminPortalAccess, authorize.Policy);
@@ -2172,8 +2197,10 @@ public sealed class AdminControllerTests
             IsPersisted: true,
             Versions: Array.Empty<GlobalPolicyVersionSnapshot>());
         var policyEngine = new FakeGlobalPolicyEngine(policySnapshot);
+        var approvalWorkflowService = new FakeApprovalWorkflowService();
         var controller = CreateController(
             new FakeGlobalExecutionSwitchService(),
+            approvalWorkflowService: approvalWorkflowService,
             globalPolicyEngine: policyEngine,
             userId: "super-admin",
             roles: [ApplicationRoles.SuperAdmin]);
@@ -2199,12 +2226,14 @@ public sealed class AdminControllerTests
             cancellationToken: CancellationToken.None);
 
         var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Empty(approvalWorkflowService.EnqueueRequests);
         var updateRequest = Assert.Single(policyEngine.UpdateRequests);
         var persistedRestrictions = updateRequest.Policy.SymbolRestrictions.OrderBy(item => item.Symbol, StringComparer.Ordinal).ToArray();
         var preservedRestriction = Assert.Single(persistedRestrictions, item => item.Symbol == "BTCUSDT");
         var changedRestriction = Assert.Single(persistedRestrictions, item => item.Symbol == "ETHUSDT");
 
         Assert.Equal(nameof(AdminController.Settings), redirectResult.ActionName);
+        Assert.Equal("cb_admin_settings_policy_restrictions", redirectResult.Fragment);
         Assert.Equal("AdminPortal.Settings.SymbolRestrictions", updateRequest.Source);
         Assert.Equal(policy.ExecutionGuardPolicy, updateRequest.Policy.ExecutionGuardPolicy);
         Assert.Equal(policy.AutonomyPolicy, updateRequest.Policy.AutonomyPolicy);
@@ -2243,6 +2272,7 @@ public sealed class AdminControllerTests
         var redirectResult = Assert.IsType<RedirectToActionResult>(result);
 
         Assert.Equal(nameof(AdminController.Settings), redirectResult.ActionName);
+        Assert.Equal("cb_admin_settings_policy_restrictions", redirectResult.Fragment);
         Assert.Empty(policyEngine.UpdateRequests);
         Assert.Equal("Bu rolde symbol restriction degistirilemez.", controller.TempData["AdminGlobalPolicyError"]);
     }

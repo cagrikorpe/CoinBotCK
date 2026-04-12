@@ -90,9 +90,15 @@ public sealed class StrategyEvaluatorServiceTests
             {
               "schemaVersion": 1,
               "entry": {
-                "path": "indicator.rsi.value",
-                "comparison": "lessThan",
-                "value": 30
+                "operator": "all",
+                "ruleType": "group",
+                "rules": [
+                  {
+                    "path": "indicator.rsi.value",
+                    "comparison": "lessThan",
+                    "value": 30
+                  }
+                ]
               }
             }
             """,

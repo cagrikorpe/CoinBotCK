@@ -1,8 +1,8 @@
 @{
-    ViewData["Title"] = "Strategy Builder";
+    ViewData["Title"] = "Strateji Oluştur";
     ViewData["ActiveNav"] = "StrategyBuilder";
-    ViewData["PageDescription"] = "Template seçimi, görsel kural blokları ve exit/risk kurallarını aynı builder yüzeyinde toplayan strategy foundation ekranı.";
-    ViewData["BreadcrumbItems"] = new[] { "Trade Lab", "Strategy Builder" };
+    ViewData["PageDescription"] = "Stratejinizi şablondan başlatın ve botunuza bağlayın.";
+    ViewData["BreadcrumbItems"] = new[] { "CoinBot", "Strateji Oluştur" };
 }
 
 @section Scripts {
@@ -13,60 +13,42 @@
     <div class="col-12">
         <div class="card card-custom gutter-b cb-card">
             <div class="card-body">
-                <div class="cb-page-header">
+                <div class="cb-page-header align-items-start">
                     <div>
-                        <div class="cb-page-eyebrow">Strategy Builder</div>
-                        <h2 class="cb-page-title">Görsel strateji kurucu</h2>
-                        <p class="cb-page-description">Hazır template’lerden başlayıp entry, exit ve risk mantığını revision/version lineage görünürlüğüyle düzenlemek için strategy yüzeyi.</p>
+                        <div class="cb-page-eyebrow">Strateji</div>
+                        <h2 class="cb-page-title">Strateji oluştur</h2>
+                        <p class="cb-page-description">Bir şablon seçin, strateji taslağını oluşturun ve bot ekranında bu stratejiyi bağlayın.</p>
                     </div>
                     <div class="cb-toolbar">
-                        <span class="cb-badge cb-badge-info">Template lifecycle</span>
-                        <button type="button" class="btn btn-primary font-weight-bolder" data-cb-strategy-action="new">Yeni Strateji</button>
+                        <a asp-controller="Bots" asp-action="Create" class="btn btn-light-primary font-weight-bolder">Bota bağla</a>
                     </div>
                 </div>
 
                 @if (TempData["StrategyBuilderTemplateSuccess"] is string templateSuccess && !string.IsNullOrWhiteSpace(templateSuccess))
                 {
-                    <div class="alert alert-success mb-6" data-cb-template-draft-success>@templateSuccess</div>
+                    <div class="cb-validation-summary cb-validation-summary-success mt-6" role="alert" data-cb-template-draft-success>@templateSuccess</div>
                 }
 
                 @if (TempData["StrategyBuilderTemplateError"] is string templateError && !string.IsNullOrWhiteSpace(templateError))
                 {
-                    <div class="alert alert-danger mb-6" data-cb-template-draft-error>@templateError</div>
+                    <div class="cb-validation-summary cb-validation-summary-danger mt-6" role="alert" data-cb-template-draft-error>@templateError</div>
                 }
-
-                @await Html.PartialAsync("StrategyBuilder/_SummaryStrip")
-
-                <div class="cb-section mt-6">
-                    <div class="cb-section-title">Builder Senaryoları</div>
-                    <p class="cb-page-description mt-2 mb-0">Boş başlangıç, template seçimi, futures modu, riskli ayar ve eksik strateji yüzeylerini aynı ekranda kontrol edin.</p>
-                    <div class="cb-chip-group mt-4" data-cb-toggle-group>
-                        <button type="button" class="cb-chip is-active" data-cb-toggle-active data-cb-strategy-scenario-trigger="blank">Sıfırdan başla</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-strategy-scenario-trigger="template">Template seçildi</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-strategy-scenario-trigger="futures">Futures + long/short</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-strategy-scenario-trigger="risky">Riskli ayar</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-strategy-scenario-trigger="incomplete">Eksik strateji</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-strategy-scenario-trigger="loading">Builder yükleniyor</button>
-                        <button type="button" class="cb-chip" data-cb-toggle-active data-cb-strategy-scenario-trigger="error">Builder hatası</button>
-                    </div>
-                </div>
             </div>
         </div>
     </div>
 
     <div class="col-xl-8">
         @await Html.PartialAsync("StrategyBuilder/_TemplateGallery")
-        @await Html.PartialAsync("StrategyBuilder/_RuleBuilderCanvas")
-        @await Html.PartialAsync("StrategyBuilder/_EntryRulesSection")
     </div>
 
     <div class="col-xl-4">
-        @await Html.PartialAsync("StrategyBuilder/_ToolboxCard")
-        @await Html.PartialAsync("StrategyBuilder/_ExitRulesSection")
-        @await Html.PartialAsync("StrategyBuilder/_RiskRulesSection")
-        @await Html.PartialAsync("StrategyBuilder/_PreviewCard")
-        @await Html.PartialAsync("StrategyBuilder/_StatePatternsCard")
+        <div class="card card-custom gutter-b cb-card" data-cb-strategy-bind-card>
+            <div class="card-body">
+                <div class="cb-section-title">Bot ile bağla</div>
+                <p class="cb-page-description mt-2">Taslak oluştuktan sonra Botlarım ekranında strateji seçimi yapabilirsiniz.</p>
+                <a asp-controller="Bots" asp-action="Create" class="btn btn-primary font-weight-bolder">Yeni bot oluştur</a>
+                <div class="text-muted font-size-sm mt-4">Strateji hazır değilse bot başlatılamaz.</div>
+            </div>
+        </div>
     </div>
 </div>
-
-@await Html.PartialAsync("StrategyBuilder/_TemplateDetailDrawer")

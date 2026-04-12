@@ -247,4 +247,80 @@ public sealed class StrategyDefinitionValidatorTests
         Assert.False(snapshot.IsValid);
         Assert.Contains(snapshot.FailureReasons, reason => reason.StartsWith("InvalidRangeOperand:entry:fast", StringComparison.Ordinal));
     }
+    [Fact]
+    public void Validate_ReturnsValidSnapshot_ForReferenceContractJson()
+    {
+        var parser = new StrategyRuleParser();
+        var validator = new StrategyDefinitionValidator();
+
+        var snapshot = validator.Validate(parser.Parse(StrategyContractJson.Reference));
+
+        Assert.True(snapshot.IsValid);
+        Assert.Equal("Valid", snapshot.StatusCode);
+        Assert.Equal(12, snapshot.EnabledRuleCount);
+    }
+
+    [Fact]
+    public void Validate_FailsClosed_WhenNoRuleGroupExists()
+    {
+        var parser = new StrategyRuleParser();
+        var validator = new StrategyDefinitionValidator();
+
+        var snapshot = validator.Validate(parser.Parse(
+            """
+            {
+              "schemaVersion": 2,
+              "entry": {
+                "path": "context.mode",
+                "comparison": "equals",
+                "value": "Live",
+                "ruleId": "entry-mode",
+                "ruleType": "context",
+                "timeframe": "1m",
+                "weight": 10,
+                "enabled": true
+              }
+            }
+            """));
+
+        Assert.False(snapshot.IsValid);
+        Assert.Equal("MissingRuleGroup:entry-exit-risk", snapshot.StatusCode);
+    }
+
+    [Fact]
+    public void Validate_FailsClosed_ForUnsupportedMarketClosePath()
+    {
+        var parser = new StrategyRuleParser();
+        var validator = new StrategyDefinitionValidator();
+
+        var snapshot = validator.Validate(parser.Parse(
+            """
+            {
+              "schemaVersion": 2,
+              "entry": {
+                "operator": "all",
+                "ruleId": "entry-root",
+                "ruleType": "group",
+                "timeframe": "1m",
+                "weight": 1,
+                "enabled": true,
+                "rules": [
+                  {
+                    "ruleId": "entry-market-close",
+                    "ruleType": "context",
+                    "path": "market.close",
+                    "comparison": "greaterThan",
+                    "value": 100,
+                    "timeframe": "1m",
+                    "weight": 10,
+                    "enabled": true
+                  }
+                ]
+              }
+            }
+            """));
+
+        Assert.False(snapshot.IsValid);
+        Assert.Contains(snapshot.FailureReasons, reason => reason.StartsWith("UnsupportedRulePath:entry.rules[0]:market.close", StringComparison.Ordinal));
+    }
 }

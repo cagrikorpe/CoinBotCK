@@ -312,7 +312,8 @@ public class BotsController(
                     option.StrategyKey,
                     option.HasPublishedVersion
                         ? $"{option.DisplayName} ({option.StrategyKey})"
-                        : $"{option.DisplayName} ({option.StrategyKey}) - yayinlanmis versiyon yok"))
+                        : $"{option.DisplayName} ({option.StrategyKey}) - hazır değil",
+                    option.HasPublishedVersion))
                 .ToArray(),
             snapshot.ExchangeAccountOptions
                 .Select(option => new BotManagementOptionViewModel(
@@ -430,9 +431,15 @@ public class BotsController(
             "GlobalSystemSoftHalt" => "Soft halt aktif.",
             "GlobalSystemFullHalt" => "Acil durdurma aktif.",
             "PilotSymbolNotAllowed" or "PilotConfigurationMissing" or "PilotTestnetEndpointMismatch" => "Pilot siniri disinda.",
+            "PrivatePlaneStale" => "Exchange verisi guncel degil.",
+            "GlobalPolicySymbolBlocked" => "Symbol kullanima kapali.",
             "UserExecutionPilotNotionalHardCapExceeded" or "UserExecutionPilotNotionalConfigurationMissing" => "Notional siniri asildi.",
+            "RiskProfileMissing" => "Risk tercihi eksik.",
+            "AccountEquityUnavailable" => "Bakiye okunamiyor.",
+            "NoSignalCandidate" => "Sinyal bekleniyor.",
             "ShadowModeActive" => "Karar var, emir gonderimi yok.",
-            _ => "Bot gorunur ama calismaz."
+            _ when string.IsNullOrWhiteSpace(code) || string.Equals(code, "None", StringComparison.OrdinalIgnoreCase) => "Sinyal bekleniyor.",
+            _ => "Sistem hazir degil."
         };
     }
 
@@ -469,6 +476,3 @@ public class BotsController(
         return $"{localTimestamp:yyyy-MM-dd HH:mm:ss} {timeZoneInfo.StandardName}";
     }
 }
-
-
-

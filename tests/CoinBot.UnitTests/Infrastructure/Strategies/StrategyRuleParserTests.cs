@@ -201,4 +201,78 @@ public sealed class StrategyRuleParserTests
         Assert.Equal("0..5", latencyCondition.Operand.Value);
         Assert.Equal(StrategyRuleComparisonOperator.Contains, sourceCondition.Comparison);
     }
+    [Fact]
+    public void Parse_AcceptsReferenceContractJson()
+    {
+        var parser = new StrategyRuleParser();
+
+        var document = parser.Parse(StrategyContractJson.Reference);
+
+        var entry = Assert.IsType<StrategyRuleGroup>(document.Entry);
+        var exit = Assert.IsType<StrategyRuleGroup>(document.Exit);
+        var risk = Assert.IsType<StrategyRuleGroup>(document.Risk);
+        Assert.Equal(2, document.SchemaVersion);
+        Assert.Equal("bollinger-rsi-reversal", document.Metadata?.TemplateKey);
+        Assert.Equal(6, entry.Rules.Count);
+        Assert.Equal(2, exit.Rules.Count);
+        Assert.Equal(4, risk.Rules.Count);
+    }
+
+    [Fact]
+    public void Parse_RejectsUnsupportedRootProperty_FailClosed()
+    {
+        var parser = new StrategyRuleParser();
+        var json = StrategyContractJson.Reference.Replace("\"entry\": {", "\"signals\": {},\n  \"entry\": {", StringComparison.Ordinal);
+
+        var exception = Assert.Throws<StrategyRuleParseException>(() => parser.Parse(json));
+
+        Assert.Contains("strategy definition.signals", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("not supported", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Parse_RejectsConditionWithValueAndValuePath_FailClosed()
+    {
+        var parser = new StrategyRuleParser();
+
+        var exception = Assert.Throws<StrategyRuleParseException>(() => parser.Parse(
+            """
+            {
+              "schemaVersion": 2,
+              "entry": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.rsi.value",
+                    "comparison": "lessThanOrEqual",
+                    "value": 30,
+                    "valuePath": "indicator.macd.spread"
+                  }
+                ]
+              }
+            }
+            """));
+
+        Assert.Contains("exactly one of 'value' or 'valuePath'", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Parse_RejectsGroupWithoutRules_FailClosed()
+    {
+        var parser = new StrategyRuleParser();
+
+        var exception = Assert.Throws<StrategyRuleParseException>(() => parser.Parse(
+            """
+            {
+              "schemaVersion": 2,
+              "entry": {
+                "operator": "all",
+                "ruleType": "group",
+                "rules": []
+              }
+            }
+            """));
+
+        Assert.Contains("must contain at least one rule", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
 }

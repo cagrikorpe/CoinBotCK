@@ -1,118 +1,75 @@
+@model CoinBot.Web.Controllers.RiskCenterViewModel
+
 <div class="card card-custom gutter-b cb-card">
     <div class="card-header border-0 pt-6">
         <div class="card-title">
             <div>
-                <h3 class="card-label font-weight-bolder mb-1">Risk policy formu</h3>
-                <div class="text-muted font-size-sm">Risk motoruna bağlanacak temel ayar alanları; gerçek persist ve validation sonraki fazda eklenecektir.</div>
+                <h3 class="card-label font-weight-bolder mb-1">Risk tercihleri</h3>
+                <div class="text-muted font-size-sm">Botların işlem açarken kullanacağı temel limitler.</div>
             </div>
         </div>
         <div class="card-toolbar">
-            <span class="cb-badge cb-badge-warning" id="cb_risk_policy_state">Kontrollü profil</span>
+            <span class="cb-badge @(Model.HasProfile ? "cb-badge-success" : "cb-badge-warning")">@Model.StatusText</span>
         </div>
     </div>
     <div class="card-body pt-2">
-        <div class="cb-strategy-section-grid">
-            <section class="cb-rule-subsection">
-                <div class="cb-rule-subsection-header">
-                    <div>
-                        <h4>Genel Risk Limitleri</h4>
-                        <div class="text-muted font-size-sm mt-2">Kaldıraç, günlük/haftalık limit ve limit dolduğunda davranış politikası.</div>
-                    </div>
-                    <span class="cb-badge cb-badge-info">Policy</span>
-                </div>
-                <div class="cb-form-grid mt-4">
-                    <div>
-                        <label class="cb-form-label">Market kapsamı</label>
-                        <select class="form-control cb-form-control" id="cb_risk_market_mode">
-                            <option value="spot">Spot ağırlıklı</option>
-                            <option value="futures">Futures odaklı</option>
-                            <option value="both">Spot + Futures</option>
-                        </select>
-                        <div class="cb-helper-text">Futures seçildiğinde leverage ve emergency helper alanları daha belirgin hale gelir.</div>
-                    </div>
-                    <div>
-                        <label class="cb-form-label">Max leverage</label>
-                        <input type="number" min="1" max="25" value="2" class="form-control cb-form-control" id="cb_risk_max_leverage" />
-                        <div class="cb-helper-text" id="cb_risk_leverage_help">Düşük kaldıraç bandı, ani volatiliteye karşı koruyucu başlangıç olarak önerilir.</div>
-                    </div>
-                    <div>
-                        <label class="cb-form-label">Günlük max zarar</label>
-                        <div class="input-group">
-                            <input type="text" value="1.8" class="form-control cb-form-control" id="cb_risk_daily_limit" />
-                            <div class="input-group-append"><span class="input-group-text cb-input-addon">%</span></div>
-                        </div>
-                    </div>
-                    <div>
-                        <label class="cb-form-label">Haftalık max zarar</label>
-                        <div class="input-group">
-                            <input type="text" value="4.5" class="form-control cb-form-control" id="cb_risk_weekly_limit" />
-                            <div class="input-group-append"><span class="input-group-text cb-input-addon">%</span></div>
-                        </div>
-                    </div>
-                    <div>
-                        <label class="cb-form-label">Limit tipi</label>
-                        <select class="form-control cb-form-control">
-                            <option>Yüzde</option>
-                            <option>Tutar placeholder</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="cb-form-label">Limit dolunca davranış</label>
-                        <select class="form-control cb-form-control" id="cb_risk_limit_action">
-                            <option>Yeni işlem açma</option>
-                            <option>Sadece uyar</option>
-                            <option>Botları durdur</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="cb-risk-progress-grid mt-4">
-                    <div class="cb-mini-helper-card">
-                        <div class="cb-rule-setting-header">
-                            <strong>Günlük limit kullanımı</strong>
-                            <span class="cb-badge cb-badge-info" id="cb_risk_daily_usage_badge">%42 kullanıldı</span>
-                        </div>
-                        <div class="progress mt-3 cb-progress-thin"><div class="progress-bar bg-warning" role="progressbar" id="cb_risk_daily_usage_bar" style="width:42%"></div></div>
-                    </div>
-                    <div class="cb-mini-helper-card">
-                        <div class="cb-rule-setting-header">
-                            <strong>Haftalık limit kullanımı</strong>
-                            <span class="cb-badge cb-badge-success" id="cb_risk_weekly_usage_badge">%31 kullanıldı</span>
-                        </div>
-                        <div class="progress mt-3 cb-progress-thin"><div class="progress-bar bg-info" role="progressbar" id="cb_risk_weekly_usage_bar" style="width:31%"></div></div>
-                    </div>
-                </div>
-                <div class="cb-mini-warning-card mt-4 d-none" id="cb_risk_leverage_warning">Yüksek leverage + futures politikası aktif. Risk helper alanı bilinçli olarak daha görünür yapıldı.</div>
-            </section>
+        <form asp-controller="RiskCenter" asp-action="Index" method="post" data-cb-risk-real-form>
+            @Html.AntiForgeryToken()
 
-            <section class="cb-rule-subsection">
-                <div class="cb-rule-subsection-header">
-                    <div>
-                        <h4>Pozisyon Kuralları</h4>
-                        <div class="text-muted font-size-sm mt-2">Aynı anda kaç işlem açılacağı ve pozisyon boyutunun ne kadar agresif olabileceği burada sınırlandırılır.</div>
-                    </div>
-                    <span class="cb-badge cb-badge-neutral">Position</span>
+            <div asp-validation-summary="ModelOnly" class="text-danger mb-4"></div>
+
+            <div class="cb-form-grid">
+                <div>
+                    <label asp-for="Input.ProfileName" class="cb-form-label">Profil adı</label>
+                    <input asp-for="Input.ProfileName" class="form-control cb-form-control" maxlength="64" />
+                    <span asp-validation-for="Input.ProfileName" class="text-danger font-size-sm"></span>
                 </div>
-                <div class="cb-form-grid mt-4">
-                    <div>
-                        <label class="cb-form-label">Max açık işlem</label>
-                        <input type="number" min="1" value="3" class="form-control cb-form-control" id="cb_risk_max_open_positions" />
-                        <div class="cb-helper-text">Botlar ve manuel işlemler aynı açık işlem bandını paylaşacakmış gibi düşünülmüştür.</div>
-                    </div>
-                    <div>
-                        <label class="cb-form-label">İşlem başına risk %</label>
-                        <input type="text" value="0.8" class="form-control cb-form-control" id="cb_risk_per_trade" />
-                    </div>
-                    <div>
-                        <label class="cb-form-label">Max position size</label>
-                        <input type="text" value="Portföy %12" class="form-control cb-form-control" />
-                    </div>
-                    <div>
-                        <label class="cb-form-label">Limit dolduğunda not</label>
-                        <input type="text" value="Yeni sinyalleri beklet" class="form-control cb-form-control" />
-                    </div>
+                <div>
+                    <label asp-for="Input.MaxLeverage" class="cb-form-label">Max kaldıraç</label>
+                    <input asp-for="Input.MaxLeverage" type="number" min="1" max="25" step="0.1" class="form-control cb-form-control" />
+                    <div class="cb-helper-text">İlk testte 1x önerilir.</div>
+                    <span asp-validation-for="Input.MaxLeverage" class="text-danger font-size-sm"></span>
                 </div>
-                <div class="cb-mini-helper-card mt-4" id="cb_risk_position_note">Düşük açık işlem sayısı, AI ve strategy builder tarafından gelen sinyallerin daha kontrollü değerlendirilmesini kolaylaştırır.</div>
-            </section>
-        </div>
+                <div>
+                    <label asp-for="Input.MaxDailyLossPercentage" class="cb-form-label">Günlük max zarar %</label>
+                    <input asp-for="Input.MaxDailyLossPercentage" type="number" min="0.1" max="100" step="0.1" class="form-control cb-form-control" />
+                    <span asp-validation-for="Input.MaxDailyLossPercentage" class="text-danger font-size-sm"></span>
+                </div>
+                <div>
+                    <label asp-for="Input.MaxWeeklyLossPercentage" class="cb-form-label">Haftalık max zarar %</label>
+                    <input asp-for="Input.MaxWeeklyLossPercentage" type="number" min="0.1" max="100" step="0.1" class="form-control cb-form-control" />
+                    <span asp-validation-for="Input.MaxWeeklyLossPercentage" class="text-danger font-size-sm"></span>
+                </div>
+                <div>
+                    <label asp-for="Input.MaxPositionSizePercentage" class="cb-form-label">Pozisyon limiti %</label>
+                    <input asp-for="Input.MaxPositionSizePercentage" type="number" min="0.1" max="100" step="0.1" class="form-control cb-form-control" />
+                    <span asp-validation-for="Input.MaxPositionSizePercentage" class="text-danger font-size-sm"></span>
+                </div>
+                <div>
+                    <label asp-for="Input.MaxSymbolExposurePercentage" class="cb-form-label">Tek sembol limiti %</label>
+                    <input asp-for="Input.MaxSymbolExposurePercentage" type="number" min="0.1" max="100" step="0.1" class="form-control cb-form-control" />
+                    <span asp-validation-for="Input.MaxSymbolExposurePercentage" class="text-danger font-size-sm"></span>
+                </div>
+                <div>
+                    <label asp-for="Input.MaxConcurrentPositions" class="cb-form-label">Max açık işlem</label>
+                    <input asp-for="Input.MaxConcurrentPositions" type="number" min="1" max="50" step="1" class="form-control cb-form-control" />
+                    <span asp-validation-for="Input.MaxConcurrentPositions" class="text-danger font-size-sm"></span>
+                </div>
+                <div>
+                    <label class="cb-form-label">Acil durdurma</label>
+                    <label class="checkbox checkbox-outline checkbox-outline-2x checkbox-primary d-flex align-items-center mt-3">
+                        <input asp-for="Input.KillSwitchEnabled" />
+                        <span></span>
+                        <strong class="ml-3">İşlem açmayı durdur</strong>
+                    </label>
+                    <div class="cb-helper-text">Açık kalırsa botlar güvenli şekilde işlem açmaz.</div>
+                </div>
+            </div>
+
+            <div class="d-flex flex-wrap align-items-center justify-content-between mt-6">
+                <div class="text-muted font-size-sm">Kaydetmeden botlar risk kontrolünden geçemez.</div>
+                <button type="submit" class="btn btn-primary font-weight-bolder">Kaydet</button>
+            </div>
+        </form>
     </div>
 </div>
