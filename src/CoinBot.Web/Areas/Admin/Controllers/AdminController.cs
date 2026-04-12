@@ -3304,43 +3304,108 @@ public sealed class AdminController : Controller
         return RedirectToAction(nameof(Settings));
     }
 
+    //private async Task<AdminStrategyTemplateCatalogPageViewModel> BuildStrategyTemplateCatalogPageViewModelAsync(
+    //    string? templateKey,
+    //    CancellationToken cancellationToken)
+    //{
+    //    var templates = await strategyTemplateCatalogService.ListAllAsync(cancellationToken);
+    //    var normalizedTemplateKey = NormalizeOptionalInput(templateKey, 128);
+    //    StrategyTemplateSnapshot? selectedTemplate = null;
+
+    //    if (normalizedTemplateKey is not null)
+    //    {
+    //        selectedTemplate = templates.FirstOrDefault(template =>
+    //            string.Equals(template.TemplateKey, normalizedTemplateKey, StringComparison.OrdinalIgnoreCase));
+
+    //        if (selectedTemplate is null && TempData[StrategyTemplateErrorTempDataKey] is null)
+    //        {
+    //            TempData[StrategyTemplateErrorTempDataKey] = "Secilen strategy template bulunamadi.";
+    //        }
+    //    }
+
+    //    selectedTemplate ??= templates
+    //        .OrderBy(template => template.IsBuiltIn ? 1 : 0)
+    //        .ThenBy(template => template.IsActive ? 0 : 1)
+    //        .ThenBy(template => template.TemplateName, StringComparer.Ordinal)
+    //        .FirstOrDefault();
+
+    //    var revisions = selectedTemplate is null
+    //        ? Array.Empty<StrategyTemplateRevisionSnapshot>()
+    //        : await strategyTemplateCatalogService.ListRevisionsAsync(selectedTemplate.TemplateKey, cancellationToken);
+
+    //    return new AdminStrategyTemplateCatalogPageViewModel(
+    //        selectedTemplate?.TemplateKey,
+    //        templates,
+    //        selectedTemplate,
+    //        revisions,
+    //        CanManageStrategyTemplates(),
+    //        DateTime.UtcNow);
+    //}
+
     private async Task<AdminStrategyTemplateCatalogPageViewModel> BuildStrategyTemplateCatalogPageViewModelAsync(
-        string? templateKey,
-        CancellationToken cancellationToken)
+    string? templateKey,
+    CancellationToken cancellationToken)
     {
-        var templates = await strategyTemplateCatalogService.ListAllAsync(cancellationToken);
         var normalizedTemplateKey = NormalizeOptionalInput(templateKey, 128);
-        StrategyTemplateSnapshot? selectedTemplate = null;
 
-        if (normalizedTemplateKey is not null)
+        try
         {
-            selectedTemplate = templates.FirstOrDefault(template =>
-                string.Equals(template.TemplateKey, normalizedTemplateKey, StringComparison.OrdinalIgnoreCase));
+            var templates = await strategyTemplateCatalogService.ListAllAsync(cancellationToken);
+            StrategyTemplateSnapshot? selectedTemplate = null;
 
-            if (selectedTemplate is null && TempData[StrategyTemplateErrorTempDataKey] is null)
+            if (normalizedTemplateKey is not null)
             {
-                TempData[StrategyTemplateErrorTempDataKey] = "Secilen strategy template bulunamadi.";
+                selectedTemplate = templates.FirstOrDefault(template =>
+                    string.Equals(template.TemplateKey, normalizedTemplateKey, StringComparison.OrdinalIgnoreCase));
+
+                if (selectedTemplate is null && TempData[StrategyTemplateErrorTempDataKey] is null)
+                {
+                    TempData[StrategyTemplateErrorTempDataKey] = "Secilen strategy template bulunamadi.";
+                }
             }
+
+            selectedTemplate ??= templates
+                .OrderBy(template => template.IsBuiltIn ? 1 : 0)
+                .ThenBy(template => template.IsActive ? 0 : 1)
+                .ThenBy(template => template.TemplateName, StringComparer.Ordinal)
+                .FirstOrDefault();
+
+            var revisions = selectedTemplate is null
+                ? Array.Empty<StrategyTemplateRevisionSnapshot>()
+                : await strategyTemplateCatalogService.ListRevisionsAsync(selectedTemplate.TemplateKey, cancellationToken);
+
+            return new AdminStrategyTemplateCatalogPageViewModel(
+                selectedTemplate?.TemplateKey,
+                templates,
+                selectedTemplate,
+                revisions,
+                CanManageStrategyTemplates(),
+                DateTime.UtcNow);
+        }
+        catch (StrategyTemplateCatalogException exception)
+        {
+            TempData[StrategyTemplateErrorTempDataKey] ??= BuildStrategyTemplateFailureMessage(exception);
+        }
+        catch (StrategyDefinitionValidationException exception)
+        {
+            TempData[StrategyTemplateErrorTempDataKey] ??=
+                $"Strategy template catalogu yuklenemedi. {SanitizeStrategyTemplateMessage(exception.Message)}";
+        }
+        catch (InvalidOperationException exception)
+        {
+            TempData[StrategyTemplateErrorTempDataKey] ??=
+                $"Strategy template catalogu yuklenemedi. {SanitizeStrategyTemplateMessage(exception.Message)}";
         }
 
-        selectedTemplate ??= templates
-            .OrderBy(template => template.IsBuiltIn ? 1 : 0)
-            .ThenBy(template => template.IsActive ? 0 : 1)
-            .ThenBy(template => template.TemplateName, StringComparer.Ordinal)
-            .FirstOrDefault();
-
-        var revisions = selectedTemplate is null
-            ? Array.Empty<StrategyTemplateRevisionSnapshot>()
-            : await strategyTemplateCatalogService.ListRevisionsAsync(selectedTemplate.TemplateKey, cancellationToken);
-
         return new AdminStrategyTemplateCatalogPageViewModel(
-            selectedTemplate?.TemplateKey,
-            templates,
-            selectedTemplate,
-            revisions,
+            normalizedTemplateKey,
+            Array.Empty<StrategyTemplateSnapshot>(),
+            null,
+            Array.Empty<StrategyTemplateRevisionSnapshot>(),
             CanManageStrategyTemplates(),
             DateTime.UtcNow);
     }
+
 
     private bool CanManageStrategyTemplates()
     {
