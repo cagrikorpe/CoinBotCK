@@ -68,9 +68,9 @@ public sealed class BotWorkerJobProcessor(
             return BackgroundJobProcessResult.PermanentFailure("PilotDisabled");
         }
 
-        if (!hostEnvironment.IsDevelopment())
+        if (!IsPilotHostAllowed())
         {
-            logger.LogWarning("Bot execution pilot is restricted to Development. BotId={BotId}", bot.Id);
+            logger.LogWarning("Bot execution pilot is restricted to explicit pilot hosts. BotId={BotId}", bot.Id);
             return BackgroundJobProcessResult.PermanentFailure("PilotRequiresDevelopment");
         }
 
@@ -1395,6 +1395,12 @@ public sealed class BotWorkerJobProcessor(
         }
 
         return Truncate(riskEvaluation.ReasonSummary, 1024);
+    }
+
+
+    private bool IsPilotHostAllowed()
+    {
+        return hostEnvironment.IsDevelopment() || optionsValue.AllowNonDevelopmentHost;
     }
 
     private bool IsClockDriftSmokeLeverageAllowed(TradingBot bot, decimal? leverage)

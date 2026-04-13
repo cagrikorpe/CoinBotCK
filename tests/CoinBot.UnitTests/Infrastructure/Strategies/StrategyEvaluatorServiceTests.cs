@@ -368,11 +368,11 @@ public sealed class StrategyEvaluatorServiceTests
                     "enabled": true
                   },
                   {
-                    "ruleId": "bandwidth-positive",
+                    "ruleId": "bandwidth-max-five-percent",
                     "ruleType": "bollinger",
                     "path": "indicator.bollinger.bandWidth",
-                    "comparison": "greaterThan",
-                    "value": 0,
+                    "comparison": "lessThanOrEqual",
+                    "value": 5,
                     "timeframe": "30m",
                     "weight": 10,
                     "enabled": true
@@ -387,6 +387,7 @@ public sealed class StrategyEvaluatorServiceTests
         Assert.All(result.EntryRuleResult!.Children, child => Assert.True(child.Matched));
         Assert.Contains(result.EntryRuleResult.Children, child => child.Path == "indicator.latencySeconds" && child.LeftValue == "3");
         Assert.Contains(result.EntryRuleResult.Children, child => child.Path == "indicator.macd.spread" && child.LeftValue == "0.3");
+        Assert.Contains(result.EntryRuleResult.Children, child => child.Path == "indicator.bollinger.bandWidth" && child.LeftValue == "1.612903");
     }
 
     private static StrategyEvaluationContext CreateContext(ExecutionEnvironment mode)

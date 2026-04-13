@@ -1376,7 +1376,7 @@ public sealed class ExecutionGate(
 
     private bool IsDevelopmentPilotHostAndActor(ExecutionGateRequest request)
     {
-        return hostEnvironment?.IsDevelopment() == true &&
+        return (hostEnvironment?.IsDevelopment() == true || pilotOptionsValue.AllowNonDevelopmentHost) &&
                request.Actor.StartsWith("system:", StringComparison.OrdinalIgnoreCase);
     }
 

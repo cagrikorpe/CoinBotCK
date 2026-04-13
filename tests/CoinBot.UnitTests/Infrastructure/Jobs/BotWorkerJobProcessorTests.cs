@@ -71,6 +71,33 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_AllowsExplicitNonDevelopmentPilotHost_WhenConfigured()
+    {
+        await using var harness = CreateHarness(environmentName: Environments.Production);
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.AllowNonDevelopmentHost = true;
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-prod-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-prod-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-prod-1",
+            CancellationToken.None);
+
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
     public async Task ProcessAsync_AllowsDevelopmentPilotLeverageAboveOne_ForClockDriftSmokeScope()
     {
         await using var harness = CreateHarness();
@@ -590,7 +617,8 @@ public sealed class BotWorkerJobProcessorTests
     private static TestHarness CreateHarness(
         AiSignalOptions? aiSignalOptions = null,
         ITradingFeatureSnapshotService? featureSnapshotServiceOverride = null,
-        IAiSignalEvaluator? aiSignalEvaluatorOverride = null)
+        IAiSignalEvaluator? aiSignalEvaluatorOverride = null,
+        string? environmentName = null)
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 1, 12, 0, 0, TimeSpan.Zero));
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -626,7 +654,7 @@ public sealed class BotWorkerJobProcessorTests
             Options.Create(new DemoSessionOptions()),
             timeProvider,
             NullLogger<DemoSessionService>.Instance);
-        var hostEnvironment = new TestHostEnvironment(Environments.Development);
+        var hostEnvironment = new TestHostEnvironment(environmentName ?? Environments.Development);
         var traceService = new TraceService(
             dbContext,
             correlationContextAccessor,

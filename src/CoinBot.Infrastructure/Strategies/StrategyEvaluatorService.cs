@@ -545,12 +545,24 @@ public sealed class StrategyEvaluatorService(
 
     private static decimal ResolveBollingerBandWidth(StrategyEvaluationContext context)
     {
-        if (context.IndicatorSnapshot.Bollinger.UpperBand is null || context.IndicatorSnapshot.Bollinger.LowerBand is null)
+        if (context.IndicatorSnapshot.Bollinger.UpperBand is null ||
+            context.IndicatorSnapshot.Bollinger.LowerBand is null ||
+            context.IndicatorSnapshot.Bollinger.MiddleBand is null)
         {
             throw new StrategyRuleEvaluationException("Strategy rule path 'indicator.bollinger.bandWidth' resolved to null.");
         }
 
-        return context.IndicatorSnapshot.Bollinger.UpperBand.Value - context.IndicatorSnapshot.Bollinger.LowerBand.Value;
+        if (context.IndicatorSnapshot.Bollinger.MiddleBand.Value == 0m)
+        {
+            throw new StrategyRuleEvaluationException("Strategy rule path 'indicator.bollinger.bandWidth' requires a non-zero middle band.");
+        }
+
+        return decimal.Round(
+            (context.IndicatorSnapshot.Bollinger.UpperBand.Value - context.IndicatorSnapshot.Bollinger.LowerBand.Value) /
+            context.IndicatorSnapshot.Bollinger.MiddleBand.Value *
+            100m,
+            6,
+            MidpointRounding.AwayFromZero);
     }
 
     private static bool IsBetween(decimal leftValue, string rangeValue)
