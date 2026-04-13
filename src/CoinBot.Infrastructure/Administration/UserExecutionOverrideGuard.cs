@@ -311,11 +311,8 @@ public sealed class UserExecutionOverrideGuard(
             blockedReasons.Add("UserExecutionPilotPlaneInvalid");
         }
 
-        if (allowedUserIds.Length != 1)
-        {
-            blockedReasons.Add("UserExecutionPilotAllowedUsersConfigurationInvalid");
-        }
-        else if (!string.Equals(allowedUserIds[0], normalizedUserId, StringComparison.Ordinal))
+        if (allowedUserIds.Length > 0 &&
+            !allowedUserIds.Contains(normalizedUserId, StringComparer.Ordinal))
         {
             blockedReasons.Add("UserExecutionPilotUserNotAllowed");
         }
@@ -325,21 +322,13 @@ public sealed class UserExecutionOverrideGuard(
             blockedReasons.Add("UserExecutionPilotBotRequired");
         }
 
-        if (allowedBotIds.Length != 1)
-        {
-            blockedReasons.Add("UserExecutionPilotAllowedBotsConfigurationInvalid");
-        }
-        else if (request.BotId.HasValue &&
-                 !string.Equals(allowedBotIds[0], request.BotId.Value.ToString("N"), StringComparison.OrdinalIgnoreCase))
+        else if (allowedBotIds.Length > 0 &&
+                 !allowedBotIds.Contains(request.BotId.Value.ToString("N"), StringComparer.OrdinalIgnoreCase))
         {
             blockedReasons.Add("UserExecutionPilotBotNotAllowed");
         }
 
-        if (allowedSymbols.Count != 1)
-        {
-            blockedReasons.Add("UserExecutionPilotAllowedSymbolsConfigurationInvalid");
-        }
-        else if (!allowedSymbols.Contains(normalizedSymbol))
+        if (allowedSymbols.Count > 0 && !allowedSymbols.Contains(normalizedSymbol))
         {
             blockedReasons.Add("UserExecutionPilotSymbolNotAllowed");
         }

@@ -141,6 +141,154 @@ public sealed class UserExecutionOverrideGuardTests
     }
 
     [Fact]
+    public async Task EvaluateAsync_AllowsPilotWhenAllowListsAreEmpty()
+    {
+        await using var dbContext = CreateDbContext();
+        var botId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        var evaluatedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+
+        dbContext.RiskProfiles.Add(new RiskProfile
+        {
+            OwnerUserId = "user-open-scope",
+            ProfileName = "Pilot",
+            MaxDailyLossPercentage = 5m,
+            MaxPositionSizePercentage = 100m,
+            MaxLeverage = 2m,
+            MaxConcurrentPositions = 1
+        });
+        dbContext.ExchangeBalances.Add(new ExchangeBalance
+        {
+            ExchangeAccountId = exchangeAccountId,
+            OwnerUserId = "user-open-scope",
+            Plane = ExchangeDataPlane.Futures,
+            Asset = "USDT",
+            WalletBalance = 1000m,
+            CrossWalletBalance = 1000m,
+            AvailableBalance = 1000m,
+            MaxWithdrawAmount = 1000m,
+            ExchangeUpdatedAtUtc = evaluatedAtUtc
+        });
+        await dbContext.SaveChangesAsync();
+
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            hostEnvironment: new TestHostEnvironment(Environments.Development),
+            riskPolicyEvaluator: new RiskPolicyEvaluator(
+                dbContext,
+                timeProvider,
+                NullLogger<RiskPolicyEvaluator>.Instance),
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                AllowedUserIds = [],
+                AllowedBotIds = [],
+                AllowedSymbols = ["BTCUSDT"],
+                MaxOpenPositionsPerUser = 1,
+                PerBotCooldownSeconds = 300,
+                PerSymbolCooldownSeconds = 300,
+                MaxOrderNotional = 200m,
+                MaxDailyLossPercentage = 5m
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-open-scope",
+                "BTCUSDT",
+                ExecutionEnvironment.Live,
+                ExecutionOrderSide.Buy,
+                0.002m,
+                65000m,
+                BotId: botId,
+                StrategyKey: "pilot-core",
+                Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                TradingStrategyId: Guid.NewGuid(),
+                TradingStrategyVersionId: Guid.NewGuid(),
+                Timeframe: "1m"),
+            CancellationToken.None);
+
+        Assert.False(result.IsBlocked);
+        Assert.Null(result.BlockCode);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_AllowsPilotWhenMultipleAllowedSymbolsContainRequestedSymbol()
+    {
+        await using var dbContext = CreateDbContext();
+        var botId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        var evaluatedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+
+        dbContext.RiskProfiles.Add(new RiskProfile
+        {
+            OwnerUserId = "user-multi-symbol",
+            ProfileName = "Pilot",
+            MaxDailyLossPercentage = 5m,
+            MaxPositionSizePercentage = 100m,
+            MaxLeverage = 2m,
+            MaxConcurrentPositions = 1
+        });
+        dbContext.ExchangeBalances.Add(new ExchangeBalance
+        {
+            ExchangeAccountId = exchangeAccountId,
+            OwnerUserId = "user-multi-symbol",
+            Plane = ExchangeDataPlane.Futures,
+            Asset = "USDT",
+            WalletBalance = 1000m,
+            CrossWalletBalance = 1000m,
+            AvailableBalance = 1000m,
+            MaxWithdrawAmount = 1000m,
+            ExchangeUpdatedAtUtc = evaluatedAtUtc
+        });
+        await dbContext.SaveChangesAsync();
+
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            hostEnvironment: new TestHostEnvironment(Environments.Development),
+            riskPolicyEvaluator: new RiskPolicyEvaluator(
+                dbContext,
+                timeProvider,
+                NullLogger<RiskPolicyEvaluator>.Instance),
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                AllowedUserIds = ["user-multi-symbol"],
+                AllowedBotIds = [botId.ToString("N")],
+                AllowedSymbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+                MaxOpenPositionsPerUser = 1,
+                PerBotCooldownSeconds = 300,
+                PerSymbolCooldownSeconds = 300,
+                MaxOrderNotional = 200m,
+                MaxDailyLossPercentage = 5m
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-multi-symbol",
+                "BTCUSDT",
+                ExecutionEnvironment.Live,
+                ExecutionOrderSide.Buy,
+                0.002m,
+                65000m,
+                BotId: botId,
+                StrategyKey: "pilot-core",
+                Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                TradingStrategyId: Guid.NewGuid(),
+                TradingStrategyVersionId: Guid.NewGuid(),
+                Timeframe: "1m"),
+            CancellationToken.None);
+
+        Assert.False(result.IsBlocked);
+        Assert.Null(result.BlockCode);
+    }
+
+    [Fact]
     public async Task EvaluateAsync_BlocksWhenBotCooldownIsActive()
     {
         await using var dbContext = CreateDbContext();
