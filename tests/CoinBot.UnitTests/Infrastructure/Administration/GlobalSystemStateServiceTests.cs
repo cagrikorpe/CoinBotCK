@@ -1,5 +1,6 @@
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.DataScope;
+using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
 using CoinBot.Infrastructure.Auditing;
@@ -21,6 +22,36 @@ public sealed class GlobalSystemStateServiceTests
         Assert.Equal(GlobalSystemStateKind.Active, snapshot.State);
         Assert.Equal("SYSTEM_ACTIVE", snapshot.ReasonCode);
         Assert.False(snapshot.IsPersisted);
+    }
+
+
+    [Fact]
+    public async Task GetSnapshotAsync_ResetsExpiredAutomaticState_ToActiveDefault()
+    {
+        await using var harness = CreateHarness();
+        harness.DbContext.GlobalSystemStates.Add(new GlobalSystemState
+        {
+            Id = GlobalSystemStateDefaults.SingletonId,
+            State = GlobalSystemStateKind.Degraded,
+            ReasonCode = "AUTONOMY_BREAKER_ORDEREXECUTION",
+            Message = "Expired breaker cooldown.",
+            Source = "Autonomy.DependencyBreaker",
+            IsManualOverride = false,
+            ExpiresAtUtc = new DateTime(2026, 3, 24, 11, 59, 0, DateTimeKind.Utc),
+            UpdatedAtUtc = new DateTime(2026, 3, 24, 11, 55, 0, DateTimeKind.Utc),
+            UpdatedByUserId = "system:autonomy",
+            Version = 7
+        });
+        await harness.DbContext.SaveChangesAsync();
+
+        var snapshot = await harness.Service.GetSnapshotAsync();
+        var entity = await harness.DbContext.GlobalSystemStates.SingleAsync();
+
+        Assert.Equal(GlobalSystemStateKind.Active, snapshot.State);
+        Assert.Equal("SYSTEM_ACTIVE", snapshot.ReasonCode);
+        Assert.Equal(GlobalSystemStateKind.Active, entity.State);
+        Assert.Null(entity.ExpiresAtUtc);
+        Assert.Equal("system:global-state-expiry", entity.UpdatedByUserId);
     }
 
     [Fact]

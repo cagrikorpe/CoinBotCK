@@ -786,6 +786,103 @@ public sealed class ExecutionEngineTests
     }
 
     [Fact]
+    public async Task DispatchAsync_AllowsReduceOnlyClose_WhenLiveExposureIsOnlyVisibleThroughSubmittedMarketOrderFallback()
+    {
+        await using var harness = CreateHarness();
+        var strategyId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        await SeedUserAsync(harness.DbContext, "user-reduce-live-fallback");
+        await SeedLiveStrategyAsync(harness.DbContext, "user-reduce-live-fallback", strategyId, "reduce-live-fallback");
+        await SeedExchangeAccountAsync(harness.DbContext, "user-reduce-live-fallback", exchangeAccountId);
+        await SeedSubmittedLiveExecutionOrderAsync(harness.DbContext, "user-reduce-live-fallback", exchangeAccountId, "BTCUSDT", 0.05m, ExecutionOrderSide.Buy, reduceOnly: false);
+        await PrimeFreshMarketDataAsync(harness, "corr-reduce-live-fallback-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-reduce-live-fallback",
+            context: "Open live reduce-only execution",
+            correlationId: "corr-reduce-live-fallback-2");
+        await harness.SwitchService.SetDemoModeAsync(
+            isEnabled: false,
+            actor: "admin-reduce-live-fallback",
+            liveApproval: new TradingModeLiveApproval("reduce-live-fallback-approval"),
+            context: "Switch to live reduce-only",
+            correlationId: "corr-reduce-live-fallback-3");
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-reduce-live-fallback",
+                strategyId: strategyId,
+                strategyKey: "reduce-live-fallback",
+                exchangeAccountId: exchangeAccountId,
+                isDemo: null) with
+            {
+                ReduceOnly = true,
+                Side = ExecutionOrderSide.Sell,
+                Quantity = 0.02m,
+                Price = 65000m
+            },
+            CancellationToken.None);
+
+        Assert.Equal(ExecutionOrderState.Submitted, result.Order.State);
+        Assert.True(result.Order.ReduceOnly);
+        Assert.True(result.Order.SubmittedToBroker);
+        Assert.Equal(ExecutionRejectionStage.None, result.Order.RejectionStage);
+        Assert.True(result.Order.CooldownApplied);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.NotNull(harness.PrivateRestClient.LastPlacementRequest);
+        Assert.True(harness.PrivateRestClient.LastPlacementRequest.ReduceOnly);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_AllowsReduceOnlyPartialClose_WhenAnotherAccountOffsetsOwnerLevelNetQuantity()
+    {
+        await using var harness = CreateHarness();
+        var strategyId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        await SeedUserAsync(harness.DbContext, "user-reduce-live-account-scope");
+        await SeedLiveStrategyAsync(harness.DbContext, "user-reduce-live-account-scope", strategyId, "reduce-live-account-scope");
+        await SeedExchangeAccountAsync(harness.DbContext, "user-reduce-live-account-scope", exchangeAccountId);
+        await SeedExchangePositionAsync(harness.DbContext, "user-reduce-live-account-scope", exchangeAccountId, "BTCUSDT", "LONG", 0.05m, 65000m);
+        await SeedExchangePositionAsync(harness.DbContext, "user-reduce-live-account-scope", Guid.NewGuid(), "BTCUSDT", "SHORT", 0.05m, 65100m);
+        await PrimeFreshMarketDataAsync(harness, "corr-reduce-live-account-scope-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-reduce-live-account-scope",
+            context: "Open live reduce-only execution",
+            correlationId: "corr-reduce-live-account-scope-2");
+        await harness.SwitchService.SetDemoModeAsync(
+            isEnabled: false,
+            actor: "admin-reduce-live-account-scope",
+            liveApproval: new TradingModeLiveApproval("reduce-live-account-scope-approval"),
+            context: "Switch to live reduce-only",
+            correlationId: "corr-reduce-live-account-scope-3");
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-reduce-live-account-scope",
+                strategyId: strategyId,
+                strategyKey: "reduce-live-account-scope",
+                exchangeAccountId: exchangeAccountId,
+                isDemo: null) with
+            {
+                ReduceOnly = true,
+                Side = ExecutionOrderSide.Sell,
+                Quantity = 0.02m,
+                Price = 65000m
+            },
+            CancellationToken.None);
+
+        Assert.Equal(ExecutionOrderState.Submitted, result.Order.State);
+        Assert.True(result.Order.ReduceOnly);
+        Assert.True(result.Order.SubmittedToBroker);
+        Assert.Equal(ExecutionRejectionStage.None, result.Order.RejectionStage);
+        Assert.Equal(exchangeAccountId, result.Order.ExchangeAccountId);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.NotNull(harness.PrivateRestClient.LastPlacementRequest);
+        Assert.True(harness.PrivateRestClient.LastPlacementRequest.ReduceOnly);
+    }
+
+    [Fact]
     public async Task DispatchAsync_FailsPostSubmit_WithRetryEligibleAndCooldownApplied_WhenBrokerRequestFails()
     {
         await using var harness = CreateHarness(environmentName: Environments.Development);
@@ -1438,6 +1535,51 @@ public sealed class ExecutionEngineTests
 
         await dbContext.SaveChangesAsync();
     }
+
+    private static async Task SeedSubmittedLiveExecutionOrderAsync(
+        ApplicationDbContext dbContext,
+        string ownerUserId,
+        Guid exchangeAccountId,
+        string symbol,
+        decimal quantity,
+        ExecutionOrderSide side,
+        bool reduceOnly)
+    {
+        var orderId = Guid.NewGuid();
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = orderId,
+            OwnerUserId = ownerUserId,
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            StrategyKey = "reduce-live-fallback",
+            Symbol = symbol,
+            Timeframe = "1m",
+            BaseAsset = symbol[..^4],
+            QuoteAsset = "USDT",
+            Side = side,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = quantity,
+            Price = 65000m,
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            ReduceOnly = reduceOnly,
+            SubmittedToBroker = true,
+            State = ExecutionOrderState.Submitted,
+            IdempotencyKey = $"seed-live-{orderId:N}",
+            RootCorrelationId = "seed-live-correlation-1",
+            ExternalOrderId = $"binance:{orderId:N}",
+            SubmittedAtUtc = new DateTime(2026, 3, 22, 11, 55, 0, DateTimeKind.Utc),
+            LastStateChangedAtUtc = new DateTime(2026, 3, 22, 11, 55, 0, DateTimeKind.Utc)
+        });
+
+        await dbContext.SaveChangesAsync();
+    }
+
 
     private static async Task SeedDemoWalletAsync(
         ApplicationDbContext dbContext,

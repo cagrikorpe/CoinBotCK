@@ -21,7 +21,8 @@ public sealed record UserDashboardPortfolioSnapshot(
     IReadOnlyCollection<UserDashboardBalanceSnapshot> Balances,
     IReadOnlyCollection<UserDashboardPositionSnapshot> Positions,
     IReadOnlyCollection<UserDashboardTradeHistoryRowSnapshot> TradeHistory,
-    IReadOnlyCollection<UserDashboardSpotHoldingSnapshot>? SpotHoldings = null);
+    IReadOnlyCollection<UserDashboardSpotHoldingSnapshot>? SpotHoldings = null,
+    UserDashboardExpectancySnapshot? Expectancy = null);
 
 public sealed record UserDashboardBalanceSnapshot(
     string Asset,
@@ -52,6 +53,21 @@ public sealed record UserDashboardPositionSnapshot(
     decimal? MarkPrice = null,
     decimal? AvailableQuantity = null,
     decimal? LockedQuantity = null);
+
+public sealed record UserDashboardExpectancySnapshot(
+    bool HasData,
+    int ClosedTradeCount,
+    int WinningTradeCount,
+    int LosingTradeCount,
+    int BreakEvenTradeCount,
+    decimal WinRatePercentage,
+    decimal AverageWin,
+    decimal AverageLoss,
+    decimal Expectancy,
+    decimal? ProfitFactor,
+    string Summary,
+    int LongClosedTradeCount = 0,
+    int ShortClosedTradeCount = 0);
 
 public sealed record UserDashboardTradeHistoryRowSnapshot(
     Guid OrderId,
@@ -89,7 +105,10 @@ public sealed record UserDashboardTradeHistoryRowSnapshot(
     decimal? FilledQuantity = null,
     decimal? CumulativeQuoteQuantity = null,
     int FillCount = 0,
-    string? TradeIdsSummary = null);
+    string? TradeIdsSummary = null,
+    string? Direction = null,
+    string? TradeAction = null,
+    bool IsClosingTrade = false);
 
 public sealed record UserDashboardSpotHoldingSnapshot(
     Guid ExchangeAccountId,

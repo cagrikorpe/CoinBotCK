@@ -1,5 +1,6 @@
 using CoinBot.Contracts.Common;
 using CoinBot.Infrastructure.Identity;
+using System.Data;
 using System.Data.Common;
 using Microsoft.Data.SqlClient;
 using Microsoft.AspNetCore.Identity;
@@ -45,6 +46,7 @@ public static class IdentitySeedData
         }
 
         await dbContext.Database.MigrateAsync(cancellationToken);
+        await EnsureTradingBotDirectionModeColumnAsync(dbContext, logger, cancellationToken);
 
         foreach (var roleName in ApplicationRoles.All)
         {
@@ -115,6 +117,61 @@ public static class IdentitySeedData
             connectionTarget.DataSource,
             connectionTarget.Database,
             await roleManager.Roles.CountAsync(cancellationToken));
+    }
+
+    private static async Task EnsureTradingBotDirectionModeColumnAsync(
+        ApplicationDbContext dbContext,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        if (!string.Equals(dbContext.Database.ProviderName, "Microsoft.EntityFrameworkCore.SqlServer", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var connection = dbContext.Database.GetDbConnection();
+        var shouldCloseConnection = connection.State != ConnectionState.Open;
+
+        if (shouldCloseConnection)
+        {
+            await dbContext.Database.OpenConnectionAsync(cancellationToken);
+        }
+
+        try
+        {
+            using var existsCommand = connection.CreateCommand();
+            existsCommand.CommandText = "SELECT COL_LENGTH('dbo.TradingBots', 'DirectionMode')";
+            var existsResult = await existsCommand.ExecuteScalarAsync(cancellationToken);
+
+            if (existsResult is not null && existsResult is not DBNull)
+            {
+                return;
+            }
+
+            logger.LogWarning(
+                "TradingBots.DirectionMode column is missing. Applying startup schema self-heal to keep runtime aligned with the current model.");
+
+            await dbContext.Database.ExecuteSqlRawAsync(
+                """
+                IF COL_LENGTH('dbo.TradingBots', 'DirectionMode') IS NULL
+                BEGIN
+                    ALTER TABLE [dbo].[TradingBots]
+                    ADD [DirectionMode] nvarchar(16) NOT NULL
+                        CONSTRAINT [DF_TradingBots_DirectionMode] DEFAULT N'LongOnly';
+                END
+                """,
+                cancellationToken);
+
+            logger.LogInformation(
+                "TradingBots.DirectionMode startup schema self-heal completed successfully.");
+        }
+        finally
+        {
+            if (shouldCloseConnection)
+            {
+                await dbContext.Database.CloseConnectionAsync();
+            }
+        }
     }
 
     private static async Task EnsureRoleClaimsAsync(RoleManager<IdentityRole> roleManager, IdentityRole role, string roleName)

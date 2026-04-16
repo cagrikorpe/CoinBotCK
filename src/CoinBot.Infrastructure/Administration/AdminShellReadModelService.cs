@@ -17,27 +17,27 @@ public sealed class AdminShellReadModelService(
         .SetSize(1)
         .SetAbsoluteExpiration(TimeSpan.FromSeconds(3));
 
-    public Task<AdminShellHealthSnapshot> GetHealthSnapshotAsync(CancellationToken cancellationToken = default)
+    public async Task<AdminShellHealthSnapshot> GetHealthSnapshotAsync(CancellationToken cancellationToken = default)
     {
-        return memoryCache.GetOrCreateAsync(
-                CacheKey,
-                async entry =>
-                {
-                    entry.SetOptions(SnapshotCacheOptions);
+        if (memoryCache.TryGetValue<AdminShellHealthSnapshot>(CacheKey, out var cachedSnapshot) &&
+            cachedSnapshot is not null)
+        {
+            return cachedSnapshot;
+        }
 
-                    var systemState = await dbContext.GlobalSystemStates
-                        .AsNoTracking()
-                        .SingleOrDefaultAsync(entity => entity.Id == GlobalSystemStateDefaults.SingletonId, cancellationToken);
-                    var executionSwitch = await dbContext.GlobalExecutionSwitches
-                        .AsNoTracking()
-                        .SingleOrDefaultAsync(
-                            entity => entity.Id == GlobalExecutionSwitchDefaults.SingletonId &&
-                                      !entity.IsDeleted,
-                            cancellationToken);
+        var systemState = await dbContext.GlobalSystemStates
+            .AsNoTracking()
+            .SingleOrDefaultAsync(entity => entity.Id == GlobalSystemStateDefaults.SingletonId, cancellationToken);
+        var executionSwitch = await dbContext.GlobalExecutionSwitches
+            .AsNoTracking()
+            .SingleOrDefaultAsync(
+                entity => entity.Id == GlobalExecutionSwitchDefaults.SingletonId &&
+                          !entity.IsDeleted,
+                cancellationToken);
 
-                    return BuildSnapshot(systemState, executionSwitch);
-                },
-                SnapshotCacheOptions)!;
+        var snapshot = BuildSnapshot(systemState, executionSwitch);
+        memoryCache.Set(CacheKey, snapshot, SnapshotCacheOptions);
+        return snapshot;
     }
 
     private static AdminShellHealthSnapshot BuildSnapshot(

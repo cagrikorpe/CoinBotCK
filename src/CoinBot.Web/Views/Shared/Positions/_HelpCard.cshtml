@@ -3,6 +3,11 @@
 @{
     var totalTone = Model.TotalPnl >= 0m ? "cb-text-positive" : "cb-text-negative";
     var balanceRows = Model.Balances.OrderBy(item => item.Asset, StringComparer.Ordinal).Take(6).ToArray();
+    var expectancy = Model.Expectancy;
+    var expectancyTone = (expectancy?.Expectancy ?? 0m) >= 0m ? "cb-text-positive" : "cb-text-negative";
+    var profitFactorText = expectancy?.ProfitFactor == decimal.MaxValue
+        ? "∞"
+        : expectancy?.ProfitFactor?.ToString("0.####") ?? "n/a";
 }
 <div class="card card-custom gutter-b cb-card" data-cb-user-exec-pnl>
     <div class="card-header border-0 pt-6">
@@ -19,6 +24,37 @@
             <div class="cb-stat-row"><span class="cb-stat-label">Açık</span><span class="cb-mono">@($"{(Model.UnrealizedPnl >= 0m ? "+" : string.Empty)}{Model.UnrealizedPnl:0.####}")</span></div>
             <div class="cb-stat-row"><span class="cb-stat-label">Geçmiş</span><span class="cb-mono">@($"{(Model.RealizedPnl >= 0m ? "+" : string.Empty)}{Model.RealizedPnl:0.####}")</span></div>
         </div>
+    </div>
+</div>
+
+<div class="card card-custom gutter-b cb-card" data-cb-user-exec-expectancy>
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div>
+                <h3 class="card-label font-weight-bolder mb-1">Expectancy</h3>
+                <div class="text-muted font-size-sm">Kapanmış işlemlerden türetilen temel kalite metrikleri.</div>
+            </div>
+        </div>
+    </div>
+    <div class="card-body pt-2">
+        @if (expectancy is null || !expectancy.HasData)
+        {
+            <div class="cb-validation-summary cb-validation-summary-info mb-0" role="status">Expectancy hazır değil. Kapanmış işlem verisi bekleniyor.</div>
+        }
+        else
+        {
+            <div class="cb-stat-list">
+                <div class="cb-stat-row"><span class="cb-stat-label">Closed trades</span><span class="cb-mono">@expectancy.ClosedTradeCount</span></div>
+                <div class="cb-stat-row"><span class="cb-stat-label">Long / Short closed</span><span class="cb-mono">@($"{expectancy.LongClosedTradeCount} / {expectancy.ShortClosedTradeCount}")</span></div>
+                <div class="cb-stat-row"><span class="cb-stat-label">Win / Loss / BE</span><span class="cb-mono">@($"{expectancy.WinningTradeCount} / {expectancy.LosingTradeCount} / {expectancy.BreakEvenTradeCount}")</span></div>
+                <div class="cb-stat-row"><span class="cb-stat-label">Win rate</span><span class="cb-mono">@($"{expectancy.WinRatePercentage:0.##}%")</span></div>
+                <div class="cb-stat-row"><span class="cb-stat-label">Average win</span><span class="cb-mono cb-text-positive">@($"+{expectancy.AverageWin:0.####}")</span></div>
+                <div class="cb-stat-row"><span class="cb-stat-label">Average loss</span><span class="cb-mono cb-text-negative">@($"-{expectancy.AverageLoss:0.####}")</span></div>
+                <div class="cb-stat-row"><span class="cb-stat-label">Profit factor</span><span class="cb-mono">@profitFactorText</span></div>
+                <div class="cb-stat-row"><span class="cb-stat-label">Expectancy</span><span class="cb-mono @expectancyTone">@($"{(expectancy.Expectancy >= 0m ? "+" : string.Empty)}{expectancy.Expectancy:0.####}")</span></div>
+            </div>
+            <div class="text-muted font-size-sm mt-3">@expectancy.Summary</div>
+        }
     </div>
 </div>
 

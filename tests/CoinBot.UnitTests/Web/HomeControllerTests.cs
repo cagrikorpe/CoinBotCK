@@ -84,6 +84,8 @@ public sealed class HomeControllerTests
         Assert.Equal("LONG", model.AiFeed[0].StrategyDirection);
         Assert.Single(model.RecentOrders);
         Assert.Contains("Fill 1", model.RecentOrders[0].FillSummary, StringComparison.Ordinal);
+        Assert.Equal("Short Exit", model.RecentOrders[0].Side);
+        Assert.Equal("danger", model.RecentOrders[0].DirectionTone);
         Assert.Equal("+15.5 USDT", model.Performance.OpenPositionEffect);
         Assert.Equal("+12.5 USDT", model.Performance.ClosedTradeEffect);
         Assert.True(model.Performance.HasSufficientData);
@@ -364,7 +366,10 @@ public sealed class HomeControllerTests
                     FilledQuantity: 0.01m,
                     CumulativeQuoteQuantity: 640m,
                     FillCount: 1,
-                    TradeIdsSummary: "77")
+                    TradeIdsSummary: "77",
+                    Direction: "Short",
+                    TradeAction: "Short Exit",
+                    IsClosingTrade: true)
             ]);
 
         public Task<UserDashboardPortfolioSnapshot> GetSnapshotAsync(string userId, CancellationToken cancellationToken = default)

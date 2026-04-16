@@ -1,0 +1,150 @@
+--- /mnt/data/work/orig/tests/CoinBot.UnitTests/Infrastructure/Jobs/BotWorkerJobProcessorTests.cs	2026-04-15 18:44:56.000000000 +0000
++++ /mnt/data/work/repo/tests/CoinBot.UnitTests/Infrastructure/Jobs/BotWorkerJobProcessorTests.cs	2026-04-15 17:21:20.969897254 +0000
+@@ -564,6 +564,139 @@
+     }
+ 
+     [Fact]
++    public async Task ProcessAsync_PersistsSkippedExitDecision_WhenNoOpenPositionExists()
++    {
++        await using var harness = CreateHarness();
++        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
++        await SetPublishedStrategyDefinitionAsync(
++            harness.DbContext,
++            bot,
++            """
++            {
++              "schemaVersion": 1,
++              "exit": {
++                "operator": "all",
++                "rules": [
++                  {
++                    "path": "indicator.sampleCount",
++                    "comparison": "greaterThanOrEqual",
++                    "value": 100
++                  }
++                ]
++              },
++              "risk": {
++                "operator": "all",
++                "rules": [
++                  {
++                    "path": "indicator.sampleCount",
++                    "comparison": "greaterThanOrEqual",
++                    "value": 100
++                  }
++                ]
++              }
++            }
++            """);
++        ConfigurePilotScope(harness, bot);
++        harness.PilotOptions.PilotActivationEnabled = true;
++        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-exit-no-position-1", symbol: "SOLUSDT");
++        await harness.SwitchService.SetTradeMasterStateAsync(
++            TradeMasterSwitchState.Armed,
++            actor: "admin-bot",
++            context: "Execution open",
++            correlationId: "corr-bot-exit-no-position-2");
++
++        var result = await harness.Processor.ProcessAsync(
++            bot,
++            "job-bot-exit-no-position-1",
++            CancellationToken.None);
++
++        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
++        var decisionTraces = await harness.DbContext.DecisionTraces
++            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
++            .OrderBy(entity => entity.CreatedAtUtc)
++            .ToListAsync();
++        var latestDecisionTrace = decisionTraces[^1];
++
++        Assert.True(result.IsSuccessful);
++        Assert.Equal(StrategySignalType.Exit, persistedSignal.SignalType);
++        Assert.Empty(harness.DbContext.ExecutionOrders);
++        Assert.Equal(2, decisionTraces.Count);
++        Assert.Equal("Persisted", decisionTraces[0].DecisionOutcome);
++        Assert.Equal("Allowed", decisionTraces[0].DecisionReasonCode);
++        Assert.Equal("Skipped", latestDecisionTrace.DecisionOutcome);
++        Assert.Equal("ExecutionSkip", latestDecisionTrace.DecisionReasonType);
++        Assert.Equal("NoOpenPositionForExit", latestDecisionTrace.DecisionReasonCode);
++    }
++
++    [Fact]
++    public async Task ProcessAsync_PersistsSkippedExitDecision_WhenClosableQuantityRoundsDownToZero()
++    {
++        await using var harness = CreateHarness();
++        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
++        await SetPublishedStrategyDefinitionAsync(
++            harness.DbContext,
++            bot,
++            """
++            {
++              "schemaVersion": 1,
++              "exit": {
++                "operator": "all",
++                "rules": [
++                  {
++                    "path": "indicator.sampleCount",
++                    "comparison": "greaterThanOrEqual",
++                    "value": 100
++                  }
++                ]
++              },
++              "risk": {
++                "operator": "all",
++                "rules": [
++                  {
++                    "path": "indicator.sampleCount",
++                    "comparison": "greaterThanOrEqual",
++                    "value": 100
++                  }
++                ]
++              }
++            }
++            """);
++        await SeedExchangePositionAsync(
++            harness.DbContext,
++            bot,
++            quantity: 0.0004m,
++            entryPrice: 80m);
++        ConfigurePilotScope(harness, bot);
++        harness.PilotOptions.PilotActivationEnabled = true;
++        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-exit-no-qty-1", symbol: "SOLUSDT");
++        await harness.SwitchService.SetTradeMasterStateAsync(
++            TradeMasterSwitchState.Armed,
++            actor: "admin-bot",
++            context: "Execution open",
++            correlationId: "corr-bot-exit-no-qty-2");
++
++        var result = await harness.Processor.ProcessAsync(
++            bot,
++            "job-bot-exit-no-qty-1",
++            CancellationToken.None);
++
++        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
++        var decisionTraces = await harness.DbContext.DecisionTraces
++            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
++            .OrderBy(entity => entity.CreatedAtUtc)
++            .ToListAsync();
++        var latestDecisionTrace = decisionTraces[^1];
++
++        Assert.True(result.IsSuccessful);
++        Assert.Equal(StrategySignalType.Exit, persistedSignal.SignalType);
++        Assert.Empty(harness.DbContext.ExecutionOrders);
++        Assert.Equal(2, decisionTraces.Count);
++        Assert.Equal("Skipped", latestDecisionTrace.DecisionOutcome);
++        Assert.Equal("ExecutionSkip", latestDecisionTrace.DecisionReasonType);
++        Assert.Equal("NoClosableQuantityForExit", latestDecisionTrace.DecisionReasonCode);
++    }
++
++    [Fact]
+     public async Task ProcessAsync_RefreshesSymbolScopedLatencyFromHistoricalBackfill_WhenHeartbeatWasNotPrimed()
+     {
+         await using var harness = CreateHarness();
+@@ -1106,6 +1239,7 @@
+             circuitBreaker,
+             featureSnapshotService,
+             aiShadowDecisionService,
++            traceService,
+             correlationContextAccessor,
+             Options.Create(pilotOptions),
+             Options.Create(resolvedAiSignalOptions),

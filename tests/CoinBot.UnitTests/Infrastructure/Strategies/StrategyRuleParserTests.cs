@@ -109,6 +109,69 @@ public sealed class StrategyRuleParserTests
         Assert.True(condition.Metadata?.Enabled);
     }
 
+
+    [Fact]
+    public void Parse_ParsesShortDirection_AndDefaultsToLongWhenMissing()
+    {
+        var parser = new StrategyRuleParser();
+
+        var shortDocument = parser.Parse(
+            """
+            {
+              "schemaVersion": 2,
+              "direction": "Short",
+              "entry": {
+                "path": "context.mode",
+                "comparison": "equals",
+                "value": "Live"
+              }
+            }
+            """);
+        var defaultDirectionDocument = parser.Parse(
+            """
+            {
+              "schemaVersion": 2,
+              "entry": {
+                "path": "context.mode",
+                "comparison": "equals",
+                "value": "Live"
+              }
+            }
+            """);
+
+        Assert.Equal(StrategyTradeDirection.Short, shortDocument.Direction);
+        Assert.Equal(StrategyTradeDirection.Long, defaultDirectionDocument.Direction);
+    }
+
+    [Fact]
+    public void Parse_ParsesDirectionalRoots_AndDefaultsDirectionToNeutral_WhenLegacyDirectionIsMissing()
+    {
+        var parser = new StrategyRuleParser();
+
+        var document = parser.Parse(
+            """
+            {
+              "schemaVersion": 2,
+              "longEntry": {
+                "path": "context.mode",
+                "comparison": "equals",
+                "value": "Live"
+              },
+              "shortExit": {
+                "path": "indicator.sampleCount",
+                "comparison": "greaterThanOrEqual",
+                "value": 100
+              }
+            }
+            """);
+
+        Assert.Equal(StrategyTradeDirection.Neutral, document.Direction);
+        Assert.NotNull(document.LongEntry);
+        Assert.NotNull(document.ShortExit);
+        Assert.Null(document.Entry);
+        Assert.Null(document.Exit);
+    }
+
     [Fact]
     public void Parse_RejectsUnsupportedSchemaVersion()
     {

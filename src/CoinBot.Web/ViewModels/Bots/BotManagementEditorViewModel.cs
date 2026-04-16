@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using CoinBot.Domain.Enums;
 
 namespace CoinBot.Web.ViewModels.Bots;
 
@@ -57,6 +58,9 @@ public sealed class BotManagementInputModel
     [Required(ErrorMessage = "Margin type zorunludur.")]
     [StringLength(32)]
     public string MarginType { get; set; } = "ISOLATED";
+
+    [Required(ErrorMessage = "Bot yön modu zorunludur.")]
+    public TradingBotDirectionMode DirectionMode { get; set; } = TradingBotDirectionMode.LongOnly;
 
     public bool IsEnabled { get; set; }
 }

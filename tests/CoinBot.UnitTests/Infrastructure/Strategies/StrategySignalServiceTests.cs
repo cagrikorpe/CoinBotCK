@@ -72,7 +72,8 @@ public sealed class StrategySignalServiceTests
         Assert.Equal(StrategySignalConfidenceBand.High, loadedSignal.ExplainabilityPayload.ConfidenceSnapshot.Band);
         Assert.False(loadedSignal.ExplainabilityPayload.ConfidenceSnapshot.IsVetoed);
         Assert.True(loadedSignal.ExplainabilityPayload.ConfidenceSnapshot.IsVirtualRiskCheck);
-        Assert.Equal("Entry signal created", loadedSignal.ExplainabilityPayload.UiLog.Title);
+        Assert.Equal("Entry (Long) signal created", loadedSignal.ExplainabilityPayload.UiLog.Title);
+        Assert.Contains("Direction Long", loadedSignal.ExplainabilityPayload.UiLog.Tags, StringComparer.Ordinal);
         Assert.Contains("RSI 28 <= 30", loadedSignal.ExplainabilityPayload.UiLog.Drivers, StringComparer.Ordinal);
         Assert.True(loadedSignal.ExplainabilityPayload.DuplicateSignalSuppression.Enabled);
         Assert.False(loadedSignal.ExplainabilityPayload.DuplicateSignalSuppression.WasSuppressed);
@@ -87,6 +88,64 @@ public sealed class StrategySignalServiceTests
         Assert.Contains("\"templateSource\":\"BuiltIn\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
         Assert.Contains("\"aggregateScore\":100", decisionTrace.SnapshotJson, StringComparison.Ordinal);
         Assert.Contains("\"passedRules\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GenerateAsync_PersistsShortEntrySignal_WithDirectionExplainability()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-signal-short", "short-reversal");
+        var version = CreateVersion(strategy, 1, CreateDefinitionJson(minimumSampleCount: 100, rsiThreshold: 30m, direction: "short"));
+
+        dbContext.TradingStrategies.Add(strategy);
+        dbContext.TradingStrategyVersions.Add(version);
+        dbContext.RiskProfiles.Add(CreateRiskProfile(strategy.OwnerUserId, "ShortProfile", 5m, 80m, 2m));
+        dbContext.DemoWallets.Add(CreateDemoWallet(strategy.OwnerUserId, "USDT", 10000m));
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext, timeProvider);
+        var result = await service.GenerateAsync(
+            new GenerateStrategySignalsRequest(
+                version.Id,
+                CreateContext(ExecutionEnvironment.Demo, sampleCount: 120, rsiValue: 28m)));
+
+        var signal = Assert.Single(result.Signals);
+        var loadedSignal = await service.GetAsync(signal.StrategySignalId);
+
+        Assert.NotNull(loadedSignal);
+        Assert.Equal(StrategyTradeDirection.Short, loadedSignal!.ExplainabilityPayload.RuleResultSnapshot.Direction);
+        Assert.Equal("Entry (Short) signal created", loadedSignal.ExplainabilityPayload.UiLog.Title);
+        Assert.Contains("Direction Short", loadedSignal.ExplainabilityPayload.UiLog.Tags, StringComparer.Ordinal);
+    }
+
+    [Fact]
+    public async Task GenerateAsync_PersistsShortEntrySignal_WhenDirectionalSchemaShortEntryMatches()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-signal-directional-short", "directional-short");
+        var version = CreateVersion(strategy, 1, CreateDirectionalSchemaDefinitionJson());
+
+        dbContext.TradingStrategies.Add(strategy);
+        dbContext.TradingStrategyVersions.Add(version);
+        dbContext.RiskProfiles.Add(CreateRiskProfile(strategy.OwnerUserId, "DirectionalShort", 5m, 80m, 2m));
+        dbContext.DemoWallets.Add(CreateDemoWallet(strategy.OwnerUserId, "USDT", 10000m));
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext, timeProvider);
+        var result = await service.GenerateAsync(
+            new GenerateStrategySignalsRequest(
+                version.Id,
+                CreateContext(ExecutionEnvironment.Demo, sampleCount: 120, rsiValue: 28m)));
+
+        var signal = Assert.Single(result.Signals);
+        var loadedSignal = await service.GetAsync(signal.StrategySignalId);
+
+        Assert.NotNull(loadedSignal);
+        Assert.Equal(StrategyTradeDirection.Short, loadedSignal!.ExplainabilityPayload.RuleResultSnapshot.Direction);
+        Assert.Equal(StrategyTradeDirection.Short, loadedSignal.ExplainabilityPayload.RuleResultSnapshot.EntryDirection);
+        Assert.Equal("Entry (Short) signal created", loadedSignal.ExplainabilityPayload.UiLog.Title);
     }
 
     [Fact]
@@ -435,7 +494,7 @@ public sealed class StrategySignalServiceTests
             Source: "UnitTest");
     }
 
-    private static string CreateDefinitionJson(int minimumSampleCount, decimal rsiThreshold = 30m)
+    private static string CreateDefinitionJson(int minimumSampleCount, decimal rsiThreshold = 30m, string direction = "long")
     {
         return
             $$"""
@@ -447,6 +506,7 @@ public sealed class StrategySignalServiceTests
                 "templateRevisionNumber": 1,
                 "templateSource": "BuiltIn"
               },
+              "direction": "{{direction}}",
               "entry": {
                 "operator": "all",
                 "rules": [
@@ -469,6 +529,52 @@ public sealed class StrategySignalServiceTests
                     "path": "indicator.sampleCount",
                     "comparison": "greaterThanOrEqual",
                     "value": {{minimumSampleCount}}
+                  }
+                ]
+              }
+            }
+            """;
+    }
+
+    private static string CreateDirectionalSchemaDefinitionJson()
+    {
+        return
+            """
+            {
+              "schemaVersion": 2,
+              "metadata": {
+                "templateKey": "directional-entry",
+                "templateName": "Directional Entry",
+                "templateRevisionNumber": 1,
+                "templateSource": "BuiltIn"
+              },
+              "longEntry": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Live"
+                  }
+                ]
+              },
+              "shortEntry": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Demo"
+                  }
+                ]
+              },
+              "risk": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 100
                   }
                 ]
               }

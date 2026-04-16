@@ -93,6 +93,29 @@ public sealed class DataLatencyCircuitBreakerTests
     }
 
     [Fact]
+    public async Task RecordHeartbeatAsync_ClassifiesStaleKlineHeartbeat_AsStaleLatency_InsteadOfClockDriftExceeded()
+    {
+        await using var harness = CreateHarness();
+
+        var snapshot = await harness.CircuitBreaker.RecordHeartbeatAsync(
+            new DataLatencyHeartbeat(
+                "binance:kline",
+                harness.TimeProvider.GetUtcNow().UtcDateTime.AddSeconds(-5),
+                Symbol: "BTCUSDT",
+                Timeframe: "1m",
+                ExpectedOpenTimeUtc: harness.TimeProvider.GetUtcNow().UtcDateTime.AddMinutes(1),
+                ContinuityGapCount: 0),
+            correlationId: "corr-latency-kline-stale-001");
+
+        Assert.Equal(DegradedModeStateCode.Degraded, snapshot.StateCode);
+        Assert.Equal(DegradedModeReasonCode.MarketDataLatencyBreached, snapshot.ReasonCode);
+        Assert.True(snapshot.SignalFlowBlocked);
+        Assert.True(snapshot.ExecutionFlowBlocked);
+        Assert.Equal(5000, snapshot.LatestClockDriftMilliseconds);
+        Assert.Equal("binance:kline", snapshot.LatestHeartbeatSource);
+    }
+
+    [Fact]
     public async Task GetSnapshotAsync_KeepsContinuityGuardActive_UntilHealthyHeartbeatClearsIt()
     {
         await using var harness = CreateHarness();
@@ -433,6 +456,111 @@ public sealed class DataLatencyCircuitBreakerTests
         Assert.Null(state.LatestContinuityRecoveredAtUtc);
     }
 
+    [Fact]
+    public async Task GetSnapshotAsync_KeepsLatestScopedHeartbeat_WhenSharedKlineProviderIsUnavailable()
+    {
+        var nowUtc = new DateTime(2026, 3, 22, 12, 0, 0, DateTimeKind.Utc);
+        var initialSnapshot = new MarketCandleSnapshot(
+            "btcusdt",
+            "1m",
+            nowUtc.AddMinutes(-1),
+            nowUtc.AddMilliseconds(-1),
+            100m,
+            101m,
+            99m,
+            100m,
+            10m,
+            true,
+            nowUtc,
+            "Binance.WebSocket.Kline");
+        var marketDataService = new FakeMarketDataService(
+            SharedMarketDataCacheReadResult<MarketCandleSnapshot>.HitFresh(
+                new SharedMarketDataCacheEntry<MarketCandleSnapshot>(
+                    SharedMarketDataCacheDataType.Kline,
+                    "BTCUSDT",
+                    "1m",
+                    UpdatedAtUtc: nowUtc,
+                    CachedAtUtc: nowUtc,
+                    FreshUntilUtc: nowUtc.AddSeconds(15),
+                    ExpiresAtUtc: nowUtc.AddMinutes(5),
+                    Source: initialSnapshot.Source,
+                    Payload: initialSnapshot)),
+            SharedMarketDataCacheReadResult<MarketCandleSnapshot>.ProviderUnavailable("redis unavailable"));
+        await using var harness = CreateHarness(marketDataService);
+
+        var firstSnapshot = await harness.CircuitBreaker.GetSnapshotAsync(
+            correlationId: "corr-shared-provider-001",
+            symbol: "BTCUSDT",
+            timeframe: "1m");
+        var secondSnapshot = await harness.CircuitBreaker.GetSnapshotAsync(
+            correlationId: "corr-shared-provider-002",
+            symbol: "BTCUSDT",
+            timeframe: "1m");
+
+        Assert.Equal(DegradedModeStateCode.Normal, firstSnapshot.StateCode);
+        Assert.Equal(DegradedModeStateCode.Normal, secondSnapshot.StateCode);
+        Assert.Equal(DegradedModeReasonCode.None, secondSnapshot.ReasonCode);
+        Assert.NotNull(secondSnapshot.LatestDataTimestampAtUtc);
+        Assert.Equal("shared-cache:kline:ProviderUnavailable", secondSnapshot.LatestHeartbeatSource);
+    }
+
+    [Fact]
+    public async Task GetSnapshotAsync_ClearsContinuityGuard_WhenSharedKlineAdvancesPastExpectedOpenTime()
+    {
+        var nowUtc = new DateTime(2026, 3, 22, 12, 0, 0, DateTimeKind.Utc);
+        var advancedSnapshot = new MarketCandleSnapshot(
+            "btcusdt",
+            "1m",
+            nowUtc.AddMinutes(1),
+            nowUtc.AddMinutes(2).AddMilliseconds(-1),
+            100m,
+            101m,
+            99m,
+            100m,
+            10m,
+            true,
+            nowUtc.AddMinutes(2),
+            "Binance.WebSocket.Kline");
+        var marketDataService = new FakeMarketDataService(
+            SharedMarketDataCacheReadResult<MarketCandleSnapshot>.HitFresh(
+                new SharedMarketDataCacheEntry<MarketCandleSnapshot>(
+                    SharedMarketDataCacheDataType.Kline,
+                    "BTCUSDT",
+                    "1m",
+                    UpdatedAtUtc: nowUtc.AddMinutes(2),
+                    CachedAtUtc: nowUtc.AddMinutes(2),
+                    FreshUntilUtc: nowUtc.AddMinutes(2).AddSeconds(15),
+                    ExpiresAtUtc: nowUtc.AddMinutes(7),
+                    Source: advancedSnapshot.Source,
+                    Payload: advancedSnapshot)));
+        await using var harness = CreateHarness(marketDataService);
+
+        await harness.CircuitBreaker.RecordHeartbeatAsync(
+            new DataLatencyHeartbeat(
+                "binance:kline",
+                nowUtc,
+                DegradedModeStateCode.Stopped,
+                DegradedModeReasonCode.CandleDataGapDetected,
+                Symbol: "BTCUSDT",
+                Timeframe: "1m",
+                ExpectedOpenTimeUtc: nowUtc.AddMinutes(1),
+                ContinuityGapCount: 1),
+            correlationId: "corr-continuity-shared-001");
+
+        harness.TimeProvider.Advance(TimeSpan.FromMinutes(2));
+
+        var recoveredSnapshot = await harness.CircuitBreaker.GetSnapshotAsync(
+            correlationId: "corr-continuity-shared-002",
+            symbol: "BTCUSDT",
+            timeframe: "1m");
+
+        Assert.Equal(DegradedModeStateCode.Normal, recoveredSnapshot.StateCode);
+        Assert.Equal(DegradedModeReasonCode.None, recoveredSnapshot.ReasonCode);
+        Assert.False(recoveredSnapshot.SignalFlowBlocked);
+        Assert.False(recoveredSnapshot.ExecutionFlowBlocked);
+        Assert.NotNull(recoveredSnapshot.LatestContinuityRecoveredAtUtc);
+    }
+
     private static TestHarness CreateHarness(IMarketDataService? marketDataService = null, DataLatencyGuardOptions? guardOptions = null)
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
@@ -454,7 +582,7 @@ public sealed class DataLatencyCircuitBreakerTests
 
     private sealed class FakeMarketDataService : IMarketDataService
     {
-        private readonly SharedMarketDataCacheReadResult<MarketCandleSnapshot> klineReadResult;
+        private readonly Queue<SharedMarketDataCacheReadResult<MarketCandleSnapshot>> klineReadResults;
 
         public FakeMarketDataService(MarketCandleSnapshot snapshot)
         {
@@ -463,22 +591,30 @@ public sealed class DataLatencyCircuitBreakerTests
                 Symbol = MarketDataSymbolNormalizer.Normalize(snapshot.Symbol)
             };
 
-            klineReadResult = SharedMarketDataCacheReadResult<MarketCandleSnapshot>.HitFresh(
-                new SharedMarketDataCacheEntry<MarketCandleSnapshot>(
-                    SharedMarketDataCacheDataType.Kline,
-                    normalizedSnapshot.Symbol,
-                    normalizedSnapshot.Interval,
-                    UpdatedAtUtc: normalizedSnapshot.ReceivedAtUtc,
-                    CachedAtUtc: normalizedSnapshot.ReceivedAtUtc,
-                    FreshUntilUtc: normalizedSnapshot.ReceivedAtUtc.AddSeconds(15),
-                    ExpiresAtUtc: normalizedSnapshot.ReceivedAtUtc.AddMinutes(5),
-                    Source: normalizedSnapshot.Source,
-                    Payload: normalizedSnapshot));
+            klineReadResults = new Queue<SharedMarketDataCacheReadResult<MarketCandleSnapshot>>(
+            [
+                SharedMarketDataCacheReadResult<MarketCandleSnapshot>.HitFresh(
+                    new SharedMarketDataCacheEntry<MarketCandleSnapshot>(
+                        SharedMarketDataCacheDataType.Kline,
+                        normalizedSnapshot.Symbol,
+                        normalizedSnapshot.Interval,
+                        UpdatedAtUtc: normalizedSnapshot.ReceivedAtUtc,
+                        CachedAtUtc: normalizedSnapshot.ReceivedAtUtc,
+                        FreshUntilUtc: normalizedSnapshot.ReceivedAtUtc.AddSeconds(15),
+                        ExpiresAtUtc: normalizedSnapshot.ReceivedAtUtc.AddMinutes(5),
+                        Source: normalizedSnapshot.Source,
+                        Payload: normalizedSnapshot))
+            ]);
         }
 
         public FakeMarketDataService(SharedMarketDataCacheReadResult<MarketCandleSnapshot> klineReadResult)
+            : this([klineReadResult])
         {
-            this.klineReadResult = klineReadResult;
+        }
+
+        public FakeMarketDataService(params SharedMarketDataCacheReadResult<MarketCandleSnapshot>[] klineReadResults)
+        {
+            this.klineReadResults = new Queue<SharedMarketDataCacheReadResult<MarketCandleSnapshot>>(klineReadResults);
         }
 
         public int SharedKlineReadCount { get; private set; }
@@ -499,7 +635,18 @@ public sealed class DataLatencyCircuitBreakerTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             SharedKlineReadCount++;
-            return ValueTask.FromResult(klineReadResult);
+
+            if (klineReadResults.Count == 0)
+            {
+                return ValueTask.FromResult(SharedMarketDataCacheReadResult<MarketCandleSnapshot>.Miss("No test kline result configured."));
+            }
+
+            if (klineReadResults.Count == 1)
+            {
+                return ValueTask.FromResult(klineReadResults.Peek());
+            }
+
+            return ValueTask.FromResult(klineReadResults.Dequeue());
         }
 
         public ValueTask<SymbolMetadataSnapshot?> GetSymbolMetadataAsync(string symbol, CancellationToken cancellationToken = default) =>

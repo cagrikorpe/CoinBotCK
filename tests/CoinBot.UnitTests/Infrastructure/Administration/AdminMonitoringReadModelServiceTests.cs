@@ -406,6 +406,25 @@ public sealed class AdminMonitoringReadModelServiceTests
         Assert.Equal("Binance.WebSocket.Ticker", tickerStream.SourceLayer);
     }
 
+
+    [Fact]
+    public async Task GetSnapshotAsync_UsesSizedCacheEntry_WhenMemoryCacheHasSizeLimit()
+    {
+        await using var dbContext = CreateDbContext();
+        using var memoryCache = new MemoryCache(new MemoryCacheOptions { SizeLimit = 128 });
+        var now = new DateTimeOffset(2026, 4, 14, 9, 0, 0, TimeSpan.Zero);
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            memoryCache,
+            new FixedTimeProvider(now),
+            Options.Create(new DataLatencyGuardOptions()));
+
+        var snapshot = await service.GetSnapshotAsync();
+        var cachedSnapshot = await service.GetSnapshotAsync();
+
+        Assert.Equal(snapshot.LastRefreshedAtUtc, cachedSnapshot.LastRefreshedAtUtc);
+    }
+
     private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => utcNow;

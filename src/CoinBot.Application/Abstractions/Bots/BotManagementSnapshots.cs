@@ -1,3 +1,5 @@
+using CoinBot.Domain.Enums;
+
 namespace CoinBot.Application.Abstractions.Bots;
 
 public sealed record BotManagementPageSnapshot(
@@ -58,7 +60,11 @@ public sealed record BotManagementBotSnapshot(
     DateTime? LastExecutionContinuityRecoveredAtUtc = null,
     string? LastShadowFinalAction = null,
     string? LastShadowNoSubmitReason = null,
-    DateTime? LastShadowEvaluatedAtUtc = null);
+    DateTime? LastShadowEvaluatedAtUtc = null,
+    string RuntimeDirectionLabel = "Neutral",
+    string RuntimeDirectionTone = "neutral",
+    string RuntimeDirectionSummary = "Henüz runtime yönü yok.",
+    TradingBotDirectionMode DirectionMode = TradingBotDirectionMode.LongOnly);
 
 public sealed record BotManagementEditorSnapshot(
     Guid? BotId,
@@ -75,7 +81,8 @@ public sealed record BotManagementDraftSnapshot(
     Guid? ExchangeAccountId,
     decimal? Leverage,
     string MarginType,
-    bool IsEnabled);
+    bool IsEnabled,
+    TradingBotDirectionMode DirectionMode = TradingBotDirectionMode.LongOnly);
 
 public sealed record BotStrategyOptionSnapshot(
     string StrategyKey,
@@ -96,7 +103,8 @@ public sealed record BotManagementSaveCommand(
     Guid? ExchangeAccountId,
     decimal? Leverage,
     string MarginType,
-    bool IsEnabled);
+    bool IsEnabled,
+    TradingBotDirectionMode DirectionMode = TradingBotDirectionMode.LongOnly);
 
 public sealed record BotManagementSaveResult(
     Guid? BotId,

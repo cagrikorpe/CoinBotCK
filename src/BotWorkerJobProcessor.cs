@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Execution;
@@ -49,21 +48,6 @@ public sealed class BotWorkerJobProcessor(
     private const string ExitSkippedDecisionReasonType = "ExecutionSkip";
     private const string NoOpenPositionForExitDecisionCode = "NoOpenPositionForExit";
     private const string NoClosableQuantityForExitDecisionCode = "NoClosableQuantityForExit";
-    private const string OrderExecutionBreakerActiveDecisionCode = "OrderExecutionBreakerActive";
-    private const string BotCooldownActiveDecisionCode = "BotCooldownActive";
-    private const string SymbolCooldownActiveDecisionCode = "SymbolCooldownActive";
-    private const string EntryNotionalSafetyBlockedDecisionCode = "EntryNotionalSafetyBlocked";
-    private const string ExitNotionalBelowMinimumDecisionCode = "ExitNotionalBelowMinimum";
-    private const string EntryQuantitySizingFailedDecisionCode = "EntryQuantitySizingFailedClosed";
-    private const string TakeProfitTriggeredDecisionCode = "TakeProfitTriggered";
-    private const string StopLossTriggeredDecisionCode = "StopLossTriggered";
-    private const string TrailingStopTriggeredDecisionCode = "TrailingStopTriggered";
-    private const string BreakEvenTriggeredDecisionCode = "BreakEvenTriggered";
-    private const string EntrySupersededByRuntimeExitQualityDecisionCode = "EntrySupersededByRuntimeExitQuality";
-    private const string ReverseBlockedOpenPositionExistsDecisionCode = "ReverseBlockedOpenPositionExists";
-    private const string EntryDirectionModeBlockedDecisionCode = "EntryDirectionModeBlocked";
-
-    private static readonly JsonSerializerOptions SerializerOptions = CreateSerializerOptions();
 
     private static readonly ExecutionOrderState[] ExistingSignalTerminalStates =
     [
@@ -323,70 +307,6 @@ public sealed class BotWorkerJobProcessor(
                 signal is not null);
             return BackgroundJobProcessResult.Success();
         }
-
-        var currentPosition = await ResolveCurrentPositionSnapshotAsync(
-            bot,
-            exchangeAccount,
-            normalizedSymbol,
-            currentNetQuantity,
-            marketState.ReferencePrice,
-            cancellationToken);
-
-        if (currentPosition is not null)
-        {
-            var activeReduceOnlyExitOrderExists = await HasActiveReduceOnlyExitOrderAsync(
-                bot,
-                exchangeAccount,
-                currentPosition,
-                cancellationToken);
-
-            if (!activeReduceOnlyExitOrderExists)
-            {
-                var runtimeExitQualityTrigger = await EvaluateRuntimeExitQualityAsync(
-                    bot,
-                    exchangeAccount,
-                    publishedVersion,
-                    signal,
-                    marketState,
-                    currentPosition,
-                    cancellationToken);
-
-                if (runtimeExitQualityTrigger is not null &&
-                    (signal is null || signal.SignalType != StrategySignalType.Exit))
-                {
-                    if (signal is not null && signal.SignalType == StrategySignalType.Entry)
-                    {
-                        await WriteEntrySkippedDecisionTraceAsync(
-                            bot.OwnerUserId,
-                            publishedVersion,
-                            signal,
-                            correlationId,
-                            strategyDecisionTrace,
-                            $"Entry signal was superseded because runtime exit quality triggered for {signal.Symbol}. {runtimeExitQualityTrigger.DecisionSummary}",
-                            currentNetQuantity,
-                            cancellationToken,
-                            decisionReasonCode: EntrySupersededByRuntimeExitQualityDecisionCode,
-                            referencePrice: marketState.ReferencePrice);
-                    }
-
-                    signal = await PersistRuntimeExitSignalAsync(
-                        bot,
-                        publishedVersion,
-                        signal,
-                        marketState,
-                        runtimeExitQualityTrigger,
-                        correlationId,
-                        cancellationToken);
-                    strategyDecisionTrace = await ResolveLatestDecisionTraceAsync(
-                        correlationId,
-                        bot.OwnerUserId,
-                        normalizedSymbol,
-                        timeframe,
-                        cancellationToken);
-                }
-            }
-        }
-
         if (signal is null)
         {
             logger.LogInformation(
@@ -415,100 +335,6 @@ public sealed class BotWorkerJobProcessor(
             return BackgroundJobProcessResult.Success();
         }
 
-        var entryDirection = signal.SignalType == StrategySignalType.Entry
-            ? ResolveSignalDirection(signal)
-            : StrategyTradeDirection.Neutral;
-
-        if (signal.SignalType == StrategySignalType.Entry &&
-            TryResolveEntryDirectionModeBlock(
-                bot,
-                entryDirection,
-                out var directionModeBlockSummary))
-        {
-            await WriteEntrySkippedDecisionTraceAsync(
-                bot.OwnerUserId,
-                publishedVersion,
-                signal,
-                correlationId,
-                strategyDecisionTrace,
-                directionModeBlockSummary!,
-                currentNetQuantity,
-                cancellationToken,
-                decisionReasonCode: EntryDirectionModeBlockedDecisionCode,
-                referencePrice: marketState.ReferencePrice);
-
-            logger.LogInformation(
-                "Bot execution pilot skipped entry dispatch for BotId {BotId} because bot direction mode {DirectionMode} blocked the {Direction} request. Symbol={Symbol} StrategySignalId={StrategySignalId}.",
-                bot.Id,
-                bot.DirectionMode,
-                entryDirection,
-                signal.Symbol,
-                signal.StrategySignalId);
-            return BackgroundJobProcessResult.Success();
-        }
-
-        if (signal.SignalType == StrategySignalType.Entry &&
-            TryResolveEntryRegimeBlock(
-                marketState,
-                entryDirection,
-                marketState.ReferencePrice,
-                out var regimeBlockSummary,
-                out var regimeDriverSummary))
-        {
-            await WriteEntrySkippedDecisionTraceAsync(
-                bot.OwnerUserId,
-                publishedVersion,
-                signal,
-                correlationId,
-                strategyDecisionTrace,
-                regimeBlockSummary!,
-                currentNetQuantity,
-                cancellationToken,
-                decisionReasonCode: ResolveEntryRegimeFilterBlockedDecisionCode(entryDirection),
-                referencePrice: marketState.ReferencePrice);
-
-            logger.LogInformation(
-                "Bot execution pilot skipped entry dispatch for BotId {BotId} because regime-aware entry discipline blocked the request. Symbol={Symbol}. Direction={Direction}. Drivers={Drivers} StrategySignalId={StrategySignalId}.",
-                bot.Id,
-                signal.Symbol,
-                entryDirection,
-                regimeDriverSummary,
-                signal.StrategySignalId);
-            return BackgroundJobProcessResult.Success();
-        }
-
-        if (signal.SignalType == StrategySignalType.Entry)
-        {
-            var hysteresisSummary = await ResolveEntryHysteresisSummaryAsync(
-                bot,
-                exchangeAccount,
-                entryDirection,
-                marketState.ReferencePrice,
-                cancellationToken);
-
-            if (!string.IsNullOrWhiteSpace(hysteresisSummary))
-            {
-                await WriteEntrySkippedDecisionTraceAsync(
-                    bot.OwnerUserId,
-                    publishedVersion,
-                    signal,
-                    correlationId,
-                    strategyDecisionTrace,
-                    hysteresisSummary,
-                    currentNetQuantity,
-                    cancellationToken,
-                    decisionReasonCode: ResolveEntryHysteresisActiveDecisionCode(entryDirection),
-                    referencePrice: marketState.ReferencePrice);
-
-                logger.LogInformation(
-                    "Bot execution pilot skipped entry dispatch for BotId {BotId} because hysteresis is active. Symbol={Symbol} StrategySignalId={StrategySignalId}.",
-                    bot.Id,
-                    signal.Symbol,
-                    signal.StrategySignalId);
-                return BackgroundJobProcessResult.Success();
-            }
-        }
-
         if (signal.SignalType == StrategySignalType.Exit && currentNetQuantity == 0m)
         {
             await WriteExitSkippedDecisionTraceAsync(
@@ -525,58 +351,6 @@ public sealed class BotWorkerJobProcessor(
             logger.LogInformation(
                 "Bot execution pilot skipped exit dispatch for BotId {BotId} because no open position exists for {Symbol}. StrategySignalId={StrategySignalId}.",
                 bot.Id,
-                signal.Symbol,
-                signal.StrategySignalId);
-            return BackgroundJobProcessResult.Success();
-        }
-
-        if (signal.SignalType == StrategySignalType.Entry &&
-            currentNetQuantity != 0m &&
-            IsActionableDirection(entryDirection))
-        {
-            var currentPositionDirection = currentPosition?.Direction
-                ?? (currentNetQuantity > 0m ? StrategyTradeDirection.Long : StrategyTradeDirection.Short);
-
-            if (currentPositionDirection == entryDirection)
-            {
-                await WriteEntrySkippedDecisionTraceAsync(
-                    bot.OwnerUserId,
-                    publishedVersion,
-                    signal,
-                    correlationId,
-                    strategyDecisionTrace,
-                    $"Entry signal was suppressed because an open {entryDirection.ToString().ToLowerInvariant()} position already exists for {signal.Symbol} on the selected exchange account.",
-                    currentNetQuantity,
-                    cancellationToken,
-                    decisionReasonCode: ResolveSameDirectionEntrySuppressedDecisionCode(entryDirection),
-                    referencePrice: marketState.ReferencePrice);
-
-                logger.LogInformation(
-                    "Bot execution pilot suppressed same-direction entry for BotId {BotId} because an open {Direction} position already exists for {Symbol}. StrategySignalId={StrategySignalId}.",
-                    bot.Id,
-                    entryDirection,
-                    signal.Symbol,
-                    signal.StrategySignalId);
-                return BackgroundJobProcessResult.Success();
-            }
-
-            await WriteEntrySkippedDecisionTraceAsync(
-                bot.OwnerUserId,
-                publishedVersion,
-                signal,
-                correlationId,
-                strategyDecisionTrace,
-                $"Entry signal was suppressed because reverse entries are disabled. CurrentPositionDirection={currentPositionDirection}; RequestedEntryDirection={entryDirection}; Symbol={signal.Symbol}.",
-                currentNetQuantity,
-                cancellationToken,
-                decisionReasonCode: ReverseBlockedOpenPositionExistsDecisionCode,
-                referencePrice: marketState.ReferencePrice);
-
-            logger.LogInformation(
-                "Bot execution pilot suppressed reverse entry for BotId {BotId} because reverse flow is disabled. CurrentPositionDirection={CurrentDirection} RequestedEntryDirection={RequestedDirection} Symbol={Symbol} StrategySignalId={StrategySignalId}.",
-                bot.Id,
-                currentPositionDirection,
-                entryDirection,
                 signal.Symbol,
                 signal.StrategySignalId);
             return BackgroundJobProcessResult.Success();
@@ -628,31 +402,6 @@ public sealed class BotWorkerJobProcessor(
                 return BackgroundJobProcessResult.Success();
             }
 
-            if (signal.SignalType == StrategySignalType.Entry &&
-                (string.Equals(exception.ReasonCode, EntryNotionalSafetyBlockedDecisionCode, StringComparison.Ordinal) ||
-                 string.Equals(exception.ReasonCode, EntryQuantitySizingFailedDecisionCode, StringComparison.Ordinal)))
-            {
-                await WriteEntrySkippedDecisionTraceAsync(
-                    bot.OwnerUserId,
-                    publishedVersion,
-                    signal,
-                    correlationId,
-                    strategyDecisionTrace,
-                    exception.Message,
-                    currentNetQuantity,
-                    cancellationToken,
-                    decisionReasonCode: exception.ReasonCode);
-
-                logger.LogInformation(
-                    exception,
-                    "Bot execution pilot skipped entry dispatch for BotId {BotId} because entry sizing failed closed for {Symbol}. StrategySignalId={StrategySignalId} ReasonCode={ReasonCode}.",
-                    bot.Id,
-                    normalizedSymbol,
-                    signal.StrategySignalId,
-                    exception.ReasonCode);
-                return BackgroundJobProcessResult.Success();
-            }
-
             logger.LogWarning(
                 exception,
                 "Bot execution pilot rejected BotId {BotId} because dispatch planning failed for {Symbol}. SignalType={SignalType}.",
@@ -687,102 +436,6 @@ public sealed class BotWorkerJobProcessor(
             return BackgroundJobProcessResult.Success();
         }
 
-        if (TryResolveDispatchSafetyBlock(
-                signal,
-                symbolMetadata,
-                marketState.ReferencePrice.Value,
-                dispatchPlan,
-                out var dispatchSafetyReasonCode,
-                out var dispatchSafetySummary))
-        {
-            if (signal.SignalType == StrategySignalType.Exit)
-            {
-                await WriteExitSkippedDecisionTraceAsync(
-                    bot.OwnerUserId,
-                    publishedVersion,
-                    signal,
-                    correlationId,
-                    strategyDecisionTrace,
-                    dispatchSafetyReasonCode!,
-                    dispatchSafetySummary!,
-                    currentNetQuantity,
-                    cancellationToken,
-                    requestedQuantity: dispatchPlan.Quantity,
-                    referencePrice: marketState.ReferencePrice.Value);
-            }
-            else
-            {
-                await WriteEntrySkippedDecisionTraceAsync(
-                    bot.OwnerUserId,
-                    publishedVersion,
-                    signal,
-                    correlationId,
-                    strategyDecisionTrace,
-                    dispatchSafetySummary!,
-                    currentNetQuantity,
-                    cancellationToken,
-                    decisionReasonCode: dispatchSafetyReasonCode!,
-                    requestedQuantity: dispatchPlan.Quantity,
-                    referencePrice: marketState.ReferencePrice.Value);
-            }
-
-            logger.LogInformation(
-                "Bot execution pilot skipped {SignalType} dispatch for BotId {BotId} because dispatch safety blocked the request. Symbol={Symbol} ReasonCode={ReasonCode} Quantity={Quantity} Price={Price}.",
-                signal.SignalType,
-                bot.Id,
-                normalizedSymbol,
-                dispatchSafetyReasonCode,
-                dispatchPlan.Quantity,
-                marketState.ReferencePrice.Value);
-            return BackgroundJobProcessResult.Success();
-        }
-
-        var activeOrderExecutionBreaker = await ResolveActiveOrderExecutionBreakerAsync(cancellationToken);
-        if (activeOrderExecutionBreaker is not null)
-        {
-            var breakerSummary = $"Execution signal was skipped because the order execution breaker is {activeOrderExecutionBreaker.StateCode} for {signal.Symbol}. CooldownUntilUtc={activeOrderExecutionBreaker.CooldownUntilUtc?.ToString("O") ?? "none"}; LastErrorCode={activeOrderExecutionBreaker.LastErrorCode ?? "none"}.";
-
-            if (signal.SignalType == StrategySignalType.Exit)
-            {
-                await WriteExitSkippedDecisionTraceAsync(
-                    bot.OwnerUserId,
-                    publishedVersion,
-                    signal,
-                    correlationId,
-                    strategyDecisionTrace,
-                    OrderExecutionBreakerActiveDecisionCode,
-                    breakerSummary,
-                    currentNetQuantity,
-                    cancellationToken,
-                    requestedQuantity: dispatchPlan.Quantity,
-                    referencePrice: marketState.ReferencePrice.Value);
-            }
-            else
-            {
-                await WriteEntrySkippedDecisionTraceAsync(
-                    bot.OwnerUserId,
-                    publishedVersion,
-                    signal,
-                    correlationId,
-                    strategyDecisionTrace,
-                    breakerSummary,
-                    currentNetQuantity,
-                    cancellationToken,
-                    decisionReasonCode: OrderExecutionBreakerActiveDecisionCode,
-                    requestedQuantity: dispatchPlan.Quantity,
-                    referencePrice: marketState.ReferencePrice.Value);
-            }
-
-            logger.LogInformation(
-                "Bot execution pilot skipped {SignalType} dispatch for BotId {BotId} because OrderExecution breaker is active. Symbol={Symbol} State={StateCode} CooldownUntilUtc={CooldownUntilUtc}.",
-                signal.SignalType,
-                bot.Id,
-                normalizedSymbol,
-                activeOrderExecutionBreaker.StateCode,
-                activeOrderExecutionBreaker.CooldownUntilUtc);
-            return BackgroundJobProcessResult.Success();
-        }
-
         var pilotExecutionContext = BuildPilotExecutionContext(marginType!, leverage!.Value, pilotActivationEnabled);
         var preSubmitPilotEvaluation = await userExecutionOverrideGuard.EvaluateAsync(
             new UserExecutionOverrideEvaluationRequest(
@@ -802,48 +455,6 @@ public sealed class BotWorkerJobProcessor(
                 ReplacesExecutionOrderId: null,
                 ExchangeDataPlane.Futures),
             cancellationToken);
-
-        if (TryResolveCooldownSkip(preSubmitPilotEvaluation, out var cooldownReasonCode, out var cooldownSummary))
-        {
-            if (signal.SignalType == StrategySignalType.Exit)
-            {
-                await WriteExitSkippedDecisionTraceAsync(
-                    bot.OwnerUserId,
-                    publishedVersion,
-                    signal,
-                    correlationId,
-                    strategyDecisionTrace,
-                    cooldownReasonCode!,
-                    cooldownSummary!,
-                    currentNetQuantity,
-                    cancellationToken,
-                    requestedQuantity: dispatchPlan.Quantity,
-                    referencePrice: marketState.ReferencePrice.Value);
-            }
-            else
-            {
-                await WriteEntrySkippedDecisionTraceAsync(
-                    bot.OwnerUserId,
-                    publishedVersion,
-                    signal,
-                    correlationId,
-                    strategyDecisionTrace,
-                    cooldownSummary!,
-                    currentNetQuantity,
-                    cancellationToken,
-                    decisionReasonCode: cooldownReasonCode!,
-                    requestedQuantity: dispatchPlan.Quantity,
-                    referencePrice: marketState.ReferencePrice.Value);
-            }
-
-            logger.LogInformation(
-                "Bot execution pilot skipped {SignalType} dispatch for BotId {BotId} because pre-submit cooldown guard blocked the request. Symbol={Symbol} BlockCode={BlockCode}.",
-                signal.SignalType,
-                bot.Id,
-                signal.Symbol,
-                cooldownReasonCode);
-            return BackgroundJobProcessResult.Success();
-        }
 
         if (IsPilotPreSubmitNotionalBlock(preSubmitPilotEvaluation))
         {
@@ -1293,776 +904,6 @@ public sealed class BotWorkerJobProcessor(
         return null;
     }
 
-    private async Task<CurrentPositionSnapshot?> ResolveCurrentPositionSnapshotAsync(
-        TradingBot bot,
-        ExchangeAccount exchangeAccount,
-        string normalizedSymbol,
-        decimal currentNetQuantity,
-        decimal? referencePrice,
-        CancellationToken cancellationToken)
-    {
-        if (currentNetQuantity == 0m)
-        {
-            return null;
-        }
-
-        var positionDirection = currentNetQuantity > 0m
-            ? StrategyTradeDirection.Long
-            : StrategyTradeDirection.Short;
-
-        var positions = await dbContext.ExchangePositions
-            .AsNoTracking()
-            .IgnoreQueryFilters()
-            .Where(entity =>
-                entity.OwnerUserId == bot.OwnerUserId &&
-                entity.ExchangeAccountId == exchangeAccount.Id &&
-                entity.Plane == ExchangeDataPlane.Futures &&
-                !entity.IsDeleted)
-            .ToListAsync(cancellationToken);
-
-        var matchingPositions = positions
-            .Where(entity => NormalizePositionSymbol(entity.Symbol) == normalizedSymbol)
-            .Where(entity =>
-            {
-                var signedQuantity = ResolveSignedPositionQuantity(entity);
-                return positionDirection == StrategyTradeDirection.Long
-                    ? signedQuantity > 0m
-                    : signedQuantity < 0m;
-            })
-            .ToArray();
-
-        var persistedNetQuantity = matchingPositions.Sum(ResolveSignedPositionQuantity);
-        var netQuantity = positionDirection == StrategyTradeDirection.Long
-            ? (persistedNetQuantity > 0m ? persistedNetQuantity : currentNetQuantity)
-            : (persistedNetQuantity < 0m ? persistedNetQuantity : currentNetQuantity);
-        if (netQuantity == 0m)
-        {
-            return null;
-        }
-
-        var weightedEntryPrice = 0m;
-        if (matchingPositions.Length > 0)
-        {
-            var totalQuantity = matchingPositions.Sum(entity => Math.Abs(entity.Quantity));
-            if (totalQuantity > 0m)
-            {
-                weightedEntryPrice = matchingPositions.Sum(entity => Math.Abs(entity.Quantity) * entity.EntryPrice) / totalQuantity;
-            }
-        }
-
-        var breakEvenPrice = matchingPositions
-            .Where(entity => entity.BreakEvenPrice > 0m)
-            .Select(entity => (decimal?)entity.BreakEvenPrice)
-            .OrderByDescending(value => value)
-            .FirstOrDefault() ?? weightedEntryPrice;
-
-        var unrealizedProfit = matchingPositions.Sum(entity => entity.UnrealizedProfit);
-        var entrySide = positionDirection == StrategyTradeDirection.Long
-            ? ExecutionOrderSide.Buy
-            : ExecutionOrderSide.Sell;
-        var latestFilledEntryOrder = await dbContext.ExecutionOrders
-            .AsNoTracking()
-            .IgnoreQueryFilters()
-            .Where(entity =>
-                entity.OwnerUserId == bot.OwnerUserId &&
-                entity.ExchangeAccountId == exchangeAccount.Id &&
-                entity.BotId == bot.Id &&
-                entity.Symbol == bot.Symbol &&
-                entity.Plane == ExchangeDataPlane.Futures &&
-                entity.SubmittedToBroker &&
-                !entity.ReduceOnly &&
-                entity.Side == entrySide &&
-                entity.State == ExecutionOrderState.Filled &&
-                !entity.IsDeleted)
-            .OrderByDescending(entity => entity.CreatedDate)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        decimal resolvedEntryPrice = weightedEntryPrice > 0m
-            ? weightedEntryPrice
-            : latestFilledEntryOrder?.AverageFillPrice.GetValueOrDefault() > 0m
-                ? latestFilledEntryOrder!.AverageFillPrice.GetValueOrDefault()
-                : latestFilledEntryOrder?.Price ?? 0m;
-
-        if (resolvedEntryPrice <= 0m)
-        {
-            return null;
-        }
-
-        decimal resolvedBreakEvenPrice = breakEvenPrice > 0m
-            ? breakEvenPrice
-            : resolvedEntryPrice;
-
-        var resolvedEntryOpenedAtUtc = latestFilledEntryOrder?.CreatedDate
-            ?? latestFilledEntryOrder?.SubmittedAtUtc
-            ?? timeProvider.GetUtcNow().UtcDateTime;
-
-        decimal resolvedUnrealizedProfit = unrealizedProfit != 0m || !referencePrice.HasValue
-            ? unrealizedProfit
-            : positionDirection == StrategyTradeDirection.Long
-                ? NormalizeDecimal((referencePrice.Value - resolvedEntryPrice) * Math.Abs(netQuantity))
-                : NormalizeDecimal((resolvedEntryPrice - referencePrice.Value) * Math.Abs(netQuantity));
-
-        return new CurrentPositionSnapshot(
-            positionDirection,
-            netQuantity,
-            resolvedEntryPrice,
-            resolvedBreakEvenPrice,
-            resolvedUnrealizedProfit,
-            resolvedEntryOpenedAtUtc,
-            latestFilledEntryOrder?.Id,
-            latestFilledEntryOrder?.CreatedDate);
-    }
-
-    private async Task<bool> HasActiveReduceOnlyExitOrderAsync(
-        TradingBot bot,
-        ExchangeAccount exchangeAccount,
-        CurrentPositionSnapshot currentPosition,
-        CancellationToken cancellationToken)
-    {
-        var reduceOnlySide = currentPosition.Direction == StrategyTradeDirection.Long
-            ? ExecutionOrderSide.Sell
-            : ExecutionOrderSide.Buy;
-
-        return await dbContext.ExecutionOrders
-            .AsNoTracking()
-            .IgnoreQueryFilters()
-            .AnyAsync(entity =>
-                entity.OwnerUserId == bot.OwnerUserId &&
-                entity.ExchangeAccountId == exchangeAccount.Id &&
-                entity.BotId == bot.Id &&
-                entity.Symbol == bot.Symbol &&
-                entity.Plane == ExchangeDataPlane.Futures &&
-                entity.SubmittedToBroker &&
-                entity.ReduceOnly &&
-                entity.Side == reduceOnlySide &&
-                !entity.IsDeleted &&
-                (entity.State == ExecutionOrderState.Received ||
-                 entity.State == ExecutionOrderState.GatePassed ||
-                 entity.State == ExecutionOrderState.Dispatching ||
-                 entity.State == ExecutionOrderState.Submitted ||
-                 entity.State == ExecutionOrderState.PartiallyFilled ||
-                 entity.State == ExecutionOrderState.CancelRequested),
-                cancellationToken);
-    }
-
-    private async Task<RuntimeExitQualityTrigger?> EvaluateRuntimeExitQualityAsync(
-        TradingBot bot,
-        ExchangeAccount exchangeAccount,
-        TradingStrategyVersion publishedVersion,
-        StrategySignalSnapshot? sourceSignal,
-        MarketStateResolution marketState,
-        CurrentPositionSnapshot currentPosition,
-        CancellationToken cancellationToken)
-    {
-        if (!optionsValue.EnableRuntimeExitQuality ||
-            !marketState.ReferencePrice.HasValue ||
-            marketState.ReferencePrice.Value <= 0m ||
-            currentPosition.EntryPrice <= 0m ||
-            currentPosition.NetQuantity == 0m)
-        {
-            return null;
-        }
-
-        var referencePrice = marketState.ReferencePrice.Value;
-        var entryPrice = currentPosition.EntryPrice;
-        var breakEvenPrice = currentPosition.BreakEvenPrice > 0m
-            ? currentPosition.BreakEvenPrice
-            : entryPrice;
-
-        if (currentPosition.Direction == StrategyTradeDirection.Long)
-        {
-            if (TryResolveUpperPriceBoundary(entryPrice, optionsValue.TakeProfitPercentage, out var takeProfitPrice) &&
-                referencePrice >= takeProfitPrice)
-            {
-                return new RuntimeExitQualityTrigger(
-                    currentPosition.Direction,
-                    TakeProfitTriggeredDecisionCode,
-                    $"Runtime exit quality triggered take profit for {bot.Symbol}. Direction=Long; EntryPrice={entryPrice:0.########}; ReferencePrice={referencePrice:0.########}; ThresholdPrice={takeProfitPrice:0.########}; NetQuantity={currentPosition.NetQuantity:0.########}.",
-                    takeProfitPrice,
-                    referencePrice,
-                    null);
-            }
-
-            if (TryResolveLowerPriceBoundary(entryPrice, optionsValue.StopLossPercentage, out var stopLossPrice) &&
-                referencePrice <= stopLossPrice)
-            {
-                return new RuntimeExitQualityTrigger(
-                    currentPosition.Direction,
-                    StopLossTriggeredDecisionCode,
-                    $"Runtime exit quality triggered stop loss for {bot.Symbol}. Direction=Long; EntryPrice={entryPrice:0.########}; ReferencePrice={referencePrice:0.########}; ThresholdPrice={stopLossPrice:0.########}; NetQuantity={currentPosition.NetQuantity:0.########}.",
-                    stopLossPrice,
-                    referencePrice,
-                    null);
-            }
-
-            var peakPriceSinceEntry = await ResolvePeakPriceSinceEntryAsync(
-                bot.Symbol,
-                sourceSignal?.Timeframe ?? optionsValue.Timeframe,
-                currentPosition.EntryOpenedAtUtc,
-                marketState,
-                cancellationToken);
-
-            if (peakPriceSinceEntry.HasValue &&
-                TryResolveUpperPriceBoundary(entryPrice, optionsValue.TrailingStopActivationPercentage, out var trailingActivationPrice) &&
-                peakPriceSinceEntry.Value >= trailingActivationPrice &&
-                TryResolveLowerPriceBoundary(peakPriceSinceEntry.Value, optionsValue.TrailingStopPercentage, out var trailingStopPrice) &&
-                referencePrice <= trailingStopPrice)
-            {
-                return new RuntimeExitQualityTrigger(
-                    currentPosition.Direction,
-                    TrailingStopTriggeredDecisionCode,
-                    $"Runtime exit quality triggered trailing stop for {bot.Symbol}. Direction=Long; EntryPrice={entryPrice:0.########}; PeakPrice={peakPriceSinceEntry.Value:0.########}; ReferencePrice={referencePrice:0.########}; ThresholdPrice={trailingStopPrice:0.########}; NetQuantity={currentPosition.NetQuantity:0.########}.",
-                    trailingStopPrice,
-                    referencePrice,
-                    peakPriceSinceEntry.Value);
-            }
-
-            if (peakPriceSinceEntry.HasValue &&
-                TryResolveUpperPriceBoundary(entryPrice, optionsValue.BreakEvenActivationPercentage, out var breakEvenActivationPrice) &&
-                peakPriceSinceEntry.Value >= breakEvenActivationPrice &&
-                TryResolveUpperPriceBoundary(breakEvenPrice, optionsValue.BreakEvenBufferPercentage, out var breakEvenFloorPrice) &&
-                referencePrice <= breakEvenFloorPrice)
-            {
-                return new RuntimeExitQualityTrigger(
-                    currentPosition.Direction,
-                    BreakEvenTriggeredDecisionCode,
-                    $"Runtime exit quality triggered break-even protection for {bot.Symbol}. Direction=Long; EntryPrice={entryPrice:0.########}; BreakEvenPrice={breakEvenPrice:0.########}; PeakPrice={peakPriceSinceEntry.Value:0.########}; ReferencePrice={referencePrice:0.########}; ThresholdPrice={breakEvenFloorPrice:0.########}; NetQuantity={currentPosition.NetQuantity:0.########}.",
-                    breakEvenFloorPrice,
-                    referencePrice,
-                    peakPriceSinceEntry.Value);
-            }
-
-            return null;
-        }
-
-        if (TryResolveLowerPriceBoundary(entryPrice, optionsValue.TakeProfitPercentage, out var shortTakeProfitPrice) &&
-            referencePrice <= shortTakeProfitPrice)
-        {
-            return new RuntimeExitQualityTrigger(
-                currentPosition.Direction,
-                TakeProfitTriggeredDecisionCode,
-                $"Runtime exit quality triggered take profit for {bot.Symbol}. Direction=Short; EntryPrice={entryPrice:0.########}; ReferencePrice={referencePrice:0.########}; ThresholdPrice={shortTakeProfitPrice:0.########}; NetQuantity={currentPosition.NetQuantity:0.########}.",
-                shortTakeProfitPrice,
-                referencePrice,
-                null);
-        }
-
-        if (TryResolveUpperPriceBoundary(entryPrice, optionsValue.StopLossPercentage, out var shortStopLossPrice) &&
-            referencePrice >= shortStopLossPrice)
-        {
-            return new RuntimeExitQualityTrigger(
-                currentPosition.Direction,
-                StopLossTriggeredDecisionCode,
-                $"Runtime exit quality triggered stop loss for {bot.Symbol}. Direction=Short; EntryPrice={entryPrice:0.########}; ReferencePrice={referencePrice:0.########}; ThresholdPrice={shortStopLossPrice:0.########}; NetQuantity={currentPosition.NetQuantity:0.########}.",
-                shortStopLossPrice,
-                referencePrice,
-                null);
-        }
-
-        var troughPriceSinceEntry = await ResolveTroughPriceSinceEntryAsync(
-            bot.Symbol,
-            sourceSignal?.Timeframe ?? optionsValue.Timeframe,
-            currentPosition.EntryOpenedAtUtc,
-            marketState,
-            cancellationToken);
-
-        if (troughPriceSinceEntry.HasValue &&
-            TryResolveLowerPriceBoundary(entryPrice, optionsValue.TrailingStopActivationPercentage, out var shortTrailingActivationPrice) &&
-            troughPriceSinceEntry.Value <= shortTrailingActivationPrice &&
-            TryResolveUpperPriceBoundary(troughPriceSinceEntry.Value, optionsValue.TrailingStopPercentage, out var shortTrailingStopPrice) &&
-            referencePrice >= shortTrailingStopPrice)
-        {
-            return new RuntimeExitQualityTrigger(
-                currentPosition.Direction,
-                TrailingStopTriggeredDecisionCode,
-                $"Runtime exit quality triggered trailing stop for {bot.Symbol}. Direction=Short; EntryPrice={entryPrice:0.########}; TroughPrice={troughPriceSinceEntry.Value:0.########}; ReferencePrice={referencePrice:0.########}; ThresholdPrice={shortTrailingStopPrice:0.########}; NetQuantity={currentPosition.NetQuantity:0.########}.",
-                shortTrailingStopPrice,
-                referencePrice,
-                troughPriceSinceEntry.Value);
-        }
-
-        if (troughPriceSinceEntry.HasValue &&
-            TryResolveLowerPriceBoundary(entryPrice, optionsValue.BreakEvenActivationPercentage, out var shortBreakEvenActivationPrice) &&
-            troughPriceSinceEntry.Value <= shortBreakEvenActivationPrice &&
-            TryResolveLowerPriceBoundary(breakEvenPrice, optionsValue.BreakEvenBufferPercentage, out var shortBreakEvenFloorPrice) &&
-            referencePrice >= shortBreakEvenFloorPrice)
-        {
-            return new RuntimeExitQualityTrigger(
-                currentPosition.Direction,
-                BreakEvenTriggeredDecisionCode,
-                $"Runtime exit quality triggered break-even protection for {bot.Symbol}. Direction=Short; EntryPrice={entryPrice:0.########}; BreakEvenPrice={breakEvenPrice:0.########}; TroughPrice={troughPriceSinceEntry.Value:0.########}; ReferencePrice={referencePrice:0.########}; ThresholdPrice={shortBreakEvenFloorPrice:0.########}; NetQuantity={currentPosition.NetQuantity:0.########}.",
-                shortBreakEvenFloorPrice,
-                referencePrice,
-                troughPriceSinceEntry.Value);
-        }
-
-        return null;
-    }
-
-    private async Task<StrategySignalSnapshot> PersistRuntimeExitSignalAsync(
-        TradingBot bot,
-        TradingStrategyVersion publishedVersion,
-        StrategySignalSnapshot? sourceSignal,
-        MarketStateResolution marketState,
-        RuntimeExitQualityTrigger trigger,
-        string correlationId,
-        CancellationToken cancellationToken)
-    {
-        var indicatorSnapshot = sourceSignal?.ExplainabilityPayload.IndicatorSnapshot
-            ?? marketState.IndicatorSnapshot
-            ?? throw new InvalidOperationException("Runtime exit quality requires a ready indicator snapshot.");
-        var generatedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
-
-        var existingSignal = await dbContext.TradingStrategySignals
-            .IgnoreQueryFilters()
-            .Where(entity =>
-                entity.TradingStrategyVersionId == publishedVersion.Id &&
-                entity.SignalType == StrategySignalType.Exit &&
-                entity.Symbol == indicatorSnapshot.Symbol &&
-                entity.Timeframe == indicatorSnapshot.Timeframe &&
-                entity.IndicatorCloseTimeUtc == indicatorSnapshot.CloseTimeUtc &&
-                !entity.IsDeleted)
-            .OrderByDescending(entity => entity.GeneratedAtUtc)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        if (existingSignal is not null)
-        {
-            return await strategySignalService.GetAsync(existingSignal.Id, cancellationToken)
-                ?? throw new InvalidOperationException("Existing runtime exit signal could not be materialized.");
-        }
-
-        var exitRuleResult = new StrategyRuleResultSnapshot(
-            true,
-            null,
-            "runtime.exitQuality.reasonCode",
-            StrategyRuleComparisonOperator.Equals,
-            trigger.DecisionReasonCode,
-            StrategyRuleOperandKind.String,
-            trigger.DecisionReasonCode,
-            trigger.DecisionReasonCode,
-            Array.Empty<StrategyRuleResultSnapshot>(),
-            RuleId: trigger.DecisionReasonCode,
-            RuleType: "RuntimeExitQuality",
-            Timeframe: indicatorSnapshot.Timeframe,
-            Reason: trigger.DecisionSummary);
-
-        var evaluationResult = new StrategyEvaluationResult(
-            HasEntryRules: sourceSignal?.ExplainabilityPayload.RuleResultSnapshot.HasEntryRules ?? false,
-            EntryMatched: false,
-            HasExitRules: true,
-            ExitMatched: true,
-            HasRiskRules: true,
-            RiskPassed: true,
-            EntryRuleResult: null,
-            ExitRuleResult: exitRuleResult,
-            RiskRuleResult: sourceSignal?.ExplainabilityPayload.RuleResultSnapshot.RiskRuleResult,
-            Direction: trigger.Direction);
-
-        var confidenceSnapshot = new StrategySignalConfidenceSnapshot(
-            100,
-            StrategySignalConfidenceBand.High,
-            1,
-            1,
-            true,
-            true,
-            false,
-            RiskVetoReasonCode.None,
-            false,
-            trigger.DecisionSummary);
-
-        var signalEntity = new TradingStrategySignal
-        {
-            Id = Guid.NewGuid(),
-            OwnerUserId = publishedVersion.OwnerUserId,
-            TradingStrategyId = publishedVersion.TradingStrategyId,
-            TradingStrategyVersionId = publishedVersion.Id,
-            StrategyVersionNumber = publishedVersion.VersionNumber,
-            StrategySchemaVersion = publishedVersion.SchemaVersion,
-            SignalType = StrategySignalType.Exit,
-            ExecutionEnvironment = sourceSignal?.Mode ?? optionsValue.SignalEvaluationMode,
-            Symbol = indicatorSnapshot.Symbol,
-            Timeframe = indicatorSnapshot.Timeframe,
-            IndicatorOpenTimeUtc = indicatorSnapshot.OpenTimeUtc,
-            IndicatorCloseTimeUtc = indicatorSnapshot.CloseTimeUtc,
-            IndicatorReceivedAtUtc = indicatorSnapshot.ReceivedAtUtc,
-            GeneratedAtUtc = generatedAtUtc,
-            ExplainabilitySchemaVersion = 1,
-            IndicatorSnapshotJson = JsonSerializer.Serialize(indicatorSnapshot, SerializerOptions),
-            RuleResultSnapshotJson = JsonSerializer.Serialize(evaluationResult, SerializerOptions),
-            RiskEvaluationJson = JsonSerializer.Serialize(confidenceSnapshot, SerializerOptions)
-        };
-
-        dbContext.TradingStrategySignals.Add(signalEntity);
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        await traceService.WriteDecisionTraceAsync(
-            new DecisionTraceWriteRequest(
-                publishedVersion.OwnerUserId,
-                indicatorSnapshot.Symbol,
-                indicatorSnapshot.Timeframe,
-                BuildStrategyVersionLabel(publishedVersion),
-                StrategySignalType.Exit.ToString(),
-                "Persisted",
-                JsonSerializer.Serialize(new
-                {
-                    RuntimeSignal = true,
-                    TriggerDirection = trigger.Direction.ToString(),
-                    TriggerReasonCode = trigger.DecisionReasonCode,
-                    TriggerSummary = trigger.DecisionSummary,
-                    TriggerThresholdPrice = trigger.ThresholdPrice,
-                    ReferencePrice = trigger.ReferencePrice,
-                    PeakPrice = trigger.PeakPrice,
-                    SourceSignalId = sourceSignal?.StrategySignalId,
-                    SourceSignalType = sourceSignal?.SignalType.ToString()
-                }),
-                0,
-                CorrelationId: correlationId,
-                StrategySignalId: signalEntity.Id,
-                DecisionReasonType: "RuntimeExitQuality",
-                DecisionReasonCode: trigger.DecisionReasonCode,
-                DecisionSummary: trigger.DecisionSummary,
-                DecisionAtUtc: generatedAtUtc),
-            cancellationToken);
-
-        return new StrategySignalSnapshot(
-            signalEntity.Id,
-            signalEntity.TradingStrategyId,
-            signalEntity.TradingStrategyVersionId,
-            signalEntity.StrategyVersionNumber,
-            signalEntity.StrategySchemaVersion,
-            signalEntity.SignalType,
-            signalEntity.ExecutionEnvironment,
-            signalEntity.Symbol,
-            signalEntity.Timeframe,
-            signalEntity.IndicatorOpenTimeUtc,
-            signalEntity.IndicatorCloseTimeUtc,
-            signalEntity.IndicatorReceivedAtUtc,
-            signalEntity.GeneratedAtUtc,
-            new StrategySignalExplainabilityPayload(
-                signalEntity.ExplainabilitySchemaVersion,
-                signalEntity.TradingStrategyId,
-                signalEntity.TradingStrategyVersionId,
-                signalEntity.StrategyVersionNumber,
-                signalEntity.StrategySchemaVersion,
-                signalEntity.ExecutionEnvironment,
-                indicatorSnapshot,
-                evaluationResult,
-                confidenceSnapshot,
-                new StrategySignalLogExplainabilitySnapshot(
-                    "Runtime exit quality",
-                    trigger.DecisionSummary,
-                    new[] { trigger.DecisionReasonCode },
-                    new[] { "runtime-exit", "profitability-quality" }),
-                new StrategySignalDuplicateSuppressionSnapshot(
-                    false,
-                    false,
-                    $"runtime-exit:{trigger.DecisionReasonCode}:{signalEntity.Symbol}:{signalEntity.Timeframe}:{signalEntity.IndicatorCloseTimeUtc:O}")));
-    }
-
-    private bool TryResolveEntryRegimeBlock(
-        MarketStateResolution marketState,
-        StrategyTradeDirection entryDirection,
-        decimal? referencePrice,
-        out string? summary,
-        out string? driverSummary)
-    {
-        summary = null;
-        driverSummary = null;
-
-        if (!optionsValue.EnableRegimeAwareEntryDiscipline ||
-            marketState.IndicatorSnapshot is null ||
-            !IsActionableDirection(entryDirection))
-        {
-            return false;
-        }
-
-        var indicatorSnapshot = marketState.IndicatorSnapshot;
-        var drivers = new List<string>();
-        var regimeRsiThreshold = optionsValue.ResolveRegimeMaxEntryRsi(entryDirection);
-        var regimeMacdThreshold = optionsValue.ResolveRegimeMacdThreshold(entryDirection);
-        var regimeMinBollingerWidthPercentage = optionsValue.ResolveRegimeMinBollingerWidthPercentage(entryDirection);
-        var regimeMiddleBandDislocationPercentage = optionsValue.ResolveRegimeMinMiddleBandDislocationPercentage(entryDirection);
-
-        if (indicatorSnapshot.Rsi.IsReady && indicatorSnapshot.Rsi.Value.HasValue)
-        {
-            if (entryDirection == StrategyTradeDirection.Long &&
-                regimeRsiThreshold > 0m &&
-                indicatorSnapshot.Rsi.Value.Value >= regimeRsiThreshold)
-            {
-                drivers.Add($"RSI {indicatorSnapshot.Rsi.Value.Value:0.##} >= {regimeRsiThreshold:0.##}");
-            }
-
-            if (entryDirection == StrategyTradeDirection.Short &&
-                regimeRsiThreshold > 0m &&
-                indicatorSnapshot.Rsi.Value.Value <= regimeRsiThreshold)
-            {
-                drivers.Add($"RSI {indicatorSnapshot.Rsi.Value.Value:0.##} <= {regimeRsiThreshold:0.##}");
-            }
-        }
-
-        if (indicatorSnapshot.Macd.IsReady && indicatorSnapshot.Macd.Histogram.HasValue)
-        {
-            if (entryDirection == StrategyTradeDirection.Long &&
-                indicatorSnapshot.Macd.Histogram.Value < regimeMacdThreshold)
-            {
-                drivers.Add($"MACD histogram {indicatorSnapshot.Macd.Histogram.Value:0.####} < {regimeMacdThreshold:0.####}");
-            }
-
-            if (entryDirection == StrategyTradeDirection.Short &&
-                indicatorSnapshot.Macd.Histogram.Value > regimeMacdThreshold)
-            {
-                drivers.Add($"MACD histogram {indicatorSnapshot.Macd.Histogram.Value:0.####} > {regimeMacdThreshold:0.####}");
-            }
-        }
-
-        var bollingerWidthPercentage = ResolveBollingerWidthPercentage(indicatorSnapshot.Bollinger);
-        if (bollingerWidthPercentage.HasValue &&
-            regimeMinBollingerWidthPercentage > 0m &&
-            bollingerWidthPercentage.Value < regimeMinBollingerWidthPercentage)
-        {
-            drivers.Add($"Bollinger width {bollingerWidthPercentage.Value:0.####}% < {regimeMinBollingerWidthPercentage:0.####}%");
-        }
-
-        if (referencePrice.HasValue &&
-            indicatorSnapshot.Bollinger.IsReady &&
-            indicatorSnapshot.Bollinger.MiddleBand.HasValue &&
-            indicatorSnapshot.Bollinger.MiddleBand.Value > 0m &&
-            regimeMiddleBandDislocationPercentage > 0m)
-        {
-            if (entryDirection == StrategyTradeDirection.Long)
-            {
-                var priceAboveMiddleBandPercentage = NormalizeDecimal(((referencePrice.Value - indicatorSnapshot.Bollinger.MiddleBand.Value) / indicatorSnapshot.Bollinger.MiddleBand.Value) * 100m);
-                if (priceAboveMiddleBandPercentage < regimeMiddleBandDislocationPercentage)
-                {
-                    drivers.Add($"Price vs middle band {priceAboveMiddleBandPercentage:0.####}% < {regimeMiddleBandDislocationPercentage:0.####}%");
-                }
-            }
-            else if (entryDirection == StrategyTradeDirection.Short)
-            {
-                var priceBelowMiddleBandPercentage = NormalizeDecimal(((indicatorSnapshot.Bollinger.MiddleBand.Value - referencePrice.Value) / indicatorSnapshot.Bollinger.MiddleBand.Value) * 100m);
-                if (priceBelowMiddleBandPercentage < regimeMiddleBandDislocationPercentage)
-                {
-                    drivers.Add($"Price vs middle band {priceBelowMiddleBandPercentage:0.####}% < {regimeMiddleBandDislocationPercentage:0.####}%");
-                }
-            }
-        }
-
-        if (drivers.Count == 0)
-        {
-            return false;
-        }
-
-        driverSummary = string.Join("; ", drivers);
-        summary = $"Entry signal was skipped because regime-aware entry discipline blocked the {entryDirection.ToString().ToLowerInvariant()} request. {driverSummary}.";
-        return true;
-    }
-
-    private async Task<string?> ResolveEntryHysteresisSummaryAsync(
-        TradingBot bot,
-        ExchangeAccount exchangeAccount,
-        StrategyTradeDirection entryDirection,
-        decimal? referencePrice,
-        CancellationToken cancellationToken)
-    {
-        if (!optionsValue.EnableEntryHysteresis || !IsActionableDirection(entryDirection))
-        {
-            return null;
-        }
-
-        var exitSide = entryDirection == StrategyTradeDirection.Long
-            ? ExecutionOrderSide.Sell
-            : ExecutionOrderSide.Buy;
-
-        var latestExitOrder = await dbContext.ExecutionOrders
-            .AsNoTracking()
-            .IgnoreQueryFilters()
-            .Where(entity =>
-                entity.OwnerUserId == bot.OwnerUserId &&
-                entity.ExchangeAccountId == exchangeAccount.Id &&
-                entity.BotId == bot.Id &&
-                entity.Symbol == bot.Symbol &&
-                entity.Plane == ExchangeDataPlane.Futures &&
-                entity.SubmittedToBroker &&
-                entity.ReduceOnly &&
-                entity.Side == exitSide &&
-                entity.State == ExecutionOrderState.Filled &&
-                !entity.IsDeleted)
-            .OrderByDescending(entity => entity.CreatedDate)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        if (latestExitOrder is null)
-        {
-            return null;
-        }
-
-        var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
-        decimal resolvedExitPrice = latestExitOrder.AverageFillPrice.GetValueOrDefault() > 0m
-            ? latestExitOrder.AverageFillPrice.GetValueOrDefault()
-            : latestExitOrder.Price;
-        var entryHysteresisCooldownMinutes = optionsValue.ResolveEntryHysteresisCooldownMinutes(entryDirection);
-        var entryHysteresisReentryBufferPercentage = optionsValue.ResolveEntryHysteresisReentryBufferPercentage(entryDirection);
-
-        if (entryHysteresisCooldownMinutes > 0 &&
-            latestExitOrder.CreatedDate.AddMinutes(entryHysteresisCooldownMinutes) > nowUtc)
-        {
-            return $"Entry signal was skipped because entry hysteresis cooldown is still active after the last filled {entryDirection.ToString().ToLowerInvariant()} exit. LastExitAtUtc={latestExitOrder.CreatedDate:O}; CooldownMinutes={entryHysteresisCooldownMinutes}.";
-        }
-
-        if (!referencePrice.HasValue || resolvedExitPrice <= 0m)
-        {
-            return null;
-        }
-
-        if (entryDirection == StrategyTradeDirection.Long &&
-            TryResolveUpperPriceBoundary(resolvedExitPrice, entryHysteresisReentryBufferPercentage, out var longReentryThresholdPrice) &&
-            referencePrice.Value <= longReentryThresholdPrice)
-        {
-            return $"Entry signal was skipped because hysteresis re-entry buffer is not yet satisfied for a long rearm. LastExitPrice={resolvedExitPrice:0.########}; ReferencePrice={referencePrice.Value:0.########}; RearmThresholdPrice={longReentryThresholdPrice:0.########}.";
-        }
-
-        if (entryDirection == StrategyTradeDirection.Short &&
-            TryResolveLowerPriceBoundary(resolvedExitPrice, entryHysteresisReentryBufferPercentage, out var shortReentryThresholdPrice) &&
-            referencePrice.Value >= shortReentryThresholdPrice)
-        {
-            return $"Entry signal was skipped because hysteresis re-entry buffer is not yet satisfied for a short rearm. LastExitPrice={resolvedExitPrice:0.########}; ReferencePrice={referencePrice.Value:0.########}; RearmThresholdPrice={shortReentryThresholdPrice:0.########}.";
-        }
-
-        return null;
-    }
-
-    private async Task<decimal?> ResolvePeakPriceSinceEntryAsync(
-        string symbol,
-        string timeframe,
-        DateTime entryOpenedAtUtc,
-        MarketStateResolution marketState,
-        CancellationToken cancellationToken)
-    {
-        var candidateHighs = marketState.HistoricalCandles
-            .Where(snapshot => snapshot.IsClosed && snapshot.CloseTimeUtc >= entryOpenedAtUtc)
-            .Select(snapshot => (decimal?)snapshot.HighPrice)
-            .ToList();
-
-        if (candidateHighs.Count == 0)
-        {
-            var interval = ResolveIntervalDuration(timeframe);
-            var currentOpenTimeUtc = AlignToIntervalBoundary(timeProvider.GetUtcNow().UtcDateTime, timeframe);
-            var lastClosedOpenTimeUtc = currentOpenTimeUtc - interval;
-            var requestedStartOpenTimeUtc = AlignToIntervalBoundary(entryOpenedAtUtc, timeframe);
-            var fallbackStartOpenTimeUtc = lastClosedOpenTimeUtc - ((optionsValue.PrimeHistoricalCandleCount - 1) * interval);
-            var startOpenTimeUtc = requestedStartOpenTimeUtc > fallbackStartOpenTimeUtc
-                ? requestedStartOpenTimeUtc
-                : fallbackStartOpenTimeUtc;
-
-            var historicalCandles = await historicalKlineClient.GetClosedCandlesAsync(
-                symbol,
-                timeframe,
-                startOpenTimeUtc,
-                lastClosedOpenTimeUtc,
-                optionsValue.PrimeHistoricalCandleCount,
-                cancellationToken);
-
-            candidateHighs.AddRange(historicalCandles
-                .Where(snapshot => snapshot.IsClosed && snapshot.CloseTimeUtc >= entryOpenedAtUtc)
-                .Select(snapshot => (decimal?)snapshot.HighPrice));
-        }
-
-        if (marketState.ReferencePrice.HasValue)
-        {
-            candidateHighs.Add(marketState.ReferencePrice.Value);
-        }
-
-        return candidateHighs
-            .Where(value => value.HasValue && value.Value > 0m)
-            .DefaultIfEmpty(null)
-            .Max();
-    }
-
-
-    private async Task<decimal?> ResolveTroughPriceSinceEntryAsync(
-        string symbol,
-        string timeframe,
-        DateTime entryOpenedAtUtc,
-        MarketStateResolution marketState,
-        CancellationToken cancellationToken)
-    {
-        var candidateLows = marketState.HistoricalCandles
-            .Where(snapshot => snapshot.IsClosed && snapshot.CloseTimeUtc >= entryOpenedAtUtc)
-            .Select(snapshot => (decimal?)snapshot.LowPrice)
-            .ToList();
-
-        if (candidateLows.Count == 0)
-        {
-            var interval = ResolveIntervalDuration(timeframe);
-            var currentOpenTimeUtc = AlignToIntervalBoundary(timeProvider.GetUtcNow().UtcDateTime, timeframe);
-            var lastClosedOpenTimeUtc = currentOpenTimeUtc - interval;
-            var requestedStartOpenTimeUtc = AlignToIntervalBoundary(entryOpenedAtUtc, timeframe);
-            var fallbackStartOpenTimeUtc = lastClosedOpenTimeUtc - ((optionsValue.PrimeHistoricalCandleCount - 1) * interval);
-            var startOpenTimeUtc = requestedStartOpenTimeUtc > fallbackStartOpenTimeUtc
-                ? requestedStartOpenTimeUtc
-                : fallbackStartOpenTimeUtc;
-
-            var historicalCandles = await historicalKlineClient.GetClosedCandlesAsync(
-                symbol,
-                timeframe,
-                startOpenTimeUtc,
-                lastClosedOpenTimeUtc,
-                optionsValue.PrimeHistoricalCandleCount,
-                cancellationToken);
-
-            candidateLows.AddRange(historicalCandles
-                .Where(snapshot => snapshot.IsClosed && snapshot.CloseTimeUtc >= entryOpenedAtUtc)
-                .Select(snapshot => (decimal?)snapshot.LowPrice));
-        }
-
-        if (marketState.ReferencePrice.HasValue)
-        {
-            candidateLows.Add(marketState.ReferencePrice.Value);
-        }
-
-        return candidateLows
-            .Where(value => value.HasValue && value.Value > 0m)
-            .DefaultIfEmpty(null)
-            .Min();
-    }
-
-    private static bool TryResolveUpperPriceBoundary(decimal basePrice, decimal percentage, out decimal thresholdPrice)
-    {
-        thresholdPrice = 0m;
-        if (basePrice <= 0m || percentage <= 0m)
-        {
-            return false;
-        }
-
-        thresholdPrice = NormalizeDecimal(basePrice * (1m + (percentage / 100m)));
-        return thresholdPrice > 0m;
-    }
-
-    private static bool TryResolveLowerPriceBoundary(decimal basePrice, decimal percentage, out decimal thresholdPrice)
-    {
-        thresholdPrice = 0m;
-        if (basePrice <= 0m || percentage <= 0m)
-        {
-            return false;
-        }
-
-        thresholdPrice = NormalizeDecimal(basePrice * (1m - (percentage / 100m)));
-        return thresholdPrice > 0m;
-    }
-
-    private static decimal? ResolveBollingerWidthPercentage(BollingerBandsSnapshot snapshot)
-    {
-        if (!snapshot.IsReady ||
-            !snapshot.MiddleBand.HasValue ||
-            !snapshot.UpperBand.HasValue ||
-            !snapshot.LowerBand.HasValue ||
-            snapshot.MiddleBand.Value == 0m)
-        {
-            return null;
-        }
-
-        return NormalizeDecimal(((snapshot.UpperBand.Value - snapshot.LowerBand.Value) / snapshot.MiddleBand.Value) * 100m);
-    }
-
     private async Task<PilotDispatchPlan> ResolvePilotDispatchPlanAsync(
         string ownerUserId,
         Guid exchangeAccountId,
@@ -2073,9 +914,8 @@ public sealed class BotWorkerJobProcessor(
     {
         if (signal.SignalType == StrategySignalType.Entry)
         {
-            var entryDirection = ResolveSignalDirection(signal);
             return new PilotDispatchPlan(
-                ResolveEntrySide(entryDirection),
+                ExecutionOrderSide.Buy,
                 ResolvePilotQuantity(symbolMetadata, referencePrice),
                 ReduceOnly: false);
         }
@@ -2266,41 +1106,21 @@ public sealed class BotWorkerJobProcessor(
         yield return StrategySignalType.Exit;
     }
 
-    private decimal ResolvePilotQuantity(
+    private static decimal ResolvePilotQuantity(
         SymbolMetadataSnapshot symbolMetadata,
         decimal referencePrice)
     {
-        return ResolvePilotQuantity(
-            symbolMetadata,
-            referencePrice,
-            ResolveProtectedMinNotional(symbolMetadata.MinNotional));
-    }
-
-    private static decimal ResolvePilotQuantity(
-        SymbolMetadataSnapshot symbolMetadata,
-        decimal referencePrice,
-        decimal? protectedMinNotional)
-    {
-        if (referencePrice <= 0m)
-        {
-            throw new ExecutionValidationException(
-                EntryQuantitySizingFailedDecisionCode,
-                $"Execution blocked because entry quantity sizing requires a positive reference price for '{symbolMetadata.Symbol}'.");
-        }
-
         var candidateQuantity = symbolMetadata.MinQuantity
             ?? symbolMetadata.StepSize;
 
         if (candidateQuantity <= 0m)
         {
-            throw new ExecutionValidationException(
-                EntryQuantitySizingFailedDecisionCode,
-                $"Execution blocked because entry quantity sizing could not be resolved for '{symbolMetadata.Symbol}'.");
+            throw new ExecutionValidationException($"Pilot quantity could not be resolved for '{symbolMetadata.Symbol}'.");
         }
 
-        if (protectedMinNotional is decimal minNotionalFloor)
+        if (symbolMetadata.MinNotional is decimal minNotional)
         {
-            candidateQuantity = Math.Max(candidateQuantity, minNotionalFloor / referencePrice);
+            candidateQuantity = Math.Max(candidateQuantity, minNotional / referencePrice);
         }
 
         candidateQuantity = AlignUp(candidateQuantity, symbolMetadata.StepSize);
@@ -2315,7 +1135,7 @@ public sealed class BotWorkerJobProcessor(
             candidateQuantity = decimal.Round(candidateQuantity, quantityPrecision, MidpointRounding.AwayFromZero);
         }
 
-        if (protectedMinNotional is decimal adjustedMinNotional &&
+        if (symbolMetadata.MinNotional is decimal adjustedMinNotional &&
             (candidateQuantity * referencePrice) < adjustedMinNotional)
         {
             candidateQuantity = AlignUp(adjustedMinNotional / referencePrice, symbolMetadata.StepSize);
@@ -2323,147 +1143,10 @@ public sealed class BotWorkerJobProcessor(
 
         if (candidateQuantity <= 0m)
         {
-            throw new ExecutionValidationException(
-                EntryQuantitySizingFailedDecisionCode,
-                $"Execution blocked because entry quantity sizing resolved to a non-positive value for '{symbolMetadata.Symbol}'.");
-        }
-
-        if (protectedMinNotional is decimal finalMinNotional &&
-            (candidateQuantity * referencePrice) < finalMinNotional)
-        {
-            throw new ExecutionValidationException(
-                EntryNotionalSafetyBlockedDecisionCode,
-                $"Execution blocked because protected entry notional {(candidateQuantity * referencePrice):0.########} is below the protected minimum notional {finalMinNotional:0.########} for '{symbolMetadata.Symbol}'.");
+            throw new ExecutionValidationException($"Pilot quantity resolved to a non-positive value for '{symbolMetadata.Symbol}'.");
         }
 
         return candidateQuantity;
-    }
-
-    private bool TryResolveDispatchSafetyBlock(
-        StrategySignalSnapshot signal,
-        SymbolMetadataSnapshot symbolMetadata,
-        decimal referencePrice,
-        PilotDispatchPlan dispatchPlan,
-        out string? decisionReasonCode,
-        out string? decisionSummary)
-    {
-        decisionReasonCode = null;
-        decisionSummary = null;
-
-        var orderNotional = dispatchPlan.Quantity * referencePrice;
-
-        if (signal.SignalType == StrategySignalType.Entry)
-        {
-            var protectedMinNotional = ResolveProtectedMinNotional(symbolMetadata.MinNotional);
-
-            if (protectedMinNotional is decimal requiredMinNotional && orderNotional < requiredMinNotional)
-            {
-                decisionReasonCode = EntryNotionalSafetyBlockedDecisionCode;
-                decisionSummary = $"Entry signal was skipped because protected entry notional {orderNotional:0.########} is below the protected minimum notional {requiredMinNotional:0.########} for {signal.Symbol}.";
-                return true;
-            }
-
-            if (optionsValue.TryResolveMaxPilotOrderNotional(out var maxPilotOrderNotional) &&
-                orderNotional > maxPilotOrderNotional)
-            {
-                decisionReasonCode = EntryQuantitySizingFailedDecisionCode;
-                decisionSummary = $"Entry signal was skipped because safe entry sizing for {signal.Symbol} requires notional {orderNotional:0.########}, which exceeds the configured pilot order notional cap {maxPilotOrderNotional:0.########}.";
-                return true;
-            }
-
-            return false;
-        }
-
-        if (symbolMetadata.MinNotional is decimal minNotional && orderNotional < minNotional)
-        {
-            decisionReasonCode = ExitNotionalBelowMinimumDecisionCode;
-            decisionSummary = $"Exit signal was skipped because reduce-only exit notional {orderNotional:0.########} is below the minimum notional {minNotional:0.########} for {signal.Symbol}.";
-            return true;
-        }
-
-        return false;
-    }
-
-    private async Task<OrderExecutionBreakerSnapshot?> ResolveActiveOrderExecutionBreakerAsync(
-        CancellationToken cancellationToken)
-    {
-        var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
-
-        var breaker = await dbContext.DependencyCircuitBreakerStates
-            .AsNoTracking()
-            .IgnoreQueryFilters()
-            .Where(entity =>
-                !entity.IsDeleted &&
-                entity.BreakerKind == DependencyCircuitBreakerKind.OrderExecution &&
-                entity.StateCode != CircuitBreakerStateCode.Closed)
-            .OrderByDescending(entity => entity.CooldownUntilUtc)
-            .ThenByDescending(entity => entity.LastFailureAtUtc)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        if (breaker is null)
-        {
-            return null;
-        }
-
-        var isActive = breaker.StateCode is CircuitBreakerStateCode.Cooldown or CircuitBreakerStateCode.HalfOpen or CircuitBreakerStateCode.Degraded or CircuitBreakerStateCode.Retrying;
-        if (!isActive)
-        {
-            return null;
-        }
-
-        if (breaker.CooldownUntilUtc.HasValue && breaker.CooldownUntilUtc.Value <= nowUtc && breaker.StateCode == CircuitBreakerStateCode.Cooldown)
-        {
-            return null;
-        }
-
-        return new OrderExecutionBreakerSnapshot(
-            breaker.StateCode,
-            breaker.CooldownUntilUtc,
-            breaker.LastErrorCode);
-    }
-
-    private static bool TryResolveCooldownSkip(
-        UserExecutionOverrideEvaluationResult evaluationResult,
-        out string? decisionReasonCode,
-        out string? decisionSummary)
-    {
-        decisionReasonCode = null;
-        decisionSummary = null;
-
-        if (!evaluationResult.IsBlocked)
-        {
-            return false;
-        }
-
-        if (string.Equals(evaluationResult.BlockCode, "UserExecutionBotCooldownActive", StringComparison.Ordinal))
-        {
-            decisionReasonCode = BotCooldownActiveDecisionCode;
-            decisionSummary = "Execution signal was skipped because bot cooldown is still active.";
-            return true;
-        }
-
-        if (string.Equals(evaluationResult.BlockCode, "UserExecutionSymbolCooldownActive", StringComparison.Ordinal))
-        {
-            decisionReasonCode = SymbolCooldownActiveDecisionCode;
-            decisionSummary = "Execution signal was skipped because symbol cooldown is still active.";
-            return true;
-        }
-
-        return false;
-    }
-
-    private decimal? ResolveProtectedMinNotional(decimal? minNotional)
-    {
-        if (!minNotional.HasValue || minNotional.Value <= 0m)
-        {
-            return null;
-        }
-
-        var multiplier = optionsValue.MinNotionalSafetyMultiplier < 1m
-            ? 1m
-            : optionsValue.MinNotionalSafetyMultiplier;
-
-        return decimal.Round(minNotional.Value * multiplier, 8, MidpointRounding.AwayFromZero);
     }
 
     private static bool IsPilotPreSubmitNotionalBlock(UserExecutionOverrideEvaluationResult evaluationResult)
@@ -2555,7 +1238,6 @@ public sealed class BotWorkerJobProcessor(
         CancellationToken cancellationToken)
     {
         var shadowDecisionId = Guid.NewGuid();
-        var strategyTradeDirection = signalGenerationResult.EvaluationResult.Direction;
         var strategyDirection = ResolveStrategyDirection(signalGenerationResult.EvaluationResult);
         var aiEvaluation = ResolvePrimaryAiEvaluation(signalGenerationResult);
         var duplicateSuppressed = signalGenerationResult.SuppressedDuplicateCount > 0 && signalGenerationResult.Signals.Count == 0;
@@ -2571,11 +1253,7 @@ public sealed class BotWorkerJobProcessor(
             correlationId,
             marginType,
             leverage,
-            strategyTradeDirection,
-            shouldEvaluate: signal is not null &&
-                            signal.SignalType == StrategySignalType.Entry &&
-                            IsActionableDirection(strategyDirection) &&
-                            !duplicateSuppressed,
+            shouldEvaluate: string.Equals(strategyDirection, "Long", StringComparison.Ordinal) && !duplicateSuppressed,
             cancellationToken);
         var persistedRiskVeto = ResolvePersistedRiskVeto(signalGenerationResult);
         var riskVetoPresent = hypotheticalEvaluation.RiskVetoPresent || persistedRiskVeto.IsPresent;
@@ -2658,7 +1336,6 @@ public sealed class BotWorkerJobProcessor(
         string correlationId,
         string marginType,
         decimal leverage,
-        StrategyTradeDirection strategyDirection,
         bool shouldEvaluate,
         CancellationToken cancellationToken)
     {
@@ -2760,7 +1437,7 @@ public sealed class BotWorkerJobProcessor(
                 bot.OwnerUserId,
                 symbol,
                 optionsValue.SignalEvaluationMode,
-                ResolveEntrySide(strategyDirection),
+                ExecutionOrderSide.Buy,
                 quantity,
                 marketState.ReferencePrice ?? 0m,
                 bot.Id,
@@ -2808,36 +1485,6 @@ public sealed class BotWorkerJobProcessor(
     }
 
 
-    private static string ResolveSameDirectionEntrySuppressedDecisionCode(StrategyTradeDirection entryDirection)
-    {
-        return entryDirection switch
-        {
-            StrategyTradeDirection.Long => "SameDirectionLongEntrySuppressed",
-            StrategyTradeDirection.Short => "SameDirectionShortEntrySuppressed",
-            _ => "SameDirectionEntrySuppressed"
-        };
-    }
-
-    private static string ResolveEntryRegimeFilterBlockedDecisionCode(StrategyTradeDirection entryDirection)
-    {
-        return entryDirection switch
-        {
-            StrategyTradeDirection.Long => "LongEntryRegimeFilterBlocked",
-            StrategyTradeDirection.Short => "ShortEntryRegimeFilterBlocked",
-            _ => "EntryRegimeFilterBlocked"
-        };
-    }
-
-    private static string ResolveEntryHysteresisActiveDecisionCode(StrategyTradeDirection entryDirection)
-    {
-        return entryDirection switch
-        {
-            StrategyTradeDirection.Long => "LongEntryHysteresisActive",
-            StrategyTradeDirection.Short => "ShortEntryHysteresisActive",
-            _ => "EntryHysteresisActive"
-        };
-    }
-
     private async Task WriteExitSkippedDecisionTraceAsync(
         string ownerUserId,
         TradingStrategyVersion publishedVersion,
@@ -2847,14 +1494,8 @@ public sealed class BotWorkerJobProcessor(
         string decisionReasonCode,
         string decisionSummary,
         decimal netQuantity,
-        CancellationToken cancellationToken,
-        decimal? requestedQuantity = null,
-        decimal? referencePrice = null)
+        CancellationToken cancellationToken)
     {
-        decimal? requestedNotional = requestedQuantity.HasValue && referencePrice.HasValue
-            ? requestedQuantity.Value * referencePrice.Value
-            : (decimal?)null;
-
         var snapshotJson = JsonSerializer.Serialize(new
         {
             PreviousDecisionOutcome = previousDecisionTrace?.DecisionOutcome,
@@ -2863,62 +1504,8 @@ public sealed class BotWorkerJobProcessor(
             SignalId = signal.StrategySignalId,
             Symbol = signal.Symbol,
             Timeframe = signal.Timeframe,
-            ExchangeEnvironment = signal.Mode.ToString(),
-            NetQuantity = netQuantity,
-            RequestedQuantity = requestedQuantity,
-            ReferencePrice = referencePrice,
-            RequestedNotional = requestedNotional
-        });
-
-        await traceService.WriteDecisionTraceAsync(
-            new DecisionTraceWriteRequest(
-                ownerUserId,
-                signal.Symbol,
-                signal.Timeframe,
-                BuildStrategyVersionLabel(publishedVersion),
-                signal.SignalType.ToString(),
-                ExitSkippedDecisionOutcome,
-                snapshotJson,
-                0,
-                CorrelationId: correlationId,
-                StrategySignalId: signal.StrategySignalId,
-                DecisionReasonType: ExitSkippedDecisionReasonType,
-                DecisionReasonCode: decisionReasonCode,
-                DecisionSummary: decisionSummary,
-                DecisionAtUtc: timeProvider.GetUtcNow().UtcDateTime),
-            cancellationToken);
-    }
-
-    private async Task WriteEntrySkippedDecisionTraceAsync(
-        string ownerUserId,
-        TradingStrategyVersion publishedVersion,
-        StrategySignalSnapshot signal,
-        string correlationId,
-        DecisionTrace? previousDecisionTrace,
-        string decisionSummary,
-        decimal netQuantity,
-        CancellationToken cancellationToken,
-        string decisionReasonCode = "EntrySuppressed",
-        decimal? requestedQuantity = null,
-        decimal? referencePrice = null)
-    {
-        decimal? requestedNotional = requestedQuantity.HasValue && referencePrice.HasValue
-            ? requestedQuantity.Value * referencePrice.Value
-            : (decimal?)null;
-
-        var snapshotJson = JsonSerializer.Serialize(new
-        {
-            PreviousDecisionOutcome = previousDecisionTrace?.DecisionOutcome,
-            PreviousDecisionReasonCode = previousDecisionTrace?.DecisionReasonCode,
-            SignalType = signal.SignalType.ToString(),
-            SignalId = signal.StrategySignalId,
-            Symbol = signal.Symbol,
-            Timeframe = signal.Timeframe,
-            ExchangeEnvironment = signal.Mode.ToString(),
-            NetQuantity = netQuantity,
-            RequestedQuantity = requestedQuantity,
-            ReferencePrice = referencePrice,
-            RequestedNotional = requestedNotional
+            ExchangeEnvironment = signal.Environment.ToString(),
+            NetQuantity = netQuantity
         });
 
         await traceService.WriteDecisionTraceAsync(
@@ -2964,66 +1551,14 @@ public sealed class BotWorkerJobProcessor(
         return $"StrategyVersion:{version.Id:N}:v{version.VersionNumber}:s{version.SchemaVersion}";
     }
 
-    private static bool TryResolveEntryDirectionModeBlock(
-        TradingBot bot,
-        StrategyTradeDirection entryDirection,
-        out string? summary)
-    {
-        summary = null;
-
-        if (!IsActionableDirection(entryDirection))
-        {
-            return false;
-        }
-
-        var blocked = bot.DirectionMode switch
-        {
-            TradingBotDirectionMode.LongOnly => entryDirection == StrategyTradeDirection.Short,
-            TradingBotDirectionMode.ShortOnly => entryDirection == StrategyTradeDirection.Long,
-            _ => false
-        };
-
-        if (!blocked)
-        {
-            return false;
-        }
-
-        summary = $"Entry signal was skipped because bot direction mode {bot.DirectionMode} does not allow {entryDirection.ToString().ToLowerInvariant()} entries for {bot.Symbol}.";
-        return true;
-    }
-
     private static string ResolveStrategyDirection(StrategyEvaluationResult evaluationResult)
     {
-        return evaluationResult.Direction.ToString();
-    }
-
-
-    private static StrategyTradeDirection ResolveSignalDirection(StrategySignalSnapshot signal)
-    {
-        return signal.ExplainabilityPayload.RuleResultSnapshot.Direction;
-    }
-
-    private static ExecutionOrderSide ResolveEntrySide(StrategyTradeDirection direction)
-    {
-        return direction switch
+        if (evaluationResult.HasEntryRules && evaluationResult.EntryMatched)
         {
-            StrategyTradeDirection.Long => ExecutionOrderSide.Buy,
-            StrategyTradeDirection.Short => ExecutionOrderSide.Sell,
-            _ => throw new ExecutionValidationException(
-                "UnsupportedEntryDirection",
-                "Execution blocked because entry direction was not actionable.")
-        };
-    }
+            return "Long";
+        }
 
-    private static bool IsActionableDirection(StrategyTradeDirection direction)
-    {
-        return direction is StrategyTradeDirection.Long or StrategyTradeDirection.Short;
-    }
-
-    private static bool IsActionableDirection(string strategyDirection)
-    {
-        return string.Equals(strategyDirection, "Long", StringComparison.Ordinal) ||
-               string.Equals(strategyDirection, "Short", StringComparison.Ordinal);
+        return "Neutral";
     }
 
     private static int? ResolveStrategyConfidenceScore(
@@ -3154,7 +1689,7 @@ public sealed class BotWorkerJobProcessor(
             return strategyReasonCode;
         }
 
-        if (!IsActionableDirection(strategyDirection))
+        if (!string.Equals(strategyDirection, "Long", StringComparison.Ordinal))
         {
             return "NoActionableSignal";
         }
@@ -3398,41 +1933,6 @@ public sealed class BotWorkerJobProcessor(
 
         return decimal.Floor(value / increment) * increment;
     }
-
-    private static decimal NormalizeDecimal(decimal value)
-    {
-        return decimal.Round(value, 8, MidpointRounding.AwayFromZero);
-    }
-
-    private static JsonSerializerOptions CreateSerializerOptions()
-    {
-        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
-        options.Converters.Add(new JsonStringEnumConverter());
-        return options;
-    }
-
-    private sealed record CurrentPositionSnapshot(
-        StrategyTradeDirection Direction,
-        decimal NetQuantity,
-        decimal EntryPrice,
-        decimal BreakEvenPrice,
-        decimal UnrealizedProfit,
-        DateTime EntryOpenedAtUtc,
-        Guid? LastFilledEntryOrderId,
-        DateTime? LastFilledEntryAtUtc);
-
-    private sealed record RuntimeExitQualityTrigger(
-        StrategyTradeDirection Direction,
-        string DecisionReasonCode,
-        string DecisionSummary,
-        decimal ThresholdPrice,
-        decimal ReferencePrice,
-        decimal? PeakPrice);
-
-    private sealed record OrderExecutionBreakerSnapshot(
-        CircuitBreakerStateCode StateCode,
-        DateTime? CooldownUntilUtc,
-        string? LastErrorCode);
 
     private sealed record PilotDispatchPlan(
         ExecutionOrderSide Side,

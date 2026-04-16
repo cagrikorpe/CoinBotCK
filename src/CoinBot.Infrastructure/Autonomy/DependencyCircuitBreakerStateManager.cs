@@ -376,6 +376,28 @@ public sealed class DependencyCircuitBreakerStateManager(
             : summary[..2048];
     }
 
+
+    private static string BuildGlobalSystemStateMessage(DependencyCircuitBreakerSnapshot snapshot)
+    {
+        return $"Dependency breaker {snapshot.BreakerKind} is in cooldown. {BuildBreakerDiagnosticSummary(snapshot)}";
+    }
+
+    private static string BuildBreakerDiagnosticSummary(DependencyCircuitBreakerSnapshot snapshot)
+    {
+        return string.Join(
+            "; ",
+            $"BreakerKind={snapshot.BreakerKind}",
+            $"State={snapshot.StateCode}",
+            $"FailureCount={snapshot.ConsecutiveFailureCount}",
+            $"CooldownUntilUtc={snapshot.CooldownUntilUtc?.ToString("O") ?? "none"}",
+            $"LastFailureAtUtc={snapshot.LastFailureAtUtc?.ToString("O") ?? "none"}",
+            $"LastSuccessAtUtc={snapshot.LastSuccessAtUtc?.ToString("O") ?? "none"}",
+            $"LastProbeAtUtc={snapshot.LastProbeAtUtc?.ToString("O") ?? "none"}",
+            $"ErrorCode={snapshot.LastErrorCode ?? "none"}",
+            $"Error={snapshot.LastErrorMessage ?? "none"}",
+            $"CorrelationId={snapshot.CorrelationId ?? "none"}");
+    }
+
     private static string BuildApprovalId(DependencyCircuitBreakerKind breakerKind, string suffix)
     {
         var payload = $"{breakerKind}|{suffix}|{Guid.NewGuid():N}";

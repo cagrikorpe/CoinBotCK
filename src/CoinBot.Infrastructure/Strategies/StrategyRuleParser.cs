@@ -25,7 +25,7 @@ public sealed class StrategyRuleParser : IStrategyRuleParser
                 throw new StrategyRuleParseException("Strategy definition root must be a JSON object.");
             }
 
-            ValidateAllowedProperties(root, ["schemaVersion", "metadata", "entry", "exit", "risk"], "strategy definition");
+            ValidateAllowedProperties(root, ["schemaVersion", "metadata", "direction", "entry", "exit", "risk", "longEntry", "longExit", "shortEntry", "shortExit"], "strategy definition");
 
             var schemaVersion = ParseSchemaVersion(root);
             var metadata = ParseDefinitionMetadata(root);
@@ -38,13 +38,27 @@ public sealed class StrategyRuleParser : IStrategyRuleParser
             var risk = TryGetProperty(root, "risk", out var riskElement)
                 ? ParseNode(riskElement, "risk")
                 : null;
+            var longEntry = TryGetProperty(root, "longEntry", out var longEntryElement)
+                ? ParseNode(longEntryElement, "longEntry")
+                : null;
+            var longExit = TryGetProperty(root, "longExit", out var longExitElement)
+                ? ParseNode(longExitElement, "longExit")
+                : null;
+            var shortEntry = TryGetProperty(root, "shortEntry", out var shortEntryElement)
+                ? ParseNode(shortEntryElement, "shortEntry")
+                : null;
+            var shortExit = TryGetProperty(root, "shortExit", out var shortExitElement)
+                ? ParseNode(shortExitElement, "shortExit")
+                : null;
+            var hasDirectionalRoots = longEntry is not null || longExit is not null || shortEntry is not null || shortExit is not null;
+            var direction = ParseDefinitionDirection(root, hasDirectionalRoots);
 
-            if (entry is null && exit is null && risk is null)
+            if (entry is null && exit is null && risk is null && !hasDirectionalRoots)
             {
-                throw new StrategyRuleParseException("Strategy definition must contain at least one of 'entry', 'exit' or 'risk'.");
+                throw new StrategyRuleParseException("Strategy definition must contain at least one of 'entry', 'exit', 'risk', 'longEntry', 'longExit', 'shortEntry' or 'shortExit'.");
             }
 
-            return new StrategyRuleDocument(schemaVersion, entry, exit, risk, metadata);
+            return new StrategyRuleDocument(schemaVersion, entry, exit, risk, metadata, direction, longEntry, longExit, shortEntry, shortExit);
         }
         catch (JsonException exception)
         {
@@ -89,6 +103,30 @@ public sealed class StrategyRuleParser : IStrategyRuleParser
             TryGetOptionalString(metadataElement, "templateName", "strategy definition.metadata.templateName"),
             TryGetOptionalInt32(metadataElement, "templateRevisionNumber", "strategy definition.metadata.templateRevisionNumber"),
             TryGetOptionalString(metadataElement, "templateSource", "strategy definition.metadata.templateSource"));
+    }
+
+    private static StrategyTradeDirection ParseDefinitionDirection(JsonElement root, bool hasDirectionalRoots)
+    {
+        if (!TryGetProperty(root, "direction", out var directionElement))
+        {
+            return hasDirectionalRoots
+                ? StrategyTradeDirection.Neutral
+                : StrategyTradeDirection.Long;
+        }
+
+        if (directionElement.ValueKind != JsonValueKind.String)
+        {
+            throw new StrategyRuleParseException("Strategy definition property 'direction' must be a string.");
+        }
+
+        var normalizedDirection = NormalizeRequiredString(directionElement.GetString(), "strategy definition.direction");
+        return normalizedDirection.ToLowerInvariant() switch
+        {
+            "long" => StrategyTradeDirection.Long,
+            "short" => StrategyTradeDirection.Short,
+            "neutral" when hasDirectionalRoots => StrategyTradeDirection.Neutral,
+            _ => throw new StrategyRuleParseException($"Strategy definition direction '{normalizedDirection}' is not supported.")
+        };
     }
 
     private static StrategyRuleNode ParseNode(JsonElement element, string location)

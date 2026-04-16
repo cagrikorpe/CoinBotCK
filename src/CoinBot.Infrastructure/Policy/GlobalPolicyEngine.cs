@@ -28,16 +28,17 @@ public sealed class GlobalPolicyEngine(
         PropertyNameCaseInsensitive = true
     };
 
-    public Task<GlobalPolicySnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
+    public async Task<GlobalPolicySnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
     {
-        return memoryCache.GetOrCreateAsync(
-                CacheKey,
-                async entry =>
-                {
-                    entry.SetOptions(SnapshotCacheOptions);
-                    return await LoadSnapshotAsync(cancellationToken);
-                },
-                SnapshotCacheOptions)!;
+        if (memoryCache.TryGetValue<GlobalPolicySnapshot>(CacheKey, out var cachedSnapshot) &&
+            cachedSnapshot is not null)
+        {
+            return cachedSnapshot;
+        }
+
+        var snapshot = await LoadSnapshotAsync(cancellationToken);
+        memoryCache.Set(CacheKey, snapshot, SnapshotCacheOptions);
+        return snapshot;
     }
 
     public async Task<GlobalPolicyEvaluationResult> EvaluateAsync(
@@ -389,24 +390,83 @@ public sealed class GlobalPolicyEngine(
     {
         var normalizedSymbol = NormalizeSymbol(request.Symbol);
 
-        return request.Environment == ExecutionEnvironment.Demo
-            ? await dbContext.DemoPositions
+        if (request.Environment == ExecutionEnvironment.Demo)
+        {
+            return await dbContext.DemoPositions
                 .AsNoTracking()
                 .IgnoreQueryFilters()
                 .Where(entity =>
                     entity.OwnerUserId == request.UserId &&
                     entity.Symbol == normalizedSymbol &&
                     !entity.IsDeleted)
-                .SumAsync(entity => entity.Quantity, cancellationToken)
-            : await dbContext.ExchangePositions
+                .SumAsync(entity => entity.Quantity, cancellationToken);
+        }
+
+        var positionNetQuantity = (await dbContext.ExchangePositions
                 .AsNoTracking()
                 .IgnoreQueryFilters()
                 .Where(entity =>
                     entity.OwnerUserId == request.UserId &&
                     entity.Plane == ExchangeDataPlane.Futures &&
-                    entity.Symbol == normalizedSymbol &&
                     !entity.IsDeleted)
-                .SumAsync(entity => entity.Quantity, cancellationToken);
+                .ToListAsync(cancellationToken))
+            .Where(entity => NormalizeSymbol(entity.Symbol) == normalizedSymbol)
+            .Sum(ResolveSignedPositionQuantity);
+
+        if (positionNetQuantity != 0m)
+        {
+            return positionNetQuantity;
+        }
+
+        return (await dbContext.ExecutionOrders
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.OwnerUserId == request.UserId &&
+                    entity.Plane == ExchangeDataPlane.Futures &&
+                    !entity.IsDeleted &&
+                    entity.SubmittedToBroker &&
+                    (entity.State == ExecutionOrderState.Submitted ||
+                     entity.State == ExecutionOrderState.Dispatching ||
+                     entity.State == ExecutionOrderState.CancelRequested ||
+                     entity.State == ExecutionOrderState.PartiallyFilled ||
+                     entity.State == ExecutionOrderState.Filled))
+                .ToListAsync(cancellationToken))
+            .Where(entity => NormalizeSymbol(entity.Symbol) == normalizedSymbol)
+            .Sum(ResolveSignedOrderQuantity);
+    }
+
+    private static decimal ResolveSignedOrderQuantity(ExecutionOrder entity)
+    {
+        var quantity = entity.FilledQuantity;
+        if (quantity == 0m)
+        {
+            return 0m;
+        }
+
+        return entity.Side == ExecutionOrderSide.Buy
+            ? quantity
+            : -quantity;
+    }
+
+    private static decimal ResolveSignedPositionQuantity(ExchangePosition entity)
+    {
+        var quantity = entity.Quantity;
+        if (quantity == 0m)
+        {
+            return 0m;
+        }
+
+        return NormalizePositionSide(entity.PositionSide) == "SHORT"
+            ? -Math.Abs(quantity)
+            : quantity;
+    }
+
+    private static string NormalizePositionSide(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? "BOTH"
+            : value.Trim().ToUpperInvariant();
     }
 
     private async Task<int> ResolveTodayTradeCountAsync(string userId, CancellationToken cancellationToken)

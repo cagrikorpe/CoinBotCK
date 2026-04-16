@@ -438,6 +438,7 @@ public sealed class AiShadowDecisionIntegrationTests
             circuitBreaker,
             featureSnapshotService,
             aiShadowDecisionService,
+            traceService,
             correlationContextAccessor,
             Options.Create(pilotOptions),
             Options.Create(aiSignalOptions),

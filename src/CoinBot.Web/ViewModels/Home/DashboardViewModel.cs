@@ -104,7 +104,8 @@ public record RecentOrderViewModel(
     string Reconciliation,
     string ResultCode,
     string ResultSummary,
-    string ReasonSummary);
+    string ReasonSummary,
+    string DirectionTone = "neutral");
 
 public record OpenPositionViewModel(
     string Symbol,

@@ -168,6 +168,7 @@ public sealed class UserDashboardPortfolioReadModelService(
         var totalUnrealizedPnl = liveUnrealizedPnl;
         var totalPnl = totalRealizedPnl + totalUnrealizedPnl;
         var pnlConsistencySummary = BuildPnlConsistencySummary(totalRealizedPnl, ledgerRealizedPnl, totalUnrealizedPnl, totalPnl);
+        var expectancy = BuildExpectancySnapshot(tradeHistory);
 
         var latestSyncAtUtc = syncStates
             .SelectMany(entity => new[]
@@ -196,7 +197,8 @@ public sealed class UserDashboardPortfolioReadModelService(
             balances,
             positions,
             tradeHistory,
-            spotHoldings);
+            spotHoldings,
+            expectancy);
     }
 
     private async Task<IReadOnlyCollection<UserDashboardTradeHistoryRowSnapshot>> BuildTradeHistoryAsync(
@@ -396,6 +398,10 @@ public sealed class UserDashboardPortfolioReadModelService(
             var clientOrderId = orderSpotRows?.FirstOrDefault()?.ClientOrderId ?? ResolveClientOrderId(order, latestTransition);
             feeAmountInQuote ??= ResolveFuturesFeeAmountInQuote(order, latestTransition);
 
+            var tradeDirection = ResolveTradeDirectionLabel(order);
+            var tradeAction = ResolveTradeActionLabel(order, tradeDirection);
+            var isClosingTrade = IsClosingTrade(order);
+
             tradeRows.Add(new UserDashboardTradeHistoryRowSnapshot(
                 order.Id,
                 SanitizeToken(clientOrderId),
@@ -432,7 +438,10 @@ public sealed class UserDashboardPortfolioReadModelService(
                 FilledQuantity: filledQuantity,
                 CumulativeQuoteQuantity: cumulativeQuoteQuantity,
                 FillCount: orderSpotRows?.Count ?? 0,
-                TradeIdsSummary: tradeIdsSummary));
+                TradeIdsSummary: tradeIdsSummary,
+                Direction: tradeDirection,
+                TradeAction: tradeAction,
+                IsClosingTrade: isClosingTrade));
         }
 
         return tradeRows;
@@ -484,6 +493,76 @@ public sealed class UserDashboardPortfolioReadModelService(
         }
 
         return normalizedValue;
+    }
+
+    private static UserDashboardExpectancySnapshot BuildExpectancySnapshot(
+        IReadOnlyCollection<UserDashboardTradeHistoryRowSnapshot> tradeHistory)
+    {
+        var closedTrades = tradeHistory
+            .Where(entity =>
+                entity.SubmittedToBroker &&
+                entity.FinalState.Equals("Filled", StringComparison.OrdinalIgnoreCase) &&
+                entity.IsClosingTrade)
+            .ToArray();
+
+        if (closedTrades.Length == 0)
+        {
+            return new UserDashboardExpectancySnapshot(
+                HasData: false,
+                ClosedTradeCount: 0,
+                WinningTradeCount: 0,
+                LosingTradeCount: 0,
+                BreakEvenTradeCount: 0,
+                WinRatePercentage: 0m,
+                AverageWin: 0m,
+                AverageLoss: 0m,
+                Expectancy: 0m,
+                ProfitFactor: null,
+                Summary: "Expectancy hazır değil. Kapanmış işlem bulunamadı.");
+        }
+
+        var winningTrades = closedTrades.Where(entity => entity.RealizedPnl > 0m).ToArray();
+        var losingTrades = closedTrades.Where(entity => entity.RealizedPnl < 0m).ToArray();
+        var breakEvenTradeCount = closedTrades.Length - winningTrades.Length - losingTrades.Length;
+        var grossProfit = winningTrades.Sum(entity => entity.RealizedPnl);
+        var grossLoss = Math.Abs(losingTrades.Sum(entity => entity.RealizedPnl));
+        var averageWin = winningTrades.Length == 0
+            ? 0m
+            : NormalizeDecimal(grossProfit / winningTrades.Length);
+        var averageLoss = losingTrades.Length == 0
+            ? 0m
+            : NormalizeDecimal(grossLoss / losingTrades.Length);
+        var winRatePercentage = NormalizeDecimal((winningTrades.Length * 100m) / closedTrades.Length);
+        var expectancy = NormalizeDecimal(closedTrades.Sum(entity => entity.RealizedPnl) / closedTrades.Length);
+        decimal? profitFactor = null;
+
+        if (grossLoss > 0m)
+        {
+            profitFactor = NormalizeDecimal(grossProfit / grossLoss);
+        }
+        else if (grossProfit > 0m)
+        {
+            profitFactor = decimal.MaxValue;
+        }
+
+        var longClosedTradeCount = closedTrades.Count(entity => string.Equals(entity.Direction, "Long", StringComparison.OrdinalIgnoreCase));
+        var shortClosedTradeCount = closedTrades.Count(entity => string.Equals(entity.Direction, "Short", StringComparison.OrdinalIgnoreCase));
+        var summary = $"ClosedTrades={closedTrades.Length}; LongClosed={longClosedTradeCount}; ShortClosed={shortClosedTradeCount}; Wins={winningTrades.Length}; Losses={losingTrades.Length}; BreakEven={breakEvenTradeCount}; WinRate={winRatePercentage:0.##}%; Expectancy={expectancy:0.####}; ProfitFactor={(profitFactor == decimal.MaxValue ? "∞" : profitFactor?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a")}.";
+
+        return new UserDashboardExpectancySnapshot(
+            HasData: true,
+            ClosedTradeCount: closedTrades.Length,
+            WinningTradeCount: winningTrades.Length,
+            LosingTradeCount: losingTrades.Length,
+            BreakEvenTradeCount: breakEvenTradeCount,
+            WinRatePercentage: winRatePercentage,
+            AverageWin: averageWin,
+            AverageLoss: averageLoss,
+            Expectancy: expectancy,
+            ProfitFactor: profitFactor,
+            Summary: summary,
+            LongClosedTradeCount: longClosedTradeCount,
+            ShortClosedTradeCount: shortClosedTradeCount);
     }
 
     private static string BuildPnlConsistencySummary(
@@ -814,6 +893,31 @@ public sealed class UserDashboardPortfolioReadModelService(
             .ThenByDescending(entity => entity.ExchangeUpdatedAtUtc)
             .ThenByDescending(entity => entity.Id)
             .FirstOrDefault();
+    }
+
+    private static bool IsClosingTrade(ExecutionOrder order)
+    {
+        if (order.Plane == ExchangeDataPlane.Spot)
+        {
+            return order.Side == ExecutionOrderSide.Sell;
+        }
+
+        return order.ReduceOnly || order.SignalType == StrategySignalType.Exit;
+    }
+
+    private static string ResolveTradeDirectionLabel(ExecutionOrder order)
+    {
+        if (IsClosingTrade(order))
+        {
+            return order.Side == ExecutionOrderSide.Sell ? "Long" : "Short";
+        }
+
+        return order.Side == ExecutionOrderSide.Buy ? "Long" : "Short";
+    }
+
+    private static string ResolveTradeActionLabel(ExecutionOrder order, string directionLabel)
+    {
+        return $"{directionLabel} {(IsClosingTrade(order) ? "Exit" : "Entry")}";
     }
 
     private static decimal? ResolvePositionCostBasis(decimal quantity, decimal entryPrice)

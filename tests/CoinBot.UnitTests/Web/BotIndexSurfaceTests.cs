@@ -28,6 +28,10 @@ public sealed class BotIndexSurfaceTests
         Assert.Contains("PAUSED", content, StringComparison.Ordinal);
         Assert.Contains("Botunuzu görün, stratejisini bağlayın ve durumunu anlayın.", content, StringComparison.Ordinal);
         Assert.Contains("Strateji oluştur", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-direction-mode-select", content, StringComparison.Ordinal);
+        Assert.Contains("LongOnly", content, StringComparison.Ordinal);
+        Assert.Contains("ShortOnly", content, StringComparison.Ordinal);
+        Assert.Contains("LongShort", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-bot-start-block-reason", content, StringComparison.Ordinal);
         Assert.Contains("Strateji hazır değil", content, StringComparison.Ordinal);
 
@@ -65,6 +69,10 @@ public sealed class BotIndexSurfaceTests
         Assert.Contains("data-cb-bot-enable-block-reason", content, StringComparison.Ordinal);
         Assert.Contains("Strateji hazır değil.", content, StringComparison.Ordinal);
         Assert.Contains("Strateji oluştur", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-direction-mode-select", content, StringComparison.Ordinal);
+        Assert.Contains("LongOnly", content, StringComparison.Ordinal);
+        Assert.Contains("ShortOnly", content, StringComparison.Ordinal);
+        Assert.Contains("LongShort", content, StringComparison.Ordinal);
 
         Assert.DoesNotContain("execution analytics", content, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("ReasonCode", content, StringComparison.Ordinal);

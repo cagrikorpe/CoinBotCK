@@ -225,7 +225,7 @@ public class HomeController(
             .Select(item => new RecentOrderViewModel(
                 FormatTimestamp(item.LastUpdatedAtUtc, displayTimeZoneInfo),
                 item.Symbol,
-                item.Side,
+                item.TradeAction ?? item.Side,
                 item.FinalState,
                 ResolveOrderTone(item),
                 BuildFillSummary(item),
@@ -233,7 +233,8 @@ public class HomeController(
                 BuildReconciliationSummary(item),
                 item.ExecutionResultCode,
                 item.ExecutionResultSummary,
-                item.ReasonChainSummary))
+                item.ReasonChainSummary,
+                ResolveDirectionTone(item.Direction)))
             .ToList();
     }
 
@@ -635,6 +636,15 @@ public class HomeController(
             "Short" => "danger",
             _ => "neutral"
         };
+    }
+
+    private static string ResolveDirectionTone(string? direction)
+    {
+        return string.Equals(direction, "Long", StringComparison.OrdinalIgnoreCase)
+            ? "success"
+            : string.Equals(direction, "Short", StringComparison.OrdinalIgnoreCase)
+                ? "danger"
+                : "neutral";
     }
 
     private static string ResolveOrderTone(UserDashboardTradeHistoryRowSnapshot snapshot)

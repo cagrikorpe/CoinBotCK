@@ -54,6 +54,71 @@ public sealed class ExecutionGateTests
     }
 
     [Fact]
+    public async Task EnsureExecutionAllowedAsync_AllowsPilotRequest_WhenGlobalSwitchIsDisarmed_AndBypassIsEnabled()
+    {
+        await using var harness = CreateHarness(
+            environmentName: Environments.Development,
+            useTestnetEndpoints: true,
+            pilotOptions: new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                PilotActivationEnabled = true,
+                AllowGlobalSwitchBypass = true,
+                PrivatePlaneFreshnessThresholdSeconds = 120
+            });
+        var botId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        await PrimeFreshMarketDataAsync(harness, "corr-pilot-bypass-1");
+        harness.DbContext.ApiCredentialValidations.Add(new ApiCredentialValidation
+        {
+            ExchangeAccountId = exchangeAccountId,
+            OwnerUserId = "user-pilot-bypass",
+            ValidationStatus = "Valid",
+            EnvironmentScope = "Demo",
+            IsKeyValid = true,
+            CanTrade = true,
+            SupportsFutures = true,
+            IsEnvironmentMatch = true,
+            ValidatedAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime
+        });
+        harness.DbContext.ExchangeAccountSyncStates.Add(new ExchangeAccountSyncState
+        {
+            ExchangeAccountId = exchangeAccountId,
+            OwnerUserId = "user-pilot-bypass",
+            Plane = ExchangeDataPlane.Futures,
+            PrivateStreamConnectionState = ExchangePrivateStreamConnectionState.Connected,
+            DriftStatus = ExchangeStateDriftStatus.InSync,
+            LastPrivateStreamEventAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime,
+            LastBalanceSyncedAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime,
+            LastPositionSyncedAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime,
+            LastStateReconciledAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime
+        });
+        await harness.DbContext.SaveChangesAsync();
+
+        var snapshot = await harness.ExecutionGate.EnsureExecutionAllowedAsync(
+            new ExecutionGateRequest(
+                Actor: "system:bot-worker",
+                Action: "TradeExecution.Dispatch",
+                Target: "bot-pilot-bypass",
+                Environment: ExecutionEnvironment.Live,
+                Context: "DevelopmentFuturesTestnetPilot=True | PilotActivationEnabled=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                CorrelationId: "corr-pilot-bypass-2",
+                UserId: "user-pilot-bypass",
+                BotId: botId,
+                ExchangeAccountId: exchangeAccountId,
+                Symbol: "BTCUSDT",
+                Timeframe: "1m",
+                Plane: ExchangeDataPlane.Futures));
+
+        var auditLog = await harness.DbContext.AuditLogs
+            .SingleAsync(entity => entity.Action == "TradeExecution.Dispatch");
+
+        Assert.False(snapshot.IsPersisted);
+        Assert.Equal("Allowed", auditLog.Outcome);
+        Assert.DoesNotContain("TradeMasterDisarmed", auditLog.Context, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task EnsureExecutionAllowedAsync_BlocksWhenTradeMasterIsDisarmed()
     {
         await using var harness = CreateHarness();
@@ -412,6 +477,60 @@ public sealed class ExecutionGateTests
         Assert.Contains("ResolvedMode=Live; Source=UserOverride", auditLog.Context, StringComparison.Ordinal);
     }
 
+
+    [Fact]
+    public async Task EnsureExecutionAllowedAsync_AppendsBreakerDiagnostics_WhenGlobalSystemStateIsDegraded()
+    {
+        await using var harness = CreateHarness();
+        await PrimeFreshMarketDataAsync(harness, "corr-gs-degraded-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-gs-degraded",
+            context: "Execution open",
+            correlationId: "corr-gs-degraded-2");
+
+        harness.DbContext.DependencyCircuitBreakerStates.Add(
+            new DependencyCircuitBreakerState
+            {
+                Id = Guid.NewGuid(),
+                BreakerKind = DependencyCircuitBreakerKind.OrderExecution,
+                StateCode = CircuitBreakerStateCode.Cooldown,
+                ConsecutiveFailureCount = 4,
+                CooldownUntilUtc = DateTime.UtcNow.AddMinutes(5),
+                LastFailureAtUtc = DateTime.UtcNow.AddMinutes(-1),
+                LastErrorCode = "ClockDriftExceeded",
+                LastErrorMessage = "Execution blocked because clock drift exceeded the safety threshold.",
+                CorrelationId = "corr-breaker-diag"
+            });
+        await harness.DbContext.SaveChangesAsync();
+
+        await harness.GlobalSystemStateService.SetStateAsync(
+            new GlobalSystemStateSetRequest(
+                GlobalSystemStateKind.Degraded,
+                "AUTONOMY_BREAKER_ORDEREXECUTION",
+                "Dependency breaker OrderExecution is in cooldown.",
+                "Autonomy.DependencyBreaker",
+                "corr-gs-degraded-3",
+                IsManualOverride: false,
+                ExpiresAtUtc: DateTime.UtcNow.AddMinutes(5),
+                UpdatedByUserId: "system:autonomy-self-healing",
+                UpdatedFromIp: null));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            harness.ExecutionGate.EnsureExecutionAllowedAsync(
+                new ExecutionGateRequest(
+                    Actor: "worker-gs-degraded",
+                    Action: "TradeExecution.Dispatch",
+                    Target: "bot-gs-degraded",
+                    Environment: ExecutionEnvironment.Demo,
+                    Context: "Dispatch during degraded breaker cooldown",
+                    CorrelationId: "corr-gs-degraded-4")));
+
+        Assert.Contains("ActiveBreakerDiagnostics=", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("BreakerKind=OrderExecution", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("ErrorCode=ClockDriftExceeded", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("CorrelationId=corr-breaker-diag", exception.Message, StringComparison.Ordinal);
+    }
 
     [Fact]
     public async Task EnsureExecutionAllowedAsync_BlocksWhenGlobalSystemStateIsMaintenance()

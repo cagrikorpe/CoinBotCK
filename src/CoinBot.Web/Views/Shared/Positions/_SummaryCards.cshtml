@@ -3,6 +3,8 @@
 @{
     var openPositionCount = Model.Positions.Count;
     var orderCount = Model.TradeHistory.Count;
+    var longPositionCount = Model.Positions.Count(item => item.PositionSide.Equals("LONG", StringComparison.OrdinalIgnoreCase) || (item.Quantity > 0m && !item.PositionSide.Equals("SHORT", StringComparison.OrdinalIgnoreCase)));
+    var shortPositionCount = Model.Positions.Count(item => item.PositionSide.Equals("SHORT", StringComparison.OrdinalIgnoreCase) || item.Quantity < 0m);
     var totalTone = Model.TotalPnl >= 0m ? "cb-text-positive" : "cb-text-negative";
     var unrealizedTone = Model.UnrealizedPnl >= 0m ? "cb-text-positive" : "cb-text-negative";
     var realizedTone = Model.RealizedPnl >= 0m ? "cb-text-positive" : "cb-text-negative";
@@ -16,7 +18,7 @@
     <div class="cb-stat-card">
         <div class="cb-stat-label">Pozisyonlar</div>
         <div class="cb-stat-value cb-numeric-strong" id="cb_positions_summary_open" data-cb-positions-summary-open>@openPositionCount.ToString("00")</div>
-        <div class="cb-stat-meta">Açık pozisyon</div>
+        <div class="cb-stat-meta">@($"{longPositionCount} long • {shortPositionCount} short")</div>
     </div>
     <div class="cb-stat-card">
         <div class="cb-stat-label">Emirler</div>

@@ -2,6 +2,7 @@ using System.Globalization;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Policy;
 using CoinBot.Application.Abstractions.Risk;
+using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.Persistence;
@@ -32,6 +33,13 @@ public sealed class UserExecutionOverrideGuard(
         var normalizedUserId = NormalizeRequired(request.UserId, nameof(request.UserId));
         var normalizedSymbol = NormalizeRequired(request.Symbol, nameof(request.Symbol)).ToUpperInvariant();
         var pilotContextRequested = IsPilotContextRequested(request.Context);
+        var isReduceOnlyOrder = await IsReduceOnlyOrderAsync(
+            normalizedUserId,
+            normalizedSymbol,
+            request.Environment,
+            request.Plane,
+            request.Side,
+            cancellationToken);
         var pilotGuardSummary = pilotContextRequested
             ? BuildPilotGuardSummary(request, normalizedUserId, normalizedSymbol)
             : null;
@@ -90,7 +98,7 @@ public sealed class UserExecutionOverrideGuard(
 
         if (pilotContextRequested)
         {
-            var pilotBlockedReasons = EvaluatePilotConfiguration(request, normalizedUserId, normalizedSymbol);
+            var pilotBlockedReasons = EvaluatePilotConfiguration(request, normalizedUserId, normalizedSymbol, isReduceOnlyOrder);
             if (pilotBlockedReasons.Count > 0)
             {
                 return Block(
@@ -109,13 +117,6 @@ public sealed class UserExecutionOverrideGuard(
         }
 
         var isReplacementOrder = request.ReplacesExecutionOrderId.HasValue;
-        var isReduceOnlyOrder = await IsReduceOnlyOrderAsync(
-            normalizedUserId,
-            normalizedSymbol,
-            request.Environment,
-            request.Plane,
-            request.Side,
-            cancellationToken);
 
         if (!isReplacementOrder &&
             !isReduceOnlyOrder &&
@@ -126,6 +127,7 @@ public sealed class UserExecutionOverrideGuard(
                 request.BotId,
                 symbol: null,
                 TimeSpan.FromSeconds(optionsValue.PerBotCooldownSeconds),
+                request.Side,
                 request.CurrentExecutionOrderId,
                 cancellationToken))
         {
@@ -143,6 +145,7 @@ public sealed class UserExecutionOverrideGuard(
                 botId: null,
                 normalizedSymbol,
                 TimeSpan.FromSeconds(optionsValue.PerSymbolCooldownSeconds),
+                request.Side,
                 request.CurrentExecutionOrderId,
                 cancellationToken))
         {
@@ -164,7 +167,8 @@ public sealed class UserExecutionOverrideGuard(
         }
 
         RiskVetoResult? riskEvaluation = null;
-        if (riskPolicyEvaluator is not null &&
+        if (!isReduceOnlyOrder &&
+            riskPolicyEvaluator is not null &&
             request.TradingStrategyId.HasValue &&
             request.TradingStrategyVersionId.HasValue &&
             !string.IsNullOrWhiteSpace(request.Timeframe))
@@ -203,7 +207,7 @@ public sealed class UserExecutionOverrideGuard(
                     pilotGuardSummary);
             }
         }
-        else if (pilotContextRequested)
+        else if (pilotContextRequested && !isReduceOnlyOrder)
         {
             return Block(
                 ["UserExecutionPilotRiskEvaluationUnavailable"],
@@ -286,7 +290,8 @@ public sealed class UserExecutionOverrideGuard(
     private IReadOnlyList<string> EvaluatePilotConfiguration(
         UserExecutionOverrideEvaluationRequest request,
         string normalizedUserId,
-        string normalizedSymbol)
+        string normalizedSymbol,
+        bool isReduceOnlyOrder)
     {
         var blockedReasons = new List<string>();
         var allowedUserIds = optionsValue.AllowedUserIds
@@ -343,17 +348,20 @@ public sealed class UserExecutionOverrideGuard(
             blockedReasons.Add("UserExecutionPilotCooldownConfigurationInvalid");
         }
 
-        if (!TryResolvePilotOrderNotionalCap(out var maxPilotOrderNotional, out var notionalConfigurationReason))
+        if (!isReduceOnlyOrder)
         {
-            blockedReasons.Add(notionalConfigurationReason!);
-        }
-        else if (!TryResolvePilotRequestedNotional(request, out var orderNotional, out var notionalDataReason))
-        {
-            blockedReasons.Add(notionalDataReason!);
-        }
-        else if (orderNotional > maxPilotOrderNotional)
-        {
-            blockedReasons.Add("UserExecutionPilotNotionalHardCapExceeded");
+            if (!TryResolvePilotOrderNotionalCap(out var maxPilotOrderNotional, out var notionalConfigurationReason))
+            {
+                blockedReasons.Add(notionalConfigurationReason!);
+            }
+            else if (!TryResolvePilotRequestedNotional(request, out var orderNotional, out var notionalDataReason))
+            {
+                blockedReasons.Add(notionalDataReason!);
+            }
+            else if (orderNotional > maxPilotOrderNotional)
+            {
+                blockedReasons.Add("UserExecutionPilotNotionalHardCapExceeded");
+            }
         }
 
         if (optionsValue.MaxDailyLossPercentage <= 0m)
@@ -484,6 +492,7 @@ public sealed class UserExecutionOverrideGuard(
         Guid? botId,
         string? symbol,
         TimeSpan cooldown,
+        ExecutionOrderSide requestedSide,
         Guid? currentExecutionOrderId,
         CancellationToken cancellationToken)
     {
@@ -494,6 +503,7 @@ public sealed class UserExecutionOverrideGuard(
             .Where(entity =>
                 entity.OwnerUserId == userId &&
                 entity.CooldownApplied &&
+                entity.Side == requestedSide &&
                 (!currentExecutionOrderId.HasValue || entity.Id != currentExecutionOrderId.Value) &&
                 !entity.IsDeleted &&
                 entity.CreatedDate >= thresholdUtc);
@@ -516,24 +526,52 @@ public sealed class UserExecutionOverrideGuard(
         ExecutionEnvironment environment,
         CancellationToken cancellationToken)
     {
-        return environment == ExecutionEnvironment.Demo
-            ? await dbContext.DemoPositions
+        if (environment == ExecutionEnvironment.Demo)
+        {
+            return await dbContext.DemoPositions
                 .AsNoTracking()
                 .IgnoreQueryFilters()
                 .CountAsync(
                     entity => entity.OwnerUserId == userId &&
-                              entity.Quantity != 0m &&
-                              !entity.IsDeleted,
-                    cancellationToken)
-            : await dbContext.ExchangePositions
-                .AsNoTracking()
-                .IgnoreQueryFilters()
-                .CountAsync(
-                    entity => entity.OwnerUserId == userId &&
-                              entity.Plane == ExchangeDataPlane.Futures &&
                               entity.Quantity != 0m &&
                               !entity.IsDeleted,
                     cancellationToken);
+        }
+
+        var positionCount = await dbContext.ExchangePositions
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .CountAsync(
+                entity => entity.OwnerUserId == userId &&
+                          entity.Plane == ExchangeDataPlane.Futures &&
+                          entity.Quantity != 0m &&
+                          !entity.IsDeleted,
+                cancellationToken);
+
+        if (positionCount != 0)
+        {
+            return positionCount;
+        }
+
+        var executionNetBySymbol = (await dbContext.ExecutionOrders
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.OwnerUserId == userId &&
+                    entity.Plane == ExchangeDataPlane.Futures &&
+                    !entity.IsDeleted &&
+                    entity.SubmittedToBroker &&
+                    (entity.State == ExecutionOrderState.Submitted ||
+                     entity.State == ExecutionOrderState.Dispatching ||
+                     entity.State == ExecutionOrderState.CancelRequested ||
+                     entity.State == ExecutionOrderState.PartiallyFilled ||
+                     entity.State == ExecutionOrderState.Filled))
+                .ToListAsync(cancellationToken))
+            .GroupBy(entity => NormalizePositionSymbol(entity.Symbol))
+            .Select(group => group.Sum(ResolveSignedOrderQuantity))
+            .Count(netQuantity => netQuantity != 0m);
+
+        return executionNetBySymbol;
     }
 
     private async Task<int> ResolveTodayTradeCountAsync(string userId, CancellationToken cancellationToken)
@@ -566,24 +604,18 @@ public sealed class UserExecutionOverrideGuard(
             return false;
         }
 
+        var normalizedSymbol = NormalizePositionSymbol(symbol);
+
         var netQuantity = environment == ExecutionEnvironment.Demo
             ? await dbContext.DemoPositions
                 .AsNoTracking()
                 .IgnoreQueryFilters()
                 .Where(entity =>
                     entity.OwnerUserId == userId &&
-                    entity.Symbol == symbol &&
+                    entity.Symbol == normalizedSymbol &&
                     !entity.IsDeleted)
                 .SumAsync(entity => entity.Quantity, cancellationToken)
-            : await dbContext.ExchangePositions
-                .AsNoTracking()
-                .IgnoreQueryFilters()
-                .Where(entity =>
-                    entity.OwnerUserId == userId &&
-                    entity.Plane == plane &&
-                    entity.Symbol == symbol &&
-                    !entity.IsDeleted)
-                .SumAsync(entity => entity.Quantity, cancellationToken);
+            : await ResolveLiveNetQuantityAsync(userId, normalizedSymbol, plane, cancellationToken);
 
         if (netQuantity == 0m)
         {
@@ -593,6 +625,104 @@ public sealed class UserExecutionOverrideGuard(
         return netQuantity > 0m
             ? side == ExecutionOrderSide.Sell
             : side == ExecutionOrderSide.Buy;
+    }
+
+    private async Task<decimal> ResolveLiveNetQuantityAsync(
+        string userId,
+        string normalizedSymbol,
+        ExchangeDataPlane plane,
+        CancellationToken cancellationToken)
+    {
+        var positionNetQuantity = (await dbContext.ExchangePositions
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.OwnerUserId == userId &&
+                    entity.Plane == plane &&
+                    !entity.IsDeleted)
+                .ToListAsync(cancellationToken))
+            .Where(entity => NormalizePositionSymbol(entity.Symbol) == normalizedSymbol)
+            .Sum(ResolveSignedPositionQuantity);
+
+        if (positionNetQuantity != 0m)
+        {
+            return positionNetQuantity;
+        }
+
+        return (await dbContext.ExecutionOrders
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.OwnerUserId == userId &&
+                    entity.Plane == plane &&
+                    !entity.IsDeleted &&
+                    entity.SubmittedToBroker &&
+                    (entity.State == ExecutionOrderState.Submitted ||
+                     entity.State == ExecutionOrderState.Dispatching ||
+                     entity.State == ExecutionOrderState.CancelRequested ||
+                     entity.State == ExecutionOrderState.PartiallyFilled ||
+                     entity.State == ExecutionOrderState.Filled))
+                .ToListAsync(cancellationToken))
+            .Where(entity => NormalizePositionSymbol(entity.Symbol) == normalizedSymbol)
+            .Sum(ResolveSignedOrderQuantity);
+    }
+
+    private static decimal ResolveSignedOrderQuantity(ExecutionOrder entity)
+    {
+        var quantity = entity.FilledQuantity > 0m
+            ? entity.FilledQuantity
+            : ResolvePendingExposureQuantity(entity);
+        if (quantity == 0m)
+        {
+            return 0m;
+        }
+
+        return entity.Side == ExecutionOrderSide.Buy
+            ? quantity
+            : -quantity;
+    }
+
+    private static decimal ResolvePendingExposureQuantity(ExecutionOrder entity)
+    {
+        if (!entity.SubmittedToBroker ||
+            entity.ReduceOnly ||
+            entity.OrderType != ExecutionOrderType.Market)
+        {
+            return 0m;
+        }
+
+        return entity.State is ExecutionOrderState.Submitted or
+            ExecutionOrderState.Dispatching or
+            ExecutionOrderState.CancelRequested
+            ? entity.Quantity
+            : 0m;
+    }
+
+    private static decimal ResolveSignedPositionQuantity(ExchangePosition entity)
+    {
+        var quantity = entity.Quantity;
+        if (quantity == 0m)
+        {
+            return 0m;
+        }
+
+        return NormalizePositionSide(entity.PositionSide) == "SHORT"
+            ? -Math.Abs(quantity)
+            : quantity;
+    }
+
+    private static string NormalizePositionSide(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? "BOTH"
+            : value.Trim().ToUpperInvariant();
+    }
+
+    private static string NormalizePositionSymbol(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : value.Trim().ToUpperInvariant();
     }
 
     private static HashSet<string> ParseSymbols(string? csv)

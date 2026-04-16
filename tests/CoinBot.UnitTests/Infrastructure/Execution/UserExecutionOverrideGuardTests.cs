@@ -404,6 +404,121 @@ public sealed class UserExecutionOverrideGuardTests
     }
 
     [Fact]
+    public async Task EvaluateAsync_AllowsWhenBotCooldownExistsOnlyForOppositeDirection()
+    {
+        await using var dbContext = CreateDbContext();
+        var botId = Guid.NewGuid();
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "user-cooldown-opposite",
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            StrategyKey = "cooldown-core",
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.01m,
+            Price = 65000m,
+            BotId = botId,
+            ExecutionEnvironment = ExecutionEnvironment.Demo,
+            ExecutorKind = ExecutionOrderExecutorKind.Virtual,
+            State = ExecutionOrderState.Submitted,
+            CooldownApplied = true,
+            IdempotencyKey = "cooldown-opposite-order",
+            RootCorrelationId = "cooldown-opposite-root",
+            CreatedDate = DateTime.UtcNow.AddSeconds(-30),
+            LastStateChangedAtUtc = DateTime.UtcNow.AddSeconds(-30)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                PerBotCooldownSeconds = 120
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-cooldown-opposite",
+                "BTCUSDT",
+                ExecutionEnvironment.Demo,
+                ExecutionOrderSide.Sell,
+                0.01m,
+                65000m,
+                BotId: botId,
+                StrategyKey: "cooldown-core"),
+            CancellationToken.None);
+
+        Assert.False(result.IsBlocked);
+        Assert.Null(result.BlockCode);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_AllowsWhenSymbolCooldownExistsOnlyForOppositeDirection()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "user-symbol-cooldown-opposite",
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            StrategyKey = "cooldown-core",
+            Symbol = "ETHUSDT",
+            Timeframe = "1m",
+            BaseAsset = "ETH",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.1m,
+            Price = 3000m,
+            ExecutionEnvironment = ExecutionEnvironment.Demo,
+            ExecutorKind = ExecutionOrderExecutorKind.Virtual,
+            State = ExecutionOrderState.Submitted,
+            CooldownApplied = true,
+            IdempotencyKey = "symbol-cooldown-opposite-order",
+            RootCorrelationId = "symbol-cooldown-opposite-root",
+            CreatedDate = DateTime.UtcNow.AddSeconds(-30),
+            LastStateChangedAtUtc = DateTime.UtcNow.AddSeconds(-30)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                PerSymbolCooldownSeconds = 60
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-symbol-cooldown-opposite",
+                "ETHUSDT",
+                ExecutionEnvironment.Demo,
+                ExecutionOrderSide.Sell,
+                0.1m,
+                3000m,
+                StrategyKey: "cooldown-core"),
+            CancellationToken.None);
+
+        Assert.False(result.IsBlocked);
+        Assert.Null(result.BlockCode);
+    }
+
+    [Fact]
     public async Task EvaluateAsync_AllowsWhenBotCooldownHasExpired()
     {
         await using var dbContext = CreateDbContext();
@@ -888,6 +1003,204 @@ public sealed class UserExecutionOverrideGuardTests
         Assert.True(result.IsBlocked);
         Assert.Equal("UserExecutionPilotNotionalDataUnavailable", result.BlockCode);
         Assert.Contains("RequestedNotional=unavailable", result.GuardSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_AllowsPilotReduceOnlyOrder_WhenRequestedNotionalExceedsConfiguredHardCap()
+    {
+        await using var dbContext = CreateDbContext();
+        var botId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        var evaluatedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+
+        dbContext.RiskProfiles.Add(new RiskProfile
+        {
+            OwnerUserId = "user-pilot-exit",
+            ProfileName = "Pilot",
+            MaxDailyLossPercentage = 5m,
+            MaxPositionSizePercentage = 100m,
+            MaxLeverage = 2m,
+            MaxConcurrentPositions = 1
+        });
+        dbContext.ExchangeBalances.Add(new ExchangeBalance
+        {
+            ExchangeAccountId = exchangeAccountId,
+            OwnerUserId = "user-pilot-exit",
+            Plane = ExchangeDataPlane.Futures,
+            Asset = "USDT",
+            WalletBalance = 1000m,
+            CrossWalletBalance = 1000m,
+            AvailableBalance = 1000m,
+            MaxWithdrawAmount = 1000m,
+            ExchangeUpdatedAtUtc = evaluatedAtUtc
+        });
+        dbContext.ExchangePositions.Add(new ExchangePosition
+        {
+            ExchangeAccountId = exchangeAccountId,
+            OwnerUserId = "user-pilot-exit",
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "BTCUSDT",
+            PositionSide = "BOTH",
+            Quantity = 0.125m,
+            EntryPrice = 80m,
+            BreakEvenPrice = 80m,
+            UnrealizedProfit = 0m,
+            MarginType = "isolated",
+            IsolatedWallet = 10m,
+            ExchangeUpdatedAtUtc = evaluatedAtUtc,
+            SyncedAtUtc = evaluatedAtUtc
+        });
+        await dbContext.SaveChangesAsync();
+
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            hostEnvironment: new TestHostEnvironment(Environments.Development),
+            riskPolicyEvaluator: new RiskPolicyEvaluator(
+                dbContext,
+                timeProvider,
+                NullLogger<RiskPolicyEvaluator>.Instance),
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                AllowedUserIds = ["user-pilot-exit"],
+                AllowedBotIds = [botId.ToString("N")],
+                AllowedSymbols = ["BTCUSDT"],
+                MaxPilotOrderNotional = "250",
+                MaxOpenPositionsPerUser = 1,
+                PerBotCooldownSeconds = 300,
+                PerSymbolCooldownSeconds = 300,
+                MaxDailyLossPercentage = 5m
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-pilot-exit",
+                "BTCUSDT",
+                ExecutionEnvironment.Live,
+                ExecutionOrderSide.Sell,
+                0.125m,
+                65000m,
+                BotId: botId,
+                StrategyKey: "pilot-core",
+                Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                TradingStrategyId: Guid.NewGuid(),
+                TradingStrategyVersionId: Guid.NewGuid(),
+                Timeframe: "1m",
+                Plane: ExchangeDataPlane.Futures),
+            CancellationToken.None);
+
+        Assert.False(result.IsBlocked);
+        Assert.Null(result.BlockCode);
+        Assert.Contains("RequestedNotional=8125", result.GuardSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_AllowsPilotReduceOnlyOrder_WhenOpenPositionIsOnlyVisibleThroughSubmittedMarketOrderFallback()
+    {
+        await using var dbContext = CreateDbContext();
+        var botId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        var evaluatedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+
+        dbContext.RiskProfiles.Add(new RiskProfile
+        {
+            OwnerUserId = "user-pilot-fallback",
+            ProfileName = "Pilot",
+            MaxDailyLossPercentage = 5m,
+            MaxPositionSizePercentage = 100m,
+            MaxLeverage = 2m,
+            MaxConcurrentPositions = 1
+        });
+        dbContext.ExchangeBalances.Add(new ExchangeBalance
+        {
+            ExchangeAccountId = exchangeAccountId,
+            OwnerUserId = "user-pilot-fallback",
+            Plane = ExchangeDataPlane.Futures,
+            Asset = "USDT",
+            WalletBalance = 1000m,
+            CrossWalletBalance = 1000m,
+            AvailableBalance = 1000m,
+            MaxWithdrawAmount = 1000m,
+            ExchangeUpdatedAtUtc = evaluatedAtUtc
+        });
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "user-pilot-fallback",
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            StrategyKey = "pilot-core",
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.125m,
+            Price = 80m,
+            ExchangeAccountId = exchangeAccountId,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            Plane = ExchangeDataPlane.Futures,
+            ReduceOnly = false,
+            SubmittedToBroker = true,
+            State = ExecutionOrderState.Submitted,
+            IdempotencyKey = $"seed-submitted-{Guid.NewGuid():N}",
+            RootCorrelationId = "seed-submitted-live-order",
+            ExternalOrderId = $"binance:{Guid.NewGuid():N}",
+            SubmittedAtUtc = evaluatedAtUtc,
+            LastStateChangedAtUtc = evaluatedAtUtc
+        });
+        await dbContext.SaveChangesAsync();
+
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            hostEnvironment: new TestHostEnvironment(Environments.Development),
+            riskPolicyEvaluator: new RiskPolicyEvaluator(
+                dbContext,
+                timeProvider,
+                NullLogger<RiskPolicyEvaluator>.Instance),
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                AllowedUserIds = ["user-pilot-fallback"],
+                AllowedBotIds = [botId.ToString("N")],
+                AllowedSymbols = ["BTCUSDT"],
+                MaxPilotOrderNotional = "250",
+                MaxOpenPositionsPerUser = 1,
+                PerBotCooldownSeconds = 300,
+                PerSymbolCooldownSeconds = 300,
+                MaxDailyLossPercentage = 5m
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-pilot-fallback",
+                "BTCUSDT",
+                ExecutionEnvironment.Live,
+                ExecutionOrderSide.Sell,
+                0.125m,
+                65000m,
+                BotId: botId,
+                StrategyKey: "pilot-core",
+                Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                TradingStrategyId: Guid.NewGuid(),
+                TradingStrategyVersionId: Guid.NewGuid(),
+                Timeframe: "1m",
+                Plane: ExchangeDataPlane.Futures),
+            CancellationToken.None);
+
+        Assert.False(result.IsBlocked);
+        Assert.Null(result.BlockCode);
+        Assert.Contains("RequestedNotional=8125", result.GuardSummary, StringComparison.Ordinal);
     }
 
     [Fact]

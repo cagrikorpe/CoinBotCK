@@ -165,6 +165,65 @@ public sealed class ExchangePrivatePlaneSyncTests
     }
 
     [Fact]
+    public async Task ExchangeAppStateSyncService_ProjectsMissingOpenPosition_FromFilledExecutionOrders()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        var exchangeAccountId = Guid.NewGuid();
+        var observedAtUtc = new DateTime(2026, 4, 15, 13, 34, 0, DateTimeKind.Utc);
+        await using var context = CreateContext(databaseRoot);
+        context.ExchangeAccounts.Add(new ExchangeAccount
+        {
+            Id = exchangeAccountId,
+            OwnerUserId = "user-projection",
+            ExchangeName = "Binance",
+            DisplayName = "Primary",
+            ApiKeyCiphertext = "cipher-api-key",
+            ApiSecretCiphertext = "cipher-api-secret",
+            CredentialStatus = ExchangeCredentialStatus.Active
+        });
+        context.ExecutionOrders.AddRange(
+            CreateFilledOrder(exchangeAccountId, "user-projection", StrategySignalType.Entry, ExecutionOrderSide.Buy, 0.06m, 83.62m, new DateTime(2026, 4, 15, 13, 24, 22, DateTimeKind.Utc)),
+            CreateFilledOrder(exchangeAccountId, "user-projection", StrategySignalType.Exit, ExecutionOrderSide.Sell, 0.06m, 83.65m, new DateTime(2026, 4, 15, 13, 26, 29, DateTimeKind.Utc), reduceOnly: true),
+            CreateFilledOrder(exchangeAccountId, "user-projection", StrategySignalType.Entry, ExecutionOrderSide.Buy, 0.06m, 83.54m, new DateTime(2026, 4, 15, 13, 33, 06, DateTimeKind.Utc)));
+        await context.SaveChangesAsync();
+
+        var snapshot = new ExchangeAccountSnapshot(
+            exchangeAccountId,
+            "user-projection",
+            "Binance",
+            [],
+            [],
+            observedAtUtc,
+            observedAtUtc,
+            "Binance.PrivateRest.Account");
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(observedAtUtc));
+        var snapshotHub = new ExchangeAccountSnapshotHub();
+        var service = new ExchangeAppStateSyncService(
+            context,
+            new FakeExchangeCredentialService(exchangeAccountId),
+            new FakePrivateRestClient(snapshot),
+            snapshotHub,
+            new ExchangeAccountSyncStateService(context),
+            timeProvider,
+            NullLogger<ExchangeAppStateSyncService>.Instance);
+
+        await using var enumerator = snapshotHub.SubscribeAsync().GetAsyncEnumerator();
+        var moveNextTask = enumerator.MoveNextAsync().AsTask();
+
+        await service.RunOnceAsync();
+
+        Assert.True(await moveNextTask);
+        var publishedSnapshot = enumerator.Current;
+        var projectedPosition = Assert.Single(publishedSnapshot.Positions);
+        Assert.Equal("SOLUSDT", projectedPosition.Symbol);
+        Assert.Equal("BOTH", projectedPosition.PositionSide);
+        Assert.Equal(0.06m, projectedPosition.Quantity);
+        Assert.Equal(83.54m, projectedPosition.EntryPrice);
+        Assert.Contains("Fallback=LocalExecutionProjection", publishedSnapshot.Source, StringComparison.Ordinal);
+    }
+
+
+    [Fact]
     public async Task ExchangeAppStateSyncService_SendsSyncFailureAlert_WhenCredentialAccessIsBlocked()
     {
         var databaseRoot = new InMemoryDatabaseRoot();
@@ -493,6 +552,56 @@ public sealed class ExchangePrivatePlaneSyncTests
             return Task.FromResult(snapshot);
         }
     }
+
+    private static ExecutionOrder CreateFilledOrder(
+        Guid exchangeAccountId,
+        string ownerUserId,
+        StrategySignalType signalType,
+        ExecutionOrderSide side,
+        decimal filledQuantity,
+        decimal averageFillPrice,
+        DateTime filledAtUtc,
+        bool reduceOnly = false)
+    {
+        return new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = ownerUserId,
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = signalType,
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            StrategyKey = "projection-test",
+            Symbol = "SOLUSDT",
+            Timeframe = "1m",
+            BaseAsset = "SOL",
+            QuoteAsset = "USDT",
+            Side = side,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = filledQuantity,
+            Price = averageFillPrice,
+            FilledQuantity = filledQuantity,
+            AverageFillPrice = averageFillPrice,
+            LastFilledAtUtc = filledAtUtc,
+            ReduceOnly = reduceOnly,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            State = ExecutionOrderState.Filled,
+            IdempotencyKey = $"projection_{Guid.NewGuid():N}",
+            RootCorrelationId = "corr-projection-root",
+            ExternalOrderId = Guid.NewGuid().ToString("N"),
+            SubmittedAtUtc = filledAtUtc,
+            SubmittedToBroker = true,
+            ReconciliationStatus = ExchangeStateDriftStatus.InSync,
+            ReconciliationSummary = "LocalState=Filled; ExchangeState=Filled; Source=Binance.PrivateRest.Order",
+            LastStateChangedAtUtc = filledAtUtc,
+            CreatedDate = filledAtUtc,
+            UpdatedDate = filledAtUtc
+        };
+    }
+
 
     private sealed class TestHostEnvironment(string environmentName) : IHostEnvironment
     {

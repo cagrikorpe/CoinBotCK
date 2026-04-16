@@ -190,7 +190,7 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
-    public async Task ProcessAsync_FailsClosedBeforeExecution_WhenPilotNotionalHardCapIsExceeded()
+    public async Task ProcessAsync_SkipsEntryBeforeExecution_WhenSafeSizingWouldExceedPilotNotionalHardCap()
     {
         await using var harness = CreateHarness();
         var bot = await SeedBotGraphAsync(harness.DbContext);
@@ -211,14 +211,18 @@ public sealed class BotWorkerJobProcessorTests
 
         var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
         var persistedFeature = await harness.DbContext.TradingFeatureSnapshots.SingleAsync();
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
 
-        Assert.False(result.IsSuccessful);
-        Assert.False(result.IsRetryableFailure);
-        Assert.Equal("UserExecutionPilotNotionalHardCapExceeded", result.ErrorCode);
+        Assert.True(result.IsSuccessful);
         Assert.Equal(StrategySignalType.Entry, persistedSignal.SignalType);
         Assert.Equal(bot.Id, persistedFeature.BotId);
         Assert.Empty(harness.DbContext.ExecutionOrders);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal("Skipped", latestDecisionTrace.DecisionOutcome);
+        Assert.Equal("EntryQuantitySizingFailedClosed", latestDecisionTrace.DecisionReasonCode);
     }
 
     [Fact]
@@ -275,6 +279,1309 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Empty(harness.DbContext.ExecutionOrders);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
     }
+
+
+    [Fact]
+    public async Task ProcessAsync_GeneratesExitSignal_AndSubmitsReduceOnlySellOrder_ForOpenLongPosition()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(
+            harness.DbContext,
+            bot,
+            """
+            {
+              "schemaVersion": 1,
+              "exit": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 100
+                  }
+                ]
+              },
+              "risk": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 100
+                  }
+                ]
+              }
+            }
+            """);
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot,
+            quantity: 1.250m,
+            entryPrice: 80m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-exit-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-exit-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-exit-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Exit, persistedSignal.SignalType);
+        Assert.Equal(ExecutionOrderSide.Sell, persistedOrder.Side);
+        Assert.True(persistedOrder.ReduceOnly);
+        Assert.Equal(1.250m, persistedOrder.Quantity);
+        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_GeneratesExitSignal_AndSubmitsReduceOnlyBuyOrder_ForOpenShortPosition()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(
+            harness.DbContext,
+            bot,
+            CreateDirectionalRootPilotDefinitionJson("shortExit", "Live"));
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot.OwnerUserId,
+            bot.ExchangeAccountId ?? throw new InvalidOperationException("Bot exchange account is required."),
+            bot.Symbol,
+            "SHORT",
+            1.250m,
+            80m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-exit-short-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-exit-short-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-exit-short-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Exit, persistedSignal.SignalType);
+        Assert.Equal(ExecutionOrderSide.Buy, persistedOrder.Side);
+        Assert.True(persistedOrder.ReduceOnly);
+        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.Contains("\"direction\":\"Short\"", persistedSignal.RuleResultSnapshotJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_GeneratesExitSignal_AndSubmitsReduceOnlySellOrder_WhenOpenLongPositionIsOnlyVisibleThroughSubmittedMarketOrderFallback()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(
+            harness.DbContext,
+            bot,
+            """
+            {
+              "schemaVersion": 1,
+              "exit": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 100
+                  }
+                ]
+              },
+              "risk": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 100
+                  }
+                ]
+              }
+            }
+            """);
+        await SeedSubmittedLiveExecutionOrderAsync(
+            harness.DbContext,
+            bot,
+            quantity: 1.250m,
+            side: ExecutionOrderSide.Buy,
+            reduceOnly: false);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-exit-fallback-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-exit-fallback-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-exit-fallback-1",
+            CancellationToken.None);
+
+        var persistedOrders = await harness.DbContext.ExecutionOrders
+            .OrderBy(entity => entity.CreatedDate)
+            .ToListAsync();
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var persistedOrder = Assert.Single(persistedOrders.Where(entity => entity.StrategySignalId == persistedSignal.Id));
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Exit, persistedSignal.SignalType);
+        Assert.Equal(ExecutionOrderSide.Sell, persistedOrder.Side);
+        Assert.True(persistedOrder.ReduceOnly);
+        Assert.Equal(1.250m, persistedOrder.Quantity);
+        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.Equal(2, persistedOrders.Count);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+    [Fact]
+    public async Task ProcessAsync_ResolvesExitAgainstBotExchangeAccount_WhenAnotherAccountOffsetsOwnerLevelPositionNetQuantity()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(
+            harness.DbContext,
+            bot,
+            """
+            {
+              "schemaVersion": 1,
+              "exit": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 100
+                  }
+                ]
+              },
+              "risk": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 100
+                  }
+                ]
+              }
+            }
+            """);
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot,
+            quantity: 1.250m,
+            entryPrice: 80m);
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot.OwnerUserId,
+            Guid.NewGuid(),
+            bot.Symbol,
+            positionSide: "SHORT",
+            quantity: 1.250m,
+            entryPrice: 81m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-exit-account-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-exit-account-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-exit-account-1",
+            CancellationToken.None);
+
+        var persistedOrders = await harness.DbContext.ExecutionOrders
+            .OrderBy(entity => entity.CreatedDate)
+            .ToListAsync();
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var persistedOrder = Assert.Single(persistedOrders.Where(entity => entity.StrategySignalId == persistedSignal.Id));
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Exit, persistedSignal.SignalType);
+        Assert.Equal(ExecutionOrderSide.Sell, persistedOrder.Side);
+        Assert.True(persistedOrder.ReduceOnly);
+        Assert.Equal(bot.ExchangeAccountId, persistedOrder.ExchangeAccountId);
+        Assert.Equal(1.250m, persistedOrder.Quantity);
+        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_UsesAccountScopedSubmittedOrderFallback_WhenAnotherAccountOffsetsOwnerLevelExposure()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(
+            harness.DbContext,
+            bot,
+            """
+            {
+              "schemaVersion": 1,
+              "exit": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 100
+                  }
+                ]
+              },
+              "risk": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 100
+                  }
+                ]
+              }
+            }
+            """);
+        await SeedSubmittedLiveExecutionOrderAsync(
+            harness.DbContext,
+            bot,
+            quantity: 1.250m,
+            side: ExecutionOrderSide.Buy,
+            reduceOnly: false);
+        await SeedSubmittedLiveExecutionOrderAsync(
+            harness.DbContext,
+            bot.OwnerUserId,
+            Guid.NewGuid(),
+            bot.Symbol,
+            quantity: 1.250m,
+            side: ExecutionOrderSide.Sell,
+            reduceOnly: false);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-exit-fallback-account-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-exit-fallback-account-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-exit-fallback-account-1",
+            CancellationToken.None);
+
+        var persistedOrders = await harness.DbContext.ExecutionOrders
+            .OrderBy(entity => entity.CreatedDate)
+            .ToListAsync();
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var persistedOrder = Assert.Single(persistedOrders.Where(entity => entity.StrategySignalId == persistedSignal.Id));
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Exit, persistedSignal.SignalType);
+        Assert.Equal(ExecutionOrderSide.Sell, persistedOrder.Side);
+        Assert.True(persistedOrder.ReduceOnly);
+        Assert.Equal(bot.ExchangeAccountId, persistedOrder.ExchangeAccountId);
+        Assert.Equal(1.250m, persistedOrder.Quantity);
+        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.Equal(2, persistedOrders.Count);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+
+    [Fact]
+    public async Task ProcessAsync_PersistsSkippedEntryDecision_WhenOpenLongPositionAlreadyExists()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot,
+            quantity: 0.125m,
+            entryPrice: 80m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-entry-same-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-entry-same-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-entry-same-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var decisionTraces = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderBy(entity => entity.CreatedAtUtc)
+            .ToListAsync();
+        var latestDecisionTrace = decisionTraces[^1];
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Entry, persistedSignal.SignalType);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal(2, decisionTraces.Count);
+        Assert.Equal("Persisted", decisionTraces[0].DecisionOutcome);
+        Assert.Equal("Allowed", decisionTraces[0].DecisionReasonCode);
+        Assert.Equal("Skipped", latestDecisionTrace.DecisionOutcome);
+        Assert.Equal("ExecutionSkip", latestDecisionTrace.DecisionReasonType);
+        Assert.Equal("SameDirectionLongEntrySuppressed", latestDecisionTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_SubmitsShortEntryOrder_WhenStrategyDirectionIsShort()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(harness.DbContext, bot, CreateDirectionalPilotDefinitionJson("short"));
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-short-entry-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-short-entry-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-short-entry-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Entry, persistedSignal.SignalType);
+        Assert.Contains("\"direction\":\"Short\"", persistedSignal.RuleResultSnapshotJson, StringComparison.Ordinal);
+        Assert.Equal(ExecutionOrderSide.Sell, persistedOrder.Side);
+        Assert.False(persistedOrder.ReduceOnly);
+        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PersistsSkippedShortEntryDecision_WhenBotDirectionModeIsLongOnly()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        bot.DirectionMode = TradingBotDirectionMode.LongOnly;
+        await SetPublishedStrategyDefinitionAsync(harness.DbContext, bot, CreateDirectionalPilotDefinitionJson("short"));
+        await harness.DbContext.SaveChangesAsync();
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-dir-mode-long-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-dir-mode-long-2");
+
+        var result = await harness.Processor.ProcessAsync(bot, "job-bot-dir-mode-long-1", CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Entry, persistedSignal.SignalType);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal("EntryDirectionModeBlocked", latestDecisionTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PersistsSkippedLongEntryDecision_WhenBotDirectionModeIsShortOnly()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        bot.DirectionMode = TradingBotDirectionMode.ShortOnly;
+        await harness.DbContext.SaveChangesAsync();
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-dir-mode-short-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-dir-mode-short-2");
+
+        var result = await harness.Processor.ProcessAsync(bot, "job-bot-dir-mode-short-1", CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Entry, persistedSignal.SignalType);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal("EntryDirectionModeBlocked", latestDecisionTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PersistsSkippedEntryDecision_WhenOpenShortPositionAlreadyExists()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(harness.DbContext, bot, CreateDirectionalPilotDefinitionJson("short"));
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot.OwnerUserId,
+            bot.ExchangeAccountId ?? throw new InvalidOperationException("Bot exchange account is required."),
+            bot.Symbol,
+            "SHORT",
+            0.125m,
+            80m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-entry-short-same-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-entry-short-same-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-entry-short-same-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var decisionTraces = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderBy(entity => entity.CreatedAtUtc)
+            .ToListAsync();
+        var latestDecisionTrace = decisionTraces[^1];
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Entry, persistedSignal.SignalType);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal("SameDirectionShortEntrySuppressed", latestDecisionTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PersistsSkippedEntryDecision_WhenReverseEntryIsRequestedAgainstOpenLongPosition()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(harness.DbContext, bot, CreateDirectionalPilotDefinitionJson("short"));
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot,
+            quantity: 0.125m,
+            entryPrice: 80m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-entry-reverse-long-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-entry-reverse-long-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-entry-reverse-long-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal("ReverseBlockedOpenPositionExists", latestDecisionTrace.DecisionReasonCode);
+        Assert.Contains("CurrentPositionDirection=Long", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("RequestedEntryDirection=Short", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PersistsSkippedEntryDecision_WhenReverseEntryIsRequestedAgainstOpenShortPosition()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot.OwnerUserId,
+            bot.ExchangeAccountId ?? throw new InvalidOperationException("Bot exchange account is required."),
+            bot.Symbol,
+            "SHORT",
+            0.125m,
+            80m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-entry-reverse-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-entry-reverse-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-entry-reverse-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal("ReverseBlockedOpenPositionExists", latestDecisionTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_SubmitsRuntimeExit_WhenTakeProfitQualityIsTriggeredForShortPosition()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        await SetPublishedStrategyDefinitionAsync(harness.DbContext, bot, CreateDirectionalPilotDefinitionJson("short"));
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot.OwnerUserId,
+            bot.ExchangeAccountId ?? throw new InvalidOperationException("Bot exchange account is required."),
+            bot.Symbol,
+            "SHORT",
+            0.002m,
+            70000m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-runtime-short-tp-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-runtime-short-tp-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-runtime-short-tp-1",
+            CancellationToken.None);
+
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
+        var persistedSignals = await harness.DbContext.TradingStrategySignals
+            .OrderBy(entity => entity.GeneratedAtUtc)
+            .ToListAsync();
+        var entrySignal = persistedSignals.Single(entity => entity.SignalType == StrategySignalType.Entry);
+        var exitSignal = persistedSignals.Single(entity => entity.SignalType == StrategySignalType.Exit);
+        var exitTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == exitSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+        var entryTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == entrySignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Exit, persistedOrder.SignalType);
+        Assert.Equal(ExecutionOrderSide.Buy, persistedOrder.Side);
+        Assert.True(persistedOrder.ReduceOnly);
+        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.Equal("TakeProfitTriggered", exitTrace.DecisionReasonCode);
+        Assert.Equal("EntrySupersededByRuntimeExitQuality", entryTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_SubmitsRuntimeExit_WhenStopLossQualityIsTriggeredForShortPosition()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        await SetPublishedStrategyDefinitionAsync(harness.DbContext, bot, CreateDirectionalPilotDefinitionJson("short"));
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot.OwnerUserId,
+            bot.ExchangeAccountId ?? throw new InvalidOperationException("Bot exchange account is required."),
+            bot.Symbol,
+            "SHORT",
+            0.002m,
+            70000m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.MarketDataService.SetLatestPrice(bot.Symbol, 70500m);
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-runtime-short-sl-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-runtime-short-sl-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-runtime-short-sl-1",
+            CancellationToken.None);
+
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
+        var exitSignal = await harness.DbContext.TradingStrategySignals.SingleAsync(entity => entity.SignalType == StrategySignalType.Exit);
+        var exitTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == exitSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(ExecutionOrderSide.Buy, persistedOrder.Side);
+        Assert.True(persistedOrder.ReduceOnly);
+        Assert.Equal("StopLossTriggered", exitTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_SubmitsRuntimeExit_WhenTrailingStopQualityIsTriggeredForShortPosition()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        await SetPublishedStrategyDefinitionAsync(harness.DbContext, bot, CreateDirectionalPilotDefinitionJson("short"));
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot.OwnerUserId,
+            bot.ExchangeAccountId ?? throw new InvalidOperationException("Bot exchange account is required."),
+            bot.Symbol,
+            "SHORT",
+            0.002m,
+            70000m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.MarketDataService.SetLatestPrice(bot.Symbol, 69600m);
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-runtime-short-trailing-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-runtime-short-trailing-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-runtime-short-trailing-1",
+            CancellationToken.None);
+
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
+        var exitSignal = await harness.DbContext.TradingStrategySignals.SingleAsync(entity => entity.SignalType == StrategySignalType.Exit);
+        var exitTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == exitSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(ExecutionOrderSide.Buy, persistedOrder.Side);
+        Assert.True(persistedOrder.ReduceOnly);
+        Assert.Equal("TrailingStopTriggered", exitTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_SubmitsRuntimeExit_WhenBreakEvenQualityIsTriggeredForShortPosition()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        await SetPublishedStrategyDefinitionAsync(harness.DbContext, bot, CreateDirectionalPilotDefinitionJson("short"));
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot.OwnerUserId,
+            bot.ExchangeAccountId ?? throw new InvalidOperationException("Bot exchange account is required."),
+            bot.Symbol,
+            "SHORT",
+            0.002m,
+            70000m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.HistoricalKlineClient.SetFlatCandle(bot.Symbol, 69900m, 69910m, 69700m, 69720m);
+        harness.MarketDataService.SetLatestPrice(bot.Symbol, 70000m);
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-runtime-short-breakeven-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-runtime-short-breakeven-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-runtime-short-breakeven-1",
+            CancellationToken.None);
+
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
+        var exitSignal = await harness.DbContext.TradingStrategySignals.SingleAsync(entity => entity.SignalType == StrategySignalType.Exit);
+        var exitTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == exitSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(ExecutionOrderSide.Buy, persistedOrder.Side);
+        Assert.True(persistedOrder.ReduceOnly);
+        Assert.Equal("BreakEvenTriggered", exitTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_SubmitsRuntimeExit_WhenTakeProfitQualityIsTriggered()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot,
+            quantity: 0.002m,
+            entryPrice: 60000m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-runtime-tp-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-runtime-tp-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-runtime-tp-1",
+            CancellationToken.None);
+
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
+        var persistedSignals = await harness.DbContext.TradingStrategySignals
+            .OrderBy(entity => entity.GeneratedAtUtc)
+            .ToListAsync();
+        var entrySignal = persistedSignals.Single(entity => entity.SignalType == StrategySignalType.Entry);
+        var exitSignal = persistedSignals.Single(entity => entity.SignalType == StrategySignalType.Exit);
+        var exitTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == exitSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+        var entryTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == entrySignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Exit, persistedOrder.SignalType);
+        Assert.Equal(ExecutionOrderSide.Sell, persistedOrder.Side);
+        Assert.True(persistedOrder.ReduceOnly);
+        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal("TakeProfitTriggered", exitTrace.DecisionReasonCode);
+        Assert.Equal("EntrySupersededByRuntimeExitQuality", entryTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PersistsSkippedEntryDecision_WhenRegimeAwareDisciplineBlocksEntry()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.RegimeMinBollingerWidthPercentage = 0m;
+        harness.PilotOptions.LongRegimeMinBollingerWidthPercentage = 0.01m;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-regime-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-regime-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-regime-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Entry, persistedSignal.SignalType);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal("LongEntryRegimeFilterBlocked", latestDecisionTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PersistsSkippedEntryDecision_WhenEntryHysteresisIsActive()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        await SeedFilledReduceOnlyExitOrderAsync(
+            harness.DbContext,
+            bot,
+            price: 65000m,
+            createdAtUtc: harness.TimeProvider.GetUtcNow().UtcDateTime.AddMinutes(-10));
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.EntryHysteresisCooldownMinutes = 0;
+        harness.PilotOptions.EntryHysteresisReentryBufferPercentage = 0m;
+        harness.PilotOptions.LongEntryHysteresisCooldownMinutes = 0;
+        harness.PilotOptions.LongEntryHysteresisReentryBufferPercentage = 0.20m;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-hysteresis-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-hysteresis-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-hysteresis-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Entry, persistedSignal.SignalType);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal("LongEntryHysteresisActive", latestDecisionTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PersistsSkippedShortEntryDecision_WhenShortEntryHysteresisIsActive()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(harness.DbContext, bot, CreateDirectionalPilotDefinitionJson("short"));
+        await SeedFilledReduceOnlyExitOrderAsync(
+            harness.DbContext,
+            bot,
+            price: 80m,
+            createdAtUtc: harness.TimeProvider.GetUtcNow().UtcDateTime.AddMinutes(-10),
+            side: ExecutionOrderSide.Buy);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.EntryHysteresisCooldownMinutes = 0;
+        harness.PilotOptions.EntryHysteresisReentryBufferPercentage = 0m;
+        harness.PilotOptions.ShortEntryHysteresisCooldownMinutes = 0;
+        harness.PilotOptions.ShortEntryHysteresisReentryBufferPercentage = 0.20m;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-short-hysteresis-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-short-hysteresis-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-short-hysteresis-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Entry, persistedSignal.SignalType);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal("ShortEntryHysteresisActive", latestDecisionTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PersistsSkippedShortEntryDecision_WhenShortRegimeAwareDisciplineBlocksEntry()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(harness.DbContext, bot, CreateDirectionalPilotDefinitionJson("short"));
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.RegimeMinBollingerWidthPercentage = 0m;
+        harness.PilotOptions.ShortRegimeMinEntryRsi = 90m;
+        harness.PilotOptions.ShortRegimeMaxMacdHistogram = 100m;
+        harness.PilotOptions.ShortRegimeMinPriceBelowMiddleBandPercentage = 0m;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-short-regime-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-short-regime-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-short-regime-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Entry, persistedSignal.SignalType);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal("ShortEntryRegimeFilterBlocked", latestDecisionTrace.DecisionReasonCode);
+        Assert.Contains("short request", latestDecisionTrace.DecisionSummary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PersistsSkippedShortEntryDecision_WhenShortEntrySizingExceedsPilotCap()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(harness.DbContext, bot, CreateDirectionalPilotDefinitionJson("short"));
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.MaxPilotOrderNotional = "5";
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-short-cap-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-short-cap-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-short-cap-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Entry, persistedSignal.SignalType);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal("EntryQuantitySizingFailedClosed", latestDecisionTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PersistsSkippedExitDecision_WhenNoOpenShortPositionExists()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(
+            harness.DbContext,
+            bot,
+            CreateDirectionalRootPilotDefinitionJson("shortExit", "Live"));
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-exit-no-short-position-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-exit-no-short-position-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-exit-no-short-position-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Exit, persistedSignal.SignalType);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal("NoOpenPositionForExit", latestDecisionTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PersistsSkippedExitDecision_WhenNoOpenPositionExists()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(
+            harness.DbContext,
+            bot,
+            """
+            {
+              "schemaVersion": 1,
+              "exit": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 100
+                  }
+                ]
+              },
+              "risk": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 100
+                  }
+                ]
+              }
+            }
+            """);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-exit-no-position-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-exit-no-position-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-exit-no-position-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var decisionTraces = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderBy(entity => entity.CreatedAtUtc)
+            .ToListAsync();
+        var latestDecisionTrace = decisionTraces[^1];
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Exit, persistedSignal.SignalType);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal(2, decisionTraces.Count);
+        Assert.Equal("Persisted", decisionTraces[0].DecisionOutcome);
+        Assert.Equal("Allowed", decisionTraces[0].DecisionReasonCode);
+        Assert.Equal("Skipped", latestDecisionTrace.DecisionOutcome);
+        Assert.Equal("ExecutionSkip", latestDecisionTrace.DecisionReasonType);
+        Assert.Equal("NoOpenPositionForExit", latestDecisionTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PersistsSkippedExitDecision_WhenClosableQuantityRoundsDownToZero()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(
+            harness.DbContext,
+            bot,
+            """
+            {
+              "schemaVersion": 1,
+              "exit": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 100
+                  }
+                ]
+              },
+              "risk": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 100
+                  }
+                ]
+              }
+            }
+            """);
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot,
+            quantity: 0.0004m,
+            entryPrice: 80m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-exit-no-qty-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-exit-no-qty-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-exit-no-qty-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var decisionTraces = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderBy(entity => entity.CreatedAtUtc)
+            .ToListAsync();
+        var latestDecisionTrace = decisionTraces[^1];
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Exit, persistedSignal.SignalType);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal(2, decisionTraces.Count);
+        Assert.Equal("Skipped", latestDecisionTrace.DecisionOutcome);
+        Assert.Equal("ExecutionSkip", latestDecisionTrace.DecisionReasonType);
+        Assert.Equal("NoClosableQuantityForExit", latestDecisionTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_SkipsExitDispatch_WhenReduceOnlyExitNotionalIsBelowMinimum()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(
+            harness.DbContext,
+            bot,
+            """
+            {
+              "schemaVersion": 1,
+              "exit": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 100
+                  }
+                ]
+              },
+              "risk": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 100
+                  }
+                ]
+              }
+            }
+            """);
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot,
+            quantity: 0.125m,
+            entryPrice: 80m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-exit-min-notional-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-exit-min-notional-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-exit-min-notional-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Exit, persistedSignal.SignalType);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal("Skipped", latestDecisionTrace.DecisionOutcome);
+        Assert.Equal("ExitNotionalBelowMinimum", latestDecisionTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_SkipsEntryDispatch_WhenOrderExecutionBreakerIsActive()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.DbContext.DependencyCircuitBreakerStates.Add(new DependencyCircuitBreakerState
+        {
+            Id = Guid.NewGuid(),
+            BreakerKind = DependencyCircuitBreakerKind.OrderExecution,
+            StateCode = CircuitBreakerStateCode.Cooldown,
+            ConsecutiveFailureCount = 3,
+            CooldownUntilUtc = DateTime.UtcNow.AddMinutes(5),
+            LastFailureAtUtc = DateTime.UtcNow.AddMinutes(-1),
+            LastErrorCode = "OrderNotionalBelowMinimum",
+            LastErrorMessage = "Order execution breaker cooldown active."
+        });
+        await harness.DbContext.SaveChangesAsync();
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-breaker-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-breaker-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-breaker-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal("Skipped", latestDecisionTrace.DecisionOutcome);
+        Assert.Equal("OrderExecutionBreakerActive", latestDecisionTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_SkipsEntryDispatch_WhenBotCooldownIsActive()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        await SeedRecentCooldownExecutionOrderAsync(harness.DbContext, bot);
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-cooldown-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-cooldown-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-cooldown-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Single(await harness.DbContext.ExecutionOrders.ToListAsync());
+        Assert.Equal("Skipped", latestDecisionTrace.DecisionOutcome);
+        Assert.Equal("BotCooldownActive", latestDecisionTrace.DecisionReasonCode);
+    }
+
     [Fact]
     public async Task ProcessAsync_RefreshesSymbolScopedLatencyFromHistoricalBackfill_WhenHeartbeatWasNotPrimed()
     {
@@ -334,6 +1641,28 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
         Assert.Empty(harness.DbContext.ExecutionOrders);
         Assert.Empty(harness.DbContext.TradingStrategySignals);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_Submits_WhenTradeMasterIsDisarmed_AndPilotGlobalSwitchBypassIsEnabled()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.AllowGlobalSwitchBypass = true;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-disarmed-bypass-1");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-disarmed-bypass-1",
+            CancellationToken.None);
+
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
     }
 
     [Fact]
@@ -630,6 +1959,7 @@ public sealed class BotWorkerJobProcessorTests
         var switchService = new GlobalExecutionSwitchService(dbContext, auditLogService);
         var globalSystemStateService = new GlobalSystemStateService(dbContext, auditLogService, timeProvider);
         var marketDataService = new FakeMarketDataService(timeProvider);
+        var historicalKlineClient = new FakeHistoricalKlineClient(timeProvider);
         var demoWalletValuationService = new DemoWalletValuationService(
             marketDataService,
             timeProvider,
@@ -774,7 +2104,7 @@ public sealed class BotWorkerJobProcessorTests
             dbContext,
             circuitBreaker,
             tradingModeService,
-            new FakeHistoricalKlineClient(timeProvider),
+            historicalKlineClient,
             Options.Create(pilotOptions),
             timeProvider,
             NullLogger<TradingFeatureSnapshotService>.Instance);
@@ -788,7 +2118,7 @@ public sealed class BotWorkerJobProcessorTests
                 NullLogger<IndicatorDataService>.Instance),
             marketDataService,
             new FakeExchangeInfoClient(marketDataService.SymbolMetadata),
-            new FakeHistoricalKlineClient(timeProvider),
+            historicalKlineClient,
             strategySignalService,
             executionEngine,
             executionGate,
@@ -796,6 +2126,7 @@ public sealed class BotWorkerJobProcessorTests
             circuitBreaker,
             featureSnapshotService,
             aiShadowDecisionService,
+            traceService,
             correlationContextAccessor,
             Options.Create(pilotOptions),
             Options.Create(resolvedAiSignalOptions),
@@ -811,7 +2142,9 @@ public sealed class BotWorkerJobProcessorTests
             timeProvider,
             privateRestClient,
             spotPrivateRestClient,
-            pilotOptions);
+            pilotOptions,
+            marketDataService,
+            historicalKlineClient);
     }
 
     private static IAiSignalEvaluator CreateAiSignalEvaluator(TimeProvider timeProvider, AiSignalOptions aiSignalOptions)
@@ -1011,6 +2344,317 @@ public sealed class BotWorkerJobProcessorTests
         ];
     }
 
+
+    private static string CreateDirectionalPilotDefinitionJson(string direction)
+    {
+        return
+            $$"""
+            {
+              "schemaVersion": 2,
+              "direction": "{{direction}}",
+              "entry": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Live"
+                  }
+                ]
+              },
+              "risk": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 100
+                  }
+                ]
+              }
+            }
+            """;
+    }
+
+    private static string CreateDirectionalRootPilotDefinitionJson(string rootName, string mode)
+    {
+        return
+            $$"""
+            {
+              "schemaVersion": 2,
+              "{{rootName}}": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "{{mode}}"
+                  }
+                ]
+              },
+              "risk": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 100
+                  }
+                ]
+              }
+            }
+            """;
+    }
+
+    private static async Task SetPublishedStrategyDefinitionAsync(
+        ApplicationDbContext dbContext,
+        TradingBot bot,
+        string definitionJson)
+    {
+        var strategy = await dbContext.TradingStrategies
+            .SingleAsync(entity =>
+                entity.OwnerUserId == bot.OwnerUserId &&
+                entity.StrategyKey == bot.StrategyKey &&
+                !entity.IsDeleted);
+        var version = await dbContext.TradingStrategyVersions
+            .SingleAsync(entity =>
+                entity.TradingStrategyId == strategy.Id &&
+                entity.Status == StrategyVersionStatus.Published &&
+                !entity.IsDeleted);
+
+        version.DefinitionJson = definitionJson;
+        await dbContext.SaveChangesAsync();
+    }
+
+    private static async Task SeedExchangePositionAsync(
+        ApplicationDbContext dbContext,
+        string ownerUserId,
+        Guid exchangeAccountId,
+        string symbol,
+        string positionSide,
+        decimal quantity,
+        decimal entryPrice)
+    {
+        dbContext.ExchangePositions.Add(new ExchangePosition
+        {
+            ExchangeAccountId = exchangeAccountId,
+            OwnerUserId = ownerUserId,
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = symbol,
+            PositionSide = positionSide,
+            Quantity = quantity,
+            EntryPrice = entryPrice,
+            BreakEvenPrice = entryPrice,
+            UnrealizedProfit = 0m,
+            MarginType = "isolated",
+            IsolatedWallet = 10m,
+            ExchangeUpdatedAtUtc = DateTime.UtcNow,
+            SyncedAtUtc = DateTime.UtcNow
+        });
+
+        await dbContext.SaveChangesAsync();
+    }
+
+    private static async Task SeedExchangePositionAsync(
+        ApplicationDbContext dbContext,
+        TradingBot bot,
+        decimal quantity,
+        decimal entryPrice)
+    {
+        dbContext.ExchangePositions.Add(new ExchangePosition
+        {
+            ExchangeAccountId = bot.ExchangeAccountId ?? throw new InvalidOperationException("Bot exchange account is required."),
+            OwnerUserId = bot.OwnerUserId,
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = bot.Symbol,
+            PositionSide = "BOTH",
+            Quantity = quantity,
+            EntryPrice = entryPrice,
+            BreakEvenPrice = entryPrice,
+            UnrealizedProfit = 0m,
+            MarginType = "isolated",
+            IsolatedWallet = 10m,
+            ExchangeUpdatedAtUtc = DateTime.UtcNow,
+            SyncedAtUtc = DateTime.UtcNow
+        });
+
+        await dbContext.SaveChangesAsync();
+    }
+
+    private static async Task SeedSubmittedLiveExecutionOrderAsync(
+        ApplicationDbContext dbContext,
+        string ownerUserId,
+        Guid exchangeAccountId,
+        string symbol,
+        decimal quantity,
+        ExecutionOrderSide side,
+        bool reduceOnly)
+    {
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = ownerUserId,
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            StrategyKey = "pilot-core",
+            Symbol = symbol,
+            Timeframe = "1m",
+            BaseAsset = symbol[..^4],
+            QuoteAsset = "USDT",
+            Side = side,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = quantity,
+            Price = 80m,
+            ExchangeAccountId = exchangeAccountId,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            Plane = ExchangeDataPlane.Futures,
+            ReduceOnly = reduceOnly,
+            SubmittedToBroker = true,
+            State = ExecutionOrderState.Submitted,
+            IdempotencyKey = $"seed-submitted-{Guid.NewGuid():N}",
+            RootCorrelationId = "seed-submitted-live-order",
+            ExternalOrderId = $"binance:{Guid.NewGuid():N}",
+            SubmittedAtUtc = DateTime.UtcNow,
+            LastStateChangedAtUtc = DateTime.UtcNow
+        });
+
+        await dbContext.SaveChangesAsync();
+    }
+
+    private static async Task SeedSubmittedLiveExecutionOrderAsync(
+        ApplicationDbContext dbContext,
+        TradingBot bot,
+        decimal quantity,
+        ExecutionOrderSide side,
+        bool reduceOnly)
+    {
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = bot.OwnerUserId,
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            StrategyKey = bot.StrategyKey,
+            Symbol = bot.Symbol,
+            Timeframe = "1m",
+            BaseAsset = bot.Symbol[..^4],
+            QuoteAsset = "USDT",
+            Side = side,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = quantity,
+            Price = 80m,
+            ExchangeAccountId = bot.ExchangeAccountId ?? throw new InvalidOperationException("Bot exchange account is required."),
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            Plane = ExchangeDataPlane.Futures,
+            ReduceOnly = reduceOnly,
+            SubmittedToBroker = true,
+            State = ExecutionOrderState.Submitted,
+            IdempotencyKey = $"seed-submitted-{Guid.NewGuid():N}",
+            RootCorrelationId = "seed-submitted-live-order",
+            ExternalOrderId = $"binance:{Guid.NewGuid():N}",
+            SubmittedAtUtc = DateTime.UtcNow,
+            LastStateChangedAtUtc = DateTime.UtcNow
+        });
+
+        await dbContext.SaveChangesAsync();
+    }
+
+
+    private static async Task SeedFilledReduceOnlyExitOrderAsync(
+        ApplicationDbContext dbContext,
+        TradingBot bot,
+        decimal price,
+        DateTime createdAtUtc,
+        ExecutionOrderSide side = ExecutionOrderSide.Sell)
+    {
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = bot.OwnerUserId,
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Exit,
+            StrategyKey = bot.StrategyKey,
+            Symbol = bot.Symbol,
+            Timeframe = "1m",
+            BaseAsset = bot.Symbol[..^4],
+            QuoteAsset = "USDT",
+            Side = side,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.002m,
+            Price = price,
+            ExchangeAccountId = bot.ExchangeAccountId ?? throw new InvalidOperationException("Bot exchange account is required."),
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            Plane = ExchangeDataPlane.Futures,
+            ReduceOnly = true,
+            SubmittedToBroker = true,
+            State = ExecutionOrderState.Filled,
+            FilledQuantity = 0.002m,
+            AverageFillPrice = price,
+            IdempotencyKey = $"seed-filled-exit-{Guid.NewGuid():N}",
+            RootCorrelationId = "seed-filled-exit-order",
+            ExternalOrderId = $"binance:{Guid.NewGuid():N}",
+            SubmittedAtUtc = createdAtUtc,
+            LastStateChangedAtUtc = createdAtUtc,
+            CreatedDate = createdAtUtc,
+            UpdatedDate = createdAtUtc
+        });
+
+        await dbContext.SaveChangesAsync();
+    }
+
+    private static async Task SeedRecentCooldownExecutionOrderAsync(
+        ApplicationDbContext dbContext,
+        TradingBot bot)
+    {
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = bot.OwnerUserId,
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            StrategyKey = bot.StrategyKey,
+            Symbol = bot.Symbol,
+            Timeframe = "1m",
+            BaseAsset = bot.Symbol[..^4],
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.002m,
+            Price = 65000m,
+            ExchangeAccountId = bot.ExchangeAccountId ?? throw new InvalidOperationException("Bot exchange account is required."),
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            Plane = ExchangeDataPlane.Futures,
+            ReduceOnly = false,
+            SubmittedToBroker = true,
+            CooldownApplied = true,
+            State = ExecutionOrderState.Filled,
+            FilledQuantity = 0.002m,
+            AverageFillPrice = 65000m,
+            IdempotencyKey = $"seed-cooldown-{Guid.NewGuid():N}",
+            RootCorrelationId = "seed-cooldown-live-order",
+            ExternalOrderId = $"binance:{Guid.NewGuid():N}",
+            SubmittedAtUtc = DateTime.UtcNow.AddSeconds(-10),
+            LastStateChangedAtUtc = DateTime.UtcNow.AddSeconds(-10),
+            CreatedDate = DateTime.UtcNow.AddSeconds(-10),
+            UpdatedDate = DateTime.UtcNow.AddSeconds(-10)
+        });
+
+        await dbContext.SaveChangesAsync();
+    }
+
+
     private static async Task PrimeFreshMarketDataAsync(
         IDataLatencyCircuitBreaker circuitBreaker,
         AdjustableTimeProvider timeProvider,
@@ -1138,6 +2782,17 @@ public sealed class BotWorkerJobProcessorTests
             ["ETHUSDT"] = CreateSymbolMetadata("ETHUSDT"),
             ["SOLUSDT"] = CreateSymbolMetadata("SOLUSDT")
         };
+        private readonly Dictionary<string, decimal> latestPrices = new(StringComparer.Ordinal)
+        {
+            ["BTCUSDT"] = 65000m,
+            ["ETHUSDT"] = 65000m,
+            ["SOLUSDT"] = 65000m
+        };
+
+        public void SetLatestPrice(string symbol, decimal price)
+        {
+            latestPrices[symbol.Trim().ToUpperInvariant()] = price;
+        }
 
         public ValueTask TrackSymbolAsync(string symbol, CancellationToken cancellationToken = default)
         {
@@ -1154,10 +2809,17 @@ public sealed class BotWorkerJobProcessorTests
         public ValueTask<MarketPriceSnapshot?> GetLatestPriceAsync(string symbol, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var normalizedSymbol = symbol.Trim().ToUpperInvariant();
+            latestPrices.TryGetValue(normalizedSymbol, out var price);
+            if (price <= 0m)
+            {
+                price = 65000m;
+            }
+
             return ValueTask.FromResult<MarketPriceSnapshot?>(
                 new MarketPriceSnapshot(
-                    symbol.Trim().ToUpperInvariant(),
-                    65000m,
+                    normalizedSymbol,
+                    price,
                     timeProvider.GetUtcNow().UtcDateTime,
                     timeProvider.GetUtcNow().UtcDateTime,
                     "UnitTest"));
@@ -1222,6 +2884,18 @@ public sealed class BotWorkerJobProcessorTests
 
     private sealed class FakeHistoricalKlineClient(TimeProvider timeProvider) : IBinanceHistoricalKlineClient
     {
+        private readonly Dictionary<string, (decimal Open, decimal High, decimal Low, decimal Close)> flatCandles = new(StringComparer.Ordinal)
+        {
+            ["BTCUSDT"] = (65000m, 65010m, 64990m, 65000m),
+            ["ETHUSDT"] = (65000m, 65010m, 64990m, 65000m),
+            ["SOLUSDT"] = (65000m, 65010m, 64990m, 65000m)
+        };
+
+        public void SetFlatCandle(string symbol, decimal open, decimal high, decimal low, decimal close)
+        {
+            flatCandles[symbol.Trim().ToUpperInvariant()] = (open, high, low, close);
+        }
+
         public Task<IReadOnlyCollection<MarketCandleSnapshot>> GetClosedCandlesAsync(
             string symbol,
             string interval,
@@ -1230,6 +2904,13 @@ public sealed class BotWorkerJobProcessorTests
             int limit,
             CancellationToken cancellationToken = default)
         {
+            var normalizedSymbol = symbol.Trim().ToUpperInvariant();
+            flatCandles.TryGetValue(normalizedSymbol, out var candleValues);
+            if (candleValues == default)
+            {
+                candleValues = (65000m, 65010m, 64990m, 65000m);
+            }
+
             var snapshots = Enumerable.Range(0, limit)
                 .Select(index =>
                 {
@@ -1237,14 +2918,14 @@ public sealed class BotWorkerJobProcessorTests
                     var closeTimeUtc = openTimeUtc.AddMinutes(1).AddMilliseconds(-1);
 
                     return new MarketCandleSnapshot(
-                        "BTCUSDT",
-                        "1m",
+                        normalizedSymbol,
+                        interval,
                         openTimeUtc,
                         closeTimeUtc,
-                        65000m,
-                        65010m,
-                        64990m,
-                        65000m,
+                        candleValues.Open,
+                        candleValues.High,
+                        candleValues.Low,
+                        candleValues.Close,
                         10m,
                         IsClosed: true,
                         timeProvider.GetUtcNow().UtcDateTime,
@@ -1496,7 +3177,9 @@ public sealed class BotWorkerJobProcessorTests
         AdjustableTimeProvider timeProvider,
         FakePrivateRestClient privateRestClient,
         FakeSpotPrivateRestClient spotPrivateRestClient,
-        BotExecutionPilotOptions pilotOptions) : IAsyncDisposable
+        BotExecutionPilotOptions pilotOptions,
+        FakeMarketDataService marketDataService,
+        FakeHistoricalKlineClient historicalKlineClient) : IAsyncDisposable
     {
         public ApplicationDbContext DbContext { get; } = dbContext;
 
@@ -1513,6 +3196,10 @@ public sealed class BotWorkerJobProcessorTests
         public FakeSpotPrivateRestClient SpotPrivateRestClient { get; } = spotPrivateRestClient;
 
         public BotExecutionPilotOptions PilotOptions { get; } = pilotOptions;
+
+        public FakeMarketDataService MarketDataService { get; } = marketDataService;
+
+        public FakeHistoricalKlineClient HistoricalKlineClient { get; } = historicalKlineClient;
 
         public async ValueTask DisposeAsync()
         {

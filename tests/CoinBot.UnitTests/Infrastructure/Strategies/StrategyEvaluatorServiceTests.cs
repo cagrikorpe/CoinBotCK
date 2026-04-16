@@ -75,6 +75,131 @@ public sealed class StrategyEvaluatorServiceTests
         Assert.Equal("indicator.sampleCount", riskChildren[0].Path);
     }
 
+
+    [Fact]
+    public void Evaluate_ReturnsShortDirection_WhenShortStrategyMatches()
+    {
+        var parser = new StrategyRuleParser();
+        var service = new StrategyEvaluatorService(parser, new StrategyDefinitionValidator());
+
+        var result = service.Evaluate(
+            """
+            {
+              "schemaVersion": 2,
+              "direction": "Short",
+              "entry": {
+                "path": "context.mode",
+                "comparison": "equals",
+                "value": "Live"
+              },
+              "risk": {
+                "path": "indicator.sampleCount",
+                "comparison": "greaterThanOrEqual",
+                "value": 100
+              }
+            }
+            """,
+            CreateContext(ExecutionEnvironment.Live));
+
+        Assert.True(result.EntryMatched);
+        Assert.Equal(StrategyTradeDirection.Short, result.Direction);
+    }
+
+    [Fact]
+    public void Evaluate_ReturnsNeutralDirection_WhenRiskBlocksMatchedShortSignal()
+    {
+        var parser = new StrategyRuleParser();
+        var service = new StrategyEvaluatorService(parser, new StrategyDefinitionValidator());
+
+        var result = service.Evaluate(
+            """
+            {
+              "schemaVersion": 2,
+              "direction": "Short",
+              "entry": {
+                "path": "context.mode",
+                "comparison": "equals",
+                "value": "Live"
+              },
+              "risk": {
+                "path": "indicator.sampleCount",
+                "comparison": "greaterThan",
+                "value": 999
+              }
+            }
+            """,
+            CreateContext(ExecutionEnvironment.Live));
+
+        Assert.True(result.EntryMatched);
+        Assert.False(result.RiskPassed);
+        Assert.Equal(StrategyTradeDirection.Neutral, result.Direction);
+    }
+
+    [Fact]
+    public void Evaluate_ReturnsShortEntryDirection_WhenDirectionalShortEntryRuleMatches()
+    {
+        var parser = new StrategyRuleParser();
+        var service = new StrategyEvaluatorService(parser, new StrategyDefinitionValidator());
+
+        var result = service.Evaluate(
+            """
+            {
+              "schemaVersion": 2,
+              "longEntry": {
+                "path": "context.mode",
+                "comparison": "equals",
+                "value": "Demo"
+              },
+              "shortEntry": {
+                "path": "context.mode",
+                "comparison": "equals",
+                "value": "Live"
+              },
+              "risk": {
+                "path": "indicator.sampleCount",
+                "comparison": "greaterThanOrEqual",
+                "value": 100
+              }
+            }
+            """,
+            CreateContext(ExecutionEnvironment.Live));
+
+        Assert.True(result.EntryMatched);
+        Assert.Equal(StrategyTradeDirection.Short, result.EntryDirection);
+        Assert.Equal(StrategyTradeDirection.Short, result.Direction);
+        Assert.NotNull(result.ShortEntryRuleResult);
+    }
+
+    [Fact]
+    public void Evaluate_ReturnsShortExitDirection_WhenDirectionalShortExitRuleMatches()
+    {
+        var parser = new StrategyRuleParser();
+        var service = new StrategyEvaluatorService(parser, new StrategyDefinitionValidator());
+
+        var result = service.Evaluate(
+            """
+            {
+              "schemaVersion": 2,
+              "shortExit": {
+                "path": "context.mode",
+                "comparison": "equals",
+                "value": "Live"
+              },
+              "risk": {
+                "path": "indicator.sampleCount",
+                "comparison": "greaterThanOrEqual",
+                "value": 100
+              }
+            }
+            """,
+            CreateContext(ExecutionEnvironment.Live));
+
+        Assert.True(result.ExitMatched);
+        Assert.Equal(StrategyTradeDirection.Short, result.ExitDirection);
+        Assert.Equal(StrategyTradeDirection.Short, result.Direction);
+        Assert.NotNull(result.ShortExitRuleResult);
+    }
+
     [Fact]
     public void Evaluate_FailsClosed_WhenRuleReferencesUnavailableIndicatorValue()
     {

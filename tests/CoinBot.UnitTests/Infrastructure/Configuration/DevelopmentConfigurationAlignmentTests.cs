@@ -16,6 +16,19 @@ public sealed class DevelopmentConfigurationAlignmentTests
         Assert.Equal(workerThresholds.ClockDriftThresholdSeconds, webThresholds.ClockDriftThresholdSeconds);
     }
 
+
+    [Fact]
+    public void WebAndWorkerProductionDataLatencyGuardThresholds_AreAligned()
+    {
+        var repoRoot = ResolveRepoRoot();
+        var webThresholds = LoadThresholds(Path.Combine(repoRoot, "src", "CoinBot.Web", "appsettings.json"));
+        var workerThresholds = LoadThresholds(Path.Combine(repoRoot, "src", "CoinBot.Worker", "appsettings.json"));
+
+        Assert.Equal(workerThresholds.StaleDataThresholdSeconds, webThresholds.StaleDataThresholdSeconds);
+        Assert.Equal(workerThresholds.StopDataThresholdSeconds, webThresholds.StopDataThresholdSeconds);
+        Assert.Equal(workerThresholds.ClockDriftThresholdSeconds, webThresholds.ClockDriftThresholdSeconds);
+    }
+
     private static string ResolveRepoRoot()
     {
         var currentDirectory = new DirectoryInfo(AppContext.BaseDirectory);

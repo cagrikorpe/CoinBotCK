@@ -1,5 +1,6 @@
 using System.Globalization;
 using CoinBot.Application.Abstractions.Strategies;
+using CoinBot.Domain.Enums;
 
 namespace CoinBot.Infrastructure.Strategies;
 
@@ -73,6 +74,8 @@ public sealed class StrategyDefinitionValidator : IStrategyDefinitionValidator
         var failures = new List<string>();
         var ruleIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var enabledRuleCount = 0;
+        var hasLegacyRoots = document.Entry is not null || document.Exit is not null;
+        var hasDirectionalRoots = document.HasDirectionalRoots;
 
         if (!SupportedSchemaVersions.Contains(document.SchemaVersion))
         {
@@ -81,20 +84,33 @@ public sealed class StrategyDefinitionValidator : IStrategyDefinitionValidator
 
         ValidateDefinitionMetadata(document.Metadata, "metadata", failures);
 
-        if (document.Entry is null && document.Exit is null && document.Risk is null)
+        if (document.Direction == StrategyTradeDirection.Neutral && !hasDirectionalRoots)
         {
-            failures.Add("MissingRuleRoot:entry-exit-risk");
+            failures.Add("UnsupportedStrategyDirection:Neutral");
+        }
+
+        if (!hasLegacyRoots && document.Risk is null && !hasDirectionalRoots)
+        {
+            failures.Add("MissingRuleRoot:entry-exit-risk-directional");
         }
 
         enabledRuleCount += ValidateNode(document.Entry, "entry", null, ruleIds, failures);
         enabledRuleCount += ValidateNode(document.Exit, "exit", null, ruleIds, failures);
         enabledRuleCount += ValidateNode(document.Risk, "risk", null, ruleIds, failures);
+        enabledRuleCount += ValidateNode(document.LongEntry, "longEntry", null, ruleIds, failures);
+        enabledRuleCount += ValidateNode(document.LongExit, "longExit", null, ruleIds, failures);
+        enabledRuleCount += ValidateNode(document.ShortEntry, "shortEntry", null, ruleIds, failures);
+        enabledRuleCount += ValidateNode(document.ShortExit, "shortExit", null, ruleIds, failures);
 
         if (!ContainsRuleGroup(document.Entry) &&
             !ContainsRuleGroup(document.Exit) &&
-            !ContainsRuleGroup(document.Risk))
+            !ContainsRuleGroup(document.Risk) &&
+            !ContainsRuleGroup(document.LongEntry) &&
+            !ContainsRuleGroup(document.LongExit) &&
+            !ContainsRuleGroup(document.ShortEntry) &&
+            !ContainsRuleGroup(document.ShortExit))
         {
-            failures.Add("MissingRuleGroup:entry-exit-risk");
+            failures.Add("MissingRuleGroup:entry-exit-risk-directional");
         }
 
         if (failures.Count > 0)
@@ -115,6 +131,48 @@ public sealed class StrategyDefinitionValidator : IStrategyDefinitionValidator
             enabledRuleCount);
     }
 
+    public StrategyDefinitionValidationSnapshot ValidateForBotDirectionMode(
+        StrategyRuleDocument document,
+        TradingBotDirectionMode directionMode)
+    {
+        var validation = Validate(document);
+        if (!validation.IsValid)
+        {
+            return validation;
+        }
+
+        if (directionMode == TradingBotDirectionMode.LongShort)
+        {
+            return validation;
+        }
+
+        var canSignalLong = CanSignalLong(document);
+        var canSignalShort = CanSignalShort(document);
+        var failures = new List<string>();
+
+        if (directionMode == TradingBotDirectionMode.LongOnly && canSignalShort)
+        {
+            failures.Add("DirectionModeBlocked:Short");
+        }
+
+        if (directionMode == TradingBotDirectionMode.ShortOnly && canSignalLong)
+        {
+            failures.Add("DirectionModeBlocked:Long");
+        }
+
+        if (failures.Count == 0)
+        {
+            return validation;
+        }
+
+        return new StrategyDefinitionValidationSnapshot(
+            false,
+            failures[0],
+            $"Strategy validation failed for bot direction mode {directionMode}: {string.Join(" | ", failures)}",
+            failures,
+            validation.EnabledRuleCount);
+    }
+
     private static bool ContainsRuleGroup(StrategyRuleNode? node)
     {
         return node switch
@@ -124,6 +182,20 @@ public sealed class StrategyDefinitionValidator : IStrategyDefinitionValidator
             null => false,
             _ => false
         };
+    }
+
+    private static bool CanSignalLong(StrategyRuleDocument document)
+    {
+        return document.LongEntry is not null ||
+               document.LongExit is not null ||
+               ((document.Entry is not null || document.Exit is not null) && document.Direction == StrategyTradeDirection.Long);
+    }
+
+    private static bool CanSignalShort(StrategyRuleDocument document)
+    {
+        return document.ShortEntry is not null ||
+               document.ShortExit is not null ||
+               ((document.Entry is not null || document.Exit is not null) && document.Direction == StrategyTradeDirection.Short);
     }
 
     private static int ValidateNode(

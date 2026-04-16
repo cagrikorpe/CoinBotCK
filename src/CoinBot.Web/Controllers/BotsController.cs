@@ -2,6 +2,7 @@ using System.Security.Claims;
 using CoinBot.Application.Abstractions.Bots;
 using CoinBot.Application.Abstractions.Settings;
 using CoinBot.Contracts.Common;
+using CoinBot.Domain.Enums;
 using CoinBot.Web.ViewModels.Bots;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -198,7 +199,8 @@ public class BotsController(
             form.ExchangeAccountId,
             form.Leverage,
             form.MarginType,
-            form.IsEnabled);
+            form.IsEnabled,
+            form.DirectionMode);
     }
 
     private static BotManagementIndexViewModel MapPage(BotManagementPageSnapshot snapshot, TimeZoneInfo timeZoneInfo)
@@ -277,7 +279,13 @@ public class BotsController(
                     : null,
                 ResolvePilotState(item).Label,
                 ResolvePilotState(item).Tone,
-                ResolvePilotState(item).Summary))
+                ResolvePilotState(item).Summary,
+                FormatDirectionModeLabel(item.DirectionMode),
+                ResolveDirectionModeTone(item.DirectionMode),
+                BuildDirectionModeSummary(item.DirectionMode),
+                item.RuntimeDirectionLabel,
+                item.RuntimeDirectionTone,
+                item.RuntimeDirectionSummary))
             .ToArray();
 
         return new BotManagementIndexViewModel(rows);
@@ -297,6 +305,7 @@ public class BotsController(
             ExchangeAccountId = snapshot.Draft.ExchangeAccountId,
             Leverage = snapshot.Draft.Leverage ?? 1m,
             MarginType = snapshot.Draft.MarginType,
+            DirectionMode = snapshot.Draft.DirectionMode,
             IsEnabled = snapshot.Draft.IsEnabled
         };
 
@@ -358,6 +367,39 @@ public class BotsController(
         return string.IsNullOrWhiteSpace(decisionReasonType) || string.Equals(decisionReasonType, "Allow", StringComparison.Ordinal)
             ? $"Decision: {decisionOutcome.Trim()}"
             : $"Decision: {decisionOutcome.Trim()} / {decisionReasonType.Trim()}";
+    }
+
+    private static string FormatDirectionModeLabel(TradingBotDirectionMode directionMode)
+    {
+        return directionMode switch
+        {
+            TradingBotDirectionMode.LongOnly => "LongOnly",
+            TradingBotDirectionMode.ShortOnly => "ShortOnly",
+            TradingBotDirectionMode.LongShort => "LongShort",
+            _ => "LongOnly"
+        };
+    }
+
+    private static string ResolveDirectionModeTone(TradingBotDirectionMode directionMode)
+    {
+        return directionMode switch
+        {
+            TradingBotDirectionMode.LongOnly => "success",
+            TradingBotDirectionMode.ShortOnly => "danger",
+            TradingBotDirectionMode.LongShort => "info",
+            _ => "neutral"
+        };
+    }
+
+    private static string BuildDirectionModeSummary(TradingBotDirectionMode directionMode)
+    {
+        return directionMode switch
+        {
+            TradingBotDirectionMode.LongOnly => "Bot sadece long yone izin verir.",
+            TradingBotDirectionMode.ShortOnly => "Bot sadece short yone izin verir.",
+            TradingBotDirectionMode.LongShort => "Bot long ve short yone izin verir.",
+            _ => "Bot sadece long yone izin verir."
+        };
     }
 
     private static string? ResolveExecutionStageText(string? rejectionStage)

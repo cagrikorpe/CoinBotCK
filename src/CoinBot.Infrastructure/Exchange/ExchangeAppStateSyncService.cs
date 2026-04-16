@@ -49,9 +49,10 @@ public sealed class ExchangeAppStateSyncService(
                     credentialAccess.ApiKey,
                     credentialAccess.ApiSecret,
                     cancellationToken);
+                var enrichedSnapshot = await EnrichSnapshotWithLocalPositionProjectionAsync(snapshot, cancellationToken);
 
-                var drift = await DetectDriftAsync(snapshot, cancellationToken);
-                snapshotHub.Publish(snapshot);
+                var drift = await DetectDriftAsync(enrichedSnapshot, cancellationToken);
+                snapshotHub.Publish(enrichedSnapshot);
 
                 await syncStateService.RecordReconciliationAsync(
                     account,
@@ -165,6 +166,167 @@ public sealed class ExchangeAppStateSyncService(
                 : ExchangeStateDriftStatus.InSync,
             summary);
     }
+
+    private async Task<ExchangeAccountSnapshot> EnrichSnapshotWithLocalPositionProjectionAsync(
+        ExchangeAccountSnapshot snapshot,
+        CancellationToken cancellationToken)
+    {
+        var projectedPositions = await BuildLocalExecutionProjectedPositionsAsync(snapshot, cancellationToken);
+
+        if (projectedPositions.Count == 0)
+        {
+            return snapshot;
+        }
+
+        var positionsByKey = snapshot.Positions.ToDictionary(
+            position => CreatePositionKey(position.Symbol, position.PositionSide),
+            StringComparer.Ordinal);
+        var addedCount = 0;
+
+        foreach (var projectedPosition in projectedPositions)
+        {
+            if (positionsByKey.TryAdd(
+                    CreatePositionKey(projectedPosition.Symbol, projectedPosition.PositionSide),
+                    projectedPosition))
+            {
+                addedCount++;
+            }
+        }
+
+        if (addedCount == 0)
+        {
+            return snapshot;
+        }
+
+        logger.LogInformation(
+            "Exchange-app reconciliation enriched snapshot with {ProjectedPositionCount} locally projected positions for account {ExchangeAccountId}.",
+            addedCount,
+            snapshot.ExchangeAccountId);
+
+        return snapshot with
+        {
+            Positions = positionsByKey.Values
+                .OrderBy(position => position.Symbol, StringComparer.Ordinal)
+                .ThenBy(position => position.PositionSide, StringComparer.Ordinal)
+                .ToArray(),
+            Source = snapshot.Source.Contains("Fallback=LocalExecutionProjection", StringComparison.Ordinal)
+                ? snapshot.Source
+                : $"{snapshot.Source};Fallback=LocalExecutionProjection"
+        };
+    }
+
+    private async Task<IReadOnlyCollection<ExchangePositionSnapshot>> BuildLocalExecutionProjectedPositionsAsync(
+        ExchangeAccountSnapshot snapshot,
+        CancellationToken cancellationToken)
+    {
+        var executionOrders = await dbContext.ExecutionOrders
+            .AsNoTracking()
+            .Where(entity =>
+                entity.ExchangeAccountId == snapshot.ExchangeAccountId &&
+                entity.Plane == snapshot.Plane &&
+                entity.ExecutionEnvironment == ExecutionEnvironment.Live &&
+                entity.SubmittedToBroker &&
+                entity.FilledQuantity != 0m &&
+                !entity.IsDeleted)
+            .OrderBy(entity => entity.LastFilledAtUtc ?? entity.CreatedDate)
+            .ThenBy(entity => entity.CreatedDate)
+            .Select(entity => new
+            {
+                entity.Symbol,
+                entity.Side,
+                entity.FilledQuantity,
+                entity.AverageFillPrice,
+                entity.Price,
+                EventTimeUtc = entity.LastFilledAtUtc ?? entity.CreatedDate
+            })
+            .ToListAsync(cancellationToken);
+
+        if (executionOrders.Count == 0)
+        {
+            return Array.Empty<ExchangePositionSnapshot>();
+        }
+
+        var projectedPositions = new List<ExchangePositionSnapshot>();
+
+        foreach (var symbolOrders in executionOrders.GroupBy(entity => NormalizeCode(entity.Symbol), StringComparer.Ordinal))
+        {
+            var netQuantity = 0m;
+            var entryPrice = 0m;
+            var latestEventTimeUtc = DateTime.MinValue;
+
+            foreach (var order in symbolOrders)
+            {
+                var price = order.AverageFillPrice.GetValueOrDefault() != 0m
+                    ? order.AverageFillPrice.GetValueOrDefault()
+                    : order.Price;
+                var signedQuantity = order.Side == ExecutionOrderSide.Buy
+                    ? order.FilledQuantity
+                    : -order.FilledQuantity;
+
+                latestEventTimeUtc = order.EventTimeUtc > latestEventTimeUtc
+                    ? order.EventTimeUtc
+                    : latestEventTimeUtc;
+
+                if (signedQuantity == 0m || price == 0m)
+                {
+                    continue;
+                }
+
+                if (netQuantity == 0m)
+                {
+                    netQuantity = signedQuantity;
+                    entryPrice = price;
+                    continue;
+                }
+
+                if (Math.Sign(netQuantity) == Math.Sign(signedQuantity))
+                {
+                    var weightedQuantity = Math.Abs(netQuantity) + Math.Abs(signedQuantity);
+                    entryPrice = weightedQuantity == 0m
+                        ? 0m
+                        : ((Math.Abs(netQuantity) * entryPrice) + (Math.Abs(signedQuantity) * price)) / weightedQuantity;
+                    netQuantity += signedQuantity;
+                    continue;
+                }
+
+                if (Math.Abs(signedQuantity) < Math.Abs(netQuantity))
+                {
+                    netQuantity += signedQuantity;
+                    continue;
+                }
+
+                if (Math.Abs(signedQuantity) == Math.Abs(netQuantity))
+                {
+                    netQuantity = 0m;
+                    entryPrice = 0m;
+                    continue;
+                }
+
+                netQuantity += signedQuantity;
+                entryPrice = price;
+            }
+
+            if (netQuantity == 0m)
+            {
+                continue;
+            }
+
+            projectedPositions.Add(new ExchangePositionSnapshot(
+                symbolOrders.Key,
+                "BOTH",
+                netQuantity,
+                entryPrice,
+                entryPrice,
+                0m,
+                "cross",
+                0m,
+                latestEventTimeUtc == DateTime.MinValue ? snapshot.ObservedAtUtc : latestEventTimeUtc,
+                snapshot.Plane));
+        }
+
+        return projectedPositions;
+    }
+
 
     private static int CountBalanceMismatches(
         IReadOnlyCollection<ExchangeBalanceSnapshot> expectedBalances,

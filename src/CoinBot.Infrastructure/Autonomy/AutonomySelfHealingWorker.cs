@@ -59,7 +59,15 @@ public sealed class AutonomySelfHealingWorker(
                 continue;
             }
 
-            await autonomyService.EvaluateAsync(
+            logger.LogInformation(
+                "Autonomy self-healing started half-open probe for {BreakerKind}. CooldownUntilUtc={CooldownUntilUtc}; LastFailureAtUtc={LastFailureAtUtc}; LastErrorCode={LastErrorCode}; CorrelationId={CorrelationId}",
+                breakerKind,
+                halfOpenSnapshot.CooldownUntilUtc,
+                halfOpenSnapshot.LastFailureAtUtc,
+                halfOpenSnapshot.LastErrorCode,
+                halfOpenSnapshot.CorrelationId);
+
+            var decision = await autonomyService.EvaluateAsync(
                 new AutonomyDecisionRequest(
                     ActorUserId: SystemActor,
                     SuggestedAction: ResolveSuggestedAction(breakerKind),
@@ -69,6 +77,41 @@ public sealed class AutonomySelfHealingWorker(
                     CorrelationId: halfOpenSnapshot.CorrelationId,
                     BreakerKind: breakerKind),
                 cancellationToken);
+
+            logger.LogInformation(
+                "Autonomy self-healing evaluated {BreakerKind}. AutoExecuted={AutoExecuted}; ReviewQueued={ReviewQueued}; ApprovalId={ApprovalId}; Outcome={Outcome}; CorrelationId={CorrelationId}",
+                breakerKind,
+                decision.AutoExecuted,
+                decision.ReviewQueued,
+                decision.ApprovalId,
+                decision.Outcome,
+                halfOpenSnapshot.CorrelationId);
+
+            if (breakerKind != DependencyCircuitBreakerKind.WebSocket &&
+                decision.AutoExecuted &&
+                !decision.ReviewQueued)
+            {
+                await breakerStateManager.RecordSuccessAsync(
+                    new DependencyCircuitBreakerSuccessRequest(
+                        breakerKind,
+                        SystemActor,
+                        halfOpenSnapshot.CorrelationId),
+                    cancellationToken);
+
+                logger.LogInformation(
+                    "Autonomy self-healing closed breaker {BreakerKind} after successful recovery. CorrelationId={CorrelationId}",
+                    breakerKind,
+                    halfOpenSnapshot.CorrelationId);
+            }
+            else
+            {
+                logger.LogWarning(
+                    "Autonomy self-healing left breaker {BreakerKind} open. AutoExecuted={AutoExecuted}; ReviewQueued={ReviewQueued}; CorrelationId={CorrelationId}",
+                    breakerKind,
+                    decision.AutoExecuted,
+                    decision.ReviewQueued,
+                    halfOpenSnapshot.CorrelationId);
+            }
         }
     }
 

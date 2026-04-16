@@ -203,6 +203,9 @@ public sealed class RiskPolicyEvaluator(
         var coinExposure = positions
             .Where(entity => string.Equals(NormalizeAsset(entity.BaseAsset), baseAsset, StringComparison.Ordinal))
             .Sum(CalculateDemoPositionExposure);
+        var currentSymbolSignedQuantity = positions
+            .Where(entity => string.Equals(entity.Symbol, symbol, StringComparison.Ordinal))
+            .Sum(entity => entity.Quantity);
         var symbolHasOpenPosition = positions.Any(entity => string.Equals(entity.Symbol, symbol, StringComparison.Ordinal));
 
         return CreateSnapshot(
@@ -221,6 +224,7 @@ public sealed class RiskPolicyEvaluator(
             currentCoinExposureAmount: coinExposure,
             openPositionCount: positions.Count,
             symbolHasOpenPosition,
+            currentSymbolSignedQuantity,
             coinSpecificLimits,
             evaluatedAtUtc);
     }
@@ -237,6 +241,8 @@ public sealed class RiskPolicyEvaluator(
         CancellationToken cancellationToken)
     {
         var balances = await dbContext.ExchangeBalances
+            .AsNoTracking()
+            .IgnoreQueryFilters()
             .Where(entity =>
                 entity.OwnerUserId == ownerUserId &&
                 entity.Plane == ExchangeDataPlane.Futures &&
@@ -244,6 +250,8 @@ public sealed class RiskPolicyEvaluator(
             .ToListAsync(cancellationToken);
 
         var positions = await dbContext.ExchangePositions
+            .AsNoTracking()
+            .IgnoreQueryFilters()
             .Where(entity =>
                 entity.OwnerUserId == ownerUserId &&
                 entity.Plane == ExchangeDataPlane.Futures &&
@@ -251,25 +259,89 @@ public sealed class RiskPolicyEvaluator(
                 entity.Quantity != 0m)
             .ToListAsync(cancellationToken);
 
+        var fallbackExecutionPositions = Array.Empty<(string Symbol, decimal NetQuantity, decimal EntryPrice)>();
+
+        if (positions.Count == 0)
+        {
+            fallbackExecutionPositions = (await dbContext.ExecutionOrders
+                    .AsNoTracking()
+                    .IgnoreQueryFilters()
+                    .Where(entity =>
+                        entity.OwnerUserId == ownerUserId &&
+                        entity.Plane == ExchangeDataPlane.Futures &&
+                        !entity.IsDeleted &&
+                        entity.SubmittedToBroker &&
+                        (entity.State == ExecutionOrderState.Submitted ||
+                         entity.State == ExecutionOrderState.Dispatching ||
+                         entity.State == ExecutionOrderState.CancelRequested ||
+                         entity.State == ExecutionOrderState.PartiallyFilled ||
+                         entity.State == ExecutionOrderState.Filled))
+                    .ToListAsync(cancellationToken))
+                .GroupBy(entity => NormalizeSymbol(entity.Symbol))
+                .Select(group =>
+                {
+                    var netQuantity = group.Sum(ResolveSignedOrderQuantity);
+                    var latestPrice = group
+                        .OrderByDescending(entity => entity.UpdatedDate)
+                        .ThenByDescending(entity => entity.CreatedDate)
+                        .Select(entity => entity.AverageFillPrice.GetValueOrDefault() != 0m ? entity.AverageFillPrice.GetValueOrDefault() : entity.Price)
+                        .FirstOrDefault();
+                    return (Symbol: group.Key, NetQuantity: netQuantity, EntryPrice: latestPrice);
+                })
+                .Where(item => item.NetQuantity != 0m)
+                .ToArray();
+        }
+
         var equity = balances.Sum(entity =>
             entity.CrossWalletBalance != 0m
                 ? entity.CrossWalletBalance
                 : entity.WalletBalance);
 
-        var grossExposure = positions.Sum(entity => Math.Abs(entity.EntryPrice * entity.Quantity));
-        var currentDailyLossAmount = positions
-            .Where(entity => entity.UnrealizedProfit < 0m && NormalizeUtc(entity.SyncedAtUtc) >= evaluatedAtUtc.Date)
-            .Sum(entity => Math.Abs(entity.UnrealizedProfit));
-        var currentWeeklyLossAmount = positions
-            .Where(entity => entity.UnrealizedProfit < 0m && NormalizeUtc(entity.SyncedAtUtc) >= ResolveIsoWeekStart(evaluatedAtUtc))
-            .Sum(entity => Math.Abs(entity.UnrealizedProfit));
-        var symbolExposure = positions
-            .Where(entity => string.Equals(entity.Symbol, symbol, StringComparison.Ordinal))
-            .Sum(entity => Math.Abs(entity.EntryPrice * entity.Quantity));
-        var coinExposure = positions
-            .Where(entity => string.Equals(ResolveBaseAsset(entity.Symbol), baseAsset, StringComparison.Ordinal))
-            .Sum(entity => Math.Abs(entity.EntryPrice * entity.Quantity));
-        var symbolHasOpenPosition = positions.Any(entity => string.Equals(entity.Symbol, symbol, StringComparison.Ordinal));
+        var normalizedSymbol = NormalizeSymbol(symbol);
+        var grossExposure = positions.Count != 0
+            ? positions.Sum(entity => Math.Abs(entity.EntryPrice * ResolveSignedPositionQuantity(entity)))
+            : fallbackExecutionPositions.Sum(entity => Math.Abs(entity.EntryPrice * entity.NetQuantity));
+        var currentDailyLossAmount = positions.Count != 0
+            ? positions
+                .Where(entity => entity.UnrealizedProfit < 0m && NormalizeUtc(entity.SyncedAtUtc) >= evaluatedAtUtc.Date)
+                .Sum(entity => Math.Abs(entity.UnrealizedProfit))
+            : 0m;
+        var currentWeeklyLossAmount = positions.Count != 0
+            ? positions
+                .Where(entity => entity.UnrealizedProfit < 0m && NormalizeUtc(entity.SyncedAtUtc) >= ResolveIsoWeekStart(evaluatedAtUtc))
+                .Sum(entity => Math.Abs(entity.UnrealizedProfit))
+            : 0m;
+        var symbolExposure = positions.Count != 0
+            ? positions
+                .Where(entity => string.Equals(NormalizeSymbol(entity.Symbol), normalizedSymbol, StringComparison.Ordinal))
+                .Sum(entity => Math.Abs(entity.EntryPrice * ResolveSignedPositionQuantity(entity)))
+            : fallbackExecutionPositions
+                .Where(entity => string.Equals(entity.Symbol, normalizedSymbol, StringComparison.Ordinal))
+                .Sum(entity => Math.Abs(entity.EntryPrice * entity.NetQuantity));
+        var coinExposure = positions.Count != 0
+            ? positions
+                .Where(entity => string.Equals(ResolveBaseAsset(entity.Symbol), baseAsset, StringComparison.Ordinal))
+                .Sum(entity => Math.Abs(entity.EntryPrice * ResolveSignedPositionQuantity(entity)))
+            : fallbackExecutionPositions
+                .Where(entity => string.Equals(ResolveBaseAsset(entity.Symbol), baseAsset, StringComparison.Ordinal))
+                .Sum(entity => Math.Abs(entity.EntryPrice * entity.NetQuantity));
+        var currentSymbolSignedQuantity = positions.Count != 0
+            ? positions
+                .Where(entity => string.Equals(NormalizeSymbol(entity.Symbol), normalizedSymbol, StringComparison.Ordinal))
+                .Sum(ResolveSignedPositionQuantity)
+            : fallbackExecutionPositions
+                .Where(entity => string.Equals(entity.Symbol, normalizedSymbol, StringComparison.Ordinal))
+                .Sum(entity => entity.NetQuantity);
+        var symbolHasOpenPosition = positions.Count != 0
+            ? positions.Any(entity =>
+                string.Equals(NormalizeSymbol(entity.Symbol), normalizedSymbol, StringComparison.Ordinal) &&
+                ResolveSignedPositionQuantity(entity) != 0m)
+            : fallbackExecutionPositions.Any(entity =>
+                string.Equals(entity.Symbol, normalizedSymbol, StringComparison.Ordinal) &&
+                entity.NetQuantity != 0m);
+        var openPositionCount = positions.Count != 0
+            ? positions.Count
+            : fallbackExecutionPositions.Length;
 
         return CreateSnapshot(
             request,
@@ -285,10 +357,51 @@ public sealed class RiskPolicyEvaluator(
             currentWeeklyLossAmount,
             symbolExposure,
             coinExposure,
-            positions.Count,
+            openPositionCount,
             symbolHasOpenPosition,
+            currentSymbolSignedQuantity,
             coinSpecificLimits,
             evaluatedAtUtc);
+    }
+
+    private static decimal ResolveSignedOrderQuantity(ExecutionOrder entity)
+    {
+        var quantity = entity.FilledQuantity;
+        if (quantity == 0m)
+        {
+            return 0m;
+        }
+
+        return entity.Side == ExecutionOrderSide.Buy
+            ? quantity
+            : -quantity;
+    }
+
+    private static decimal ResolveSignedPositionQuantity(ExchangePosition entity)
+    {
+        var quantity = entity.Quantity;
+        if (quantity == 0m)
+        {
+            return 0m;
+        }
+
+        return NormalizePositionSide(entity.PositionSide) == "SHORT"
+            ? -Math.Abs(quantity)
+            : quantity;
+    }
+
+    private static string NormalizePositionSide(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? "BOTH"
+            : value.Trim().ToUpperInvariant();
+    }
+
+    private static string NormalizeSymbol(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : value.Trim().ToUpperInvariant();
     }
 
     private static PreTradeRiskSnapshot CreateSnapshot(
@@ -307,6 +420,7 @@ public sealed class RiskPolicyEvaluator(
         decimal currentCoinExposureAmount,
         int openPositionCount,
         bool symbolHasOpenPosition,
+        decimal currentSymbolSignedQuantity,
         IReadOnlyDictionary<string, decimal> coinSpecificLimits,
         DateTime evaluatedAtUtc)
     {
@@ -315,9 +429,21 @@ public sealed class RiskPolicyEvaluator(
         var requestedNotional = requestedQuantity > 0m && requestedPrice > 0m
             ? Math.Abs(requestedQuantity * requestedPrice)
             : 0m;
-        var projectedGrossExposure = currentGrossExposure + requestedNotional;
-        var projectedSymbolExposureAmount = currentSymbolExposureAmount + requestedNotional;
-        var projectedCoinExposureAmount = currentCoinExposureAmount + requestedNotional;
+        var requestedSignedQuantity = ResolveRequestedSignedQuantity(request.Side, requestedQuantity);
+        var requestOpposesCurrentSymbolPosition = requestedNotional > 0m &&
+            currentSymbolExposureAmount > 0m &&
+            currentSymbolSignedQuantity != 0m &&
+            requestedSignedQuantity != 0m &&
+            Math.Sign(currentSymbolSignedQuantity) != Math.Sign(requestedSignedQuantity);
+        var projectedSymbolExposureAmount = requestOpposesCurrentSymbolPosition
+            ? Math.Abs(currentSymbolExposureAmount - requestedNotional)
+            : currentSymbolExposureAmount + requestedNotional;
+        var projectedGrossExposure = requestOpposesCurrentSymbolPosition
+            ? Math.Max(0m, currentGrossExposure - currentSymbolExposureAmount) + projectedSymbolExposureAmount
+            : currentGrossExposure + requestedNotional;
+        var projectedCoinExposureAmount = requestOpposesCurrentSymbolPosition
+            ? Math.Max(0m, currentCoinExposureAmount - currentSymbolExposureAmount) + projectedSymbolExposureAmount
+            : currentCoinExposureAmount + requestedNotional;
         var currentLeverage = ResolvePercentageRatio(currentGrossExposure, currentEquity, multiplier: 1m);
         var projectedLeverage = ResolvePercentageRatio(projectedGrossExposure, currentEquity, multiplier: 1m);
         var currentExposurePercentage = ResolvePercentageRatio(currentGrossExposure, currentEquity, multiplier: 100m);
@@ -334,9 +460,13 @@ public sealed class RiskPolicyEvaluator(
         decimal? maxCoinExposurePercentage = coinSpecificLimits.TryGetValue(baseAsset, out var coinLimit)
             ? coinLimit
             : null;
-        var projectedOpenPositionCount = requestedNotional > 0m && !symbolHasOpenPosition
-            ? openPositionCount + 1
-            : openPositionCount;
+        var projectedOpenPositionCount = requestedNotional <= 0m
+            ? openPositionCount
+            : !symbolHasOpenPosition
+                ? openPositionCount + 1
+                : requestOpposesCurrentSymbolPosition && projectedSymbolExposureAmount == 0m
+                    ? Math.Max(0, openPositionCount - 1)
+                    : openPositionCount;
 
         return new PreTradeRiskSnapshot(
             IsVirtualCheck: isVirtualCheck,
@@ -567,6 +697,19 @@ public sealed class RiskPolicyEvaluator(
         return denominator > 0m
             ? (numerator / denominator) * multiplier
             : 0m;
+    }
+
+
+    private static decimal ResolveRequestedSignedQuantity(ExecutionOrderSide? side, decimal quantity)
+    {
+        if (quantity <= 0m || side is null)
+        {
+            return 0m;
+        }
+
+        return side == ExecutionOrderSide.Buy
+            ? quantity
+            : -quantity;
     }
 
     private static decimal CalculateDemoPositionExposure(DemoPosition position)

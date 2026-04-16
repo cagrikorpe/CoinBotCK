@@ -18,6 +18,8 @@ public sealed class TradingBot : UserOwnedEntity
 
     public string? MarginType { get; set; }
 
+    public TradingBotDirectionMode DirectionMode { get; set; } = TradingBotDirectionMode.LongOnly;
+
     public bool IsEnabled { get; set; }
 
     public ExecutionEnvironment? TradingModeOverride { get; set; }

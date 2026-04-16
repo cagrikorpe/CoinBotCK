@@ -781,6 +781,7 @@ public sealed class ExecutionEngine(
 
         var netQuantity = await ResolveNetPositionQuantityAsync(
             command.OwnerUserId,
+            command.ExchangeAccountId,
             command.Symbol,
             requestedEnvironment,
             plane,
@@ -815,29 +816,118 @@ public sealed class ExecutionEngine(
 
     private async Task<decimal> ResolveNetPositionQuantityAsync(
         string ownerUserId,
+        Guid? exchangeAccountId,
         string symbol,
         ExecutionEnvironment requestedEnvironment,
         ExchangeDataPlane plane,
         CancellationToken cancellationToken)
     {
-        return requestedEnvironment == ExecutionEnvironment.Demo
-            ? await dbContext.DemoPositions
+        var normalizedSymbol = NormalizePositionSymbol(symbol);
+
+        if (requestedEnvironment == ExecutionEnvironment.Demo)
+        {
+            return await dbContext.DemoPositions
                 .AsNoTracking()
                 .IgnoreQueryFilters()
                 .Where(entity =>
                     entity.OwnerUserId == ownerUserId &&
-                    entity.Symbol == symbol &&
-                    !entity.IsDeleted)
-                .SumAsync(entity => entity.Quantity, cancellationToken)
-            : await dbContext.ExchangePositions
-                .AsNoTracking()
-                .IgnoreQueryFilters()
-                .Where(entity =>
-                    entity.OwnerUserId == ownerUserId &&
-                    entity.Plane == plane &&
-                    entity.Symbol == symbol &&
+                    entity.Symbol == normalizedSymbol &&
                     !entity.IsDeleted)
                 .SumAsync(entity => entity.Quantity, cancellationToken);
+        }
+
+        var positionNetQuantity = (await dbContext.ExchangePositions
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.OwnerUserId == ownerUserId &&
+                    (!exchangeAccountId.HasValue || entity.ExchangeAccountId == exchangeAccountId.Value) &&
+                    entity.Plane == plane &&
+                    !entity.IsDeleted)
+                .ToListAsync(cancellationToken))
+            .Where(entity => NormalizePositionSymbol(entity.Symbol) == normalizedSymbol)
+            .Sum(ResolveSignedPositionQuantity);
+
+        if (positionNetQuantity != 0m)
+        {
+            return positionNetQuantity;
+        }
+
+        return (await dbContext.ExecutionOrders
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.OwnerUserId == ownerUserId &&
+                    (!exchangeAccountId.HasValue || entity.ExchangeAccountId == exchangeAccountId.Value) &&
+                    entity.Plane == plane &&
+                    !entity.IsDeleted &&
+                    entity.SubmittedToBroker &&
+                    (entity.State == ExecutionOrderState.Submitted ||
+                     entity.State == ExecutionOrderState.Dispatching ||
+                     entity.State == ExecutionOrderState.CancelRequested ||
+                     entity.State == ExecutionOrderState.PartiallyFilled ||
+                     entity.State == ExecutionOrderState.Filled))
+                .ToListAsync(cancellationToken))
+            .Where(entity => NormalizePositionSymbol(entity.Symbol) == normalizedSymbol)
+            .Sum(ResolveSignedOrderQuantity);
+    }
+
+    private static decimal ResolveSignedOrderQuantity(ExecutionOrder entity)
+    {
+        var quantity = entity.FilledQuantity > 0m
+            ? entity.FilledQuantity
+            : ResolvePendingExposureQuantity(entity);
+        if (quantity == 0m)
+        {
+            return 0m;
+        }
+
+        return entity.Side == ExecutionOrderSide.Buy
+            ? quantity
+            : -quantity;
+    }
+
+    private static decimal ResolvePendingExposureQuantity(ExecutionOrder entity)
+    {
+        if (!entity.SubmittedToBroker ||
+            entity.ReduceOnly ||
+            entity.OrderType != ExecutionOrderType.Market)
+        {
+            return 0m;
+        }
+
+        return entity.State is ExecutionOrderState.Submitted or
+            ExecutionOrderState.Dispatching or
+            ExecutionOrderState.CancelRequested
+            ? entity.Quantity
+            : 0m;
+    }
+
+    private static decimal ResolveSignedPositionQuantity(ExchangePosition entity)
+    {
+        var quantity = entity.Quantity;
+        if (quantity == 0m)
+        {
+            return 0m;
+        }
+
+        return NormalizePositionSide(entity.PositionSide) == "SHORT"
+            ? -Math.Abs(quantity)
+            : quantity;
+    }
+
+    private static string NormalizePositionSide(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? "BOTH"
+            : value.Trim().ToUpperInvariant();
+    }
+
+    private static string NormalizePositionSymbol(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : value.Trim().ToUpperInvariant();
     }
 
     private async Task MarkDuplicateSuppressedAsync(

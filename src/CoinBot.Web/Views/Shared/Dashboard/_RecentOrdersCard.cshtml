@@ -41,7 +41,7 @@
                                 <td class="cb-mono">@item.Time</td>
                                 <td>
                                     <div class="font-weight-bolder" data-cb-recent-order-symbol>@item.Symbol</div>
-                                    <div class="text-muted" data-cb-recent-order-side>@item.Side</div>
+                                    <div class="mt-2"><span class="cb-badge @(item.DirectionTone == "success" ? "cb-badge-success" : item.DirectionTone == "danger" ? "cb-badge-danger" : "cb-badge-neutral")" data-cb-recent-order-side>@item.Side</span></div>
                                 </td>
                                 <td>
                                     <div><span class="cb-badge @badgeClass" data-cb-recent-order-state>@item.FinalState</span></div>

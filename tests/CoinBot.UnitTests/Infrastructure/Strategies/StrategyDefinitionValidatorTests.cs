@@ -1,3 +1,5 @@
+using CoinBot.Application.Abstractions.Strategies;
+using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Strategies;
 
 namespace CoinBot.UnitTests.Infrastructure.Strategies;
@@ -41,6 +43,156 @@ public sealed class StrategyDefinitionValidatorTests
         Assert.True(snapshot.IsValid);
         Assert.Equal("Valid", snapshot.StatusCode);
         Assert.Equal(1, snapshot.EnabledRuleCount);
+    }
+
+
+    [Fact]
+    public void Validate_FailsClosed_ForNeutralStrategyDirection()
+    {
+        var validator = new StrategyDefinitionValidator();
+        var document = new StrategyRuleDocument(
+            2,
+            new StrategyRuleCondition(
+                "context.mode",
+                StrategyRuleComparisonOperator.Equals,
+                new StrategyRuleOperand(StrategyRuleOperandKind.String, "Live")),
+            null,
+            null,
+            Direction: StrategyTradeDirection.Neutral);
+
+        var snapshot = validator.Validate(document);
+
+        Assert.False(snapshot.IsValid);
+        Assert.Equal("UnsupportedStrategyDirection:Neutral", snapshot.StatusCode);
+    }
+
+    [Fact]
+    public void Validate_AllowsNeutralStrategyDirection_WhenDirectionalRootsAreUsed()
+    {
+        var parser = new StrategyRuleParser();
+        var validator = new StrategyDefinitionValidator();
+
+        var snapshot = validator.Validate(parser.Parse(
+            """
+            {
+              "schemaVersion": 2,
+              "longEntry": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Live"
+                  }
+                ]
+              },
+              "shortEntry": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Demo"
+                  }
+                ]
+              }
+            }
+            """));
+
+        Assert.True(snapshot.IsValid);
+    }
+
+    [Fact]
+    public void ValidateForBotDirectionMode_FailsClosed_WhenLongOnlyBotReceivesShortRules()
+    {
+        var parser = new StrategyRuleParser();
+        var validator = new StrategyDefinitionValidator();
+        var document = parser.Parse(
+            """
+            {
+              "schemaVersion": 2,
+              "shortEntry": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Live"
+                  }
+                ]
+              }
+            }
+            """);
+
+        var snapshot = validator.ValidateForBotDirectionMode(document, TradingBotDirectionMode.LongOnly);
+
+        Assert.False(snapshot.IsValid);
+        Assert.Equal("DirectionModeBlocked:Short", snapshot.StatusCode);
+    }
+
+    [Fact]
+    public void ValidateForBotDirectionMode_FailsClosed_WhenShortOnlyBotReceivesLongRules()
+    {
+        var parser = new StrategyRuleParser();
+        var validator = new StrategyDefinitionValidator();
+        var document = parser.Parse(
+            """
+            {
+              "schemaVersion": 2,
+              "longEntry": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Live"
+                  }
+                ]
+              }
+            }
+            """);
+
+        var snapshot = validator.ValidateForBotDirectionMode(document, TradingBotDirectionMode.ShortOnly);
+
+        Assert.False(snapshot.IsValid);
+        Assert.Equal("DirectionModeBlocked:Long", snapshot.StatusCode);
+    }
+
+    [Fact]
+    public void ValidateForBotDirectionMode_AllowsLongShortBot_WhenBothDirectionsExist()
+    {
+        var parser = new StrategyRuleParser();
+        var validator = new StrategyDefinitionValidator();
+        var document = parser.Parse(
+            """
+            {
+              "schemaVersion": 2,
+              "longEntry": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Live"
+                  }
+                ]
+              },
+              "shortEntry": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Demo"
+                  }
+                ]
+              }
+            }
+            """);
+
+        var snapshot = validator.ValidateForBotDirectionMode(document, TradingBotDirectionMode.LongShort);
+
+        Assert.True(snapshot.IsValid);
     }
 
     [Fact]

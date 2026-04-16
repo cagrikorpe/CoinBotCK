@@ -440,6 +440,39 @@ public sealed class RiskPolicyEvaluatorTests
     }
 
     [Fact]
+    public async Task EvaluateAsync_ReducesProjectedExposure_WhenBuyOffsetsExistingShortPosition()
+    {
+        await using var dbContext = CreateDbContext();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        dbContext.RiskProfiles.Add(CreateRiskProfile("user-short-risk", 10m, 200m, 5m, maxConcurrentPositions: 2));
+        dbContext.DemoWallets.Add(CreateDemoWallet("user-short-risk", "USDT", 1000m));
+        dbContext.DemoPositions.Add(CreateDemoPosition("user-short-risk", "BTCUSDT", -1m, 100m, 100m, 0m, 100m));
+        await dbContext.SaveChangesAsync();
+
+        var evaluator = CreateEvaluator(dbContext, timeProvider);
+        var result = await evaluator.EvaluateAsync(
+            new RiskPolicyEvaluationRequest(
+                "user-short-risk",
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                StrategySignalType.Entry,
+                ExecutionEnvironment.Demo,
+                "BTCUSDT",
+                "1m",
+                Side: ExecutionOrderSide.Buy,
+                Quantity: 1m,
+                Price: 100m));
+
+        Assert.False(result.IsVetoed);
+        Assert.Equal(100m, result.Snapshot.CurrentGrossExposure);
+        Assert.Equal(0m, result.Snapshot.ProjectedGrossExposure);
+        Assert.Equal(100m, result.Snapshot.CurrentSymbolExposureAmount);
+        Assert.Equal(0m, result.Snapshot.ProjectedSymbolExposureAmount);
+        Assert.Equal(1, result.Snapshot.OpenPositionCount);
+        Assert.Equal(0, result.Snapshot.ProjectedOpenPositionCount);
+    }
+
+    [Fact]
     public async Task EvaluateAsync_UsesFuturesDemoEquity_NotSpotLikeNotionalValue()
     {
         await using var dbContext = CreateDbContext();

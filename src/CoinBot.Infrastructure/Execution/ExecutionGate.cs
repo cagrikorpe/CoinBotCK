@@ -195,7 +195,7 @@ public sealed class ExecutionGate(
                 request,
                 isBlocked: true,
                 reasonCode: ResolveGlobalSystemDecisionReasonCode(globalSystemStateSnapshot.State),
-                summary: CreateGlobalSystemStateMessage(globalSystemStateSnapshot),
+                summary: await CreateGlobalSystemStateMessageAsync(globalSystemStateSnapshot, cancellationToken),
                 latencySnapshot,
                 clock.GetUtcNow().UtcDateTime);
 
@@ -225,7 +225,7 @@ public sealed class ExecutionGate(
                 "Execution stage blocked because global system state is {GlobalSystemState}.",
                 globalSystemStateSnapshot.State);
 
-            throw new InvalidOperationException(CreateGlobalSystemStateMessage(globalSystemStateSnapshot));
+            throw new InvalidOperationException(await CreateGlobalSystemStateMessageAsync(globalSystemStateSnapshot, cancellationToken));
         }
 
         DemoSessionSnapshot? demoSessionSnapshot = null;
@@ -314,7 +314,10 @@ public sealed class ExecutionGate(
             snapshot,
             request.Environment,
             modeResolution,
-            pilotSafetyEvaluation.AllowModeOverride);
+            pilotSafetyEvaluation.AllowModeOverride,
+            allowPilotGlobalSwitchBypass: pilotSafetyEvaluation.IsPilotRequest &&
+                                         pilotSafetyEvaluation.AllowModeOverride &&
+                                         pilotOptionsValue.AllowGlobalSwitchBypass);
         ExecutionGateBlockedReason? pilotBlockedReason = pilotSafetyEvaluation.BlockedReasons.Count > 0
             ? pilotSafetyEvaluation.BlockedReasons[0]
             : null;
@@ -793,14 +796,15 @@ public sealed class ExecutionGate(
         GlobalExecutionSwitchSnapshot snapshot,
         ExecutionEnvironment requestedEnvironment,
         TradingModeResolution modeResolution,
-        bool allowDevelopmentFuturesPilotOverride)
+        bool allowDevelopmentFuturesPilotOverride,
+        bool allowPilotGlobalSwitchBypass)
     {
-        if (!snapshot.IsPersisted)
+        if (!snapshot.IsPersisted && !allowPilotGlobalSwitchBypass)
         {
             return ExecutionGateBlockedReason.SwitchConfigurationMissing;
         }
 
-        if (!snapshot.IsTradeMasterArmed)
+        if (!snapshot.IsTradeMasterArmed && !allowPilotGlobalSwitchBypass)
         {
             return ExecutionGateBlockedReason.TradeMasterDisarmed;
         }
@@ -921,11 +925,49 @@ public sealed class ExecutionGate(
         };
     }
 
-    private static string CreateGlobalSystemStateMessage(GlobalSystemStateSnapshot snapshot)
+    private async Task<string> CreateGlobalSystemStateMessageAsync(
+        GlobalSystemStateSnapshot snapshot,
+        CancellationToken cancellationToken)
     {
-        return string.IsNullOrWhiteSpace(snapshot.Message)
+        var baseMessage = string.IsNullOrWhiteSpace(snapshot.Message)
             ? $"Execution blocked because global system state is {snapshot.State}."
             : $"Execution blocked because global system state is {snapshot.State}: {snapshot.Message}";
+
+        if (snapshot.State != GlobalSystemStateKind.Degraded || dbContext is null)
+        {
+            return baseMessage;
+        }
+
+        var activeBreakers = await dbContext.DependencyCircuitBreakerStates
+            .AsNoTracking()
+            .Where(entity => !entity.IsDeleted && entity.StateCode != CircuitBreakerStateCode.Closed)
+            .OrderBy(entity => entity.BreakerKind)
+            .Select(entity => new
+            {
+                entity.BreakerKind,
+                entity.StateCode,
+                entity.ConsecutiveFailureCount,
+                entity.CooldownUntilUtc,
+                entity.LastFailureAtUtc,
+                entity.LastSuccessAtUtc,
+                entity.LastProbeAtUtc,
+                entity.LastErrorCode,
+                entity.LastErrorMessage,
+                entity.CorrelationId
+            })
+            .ToListAsync(cancellationToken);
+
+        if (activeBreakers.Count == 0)
+        {
+            return baseMessage;
+        }
+
+        var detail = string.Join(
+            " | ",
+            activeBreakers.Select(entity =>
+                $"BreakerKind={entity.BreakerKind}; State={entity.StateCode}; FailureCount={entity.ConsecutiveFailureCount}; CooldownUntilUtc={entity.CooldownUntilUtc?.ToString("O") ?? "none"}; LastFailureAtUtc={entity.LastFailureAtUtc?.ToString("O") ?? "none"}; LastSuccessAtUtc={entity.LastSuccessAtUtc?.ToString("O") ?? "none"}; LastProbeAtUtc={entity.LastProbeAtUtc?.ToString("O") ?? "none"}; ErrorCode={entity.LastErrorCode ?? "none"}; Error={entity.LastErrorMessage ?? "none"}; CorrelationId={entity.CorrelationId ?? "none"}"));
+
+        return $"{baseMessage} ActiveBreakerDiagnostics={detail}";
     }
 
     private static string CreateLatencyDecisionMessage(string baseMessage, DegradedModeSnapshot? snapshot)

@@ -252,6 +252,7 @@ public sealed class BotManagementService(
                         lastExecutionContinuityRecoveredAtUtc);
                 var lastExecutionStaleReason = lastExecutionTransition?.Diagnostics.StaleReason ??
                     ExecutionDecisionDiagnostics.ResolveStaleReason(latencyReasonCode);
+                var runtimeDirection = ResolveRuntimeDirection(order ?? currentOrder);
 
                 return new BotManagementBotSnapshot(
                     bot.Id,
@@ -312,7 +313,11 @@ public sealed class BotManagementService(
                     lastExecutionContinuityRecoveredAtUtc,
                     shadowDecision?.FinalAction,
                     shadowDecision?.NoSubmitReason,
-                    NormalizeUtcNullable(shadowDecision?.EvaluatedAtUtc));
+                    NormalizeUtcNullable(shadowDecision?.EvaluatedAtUtc),
+                    runtimeDirection.Label,
+                    runtimeDirection.Tone,
+                    runtimeDirection.Summary,
+                    bot.DirectionMode);
             })
             .ToArray();
 
@@ -331,7 +336,8 @@ public sealed class BotManagementService(
             ExchangeAccountId: await ResolveSingleActiveExchangeAccountIdAsync(ownerUserId, cancellationToken),
             Leverage: 1m,
             MarginType: FrozenPilotMarginType,
-            IsEnabled: false);
+            IsEnabled: false,
+            DirectionMode: TradingBotDirectionMode.LongOnly);
 
         return await CreateEditorSnapshotAsync(ownerUserId, null, draft, cancellationToken);
     }
@@ -362,7 +368,8 @@ public sealed class BotManagementService(
             bot.ExchangeAccountId,
             bot.Leverage ?? 1m,
             NormalizeMarginType(bot.MarginType),
-            bot.IsEnabled);
+            bot.IsEnabled,
+            bot.DirectionMode);
 
         return await CreateEditorSnapshotAsync(ownerUserId, bot.Id, draft, cancellationToken);
     }
@@ -421,6 +428,7 @@ public sealed class BotManagementService(
             ExchangeAccountId = command.ExchangeAccountId,
             Leverage = NormalizeLeverage(command.Leverage),
             MarginType = NormalizeMarginType(command.MarginType),
+            DirectionMode = NormalizeDirectionMode(command.DirectionMode),
             IsEnabled = false
         };
 
@@ -504,6 +512,7 @@ public sealed class BotManagementService(
         bot.ExchangeAccountId = command.ExchangeAccountId;
         bot.Leverage = NormalizeLeverage(command.Leverage);
         bot.MarginType = NormalizeMarginType(command.MarginType);
+        bot.DirectionMode = NormalizeDirectionMode(command.DirectionMode);
 
         if (command.IsEnabled)
         {
@@ -1004,6 +1013,13 @@ public sealed class BotManagementService(
             : marginType.Trim().ToUpperInvariant();
     }
 
+    private static TradingBotDirectionMode NormalizeDirectionMode(TradingBotDirectionMode directionMode)
+    {
+        return Enum.IsDefined(typeof(TradingBotDirectionMode), directionMode)
+            ? directionMode
+            : TradingBotDirectionMode.LongOnly;
+    }
+
     private static string NormalizeRequired(string? value, string parameterName)
     {
         var normalizedValue = value?.Trim();
@@ -1019,6 +1035,22 @@ public sealed class BotManagementService(
     private bool IsAllowedSymbol(string symbol)
     {
         return ResolveSymbolOptions(symbol).Contains(symbol, StringComparer.Ordinal);
+    }
+
+    private static (string Label, string Tone, string Summary) ResolveRuntimeDirection(ExecutionOrder? order)
+    {
+        if (order is null)
+        {
+            return ("Neutral", "neutral", "Henüz runtime yönü yok.");
+        }
+
+        var isClosingTrade = order.ReduceOnly || order.SignalType == StrategySignalType.Exit;
+        var direction = order.Side == ExecutionOrderSide.Buy
+            ? (isClosingTrade ? "Short" : "Long")
+            : (isClosingTrade ? "Long" : "Short");
+        var action = isClosingTrade ? "Exit" : "Entry";
+        var tone = direction == "Long" ? "success" : "danger";
+        return ($"{direction} {action}", tone, $"{direction} {action} • {order.State} • {order.Symbol}");
     }
 
     private static bool IsExecutionOrderCurrentForFeatureSnapshot(ExecutionOrder? order, TradingFeatureSnapshot? featureSnapshot)

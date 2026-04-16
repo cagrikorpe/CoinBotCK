@@ -3885,6 +3885,13 @@ namespace CoinBot.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("ExchangeAccountId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("DirectionMode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)")
+                        .HasDefaultValue("LongOnly");
+
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("bit");
 

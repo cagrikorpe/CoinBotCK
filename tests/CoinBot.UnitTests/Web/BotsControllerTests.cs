@@ -3,6 +3,7 @@ using CoinBot.Application.Abstractions.Bots;
 using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Application.Abstractions.Settings;
 using CoinBot.Contracts.Common;
+using CoinBot.Domain.Enums;
 using CoinBot.Web.Controllers;
 using CoinBot.Web.ViewModels.Bots;
 using Microsoft.AspNetCore.Authorization;
@@ -112,6 +113,7 @@ public sealed class BotsControllerTests
         Assert.Equal("PAUSED", row.PilotStateLabel);
         Assert.Equal("warning", row.PilotStateTone);
         Assert.Equal("Bot kapali.", row.PilotStateSummary);
+        Assert.Equal("LongOnly", row.DirectionModeLabel);
     }
 
     [Fact]
@@ -421,6 +423,7 @@ public sealed class BotsControllerTests
         var model = Assert.IsType<BotManagementEditorViewModel>(viewResult.Model);
 
         Assert.Equal("Editor", viewResult.ViewName);
+        Assert.Equal(TradingBotDirectionMode.LongOnly, model.Form.DirectionMode);
         Assert.False(model.IsEditMode);
     }
 
@@ -458,6 +461,7 @@ public sealed class BotsControllerTests
         Assert.Equal("Pilot A", request.Name);
         Assert.Equal("strategy-a", request.StrategyKey);
         Assert.Equal("BTCUSDT", request.Symbol);
+        Assert.Equal(TradingBotDirectionMode.LongShort, request.DirectionMode);
         Assert.Equal("Pilot bot kaydedildi.", controller.TempData["BotControlSuccess"]);
     }
 
@@ -493,6 +497,7 @@ public sealed class BotsControllerTests
 
         Assert.Equal(nameof(BotsController.Index), redirectResult.ActionName);
         Assert.Equal(managementService.EditBotId, request.BotId);
+        Assert.Equal(TradingBotDirectionMode.LongShort, request.Command.DirectionMode);
         Assert.Equal("Pilot bot guncellendi.", controller.TempData["BotControlSuccess"]);
     }
 
@@ -570,7 +575,7 @@ public sealed class BotsControllerTests
         var editBotId = Guid.NewGuid();
         var editorSnapshot = new BotManagementEditorSnapshot(
             editBotId,
-            new BotManagementDraftSnapshot("Pilot A", "strategy-a", "BTCUSDT", null, null, 1m, "ISOLATED", false),
+            new BotManagementDraftSnapshot("Pilot A", "strategy-a", "BTCUSDT", null, null, 1m, "ISOLATED", false, TradingBotDirectionMode.LongOnly),
             ["BTCUSDT", "ETHUSDT"],
             [new BotStrategyOptionSnapshot("strategy-a", "Strategy A", true)],
             [new BotExchangeAccountOptionSnapshot(Guid.NewGuid(), "Pilot Futures", true, true)]);
@@ -625,7 +630,7 @@ public sealed class BotsControllerTests
 
         public BotManagementEditorSnapshot CreateSnapshot { get; set; } = new(
             null,
-            new BotManagementDraftSnapshot(string.Empty, string.Empty, "BTCUSDT", null, null, 1m, "ISOLATED", false),
+            new BotManagementDraftSnapshot(string.Empty, string.Empty, "BTCUSDT", null, null, 1m, "ISOLATED", false, TradingBotDirectionMode.LongOnly),
             ["BTCUSDT"],
             [],
             []);

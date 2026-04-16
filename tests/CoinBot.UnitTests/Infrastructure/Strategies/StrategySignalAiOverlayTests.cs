@@ -269,12 +269,12 @@ public sealed class StrategySignalAiOverlayTests
     }
 
     [Fact]
-    public async Task GenerateAsync_SuppressesEntrySignal_WhenAiDirectionConflictsWithStrategyDirection()
+    public async Task GenerateAsync_PersistsSignal_WhenAiConfirmsShortStrategyDirection()
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 6, 12, 0, 0, TimeSpan.Zero));
         await using var dbContext = CreateDbContext();
         var strategy = CreateStrategy("ai-overlay-user-short", "ai-overlay-core");
-        var version = CreateVersion(strategy, 1, CreateDefinitionJson());
+        var version = CreateVersion(strategy, 1, CreateDefinitionJson("short"));
 
         dbContext.TradingStrategies.Add(strategy);
         dbContext.TradingStrategyVersions.Add(version);
@@ -293,6 +293,49 @@ public sealed class StrategySignalAiOverlayTests
                 AllowShort = true
             },
             new FixedAiSignalEvaluator(AiSignalDirection.Short, 0.82m, false, null));
+
+        var result = await service.GenerateAsync(
+            new GenerateStrategySignalsRequest(
+                version.Id,
+                CreateContext(),
+                CreateFeatureSnapshot(FeatureSnapshotState.Ready)));
+        var signal = Assert.Single(result.Signals);
+        var loadedSignal = await service.GetAsync(signal.StrategySignalId);
+        var decisionTrace = await dbContext.DecisionTraces.SingleAsync();
+
+        Assert.NotNull(loadedSignal);
+        Assert.Equal(StrategyTradeDirection.Short, loadedSignal!.ExplainabilityPayload.RuleResultSnapshot.Direction);
+        Assert.Equal("Entry (Short) signal created", loadedSignal.ExplainabilityPayload.UiLog.Title);
+        Assert.Contains("Direction Short", loadedSignal.ExplainabilityPayload.UiLog.Tags, StringComparer.Ordinal);
+        Assert.Equal("Allowed", decisionTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task GenerateAsync_SuppressesEntrySignal_WhenAiDirectionConflictsWithShortStrategyDirection()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 6, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("ai-overlay-user-short-conflict", "ai-overlay-core");
+        var version = CreateVersion(strategy, 1, CreateDefinitionJson("short"));
+
+        dbContext.TradingStrategies.Add(strategy);
+        dbContext.TradingStrategyVersions.Add(version);
+        dbContext.RiskProfiles.Add(CreateRiskProfile(strategy.OwnerUserId));
+        dbContext.DemoWallets.Add(CreateDemoWallet(strategy.OwnerUserId));
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(
+            dbContext,
+            timeProvider,
+            new AiSignalOptions
+            {
+                Enabled = true,
+                SelectedProvider = DeterministicStubAiSignalProviderAdapter.ProviderNameValue,
+                MinimumConfidence = 0.70m,
+                AllowShort = true,
+                AllowLong = true
+            },
+            new FixedAiSignalEvaluator(AiSignalDirection.Long, 0.82m, false, null));
 
         var result = await service.GenerateAsync(
             new GenerateStrategySignalsRequest(
@@ -526,16 +569,17 @@ public sealed class StrategySignalAiOverlayTests
             null);
     }
 
-    private static string CreateDefinitionJson()
+    private static string CreateDefinitionJson(string direction = "long")
     {
         return
-            """
+            $$"""
             {
               "schemaVersion": 2,
               "metadata": {
                 "templateKey": "ai-overlay-template",
                 "templateName": "AI Overlay Template"
               },
+              "direction": "{{direction}}",
               "entry": {
                 "operator": "all",
                 "rules": [

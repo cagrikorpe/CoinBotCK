@@ -1,10 +1,47 @@
 @model CoinBot.Application.Abstractions.Administration.AdminTraceDetailSnapshot
 @using System.Linq
 @using CoinBot.Web.ViewModels.Admin
+@using System.Text.Json
 @{
     string FormatUtc(DateTime? value) => value.HasValue ? value.Value.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") + " UTC" : "n/a";
     string FormatNumber(int? value, string suffix = "") => value.HasValue ? value.Value.ToString() + suffix : "n/a";
     string FormatText(string? value) => string.IsNullOrWhiteSpace(value) ? "n/a" : value;
+    string FormatDecisionDirection(string? snapshotJson)
+    {
+        if (string.IsNullOrWhiteSpace(snapshotJson))
+        {
+            return "n/a";
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(snapshotJson);
+            if (!document.RootElement.TryGetProperty("EvaluationResult", out var evaluationElement))
+            {
+                evaluationElement = document.RootElement;
+            }
+
+            string? ReadDirection(string propertyName)
+            {
+                return evaluationElement.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
+                    ? property.GetString()
+                    : null;
+            }
+
+            var direction = ReadDirection("Direction");
+            var entryDirection = ReadDirection("EntryDirection");
+            var exitDirection = ReadDirection("ExitDirection");
+            var parts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(direction) && !string.Equals(direction, "Neutral", StringComparison.OrdinalIgnoreCase)) parts.Add($"Direction={direction}");
+            if (!string.IsNullOrWhiteSpace(entryDirection) && !string.Equals(entryDirection, "Neutral", StringComparison.OrdinalIgnoreCase)) parts.Add($"Entry={entryDirection}");
+            if (!string.IsNullOrWhiteSpace(exitDirection) && !string.Equals(exitDirection, "Neutral", StringComparison.OrdinalIgnoreCase)) parts.Add($"Exit={exitDirection}");
+            return parts.Count == 0 ? "n/a" : string.Join(" · ", parts);
+        }
+        catch
+        {
+            return "n/a";
+        }
+    }
     var primaryDecision = Model.DecisionTraces.FirstOrDefault();
     var primaryExecution = Model.ExecutionTraces.FirstOrDefault();
     var timelineEntries = Model.DecisionTraces
@@ -16,7 +53,7 @@
             SecondaryReference = decision.StrategySignalId?.ToString(),
             Title = $"{decision.Symbol} / {decision.Timeframe}",
             Summary = decision.DecisionSummary ?? $"Outcome={decision.DecisionOutcome} · Risk={(decision.RiskScore?.ToString() ?? "-")} · Strategy={decision.StrategyVersion}",
-            Meta = $"ReasonType={FormatText(decision.DecisionReasonType)} · ReasonCode={FormatText(decision.DecisionReasonCode)} · DecisionAt={FormatUtc(decision.DecisionAtUtc ?? decision.CreatedAtUtc)} · LastCandle={FormatUtc(decision.LastCandleAtUtc)} · DataAge={FormatNumber(decision.DataAgeMs, "ms")} · Threshold={FormatNumber(decision.StaleThresholdMs, "ms")} · Continuity={FormatText(decision.ContinuityState)}{(string.IsNullOrWhiteSpace(decision.VetoReasonCode) ? string.Empty : $" · Veto={decision.VetoReasonCode}")}",
+            Meta = $"ReasonType={FormatText(decision.DecisionReasonType)} · ReasonCode={FormatText(decision.DecisionReasonCode)} · Direction={FormatDecisionDirection(decision.SnapshotJson)} · DecisionAt={FormatUtc(decision.DecisionAtUtc ?? decision.CreatedAtUtc)} · LastCandle={FormatUtc(decision.LastCandleAtUtc)} · DataAge={FormatNumber(decision.DataAgeMs, "ms")} · Threshold={FormatNumber(decision.StaleThresholdMs, "ms")} · Continuity={FormatText(decision.ContinuityState)}{(string.IsNullOrWhiteSpace(decision.VetoReasonCode) ? string.Empty : $" · Veto={decision.VetoReasonCode}")}",
             RequestMasked = (string?)null,
             ResponseMasked = (string?)decision.SnapshotJson
         })
@@ -82,6 +119,11 @@
                             <span class="cb-admin-summary-label">Reason code</span>
                             <strong>@FormatText(primaryDecision.DecisionReasonCode)</strong>
                             <small data-cb-trace-decision-at>@FormatUtc(primaryDecision.DecisionAtUtc ?? primaryDecision.CreatedAtUtc)</small>
+                        </div>
+                        <div class="cb-admin-summary-card" data-cb-trace-decision-direction>
+                            <span class="cb-admin-summary-label">Direction</span>
+                            <strong>@FormatDecisionDirection(primaryDecision.SnapshotJson)</strong>
+                            <small data-cb-trace-decision-signal>@(primaryDecision.StrategySignalId?.ToString() ?? "n/a")</small>
                         </div>
                         <div class="cb-admin-summary-card" data-cb-trace-market-last-candle>
                             <span class="cb-admin-summary-label">Market freshness</span>
@@ -218,7 +260,7 @@
                             <div><strong>@decision.DecisionId</strong> · @decision.DecisionOutcome · @decision.Symbol / @decision.Timeframe</div>
                             <div class="text-muted">@decision.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC · DecisionAt=@FormatUtc(decision.DecisionAtUtc ?? decision.CreatedAtUtc) · Risk=@(decision.RiskScore?.ToString() ?? "-") · Latency=@decision.LatencyMs ms @(string.IsNullOrWhiteSpace(decision.VetoReasonCode) ? string.Empty : $"· Veto={decision.VetoReasonCode}")</div>
                             <div class="text-muted">SignalId=@(decision.StrategySignalId?.ToString() ?? "-")</div>
-                            <div class="text-muted">ReasonType=@FormatText(decision.DecisionReasonType) · ReasonCode=@FormatText(decision.DecisionReasonCode) · Summary=@FormatText(decision.DecisionSummary)</div>
+                            <div class="text-muted">ReasonType=@FormatText(decision.DecisionReasonType) · ReasonCode=@FormatText(decision.DecisionReasonCode) · Direction=@FormatDecisionDirection(decision.SnapshotJson) · Summary=@FormatText(decision.DecisionSummary)</div>
                             <div class="text-muted">LastCandleAtUtc=@FormatUtc(decision.LastCandleAtUtc) · DataAgeMs=@FormatNumber(decision.DataAgeMs) · StaleThresholdMs=@FormatNumber(decision.StaleThresholdMs) · StaleReason=@FormatText(decision.StaleReason)</div>
                             <div class="text-muted">ContinuityState=@FormatText(decision.ContinuityState) · GapCount=@FormatNumber(decision.ContinuityGapCount) · GapStart=@FormatUtc(decision.ContinuityGapStartedAtUtc) · GapLastSeen=@FormatUtc(decision.ContinuityGapLastSeenAtUtc) · Recovered=@FormatUtc(decision.ContinuityRecoveredAtUtc)</div>
                             <div class="d-flex flex-wrap gap-2 mt-3">

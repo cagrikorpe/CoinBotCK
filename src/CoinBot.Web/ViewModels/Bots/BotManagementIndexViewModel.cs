@@ -61,6 +61,12 @@ public sealed record BotManagementRowViewModel(
     string? ContinuityRecoveryText = null,
     string PilotStateLabel = "PAUSED",
     string PilotStateTone = "warning",
-    string PilotStateSummary = "Bot gorunur ama calismaz.");
+    string PilotStateSummary = "Bot gorunur ama calismaz.",
+    string DirectionModeLabel = "LongOnly",
+    string DirectionModeTone = "neutral",
+    string DirectionModeSummary = "Bot sadece long yone izin verir.",
+    string RuntimeDirectionLabel = "Neutral",
+    string RuntimeDirectionTone = "neutral",
+    string RuntimeDirectionSummary = "Henüz runtime yönü yok.");
 
 

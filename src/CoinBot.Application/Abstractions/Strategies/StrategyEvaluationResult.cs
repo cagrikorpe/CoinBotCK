@@ -9,4 +9,11 @@ public sealed record StrategyEvaluationResult(
     bool RiskPassed,
     StrategyRuleResultSnapshot? EntryRuleResult,
     StrategyRuleResultSnapshot? ExitRuleResult,
-    StrategyRuleResultSnapshot? RiskRuleResult);
+    StrategyRuleResultSnapshot? RiskRuleResult,
+    StrategyTradeDirection Direction = StrategyTradeDirection.Neutral,
+    StrategyTradeDirection EntryDirection = StrategyTradeDirection.Neutral,
+    StrategyTradeDirection ExitDirection = StrategyTradeDirection.Neutral,
+    StrategyRuleResultSnapshot? LongEntryRuleResult = null,
+    StrategyRuleResultSnapshot? LongExitRuleResult = null,
+    StrategyRuleResultSnapshot? ShortEntryRuleResult = null,
+    StrategyRuleResultSnapshot? ShortExitRuleResult = null);

@@ -364,6 +364,39 @@ public sealed class AutonomyFoundationTests
         Assert.Equal(DependencyCircuitBreakerKind.WebSocket, evaluation.BreakerKind);
     }
 
+
+    [Fact]
+    public async Task SelfHealingWorker_RunOnce_ClosesOrderExecutionBreaker_AfterSuccessfulRecovery()
+    {
+        var fakeReviewQueue = new FakeReviewQueueService();
+        var fakeAutonomyService = new FakeAutonomyService
+        {
+            Result = new AutonomyDecisionResult(
+                new PreFlightSimulationResult(0, 0m, "None", "None", "None", 0.1m, true, false, Array.Empty<string>(), Array.Empty<string>()),
+                AutoExecuted: true,
+                ReviewQueued: false,
+                ApprovalId: null,
+                Outcome: "Executed",
+                Detail: "Recovered")
+        };
+        var fakeBreakerManager = new FakeBreakerManager(DependencyCircuitBreakerKind.OrderExecution);
+        var services = new ServiceCollection();
+        services.AddSingleton<IAutonomyReviewQueueService>(fakeReviewQueue);
+        services.AddSingleton<IAutonomyService>(fakeAutonomyService);
+        services.AddSingleton<IDependencyCircuitBreakerStateManager>(fakeBreakerManager);
+        services.AddLogging();
+
+        using var provider = services.BuildServiceProvider();
+        var worker = new AutonomySelfHealingWorker(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(new AutonomyOptions()),
+            NullLogger<AutonomySelfHealingWorker>.Instance);
+
+        await worker.RunOnceAsync();
+
+        Assert.Contains(DependencyCircuitBreakerKind.OrderExecution, fakeBreakerManager.RecordedSuccessKinds);
+    }
+
     private static ApplicationDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -617,6 +650,7 @@ public sealed class AutonomyFoundationTests
     private sealed class FakeAutonomyService : IAutonomyService
     {
         public List<AutonomyDecisionRequest> Requests { get; } = [];
+        public AutonomyDecisionResult? Result { get; set; }
 
         public Task<PreFlightSimulationResult> SimulateAsync(PreFlightSimulationRequest request, CancellationToken cancellationToken = default)
         {
@@ -627,7 +661,7 @@ public sealed class AutonomyFoundationTests
         {
             Requests.Add(request);
             return Task.FromResult(
-                new AutonomyDecisionResult(
+                Result ?? new AutonomyDecisionResult(
                     new PreFlightSimulationResult(0, 0m, "None", "None", "None", 0.1m, true, false, Array.Empty<string>(), Array.Empty<string>()),
                     AutoExecuted: true,
                     ReviewQueued: false,
@@ -640,6 +674,7 @@ public sealed class AutonomyFoundationTests
     private sealed class FakeBreakerManager(DependencyCircuitBreakerKind dueBreakerKind) : IDependencyCircuitBreakerStateManager
     {
         public List<DependencyCircuitBreakerKind> HalfOpenRequests { get; } = [];
+        public List<DependencyCircuitBreakerKind> RecordedSuccessKinds { get; } = [];
 
         public Task<DependencyCircuitBreakerSnapshot> GetSnapshotAsync(DependencyCircuitBreakerKind breakerKind, CancellationToken cancellationToken = default)
         {
@@ -658,7 +693,8 @@ public sealed class AutonomyFoundationTests
 
         public Task<DependencyCircuitBreakerSnapshot> RecordSuccessAsync(DependencyCircuitBreakerSuccessRequest request, CancellationToken cancellationToken = default)
         {
-            throw new NotSupportedException();
+            RecordedSuccessKinds.Add(request.BreakerKind);
+            return Task.FromResult(CreateSnapshot(request.BreakerKind, CircuitBreakerStateCode.Closed));
         }
 
         public Task<DependencyCircuitBreakerSnapshot?> TryBeginHalfOpenAsync(DependencyCircuitBreakerHalfOpenRequest request, CancellationToken cancellationToken = default)

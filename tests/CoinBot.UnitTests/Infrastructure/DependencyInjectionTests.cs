@@ -155,7 +155,7 @@ public sealed class DependencyInjectionTests
         Assert.Equal(15, marketHealthOptions.ValidationFreshnessMinutes);
         Assert.Equal(3, dataLatencyOptions.StaleDataThresholdSeconds);
         Assert.Equal(6, dataLatencyOptions.StopDataThresholdSeconds);
-        Assert.Equal(2, dataLatencyOptions.ClockDriftThresholdSeconds);
+        Assert.Equal(5, dataLatencyOptions.ClockDriftThresholdSeconds);
         Assert.Equal(8, demoFillOptions.MakerFeeBps);
         Assert.Equal(10, demoFillOptions.TakerFeeBps);
         Assert.Equal(6, demoFillOptions.MarketOrderBaseSlippageBps);

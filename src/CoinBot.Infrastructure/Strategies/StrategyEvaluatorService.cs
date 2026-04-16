@@ -31,15 +31,7 @@ public sealed class StrategyEvaluatorService(
         EnsureValid(document);
 
         var evaluationResult = EvaluateDocument(document, request.EvaluationContext);
-        var rootSnapshots = new[]
-            {
-                evaluationResult.EntryRuleResult,
-                evaluationResult.ExitRuleResult,
-                evaluationResult.RiskRuleResult
-            }
-            .Where(snapshot => snapshot is not null)
-            .Select(snapshot => snapshot!)
-            .ToArray();
+        var rootSnapshots = CollectEvaluationRootSnapshots(evaluationResult);
         var leafRules = rootSnapshots
             .SelectMany(CollectLeafRules)
             .Where(rule => rule.Enabled)
@@ -61,6 +53,7 @@ public sealed class StrategyEvaluatorService(
         var summary = BuildExplainabilitySummary(
             request,
             document.Metadata,
+            evaluationResult.Direction,
             outcome,
             aggregateScore,
             passedRules,
@@ -103,17 +96,65 @@ public sealed class StrategyEvaluatorService(
         var riskResult = document.Risk is not null
             ? EvaluateNode(document.Risk, context)
             : null;
+        var longEntryResult = document.LongEntry is not null
+            ? EvaluateNode(document.LongEntry, context)
+            : null;
+        var longExitResult = document.LongExit is not null
+            ? EvaluateNode(document.LongExit, context)
+            : null;
+        var shortEntryResult = document.ShortEntry is not null
+            ? EvaluateNode(document.ShortEntry, context)
+            : null;
+        var shortExitResult = document.ShortExit is not null
+            ? EvaluateNode(document.ShortExit, context)
+            : null;
+
+        var legacyEntryMatched = entryResult?.Matched ?? false;
+        var legacyExitMatched = exitResult?.Matched ?? false;
+        var longEntryMatched = longEntryResult?.Matched ?? false;
+        var longExitMatched = longExitResult?.Matched ?? false;
+        var shortEntryMatched = shortEntryResult?.Matched ?? false;
+        var shortExitMatched = shortExitResult?.Matched ?? false;
+        var riskPassed = riskResult?.Matched ?? true;
+        var hasEntryRules = document.Entry is not null || document.LongEntry is not null || document.ShortEntry is not null;
+        var hasExitRules = document.Exit is not null || document.LongExit is not null || document.ShortExit is not null;
+        var entryMatched = legacyEntryMatched || longEntryMatched || shortEntryMatched;
+        var exitMatched = legacyExitMatched || longExitMatched || shortExitMatched;
+        var entryDirection = ResolveEntryDirection(
+            document.Direction,
+            document.HasDirectionalRoots,
+            document.Risk is not null,
+            riskPassed,
+            legacyEntryMatched,
+            longEntryMatched,
+            shortEntryMatched);
+        var exitDirection = ResolveExitDirection(
+            document.Direction,
+            document.HasDirectionalRoots,
+            document.Risk is not null,
+            riskPassed,
+            legacyExitMatched,
+            longExitMatched,
+            shortExitMatched);
+        var direction = ResolvePrimaryDirection(entryDirection, exitDirection);
 
         return new StrategyEvaluationResult(
-            HasEntryRules: document.Entry is not null,
-            EntryMatched: entryResult?.Matched ?? false,
-            HasExitRules: document.Exit is not null,
-            ExitMatched: exitResult?.Matched ?? false,
+            HasEntryRules: hasEntryRules,
+            EntryMatched: entryMatched,
+            HasExitRules: hasExitRules,
+            ExitMatched: exitMatched,
             HasRiskRules: document.Risk is not null,
-            RiskPassed: riskResult?.Matched ?? true,
-            EntryRuleResult: entryResult?.Snapshot,
-            ExitRuleResult: exitResult?.Snapshot,
-            RiskRuleResult: riskResult?.Snapshot);
+            RiskPassed: riskPassed,
+            EntryRuleResult: ResolveEntryRuleResult(entryDirection, entryResult?.Snapshot, longEntryResult?.Snapshot, shortEntryResult?.Snapshot),
+            ExitRuleResult: ResolveExitRuleResult(exitDirection, exitResult?.Snapshot, longExitResult?.Snapshot, shortExitResult?.Snapshot),
+            RiskRuleResult: riskResult?.Snapshot,
+            Direction: direction,
+            EntryDirection: entryDirection,
+            ExitDirection: exitDirection,
+            LongEntryRuleResult: longEntryResult?.Snapshot,
+            LongExitRuleResult: longExitResult?.Snapshot,
+            ShortEntryRuleResult: shortEntryResult?.Snapshot,
+            ShortExitRuleResult: shortExitResult?.Snapshot);
     }
 
     private void EnsureValid(StrategyRuleDocument document)
@@ -331,6 +372,144 @@ public sealed class StrategyEvaluatorService(
         }
     }
 
+    private static IReadOnlyCollection<StrategyRuleResultSnapshot> CollectEvaluationRootSnapshots(StrategyEvaluationResult evaluationResult)
+    {
+        var snapshots = new List<StrategyRuleResultSnapshot>(capacity: 7);
+        AddSnapshot(snapshots, evaluationResult.EntryRuleResult);
+        AddSnapshot(snapshots, evaluationResult.ExitRuleResult);
+        AddSnapshot(snapshots, evaluationResult.RiskRuleResult);
+        AddSnapshot(snapshots, evaluationResult.LongEntryRuleResult);
+        AddSnapshot(snapshots, evaluationResult.LongExitRuleResult);
+        AddSnapshot(snapshots, evaluationResult.ShortEntryRuleResult);
+        AddSnapshot(snapshots, evaluationResult.ShortExitRuleResult);
+        return snapshots;
+    }
+
+    private static void AddSnapshot(ICollection<StrategyRuleResultSnapshot> snapshots, StrategyRuleResultSnapshot? snapshot)
+    {
+        if (snapshot is null || snapshots.Contains(snapshot))
+        {
+            return;
+        }
+
+        snapshots.Add(snapshot);
+    }
+
+    private static StrategyTradeDirection ResolveEntryDirection(
+        StrategyTradeDirection documentDirection,
+        bool hasDirectionalRoots,
+        bool hasRiskRules,
+        bool riskPassed,
+        bool legacyEntryMatched,
+        bool longEntryMatched,
+        bool shortEntryMatched)
+    {
+        if (hasRiskRules && !riskPassed)
+        {
+            return StrategyTradeDirection.Neutral;
+        }
+
+        if (hasDirectionalRoots)
+        {
+            return ResolveMatchedDirection(longEntryMatched, shortEntryMatched);
+        }
+
+        return legacyEntryMatched
+            ? documentDirection
+            : StrategyTradeDirection.Neutral;
+    }
+
+    private static StrategyTradeDirection ResolveExitDirection(
+        StrategyTradeDirection documentDirection,
+        bool hasDirectionalRoots,
+        bool hasRiskRules,
+        bool riskPassed,
+        bool legacyExitMatched,
+        bool longExitMatched,
+        bool shortExitMatched)
+    {
+        if (hasRiskRules && !riskPassed)
+        {
+            return StrategyTradeDirection.Neutral;
+        }
+
+        if (hasDirectionalRoots)
+        {
+            return ResolveMatchedDirection(longExitMatched, shortExitMatched);
+        }
+
+        return legacyExitMatched
+            ? documentDirection
+            : StrategyTradeDirection.Neutral;
+    }
+
+    private static StrategyTradeDirection ResolveMatchedDirection(bool longMatched, bool shortMatched)
+    {
+        if (longMatched == shortMatched)
+        {
+            return StrategyTradeDirection.Neutral;
+        }
+
+        return longMatched
+            ? StrategyTradeDirection.Long
+            : StrategyTradeDirection.Short;
+    }
+
+    private static StrategyTradeDirection ResolvePrimaryDirection(
+        StrategyTradeDirection entryDirection,
+        StrategyTradeDirection exitDirection)
+    {
+        if (entryDirection == exitDirection)
+        {
+            return entryDirection;
+        }
+
+        if (IsActionableDirection(entryDirection) && !IsActionableDirection(exitDirection))
+        {
+            return entryDirection;
+        }
+
+        if (IsActionableDirection(exitDirection) && !IsActionableDirection(entryDirection))
+        {
+            return exitDirection;
+        }
+
+        return StrategyTradeDirection.Neutral;
+    }
+
+    private static StrategyRuleResultSnapshot? ResolveEntryRuleResult(
+        StrategyTradeDirection entryDirection,
+        StrategyRuleResultSnapshot? legacyEntry,
+        StrategyRuleResultSnapshot? longEntry,
+        StrategyRuleResultSnapshot? shortEntry)
+    {
+        return entryDirection switch
+        {
+            StrategyTradeDirection.Long => longEntry ?? legacyEntry,
+            StrategyTradeDirection.Short => shortEntry ?? legacyEntry,
+            _ => legacyEntry ?? longEntry ?? shortEntry
+        };
+    }
+
+    private static StrategyRuleResultSnapshot? ResolveExitRuleResult(
+        StrategyTradeDirection exitDirection,
+        StrategyRuleResultSnapshot? legacyExit,
+        StrategyRuleResultSnapshot? longExit,
+        StrategyRuleResultSnapshot? shortExit)
+    {
+        return exitDirection switch
+        {
+            StrategyTradeDirection.Long => longExit ?? legacyExit,
+            StrategyTradeDirection.Short => shortExit ?? legacyExit,
+            _ => legacyExit ?? longExit ?? shortExit
+        };
+    }
+
+    private static bool IsActionableDirection(StrategyTradeDirection direction)
+    {
+        return direction is StrategyTradeDirection.Long or StrategyTradeDirection.Short;
+    }
+
     private static string DescribeRuleResult(StrategyRuleResultSnapshot snapshot)
     {
         var label = !string.IsNullOrWhiteSpace(snapshot.RuleId)
@@ -353,12 +532,12 @@ public sealed class StrategyEvaluatorService(
             return "RiskVetoed";
         }
 
-        if (result.HasEntryRules && result.EntryMatched)
+        if (result.HasEntryRules && result.EntryMatched && IsActionableDirection(result.EntryDirection))
         {
             return "EntryMatched";
         }
 
-        if (result.HasExitRules && result.ExitMatched)
+        if (result.HasExitRules && result.ExitMatched && IsActionableDirection(result.ExitDirection))
         {
             return "ExitMatched";
         }
@@ -369,6 +548,7 @@ public sealed class StrategyEvaluatorService(
     private static string BuildExplainabilitySummary(
         StrategyEvaluationReportRequest request,
         StrategyDefinitionMetadata? metadata,
+        StrategyTradeDirection direction,
         string outcome,
         int aggregateScore,
         IReadOnlyCollection<string> passedRules,
@@ -384,7 +564,7 @@ public sealed class StrategyEvaluatorService(
         var passedText = passedRules.Count == 0 ? "none" : string.Join(" | ", passedRules.Take(2));
 
         return FormattableString.Invariant(
-            $"Strategy={request.StrategyKey}; Template={templateLabel}/{templateRevisionLabel}; Symbol={request.EvaluationContext.IndicatorSnapshot.Symbol}; Timeframe={request.EvaluationContext.IndicatorSnapshot.Timeframe}; Outcome={outcome}; Score={aggregateScore}; Passed={passedRules.Count}; Failed={failedRules.Count}; TopPassed={passedText}; TopFailed={failedText}");
+            $"Strategy={request.StrategyKey}; Template={templateLabel}/{templateRevisionLabel}; Symbol={request.EvaluationContext.IndicatorSnapshot.Symbol}; Timeframe={request.EvaluationContext.IndicatorSnapshot.Timeframe}; Outcome={outcome}; Direction={direction}; Score={aggregateScore}; Passed={passedRules.Count}; Failed={failedRules.Count}; TopPassed={passedText}; TopFailed={failedText}");
     }
 
     private static ResolvedValue ResolvePathValue(string path, StrategyEvaluationContext context)

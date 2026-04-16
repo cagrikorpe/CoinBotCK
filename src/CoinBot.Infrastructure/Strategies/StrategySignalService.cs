@@ -143,6 +143,7 @@ public sealed class StrategySignalService(
 
         foreach (var signalType in candidateSignalTypes)
         {
+            var signalScopedEvaluationResult = CreateSignalScopedEvaluationResult(signalType, evaluationResult);
             var duplicateExists = await dbContext.TradingStrategySignals.AnyAsync(
                 entity =>
                     entity.TradingStrategyVersionId == version.Id &&
@@ -178,7 +179,7 @@ public sealed class StrategySignalService(
                             version,
                             evaluationReport,
                             normalizedContext,
-                            evaluationResult,
+                            signalScopedEvaluationResult,
                             signalType,
                             "SuppressedDuplicate",
                             vetoReasonCode: null,
@@ -214,7 +215,7 @@ public sealed class StrategySignalService(
                     cancellationToken);
                 aiEvaluations.Add(aiEvaluation);
 
-                aiOverlayDecision = ResolveAiOverlayDecision(aiEvaluation, signalType, aiSignalOptionsValue);
+                aiOverlayDecision = ResolveAiOverlayDecision(aiEvaluation, signalType, signalScopedEvaluationResult.Direction, aiSignalOptionsValue);
                 if (aiOverlayDecision.IsSuppressed)
                 {
                     await traceService.WriteDecisionTraceAsync(
@@ -230,7 +231,7 @@ public sealed class StrategySignalService(
                                 version,
                                 evaluationReport,
                                 normalizedContext,
-                                evaluationResult,
+                                signalScopedEvaluationResult,
                                 signalType,
                                 "SuppressedByAi",
                                 vetoReasonCode: null,
@@ -262,7 +263,7 @@ public sealed class StrategySignalService(
                     normalizedContext.IndicatorSnapshot.Symbol,
                     normalizedContext.IndicatorSnapshot.Timeframe),
                 cancellationToken);
-            var confidenceSnapshot = CreateConfidenceSnapshot(signalType, evaluationResult, riskEvaluation, aiEvaluation, aiOverlayDecision);
+            var confidenceSnapshot = CreateConfidenceSnapshot(signalType, signalScopedEvaluationResult, riskEvaluation, aiEvaluation, aiOverlayDecision);
 
             if (riskEvaluation.IsVetoed)
             {
@@ -308,7 +309,7 @@ public sealed class StrategySignalService(
                             version,
                             evaluationReport,
                             normalizedContext,
-                            evaluationResult,
+                            signalScopedEvaluationResult,
                             signalType,
                             "Vetoed",
                             riskEvaluation.ReasonCode.ToString(),
@@ -334,7 +335,7 @@ public sealed class StrategySignalService(
                 version,
                 signalType,
                 normalizedContext,
-                evaluationResult,
+                signalScopedEvaluationResult,
                 confidenceSnapshot,
                 riskEvaluation.Snapshot.EvaluatedAtUtc);
             dbContext.TradingStrategySignals.Add(signal);
@@ -395,7 +396,7 @@ public sealed class StrategySignalService(
             .Select(signal => ToSnapshot(
                 signal,
                 normalizedContext.IndicatorSnapshot,
-                evaluationResult,
+                DeserializeRequired<StrategyEvaluationResult>(signal.RuleResultSnapshotJson),
                 DeserializeConfidenceSnapshot(signal.RiskEvaluationJson)))
             .ToArray();
 
@@ -479,17 +480,30 @@ public sealed class StrategySignalService(
 
         var signalTypes = new List<StrategySignalType>(capacity: 2);
 
-        if (evaluationResult.EntryMatched)
+        if (evaluationResult.EntryMatched && IsActionableDirection(evaluationResult.EntryDirection))
         {
             signalTypes.Add(StrategySignalType.Entry);
         }
 
-        if (evaluationResult.ExitMatched)
+        if (evaluationResult.ExitMatched && IsActionableDirection(evaluationResult.ExitDirection))
         {
             signalTypes.Add(StrategySignalType.Exit);
         }
 
         return signalTypes;
+    }
+
+    private static StrategyEvaluationResult CreateSignalScopedEvaluationResult(
+        StrategySignalType signalType,
+        StrategyEvaluationResult evaluationResult)
+    {
+        var resolvedDirection = ResolveSignalDirection(signalType, evaluationResult);
+        return evaluationResult with
+        {
+            Direction = resolvedDirection,
+            EntryMatched = signalType == StrategySignalType.Entry && IsActionableDirection(evaluationResult.EntryDirection),
+            ExitMatched = signalType == StrategySignalType.Exit && IsActionableDirection(evaluationResult.ExitDirection)
+        };
     }
 
     private static TradingStrategySignal CreateSignalEntity(
@@ -744,6 +758,7 @@ public sealed class StrategySignalService(
     private static AiOverlayDecision ResolveAiOverlayDecision(
         AiSignalEvaluationResult aiEvaluation,
         StrategySignalType signalType,
+        StrategyTradeDirection strategyDirection,
         AiSignalOptions aiSignalOptions)
     {
         if (aiEvaluation.IsFallback)
@@ -759,9 +774,13 @@ public sealed class StrategySignalService(
             return AiOverlayDecision.Suppress("AiOverlay", "AiNeutral", "AI overlay returned a neutral signal.");
         }
 
-        if (signalType == StrategySignalType.Entry && aiEvaluation.SignalDirection == AiSignalDirection.Short)
+        if (signalType == StrategySignalType.Entry &&
+            !DoesAiDirectionMatchStrategyDirection(aiEvaluation.SignalDirection, strategyDirection))
         {
-            return AiOverlayDecision.Suppress("AiOverlay", "AiDirectionMismatch", "AI overlay returned a short signal for a long-only entry flow.");
+            return AiOverlayDecision.Suppress(
+                "AiOverlay",
+                "AiDirectionMismatch",
+                $"AI overlay returned {aiEvaluation.SignalDirection}, but the strategy entry direction is {strategyDirection}.");
         }
 
         if (aiEvaluation.SignalDirection == AiSignalDirection.Long && !aiSignalOptions.AllowLong)
@@ -837,12 +856,13 @@ public sealed class StrategySignalService(
                 .Concat(aiDrivers)
                 .Take(3)
                 .ToArray();
+        var directionLabel = FormatSignalDirectionLabel(ResolveSignalDirection(signalType, evaluationResult));
         var title = confidenceSnapshot.IsVetoed
-            ? $"{signalType} signal vetoed"
-            : $"{signalType} signal created";
+            ? $"{signalType} ({directionLabel}) signal vetoed"
+            : $"{signalType} ({directionLabel}) signal created";
         var summary = confidenceSnapshot.IsVetoed
-            ? $"{symbol} {timeframe} {signalType.ToString().ToLowerInvariant()} signal vetoed because {FormatRiskReason(confidenceSnapshot.RiskReasonCode)}."
-            : $"{symbol} {timeframe} {signalType.ToString().ToLowerInvariant()} signal created from matching strategy rules.";
+            ? $"{symbol} {timeframe} {signalType.ToString().ToLowerInvariant()} ({directionLabel.ToLowerInvariant()}) signal vetoed because {FormatRiskReason(confidenceSnapshot.RiskReasonCode)}."
+            : $"{symbol} {timeframe} {signalType.ToString().ToLowerInvariant()} ({directionLabel.ToLowerInvariant()}) signal created from matching strategy rules.";
         var aiSuffix = BuildAiSummarySuffix(confidenceSnapshot.AiEvaluation);
 
         return new StrategySignalLogExplainabilitySnapshot(
@@ -853,6 +873,7 @@ public sealed class StrategySignalService(
                 symbol,
                 timeframe,
                 signalType.ToString(),
+                $"Direction {directionLabel}",
                 $"Confidence {confidenceSnapshot.ScorePercentage}%",
                 confidenceSnapshot.IsVetoed
                     ? $"Veto {confidenceSnapshot.RiskReasonCode}"
@@ -921,6 +942,46 @@ public sealed class StrategySignalService(
         return aiEvaluation is null
             ? null
             : $"AI overlay: {aiEvaluation.SignalDirection} from {aiEvaluation.ProviderName} at {aiEvaluation.ConfidenceScore:0.##}. {aiEvaluation.ReasonSummary}";
+    }
+
+
+    private static StrategyTradeDirection ResolveSignalDirection(
+        StrategySignalType signalType,
+        StrategyEvaluationResult evaluationResult)
+    {
+        return signalType switch
+        {
+            StrategySignalType.Entry => evaluationResult.EntryDirection,
+            StrategySignalType.Exit => evaluationResult.ExitDirection,
+            _ => evaluationResult.Direction
+        };
+    }
+
+    private static bool IsActionableDirection(StrategyTradeDirection direction)
+    {
+        return direction is StrategyTradeDirection.Long or StrategyTradeDirection.Short;
+    }
+
+    private static bool DoesAiDirectionMatchStrategyDirection(
+        AiSignalDirection aiDirection,
+        StrategyTradeDirection strategyDirection)
+    {
+        return strategyDirection switch
+        {
+            StrategyTradeDirection.Long => aiDirection == AiSignalDirection.Long,
+            StrategyTradeDirection.Short => aiDirection == AiSignalDirection.Short,
+            _ => false
+        };
+    }
+
+    private static string FormatSignalDirectionLabel(StrategyTradeDirection direction)
+    {
+        return direction switch
+        {
+            StrategyTradeDirection.Long => "Long",
+            StrategyTradeDirection.Short => "Short",
+            _ => "Neutral"
+        };
     }
 
     private static StrategySignalDuplicateSuppressionSnapshot CreateDuplicateSuppressionSnapshot(TradingStrategySignal signal)
@@ -1204,6 +1265,9 @@ public sealed class StrategySignalService(
                 evaluationResult.EntryMatched,
                 evaluationResult.ExitMatched,
                 evaluationResult.RiskPassed,
+                Direction = evaluationResult.Direction.ToString(),
+                EntryDirection = evaluationResult.EntryDirection.ToString(),
+                ExitDirection = evaluationResult.ExitDirection.ToString(),
                 RiskOutcome = riskEvaluation is null
                     ? null
                     : riskEvaluation.IsVetoed

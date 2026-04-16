@@ -944,6 +944,213 @@ public sealed class UserDashboardPortfolioReadModelServiceTests
         Assert.DoesNotContain("ReconciliationStatus=DriftDetected", historyRow.ExecutionResultSummary, StringComparison.Ordinal);
         Assert.DoesNotContain("ReconciliationSummary=Transition drift detail.", historyRow.ReasonChainSummary, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public async Task GetSnapshotAsync_ComputesExpectancyMetrics_FromClosedSellTrades()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        await using var context = CreateContext(databaseRoot);
+        var ownerUserId = "user-dashboard-expectancy-01";
+        var botId = Guid.NewGuid();
+        var strategyId = Guid.NewGuid();
+        var versionId = Guid.NewGuid();
+        var now = new DateTime(2026, 4, 15, 12, 0, 0, DateTimeKind.Utc);
+
+        var winOrder = CreateClosedSellOrder(ownerUserId, botId, strategyId, versionId, Guid.NewGuid(), now.AddMinutes(-3), 30m);
+        var lossOrder = CreateClosedSellOrder(ownerUserId, botId, strategyId, versionId, Guid.NewGuid(), now.AddMinutes(-2), -10m);
+        var breakEvenOrder = CreateClosedSellOrder(ownerUserId, botId, strategyId, versionId, Guid.NewGuid(), now.AddMinutes(-1), 0m);
+
+        context.ExecutionOrders.AddRange(winOrder, lossOrder, breakEvenOrder);
+        context.DemoLedgerTransactions.AddRange(
+            CreateLedgerRow(ownerUserId, botId, winOrder.Id, now.AddMinutes(-3), 30m),
+            CreateLedgerRow(ownerUserId, botId, lossOrder.Id, now.AddMinutes(-2), -10m),
+            CreateLedgerRow(ownerUserId, botId, breakEvenOrder.Id, now.AddMinutes(-1), 0m));
+        await context.SaveChangesAsync();
+
+        var service = new UserDashboardPortfolioReadModelService(context);
+
+        var snapshot = await service.GetSnapshotAsync(ownerUserId);
+        Assert.NotNull(snapshot.Expectancy);
+        var expectancy = snapshot.Expectancy!;
+
+        Assert.True(expectancy.HasData);
+        Assert.Equal(3, expectancy.ClosedTradeCount);
+        Assert.Equal(1, expectancy.WinningTradeCount);
+        Assert.Equal(1, expectancy.LosingTradeCount);
+        Assert.Equal(1, expectancy.BreakEvenTradeCount);
+        Assert.Equal(33.333333333333333333333333333m, expectancy.WinRatePercentage);
+        Assert.Equal(30m, expectancy.AverageWin);
+        Assert.Equal(10m, expectancy.AverageLoss);
+        Assert.Equal(Math.Round(20m / 3m, 27), Math.Round(expectancy.Expectancy, 27));
+        Assert.Equal(3m, expectancy.ProfitFactor);
+    }
+
+    private static ExecutionOrder CreateClosedSellOrder(
+        string ownerUserId,
+        Guid botId,
+        Guid strategyId,
+        Guid versionId,
+        Guid orderId,
+        DateTime changedAtUtc,
+        decimal realizedPnl)
+    {
+        return new ExecutionOrder
+        {
+            Id = orderId,
+            OwnerUserId = ownerUserId,
+            TradingStrategyId = strategyId,
+            TradingStrategyVersionId = versionId,
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Exit,
+            BotId = botId,
+            Plane = ExchangeDataPlane.Futures,
+            StrategyKey = "expectancy-test",
+            Symbol = "SOLUSDT",
+            Timeframe = "1m",
+            BaseAsset = "SOL",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Sell,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.1m,
+            Price = 100m,
+            FilledQuantity = 0.1m,
+            AverageFillPrice = 100m,
+            ExecutionEnvironment = ExecutionEnvironment.Demo,
+            ExecutorKind = ExecutionOrderExecutorKind.Virtual,
+            State = ExecutionOrderState.Filled,
+            IdempotencyKey = $"expectancy-{orderId:N}",
+            RootCorrelationId = $"root-{orderId:N}",
+            SubmittedToBroker = true,
+            LastStateChangedAtUtc = changedAtUtc,
+            CreatedDate = changedAtUtc.AddSeconds(-5),
+            UpdatedDate = changedAtUtc
+        };
+    }
+
+    private static DemoLedgerTransaction CreateLedgerRow(
+        string ownerUserId,
+        Guid botId,
+        Guid orderId,
+        DateTime occurredAtUtc,
+        decimal realizedPnl)
+    {
+        return new DemoLedgerTransaction
+        {
+            OwnerUserId = ownerUserId,
+            OperationId = $"op-{orderId:N}",
+            TransactionType = DemoLedgerTransactionType.FillApplied,
+            BotId = botId,
+            PositionScopeKey = "portfolio",
+            OrderId = orderId.ToString("N"),
+            FillId = $"fill-{orderId:N}",
+            Symbol = "SOLUSDT",
+            BaseAsset = "SOL",
+            QuoteAsset = "USDT",
+            Side = DemoTradeSide.Sell,
+            Quantity = 0.1m,
+            Price = 100m,
+            FeeAmountInQuote = 0.1m,
+            RealizedPnlDelta = realizedPnl,
+            CumulativeRealizedPnlAfter = realizedPnl,
+            UnrealizedPnlAfter = 0m,
+            OccurredAtUtc = occurredAtUtc
+        };
+    }
+
+    [Fact]
+    public async Task GetSnapshotAsync_CountsShortClosingTradesInExpectancyAndLabelsTradeHistory()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        await using var context = CreateContext(databaseRoot);
+        var ownerUserId = "user-short-expectancy-01";
+        var botId = Guid.NewGuid();
+        var strategyId = Guid.NewGuid();
+        var strategyVersionId = Guid.NewGuid();
+        var signalId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var createdAtUtc = new DateTime(2026, 4, 5, 10, 0, 0, DateTimeKind.Utc);
+        var closedAtUtc = createdAtUtc.AddMinutes(4);
+
+        context.TradingBots.Add(new TradingBot
+        {
+            Id = botId,
+            OwnerUserId = ownerUserId,
+            Name = "Short Expectancy Bot",
+            StrategyKey = "short-expectancy",
+            Symbol = "BTCUSDT",
+            IsEnabled = true
+        });
+        context.DemoLedgerTransactions.Add(new DemoLedgerTransaction
+        {
+            OwnerUserId = ownerUserId,
+            OperationId = "short-exit-fill",
+            TransactionType = DemoLedgerTransactionType.FillApplied,
+            BotId = botId,
+            PositionScopeKey = "portfolio",
+            OrderId = orderId.ToString("N"),
+            FillId = $"demo-fill:{orderId:N}:1",
+            Symbol = "BTCUSDT",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = DemoTradeSide.Buy,
+            Quantity = 0.5m,
+            Price = 64750m,
+            FeeAmountInQuote = 1.1m,
+            RealizedPnlDelta = 18.5m,
+            CumulativeRealizedPnlAfter = 18.5m,
+            UnrealizedPnlAfter = 0m,
+            OccurredAtUtc = closedAtUtc
+        });
+        context.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = orderId,
+            OwnerUserId = ownerUserId,
+            TradingStrategyId = strategyId,
+            TradingStrategyVersionId = strategyVersionId,
+            StrategySignalId = signalId,
+            SignalType = StrategySignalType.Exit,
+            BotId = botId,
+            StrategyKey = "short-expectancy",
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.5m,
+            Price = 64750m,
+            FilledQuantity = 0.5m,
+            AverageFillPrice = 64750m,
+            ReduceOnly = true,
+            ExecutionEnvironment = ExecutionEnvironment.Demo,
+            ExecutorKind = ExecutionOrderExecutorKind.Virtual,
+            Plane = ExchangeDataPlane.Futures,
+            SubmittedToBroker = true,
+            State = ExecutionOrderState.Filled,
+            IdempotencyKey = "short-expectancy-order",
+            RootCorrelationId = "short-expectancy-corr",
+            LastStateChangedAtUtc = closedAtUtc,
+            CreatedDate = createdAtUtc,
+            UpdatedDate = closedAtUtc
+        });
+        await context.SaveChangesAsync();
+
+        var service = new UserDashboardPortfolioReadModelService(context);
+
+        var snapshot = await service.GetSnapshotAsync(ownerUserId);
+
+        var trade = Assert.Single(snapshot.TradeHistory);
+        Assert.Equal("Short", trade.Direction);
+        Assert.Equal("Short Exit", trade.TradeAction);
+        Assert.True(trade.IsClosingTrade);
+        Assert.NotNull(snapshot.Expectancy);
+        Assert.True(snapshot.Expectancy!.HasData);
+        Assert.Equal(1, snapshot.Expectancy.ClosedTradeCount);
+        Assert.Equal(1, snapshot.Expectancy.ShortClosedTradeCount);
+        Assert.Equal(0, snapshot.Expectancy.LongClosedTradeCount);
+        Assert.Equal(1, snapshot.Expectancy.WinningTradeCount);
+    }
+
     private static ApplicationDbContext CreateContext(InMemoryDatabaseRoot databaseRoot)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()

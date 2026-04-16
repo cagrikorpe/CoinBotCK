@@ -1,4 +1,5 @@
 @model CoinBot.Web.ViewModels.Bots.BotManagementEditorViewModel
+@using CoinBot.Domain.Enums
 @{
     ViewData["Title"] = Model.IsEditMode ? "Bot Düzenle" : "Yeni Bot";
     ViewData["ActiveNav"] = "Bots";
@@ -78,6 +79,17 @@
                         <input asp-for="Form.Quantity" class="form-control" />
                         <small class="form-text text-muted">Boş bırakılırsa sistem uygun miktarı kullanır.</small>
                         <span asp-validation-for="Form.Quantity" class="text-danger"></span>
+                    </div>
+
+                    <div class="form-group">
+                        <label asp-for="Form.DirectionMode">Yön modu</label>
+                        <select asp-for="Form.DirectionMode" class="form-control" data-cb-bot-direction-mode-select>
+                            <option value="@TradingBotDirectionMode.LongOnly">LongOnly</option>
+                            <option value="@TradingBotDirectionMode.ShortOnly">ShortOnly</option>
+                            <option value="@TradingBotDirectionMode.LongShort">LongShort</option>
+                        </select>
+                        <small class="form-text text-muted">Runtime giriş yönü bu moda göre fail-closed filtrelenir.</small>
+                        <span asp-validation-for="Form.DirectionMode" class="text-danger"></span>
                     </div>
 
                     <div class="form-group">

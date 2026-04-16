@@ -31,7 +31,9 @@
                 <tbody>
                     @foreach (var row in closedRows)
                     {
-                        var sideTone = row.Side.Equals("Buy", StringComparison.OrdinalIgnoreCase) ? "cb-badge-success" : "cb-badge-danger";
+                        var directionLabel = row.Direction ?? (row.Side.Equals("Buy", StringComparison.OrdinalIgnoreCase) ? "Long" : "Short");
+                        var tradeAction = row.TradeAction ?? row.Side;
+                        var sideTone = directionLabel.Equals("Long", StringComparison.OrdinalIgnoreCase) ? "cb-badge-success" : "cb-badge-danger";
                         var resultTone = row.ExecutionResultCategory switch
                         {
                             "Filled" => "cb-badge-success",
@@ -43,7 +45,7 @@
                         var pnlTone = row.RealizedPnl >= 0m ? "cb-text-positive" : "cb-text-negative";
                         <tr data-cb-position-detail="@row.OrderId.ToString("N")" data-cb-position-kind="closed" data-cb-closed-position-row>
                             <td><div class="cb-bot-row-title" data-cb-closed-position-symbol>@row.Symbol</div><div class="cb-bot-row-subtitle">@row.Plane</div></td>
-                            <td><span class="cb-badge @sideTone cb-direction-badge" data-cb-closed-position-side>@row.Side</span></td>
+                            <td><span class="cb-badge @sideTone cb-direction-badge" data-cb-closed-position-side>@tradeAction</span></td>
                             <td><span class="cb-badge @resultTone" data-cb-closed-position-result>@row.ExecutionResultCategory</span></td>
                             <td class="cb-mono @pnlTone" data-cb-closed-position-realized>@($"{(row.RealizedPnl >= 0m ? "+" : string.Empty)}{row.RealizedPnl:0.####}")</td>
                             <td><div class="cb-mono" data-cb-closed-position-updated>@row.LastUpdatedAtUtc.ToUniversalTime().ToString("dd MMM · HH:mm")</div></td>

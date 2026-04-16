@@ -110,6 +110,45 @@ public sealed class AiSignalCoreIntegrationTests
     }
 
     [Fact]
+    public async Task ShortFeatureSnapshot_ToAiOverlay_PersistsShortSignal_OnSqlServer()
+    {
+        var databaseName = $"CoinBotAiSignalCoreShort_{Guid.NewGuid():N}";
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString(databaseName);
+        var nowUtc = new DateTimeOffset(2026, 4, 6, 12, 0, 0, TimeSpan.Zero);
+        await using var dbContext = CreateDbContext(connectionString);
+        await dbContext.Database.EnsureDeletedAsync();
+        await dbContext.Database.EnsureCreatedAsync();
+
+        try
+        {
+            SeedStrategyGraph(dbContext, nowUtc.UtcDateTime, "short");
+            await dbContext.SaveChangesAsync();
+
+            var featureSnapshot = PromoteForShortOverlay(await CaptureFeatureSnapshotAsync(dbContext, nowUtc, stale: false));
+            var service = CreateSignalService(dbContext, nowUtc, CreateEnabledShortAiOptions());
+            var versionId = await dbContext.TradingStrategyVersions.Select(entity => entity.Id).SingleAsync();
+
+            var result = await service.GenerateAsync(
+                new GenerateStrategySignalsRequest(
+                    versionId,
+                    CreateContext(nowUtc.UtcDateTime),
+                    featureSnapshot));
+            var decisionTrace = await dbContext.DecisionTraces.SingleAsync();
+
+            var signal = Assert.Single(result.Signals);
+            var aiEvaluation = Assert.Single(result.AiEvaluations);
+            Assert.Equal(AiSignalDirection.Short, aiEvaluation.SignalDirection);
+            Assert.Equal(StrategyTradeDirection.Short, signal.ExplainabilityPayload.RuleResultSnapshot.Direction);
+            Assert.Equal("Persisted", decisionTrace.DecisionOutcome);
+            Assert.Equal("Allowed", decisionTrace.DecisionReasonCode);
+        }
+        finally
+        {
+            await SqlServerIntegrationDatabase.CleanupDatabaseAsync(connectionString);
+        }
+    }
+
+    [Fact]
     public async Task InvalidQualityFeatureSnapshot_ToAiOverlay_SuppressesSignal_OnSqlServer()
     {
         var databaseName = $"CoinBotAiSignalCoreQuality_{Guid.NewGuid():N}";
@@ -159,6 +198,17 @@ public sealed class AiSignalCoreIntegrationTests
         return new AiSignalOptions
         {
             Enabled = true,
+            SelectedProvider = DeterministicStubAiSignalProviderAdapter.ProviderNameValue,
+            MinimumConfidence = 0.70m
+        };
+    }
+
+    private static AiSignalOptions CreateEnabledShortAiOptions()
+    {
+        return new AiSignalOptions
+        {
+            Enabled = true,
+            AllowShort = true,
             SelectedProvider = DeterministicStubAiSignalProviderAdapter.ProviderNameValue,
             MinimumConfidence = 0.70m
         };
@@ -216,6 +266,22 @@ public sealed class AiSignalCoreIntegrationTests
             CancellationToken.None);
     }
 
+    private static TradingFeatureSnapshotModel PromoteForShortOverlay(TradingFeatureSnapshotModel snapshot)
+    {
+        return snapshot with
+        {
+            Trend = snapshot.Trend with { Ema20 = 62000m, Ema50 = 62800m, Ema200 = 63500m },
+            Momentum = snapshot.Momentum with { Rsi = 72m, MacdHistogram = -0.6m, MacdLine = -1.4m, MacdSignal = -0.8m },
+            Volume = snapshot.Volume with { RelativeVolume = 1.30m },
+            Volatility = snapshot.Volatility with { BollingerPercentB = 0.88m },
+            FeatureSummary = "AI-ready bearish feature snapshot.",
+            TopSignalHints = "RSI overbought; MACD weakening; EMA stack bearish.",
+            PrimaryRegime = "TrendDown",
+            MomentumBias = "Bearish",
+            VolatilityState = "Expanding"
+        };
+    }
+
     private static TradingFeatureSnapshotModel PromoteForLongOverlay(TradingFeatureSnapshotModel snapshot)
     {
         return snapshot with
@@ -258,7 +324,7 @@ public sealed class AiSignalCoreIntegrationTests
             NullLogger<StrategySignalService>.Instance);
     }
 
-    private static void SeedStrategyGraph(ApplicationDbContext dbContext, DateTime nowUtc)
+    private static void SeedStrategyGraph(ApplicationDbContext dbContext, DateTime nowUtc, string direction = "long")
     {
         var ownerUserId = "ai-int-user";
         var strategy = new TradingStrategy
@@ -297,7 +363,7 @@ public sealed class AiSignalCoreIntegrationTests
             SchemaVersion = 2,
             VersionNumber = 1,
             Status = StrategyVersionStatus.Published,
-            DefinitionJson = CreateDefinitionJson(),
+            DefinitionJson = CreateDefinitionJson(direction),
             PublishedAtUtc = nowUtc.AddMinutes(-5)
         });
         dbContext.RiskProfiles.Add(new RiskProfile
@@ -362,12 +428,13 @@ public sealed class AiSignalCoreIntegrationTests
             .ToArray();
     }
 
-    private static string CreateDefinitionJson()
+    private static string CreateDefinitionJson(string direction = "long")
     {
         return
-            """
+            $$"""
             {
               "schemaVersion": 2,
+              "direction": "{{direction}}",
               "metadata": {
                 "templateKey": "ai-int-template",
                 "templateName": "AI Integration Template"

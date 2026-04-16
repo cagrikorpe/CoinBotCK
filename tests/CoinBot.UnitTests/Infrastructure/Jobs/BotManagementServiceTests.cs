@@ -20,6 +20,36 @@ namespace CoinBot.UnitTests.Infrastructure.Jobs;
 public sealed class BotManagementServiceTests
 {
     [Fact]
+    public async Task CreateAsync_PersistsDirectionMode_OnTradingBot()
+    {
+        await using var dbContext = CreateDbContext();
+        var ownerUserId = "user-bot-direction";
+        var strategy = CreateStrategy(ownerUserId, "strategy-direction", hasPublishedVersion: true);
+        var exchangeAccount = CreateExchangeAccount(ownerUserId, isActive: true, isWritable: true);
+        dbContext.TradingStrategies.Add(strategy);
+        dbContext.ExchangeAccounts.Add(exchangeAccount);
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext);
+        var result = await service.CreateAsync(
+            ownerUserId,
+            new BotManagementSaveCommand(
+                "Directional Bot",
+                "strategy-direction",
+                "BTCUSDT",
+                0.01m,
+                exchangeAccount.Id,
+                1m,
+                "ISOLATED",
+                false,
+                TradingBotDirectionMode.LongShort),
+            "user:user-bot-direction");
+
+        Assert.True(result.IsSuccessful);
+        var bot = await dbContext.TradingBots.SingleAsync();
+        Assert.Equal(TradingBotDirectionMode.LongShort, bot.DirectionMode);
+    }
+    [Fact]
     public async Task CreateAsync_PersistsPilotFields_AndStrategyAssignment()
     {
         await using var context = CreateContext();
@@ -672,6 +702,39 @@ public sealed class BotManagementServiceTests
                 new StrategyRuleParser(),
                 new StrategyDefinitionValidator(),
                 context));
+    }
+
+    private static ApplicationDbContext CreateDbContext()
+    {
+        return CreateContext();
+    }
+
+    private static TradingStrategy CreateStrategy(string ownerUserId, string strategyKey, bool hasPublishedVersion = true)
+    {
+        return new TradingStrategy
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = ownerUserId,
+            StrategyKey = strategyKey,
+            DisplayName = $"{strategyKey}-display",
+            UsesExplicitVersionLifecycle = false,
+            PromotionState = hasPublishedVersion ? StrategyPromotionState.LivePublished : StrategyPromotionState.Draft,
+            PublishedAtUtc = hasPublishedVersion ? DateTime.UtcNow : null,
+            PublishedMode = hasPublishedVersion ? ExecutionEnvironment.Live : null
+        };
+    }
+
+    private static ExchangeAccount CreateExchangeAccount(string ownerUserId, bool isActive, bool isWritable)
+    {
+        return new ExchangeAccount
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = ownerUserId,
+            ExchangeName = "Binance",
+            DisplayName = "Pilot Futures",
+            IsReadOnly = !isWritable,
+            CredentialStatus = isActive ? ExchangeCredentialStatus.Active : ExchangeCredentialStatus.Missing
+        };
     }
 
     private static async Task<Guid> SeedStrategyAndExchangeAccountAsync(ApplicationDbContext context, string ownerUserId, string strategyKey)

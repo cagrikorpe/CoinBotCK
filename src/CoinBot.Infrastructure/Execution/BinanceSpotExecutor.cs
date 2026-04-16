@@ -118,7 +118,8 @@ public sealed class BinanceSpotExecutor(
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            if (dependencyCircuitBreakerStateManager is not null)
+            if (dependencyCircuitBreakerStateManager is not null &&
+                ShouldRecordBreakerFailure(exception))
             {
                 await dependencyCircuitBreakerStateManager.RecordFailureAsync(
                     new DependencyCircuitBreakerFailureRequest(
@@ -327,6 +328,25 @@ public sealed class BinanceSpotExecutor(
         return command.Side == ExecutionOrderSide.Buy
             ? command.QuoteQuantity ?? ResolveReferenceNotional(command)
             : command.Quantity;
+    }
+
+    private static bool ShouldRecordBreakerFailure(Exception exception)
+    {
+        return exception is not ExecutionValidationException validationException ||
+               !IsNonDependencyValidationFailure(validationException.ReasonCode);
+    }
+
+    private static bool IsNonDependencyValidationFailure(string? reasonCode)
+    {
+        return reasonCode is "OrderQuantityBelowMinimum" or
+            "OrderQuantityStepSizeMismatch" or
+            "OrderQuantityPrecisionExceeded" or
+            "OrderNotionalBelowMinimum" or
+            "LimitPriceTickSizeMismatch" or
+            "LimitPricePrecisionExceeded" or
+            "SymbolTradingDisabled" or
+            "SpotBalanceInsufficient" or
+            "SpotReduceOnlyUnsupported";
     }
 
     private static decimal ResolveReferenceNotional(ExecutionCommand command)

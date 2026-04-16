@@ -1,3 +1,4 @@
+using CoinBot.Application.Abstractions.Autonomy;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Application.Abstractions.ExchangeCredentials;
@@ -91,6 +92,47 @@ public sealed class BinanceExecutorTests
         Assert.Equal("OrderNotionalBelowMinimum", exception.ReasonCode);
         Assert.Contains("minimum notional", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+
+    [Fact]
+    public async Task DispatchAsync_AllowsReduceOnly_WhenNotionalIsBelowMinimum()
+    {
+        await using var harness = await CreateHarnessAsync();
+
+        var result = await harness.Executor.DispatchAsync(
+            harness.Order,
+            CreateCommand(harness.ExchangeAccountId) with
+            {
+                SignalType = StrategySignalType.Exit,
+                Side = ExecutionOrderSide.Sell,
+                ReduceOnly = true,
+                Quantity = 0.001m,
+                Price = 65000m
+            },
+            CancellationToken.None);
+
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal("binance-order-1", result.ExternalOrderId);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_DoesNotTripBreaker_WhenValidationFailsClosed()
+    {
+        var breakerManager = new RecordingBreakerStateManager();
+        await using var harness = await CreateHarnessAsync(dependencyCircuitBreakerStateManager: breakerManager);
+
+        var exception = await Assert.ThrowsAsync<ExecutionValidationException>(() => harness.Executor.DispatchAsync(
+            harness.Order,
+            CreateCommand(harness.ExchangeAccountId) with
+            {
+                Quantity = 0.001m,
+                Price = 65000m
+            },
+            CancellationToken.None));
+
+        Assert.Equal("OrderNotionalBelowMinimum", exception.ReasonCode);
+        Assert.Equal(0, breakerManager.RecordFailureCalls);
     }
 
     [Fact]
@@ -220,7 +262,8 @@ public sealed class BinanceExecutorTests
         SymbolMetadataSnapshot? metadata = null,
         IMarketDataService? marketDataService = null,
         FakeExchangeInfoClient? exchangeInfoClient = null,
-        decimal? futuresQuoteAvailableBalance = null)
+        decimal? futuresQuoteAvailableBalance = null,
+        IDependencyCircuitBreakerStateManager? dependencyCircuitBreakerStateManager = null)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
@@ -286,8 +329,9 @@ public sealed class BinanceExecutorTests
             new FakeExchangeCredentialService(),
             privateRestClient,
             NullLogger<BinanceExecutor>.Instance,
-            marketDataService: resolvedMarketDataService,
-            exchangeInfoClient: resolvedExchangeInfoClient);
+            dependencyCircuitBreakerStateManager,
+            resolvedMarketDataService,
+            resolvedExchangeInfoClient);
 
         return new TestHarness(
             dbContext,
@@ -572,5 +616,45 @@ public sealed class BinanceExecutorTests
             await DbContext.DisposeAsync();
         }
     }
+
+
+    private sealed class RecordingBreakerStateManager : IDependencyCircuitBreakerStateManager
+    {
+        public int RecordFailureCalls { get; private set; }
+
+        public Task<DependencyCircuitBreakerSnapshot> GetSnapshotAsync(DependencyCircuitBreakerKind breakerKind, CancellationToken cancellationToken = default)
+            => Task.FromResult(CreateSnapshot(breakerKind, CircuitBreakerStateCode.Closed));
+
+        public Task<IReadOnlyCollection<DependencyCircuitBreakerSnapshot>> ListSnapshotsAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyCollection<DependencyCircuitBreakerSnapshot>>(Array.Empty<DependencyCircuitBreakerSnapshot>());
+
+        public Task<DependencyCircuitBreakerSnapshot> RecordFailureAsync(DependencyCircuitBreakerFailureRequest request, CancellationToken cancellationToken = default)
+        {
+            RecordFailureCalls++;
+            return Task.FromResult(CreateSnapshot(request.BreakerKind, CircuitBreakerStateCode.Cooldown));
+        }
+
+        public Task<DependencyCircuitBreakerSnapshot> RecordSuccessAsync(DependencyCircuitBreakerSuccessRequest request, CancellationToken cancellationToken = default)
+            => Task.FromResult(CreateSnapshot(request.BreakerKind, CircuitBreakerStateCode.Closed));
+
+        public Task<DependencyCircuitBreakerSnapshot?> TryBeginHalfOpenAsync(DependencyCircuitBreakerHalfOpenRequest request, CancellationToken cancellationToken = default)
+            => Task.FromResult<DependencyCircuitBreakerSnapshot?>(null);
+
+        private static DependencyCircuitBreakerSnapshot CreateSnapshot(DependencyCircuitBreakerKind breakerKind, CircuitBreakerStateCode stateCode)
+            => new(
+                breakerKind,
+                stateCode,
+                ConsecutiveFailureCount: 0,
+                LastFailureAtUtc: null,
+                LastSuccessAtUtc: null,
+                CooldownUntilUtc: null,
+                HalfOpenStartedAtUtc: null,
+                LastProbeAtUtc: null,
+                LastErrorCode: null,
+                LastErrorMessage: null,
+                CorrelationId: null,
+                IsPersisted: false);
+    }
+
 }
 

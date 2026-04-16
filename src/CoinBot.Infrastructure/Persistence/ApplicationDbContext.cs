@@ -2032,6 +2032,11 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         builder.Property(entity => entity.MarginType)
             .HasMaxLength(16);
 
+        builder.Property(entity => entity.DirectionMode)
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .HasDefaultValue(TradingBotDirectionMode.LongOnly);
+
         builder.Property(entity => entity.TradingModeOverride)
             .HasConversion<string>()
             .HasMaxLength(32);

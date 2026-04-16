@@ -15,12 +15,39 @@ public sealed class GlobalSystemStateService(
     public async Task<GlobalSystemStateSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
     {
         var entity = await dbContext.GlobalSystemStates
-            .AsNoTracking()
             .SingleOrDefaultAsync(entry => entry.Id == GlobalSystemStateDefaults.SingletonId, cancellationToken);
 
-        return entity is null
-            ? GlobalSystemStateDefaults.CreateSnapshot()
-            : MapSnapshot(entity, isPersisted: true);
+        if (entity is null)
+        {
+            return GlobalSystemStateDefaults.CreateSnapshot();
+        }
+
+        if (ShouldExpireAutomatically(entity))
+        {
+            return await SetStateAsync(
+                new GlobalSystemStateSetRequest(
+                    GlobalSystemStateKind.Active,
+                    GlobalSystemStateDefaults.DefaultReasonCode,
+                    Message: null,
+                    GlobalSystemStateDefaults.DefaultSource,
+                    CorrelationId: null,
+                    IsManualOverride: false,
+                    ExpiresAtUtc: null,
+                    UpdatedByUserId: "system:global-state-expiry",
+                    UpdatedFromIp: null,
+                    ChangeSummary: "Automatic expiration of non-manual global system state."),
+                cancellationToken);
+        }
+
+        return MapSnapshot(entity, isPersisted: true);
+    }
+
+
+    private bool ShouldExpireAutomatically(GlobalSystemState entity)
+    {
+        return !entity.IsManualOverride &&
+               entity.ExpiresAtUtc.HasValue &&
+               entity.ExpiresAtUtc.Value <= timeProvider.GetUtcNow().UtcDateTime;
     }
 
     public async Task<GlobalSystemStateSnapshot> SetStateAsync(
