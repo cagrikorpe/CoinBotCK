@@ -98,6 +98,8 @@ public sealed class MarketScannerHandoffAttempt : BaseEntity
 
     public string? BlockerDetail { get; set; }
 
+    public string? BlockerSummary { get; set; }
+
     public string? GuardSummary { get; set; }
 
     public string CorrelationId { get; set; } = string.Empty;

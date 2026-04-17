@@ -1,5 +1,6 @@
 using CoinBot.Infrastructure;
 using CoinBot.Infrastructure.Jobs;
+using CoinBot.Infrastructure.MarketData;
 using CoinBot.Worker;
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -18,6 +19,7 @@ builder.Services.AddHostedService<Worker>();
 builder.Services.AddHostedService<JobKeepAliveWorker>();
 builder.Services.AddHostedService<JobCleanupWorker>();
 builder.Services.AddHostedService<JobWatchdogWorker>();
+builder.Services.AddHostedService<MarketScannerWorker>();
 
 var host = builder.Build();
 host.Run();

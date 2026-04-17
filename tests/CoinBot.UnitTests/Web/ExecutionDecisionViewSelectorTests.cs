@@ -34,6 +34,7 @@ public sealed class ExecutionDecisionViewSelectorTests
             "Foundation",
             "_AdminMarketScannerCard.cshtml"));
 
+        Assert.Contains("data-cb-scanner-handoff-blocker-summary", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-scanner-decision", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-scanner-decision-reason-type", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-scanner-decision-reason-code", content, StringComparison.Ordinal);

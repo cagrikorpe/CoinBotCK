@@ -85,6 +85,7 @@
                     <span> · Blocker: </span>
                     <span data-cb-scanner-handoff-blocker>@(latestHandoff.BlockerCode ?? "none")</span>
                 </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-scanner-handoff-blocker-summary>@(latestHandoff.BlockerSummary ?? latestHandoff.DecisionSummary ?? "n/a")</div>
                 <div class="cb-admin-info-strip-text mt-2" data-cb-scanner-handoff-guard>@(latestHandoff.GuardSummary ?? "n/a")</div>
             </div>
             <span class="cb-admin-info-strip-meta cb-mono" data-cb-scanner-handoff-at>@(latestHandoff.CompletedAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "No handoff")</span>

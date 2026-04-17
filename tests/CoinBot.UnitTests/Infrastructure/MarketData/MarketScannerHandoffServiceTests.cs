@@ -54,6 +54,7 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal(ExecutionOrderSide.Buy, persistedAttempt.ExecutionSide);
         Assert.Equal(ExecutionOrderType.Market, persistedAttempt.ExecutionOrderType);
         Assert.Null(persistedAttempt.BlockerCode);
+        Assert.Equal("Allowed: execution request prepared.", persistedAttempt.BlockerSummary);
         Assert.Contains("Top-ranked eligible candidate selected", persistedAttempt.SelectionReason, StringComparison.Ordinal);
         Assert.Contains("ExecutionGate=Allowed", persistedAttempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("LatencyReason=None", persistedAttempt.GuardSummary, StringComparison.Ordinal);
@@ -264,6 +265,7 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
         Assert.Equal("NoEligibleCandidate", attempt.BlockerCode);
         Assert.Equal("No eligible candidate available.", attempt.SelectionReason);
+        Assert.Equal("NoEligibleCandidate: Scanner handoff did not find an eligible candidate in the latest scan cycle.", attempt.BlockerSummary);
         Assert.Equal("CandidateSelection=None", attempt.GuardSummary);
         Assert.Null(attempt.SelectedSymbol);
     }

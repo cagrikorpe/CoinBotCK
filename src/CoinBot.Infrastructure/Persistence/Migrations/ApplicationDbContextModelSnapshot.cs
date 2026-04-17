@@ -3244,6 +3244,10 @@ namespace CoinBot.Infrastructure.Persistence.Migrations
                         .HasMaxLength(512)
                         .HasColumnType("nvarchar(512)");
 
+                    b.Property<string>("BlockerSummary")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
                     b.Property<Guid?>("BotId")
                         .HasColumnType("uniqueidentifier");
 

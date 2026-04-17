@@ -279,33 +279,66 @@ public sealed class HistoricalGapFillerService(
                 break;
             }
 
-            var firstSnapshot = deduplicationResult.Snapshots[0];
-            var lastSnapshot = deduplicationResult.Snapshots[deduplicationResult.Snapshots.Count - 1];
+            var persistableSnapshots = deduplicationResult.Snapshots
+                .Where(IsPersistableHistoricalSnapshot)
+                .ToArray();
 
-            var existingOpenTimes = await dbContext.HistoricalMarketCandles
+            if (persistableSnapshots.Length == 0)
+            {
+                logger.LogWarning(
+                    "Historical gap filler could not map any persistable candles for {Symbol} {Interval} between {StartOpenTimeUtc:o} and {EndOpenTimeUtc:o}.",
+                    gap.Symbol,
+                    gap.Interval,
+                    nextOpenTimeUtc,
+                    batchEndOpenTimeUtc);
+
+                break;
+            }
+
+            var firstSnapshot = persistableSnapshots[0];
+            var lastSnapshot = persistableSnapshots[persistableSnapshots.Length - 1];
+
+            var existingCandles = await dbContext.HistoricalMarketCandles
+                .IgnoreQueryFilters()
                 .Where(entity =>
-                    !entity.IsDeleted &&
                     entity.Symbol == gap.Symbol &&
                     entity.Interval == gap.Interval &&
                     entity.OpenTimeUtc >= firstSnapshot.OpenTimeUtc &&
                     entity.OpenTimeUtc <= lastSnapshot.OpenTimeUtc)
-                .Select(entity => entity.OpenTimeUtc)
                 .ToListAsync(cancellationToken);
-            var existingOpenTimeSet = existingOpenTimes.ToHashSet();
+            var existingCandlesByOpenTime = existingCandles
+                .GroupBy(entity => NormalizeTimestamp(entity.OpenTimeUtc))
+                .ToDictionary(
+                    group => group.Key,
+                    group => group
+                        .OrderByDescending(IsUsableHistoricalCandle)
+                        .ThenBy(entity => entity.IsDeleted)
+                        .ThenByDescending(entity => entity.UpdatedDate)
+                        .First());
 
-            foreach (var snapshot in deduplicationResult.Snapshots)
+            foreach (var snapshot in persistableSnapshots)
             {
-                if (!existingOpenTimeSet.Add(snapshot.OpenTimeUtc))
+                var normalizedOpenTimeUtc = NormalizeTimestamp(snapshot.OpenTimeUtc);
+                if (existingCandlesByOpenTime.TryGetValue(normalizedOpenTimeUtc, out var existingCandle))
                 {
-                    skippedDuplicateCount++;
+                    if (IsUsableHistoricalCandle(existingCandle))
+                    {
+                        skippedDuplicateCount++;
+                        continue;
+                    }
+
+                    ApplyHistoricalMarketCandleSnapshot(existingCandle, snapshot);
+                    insertedCandleCount++;
                     continue;
                 }
 
-                dbContext.HistoricalMarketCandles.Add(MapHistoricalMarketCandle(snapshot));
+                var historicalCandle = MapHistoricalMarketCandle(snapshot);
+                dbContext.HistoricalMarketCandles.Add(historicalCandle);
+                existingCandlesByOpenTime[normalizedOpenTimeUtc] = historicalCandle;
                 insertedCandleCount++;
             }
 
-            if (dbContext.ChangeTracker.Entries<HistoricalMarketCandle>().Any(entry => entry.State == EntityState.Added))
+            if (dbContext.ChangeTracker.Entries<HistoricalMarketCandle>().Any(entry => entry.State is EntityState.Added or EntityState.Modified))
             {
                 await dbContext.SaveChangesAsync(cancellationToken);
             }
@@ -539,6 +572,44 @@ public sealed class HistoricalGapFillerService(
             ReceivedAtUtc = NormalizeTimestamp(snapshot.ReceivedAtUtc),
             Source = snapshot.Source.Trim()
         };
+    }
+
+    private static void ApplyHistoricalMarketCandleSnapshot(
+        HistoricalMarketCandle entity,
+        MarketCandleSnapshot snapshot)
+    {
+        var replacement = MapHistoricalMarketCandle(snapshot);
+        entity.Symbol = replacement.Symbol;
+        entity.Interval = replacement.Interval;
+        entity.OpenTimeUtc = replacement.OpenTimeUtc;
+        entity.CloseTimeUtc = replacement.CloseTimeUtc;
+        entity.OpenPrice = replacement.OpenPrice;
+        entity.HighPrice = replacement.HighPrice;
+        entity.LowPrice = replacement.LowPrice;
+        entity.ClosePrice = replacement.ClosePrice;
+        entity.Volume = replacement.Volume;
+        entity.ReceivedAtUtc = replacement.ReceivedAtUtc;
+        entity.Source = replacement.Source;
+        entity.IsDeleted = false;
+    }
+
+    private static bool IsPersistableHistoricalSnapshot(MarketCandleSnapshot snapshot)
+    {
+        return !string.IsNullOrWhiteSpace(snapshot.Symbol) &&
+               !string.IsNullOrWhiteSpace(snapshot.Interval) &&
+               !string.IsNullOrWhiteSpace(snapshot.Source) &&
+               NormalizeTimestamp(snapshot.OpenTimeUtc) < NormalizeTimestamp(snapshot.CloseTimeUtc) &&
+               snapshot.ClosePrice > 0m &&
+               snapshot.Volume >= 0m;
+    }
+
+    private static bool IsUsableHistoricalCandle(HistoricalMarketCandle entity)
+    {
+        return !entity.IsDeleted &&
+               !string.IsNullOrWhiteSpace(entity.Source) &&
+               NormalizeTimestamp(entity.OpenTimeUtc) < NormalizeTimestamp(entity.CloseTimeUtc) &&
+               entity.ClosePrice > 0m &&
+               entity.Volume >= 0m;
     }
 
     private static MarketCandleSnapshot MapMarketCandleSnapshot(HistoricalMarketCandle entity)

@@ -1,7 +1,9 @@
+using System.Globalization;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.Persistence;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -191,21 +193,23 @@ public sealed class MarketScannerWorker(
             }
 
             var failureCode = ResolveFailureCode(exception);
+            var failureMessage = ResolveFailureMessage(exception, failureCode);
             var failureDetail = ResolveFailureDetail(exception, failureCode);
 
-            entity.WorkerName = MarketScannerService.WorkerName;
-            entity.HealthState = MonitoringHealthState.Critical;
-            entity.FreshnessTier = MonitoringFreshnessTier.Hot;
-            entity.CircuitBreakerState = CircuitBreakerStateCode.Cooldown;
-            entity.LastHeartbeatAtUtc = nowUtc;
-            entity.LastUpdatedAtUtc = nowUtc;
-            entity.ConsecutiveFailureCount += 1;
-            entity.LastErrorCode = failureCode;
-            entity.LastErrorMessage = Truncate(exception.Message, 1024);
-            entity.SnapshotAgeSeconds = 0;
-            entity.Detail = Truncate(failureDetail, 2048);
+            ApplyFailureHeartbeat(entity, nowUtc, failureCode, failureMessage, failureDetail);
 
-            await dbContext.SaveChangesAsync(cancellationToken);
+            try
+            {
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException saveException) when (IsWorkerHeartbeatUniqueConstraintViolation(saveException))
+            {
+                dbContext.ChangeTracker.Clear();
+                var existingEntity = await dbContext.WorkerHeartbeats
+                    .SingleAsync(item => item.WorkerKey == MarketScannerService.WorkerKey, cancellationToken);
+                ApplyFailureHeartbeat(existingEntity, nowUtc, failureCode, failureMessage, failureDetail);
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
         }
         catch (Exception heartbeatException)
         {
@@ -213,6 +217,30 @@ public sealed class MarketScannerWorker(
         }
     }
 
+    private static void ApplyFailureHeartbeat(
+        WorkerHeartbeat entity,
+        DateTime nowUtc,
+        string failureCode,
+        string failureMessage,
+        string failureDetail)
+    {
+        entity.WorkerName = MarketScannerService.WorkerName;
+        entity.HealthState = MonitoringHealthState.Critical;
+        entity.FreshnessTier = MonitoringFreshnessTier.Hot;
+        entity.CircuitBreakerState = CircuitBreakerStateCode.Cooldown;
+        entity.LastHeartbeatAtUtc = nowUtc;
+        entity.LastUpdatedAtUtc = nowUtc;
+        entity.ConsecutiveFailureCount += 1;
+        entity.LastErrorCode = failureCode;
+        entity.LastErrorMessage = Truncate(failureMessage, 1024);
+        entity.SnapshotAgeSeconds = 0;
+        entity.Detail = Truncate(failureDetail, 2048);
+    }
+
+    private static bool IsWorkerHeartbeatUniqueConstraintViolation(DbUpdateException exception)
+    {
+        return exception.InnerException is SqlException { Number: 2601 or 2627 };
+    }
     private async Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
     {
         if (delay <= TimeSpan.Zero)
@@ -231,12 +259,8 @@ public sealed class MarketScannerWorker(
         }
 
         var nextDueAtUtc = leaseSnapshot.AcquiredAtUtc.AddSeconds(optionsValue.ScanIntervalSeconds);
-        var earliestRunAtUtc = leaseSnapshot.LeaseExpiresAtUtc > nextDueAtUtc
-            ? leaseSnapshot.LeaseExpiresAtUtc
-            : nextDueAtUtc;
-
-        return earliestRunAtUtc > utcNow
-            ? earliestRunAtUtc - utcNow
+        return nextDueAtUtc > utcNow
+            ? nextDueAtUtc - utcNow
             : TimeSpan.Zero;
     }
 
@@ -246,8 +270,38 @@ public sealed class MarketScannerWorker(
         {
             MarketScannerNumericOverflowException overflowException => overflowException.ErrorCode,
             MarketScannerPoisonedCandleAuditException poisonedCandleException => poisonedCandleException.ErrorCode,
+            DbUpdateConcurrencyException => "ConcurrencyConflict",
+            DbUpdateException dbUpdateException => ResolveDbUpdateFailureCode(dbUpdateException),
             _ => exception.GetType().Name
         };
+    }
+
+    private static string ResolveDbUpdateFailureCode(DbUpdateException exception)
+    {
+        if (exception.InnerException is SqlException sqlException)
+        {
+            return sqlException.Number switch
+            {
+                2601 or 2627 => "UniqueConstraintViolation",
+                515 => "NullRequiredColumn",
+                547 => "ForeignKeyConstraintViolation",
+                _ => "DbUpdateException"
+            };
+        }
+
+        return exception.InnerException switch
+        {
+            OverflowException => "NumericOverflow",
+            InvalidOperationException => "InvalidEntityState",
+            _ => "DbUpdateException"
+        };
+    }
+
+    private static string ResolveFailureMessage(Exception exception, string failureCode)
+    {
+        return exception is DbUpdateException
+            ? $"Database update failed. Reason={failureCode}."
+            : exception.Message;
     }
 
     private static string ResolveFailureDetail(Exception exception, string failureCode)
@@ -256,8 +310,19 @@ public sealed class MarketScannerWorker(
         {
             MarketScannerNumericOverflowException overflowException => overflowException.Detail,
             MarketScannerPoisonedCandleAuditException poisonedCandleException => poisonedCandleException.Detail,
+            DbUpdateException dbUpdateException => BuildDbUpdateFailureDetail(dbUpdateException, failureCode),
             _ => $"Worker={MarketScannerService.WorkerName}; Failure={failureCode}; Message={exception.Message}"
         };
+    }
+
+    private static string BuildDbUpdateFailureDetail(DbUpdateException exception, string failureCode)
+    {
+        var innerExceptionType = exception.InnerException?.GetType().Name ?? "none";
+        var sqlNumber = exception.InnerException is SqlException sqlException
+            ? sqlException.Number.ToString(CultureInfo.InvariantCulture)
+            : "none";
+
+        return $"Worker={MarketScannerService.WorkerName}; Failure={failureCode}; DbUpdate={exception.GetType().Name}; InnerException={innerExceptionType}; SqlNumber={sqlNumber}";
     }
 
     internal static string ResolveCurrentHostLabel(string? applicationName)

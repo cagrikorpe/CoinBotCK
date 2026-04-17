@@ -1622,6 +1622,7 @@ public sealed class BotWorkerJobProcessorTests
         var bot = await SeedBotGraphAsync(harness.DbContext);
         ConfigurePilotScope(harness, bot);
         harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.LongRegimeFilterEnabled = false;
         await harness.SwitchService.SetTradeMasterStateAsync(
             TradeMasterSwitchState.Armed,
             actor: "admin-bot",
@@ -1632,6 +1633,7 @@ public sealed class BotWorkerJobProcessorTests
             bot,
             "job-bot-rest-1",
             CancellationToken.None);
+
 
         var stateId = DegradedModeDefaults.ResolveStateId("BTCUSDT", "1m");
         var scopedState = await harness.DbContext.DegradedModeStates.SingleAsync(entity => entity.Id == stateId);

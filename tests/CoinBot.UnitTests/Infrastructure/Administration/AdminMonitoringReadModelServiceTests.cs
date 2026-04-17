@@ -408,10 +408,12 @@ public sealed class AdminMonitoringReadModelServiceTests
         Assert.Equal("RiskVeto", snapshot.MarketScanner.LatestHandoff.DecisionReasonType);
         Assert.Equal("StrategyVetoed", snapshot.MarketScanner.LatestHandoff.DecisionReasonCode);
         Assert.Equal("Exposure limit breached.", snapshot.MarketScanner.LatestHandoff.DecisionSummary);
+        Assert.Equal("StrategyVetoed: Exposure limit breached.", snapshot.MarketScanner.LatestHandoff.BlockerSummary);
         Assert.Equal("BTCUSDT", snapshot.MarketScanner.LastSuccessfulHandoff.SelectedSymbol);
         Assert.Equal("Prepared", snapshot.MarketScanner.LastSuccessfulHandoff.ExecutionRequestStatus);
         Assert.Equal("Allow", snapshot.MarketScanner.LastSuccessfulHandoff.DecisionOutcome);
         Assert.Equal("Allowed", snapshot.MarketScanner.LastSuccessfulHandoff.DecisionReasonCode);
+        Assert.Equal("Allowed: execution request prepared.", snapshot.MarketScanner.LastSuccessfulHandoff.BlockerSummary);
         Assert.Equal("SOLUSDT", snapshot.MarketScanner.LastBlockedHandoff.SelectedSymbol);
         Assert.Equal("StrategyVetoed", snapshot.MarketScanner.LastBlockedHandoff.BlockerCode);
         Assert.Equal(DateTimeKind.Utc, snapshot.MarketScanner.LatestHandoff.CompletedAtUtc!.Value.Kind);

@@ -378,7 +378,6 @@ public static class DependencyInjection
         services.AddHostedService<VirtualExecutionWatchdogWorker>();
         services.AddHostedService<AutonomySelfHealingWorker>();
         services.AddHostedService<MarketAnomalyWorker>();
-        services.AddHostedService<MarketScannerWorker>();
 
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseSqlServer(connectionString, sqlOptions =>

@@ -2523,6 +2523,9 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         builder.Property(entity => entity.BlockerDetail)
             .HasMaxLength(512);
 
+        builder.Property(entity => entity.BlockerSummary)
+            .HasMaxLength(256);
+
         builder.Property(entity => entity.GuardSummary)
             .HasMaxLength(512);
 

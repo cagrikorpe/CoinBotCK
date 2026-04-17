@@ -52,8 +52,7 @@ public sealed class DistributedJobLockManager(
             }
         }
 
-        if (existingLock.WorkerInstanceId != workerInstanceAccessor.WorkerInstanceId &&
-            existingLock.LeaseExpiresAtUtc > utcNow)
+        if (existingLock.LeaseExpiresAtUtc > utcNow)
         {
             return false;
         }

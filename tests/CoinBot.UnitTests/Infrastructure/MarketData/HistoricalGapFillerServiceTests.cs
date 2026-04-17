@@ -69,6 +69,40 @@ public sealed class HistoricalGapFillerServiceTests
     }
 
     [Fact]
+    public async Task BackfillAsync_ReactivatesSoftDeletedCandle_WhenReplacementSnapshotExists()
+    {
+        var deletedOpenTimeUtc = new DateTime(2026, 3, 22, 12, 1, 0, DateTimeKind.Utc);
+        await using var harness = CreateHarness(
+            now: new DateTimeOffset(2026, 3, 22, 12, 3, 30, TimeSpan.Zero),
+            clientSnapshots:
+            [
+                CreateSnapshot("BTCUSDT", deletedOpenTimeUtc, 64055m)
+            ]);
+        var deletedCandle = CreateEntity("BTCUSDT", deletedOpenTimeUtc);
+        await SeedCandlesAsync(
+            harness.Context,
+            CreateEntity("BTCUSDT", new DateTime(2026, 3, 22, 12, 0, 0, DateTimeKind.Utc)),
+            deletedCandle,
+            CreateEntity("BTCUSDT", new DateTime(2026, 3, 22, 12, 2, 0, DateTimeKind.Utc)));
+        deletedCandle.IsDeleted = true;
+        await harness.Context.SaveChangesAsync();
+
+        var summary = await harness.Service.BackfillAsync();
+        var storedCandles = await harness.Context.HistoricalMarketCandles
+            .IgnoreQueryFilters()
+            .Where(entity => entity.Symbol == "BTCUSDT" && entity.Interval == "1m")
+            .OrderBy(entity => entity.OpenTimeUtc)
+            .ToListAsync();
+        var restoredCandle = Assert.Single(storedCandles, entity => entity.OpenTimeUtc == deletedOpenTimeUtc);
+
+        Assert.Equal(3, storedCandles.Count);
+        Assert.Equal(1, summary.InsertedCandleCount);
+        Assert.False(restoredCandle.IsDeleted);
+        Assert.Equal("Binance.Rest.Kline", restoredCandle.Source);
+        Assert.Equal(64055m, restoredCandle.ClosePrice);
+    }
+
+    [Fact]
     public async Task BackfillAsync_ThrowsWhenContinuityCannotBeRestored()
     {
         await using var harness = CreateHarness(

@@ -437,6 +437,7 @@ SELECT TOP (1)
     ExecutionRequestStatus,
     BlockerCode,
     BlockerDetail,
+    BlockerSummary,
     GuardSummary,
     CorrelationId,
     CompletedAtUtc
@@ -674,6 +675,7 @@ try {
         UiHandoffSelection = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-handoff-selection'
         UiHandoffStrategy = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-handoff-strategy'
         UiHandoffBlocker = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-handoff-blocker'
+        UiHandoffBlockerSummary = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-handoff-blocker-summary'
         UiHandoffGuard = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-handoff-guard'
         UiHandoffAt = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-handoff-at'
         UiHandoffMarketScore = Read-HtmlText -Html $adminPage.Content -DataAttribute 'data-cb-scanner-handoff-market-score'
@@ -740,9 +742,11 @@ try {
     Write-Host ('HandoffStatusDb=' + $summary.LatestHandoffDb.ExecutionRequestStatus)
     Write-Host ('HandoffSymbolDb=' + $summary.LatestHandoffDb.SelectedSymbol)
     Write-Host ('HandoffBlockerDb=' + (Get-ValueOrDefault -Value $summary.LatestHandoffDb.BlockerCode -DefaultValue 'none'))
+    Write-Host ('HandoffBlockerSummaryDb=' + (Get-ValueOrDefault -Value $summary.LatestHandoffDb.BlockerSummary -DefaultValue 'n/a'))
     Write-Host ('UiHandoffStatus=' + $summary.UiHandoffStatus)
     Write-Host ('UiHandoffSymbol=' + $summary.UiHandoffSymbol)
     Write-Host ('UiHandoffBlocker=' + $summary.UiHandoffBlocker)
+    Write-Host ('UiHandoffBlockerSummary=' + $summary.UiHandoffBlockerSummary)
     Write-Host ('UiRiskOutcome=' + $summary.UiRiskOutcome)
     Write-Host ('UiRiskReason=' + $summary.UiRiskReason)
     Write-Host ('UiRiskDaily=' + $summary.UiRiskDaily)

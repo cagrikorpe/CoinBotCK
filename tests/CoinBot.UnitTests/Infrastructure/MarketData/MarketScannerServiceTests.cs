@@ -281,6 +281,21 @@ public sealed class MarketScannerServiceTests
         var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
         var timeProvider = new AdjustableTimeProvider(nowUtc);
         await using var dbContext = CreateDbContext();
+        var deletedCandle = new HistoricalMarketCandle
+        {
+            Id = Guid.NewGuid(),
+            Symbol = "ADAUSDT",
+            Interval = "1m",
+            OpenTimeUtc = nowUtc.UtcDateTime.AddMinutes(-3),
+            CloseTimeUtc = nowUtc.UtcDateTime.AddMinutes(-2),
+            OpenPrice = 1m,
+            HighPrice = 1m,
+            LowPrice = 1m,
+            ClosePrice = 1m,
+            Volume = 99m,
+            ReceivedAtUtc = nowUtc.UtcDateTime.AddMinutes(-2),
+            Source = "unit-test"
+        };
         dbContext.HistoricalMarketCandles.AddRange(
             new HistoricalMarketCandle
             {
@@ -327,22 +342,7 @@ public sealed class MarketScannerServiceTests
                 ReceivedAtUtc = nowUtc.UtcDateTime.AddMinutes(-1),
                 Source = "   "
             },
-            new HistoricalMarketCandle
-            {
-                Id = Guid.NewGuid(),
-                Symbol = "ADAUSDT",
-                Interval = "1m",
-                OpenTimeUtc = nowUtc.UtcDateTime.AddMinutes(-3),
-                CloseTimeUtc = nowUtc.UtcDateTime.AddMinutes(-2),
-                OpenPrice = 1m,
-                HighPrice = 1m,
-                LowPrice = 1m,
-                ClosePrice = 1m,
-                Volume = 99m,
-                ReceivedAtUtc = nowUtc.UtcDateTime.AddMinutes(-2),
-                Source = "unit-test",
-                IsDeleted = true
-            },
+            deletedCandle,
             new HistoricalMarketCandle
             {
                 Id = Guid.NewGuid(),
@@ -358,6 +358,8 @@ public sealed class MarketScannerServiceTests
                 ReceivedAtUtc = nowUtc.UtcDateTime.AddHours(-2),
                 Source = "unit-test"
             });
+        await dbContext.SaveChangesAsync();
+        deletedCandle.IsDeleted = true;
         await dbContext.SaveChangesAsync();
 
         var marketDataService = new FakeMarketDataService();
@@ -408,6 +410,124 @@ public sealed class MarketScannerServiceTests
         Assert.Equal(30m, candidate.QuoteVolume24h);
     }
 
+    [Fact]
+    public async Task RunOnceAsync_UsesActiveHistoricalWindow_ForQuoteVolumeAndEligibility_WhenSharedMarketDataMissing()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        await dbContext.SaveChangesAsync();
+
+        var service = new MarketScannerService(
+            dbContext,
+            new FakeMarketDataService(),
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("BTCUSDT", "Binance", "BTC", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 10,
+                Min24hQuoteVolume = 100m,
+                MaxDataAgeSeconds = 120,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = false
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["BTCUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance);
+
+        var cycle = await service.RunOnceAsync();
+
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+
+        Assert.Equal(1, cycle.ScannedSymbolCount);
+        Assert.Equal(1, cycle.EligibleCandidateCount);
+        Assert.Equal("BTCUSDT", cycle.BestCandidateSymbol);
+        Assert.True(candidate.IsEligible);
+        Assert.Null(candidate.RejectionReason);
+        Assert.Equal(100m, candidate.LastPrice);
+        Assert.Equal(1_000_000m, candidate.QuoteVolume24h);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_ReactivatesRecoverableDeletedHistoricalWindow_WhenRestRecoveryIsUnavailable()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        var deletedCandle = new HistoricalMarketCandle
+        {
+            Id = Guid.NewGuid(),
+            Symbol = "BTCUSDT",
+            Interval = "1m",
+            OpenTimeUtc = nowUtc.UtcDateTime.AddMinutes(-1),
+            CloseTimeUtc = nowUtc.UtcDateTime,
+            OpenPrice = 100m,
+            HighPrice = 100m,
+            LowPrice = 100m,
+            ClosePrice = 100m,
+            Volume = 1_000m,
+            ReceivedAtUtc = nowUtc.UtcDateTime,
+            Source = "unit-test"
+        };
+        dbContext.HistoricalMarketCandles.Add(deletedCandle);
+        await dbContext.SaveChangesAsync();
+        deletedCandle.IsDeleted = true;
+        await dbContext.SaveChangesAsync();
+
+        var marketDataService = new FakeMarketDataService();
+        marketDataService.SetLatestPrice("BTCUSDT", 100m, nowUtc.UtcDateTime);
+        marketDataService.SetLatestKline(
+            "BTCUSDT",
+            "1m",
+            new MarketCandleSnapshot(
+                "BTCUSDT",
+                "1m",
+                nowUtc.UtcDateTime.AddMinutes(-1),
+                nowUtc.UtcDateTime,
+                100m,
+                100m,
+                100m,
+                100m,
+                1_000m,
+                true,
+                nowUtc.UtcDateTime,
+                "unit-test-shared"),
+            SharedMarketDataCacheReadStatus.HitFresh);
+
+        var service = new MarketScannerService(
+            dbContext,
+            marketDataService,
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("BTCUSDT", "Binance", "BTC", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 10,
+                Min24hQuoteVolume = 100m,
+                MaxDataAgeSeconds = 120,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = false
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["BTCUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance);
+
+        var cycle = await service.RunOnceAsync();
+
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+        var restoredCandle = await dbContext.HistoricalMarketCandles
+            .IgnoreQueryFilters()
+            .SingleAsync(entity => entity.Id == deletedCandle.Id);
+
+        Assert.True(candidate.IsEligible);
+        Assert.Equal(100_000m, candidate.QuoteVolume24h);
+        Assert.False(restoredCandle.IsDeleted);
+        Assert.Contains("HistoricalCandlesDb.Reactivated", candidate.ScoringSummary ?? string.Empty, StringComparison.Ordinal);
+    }
     [Fact]
     public async Task RunOnceAsync_RejectsDeletedHistoricalWindow_WhenSharedCandleExistsButHistoricalWindowMissing()
     {
@@ -530,6 +650,110 @@ public sealed class MarketScannerServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_ReactivatesSoftDeletedRecoveredHistoricalCandle_InsteadOfInsertingDuplicate()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        var softDeletedOpenTimeUtc = nowUtc.UtcDateTime.AddMinutes(-1);
+        var softDeletedCandle = new HistoricalMarketCandle
+        {
+            Id = Guid.NewGuid(),
+            Symbol = "BTCUSDT",
+            Interval = "1m",
+            OpenTimeUtc = softDeletedOpenTimeUtc,
+            CloseTimeUtc = nowUtc.UtcDateTime,
+            OpenPrice = 1m,
+            HighPrice = 1m,
+            LowPrice = 1m,
+            ClosePrice = 1m,
+            Volume = 1m,
+            ReceivedAtUtc = nowUtc.UtcDateTime,
+            Source = "deleted-seed"
+        };
+        dbContext.HistoricalMarketCandles.Add(softDeletedCandle);
+        await dbContext.SaveChangesAsync();
+        softDeletedCandle.IsDeleted = true;
+        await dbContext.SaveChangesAsync();
+
+        var marketDataService = new FakeMarketDataService();
+        marketDataService.SetLatestPrice("BTCUSDT", 100m, nowUtc.UtcDateTime);
+        marketDataService.SetLatestKline(
+            "BTCUSDT",
+            "1m",
+            new MarketCandleSnapshot(
+                "BTCUSDT",
+                "1m",
+                softDeletedOpenTimeUtc,
+                nowUtc.UtcDateTime,
+                100m,
+                100m,
+                100m,
+                100m,
+                1_500m,
+                true,
+                nowUtc.UtcDateTime,
+                "unit-test-shared"),
+            SharedMarketDataCacheReadStatus.HitFresh);
+
+        var historicalClient = new FakeHistoricalKlineClient();
+        historicalClient.SetCandles(
+            "BTCUSDT",
+            [
+                new MarketCandleSnapshot(
+                    "BTCUSDT",
+                    "1m",
+                    nowUtc.UtcDateTime.AddMinutes(-2),
+                    softDeletedOpenTimeUtc,
+                    100m,
+                    100m,
+                    100m,
+                    100m,
+                    2_000m,
+                    true,
+                    softDeletedOpenTimeUtc,
+                    "unit-test-rest")
+            ]);
+
+        var service = new MarketScannerService(
+            dbContext,
+            marketDataService,
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("BTCUSDT", "Binance", "BTC", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 10,
+                VolumeLookbackHours = 1,
+                Min24hQuoteVolume = 100m,
+                MaxDataAgeSeconds = 120,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = false
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["BTCUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance,
+            historicalKlineClient: historicalClient);
+
+        var cycle = await service.RunOnceAsync();
+
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+        var recoveredRows = await dbContext.HistoricalMarketCandles
+            .IgnoreQueryFilters()
+            .Where(entity => entity.Symbol == "BTCUSDT" && entity.Interval == "1m" && entity.OpenTimeUtc == softDeletedOpenTimeUtc)
+            .ToListAsync();
+        var recoveredCandle = Assert.Single(recoveredRows);
+
+        Assert.True(candidate.IsEligible);
+        Assert.NotNull(candidate.QuoteVolume24h);
+        Assert.Equal(softDeletedCandle.Id, recoveredCandle.Id);
+        Assert.False(recoveredCandle.IsDeleted);
+        Assert.Equal("unit-test-shared", recoveredCandle.Source);
+        Assert.Equal(100m, recoveredCandle.ClosePrice);
+    }
+
+    [Fact]
     public async Task RunOnceAsync_ClampsMarketScoreAndCompositeScore_WhenQuoteVolumeGreatlyExceedsThreshold()
     {
         var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
@@ -564,7 +788,7 @@ public sealed class MarketScannerServiceTests
         var cycle = await service.RunOnceAsync();
         var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
 
-        Assert.Equal(10_000_000_000_000m, candidate.QuoteVolume24h);
+        Assert.Equal(79_228_162_514.264337593543950335m, candidate.QuoteVolume24h);
         Assert.Equal(100m, candidate.MarketScore);
         Assert.Equal(33.3333m, candidate.Score);
     }
@@ -841,16 +1065,16 @@ public sealed class MarketScannerServiceTests
     }
 
     [Fact]
-    public async Task RunOnceAsync_ThrowsScannerPoisonedCandleAuditException_AndSoftDeletesPoisonedCandles()
+    public async Task RunOnceAsync_ThrowsScannerPoisonedCandleAuditException_AndSoftDeletesInvalidCandles()
     {
         var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
         var timeProvider = new AdjustableTimeProvider(nowUtc);
         await using var dbContext = CreateDbContext();
-        SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 10_000_000_000m, volume: 10_000_000_000m);
+        SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 0m, volume: 10m);
         await dbContext.SaveChangesAsync();
 
         var marketDataService = new FakeMarketDataService();
-        marketDataService.SetLatestPrice("BTCUSDT", 10_000_000_000m, nowUtc.UtcDateTime);
+        marketDataService.SetLatestPrice("BTCUSDT", 100m, nowUtc.UtcDateTime);
 
         var service = new MarketScannerService(
             dbContext,
@@ -877,8 +1101,8 @@ public sealed class MarketScannerServiceTests
         Assert.Equal(10, exception.PurgedCount);
         Assert.Contains("PurgedCount=10", exception.Detail, StringComparison.Ordinal);
         Assert.Contains("Symbol=BTCUSDT", exception.Detail, StringComparison.Ordinal);
-        Assert.Contains("Field=ClosePriceTimesVolume", exception.Detail, StringComparison.Ordinal);
-        Assert.Contains("BadValue=100000000000000000000", exception.Detail, StringComparison.Ordinal);
+        Assert.Contains("Field=ClosePrice", exception.Detail, StringComparison.Ordinal);
+        Assert.Contains("BadValue=0", exception.Detail, StringComparison.Ordinal);
 
         var softDeletedCandles = await dbContext.HistoricalMarketCandles
             .IgnoreQueryFilters()
@@ -891,6 +1115,48 @@ public sealed class MarketScannerServiceTests
         Assert.Equal(0, cycleCount);
     }
 
+    [Fact]
+    public async Task RunOnceAsync_KeepsValidHighNotionalCandlesActive_AndCapsPersistedQuoteVolume()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 10_000_000_000m, volume: 10_000_000_000m);
+        await dbContext.SaveChangesAsync();
+
+        var marketDataService = new FakeMarketDataService();
+        marketDataService.SetLatestPrice("BTCUSDT", 100m, nowUtc.UtcDateTime);
+
+        var service = new MarketScannerService(
+            dbContext,
+            marketDataService,
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("BTCUSDT", "Binance", "BTC", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 10,
+                Min24hQuoteVolume = 100m,
+                MaxDataAgeSeconds = 120,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = false
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["BTCUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance);
+
+        var cycle = await service.RunOnceAsync();
+
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+        var softDeletedCandles = await dbContext.HistoricalMarketCandles
+            .IgnoreQueryFilters()
+            .CountAsync(entity => entity.Symbol == "BTCUSDT" && entity.IsDeleted);
+
+        Assert.True(candidate.IsEligible);
+        Assert.Equal(79_228_162_514.264337593543950335m, candidate.QuoteVolume24h);
+        Assert.Equal(0, softDeletedCandles);
+    }
     [Fact]
     public async Task RunOnceAsync_UsesExplicitActiveStrategyVersion_WhenLifecycleIsManaged()
     {

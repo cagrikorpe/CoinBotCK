@@ -29,6 +29,7 @@ public sealed class MarketScannerService(
 {
     internal const string WorkerKey = "market-scanner";
     internal const string WorkerName = "Market Scanner";
+    private const decimal MaxSqlClientDecimal38Scale18Value = 79_228_162_514.264337593543950335m;
 
     private readonly MarketScannerOptions scannerOptionsValue = scannerOptions.Value;
     private readonly string klineInterval = string.IsNullOrWhiteSpace(marketDataOptions.Value.KlineInterval)
@@ -103,6 +104,7 @@ public sealed class MarketScannerService(
             ? candidates
             : Array.Empty<MarketScannerCandidate>();
 
+        NormalizeScannerPersistenceNumerics(cycle, persistedCandidates);
         ValidateNumericEnvelope(cycle, persistedCandidates);
 
         if (persistedCandidates.Count > 0)
@@ -207,7 +209,9 @@ public sealed class MarketScannerService(
             .FirstOrDefault();
 
         cycle.BestCandidateSymbol = bestCandidate?.Symbol;
-        cycle.BestCandidateScore = bestCandidate?.Score;
+        cycle.BestCandidateScore = bestCandidate?.Score is decimal bestScore
+            ? NormalizePersistableDecimal38Scale18(bestScore)
+            : null;
         cycle.Summary = BuildCycleSummary(cycle, activeCandidates);
     }
 
@@ -227,10 +231,12 @@ public sealed class MarketScannerService(
         AddSymbols(universe, enabledBotSymbols, "enabled-bot");
 
         var recentWindowStartUtc = nowUtc.AddHours(-scannerOptionsValue.VolumeLookbackHours);
-        var recentWindowRows = await BuildHistoricalMarketWindowQuery(recentWindowStartUtc, nowUtc, activeOnly: false)
-            .ToListAsync(cancellationToken);
-        var recentCandleSymbols = recentWindowRows
-            .Where(IsActiveHistoricalCandle)
+        var recentWindowCandles = await LoadHistoricalMarketWindowCandlesAsync(
+            recentWindowStartUtc,
+            nowUtc,
+            activeOnly: true,
+            cancellationToken);
+        var recentCandleSymbols = recentWindowCandles
             .Select(entity => entity.Symbol)
             .Distinct(StringComparer.Ordinal)
             .ToList();
@@ -348,11 +354,12 @@ public sealed class MarketScannerService(
             .Select(item => item.Symbol)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
-        var auditWindowRows = await BuildHistoricalMarketWindowQuery(auditWindowStartUtc, normalizedObservedAtUtc, activeOnly: false)
+        IReadOnlyCollection<HistoricalMarketCandle> candles = (await LoadHistoricalMarketWindowCandlesAsync(
+                auditWindowStartUtc,
+                normalizedObservedAtUtc,
+                activeOnly: true,
+                cancellationToken))
             .Where(entity => universeSymbols.Contains(entity.Symbol))
-            .ToListAsync(cancellationToken);
-        IReadOnlyCollection<HistoricalMarketCandle> candles = auditWindowRows
-            .Where(IsActiveHistoricalCandle)
             .OrderBy(entity => entity.Symbol)
             .ThenBy(entity => entity.CloseTimeUtc)
             .ToArray();
@@ -435,18 +442,6 @@ public sealed class MarketScannerService(
             return true;
         }
 
-        if (!TryComputeCandleNotional(candle.ClosePrice, candle.Volume, out var notional, out var notionalText))
-        {
-            finding = CreatePoisonedHistoricalCandleAuditFinding(candle, "ClosePriceTimesVolume", notionalText, "ClosePrice * Volume overflowed while scanner audited historical candles.");
-            return true;
-        }
-
-        if (!FitsDecimal38Scale18(notional))
-        {
-            finding = CreatePoisonedHistoricalCandleAuditFinding(candle, "ClosePriceTimesVolume", notionalText, "ClosePrice * Volume does not fit decimal(38,18).");
-            return true;
-        }
-
         finding = default;
         return false;
     }
@@ -504,6 +499,32 @@ public sealed class MarketScannerService(
         string ClosePrice,
         string Volume);
 
+    private static void NormalizeScannerPersistenceNumerics(
+        MarketScannerCycle cycle,
+        IReadOnlyCollection<MarketScannerCandidate> persistedCandidates)
+    {
+        if (cycle.BestCandidateScore is decimal bestCandidateScore)
+        {
+            cycle.BestCandidateScore = NormalizePersistableDecimal38Scale18(bestCandidateScore);
+        }
+
+        foreach (var candidate in persistedCandidates)
+        {
+            if (candidate.LastPrice is decimal lastPrice)
+            {
+                candidate.LastPrice = NormalizePersistableDecimal38Scale18(lastPrice);
+            }
+
+            if (candidate.QuoteVolume24h is decimal quoteVolume)
+            {
+                candidate.QuoteVolume24h = NormalizePersistableDecimal38Scale18(quoteVolume);
+            }
+
+            candidate.MarketScore = NormalizePersistableDecimal38Scale18(candidate.MarketScore);
+            candidate.Score = NormalizePersistableDecimal38Scale18(candidate.Score);
+        }
+    }
+
     private void ValidateNumericEnvelope(
         MarketScannerCycle cycle,
         IReadOnlyCollection<MarketScannerCandidate> persistedCandidates)
@@ -526,7 +547,11 @@ public sealed class MarketScannerService(
                 ValidateNumericEnvelope(candidate.ScanCycleId, candidate.Symbol, nameof(MarketScannerCandidate.LastPrice), lastPrice);
             }
 
-            // QuoteVolume24h raw diagnostic alandir; persistence guard yalniz bounded ranking alanlarina uygulanir.
+            if (candidate.QuoteVolume24h is decimal quoteVolume)
+            {
+                ValidateNumericEnvelope(candidate.ScanCycleId, candidate.Symbol, nameof(MarketScannerCandidate.QuoteVolume24h), quoteVolume);
+            }
+
             ValidateNumericEnvelope(candidate.ScanCycleId, candidate.Symbol, nameof(MarketScannerCandidate.MarketScore), candidate.MarketScore);
             ValidateNumericEnvelope(candidate.ScanCycleId, candidate.Symbol, nameof(MarketScannerCandidate.Score), candidate.Score);
         }
@@ -739,21 +764,46 @@ public sealed class MarketScannerService(
         var normalizedSymbol = MarketDataSymbolNormalizer.Normalize(symbol);
         var normalizedWindowStartUtc = NormalizeUtc(windowStartUtc);
         var normalizedObservedAtUtc = NormalizeUtc(observedAtUtc);
-        var historicalWindowRows = await BuildHistoricalMarketWindowQuery(normalizedWindowStartUtc, normalizedObservedAtUtc, activeOnly: false)
+        IReadOnlyCollection<HistoricalMarketCandle> candles = (await LoadHistoricalMarketWindowCandlesAsync(
+                normalizedWindowStartUtc,
+                normalizedObservedAtUtc,
+                activeOnly: true,
+                cancellationToken))
             .Where(entity => entity.Symbol == normalizedSymbol)
-            .ToListAsync(cancellationToken);
-        IReadOnlyCollection<HistoricalMarketCandle> candles = historicalWindowRows
-            .Where(IsActiveHistoricalCandle)
             .OrderByDescending(entity => entity.CloseTimeUtc)
             .ToArray();
+        var reactivationApplied = false;
+
+        if (candles.Count == 0)
+        {
+            var reactivatedCandles = await ReactivateRecoverableHistoricalWindowCandlesAsync(
+                normalizedSymbol,
+                latestSharedKline,
+                normalizedWindowStartUtc,
+                normalizedObservedAtUtc,
+                cancellationToken);
+            if (reactivatedCandles.Count > 0)
+            {
+                candles = reactivatedCandles
+                    .OrderByDescending(entity => entity.CloseTimeUtc)
+                    .ToArray();
+                reactivationApplied = true;
+            }
+        }
 
         var latestHistoricalCandle = candles.FirstOrDefault();
-        var hasInactiveHistoricalWindowRows = latestSharedKline is not null && historicalWindowRows.Any(entity => !IsActiveHistoricalCandle(entity));
+        var hasInactiveHistoricalWindowRows = candles.Count == 0 && latestSharedKline is not null
+            ? await BuildHistoricalMarketWindowQuery(normalizedWindowStartUtc, normalizedObservedAtUtc, activeOnly: false)
+                .Where(entity => entity.Symbol == normalizedSymbol)
+                .AnyAsync(
+                    entity => entity.IsDeleted || entity.Source == null || string.IsNullOrWhiteSpace(entity.Source),
+                    cancellationToken)
+            : false;
         var hasDeletedHistoricalWindow = latestSharedKline is not null && (candles.Count == 0 || hasInactiveHistoricalWindowRows);
         var parityLag = ResolveHistoricalParityLagSeconds(latestSharedKline, latestHistoricalCandle);
         var requiresHistoricalRepair = candles.Count == 0 || parityLag.HasValue;
-        var repairApplied = false;
-        string? repairSource = null;
+        var repairApplied = reactivationApplied;
+        string? repairSource = reactivationApplied ? "HistoricalCandlesDb.Reactivated" : null;
 
         if (requiresHistoricalRepair && historicalKlineClient is not null)
         {
@@ -767,14 +817,19 @@ public sealed class MarketScannerService(
             candles = recovery.Candles;
             latestHistoricalCandle = candles.FirstOrDefault();
             parityLag = ResolveHistoricalParityLagSeconds(latestSharedKline, latestHistoricalCandle);
-            repairApplied = recovery.RecoveryApplied && !parityLag.HasValue && candles.Count > 0;
-            repairSource = repairApplied ? recovery.RecoverySource : null;
+            var recoveryApplied = recovery.RecoveryApplied && !parityLag.HasValue && candles.Count > 0;
+            repairApplied = repairApplied || recoveryApplied;
+            repairSource = recoveryApplied ? recovery.RecoverySource : repairSource;
         }
 
+        candles = candles
+            .Where(IsActiveHistoricalCandle)
+            .OrderByDescending(entity => entity.CloseTimeUtc)
+            .ToArray();
+        latestHistoricalCandle = candles.FirstOrDefault();
+
         var latestCandle = ResolveLatestClosedCandle(latestSharedKline, latestHistoricalCandle);
-        var quoteVolume = candles.Count == 0
-            ? (decimal?)null
-            : candles.Sum(item => item.ClosePrice * item.Volume);
+        var quoteVolume = ResolvePersistableQuoteVolume24h(candles);
 
         return new ScannerMarketWindowSnapshot(
             candles,
@@ -919,7 +974,7 @@ public sealed class MarketScannerService(
             entity.Source.Trim() != string.Empty);
     }
 
-    private IQueryable<HistoricalMarketCandle> BuildActiveHistoricalCandlesByOpenTimesQuery(
+    private IQueryable<HistoricalMarketCandle> BuildHistoricalCandlesByOpenTimesQuery(
         string symbol,
         IReadOnlyCollection<DateTime> openTimes)
     {
@@ -928,15 +983,74 @@ public sealed class MarketScannerService(
         return dbContext.HistoricalMarketCandles
             .IgnoreQueryFilters()
             .Where(entity =>
-                !entity.IsDeleted &&
                 entity.Symbol == normalizedSymbol &&
                 entity.Interval != null &&
                 entity.Interval.Trim() == normalizedInterval &&
-                entity.Source != null &&
-                entity.Source.Trim() != string.Empty &&
                 openTimes.Contains(entity.OpenTimeUtc));
     }
 
+    private async Task<IReadOnlyCollection<HistoricalMarketCandle>> ReactivateRecoverableHistoricalWindowCandlesAsync(
+        string symbol,
+        MarketCandleSnapshot? latestSharedKline,
+        DateTime windowStartUtc,
+        DateTime observedAtUtc,
+        CancellationToken cancellationToken)
+    {
+        var normalizedSymbol = MarketDataSymbolNormalizer.Normalize(symbol);
+        var normalizedWindowStartUtc = NormalizeUtc(windowStartUtc);
+        var normalizedObservedAtUtc = NormalizeUtc(observedAtUtc);
+        var normalizedInterval = klineInterval.Trim();
+        var windowCandles = await dbContext.HistoricalMarketCandles
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.IsDeleted &&
+                entity.Symbol == normalizedSymbol &&
+                entity.Interval != null &&
+                entity.Interval.Trim() == normalizedInterval &&
+                entity.OpenTimeUtc < entity.CloseTimeUtc &&
+                entity.OpenTimeUtc < normalizedObservedAtUtc &&
+                entity.CloseTimeUtc >= normalizedWindowStartUtc)
+            .ToListAsync(cancellationToken);
+        var recoverableCandles = windowCandles
+            .Where(IsRecoverableHistoricalCandle)
+            .OrderByDescending(entity => entity.CloseTimeUtc)
+            .ToArray();
+
+        if (recoverableCandles.Length == 0)
+        {
+            return Array.Empty<HistoricalMarketCandle>();
+        }
+
+        var normalizedSharedSnapshot = latestSharedKline is { IsClosed: true } sharedSnapshot
+            ? NormalizeSnapshot(sharedSnapshot)
+            : null;
+        if (normalizedSharedSnapshot is not null && !IsPersistableHistoricalSnapshot(normalizedSharedSnapshot))
+        {
+            normalizedSharedSnapshot = null;
+        }
+
+        foreach (var candle in recoverableCandles)
+        {
+            if (normalizedSharedSnapshot is not null &&
+                string.Equals(candle.Symbol, normalizedSharedSnapshot.Symbol, StringComparison.Ordinal) &&
+                string.Equals(candle.Interval.Trim(), normalizedSharedSnapshot.Interval.Trim(), StringComparison.Ordinal) &&
+                NormalizeUtc(candle.OpenTimeUtc) == normalizedSharedSnapshot.OpenTimeUtc)
+            {
+                ApplyHistoricalMarketCandleSnapshot(candle, normalizedSharedSnapshot);
+                continue;
+            }
+
+            candle.IsDeleted = false;
+        }
+
+        logger.LogInformation(
+            "Market scanner reactivated {ReactivatedCandleCount} recoverable historical candles for {Symbol} {Interval}.",
+            recoverableCandles.Length,
+            normalizedSymbol,
+            normalizedInterval);
+
+        return recoverableCandles;
+    }
     private async Task<IReadOnlyCollection<HistoricalMarketCandle>> LoadHistoricalMarketWindowCandlesAsync(
         DateTime windowStartUtc,
         DateTime observedAtUtc,
@@ -965,6 +1079,64 @@ public sealed class MarketScannerService(
                entity.OpenTimeUtc < entity.CloseTimeUtc;
     }
 
+    private bool IsRecoverableHistoricalCandle(HistoricalMarketCandle entity)
+    {
+        return entity.IsDeleted &&
+               entity.Interval is not null &&
+               string.Equals(entity.Interval.Trim(), klineInterval, StringComparison.Ordinal) &&
+               !string.IsNullOrWhiteSpace(entity.Source) &&
+               entity.OpenTimeUtc < entity.CloseTimeUtc &&
+               !TryCreatePoisonedHistoricalCandleAuditFinding(entity, out _);
+    }
+
+    private decimal? ResolvePersistableQuoteVolume24h(IReadOnlyCollection<HistoricalMarketCandle> candles)
+    {
+        if (candles.Count == 0)
+        {
+            return null;
+        }
+
+        var total = 0m;
+        foreach (var candle in candles)
+        {
+            if (!TryComputeCandleNotional(candle.ClosePrice, candle.Volume, out var notional, out _))
+            {
+                return MaxSqlClientDecimal38Scale18Value;
+            }
+
+            var normalizedNotional = NormalizePersistableDecimal38Scale18(notional);
+            if (MaxSqlClientDecimal38Scale18Value - total <= normalizedNotional)
+            {
+                return MaxSqlClientDecimal38Scale18Value;
+            }
+
+            total += normalizedNotional;
+        }
+
+        return NormalizePersistableDecimal38Scale18(total);
+    }
+
+    private static decimal NormalizePersistableDecimal38Scale18(decimal value)
+    {
+        if (value <= 0m)
+        {
+            return 0m;
+        }
+
+        if (value >= MaxSqlClientDecimal38Scale18Value || GetIntegerDigitCount(value) > 20)
+        {
+            return MaxSqlClientDecimal38Scale18Value;
+        }
+
+        var normalized = GetDecimalScale(value) > 18
+            ? decimal.Round(value, 18, MidpointRounding.AwayFromZero)
+            : value;
+
+        return normalized >= MaxSqlClientDecimal38Scale18Value || GetIntegerDigitCount(normalized) > 20
+            ? MaxSqlClientDecimal38Scale18Value
+            : normalized;
+    }
+
     private async Task<int> PersistRecoveredHistoricalCandlesAsync(
         string symbol,
         int existingHistoricalCandleCount,
@@ -973,7 +1145,7 @@ public sealed class MarketScannerService(
         CancellationToken cancellationToken)
     {
         var persistableSnapshots = new Dictionary<DateTime, MarketCandleSnapshot>(EqualityComparer<DateTime>.Default);
-        foreach (var snapshot in fetchedSnapshots.Where(item => item.IsClosed).Select(NormalizeSnapshot))
+        foreach (var snapshot in fetchedSnapshots.Where(item => item.IsClosed).Select(NormalizeSnapshot).Where(IsPersistableHistoricalSnapshot))
         {
             persistableSnapshots[snapshot.OpenTimeUtc] = snapshot;
         }
@@ -981,7 +1153,10 @@ public sealed class MarketScannerService(
         if (latestSharedKline is { IsClosed: true } && (existingHistoricalCandleCount > 0 || fetchedSnapshots.Count > 0))
         {
             var normalizedSharedSnapshot = NormalizeSnapshot(latestSharedKline);
-            persistableSnapshots[normalizedSharedSnapshot.OpenTimeUtc] = normalizedSharedSnapshot;
+            if (IsPersistableHistoricalSnapshot(normalizedSharedSnapshot))
+            {
+                persistableSnapshots[normalizedSharedSnapshot.OpenTimeUtc] = normalizedSharedSnapshot;
+            }
         }
 
         if (persistableSnapshots.Count == 0)
@@ -990,24 +1165,41 @@ public sealed class MarketScannerService(
         }
 
         var openTimes = persistableSnapshots.Keys.ToArray();
-        var existingOpenTimes = await BuildActiveHistoricalCandlesByOpenTimesQuery(symbol, openTimes)
-            .Select(entity => entity.OpenTimeUtc)
+        var existingCandles = await BuildHistoricalCandlesByOpenTimesQuery(symbol, openTimes)
             .ToListAsync(cancellationToken);
-        var existingOpenTimeSet = existingOpenTimes.ToHashSet();
-        var insertedCount = 0;
+        var existingCandlesByOpenTime = existingCandles
+            .GroupBy(entity => NormalizeUtc(entity.OpenTimeUtc))
+            .ToDictionary(
+                group => group.Key,
+                group => group
+                    .OrderByDescending(IsActiveHistoricalCandle)
+                    .ThenBy(entity => entity.IsDeleted)
+                    .ThenByDescending(entity => entity.UpdatedDate)
+                    .First());
+        var persistedCount = 0;
 
         foreach (var snapshot in persistableSnapshots.Values.OrderBy(item => item.OpenTimeUtc))
         {
-            if (!existingOpenTimeSet.Add(snapshot.OpenTimeUtc))
+            var normalizedOpenTimeUtc = NormalizeUtc(snapshot.OpenTimeUtc);
+            if (existingCandlesByOpenTime.TryGetValue(normalizedOpenTimeUtc, out var existingCandle))
             {
+                if (IsActiveHistoricalCandle(existingCandle))
+                {
+                    continue;
+                }
+
+                ApplyHistoricalMarketCandleSnapshot(existingCandle, snapshot);
+                persistedCount++;
                 continue;
             }
 
-            dbContext.HistoricalMarketCandles.Add(MapHistoricalMarketCandle(snapshot));
-            insertedCount++;
+            var historicalCandle = MapHistoricalMarketCandle(snapshot);
+            dbContext.HistoricalMarketCandles.Add(historicalCandle);
+            existingCandlesByOpenTime[normalizedOpenTimeUtc] = historicalCandle;
+            persistedCount++;
         }
 
-        return insertedCount;
+        return persistedCount;
     }
 
     private static IReadOnlyList<HistoricalMarketCandle> MergeHistoricalCandles(
@@ -1090,6 +1282,25 @@ public sealed class MarketScannerService(
         };
     }
 
+    private static void ApplyHistoricalMarketCandleSnapshot(
+        HistoricalMarketCandle entity,
+        MarketCandleSnapshot snapshot)
+    {
+        var replacement = MapHistoricalMarketCandle(snapshot);
+        entity.Symbol = replacement.Symbol;
+        entity.Interval = replacement.Interval;
+        entity.OpenTimeUtc = replacement.OpenTimeUtc;
+        entity.CloseTimeUtc = replacement.CloseTimeUtc;
+        entity.OpenPrice = replacement.OpenPrice;
+        entity.HighPrice = replacement.HighPrice;
+        entity.LowPrice = replacement.LowPrice;
+        entity.ClosePrice = replacement.ClosePrice;
+        entity.Volume = replacement.Volume;
+        entity.ReceivedAtUtc = replacement.ReceivedAtUtc;
+        entity.Source = replacement.Source;
+        entity.IsDeleted = false;
+    }
+
     private static MarketCandleSnapshot NormalizeSnapshot(MarketCandleSnapshot snapshot)
     {
         return new MarketCandleSnapshot(
@@ -1105,6 +1316,16 @@ public sealed class MarketScannerService(
             snapshot.IsClosed,
             NormalizeUtc(snapshot.ReceivedAtUtc),
             snapshot.Source);
+    }
+
+    private static bool IsPersistableHistoricalSnapshot(MarketCandleSnapshot snapshot)
+    {
+        return !string.IsNullOrWhiteSpace(snapshot.Symbol) &&
+               !string.IsNullOrWhiteSpace(snapshot.Interval) &&
+               !string.IsNullOrWhiteSpace(snapshot.Source) &&
+               snapshot.OpenTimeUtc < snapshot.CloseTimeUtc &&
+               snapshot.ClosePrice > 0m &&
+               snapshot.Volume >= 0m;
     }
 
     private static int? ResolveHistoricalParityLagSeconds(

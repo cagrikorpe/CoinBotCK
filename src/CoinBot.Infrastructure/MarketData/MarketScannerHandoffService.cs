@@ -733,6 +733,7 @@ public sealed class MarketScannerHandoffService(
             ExecutionPrice = executionContext?.Price,
             BlockerCode = Truncate(blockerCode, 64),
             BlockerDetail = SanitizeBlockerDetail(blockerDetail),
+            BlockerSummary = BuildBlockerSummary(executionStatus, blockerCode, blockerDetail, guardSummary),
             GuardSummary = Truncate(guardSummary, 512),
             CorrelationId = CreateCorrelationId(),
             CompletedAtUtc = nowUtc
@@ -986,6 +987,30 @@ public sealed class MarketScannerHandoffService(
     private static string CreateCorrelationId()
     {
         return Guid.NewGuid().ToString("N");
+    }
+
+    private static string? BuildBlockerSummary(
+        string executionStatus,
+        string? blockerCode,
+        string? blockerDetail,
+        string? guardSummary)
+    {
+        if (string.Equals(executionStatus, "Prepared", StringComparison.Ordinal))
+        {
+            return "Allowed: execution request prepared.";
+        }
+
+        var normalizedCode = string.IsNullOrWhiteSpace(blockerCode)
+            ? "Blocked"
+            : blockerCode.Trim();
+        var humanSummary = ExecutionDecisionDiagnostics.ExtractHumanSummary(blockerDetail)
+            ?? ExecutionDecisionDiagnostics.ExtractHumanSummary(guardSummary);
+
+        return Truncate(
+            string.IsNullOrWhiteSpace(humanSummary)
+                ? $"{normalizedCode}: scanner handoff blocked execution."
+                : $"{normalizedCode}: {humanSummary}",
+            256);
     }
 
     private static string? SanitizeBlockerDetail(string? blockerDetail)

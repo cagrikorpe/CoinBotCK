@@ -285,6 +285,7 @@ public sealed class AdminMonitoringReadModelService(
             entity.ExecutionPrice,
             entity.BlockerCode,
             entity.BlockerDetail,
+            ResolveHandoffBlockerSummary(entity, isBlocked, decisionSummary),
             entity.GuardSummary,
             entity.CorrelationId,
             decisionAtUtc,
@@ -333,6 +334,33 @@ public sealed class AdminMonitoringReadModelService(
                 entity.SnapshotAgeSeconds),
             entity.Detail,
             entity.ObservedAtUtc);
+    }
+
+    private static string? ResolveHandoffBlockerSummary(
+        MarketScannerHandoffAttemptEntity entity,
+        bool isBlocked,
+        string decisionSummary)
+    {
+        if (!string.IsNullOrWhiteSpace(entity.BlockerSummary))
+        {
+            return entity.BlockerSummary.Trim();
+        }
+
+        if (!isBlocked)
+        {
+            return "Allowed: execution request prepared.";
+        }
+
+        var normalizedCode = string.IsNullOrWhiteSpace(entity.BlockerCode)
+            ? "Blocked"
+            : entity.BlockerCode.Trim();
+        var humanSummary = ExecutionDecisionDiagnostics.ExtractHumanSummary(entity.BlockerDetail)
+            ?? ExecutionDecisionDiagnostics.ExtractHumanSummary(entity.GuardSummary)
+            ?? decisionSummary;
+
+        return string.IsNullOrWhiteSpace(humanSummary)
+            ? $"{normalizedCode}: scanner handoff blocked execution."
+            : $"{normalizedCode}: {humanSummary}";
     }
 
     private static MarketScannerCandidateSnapshot MapMarketScannerCandidate(MarketScannerCandidateEntity entity)

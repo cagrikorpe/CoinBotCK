@@ -208,6 +208,68 @@ public sealed class MarketScannerWorkerTests
     }
 
     [Fact]
+    public async Task RecordFailureAsync_PersistsDbUpdateException_WithSanitizedReason()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new FixedTimeProvider(nowUtc);
+        var services = CreateServices(timeProvider, out var dbContextOptions);
+
+        using var provider = services.BuildServiceProvider();
+        var worker = new MarketScannerWorker(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(new MarketScannerOptions()),
+            timeProvider,
+            NullLogger<MarketScannerWorker>.Instance);
+
+        var exception = new DbUpdateException(
+            "raw outer database failure should not be persisted",
+            new InvalidOperationException("raw inner state failure should not be persisted"));
+
+        await worker.RecordFailureAsync(exception);
+
+        await using var verifyContext = new ApplicationDbContext(dbContextOptions, new TestDataScopeContext());
+        var heartbeat = await verifyContext.WorkerHeartbeats.SingleAsync(entity => entity.WorkerKey == MarketScannerService.WorkerKey);
+
+        Assert.Equal(MonitoringHealthState.Critical, heartbeat.HealthState);
+        Assert.Equal("InvalidEntityState", heartbeat.LastErrorCode);
+        Assert.Equal("Database update failed. Reason=InvalidEntityState.", heartbeat.LastErrorMessage);
+        Assert.Contains("DbUpdate=DbUpdateException", heartbeat.Detail ?? string.Empty, StringComparison.Ordinal);
+        Assert.Contains("InnerException=InvalidOperationException", heartbeat.Detail ?? string.Empty, StringComparison.Ordinal);
+        Assert.Contains("SqlNumber=none", heartbeat.Detail ?? string.Empty, StringComparison.Ordinal);
+        Assert.DoesNotContain("raw outer", heartbeat.Detail ?? string.Empty, StringComparison.Ordinal);
+        Assert.DoesNotContain("raw inner", heartbeat.Detail ?? string.Empty, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RecordFailureAsync_PersistsDbUpdateOverflow_WithNumericOverflowReason()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new FixedTimeProvider(nowUtc);
+        var services = CreateServices(timeProvider, out var dbContextOptions);
+
+        using var provider = services.BuildServiceProvider();
+        var worker = new MarketScannerWorker(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(new MarketScannerOptions()),
+            timeProvider,
+            NullLogger<MarketScannerWorker>.Instance);
+
+        var exception = new DbUpdateException(
+            "raw outer database failure should not be persisted",
+            new OverflowException("raw overflow detail should not be persisted"));
+
+        await worker.RecordFailureAsync(exception);
+
+        await using var verifyContext = new ApplicationDbContext(dbContextOptions, new TestDataScopeContext());
+        var heartbeat = await verifyContext.WorkerHeartbeats.SingleAsync(entity => entity.WorkerKey == MarketScannerService.WorkerKey);
+
+        Assert.Equal("NumericOverflow", heartbeat.LastErrorCode);
+        Assert.Equal("Database update failed. Reason=NumericOverflow.", heartbeat.LastErrorMessage);
+        Assert.Contains("InnerException=OverflowException", heartbeat.Detail ?? string.Empty, StringComparison.Ordinal);
+        Assert.Contains("SqlNumber=none", heartbeat.Detail ?? string.Empty, StringComparison.Ordinal);
+        Assert.DoesNotContain("raw overflow", heartbeat.Detail ?? string.Empty, StringComparison.Ordinal);
+    }
+    [Fact]
     public async Task RecordFailureAsync_PersistsCriticalHeartbeat()
     {
         var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
