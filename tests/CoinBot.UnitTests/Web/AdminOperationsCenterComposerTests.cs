@@ -52,7 +52,7 @@ public sealed class AdminOperationsCenterComposerTests
         Assert.False(activateAction.IsEnabled, activationActionDebug);
         Assert.Equal("Exchange bagli degil", activateAction.BlockedReason);
         Assert.Equal("Exchange bagli degil", model.PrimaryFlow.Setup.PrimaryMessage);
-        Assert.Contains(model.RuntimeHealthCenter.Signals, item => item.Code == "WorkerHeartbeatUnavailable");
+        Assert.Contains(model.RuntimeHealthCenter.Signals, item => item.Code == "CoreWorkerHeartbeatUnavailable");
         var credential = Assert.Single(model.ExchangeGovernanceCenter.Accounts);
         Assert.Equal("fp-****-7890", credential.FingerprintLabel);
         Assert.Equal("Testnet", credential.EnvironmentLabel);
@@ -284,6 +284,61 @@ public sealed class AdminOperationsCenterComposerTests
     }
 
     [Fact]
+    public void Compose_WhenCoreWorkerHealthy_ButMarketScannerIsCritical_UsesParitySummary()
+    {
+        var now = new DateTime(2026, 4, 8, 12, 30, 0, DateTimeKind.Utc);
+        var monitoring = new MonitoringDashboardSnapshot(
+            Array.Empty<HealthSnapshot>(),
+            [
+                new WorkerHeartbeat("job-orchestration", "Job Orchestration", MonitoringHealthState.Healthy, MonitoringFreshnessTier.Hot, CircuitBreakerStateCode.Closed, now.AddSeconds(-12), now.AddSeconds(-8), 0),
+                new WorkerHeartbeat("exchange-private-stream", "Exchange Private Stream", MonitoringHealthState.Healthy, MonitoringFreshnessTier.Hot, CircuitBreakerStateCode.Closed, now.AddSeconds(-11), now.AddSeconds(-7), 0),
+                new WorkerHeartbeat(
+                    WorkerKey: "market-scanner",
+                    WorkerName: "Market Scanner",
+                    HealthState: MonitoringHealthState.Critical,
+                    FreshnessTier: MonitoringFreshnessTier.Hot,
+                    CircuitBreakerState: CircuitBreakerStateCode.Cooldown,
+                    LastHeartbeatAtUtc: now.AddSeconds(-10),
+                    LastUpdatedAtUtc: now.AddSeconds(-6),
+                    ConsecutiveFailureCount: 2,
+                    LastErrorCode: "ScannerNumericOverflow",
+                    LastErrorMessage: "overflow",
+                    SnapshotAgeSeconds: null,
+                    Detail: "Worker=Market Scanner; Failure=ScannerNumericOverflow")
+            ],
+            now)
+        {
+            MarketScanner = MarketScannerDashboardSnapshot.Empty() with
+            {
+                LastScanCompletedAtUtc = now.AddMinutes(-1)
+            }
+        };
+
+        var model = AdminOperationsCenterComposer.Compose(
+            CreateActivationModel() with { IsCurrentlyActive = true },
+            monitoring,
+            CreateClockSnapshot(),
+            CreateDriftSnapshot(),
+            AdminUsersPageSnapshot.Empty(now),
+            AdminBotOperationsPageSnapshot.Empty(now),
+            [new ApiCredentialAdminSummary(Guid.NewGuid(), "user-1", "Binance", "Primary", false, "fp-****-7890", "Valid", "Env=Testnet;Spot=True;Futures=True;Trade=True", now.AddMinutes(-5), null)],
+            GlobalPolicySnapshot.CreateDefault(now),
+            new BotExecutionPilotOptions { PilotActivationEnabled = true, MaxPilotOrderNotional = "250" },
+            null,
+            new GlobalExecutionSwitchSnapshot(TradeMasterSwitchState.Armed, true, true),
+            new GlobalSystemStateSnapshot(GlobalSystemStateKind.Active, "SYSTEM_ACTIVE", null, "AdminPortal", null, false, null, now.AddMinutes(-1), "super-admin", "ip:masked", 1, true),
+            true,
+            now);
+
+        Assert.Equal("Hazir", model.PrimaryFlow.Setup.StatusLabel);
+        Assert.Equal("Core worker healthy, market scanner critical.", model.PrimaryFlow.Monitoring.PrimaryMessage);
+        Assert.Equal("Core worker healthy, market scanner critical.", model.RuntimeHealthCenter.Summary);
+        Assert.Contains(model.PrimaryFlow.Monitoring.Items, item => item.Key == "core-worker-health" && item.Tone == "healthy");
+        Assert.Contains(model.PrimaryFlow.Monitoring.Items, item => item.Key == "market-scanner-health" && item.Value == "Cooldown" && item.Tone == "critical");
+        Assert.Equal("Market scanner kritik", model.PrimaryFlow.Monitoring.Items.First(item => item.Key == "last-error").Value);
+    }
+
+    [Fact]
     public void BuildRolloutClosureCenter_WhenEvidenceMissing_FailsClosed()
     {
         var now = new DateTime(2026, 4, 8, 12, 10, 0, DateTimeKind.Utc);
@@ -433,10 +488,21 @@ public sealed class AdminOperationsCenterComposerTests
     }
     private static MonitoringDashboardSnapshot CreateMonitoringSnapshot()
     {
+        var now = new DateTime(2026, 4, 8, 12, 0, 0, DateTimeKind.Utc);
         return new MonitoringDashboardSnapshot(
             Array.Empty<HealthSnapshot>(),
-            [new WorkerHeartbeat("worker-1", "Bot Worker", MonitoringHealthState.Healthy, MonitoringFreshnessTier.Hot, CircuitBreakerStateCode.Closed, new DateTime(2026, 4, 8, 11, 59, 50, DateTimeKind.Utc), new DateTime(2026, 4, 8, 11, 59, 55, DateTimeKind.Utc), 0)],
-            new DateTime(2026, 4, 8, 12, 0, 0, DateTimeKind.Utc));
+            [
+                new WorkerHeartbeat("job-orchestration", "Job Orchestration", MonitoringHealthState.Healthy, MonitoringFreshnessTier.Hot, CircuitBreakerStateCode.Closed, now.AddSeconds(-15), now.AddSeconds(-10), 0),
+                new WorkerHeartbeat("exchange-private-stream", "Exchange Private Stream", MonitoringHealthState.Healthy, MonitoringFreshnessTier.Hot, CircuitBreakerStateCode.Closed, now.AddSeconds(-14), now.AddSeconds(-9), 0),
+                new WorkerHeartbeat("market-scanner", "Market Scanner", MonitoringHealthState.Healthy, MonitoringFreshnessTier.Hot, CircuitBreakerStateCode.Closed, now.AddSeconds(-13), now.AddSeconds(-8), 0)
+            ],
+            now)
+        {
+            MarketScanner = MarketScannerDashboardSnapshot.Empty() with
+            {
+                LastScanCompletedAtUtc = now.AddSeconds(-20)
+            }
+        };
     }
 
     private static BinanceTimeSyncSnapshot CreateClockSnapshot() => new(

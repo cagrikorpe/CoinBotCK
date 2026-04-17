@@ -6,6 +6,7 @@ using CoinBot.Application.Abstractions.Policy;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Persistence;
+using CoinBot.Infrastructure.Execution;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
@@ -402,38 +403,13 @@ public sealed class GlobalPolicyEngine(
                 .SumAsync(entity => entity.Quantity, cancellationToken);
         }
 
-        var positionNetQuantity = (await dbContext.ExchangePositions
-                .AsNoTracking()
-                .IgnoreQueryFilters()
-                .Where(entity =>
-                    entity.OwnerUserId == request.UserId &&
-                    entity.Plane == ExchangeDataPlane.Futures &&
-                    !entity.IsDeleted)
-                .ToListAsync(cancellationToken))
-            .Where(entity => NormalizeSymbol(entity.Symbol) == normalizedSymbol)
-            .Sum(ResolveSignedPositionQuantity);
-
-        if (positionNetQuantity != 0m)
-        {
-            return positionNetQuantity;
-        }
-
-        return (await dbContext.ExecutionOrders
-                .AsNoTracking()
-                .IgnoreQueryFilters()
-                .Where(entity =>
-                    entity.OwnerUserId == request.UserId &&
-                    entity.Plane == ExchangeDataPlane.Futures &&
-                    !entity.IsDeleted &&
-                    entity.SubmittedToBroker &&
-                    (entity.State == ExecutionOrderState.Submitted ||
-                     entity.State == ExecutionOrderState.Dispatching ||
-                     entity.State == ExecutionOrderState.CancelRequested ||
-                     entity.State == ExecutionOrderState.PartiallyFilled ||
-                     entity.State == ExecutionOrderState.Filled))
-                .ToListAsync(cancellationToken))
-            .Where(entity => NormalizeSymbol(entity.Symbol) == normalizedSymbol)
-            .Sum(ResolveSignedOrderQuantity);
+        return await LivePositionTruthResolver.ResolveNetQuantityAsync(
+            dbContext,
+            request.UserId,
+            ExchangeDataPlane.Futures,
+            exchangeAccountId: null,
+            normalizedSymbol,
+            cancellationToken);
     }
 
     private static decimal ResolveSignedOrderQuantity(ExecutionOrder entity)

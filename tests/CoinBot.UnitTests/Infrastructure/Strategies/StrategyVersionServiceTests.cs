@@ -107,6 +107,71 @@ public sealed class StrategyVersionServiceTests
         Assert.Contains("\"templateRevisionNumber\": 2", persistedVersions[1].DefinitionJson, StringComparison.Ordinal);
     }
     [Fact]
+    public async Task CreateDraftAsync_PersistsCanonicalDefinitionJson_FromBuilderPayload()
+    {
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-canonical-1", "canonical-core");
+        dbContext.TradingStrategies.Add(strategy);
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext, new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero)));
+
+        var draft = await service.CreateDraftAsync(
+            strategy.Id,
+            """
+            {
+              "entry": {
+                "rules": [
+                  {
+                    "comparison": "equals",
+                    "value": "Live",
+                    "path": "context.mode",
+                    "ruleType": "context",
+                    "ruleId": "entry-mode",
+                    "enabled": true,
+                    "weight": 10,
+                    "group": "entry",
+                    "timeframe": "1m"
+                  },
+                  {
+                    "comparison": "lessThanOrEqual",
+                    "value": 30,
+                    "path": "indicator.rsi.value",
+                    "ruleType": "rsi",
+                    "ruleId": "entry-rsi",
+                    "enabled": true,
+                    "weight": 10,
+                    "group": "entry",
+                    "timeframe": "1m"
+                  }
+                ],
+                "enabled": true,
+                "weight": 1,
+                "timeframe": "1m",
+                "ruleType": "group",
+                "ruleId": "entry-root",
+                "operator": "all",
+                "group": "entry"
+              },
+              "metadata": {
+                "templateName": "Builder Strategy",
+                "templateKey": "builder-custom",
+                "templateSource": "Custom"
+              },
+              "schemaVersion": 2
+            }
+            """);
+
+        var persistedVersion = await dbContext.TradingStrategyVersions.SingleAsync(entity => entity.Id == draft.StrategyVersionId);
+        var canonicalDocument = new StrategyRuleParser().Parse(persistedVersion.DefinitionJson);
+        var canonicalJson = StrategyDefinitionCanonicalJsonSerializer.Serialize(canonicalDocument);
+
+        Assert.Equal(canonicalJson, persistedVersion.DefinitionJson);
+        Assert.Contains("\"templateKey\": \"builder-custom\"", persistedVersion.DefinitionJson, StringComparison.Ordinal);
+        Assert.Contains("\"entry\": {", persistedVersion.DefinitionJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task CreateDraftFromVersionAsync_LeavesPublishedVersionImmutable_AndCreatesNewDraft()
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));

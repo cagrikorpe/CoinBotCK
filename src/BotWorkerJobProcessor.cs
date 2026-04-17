@@ -947,40 +947,13 @@ public sealed class BotWorkerJobProcessor(
     {
         var normalizedSymbol = NormalizePositionSymbol(symbol);
 
-        var positionNetQuantity = (await dbContext.ExchangePositions
-                .AsNoTracking()
-                .IgnoreQueryFilters()
-                .Where(entity =>
-                    entity.OwnerUserId == ownerUserId &&
-                    entity.ExchangeAccountId == exchangeAccountId &&
-                    entity.Plane == ExchangeDataPlane.Futures &&
-                    !entity.IsDeleted)
-                .ToListAsync(cancellationToken))
-            .Where(entity => NormalizePositionSymbol(entity.Symbol) == normalizedSymbol)
-            .Sum(ResolveSignedPositionQuantity);
-
-        if (positionNetQuantity != 0m)
-        {
-            return positionNetQuantity;
-        }
-
-        return (await dbContext.ExecutionOrders
-                .AsNoTracking()
-                .IgnoreQueryFilters()
-                .Where(entity =>
-                    entity.OwnerUserId == ownerUserId &&
-                    entity.ExchangeAccountId == exchangeAccountId &&
-                    entity.Plane == ExchangeDataPlane.Futures &&
-                    !entity.IsDeleted &&
-                    entity.SubmittedToBroker &&
-                    (entity.State == ExecutionOrderState.Submitted ||
-                     entity.State == ExecutionOrderState.Dispatching ||
-                     entity.State == ExecutionOrderState.CancelRequested ||
-                     entity.State == ExecutionOrderState.PartiallyFilled ||
-                     entity.State == ExecutionOrderState.Filled))
-                .ToListAsync(cancellationToken))
-            .Where(entity => NormalizePositionSymbol(entity.Symbol) == normalizedSymbol)
-            .Sum(ResolveSignedOrderQuantity);
+        return await LivePositionTruthResolver.ResolveNetQuantityAsync(
+            dbContext,
+            ownerUserId,
+            ExchangeDataPlane.Futures,
+            exchangeAccountId,
+            normalizedSymbol,
+            cancellationToken);
     }
 
     private static decimal ResolveSignedOrderQuantity(ExecutionOrder entity)

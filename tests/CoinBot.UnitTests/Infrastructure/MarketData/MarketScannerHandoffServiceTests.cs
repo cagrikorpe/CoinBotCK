@@ -100,6 +100,65 @@ public sealed class MarketScannerHandoffServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_SkipsLegacyDirtyMarketScoreCandidate_AndPreparesNextCleanCandidate()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var btcBot = await SeedBotGraphAsync(harness.DbContext, "user-btc", "BTCUSDT", "pilot-btc");
+        var ethBot = await SeedBotGraphAsync(harness.DbContext, "user-eth", "ETHUSDT", "pilot-eth");
+        SeedScanCycle(harness.DbContext, scanCycleId, eligibleCandidateCount: 2, bestCandidateSymbol: "BTCUSDT", bestCandidateScore: 95m);
+        harness.DbContext.MarketScannerCandidates.Add(new MarketScannerCandidate
+        {
+            Id = Guid.NewGuid(),
+            ScanCycleId = scanCycleId,
+            Symbol = "BTCUSDT",
+            UniverseSource = "unit-test",
+            ObservedAtUtc = harness.NowUtc,
+            LastCandleAtUtc = harness.NowUtc,
+            LastPrice = 100m,
+            QuoteVolume24h = 123456m,
+            MarketScore = 123456m,
+            StrategyScore = 91,
+            IsEligible = true,
+            Score = 95m,
+            Rank = 1,
+            IsTopCandidate = true
+        });
+        harness.DbContext.MarketScannerCandidates.Add(new MarketScannerCandidate
+        {
+            Id = Guid.NewGuid(),
+            ScanCycleId = scanCycleId,
+            Symbol = "ETHUSDT",
+            UniverseSource = "unit-test",
+            ObservedAtUtc = harness.NowUtc,
+            LastCandleAtUtc = harness.NowUtc,
+            LastPrice = 90m,
+            QuoteVolume24h = 100000m,
+            MarketScore = 100m,
+            StrategyScore = 88,
+            IsEligible = true,
+            Score = 80m,
+            Rank = 2,
+            IsTopCandidate = true
+        });
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("BTCUSDT", "BTC", "USDT");
+        harness.MarketDataService.SetMetadata("ETHUSDT", "ETH", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", harness.NowUtc));
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("ETHUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(btcBot.TradingStrategyId, btcBot.TradingStrategyVersionId, "BTCUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(ethBot.TradingStrategyId, ethBot.TradingStrategyVersionId, "ETHUSDT", "1m", harness.NowUtc));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("ETHUSDT", attempt.SelectedSymbol);
+        Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
+        Assert.Equal("ETHUSDT", harness.ExecutionGate.LastRequest?.Symbol);
+        Assert.Equal("ETHUSDT", harness.UserExecutionOverrideGuard.LastRequest?.Symbol);
+        Assert.Equal("ETHUSDT", harness.StrategySignalService.LastRequest?.EvaluationContext.IndicatorSnapshot.Symbol);
+    }
+
+    [Fact]
     public async Task RunOnceAsync_PersistsStrategyVetoReason_WhenNoActionableSignalExists()
     {
         await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));

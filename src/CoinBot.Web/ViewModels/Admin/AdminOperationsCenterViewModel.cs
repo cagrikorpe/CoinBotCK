@@ -305,6 +305,7 @@ public static class AdminOperationsCenterComposer
         DegradedModeSnapshot driftGuardSnapshot)
     {
         var workerSignal = BuildWorkerSignal(monitoringDashboard);
+        var marketScannerSignal = BuildMarketScannerSignal(monitoringDashboard);
         var exchangeSyncSignal = BuildExchangeSyncSignal(monitoringDashboard);
         var clockDriftSignal = BuildClockDriftSignal(clockDriftSnapshot);
         var marketFreshnessSignal = BuildMarketFreshnessSignal(monitoringDashboard, driftGuardSnapshot);
@@ -314,6 +315,7 @@ public static class AdminOperationsCenterComposer
         var signals = new[]
         {
             workerSignal,
+            marketScannerSignal,
             exchangeSyncSignal,
             clockDriftSignal,
             marketFreshnessSignal,
@@ -333,11 +335,7 @@ public static class AdminOperationsCenterComposer
             : warningCount > 0
                 ? "Review"
                 : "Healthy";
-        var summary = criticalCount > 0
-            ? $"{criticalCount} kritik runtime sinyali var; aktivasyon ve trade yolu tekrar kontrol edilmeli."
-            : warningCount > 0
-                ? $"{warningCount} runtime sinyali review gerektiriyor."
-                : "Runtime health, drift ve freshness sinyalleri operasyon icin uygun gorunuyor.";
+        var summary = BuildRuntimeParitySummary(workerSignal, marketScannerSignal, signals);
         var lastFailureSummary = signals
             .Where(item => string.Equals(item.Tone, "critical", StringComparison.OrdinalIgnoreCase) || string.Equals(item.Tone, "warning", StringComparison.OrdinalIgnoreCase) || string.Equals(item.Tone, "degraded", StringComparison.OrdinalIgnoreCase))
             .Select(item => $"{item.Code}: {item.Summary}")
@@ -356,17 +354,19 @@ public static class AdminOperationsCenterComposer
 
     private static AdminOperationsSignalViewModel BuildWorkerSignal(MonitoringDashboardSnapshot monitoringDashboard)
     {
-        var workers = monitoringDashboard.WorkerHeartbeats;
+        var workers = monitoringDashboard.WorkerHeartbeats
+            .Where(worker => !string.Equals(worker.WorkerKey, "market-scanner", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
 
-        if (workers.Count == 0)
+        if (workers.Length == 0)
         {
             return new AdminOperationsSignalViewModel(
                 "worker-health",
-                "Worker health",
+                "Core worker / orchestration",
                 "Unknown",
                 "critical",
-                "Worker heartbeat read-modeli bos; worker ayakta olsa bile snapshot yoksa fail-closed review gerekir.",
-                "WorkerHeartbeatUnavailable");
+                "Core worker / orchestration heartbeat read-modeli bos; worker ayakta olsa bile snapshot yoksa fail-closed review gerekir.",
+                "CoreWorkerHeartbeatUnavailable");
         }
 
         var staleCount = workers.Count(worker => worker.FreshnessTier == MonitoringFreshnessTier.Stale);
@@ -377,20 +377,84 @@ public static class AdminOperationsCenterComposer
         {
             return new AdminOperationsSignalViewModel(
                 "worker-health",
-                "Worker health",
-                $"{workers.Count - staleCount}/{workers.Count} healthy-ish",
+                "Core worker / orchestration",
+                $"{workers.Length - staleCount}/{workers.Length} healthy-ish",
                 criticalCount > 0 ? "critical" : "warning",
-                $"{staleCount} stale worker, {criticalCount} critical worker. Last heartbeat {FormatUtc(latestHeartbeat)}.",
-                criticalCount > 0 ? "WorkerCritical" : "WorkerStale");
+                $"{staleCount} stale core worker, {criticalCount} critical core worker. Last heartbeat {FormatUtc(latestHeartbeat)}.",
+                criticalCount > 0 ? "CoreWorkerCritical" : "CoreWorkerStale");
         }
 
         return new AdminOperationsSignalViewModel(
             "worker-health",
-            "Worker health",
-            $"{workers.Count} active",
+            "Core worker / orchestration",
+            $"{workers.Length} active",
             "healthy",
-            $"Tum worker heartbeat'leri fresh. Last heartbeat {FormatUtc(latestHeartbeat)}.",
-            "WorkerHealthy");
+            $"Core worker / orchestration heartbeat'leri fresh. Last heartbeat {FormatUtc(latestHeartbeat)}.",
+            "CoreWorkerHealthy");
+    }
+
+    private static AdminOperationsSignalViewModel BuildMarketScannerSignal(MonitoringDashboardSnapshot monitoringDashboard)
+    {
+        var scannerWorker = monitoringDashboard.WorkerHeartbeats.FirstOrDefault(worker =>
+            string.Equals(worker.WorkerKey, "market-scanner", StringComparison.OrdinalIgnoreCase));
+        var scannerSnapshot = monitoringDashboard.MarketScanner ?? MarketScannerDashboardSnapshot.Empty();
+        var lastScanSummary = scannerSnapshot.LastScanCompletedAtUtc.HasValue
+            ? $"Last scan {FormatUtc(scannerSnapshot.LastScanCompletedAtUtc.Value)}"
+            : "Last scan n/a";
+
+        if (scannerWorker is null)
+        {
+            return new AdminOperationsSignalViewModel(
+                "market-scanner-health",
+                "Market scanner health",
+                "Unknown",
+                "critical",
+                $"Market scanner heartbeat yok; {lastScanSummary}.",
+                "MarketScannerHeartbeatUnavailable");
+        }
+
+        var tone = scannerWorker.HealthState == MonitoringHealthState.Healthy &&
+                   scannerWorker.FreshnessTier != MonitoringFreshnessTier.Stale
+            ? "healthy"
+            : scannerWorker.HealthState == MonitoringHealthState.Critical ||
+              scannerWorker.FreshnessTier == MonitoringFreshnessTier.Stale
+                ? "critical"
+                : "warning";
+        var code = tone == "healthy"
+            ? "MarketScannerHealthy"
+            : scannerWorker.HealthState == MonitoringHealthState.Critical
+                ? "MarketScannerCritical"
+                : scannerWorker.FreshnessTier == MonitoringFreshnessTier.Stale
+                    ? "MarketScannerStale"
+                    : "MarketScannerReview";
+
+        return new AdminOperationsSignalViewModel(
+            "market-scanner-health",
+            "Market scanner health",
+            scannerWorker.CircuitBreakerState.ToString(),
+            tone,
+            $"{scannerWorker.WorkerName} heartbeat {FormatUtc(scannerWorker.LastHeartbeatAtUtc)} · Error={(scannerWorker.LastErrorCode ?? "none")} · {lastScanSummary}",
+            code);
+    }
+
+    private static string BuildRuntimeParitySummary(
+        AdminOperationsSignalViewModel workerSignal,
+        AdminOperationsSignalViewModel marketScannerSignal,
+        IReadOnlyCollection<AdminOperationsSignalViewModel> signals)
+    {
+        _ = signals;
+        return $"Core worker {DescribeParityTone(workerSignal.Tone)}, market scanner {DescribeParityTone(marketScannerSignal.Tone)}.";
+    }
+
+    private static string DescribeParityTone(string tone)
+    {
+        return tone.ToLowerInvariant() switch
+        {
+            "healthy" => "healthy",
+            "warning" => "warning",
+            "degraded" => "warning",
+            _ => "critical"
+        };
     }
 
     private static AdminOperationsSignalViewModel BuildExchangeSyncSignal(MonitoringDashboardSnapshot monitoringDashboard)

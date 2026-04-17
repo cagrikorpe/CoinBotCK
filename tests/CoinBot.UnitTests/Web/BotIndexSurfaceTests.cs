@@ -5,7 +5,7 @@ namespace CoinBot.UnitTests.Web;
 public sealed class BotIndexSurfaceTests
 {
     [Fact]
-    public void BotsIndexView_RendersUltraSoftBotListWithoutExecutionAnalytics()
+    public void BotsIndexView_RendersBotListWithSingleScreenOperationParity()
     {
         var content = File.ReadAllText(Path.Combine(
             ResolveRepositoryRoot(),
@@ -21,6 +21,11 @@ public sealed class BotIndexSurfaceTests
         Assert.Contains("data-cb-bot-state-badge", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-bot-state-value", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-bot-state-summary", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-long-regime-card", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-long-regime-status", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-long-regime-policy", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-long-regime-live", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-long-regime-explain", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-bot-detail", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-bot-toggle", content, StringComparison.Ordinal);
         Assert.Contains("LIVE", content, StringComparison.Ordinal);
@@ -35,21 +40,26 @@ public sealed class BotIndexSurfaceTests
         Assert.Contains("data-cb-bot-start-block-reason", content, StringComparison.Ordinal);
         Assert.Contains("Strateji hazır değil", content, StringComparison.Ordinal);
 
-        Assert.DoesNotContain("data-cb-bot-market-diagnostics", content, StringComparison.Ordinal);
-        Assert.DoesNotContain("data-cb-bot-exec-submit", content, StringComparison.Ordinal);
-        Assert.DoesNotContain("data-cb-bot-exec-retry", content, StringComparison.Ordinal);
-        Assert.DoesNotContain("data-cb-bot-exec-protection", content, StringComparison.Ordinal);
-        Assert.DoesNotContain("data-cb-bot-exec-stage", content, StringComparison.Ordinal);
-        Assert.DoesNotContain("data-cb-bot-exec-transition", content, StringComparison.Ordinal);
-        Assert.DoesNotContain("data-cb-bot-exec-correlation", content, StringComparison.Ordinal);
-        Assert.DoesNotContain("data-cb-bot-exec-client-order", content, StringComparison.Ordinal);
-        Assert.DoesNotContain("data-cb-bot-decision", content, StringComparison.Ordinal);
-        Assert.DoesNotContain("Decision", content, StringComparison.Ordinal);
-        Assert.DoesNotContain("ReasonCode", content, StringComparison.Ordinal);
-        Assert.DoesNotContain("Open orders", content, StringComparison.Ordinal);
-        Assert.DoesNotContain("Execution", content, StringComparison.Ordinal);
-        Assert.DoesNotContain("Worker</th>", content, StringComparison.Ordinal);
-        Assert.DoesNotContain("Pilot</th>", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-ops-card", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-ops-signal", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-ops-decision", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-ops-order", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-ops-reason", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-entry-counters", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-exit-counters", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-entry-generated", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-entry-skipped", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-entry-vetoed", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-entry-ordered", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-entry-filled", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-exit-generated", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-exit-skipped", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-exit-vetoed", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-exit-ordered", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-exit-filled", content, StringComparison.Ordinal);
+        Assert.Contains("Signal / Decision / Order", content, StringComparison.Ordinal);
+        Assert.Contains("Runtime decision:", content, StringComparison.Ordinal);
+        Assert.Contains("Rejection / failure:", content, StringComparison.Ordinal);
     }
 
     [Fact]

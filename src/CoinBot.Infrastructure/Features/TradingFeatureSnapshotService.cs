@@ -5,6 +5,7 @@ using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Persistence;
@@ -433,16 +434,13 @@ public sealed class TradingFeatureSnapshotService(
                 .FirstOrDefaultAsync(cancellationToken) is decimal holdingQuantityAfter && holdingQuantityAfter > 0m;
         }
 
-        return await dbContext.ExchangePositions
-            .IgnoreQueryFilters()
-            .AsNoTracking()
-            .AnyAsync(item => item.OwnerUserId == userId &&
-                              item.Symbol == symbol &&
-                              item.Plane == plane &&
-                              !item.IsDeleted &&
-                              (!exchangeAccountId.HasValue || item.ExchangeAccountId == exchangeAccountId.Value) &&
-                              item.Quantity != 0m,
-                cancellationToken);
+        return await LivePositionTruthResolver.ResolveNetQuantityAsync(
+            dbContext,
+            userId,
+            plane,
+            exchangeAccountId,
+            symbol,
+            cancellationToken) != 0m;
     }
 
     private async Task<bool> ResolveCooldownActiveAsync(

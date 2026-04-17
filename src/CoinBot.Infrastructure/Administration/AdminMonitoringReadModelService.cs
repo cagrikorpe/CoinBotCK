@@ -3,6 +3,7 @@ using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Domain.Entities;
 using CoinBot.Infrastructure.Execution;
+using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
@@ -64,6 +65,7 @@ public sealed class AdminMonitoringReadModelService(
     {
         var latestCycle = await dbContext.MarketScannerCycles
             .AsNoTracking()
+            .Where(entity => !entity.IsDeleted)
             .OrderByDescending(entity => entity.CompletedAtUtc)
             .ThenByDescending(entity => entity.CreatedDate)
             .FirstOrDefaultAsync(cancellationToken);
@@ -73,21 +75,30 @@ public sealed class AdminMonitoringReadModelService(
             return MarketScannerDashboardSnapshot.Empty();
         }
 
-        var topCandidateEntities = await dbContext.MarketScannerCandidates
+        var cycleCandidateEntities = await dbContext.MarketScannerCandidates
             .AsNoTracking()
-            .Where(entity => entity.ScanCycleId == latestCycle.Id && entity.IsTopCandidate)
+            .Where(entity => entity.ScanCycleId == latestCycle.Id && !entity.IsDeleted)
             .OrderBy(entity => entity.Rank ?? int.MaxValue)
-            .ThenByDescending(entity => entity.Score)
             .ThenBy(entity => entity.Symbol)
             .ToListAsync(cancellationToken);
 
-        var rejectedSampleEntities = await dbContext.MarketScannerCandidates
-            .AsNoTracking()
-            .Where(entity => entity.ScanCycleId == latestCycle.Id && !entity.IsEligible)
-            .OrderBy(entity => entity.RejectionReason)
-            .ThenBy(entity => entity.Symbol)
+        var validCandidateEntities = cycleCandidateEntities
+            .Where(entity => !MarketScannerCandidateIntegrityGuard.HasLegacyDirtyMarketScore(entity))
+            .ToArray();
+
+        var topCandidateEntities = validCandidateEntities
+            .Where(entity => entity.IsTopCandidate)
+            .OrderBy(entity => entity.Rank ?? int.MaxValue)
+            .ThenByDescending(entity => entity.Score)
+            .ThenBy(entity => entity.Symbol, StringComparer.Ordinal)
+            .ToArray();
+
+        var rejectedSampleEntities = validCandidateEntities
+            .Where(entity => !entity.IsEligible)
+            .OrderBy(entity => entity.RejectionReason, StringComparer.Ordinal)
+            .ThenBy(entity => entity.Symbol, StringComparer.Ordinal)
             .Take(5)
-            .ToListAsync(cancellationToken);
+            .ToArray();
 
         var latestHandoffEntity = await dbContext.MarketScannerHandoffAttempts
             .AsNoTracking()
@@ -110,19 +121,34 @@ public sealed class AdminMonitoringReadModelService(
             [latestHandoffEntity, lastSuccessfulHandoffEntity, lastBlockedHandoffEntity],
             cancellationToken);
 
+        var excludedCandidateCount = cycleCandidateEntities.Count - validCandidateEntities.Length;
+        var excludedEligibleCount = cycleCandidateEntities.Count(entity => entity.IsEligible) - validCandidateEntities.Count(entity => entity.IsEligible);
+        var bestCandidate = topCandidateEntities
+            .OrderBy(entity => entity.Rank ?? int.MaxValue)
+            .ThenBy(entity => entity.Symbol, StringComparer.Ordinal)
+            .FirstOrDefault();
+        var cycleSummary = BuildMarketScannerCycleSummary(
+            Math.Max(0, latestCycle.ScannedSymbolCount - excludedCandidateCount),
+            bestCandidate,
+            validCandidateEntities,
+            latestCycle.Summary);
+        var rejectionSummary = BuildMarketScannerRejectionSummary(validCandidateEntities);
+
         return new MarketScannerDashboardSnapshot(
             latestCycle.Id,
             NormalizeUtc(latestCycle.CompletedAtUtc),
-            latestCycle.ScannedSymbolCount,
-            latestCycle.EligibleCandidateCount,
+            Math.Max(0, latestCycle.ScannedSymbolCount - excludedCandidateCount),
+            Math.Max(0, latestCycle.EligibleCandidateCount - excludedEligibleCount),
             latestCycle.UniverseSource,
-            latestCycle.BestCandidateSymbol,
-            latestCycle.BestCandidateScore,
+            bestCandidate?.Symbol,
+            bestCandidate?.Score,
             topCandidateEntities.Select(MapMarketScannerCandidate).ToArray(),
             rejectedSampleEntities.Select(MapMarketScannerCandidate).ToArray(),
             MapMarketScannerHandoffAttempt(latestHandoffEntity, ResolveDegradedModeState(latestHandoffEntity, degradedModeStates)),
             MapMarketScannerHandoffAttempt(lastSuccessfulHandoffEntity, ResolveDegradedModeState(lastSuccessfulHandoffEntity, degradedModeStates)),
-            MapMarketScannerHandoffAttempt(lastBlockedHandoffEntity, ResolveDegradedModeState(lastBlockedHandoffEntity, degradedModeStates)));
+            MapMarketScannerHandoffAttempt(lastBlockedHandoffEntity, ResolveDegradedModeState(lastBlockedHandoffEntity, degradedModeStates)),
+            cycleSummary,
+            rejectionSummary);
     }
 
     private async Task<Dictionary<Guid, DegradedModeState>> LoadDegradedModeStatesAsync(
@@ -206,6 +232,10 @@ public sealed class AdminMonitoringReadModelService(
             decisionReasonCode,
             entity.BlockerDetail);
 
+        var candidateMarketScore = entity.CandidateMarketScore is { } marketScore && marketScore > 100m
+            ? null
+            : entity.CandidateMarketScore;
+
         return new MarketScannerHandoffSnapshot(
             entity.Id,
             entity.ScanCycleId,
@@ -214,7 +244,7 @@ public sealed class AdminMonitoringReadModelService(
             entity.SelectedTimeframe,
             NormalizeUtc(entity.SelectedAtUtc),
             entity.CandidateRank,
-            entity.CandidateMarketScore,
+            candidateMarketScore,
             entity.CandidateScore,
             entity.SelectionReason,
             entity.OwnerUserId,
@@ -323,6 +353,62 @@ public sealed class AdminMonitoringReadModelService(
             entity.Rank,
             entity.IsTopCandidate);
     }
+
+    private static string? BuildMarketScannerCycleSummary(
+        int scannedSymbolCount,
+        MarketScannerCandidateEntity? bestCandidate,
+        IReadOnlyCollection<MarketScannerCandidateEntity> candidates,
+        string? persistedSummary)
+    {
+        if (bestCandidate is not null)
+        {
+            return string.IsNullOrWhiteSpace(persistedSummary)
+                ? $"Market scanner evaluated {scannedSymbolCount} symbols and ranked {bestCandidate.Symbol} #{bestCandidate.Rank} with score {bestCandidate.Score.ToString("0.####", CultureInfo.InvariantCulture)}."
+                : persistedSummary;
+        }
+
+        if (scannedSymbolCount <= 0)
+        {
+            return string.IsNullOrWhiteSpace(persistedSummary)
+                ? "Market scanner found no universe symbols."
+                : persistedSummary;
+        }
+
+        var rejectionSummary = BuildMarketScannerRejectionSummary(candidates);
+        return string.IsNullOrWhiteSpace(rejectionSummary)
+            ? $"Market scanner evaluated {scannedSymbolCount} symbols and found no eligible candidates."
+            : $"Market scanner evaluated {scannedSymbolCount} symbols and found no eligible candidates. Reasons={rejectionSummary}.";
+    }
+
+    private static string? BuildMarketScannerRejectionSummary(IReadOnlyCollection<MarketScannerCandidateEntity> candidates)
+    {
+        var rejectionGroups = candidates
+            .Where(entity => !entity.IsEligible && !string.IsNullOrWhiteSpace(entity.RejectionReason))
+            .GroupBy(entity => entity.RejectionReason!, StringComparer.Ordinal)
+            .OrderByDescending(group => group.Count())
+            .ThenBy(group => group.Key, StringComparer.Ordinal)
+            .Take(4)
+            .Select(group =>
+            {
+                var sampleSymbols = group
+                    .Select(entity => entity.Symbol)
+                    .Where(symbol => !string.IsNullOrWhiteSpace(symbol))
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(symbol => symbol, StringComparer.Ordinal)
+                    .Take(2)
+                    .ToArray();
+                var samples = sampleSymbols.Length == 0
+                    ? string.Empty
+                    : $" [{string.Join(',', sampleSymbols)}]";
+                return $"{group.Key}:{group.Count()}{samples}";
+            })
+            .ToArray();
+
+        return rejectionGroups.Length == 0
+            ? null
+            : string.Join(" | ", rejectionGroups);
+    }
+
 
     private static int? TryReadDetailMetric(string? detail, string metricName)
     {

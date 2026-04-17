@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.Indicators;
+using CoinBot.Application.Abstractions.Features;
 using CoinBot.Application.Abstractions.Risk;
 using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
@@ -31,6 +32,8 @@ public sealed class StrategySignalService(
     ILogger<StrategySignalService> logger) : IStrategySignalService
 {
     private const int ExplainabilitySchemaVersion = 1;
+    private const int RepeatedNoOpenPositionExitTraceSuppressionWindowSeconds = 120;
+    private const int DecisionSummaryMaxLength = 512;
 
     private static readonly JsonSerializerOptions SerializerOptions = CreateSerializerOptions();
 
@@ -89,6 +92,32 @@ public sealed class StrategySignalService(
             now));
         var evaluationResult = evaluationReport.RuleEvaluation;
         var candidateSignalTypes = GetCandidateSignalTypes(evaluationResult);
+        var exitCandidateSuppressedByPositionAwareness =
+            candidateSignalTypes.Contains(StrategySignalType.Exit) &&
+            ShouldSuppressExitCandidateForMissingOpenPosition(request.FeatureSnapshot);
+        if (exitCandidateSuppressedByPositionAwareness)
+        {
+            candidateSignalTypes = FilterCandidateSignalTypesForPositionAwareness(candidateSignalTypes, StrategySignalType.Exit);
+            logger.LogInformation(
+                "Strategy exit candidate was suppressed because no open position exists for StrategyVersionId {StrategyVersionId}, Symbol {Symbol}, Timeframe {Timeframe}.",
+                version.Id,
+                normalizedContext.IndicatorSnapshot.Symbol,
+                normalizedContext.IndicatorSnapshot.Timeframe);
+        }
+
+        var sameDirectionEntrySuppressionSummary = candidateSignalTypes.Contains(StrategySignalType.Entry)
+            ? await ResolveSameDirectionEntrySuppressionSummaryAsync(request.FeatureSnapshot, evaluationResult.EntryDirection, cancellationToken)
+            : null;
+        if (!string.IsNullOrWhiteSpace(sameDirectionEntrySuppressionSummary))
+        {
+            candidateSignalTypes = FilterCandidateSignalTypesForPositionAwareness(candidateSignalTypes, StrategySignalType.Entry);
+            logger.LogInformation(
+                "Strategy entry candidate was suppressed because a same-direction open position already exists for StrategyVersionId {StrategyVersionId}, Symbol {Symbol}, Timeframe {Timeframe}.",
+                version.Id,
+                normalizedContext.IndicatorSnapshot.Symbol,
+                normalizedContext.IndicatorSnapshot.Timeframe);
+        }
+
         var aiEvaluations = new List<AiSignalEvaluationResult>(candidateSignalTypes.Count);
         signalActivity.SetTag("coinbot.signal.candidate_count", candidateSignalTypes.Count);
 
@@ -99,31 +128,50 @@ public sealed class StrategySignalService(
                 "Strategy signal generation produced no persisted signals for StrategyVersionId {StrategyVersionId}.",
                 version.Id);
 
-            await traceService.WriteDecisionTraceAsync(
-                new DecisionTraceWriteRequest(
-                        version.OwnerUserId,
-                        normalizedContext.IndicatorSnapshot.Symbol,
-                        normalizedContext.IndicatorSnapshot.Timeframe,
-                        BuildStrategyVersionLabel(version),
-                        "None",
-                        "NoSignalCandidate",
-                        BuildDecisionSnapshotJson(
-                            strategy,
-                            version,
-                            evaluationReport,
-                            normalizedContext,
-                            evaluationResult,
-                            signalType: null,
-                            decisionOutcome: "NoSignalCandidate",
-                        vetoReasonCode: null,
-                        riskScore: null,
-                        relatedEntityId: null),
-                    (int)decisionStopwatch.ElapsedMilliseconds,
-                    DecisionReasonType: "StrategyCandidate",
-                    DecisionReasonCode: "NoSignalCandidate",
-                    DecisionSummary: "Strategy did not produce an executable candidate.",
-                    DecisionAtUtc: now),
-                cancellationToken);
+            var noSignalSummary = BuildNoSignalDecisionSummary(
+                evaluationReport,
+                exitCandidateSuppressedByPositionAwareness,
+                sameDirectionEntrySuppressionSummary);
+
+            var noSignalTraceRequest = new DecisionTraceWriteRequest(
+                version.OwnerUserId,
+                normalizedContext.IndicatorSnapshot.Symbol,
+                normalizedContext.IndicatorSnapshot.Timeframe,
+                BuildStrategyVersionLabel(version),
+                "None",
+                "NoSignalCandidate",
+                BuildDecisionSnapshotJson(
+                    strategy,
+                    version,
+                    evaluationReport,
+                    normalizedContext,
+                    evaluationResult,
+                    signalType: null,
+                    decisionOutcome: "NoSignalCandidate",
+                    vetoReasonCode: null,
+                    riskScore: null,
+                    relatedEntityId: null),
+                (int)decisionStopwatch.ElapsedMilliseconds,
+                DecisionReasonType: "StrategyCandidate",
+                DecisionReasonCode: "NoSignalCandidate",
+                DecisionSummary: noSignalSummary,
+                DecisionAtUtc: now);
+
+            if (await ShouldWriteNoSignalDecisionTraceAsync(
+                    noSignalTraceRequest,
+                    exitCandidateSuppressedByPositionAwareness || !string.IsNullOrWhiteSpace(sameDirectionEntrySuppressionSummary),
+                    cancellationToken))
+            {
+                await traceService.WriteDecisionTraceAsync(noSignalTraceRequest, cancellationToken);
+            }
+            else
+            {
+                logger.LogDebug(
+                    "Repeated no-open-position exit trace suppressed for StrategyVersionId {StrategyVersionId}, Symbol {Symbol}, Timeframe {Timeframe}.",
+                    version.Id,
+                    normalizedContext.IndicatorSnapshot.Symbol,
+                    normalizedContext.IndicatorSnapshot.Timeframe);
+            }
 
             return new StrategySignalGenerationResult(
                 evaluationResult,
@@ -367,9 +415,9 @@ public sealed class StrategySignalService(
                     CorrelationId: ResolveCorrelationId(),
                     RiskScore: confidenceSnapshot.ScorePercentage,
                     StrategySignalId: signal.Id,
-                    DecisionReasonType: "Allow",
-                    DecisionReasonCode: ExecutionDecisionDiagnostics.AllowedDecisionCode,
-                    DecisionSummary: "Strategy produced an executable candidate.",
+                    DecisionReasonType: "StrategyCandidate",
+                    DecisionReasonCode: "CandidatePersisted",
+                    DecisionSummary: "Strategy persisted a candidate signal. Runtime execution gating is pending.",
                     DecisionAtUtc: now),
                 cancellationToken);
         }
@@ -491,6 +539,172 @@ public sealed class StrategySignalService(
         }
 
         return signalTypes;
+    }
+
+    private static string BuildNoSignalDecisionSummary(
+        StrategyEvaluationReportSnapshot evaluationReport,
+        bool exitCandidateSuppressedByPositionAwareness,
+        string? sameDirectionEntrySuppressionSummary)
+    {
+        if (!string.IsNullOrWhiteSpace(sameDirectionEntrySuppressionSummary))
+        {
+            return sameDirectionEntrySuppressionSummary;
+        }
+
+        if (exitCandidateSuppressedByPositionAwareness)
+        {
+            return "Strategy exit candidate was suppressed because no open position exists. Runtime exit persistence was skipped.";
+        }
+
+        var explainabilitySummary = string.IsNullOrWhiteSpace(evaluationReport.ExplainabilitySummary)
+            ? null
+            : evaluationReport.ExplainabilitySummary.Trim();
+
+        var summary = string.IsNullOrWhiteSpace(explainabilitySummary)
+            ? "Strategy did not produce an executable candidate."
+            : $"Strategy did not produce an executable candidate. Explainability: {explainabilitySummary}";
+
+        return Truncate(summary, DecisionSummaryMaxLength) ?? "Strategy did not produce an executable candidate.";
+    }
+
+    private static string? Truncate(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        var trimmed = value.Trim();
+        return trimmed.Length <= maxLength
+            ? trimmed
+            : trimmed[..maxLength];
+    }
+
+    private async Task<bool> ShouldWriteNoSignalDecisionTraceAsync(
+        DecisionTraceWriteRequest traceRequest,
+        bool suppressionDeduplicationEnabled,
+        CancellationToken cancellationToken)
+    {
+        if (!suppressionDeduplicationEnabled)
+        {
+            return true;
+        }
+
+        var latestTrace = await dbContext.DecisionTraces
+            .Where(entity =>
+                !entity.IsDeleted &&
+                entity.UserId == traceRequest.UserId &&
+                entity.Symbol == traceRequest.Symbol &&
+                entity.Timeframe == traceRequest.Timeframe &&
+                entity.StrategyVersion == traceRequest.StrategyVersion &&
+                entity.SignalType == traceRequest.SignalType &&
+                entity.DecisionOutcome == traceRequest.DecisionOutcome &&
+                entity.DecisionReasonCode == traceRequest.DecisionReasonCode)
+            .OrderByDescending(entity => entity.DecisionAtUtc ?? entity.CreatedAtUtc)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (latestTrace is null)
+        {
+            return true;
+        }
+
+        var latestObservedAtUtc = latestTrace.DecisionAtUtc ?? latestTrace.CreatedAtUtc;
+        var currentObservedAtUtc = traceRequest.DecisionAtUtc ?? traceRequest.CreatedAtUtc ?? timeProvider.GetUtcNow().UtcDateTime;
+
+        return !string.Equals(latestTrace.DecisionSummary, traceRequest.DecisionSummary, StringComparison.Ordinal) ||
+               currentObservedAtUtc - latestObservedAtUtc >= TimeSpan.FromSeconds(RepeatedNoOpenPositionExitTraceSuppressionWindowSeconds);
+    }
+
+    private static bool ShouldSuppressExitCandidateForMissingOpenPosition(TradingFeatureSnapshotModel? featureSnapshot)
+    {
+        return featureSnapshot is not null && !featureSnapshot.TradingContext.HasOpenPosition;
+    }
+
+    private async Task<string?> ResolveSameDirectionEntrySuppressionSummaryAsync(
+        TradingFeatureSnapshotModel? featureSnapshot,
+        StrategyTradeDirection entryDirection,
+        CancellationToken cancellationToken)
+    {
+        if (featureSnapshot is null || !IsActionableDirection(entryDirection))
+        {
+            return null;
+        }
+
+        var currentNetQuantity = await ResolveCurrentNetQuantityAsync(featureSnapshot, cancellationToken);
+        if (currentNetQuantity == 0m)
+        {
+            return null;
+        }
+
+        var currentPositionDirection = currentNetQuantity > 0m
+            ? StrategyTradeDirection.Long
+            : StrategyTradeDirection.Short;
+        if (currentPositionDirection != entryDirection)
+        {
+            return null;
+        }
+
+        return $"Strategy entry candidate was suppressed because an open {entryDirection.ToString().ToLowerInvariant()} position already exists. Runtime entry persistence was skipped.";
+    }
+
+    private async Task<decimal> ResolveCurrentNetQuantityAsync(
+        TradingFeatureSnapshotModel featureSnapshot,
+        CancellationToken cancellationToken)
+    {
+        if (featureSnapshot.TradingContext.TradingMode == ExecutionEnvironment.Demo)
+        {
+            var quantity = await dbContext.DemoPositions
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .Where(entity =>
+                    entity.OwnerUserId == featureSnapshot.UserId &&
+                    entity.BotId == featureSnapshot.BotId &&
+                    entity.Symbol == featureSnapshot.Symbol &&
+                    !entity.IsDeleted)
+                .Select(entity => (decimal?)entity.Quantity)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            return quantity ?? 0m;
+        }
+
+        if (featureSnapshot.TradingContext.Plane == ExchangeDataPlane.Spot)
+        {
+            var latestHoldingQuantity = await dbContext.SpotPortfolioFills
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .Where(entity =>
+                    entity.OwnerUserId == featureSnapshot.UserId &&
+                    entity.Symbol == featureSnapshot.Symbol &&
+                    !entity.IsDeleted &&
+                    (!featureSnapshot.ExchangeAccountId.HasValue || entity.ExchangeAccountId == featureSnapshot.ExchangeAccountId.Value))
+                .OrderByDescending(entity => entity.OccurredAtUtc)
+                .Select(entity => (decimal?)entity.HoldingQuantityAfter)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            return latestHoldingQuantity ?? 0m;
+        }
+
+        return await LivePositionTruthResolver.ResolveNetQuantityAsync(
+            dbContext,
+            featureSnapshot.UserId,
+            featureSnapshot.TradingContext.Plane,
+            featureSnapshot.ExchangeAccountId,
+            featureSnapshot.Symbol,
+            cancellationToken);
+    }
+
+    private static IReadOnlyCollection<StrategySignalType> FilterCandidateSignalTypesForPositionAwareness(
+        IReadOnlyCollection<StrategySignalType> candidateSignalTypes,
+        StrategySignalType suppressedSignalType)
+    {
+        if (!candidateSignalTypes.Contains(suppressedSignalType))
+        {
+            return candidateSignalTypes;
+        }
+
+        return candidateSignalTypes
+            .Where(signalType => signalType != suppressedSignalType)
+            .ToArray();
     }
 
     private static StrategyEvaluationResult CreateSignalScopedEvaluationResult(

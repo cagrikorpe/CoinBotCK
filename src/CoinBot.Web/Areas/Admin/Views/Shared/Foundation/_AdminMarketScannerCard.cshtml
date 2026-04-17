@@ -52,6 +52,21 @@
             </div>
         </div>
 
+        @if (!string.IsNullOrWhiteSpace(scanner.CycleSummary) || !string.IsNullOrWhiteSpace(scanner.RejectionSummary))
+        {
+            <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6" data-cb-scanner-cycle-reason-strip>
+                <div>
+                    <div class="cb-admin-info-strip-title">Cycle reason</div>
+                    <div class="cb-admin-info-strip-text" data-cb-scanner-cycle-summary>@(scanner.CycleSummary ?? "n/a")</div>
+                    @if (!string.IsNullOrWhiteSpace(scanner.RejectionSummary))
+                    {
+                        <div class="cb-admin-info-strip-text mt-2" data-cb-scanner-rejection-breakdown>@scanner.RejectionSummary</div>
+                    }
+                </div>
+                <span class="cb-admin-info-strip-meta">Explainable</span>
+            </div>
+        }
+
         <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6" data-cb-scanner-handoff-strip>
             <div>
                 <div class="cb-admin-info-strip-title" data-cb-scanner-handoff-status>@latestHandoff.ExecutionRequestStatus</div>

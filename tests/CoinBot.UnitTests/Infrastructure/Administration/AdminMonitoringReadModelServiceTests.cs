@@ -155,6 +155,165 @@ public sealed class AdminMonitoringReadModelServiceTests
     }
 
     [Fact]
+    public async Task GetSnapshotAsync_ExcludesLegacyDirtyMarketScoreCandidates_FromDashboardProjection()
+    {
+        var now = new DateTime(2026, 4, 3, 12, 0, 0, DateTimeKind.Utc);
+        var cycleId = Guid.NewGuid();
+        var dirtyCandidateId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext();
+
+        dbContext.MarketScannerCycles.Add(new MarketScannerCycle
+        {
+            Id = cycleId,
+            StartedAtUtc = now.AddSeconds(-2),
+            CompletedAtUtc = now,
+            UniverseSource = "config+registry",
+            ScannedSymbolCount = 2,
+            EligibleCandidateCount = 2,
+            TopCandidateCount = 2,
+            BestCandidateSymbol = "BTCUSDT",
+            BestCandidateScore = 95m,
+            Summary = "scan complete"
+        });
+        dbContext.MarketScannerCandidates.AddRange(
+            new MarketScannerCandidate
+            {
+                Id = dirtyCandidateId,
+                ScanCycleId = cycleId,
+                Symbol = "BTCUSDT",
+                UniverseSource = "config+registry",
+                ObservedAtUtc = now,
+                LastCandleAtUtc = now,
+                LastPrice = 100m,
+                QuoteVolume24h = 123456m,
+                MarketScore = 123456m,
+                IsEligible = true,
+                Score = 95m,
+                Rank = 1,
+                IsTopCandidate = true
+            },
+            new MarketScannerCandidate
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                Symbol = "ETHUSDT",
+                UniverseSource = "config+registry",
+                ObservedAtUtc = now,
+                LastCandleAtUtc = now,
+                LastPrice = 90m,
+                QuoteVolume24h = 100000m,
+                MarketScore = 100m,
+                IsEligible = true,
+                Score = 80m,
+                Rank = 2,
+                IsTopCandidate = true
+            });
+        dbContext.MarketScannerHandoffAttempts.Add(new MarketScannerHandoffAttempt
+        {
+            Id = Guid.NewGuid(),
+            ScanCycleId = cycleId,
+            SelectedCandidateId = dirtyCandidateId,
+            SelectedSymbol = "BTCUSDT",
+            SelectedTimeframe = "1m",
+            SelectedAtUtc = now,
+            CandidateRank = 1,
+            CandidateMarketScore = 123456m,
+            CandidateScore = 95m,
+            SelectionReason = "legacy",
+            StrategyDecisionOutcome = "Persisted",
+            ExecutionRequestStatus = "Prepared",
+            CompletedAtUtc = now,
+            CorrelationId = "corr-legacy"
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            TimeProvider.System,
+            Options.Create(new DataLatencyGuardOptions()));
+
+        var snapshot = await service.GetSnapshotAsync();
+
+        Assert.Equal("ETHUSDT", snapshot.MarketScanner.BestCandidateSymbol);
+        Assert.Equal(80m, snapshot.MarketScanner.BestCandidateScore);
+        Assert.Equal(1, snapshot.MarketScanner.ScannedSymbolCount);
+        Assert.Equal(1, snapshot.MarketScanner.EligibleCandidateCount);
+        var topCandidate = Assert.Single(snapshot.MarketScanner.TopCandidates);
+        Assert.Equal("ETHUSDT", topCandidate.Symbol);
+        Assert.Null(snapshot.MarketScanner.LatestHandoff.CandidateMarketScore);
+    }
+
+    [Fact]
+    public async Task GetSnapshotAsync_ExposesNoEligibleCandidateReasonBreakdown()
+    {
+        var now = new DateTime(2026, 4, 3, 12, 0, 0, DateTimeKind.Utc);
+        var cycleId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext();
+
+        dbContext.MarketScannerCycles.Add(new MarketScannerCycle
+        {
+            Id = cycleId,
+            StartedAtUtc = now.AddSeconds(-2),
+            CompletedAtUtc = now,
+            UniverseSource = "config+registry",
+            ScannedSymbolCount = 3,
+            EligibleCandidateCount = 0,
+            TopCandidateCount = 0,
+            Summary = null
+        });
+        dbContext.MarketScannerCandidates.AddRange(
+            new MarketScannerCandidate
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                Symbol = "BTCUSDT",
+                UniverseSource = "config",
+                ObservedAtUtc = now,
+                IsEligible = false,
+                RejectionReason = "QuoteVolume24hMissing",
+                Score = 0m
+            },
+            new MarketScannerCandidate
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                Symbol = "ETHUSDT",
+                UniverseSource = "registry",
+                ObservedAtUtc = now,
+                IsEligible = false,
+                RejectionReason = "QuoteVolume24hMissing",
+                Score = 0m
+            },
+            new MarketScannerCandidate
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                Symbol = "SOLUSDT",
+                UniverseSource = "registry",
+                ObservedAtUtc = now,
+                IsEligible = false,
+                RejectionReason = "HistoricalParityLag",
+                Score = 0m
+            });
+
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            TimeProvider.System,
+            Options.Create(new DataLatencyGuardOptions()));
+
+        var snapshot = await service.GetSnapshotAsync();
+
+        Assert.Contains("found no eligible candidates", snapshot.MarketScanner.CycleSummary ?? string.Empty, StringComparison.Ordinal);
+        Assert.Contains("QuoteVolume24hMissing:2 [BTCUSDT,ETHUSDT]", snapshot.MarketScanner.RejectionSummary ?? string.Empty, StringComparison.Ordinal);
+        Assert.Contains("HistoricalParityLag:1 [SOLUSDT]", snapshot.MarketScanner.RejectionSummary ?? string.Empty, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task GetSnapshotAsync_ProjectsLatestMarketScannerHandoffSnapshots()
     {
         var now = new DateTime(2026, 4, 3, 12, 0, 0, DateTimeKind.Utc);

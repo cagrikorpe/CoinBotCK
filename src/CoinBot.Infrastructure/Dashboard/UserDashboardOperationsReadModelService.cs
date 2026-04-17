@@ -106,6 +106,12 @@ public sealed class UserDashboardOperationsReadModelService(
                 !entity.IsDeleted &&
                 entity.Quantity != 0m)
             .ToListAsync(cancellationToken);
+        var projectedOpenPositionCount = await LivePositionTruthResolver.ResolveOpenPositionCountAsync(
+            dbContext,
+            normalizedUserId,
+            ExchangeDataPlane.Futures,
+            exchangeAccountId: null,
+            cancellationToken);
 
         var equity = balances.Sum(entity =>
             entity.CrossWalletBalance != 0m
@@ -143,7 +149,7 @@ public sealed class UserDashboardOperationsReadModelService(
             OpenCircuitBreakerCount: breakerStates.Count,
             CurrentDailyLossPercentage: currentDailyLossPercentage,
             MaxDailyLossPercentage: riskProfile?.MaxDailyLossPercentage,
-            OpenPositionCount: positions.Count,
+            OpenPositionCount: projectedOpenPositionCount,
             MaxOpenPositions: optionsValue.MaxOpenPositionsPerUser,
             ActiveBotCooldownCount: activeBotCooldownCount,
             ActiveSymbolCooldownCount: activeSymbolCooldownCount,

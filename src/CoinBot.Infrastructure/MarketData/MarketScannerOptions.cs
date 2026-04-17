@@ -6,6 +6,9 @@ public sealed class MarketScannerOptions
 {
     public bool Enabled { get; set; } = true;
 
+    [MaxLength(32)]
+    public string ExecutionHost { get; set; } = "Worker";
+
     [Range(5, 300)]
     public int ScanIntervalSeconds { get; set; } = 30;
 
@@ -31,7 +34,7 @@ public sealed class MarketScannerOptions
     public decimal MaxPrice { get; set; } = 1_000_000m;
 
     [Range(typeof(decimal), "0", "1000000000000000")]
-    public decimal StrategyScoreWeight { get; set; } = 1_000m;
+    public decimal StrategyScoreWeight { get; set; } = 2m;
 
     public string[] AllowedQuoteAssets { get; set; } = ["USDT"];
 

@@ -92,7 +92,7 @@ public sealed class AdminOperationsCenterIntegrationTests
         Assert.Equal("Exchange bagli degil", operationsModel.PrimaryFlow.Setup.PrimaryMessage);
         Assert.Equal("Eksik", operationsModel.PrimaryFlow.Monitoring.StatusLabel);
         Assert.Equal("critical", operationsModel.RuntimeHealthCenter.StatusTone);
-        Assert.Contains(operationsModel.RuntimeHealthCenter.Signals, item => item.Code == "WorkerHeartbeatUnavailable");
+        Assert.Contains(operationsModel.RuntimeHealthCenter.Signals, item => item.Code == "CoreWorkerHeartbeatUnavailable");
         Assert.Contains(operationsModel.SummaryCards, item => item.Label == "CanActivate" && item.Value == "true");
 
         var rolloutModel = AdminOperationsCenterComposer.BuildRolloutClosureCenter(

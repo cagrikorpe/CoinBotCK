@@ -3,6 +3,9 @@
     var canEditGlobalPolicy = ViewData["AdminCanEditGlobalPolicy"] is bool canEditValue && canEditValue;
     var pilotOrderNotionalSummary = ViewData["AdminPilotOrderNotionalSummary"] as string ?? "Missing";
     var pilotOrderNotionalTone = ViewData["AdminPilotOrderNotionalTone"] as string ?? "critical";
+    var longRegimePolicyStatus = ViewData["AdminLongRegimePolicyStatus"] as string ?? "Disabled";
+    var longRegimePolicyTone = ViewData["AdminLongRegimePolicyTone"] as string ?? "warning";
+    var longRegimePolicyDetail = ViewData["AdminLongRegimePolicyDetail"] as string ?? "Long regime policy unavailable.";
 }
 
 <section id="cb_admin_settings_execution" class="card card-custom gutter-b cb-card cb-admin-card cb-admin-settings-section">
@@ -136,6 +139,20 @@
                         Label = pilotOrderNotionalTone == "healthy" ? "Bound" : "Blocked",
                         Tone = pilotOrderNotionalTone,
                         IconText = "HC"
+                    })
+                </div>
+            </div>
+
+            <div class="cb-admin-summary-card" data-cb-admin-long-regime-policy>
+                <span class="cb-admin-summary-label">Long regime gate</span>
+                <strong>@longRegimePolicyStatus</strong>
+                <small data-cb-admin-long-regime-policy-detail>@longRegimePolicyDetail</small>
+                <div class="cb-admin-page-meta mt-4">
+                    @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+                    {
+                        Label = longRegimePolicyStatus,
+                        Tone = longRegimePolicyTone,
+                        IconText = "LR"
                     })
                 </div>
             </div>

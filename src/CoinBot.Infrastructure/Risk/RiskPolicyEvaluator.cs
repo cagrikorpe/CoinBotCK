@@ -4,6 +4,7 @@ using CoinBot.Application.Abstractions.Risk;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Observability;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -259,38 +260,17 @@ public sealed class RiskPolicyEvaluator(
                 entity.Quantity != 0m)
             .ToListAsync(cancellationToken);
 
-        var fallbackExecutionPositions = Array.Empty<(string Symbol, decimal NetQuantity, decimal EntryPrice)>();
-
-        if (positions.Count == 0)
-        {
-            fallbackExecutionPositions = (await dbContext.ExecutionOrders
-                    .AsNoTracking()
-                    .IgnoreQueryFilters()
-                    .Where(entity =>
-                        entity.OwnerUserId == ownerUserId &&
-                        entity.Plane == ExchangeDataPlane.Futures &&
-                        !entity.IsDeleted &&
-                        entity.SubmittedToBroker &&
-                        (entity.State == ExecutionOrderState.Submitted ||
-                         entity.State == ExecutionOrderState.Dispatching ||
-                         entity.State == ExecutionOrderState.CancelRequested ||
-                         entity.State == ExecutionOrderState.PartiallyFilled ||
-                         entity.State == ExecutionOrderState.Filled))
-                    .ToListAsync(cancellationToken))
-                .GroupBy(entity => NormalizeSymbol(entity.Symbol))
-                .Select(group =>
-                {
-                    var netQuantity = group.Sum(ResolveSignedOrderQuantity);
-                    var latestPrice = group
-                        .OrderByDescending(entity => entity.UpdatedDate)
-                        .ThenByDescending(entity => entity.CreatedDate)
-                        .Select(entity => entity.AverageFillPrice.GetValueOrDefault() != 0m ? entity.AverageFillPrice.GetValueOrDefault() : entity.Price)
-                        .FirstOrDefault();
-                    return (Symbol: group.Key, NetQuantity: netQuantity, EntryPrice: latestPrice);
-                })
-                .Where(item => item.NetQuantity != 0m)
-                .ToArray();
-        }
+        var projectedPositionRows = await LivePositionTruthResolver.ResolveProjectedPositionsAsync(
+            dbContext,
+            ownerUserId,
+            ExchangeDataPlane.Futures,
+            exchangeAccountId: null,
+            cancellationToken);
+        var fallbackExecutionPositions = positions.Count == 0
+            ? projectedPositionRows
+                .Select(row => (Symbol: row.Symbol, NetQuantity: row.NetQuantity, EntryPrice: row.ReferencePrice))
+                .ToArray()
+            : Array.Empty<(string Symbol, decimal NetQuantity, decimal EntryPrice)>();
 
         var equity = balances.Sum(entity =>
             entity.CrossWalletBalance != 0m
@@ -325,23 +305,11 @@ public sealed class RiskPolicyEvaluator(
             : fallbackExecutionPositions
                 .Where(entity => string.Equals(ResolveBaseAsset(entity.Symbol), baseAsset, StringComparison.Ordinal))
                 .Sum(entity => Math.Abs(entity.EntryPrice * entity.NetQuantity));
-        var currentSymbolSignedQuantity = positions.Count != 0
-            ? positions
-                .Where(entity => string.Equals(NormalizeSymbol(entity.Symbol), normalizedSymbol, StringComparison.Ordinal))
-                .Sum(ResolveSignedPositionQuantity)
-            : fallbackExecutionPositions
-                .Where(entity => string.Equals(entity.Symbol, normalizedSymbol, StringComparison.Ordinal))
-                .Sum(entity => entity.NetQuantity);
-        var symbolHasOpenPosition = positions.Count != 0
-            ? positions.Any(entity =>
-                string.Equals(NormalizeSymbol(entity.Symbol), normalizedSymbol, StringComparison.Ordinal) &&
-                ResolveSignedPositionQuantity(entity) != 0m)
-            : fallbackExecutionPositions.Any(entity =>
-                string.Equals(entity.Symbol, normalizedSymbol, StringComparison.Ordinal) &&
-                entity.NetQuantity != 0m);
-        var openPositionCount = positions.Count != 0
-            ? positions.Count
-            : fallbackExecutionPositions.Length;
+        var currentSymbolSignedQuantity = projectedPositionRows
+            .Where(entity => string.Equals(entity.Symbol, normalizedSymbol, StringComparison.Ordinal))
+            .Sum(entity => entity.NetQuantity);
+        var symbolHasOpenPosition = currentSymbolSignedQuantity != 0m;
+        var openPositionCount = projectedPositionRows.Count;
 
         return CreateSnapshot(
             request,

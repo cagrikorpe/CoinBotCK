@@ -80,6 +80,7 @@ public static class AdminSuperAdminPrimaryFlowComposer
         DateTime evaluatedAtUtc)
     {
         var workerSignal = runtimeCenter.Signals.FirstOrDefault(item => string.Equals(item.Key, "worker-health", StringComparison.OrdinalIgnoreCase));
+        var marketScannerSignal = runtimeCenter.Signals.FirstOrDefault(item => string.Equals(item.Key, "market-scanner-health", StringComparison.OrdinalIgnoreCase));
         var exchangeReady = HasReadyExchange(exchangeCenter, activationControlCenter.CurrentModeLabel);
         var workerReady = workerSignal is not null && string.Equals(workerSignal.Tone, "healthy", StringComparison.OrdinalIgnoreCase);
         var emergencyActive = IsEmergencyActive(activationControlCenter, globalSystemStateSnapshot);
@@ -104,7 +105,7 @@ public static class AdminSuperAdminPrimaryFlowComposer
                 setupReady ? "Hazir" : "Eksik",
                 setupReady ? "healthy" : "critical",
                 setupReady
-                    ? "Ortam secimi, exchange baglantisi ve worker durumu temiz gorunuyor."
+                    ? "Ortam secimi, exchange baglantisi ve core worker / orchestration durumu temiz gorunuyor."
                     : "Kurulum eksigi var; tek satir blocker mesajini giderin.",
                 setupMessage,
                 true,
@@ -113,7 +114,7 @@ public static class AdminSuperAdminPrimaryFlowComposer
                 {
                     new AdminSuperAdminFlowItemViewModel("environment", "Ortam", activationControlCenter.CurrentModeLabel, activationControlCenter.CurrentModeLabel.Equals("Live", StringComparison.OrdinalIgnoreCase) ? "warning" : "info", activationControlCenter.CurrentModeSummary),
                     new AdminSuperAdminFlowItemViewModel("exchange", "Exchange hazir mi", exchangeReady ? "Hazir" : "Eksik", exchangeReady ? "healthy" : "critical", exchangeReady ? "Secili ortam icin exchange hesabi hazir gorunuyor." : ResolveExchangeBlockedSummary(activationControlCenter.CurrentModeLabel)),
-                    new AdminSuperAdminFlowItemViewModel("worker", "Worker hazir mi", workerReady ? "Hazir" : "Eksik", workerReady ? "healthy" : "critical", workerReady ? "Worker heartbeat gorunuyor." : "Worker calismiyor.")
+                    new AdminSuperAdminFlowItemViewModel("worker", "Core worker / orchestration hazir mi", workerReady ? "Hazir" : "Eksik", workerReady ? "healthy" : "critical", workerReady ? "Core worker / orchestration heartbeat gorunuyor." : "Core worker / orchestration hazir degil.")
                 },
                 BuildSetupActions(canRefreshOperationalState)),
             new AdminSuperAdminFlowSectionViewModel(
@@ -141,7 +142,7 @@ public static class AdminSuperAdminPrimaryFlowComposer
                 {
                     new AdminSuperAdminFlowItemViewModel("environment", "Ortam ozeti", activationControlCenter.CurrentModeLabel, activationControlCenter.CurrentModeLabel.Equals("Live", StringComparison.OrdinalIgnoreCase) ? "warning" : "info", activationControlCenter.CurrentModeSummary),
                     new AdminSuperAdminFlowItemViewModel("exchange", "Exchange hazir mi", exchangeReady ? "Hazir" : "Eksik", exchangeReady ? "healthy" : "critical", exchangeReady ? "Exchange baglantisi hazir." : ResolveExchangeBlockedSummary(activationControlCenter.CurrentModeLabel)),
-                    new AdminSuperAdminFlowItemViewModel("worker", "Worker hazir mi", workerReady ? "Hazir" : "Eksik", workerReady ? "healthy" : "critical", workerReady ? "Worker heartbeat gorunuyor." : "Worker calismiyor."),
+                    new AdminSuperAdminFlowItemViewModel("worker", "Core worker / orchestration hazir mi", workerReady ? "Hazir" : "Eksik", workerReady ? "healthy" : "critical", workerReady ? "Core worker / orchestration heartbeat gorunuyor." : "Core worker / orchestration hazir degil."),
                     new AdminSuperAdminFlowItemViewModel("trade-master", "TradeMaster acik mi", ResolveTradeMasterValue(activationControlCenter), ResolveSwitchTone(activationControlCenter, "trade-master", "critical"), ResolveSwitchSummary(activationControlCenter, "trade-master", "TradeMaster kapali.")),
                     new AdminSuperAdminFlowItemViewModel("system-active", "Sistem aktif mi", activationControlCenter.IsCurrentlyActive ? "Aktif" : "Durduruldu", activationControlCenter.IsCurrentlyActive ? "healthy" : "warning", activationControlCenter.IsCurrentlyActive ? "Sistem su anda aktif." : "Sistem su anda kapali.")
                 },
@@ -171,6 +172,8 @@ public static class AdminSuperAdminPrimaryFlowComposer
                 {
                     new AdminSuperAdminFlowItemViewModel("status", "Sistem aktif mi", monitoringDisplayStatus, monitoringStatus switch { "Aktif" => "healthy", "Durduruldu" => "warning", _ => "critical" }, ResolveMonitoringStatusSummary(monitoringStatus)),
                     new AdminSuperAdminFlowItemViewModel("environment", "Ortam", activationControlCenter.CurrentModeLabel, activationControlCenter.CurrentModeLabel.Equals("Live", StringComparison.OrdinalIgnoreCase) ? "warning" : "info", activationControlCenter.CurrentModeSummary),
+                    new AdminSuperAdminFlowItemViewModel("core-worker-health", workerSignal?.Label ?? "Core worker / orchestration", workerSignal?.Value ?? "Unknown", workerSignal?.Tone ?? "critical", workerSignal?.Summary ?? "Core worker / orchestration snapshot yok."),
+                    new AdminSuperAdminFlowItemViewModel("market-scanner-health", marketScannerSignal?.Label ?? "Market scanner health", marketScannerSignal?.Value ?? "Unknown", marketScannerSignal?.Tone ?? "critical", marketScannerSignal?.Summary ?? "Market scanner snapshot yok."),
                     new AdminSuperAdminFlowItemViewModel("running-bots", "Calisan bot sayisi", runningBotCount.ToString(CultureInfo.InvariantCulture), runningBotCount > 0 ? "healthy" : "warning", runningBotCount > 0 ? "Bot calisiyor." : "Calisan bot yok."),
                     new AdminSuperAdminFlowItemViewModel("last-error", "Son hata", lastErrorDisplay, string.Equals(lastErrorDisplay, "Son hata yok", StringComparison.OrdinalIgnoreCase) ? "healthy" : "warning", string.Equals(lastErrorDisplay, "Son hata yok", StringComparison.OrdinalIgnoreCase) ? "Sorun gorunmuyor." : "Kisa hata ozeti."),
                     new AdminSuperAdminFlowItemViewModel("last-stop", "Son durdurma nedeni", lastStopDisplay, string.Equals(lastStopDisplay, "Son durdurma nedeni yok", StringComparison.OrdinalIgnoreCase) ? "healthy" : "warning", string.Equals(lastStopDisplay, "Son durdurma nedeni yok", StringComparison.OrdinalIgnoreCase) ? "Durdurma nedeni yok." : "Kisa durdurma nedeni."),
@@ -310,7 +313,7 @@ public static class AdminSuperAdminPrimaryFlowComposer
 
         if (!workerReady)
         {
-            return "Worker calismiyor";
+            return "Core worker / orchestration hazir degil";
         }
 
         return activationControlCenter.IsActivatable
@@ -332,7 +335,7 @@ public static class AdminSuperAdminPrimaryFlowComposer
 
         if (!workerReady)
         {
-            return "Worker calismiyor";
+            return "Core worker / orchestration hazir degil";
         }
 
         if (!activationControlCenter.IsActivatable)
@@ -354,7 +357,7 @@ public static class AdminSuperAdminPrimaryFlowComposer
 
         if (!workerReady)
         {
-            return "Worker calismiyor";
+            return "Core worker / orchestration hazir degil";
         }
 
         if (!exchangeReady)
@@ -362,9 +365,14 @@ public static class AdminSuperAdminPrimaryFlowComposer
             return ResolveExchangeBlockedSummary(activationControlCenter.CurrentModeLabel);
         }
 
+        if (!string.Equals(runtimeCenter.StatusTone, "healthy", StringComparison.OrdinalIgnoreCase))
+        {
+            return runtimeCenter.Summary;
+        }
+
         return executionSnapshot.IsTradeMasterArmed
             ? "Sistem aktif"
-            : (string.Equals(runtimeCenter.StatusTone, "critical", StringComparison.OrdinalIgnoreCase) ? "Eksik" : "Sistem kapali");
+            : "Sistem kapali";
     }
 
     private static string ResolveActivationBlockedSummary(AdminActivationControlCenterViewModel activationControlCenter)
@@ -405,11 +413,24 @@ public static class AdminSuperAdminPrimaryFlowComposer
             return "Yok";
         }
 
-        var failureSummary = runtimeCenter.LastFailureSummary ?? string.Empty;
-        if (ContainsToken(failureSummary, "worker"))
+        var marketScannerSignal = runtimeCenter.Signals.FirstOrDefault(item => string.Equals(item.Key, "market-scanner-health", StringComparison.OrdinalIgnoreCase));
+        if (marketScannerSignal is not null && string.Equals(marketScannerSignal.Tone, "critical", StringComparison.OrdinalIgnoreCase))
         {
-            return "Worker calismiyor";
+            return "Market scanner kritik";
         }
+
+        if (marketScannerSignal is not null && string.Equals(marketScannerSignal.Tone, "warning", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Market scanner review gerekiyor";
+        }
+
+        var coreWorkerSignal = runtimeCenter.Signals.FirstOrDefault(item => string.Equals(item.Key, "worker-health", StringComparison.OrdinalIgnoreCase));
+        if (coreWorkerSignal is not null && !string.Equals(coreWorkerSignal.Tone, "healthy", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Core worker / orchestration hazir degil";
+        }
+
+        var failureSummary = runtimeCenter.LastFailureSummary ?? string.Empty;
 
         if (ContainsToken(failureSummary, "clock") || ContainsToken(failureSummary, "drift"))
         {

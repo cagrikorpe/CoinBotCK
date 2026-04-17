@@ -30,6 +30,7 @@ public sealed class StrategyVersionService(
     {
         var strategy = await GetStrategyAsync(strategyId, cancellationToken);
         var parsedDefinition = ParseAndValidate(definitionJson);
+        var canonicalDefinitionJson = NormalizeDefinitionJson(parsedDefinition.Document, definitionJson);
         var utcNow = GetUtcNow();
 
         var existingDrafts = await dbContext.TradingStrategyVersions
@@ -56,7 +57,7 @@ public sealed class StrategyVersionService(
             SchemaVersion = parsedDefinition.Document.SchemaVersion,
             VersionNumber = nextVersionNumber + 1,
             Status = StrategyVersionStatus.Draft,
-            DefinitionJson = NormalizeDefinitionJson(definitionJson)
+            DefinitionJson = canonicalDefinitionJson
         };
 
         dbContext.TradingStrategyVersions.Add(version);
@@ -468,11 +469,14 @@ public sealed class StrategyVersionService(
             innerException);
     }
 
-    private static string NormalizeDefinitionJson(string definitionJson)
+    private static string NormalizeDefinitionJson(StrategyRuleDocument document, string fallbackDefinitionJson)
     {
-        return string.IsNullOrWhiteSpace(definitionJson)
-            ? throw new ArgumentException("The value is required.", nameof(definitionJson))
-            : definitionJson.Trim();
+        if (string.IsNullOrWhiteSpace(fallbackDefinitionJson))
+        {
+            throw new ArgumentException("The value is required.", nameof(fallbackDefinitionJson));
+        }
+
+        return StrategyDefinitionCanonicalJsonSerializer.Serialize(document);
     }
 
     private static string? Truncate(string? value, int maxLength)

@@ -538,40 +538,12 @@ public sealed class UserExecutionOverrideGuard(
                     cancellationToken);
         }
 
-        var positionCount = await dbContext.ExchangePositions
-            .AsNoTracking()
-            .IgnoreQueryFilters()
-            .CountAsync(
-                entity => entity.OwnerUserId == userId &&
-                          entity.Plane == ExchangeDataPlane.Futures &&
-                          entity.Quantity != 0m &&
-                          !entity.IsDeleted,
-                cancellationToken);
-
-        if (positionCount != 0)
-        {
-            return positionCount;
-        }
-
-        var executionNetBySymbol = (await dbContext.ExecutionOrders
-                .AsNoTracking()
-                .IgnoreQueryFilters()
-                .Where(entity =>
-                    entity.OwnerUserId == userId &&
-                    entity.Plane == ExchangeDataPlane.Futures &&
-                    !entity.IsDeleted &&
-                    entity.SubmittedToBroker &&
-                    (entity.State == ExecutionOrderState.Submitted ||
-                     entity.State == ExecutionOrderState.Dispatching ||
-                     entity.State == ExecutionOrderState.CancelRequested ||
-                     entity.State == ExecutionOrderState.PartiallyFilled ||
-                     entity.State == ExecutionOrderState.Filled))
-                .ToListAsync(cancellationToken))
-            .GroupBy(entity => NormalizePositionSymbol(entity.Symbol))
-            .Select(group => group.Sum(ResolveSignedOrderQuantity))
-            .Count(netQuantity => netQuantity != 0m);
-
-        return executionNetBySymbol;
+        return await LivePositionTruthResolver.ResolveOpenPositionCountAsync(
+            dbContext,
+            userId,
+            ExchangeDataPlane.Futures,
+            exchangeAccountId: null,
+            cancellationToken);
     }
 
     private async Task<int> ResolveTodayTradeCountAsync(string userId, CancellationToken cancellationToken)
@@ -633,38 +605,13 @@ public sealed class UserExecutionOverrideGuard(
         ExchangeDataPlane plane,
         CancellationToken cancellationToken)
     {
-        var positionNetQuantity = (await dbContext.ExchangePositions
-                .AsNoTracking()
-                .IgnoreQueryFilters()
-                .Where(entity =>
-                    entity.OwnerUserId == userId &&
-                    entity.Plane == plane &&
-                    !entity.IsDeleted)
-                .ToListAsync(cancellationToken))
-            .Where(entity => NormalizePositionSymbol(entity.Symbol) == normalizedSymbol)
-            .Sum(ResolveSignedPositionQuantity);
-
-        if (positionNetQuantity != 0m)
-        {
-            return positionNetQuantity;
-        }
-
-        return (await dbContext.ExecutionOrders
-                .AsNoTracking()
-                .IgnoreQueryFilters()
-                .Where(entity =>
-                    entity.OwnerUserId == userId &&
-                    entity.Plane == plane &&
-                    !entity.IsDeleted &&
-                    entity.SubmittedToBroker &&
-                    (entity.State == ExecutionOrderState.Submitted ||
-                     entity.State == ExecutionOrderState.Dispatching ||
-                     entity.State == ExecutionOrderState.CancelRequested ||
-                     entity.State == ExecutionOrderState.PartiallyFilled ||
-                     entity.State == ExecutionOrderState.Filled))
-                .ToListAsync(cancellationToken))
-            .Where(entity => NormalizePositionSymbol(entity.Symbol) == normalizedSymbol)
-            .Sum(ResolveSignedOrderQuantity);
+        return await LivePositionTruthResolver.ResolveNetQuantityAsync(
+            dbContext,
+            userId,
+            plane,
+            exchangeAccountId: null,
+            normalizedSymbol,
+            cancellationToken);
     }
 
     private static decimal ResolveSignedOrderQuantity(ExecutionOrder entity)

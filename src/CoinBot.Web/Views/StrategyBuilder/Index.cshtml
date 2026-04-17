@@ -1,4 +1,5 @@
 @{
+    var runtimeConfigJson = ViewData["StrategyBuilderRuntimeConfigJson"] as string ?? "{}";
     ViewData["Title"] = "Strateji Oluştur";
     ViewData["ActiveNav"] = "StrategyBuilder";
     ViewData["PageDescription"] = "Stratejinizi şablondan başlatın ve botunuza bağlayın.";
@@ -9,7 +10,7 @@
     <script src="~/js/strategy-builder-foundation.js" asp-append-version="true"></script>
 }
 
-<div class="row" data-cb-strategy-builder data-cb-strategy-scenario="blank" data-cb-market-mode="spot">
+<div class="row" data-cb-strategy-builder data-cb-strategy-scenario="blank" data-cb-market-mode="spot" data-cb-runtime-config='@runtimeConfigJson'>
     <div class="col-12">
         <div class="card card-custom gutter-b cb-card">
             <div class="card-body">

@@ -59,6 +59,27 @@ public sealed class AdminOverviewSurfaceTests
         Assert.DoesNotContain("blocker", content, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("readiness checklist", content, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void AdminSystemHealthView_RendersMarketScannerParitySelectors()
+    {
+        var content = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Areas",
+            "Admin",
+            "Views",
+            "Admin",
+            "SystemHealth.cshtml"));
+
+        Assert.Contains("data-cb-system-health-parity", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-system-health-parity-summary", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-system-health-core-tone", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-system-health-market-scanner-tone", content, StringComparison.Ordinal);
+        Assert.Contains("Runtime parity", content, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void AdminSuperAdminPrimaryFlowModel_ExposesAdvancedTechnicalLinks()
     {

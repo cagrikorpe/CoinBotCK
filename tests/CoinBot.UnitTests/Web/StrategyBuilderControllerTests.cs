@@ -4,14 +4,18 @@ using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Contracts.Common;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.Persistence;
+using CoinBot.Infrastructure.Strategies;
 using CoinBot.Web.Controllers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Rendering;
 using Microsoft.AspNetCore.Mvc.ViewFeatures;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace CoinBot.UnitTests.Web;
 
@@ -53,12 +57,15 @@ public sealed class StrategyBuilderControllerTests
         var viewResult = Assert.IsType<ViewResult>(result);
         var templates = Assert.IsAssignableFrom<IReadOnlyCollection<StrategyTemplateSnapshot>>(controller.ViewData["StrategyTemplateCatalog"]);
         var targets = Assert.IsAssignableFrom<IReadOnlyCollection<SelectListItem>>(controller.ViewData["StrategyBuilderDraftTargets"]);
+        var runtimeConfigJson = Assert.IsType<string>(controller.ViewData["StrategyBuilderRuntimeConfigJson"]);
 
         Assert.Same(templates, templateCatalog.ListResult);
         Assert.Equal(2, targets.Count);
         Assert.Contains(targets, item => item.Text == "Alpha Core (alpha-core)");
         Assert.Contains(targets, item => item.Text == "beta-core");
         Assert.DoesNotContain(targets, item => item.Text.Contains("gamma-core", StringComparison.Ordinal));
+        Assert.Contains("Long", runtimeConfigJson, StringComparison.Ordinal);
+        Assert.Contains("Short", runtimeConfigJson, StringComparison.Ordinal);
     }
 
 
@@ -84,7 +91,7 @@ public sealed class StrategyBuilderControllerTests
         var redirect = Assert.IsType<RedirectToActionResult>(result);
         Assert.Equal(nameof(StrategyBuilderController.Index), redirect.ActionName);
         Assert.Empty(versionService.CreateDraftFromTemplateRequests);
-        Assert.Equal("Template ve strateji seçimi gerekli.", controller.TempData["StrategyBuilderTemplateError"]?.ToString());
+        Assert.Equal("Template veya builder kaydi gerekli.", controller.TempData["StrategyBuilderTemplateError"]?.ToString());
     }
 
     [Fact]
@@ -260,6 +267,140 @@ public sealed class StrategyBuilderControllerTests
     }
 
     [Fact]
+    public async Task CreateDraftFromTemplate_WithBuilderDefinition_UsesCreateDraftAsync_AndPublishes()
+    {
+        await using var dbContext = CreateDbContext();
+        var strategyId = Guid.Parse("abababab-abab-abab-abab-abababababab");
+        dbContext.TradingStrategies.Add(new TradingStrategy
+        {
+            Id = strategyId,
+            OwnerUserId = "builder-user",
+            StrategyKey = "builder-definition-core",
+            DisplayName = "Builder Definition Core"
+        });
+        await dbContext.SaveChangesAsync();
+
+        var versionService = new FakeStrategyVersionService();
+        var controller = CreateController(dbContext, new FakeStrategyTemplateCatalogService(), versionService, "builder-user");
+        SetPostedDefinitionJson(controller, "{\"schemaVersion\":2,\"entry\":{\"path\":\"indicator.rsi.value\",\"comparison\":\"lessThanOrEqual\",\"value\":30,\"ruleId\":\"entry-rsi\",\"ruleType\":\"rsi\",\"weight\":10,\"enabled\":true}}");
+
+        var result = await controller.CreateDraftFromTemplate(strategyId, "rsi-reversal", CancellationToken.None);
+
+        var redirect = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(StrategyBuilderController.Index), redirect.ActionName);
+        var request = Assert.Single(versionService.CreateDraftRequests);
+        Assert.Equal(strategyId, request.StrategyId);
+        Assert.Contains("\"schemaVersion\":2", request.DefinitionJson, StringComparison.Ordinal);
+        Assert.Empty(versionService.CreateDraftFromTemplateRequests);
+        Assert.Contains(versionService.PublishRequests, requestId => requestId == versionService.LastDraftId);
+    }
+
+    [Fact]
+    public async Task StartFromTemplate_WithBuilderDefinition_CreatesOwnedStrategy_AndUsesCreateDraftAsync()
+    {
+        await using var dbContext = CreateDbContext();
+        var templateCatalog = new FakeStrategyTemplateCatalogService();
+        var versionService = new FakeStrategyVersionService();
+        var controller = CreateController(dbContext, templateCatalog, versionService, "builder-user");
+        SetPostedDefinitionJson(controller, "{\"schemaVersion\":2,\"entry\":{\"path\":\"indicator.rsi.value\",\"comparison\":\"lessThanOrEqual\",\"value\":30,\"ruleId\":\"entry-rsi\",\"ruleType\":\"rsi\",\"weight\":10,\"enabled\":true}}");
+
+        var result = await controller.StartFromTemplate("rsi-reversal", "BTC Builder", CancellationToken.None);
+
+        var redirect = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(StrategyBuilderController.Index), redirect.ActionName);
+        var strategy = await dbContext.TradingStrategies.SingleAsync();
+        var request = Assert.Single(versionService.CreateDraftRequests);
+        Assert.Equal(strategy.Id, request.StrategyId);
+        Assert.Empty(versionService.CreateDraftFromTemplateRequests);
+        Assert.Equal("BTC Builder", strategy.DisplayName);
+        Assert.Contains(versionService.PublishRequests, requestId => requestId == versionService.LastDraftId);
+    }
+
+    [Fact]
+    public async Task CreateDraftFromTemplate_MapsInvalidThresholdValidation_ToSafeMessage()
+    {
+        await using var dbContext = CreateDbContext();
+        var strategyId = Guid.Parse("cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd");
+        dbContext.TradingStrategies.Add(new TradingStrategy
+        {
+            Id = strategyId,
+            OwnerUserId = "builder-user",
+            StrategyKey = "threshold-core",
+            DisplayName = "Threshold Core"
+        });
+        await dbContext.SaveChangesAsync();
+
+        var versionService = new FakeStrategyVersionService
+        {
+            NextException = new StrategyDefinitionValidationException(
+                "InvalidRsiThreshold:entry:101",
+                "Validation failed.",
+                ["InvalidRsiThreshold:entry:101"])
+        };
+        var controller = CreateController(dbContext, new FakeStrategyTemplateCatalogService(), versionService, "builder-user");
+        SetPostedDefinitionJson(controller, "{\"schemaVersion\":2}");
+
+        _ = await controller.CreateDraftFromTemplate(strategyId, "rsi-reversal", CancellationToken.None);
+
+        Assert.Equal("Kaydetme engellendi: eşik veya aralık değeri geçersiz.", controller.TempData["StrategyBuilderTemplateError"]?.ToString());
+    }
+
+    [Fact]
+    public async Task CreateDraftFromTemplate_MapsConflictingRuleValidation_ToSafeMessage()
+    {
+        await using var dbContext = CreateDbContext();
+        var strategyId = Guid.Parse("edededed-eded-eded-eded-edededededed");
+        dbContext.TradingStrategies.Add(new TradingStrategy
+        {
+            Id = strategyId,
+            OwnerUserId = "builder-user",
+            StrategyKey = "conflict-core",
+            DisplayName = "Conflict Core"
+        });
+        await dbContext.SaveChangesAsync();
+
+        var versionService = new FakeStrategyVersionService
+        {
+            NextException = new StrategyDefinitionValidationException(
+                "ConflictingRule:entry.rules[1]:context.mode",
+                "Validation failed.",
+                ["ConflictingRule:entry.rules[1]:context.mode"])
+        };
+        var controller = CreateController(dbContext, new FakeStrategyTemplateCatalogService(), versionService, "builder-user");
+        SetPostedDefinitionJson(controller, "{\"schemaVersion\":2}");
+
+        _ = await controller.CreateDraftFromTemplate(strategyId, "rsi-reversal", CancellationToken.None);
+
+        Assert.Equal("Kaydetme engellendi: çelişkili veya tekrar eden kural var.", controller.TempData["StrategyBuilderTemplateError"]?.ToString());
+    }
+
+    [Fact]
+    public async Task CreateDraftFromTemplate_MapsMissingFieldParse_ToSafeMessage()
+    {
+        await using var dbContext = CreateDbContext();
+        var strategyId = Guid.Parse("efefefef-efef-efef-efef-efefefefefef");
+        dbContext.TradingStrategies.Add(new TradingStrategy
+        {
+            Id = strategyId,
+            OwnerUserId = "builder-user",
+            StrategyKey = "missing-core",
+            DisplayName = "Missing Core"
+        });
+        await dbContext.SaveChangesAsync();
+
+        var versionService = new FakeStrategyVersionService
+        {
+            NextException = new StrategyRuleParseException("Strategy rule property 'entry.path' is required.")
+        };
+        var controller = CreateController(dbContext, new FakeStrategyTemplateCatalogService(), versionService, "builder-user");
+        SetPostedDefinitionJson(controller, "{\"schemaVersion\":2}");
+
+        _ = await controller.CreateDraftFromTemplate(strategyId, "rsi-reversal", CancellationToken.None);
+
+        Assert.Equal("Kaydetme engellendi: builder alanlarında eksik veya hatalı veri var.", controller.TempData["StrategyBuilderTemplateError"]?.ToString());
+    }
+
+    [Fact]
     public async Task StartFromTemplate_CreatesOwnedStrategy_AndDraftFromTemplate()
     {
         await using var dbContext = CreateDbContext();
@@ -281,6 +422,124 @@ public sealed class StrategyBuilderControllerTests
         Assert.Equal("Strateji oluşturuldu. Bot oluştururken bu stratejiyi seçebilirsiniz.", controller.TempData["StrategyBuilderTemplateSuccess"]?.ToString());
         Assert.Contains(versionService.PublishRequests, requestId => requestId == versionService.LastDraftId);
     }
+
+    [Fact]
+    public async Task CreateDraftFromTemplate_WithBuilderDefinition_EndToEnd_PublishesCanonicalVersion_AndReloadsToSameFormState()
+    {
+        await using var dbContext = CreateDbContext();
+        var strategyId = Guid.Parse("10101010-2020-3030-4040-505050505050");
+        dbContext.TradingStrategies.Add(new TradingStrategy
+        {
+            Id = strategyId,
+            OwnerUserId = "builder-user",
+            StrategyKey = "builder-e2e-core",
+            DisplayName = "Builder E2E Core"
+        });
+        await dbContext.SaveChangesAsync();
+
+        var controller = CreateController(
+            dbContext,
+            new FakeStrategyTemplateCatalogService(),
+            CreateRealStrategyVersionService(dbContext),
+            "builder-user");
+        var postedDefinitionJson = CreateBuilderDefinitionJson();
+        SetPostedDefinitionJson(controller, postedDefinitionJson);
+
+        var result = await controller.CreateDraftFromTemplate(strategyId, string.Empty, CancellationToken.None);
+
+        var redirect = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(StrategyBuilderController.Index), redirect.ActionName);
+        Assert.Equal("Strateji güncellendi. Bot ekranında seçebilirsiniz.", controller.TempData["StrategyBuilderTemplateSuccess"]?.ToString());
+
+        var persistedVersion = await dbContext.TradingStrategyVersions.SingleAsync();
+        var strategy = await dbContext.TradingStrategies.SingleAsync(entity => entity.Id == strategyId);
+        var expectedCanonicalJson = Canonicalize(postedDefinitionJson);
+
+        Assert.Equal(StrategyVersionStatus.Published, persistedVersion.Status);
+        Assert.Equal(expectedCanonicalJson, persistedVersion.DefinitionJson);
+        Assert.Equal(persistedVersion.Id, strategy.ActiveTradingStrategyVersionId);
+        Assert.True(strategy.UsesExplicitVersionLifecycle);
+        Assert.NotNull(strategy.ActiveVersionActivatedAtUtc);
+        AssertDefinitionRoundTripsToSameFormState(postedDefinitionJson, persistedVersion.DefinitionJson);
+    }
+
+    [Fact]
+    public async Task StartFromTemplate_WithBuilderDefinition_EndToEnd_CreatesOwnedStrategy_AndReloadsPublishedCanonicalJson()
+    {
+        await using var dbContext = CreateDbContext();
+        var controller = CreateController(
+            dbContext,
+            new FakeStrategyTemplateCatalogService(),
+            CreateRealStrategyVersionService(dbContext),
+            "builder-user");
+        var postedDefinitionJson = CreateBuilderDefinitionJson();
+        SetPostedDefinitionJson(controller, postedDefinitionJson);
+
+        var result = await controller.StartFromTemplate(string.Empty, "Builder Save Flow", CancellationToken.None);
+
+        var redirect = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(StrategyBuilderController.Index), redirect.ActionName);
+        Assert.Equal("Strateji oluşturuldu. Bot oluştururken bu stratejiyi seçebilirsiniz.", controller.TempData["StrategyBuilderTemplateSuccess"]?.ToString());
+
+        var strategy = await dbContext.TradingStrategies.SingleAsync();
+        var persistedVersion = await dbContext.TradingStrategyVersions.SingleAsync(entity => entity.TradingStrategyId == strategy.Id);
+
+        Assert.Equal("builder-user", strategy.OwnerUserId);
+        Assert.Equal("Builder Save Flow", strategy.DisplayName);
+        Assert.Equal("builder-save-flow", strategy.StrategyKey);
+        Assert.Equal(StrategyVersionStatus.Published, persistedVersion.Status);
+        Assert.Equal(persistedVersion.Id, strategy.ActiveTradingStrategyVersionId);
+        AssertDefinitionRoundTripsToSameFormState(postedDefinitionJson, persistedVersion.DefinitionJson);
+    }
+
+    [Fact]
+    public async Task CreateDraftFromTemplate_WithInvalidBuilderDefinition_EndToEnd_DoesNotPersistOrPublishVersion()
+    {
+        await using var dbContext = CreateDbContext();
+        var strategyId = Guid.Parse("60606060-7070-8080-9090-a0a0a0a0a0a0");
+        dbContext.TradingStrategies.Add(new TradingStrategy
+        {
+            Id = strategyId,
+            OwnerUserId = "builder-user",
+            StrategyKey = "builder-invalid-core",
+            DisplayName = "Builder Invalid Core"
+        });
+        await dbContext.SaveChangesAsync();
+
+        var controller = CreateController(
+            dbContext,
+            new FakeStrategyTemplateCatalogService(),
+            CreateRealStrategyVersionService(dbContext),
+            "builder-user");
+        SetPostedDefinitionJson(
+            controller,
+            """
+            {
+              "schemaVersion": 2,
+              "entry": {
+                "path": "indicator.rsi.value",
+                "comparison": "lessThanOrEqual",
+                "value": 101,
+                "ruleId": "entry-rsi",
+                "ruleType": "rsi",
+                "weight": 10,
+                "enabled": true
+              }
+            }
+            """);
+
+        var result = await controller.CreateDraftFromTemplate(strategyId, string.Empty, CancellationToken.None);
+
+        var redirect = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(StrategyBuilderController.Index), redirect.ActionName);
+        Assert.Equal("Kaydetme engellendi: eşik veya aralık değeri geçersiz.", controller.TempData["StrategyBuilderTemplateError"]?.ToString());
+        Assert.Empty(await dbContext.TradingStrategyVersions.ToListAsync());
+
+        var strategy = await dbContext.TradingStrategies.SingleAsync(entity => entity.Id == strategyId);
+        Assert.Null(strategy.ActiveTradingStrategyVersionId);
+        Assert.False(strategy.UsesExplicitVersionLifecycle);
+    }
+
     [Fact]
     public void Controller_RequiresTradeOperations_AndClonePostRequiresAntiForgery()
     {
@@ -306,11 +565,25 @@ public sealed class StrategyBuilderControllerTests
 
     private static StrategyBuilderController CreateController(
         ApplicationDbContext dbContext,
-        FakeStrategyTemplateCatalogService templateCatalogService,
-        FakeStrategyVersionService strategyVersionService,
+        IStrategyTemplateCatalogService templateCatalogService,
+        IStrategyVersionService strategyVersionService,
         string userId)
     {
-        var controller = new StrategyBuilderController(templateCatalogService, strategyVersionService, dbContext);
+        var controller = new StrategyBuilderController(
+            templateCatalogService,
+            strategyVersionService,
+            dbContext,
+            Options.Create(new BotExecutionPilotOptions
+            {
+                LongRegimeFilterEnabled = true,
+                ShortRegimeFilterEnabled = true,
+                LongRegimeMaxEntryRsi = 68m,
+                ShortRegimeMinEntryRsi = 32m,
+                LongRegimeMinMacdHistogram = -0.005m,
+                ShortRegimeMaxMacdHistogram = 0.005m,
+                LongRegimeMinBollingerWidthPercentage = 0.07m,
+                ShortRegimeMinBollingerWidthPercentage = 0.09m
+            }));
         var httpContext = new DefaultHttpContext();
         httpContext.User = new ClaimsPrincipal(
             new ClaimsIdentity(
@@ -322,6 +595,128 @@ public sealed class StrategyBuilderControllerTests
         };
         controller.TempData = new TempDataDictionary(httpContext, new TestTempDataProvider());
         return controller;
+    }
+
+    private static void SetPostedDefinitionJson(StrategyBuilderController controller, string definitionJson)
+    {
+        controller.ControllerContext.HttpContext.Request.ContentType = "application/x-www-form-urlencoded";
+        controller.ControllerContext.HttpContext.Features.Set<IFormFeature>(
+            new FormFeature(new FormCollection(new Dictionary<string, Microsoft.Extensions.Primitives.StringValues>(StringComparer.Ordinal)
+            {
+                ["definitionJson"] = definitionJson
+            })));
+    }
+
+
+    private static StrategyVersionService CreateRealStrategyVersionService(ApplicationDbContext dbContext)
+    {
+        var parser = new StrategyRuleParser();
+        var validator = new StrategyDefinitionValidator();
+        return new StrategyVersionService(dbContext, parser, TimeProvider.System, validator, new FakeStrategyTemplateCatalogService());
+    }
+
+    private static string CreateBuilderDefinitionJson()
+    {
+        return
+            """
+            {
+              "entry": {
+                "rules": [
+                  {
+                    "comparison": "lessThanOrEqual",
+                    "value": 30.000,
+                    "path": "indicator.rsi.value",
+                    "ruleType": "rsi",
+                    "ruleId": "entry-rsi",
+                    "enabled": true,
+                    "weight": 10.000,
+                    "group": "entry",
+                    "timeframe": "1m"
+                  },
+                  {
+                    "comparison": "equals",
+                    "value": "Live",
+                    "path": "context.mode",
+                    "ruleType": "context",
+                    "ruleId": "entry-mode",
+                    "enabled": true,
+                    "weight": 5.000,
+                    "group": "entry",
+                    "timeframe": "1m"
+                  }
+                ],
+                "enabled": true,
+                "weight": 1.000,
+                "timeframe": "1m",
+                "ruleType": "group",
+                "ruleId": "entry-root",
+                "operator": "all",
+                "group": "entry"
+              },
+              "metadata": {
+                "templateName": " Builder Save Flow ",
+                "templateKey": " builder-save-flow ",
+                "templateSource": " Custom "
+              },
+              "schemaVersion": 2
+            }
+            """;
+    }
+
+    private static string Canonicalize(string definitionJson)
+    {
+        return StrategyDefinitionCanonicalJsonSerializer.Serialize(new StrategyRuleParser().Parse(definitionJson));
+    }
+
+    private static void AssertDefinitionRoundTripsToSameFormState(string postedDefinitionJson, string reloadedDefinitionJson)
+    {
+        var postedCanonicalJson = Canonicalize(postedDefinitionJson);
+        var reloadedCanonicalJson = Canonicalize(reloadedDefinitionJson);
+        Assert.Equal(postedCanonicalJson, reloadedCanonicalJson);
+
+        var postedDocument = new StrategyRuleParser().Parse(postedCanonicalJson);
+        var reloadedDocument = new StrategyRuleParser().Parse(reloadedCanonicalJson);
+
+        Assert.Equal(postedDocument.SchemaVersion, reloadedDocument.SchemaVersion);
+        Assert.Equal(postedDocument.Metadata?.TemplateKey, reloadedDocument.Metadata?.TemplateKey);
+        Assert.Equal(postedDocument.Metadata?.TemplateName, reloadedDocument.Metadata?.TemplateName);
+        Assert.Equal(postedDocument.Metadata?.TemplateSource, reloadedDocument.Metadata?.TemplateSource);
+        Assert.Equal(FlattenRuleFingerprints(postedDocument), FlattenRuleFingerprints(reloadedDocument));
+    }
+
+    private static IReadOnlyList<string> FlattenRuleFingerprints(StrategyRuleDocument document)
+    {
+        var fingerprints = new List<string>();
+        AppendFingerprints(fingerprints, "entry", document.Entry);
+        AppendFingerprints(fingerprints, "exit", document.Exit);
+        AppendFingerprints(fingerprints, "risk", document.Risk);
+        AppendFingerprints(fingerprints, "longEntry", document.LongEntry);
+        AppendFingerprints(fingerprints, "longExit", document.LongExit);
+        AppendFingerprints(fingerprints, "shortEntry", document.ShortEntry);
+        AppendFingerprints(fingerprints, "shortExit", document.ShortExit);
+        return fingerprints;
+    }
+
+    private static void AppendFingerprints(List<string> fingerprints, string rootName, StrategyRuleNode? node)
+    {
+        if (node is null)
+        {
+            return;
+        }
+
+        switch (node)
+        {
+            case StrategyRuleGroup group:
+                fingerprints.Add($"{rootName}|group|{group.Metadata?.RuleId}|{group.Metadata?.RuleType}|{group.Operator}|{group.Metadata?.Timeframe}|{group.Metadata?.Weight}|{group.Metadata?.Enabled}|{group.Metadata?.Group}");
+                foreach (var child in group.Rules)
+                {
+                    AppendFingerprints(fingerprints, rootName, child);
+                }
+                break;
+            case StrategyRuleCondition condition:
+                fingerprints.Add($"{rootName}|condition|{condition.Metadata?.RuleId}|{condition.Metadata?.RuleType}|{condition.Path}|{condition.Comparison}|{condition.Operand.Kind}|{condition.Operand.Value}|{condition.Metadata?.Timeframe}|{condition.Metadata?.Weight}|{condition.Metadata?.Enabled}|{condition.Metadata?.Group}");
+                break;
+        }
     }
 
     private static ApplicationDbContext CreateDbContext()
@@ -377,10 +772,36 @@ public sealed class StrategyBuilderControllerTests
         public StrategyVersionSnapshot? NextDraft { get; set; }
         public Exception? NextException { get; set; }
         public Guid LastDraftId { get; private set; }
+        public List<CreateDraftRequest> CreateDraftRequests { get; } = [];
         public List<CreateDraftFromTemplateRequest> CreateDraftFromTemplateRequests { get; } = [];
         public List<Guid> PublishRequests { get; } = [];
 
-        public Task<StrategyVersionSnapshot> CreateDraftAsync(Guid strategyId, string definitionJson, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<StrategyVersionSnapshot> CreateDraftAsync(Guid strategyId, string definitionJson, CancellationToken cancellationToken = default)
+        {
+            CreateDraftRequests.Add(new CreateDraftRequest(strategyId, definitionJson));
+            if (NextException is not null)
+            {
+                throw NextException;
+            }
+
+            var draft = NextDraft ?? new StrategyVersionSnapshot(
+                Guid.NewGuid(),
+                strategyId,
+                2,
+                1,
+                StrategyVersionStatus.Draft,
+                null,
+                null,
+                TemplateKey: "custom",
+                TemplateName: "custom",
+                ValidationStatusCode: "Valid",
+                ValidationSummary: "Ready",
+                TemplateRevisionNumber: 1,
+                TemplateSource: "Custom");
+
+            LastDraftId = draft.StrategyVersionId;
+            return Task.FromResult(draft);
+        }
 
         public Task<StrategyVersionSnapshot> CreateDraftFromTemplateAsync(Guid strategyId, string templateKey, CancellationToken cancellationToken = default)
         {
@@ -430,6 +851,7 @@ public sealed class StrategyBuilderControllerTests
         public Task<StrategyVersionSnapshot> ArchiveAsync(Guid strategyVersionId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 
+    private sealed record CreateDraftRequest(Guid StrategyId, string DefinitionJson);
     private sealed record CreateDraftFromTemplateRequest(Guid StrategyId, string TemplateKey);
 
     private sealed class TestDataScopeContext : IDataScopeContext

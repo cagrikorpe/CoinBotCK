@@ -646,6 +646,115 @@ public sealed class UserExecutionOverrideGuardTests
     }
 
     [Fact]
+    public async Task EvaluateAsync_DoesNotBlockWhenPostSyncFilledExitClosesLivePositionTruth()
+    {
+        await using var dbContext = CreateDbContext();
+        var exchangeAccountId = Guid.NewGuid();
+        var syncAtUtc = new DateTime(2026, 4, 16, 10, 0, 0, DateTimeKind.Utc);
+        var exitFilledAtUtc = syncAtUtc.AddMinutes(1);
+
+        dbContext.ExchangeAccountSyncStates.Add(new ExchangeAccountSyncState
+        {
+            OwnerUserId = "user-live-truth",
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            LastPositionSyncedAtUtc = syncAtUtc,
+            LastStateReconciledAtUtc = syncAtUtc,
+            DriftStatus = ExchangeStateDriftStatus.InSync
+        });
+        dbContext.ExchangePositions.Add(new ExchangePosition
+        {
+            OwnerUserId = "user-live-truth",
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "BTCUSDT",
+            PositionSide = "LONG",
+            Quantity = 0.25m,
+            EntryPrice = 65000m,
+            BreakEvenPrice = 65000m,
+            UnrealizedProfit = 0m,
+            MarginType = "cross",
+            IsolatedWallet = 0m,
+            ExchangeUpdatedAtUtc = syncAtUtc,
+            SyncedAtUtc = syncAtUtc
+        });
+        dbContext.ExchangePositions.Add(new ExchangePosition
+        {
+            OwnerUserId = "user-live-truth",
+            ExchangeAccountId = Guid.NewGuid(),
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "ETHUSDT",
+            PositionSide = "LONG",
+            Quantity = 4m,
+            EntryPrice = 2500m,
+            BreakEvenPrice = 2500m,
+            UnrealizedProfit = 0m,
+            MarginType = "cross",
+            IsolatedWallet = 0m,
+            ExchangeUpdatedAtUtc = syncAtUtc,
+            SyncedAtUtc = syncAtUtc,
+            IsDeleted = true
+        });
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            OwnerUserId = "user-live-truth",
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Exit,
+            StrategyKey = "pilot-core",
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Sell,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.25m,
+            FilledQuantity = 0.25m,
+            Price = 65100m,
+            AverageFillPrice = 65100m,
+            LastFilledAtUtc = exitFilledAtUtc,
+            ReduceOnly = true,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            State = ExecutionOrderState.Filled,
+            SubmittedToBroker = true,
+            IdempotencyKey = Guid.NewGuid().ToString("N"),
+            RootCorrelationId = "root-live-truth",
+            SubmittedAtUtc = exitFilledAtUtc,
+            LastStateChangedAtUtc = exitFilledAtUtc,
+            CreatedDate = exitFilledAtUtc,
+            UpdatedDate = exitFilledAtUtc
+        });
+        await dbContext.SaveChangesAsync();
+
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                MaxOpenPositionsPerUser = 1
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-live-truth",
+                "SOLUSDT",
+                ExecutionEnvironment.Live,
+                ExecutionOrderSide.Buy,
+                1m,
+                100m,
+                StrategyKey: "positions-core",
+                Plane: ExchangeDataPlane.Futures),
+            CancellationToken.None);
+
+        Assert.False(result.IsBlocked);
+        Assert.NotEqual("UserExecutionMaxOpenPositionsExceeded", result.BlockCode);
+    }
+
+    [Fact]
     public async Task EvaluateAsync_BlocksWhenRiskPolicyVetoesDailyLoss()
     {
         await using var dbContext = CreateDbContext();

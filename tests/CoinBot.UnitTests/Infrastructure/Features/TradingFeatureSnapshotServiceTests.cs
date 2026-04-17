@@ -163,6 +163,73 @@ public sealed class TradingFeatureSnapshotServiceTests
     }
 
     [Fact]
+    public async Task CaptureAsync_MarksHasOpenPositionTrue_WhenLivePositionTruthComesFromFilledOrder()
+    {
+        await using var harness = await CreateHarnessAsync("feature-live-position-01");
+        var evaluatedAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime;
+        var candles = CreateCandles("BTCUSDT", "1m", evaluatedAtUtc.AddMinutes(-240), 240, 65000m, 3m, 110m);
+
+        harness.DbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = harness.UserId,
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            BotId = harness.BotId,
+            ExchangeAccountId = harness.ExchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            StrategyKey = "feature-strategy",
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.06m,
+            FilledQuantity = 0.06m,
+            AverageFillPrice = 65123m,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            State = ExecutionOrderState.Filled,
+            IdempotencyKey = "feature-live-position-order",
+            RootCorrelationId = "feature-live-position-order",
+            SubmittedToBroker = true,
+            SubmittedAtUtc = evaluatedAtUtc.AddSeconds(-5),
+            LastFilledAtUtc = evaluatedAtUtc.AddSeconds(-4),
+            LastStateChangedAtUtc = evaluatedAtUtc.AddSeconds(-4),
+            CreatedDate = evaluatedAtUtc.AddSeconds(-5),
+            UpdatedDate = evaluatedAtUtc.AddSeconds(-4)
+        });
+        await harness.DbContext.SaveChangesAsync();
+
+        await harness.CircuitBreaker.RecordHeartbeatAsync(
+            new DataLatencyHeartbeat(
+                "feature-test",
+                candles[^1].CloseTimeUtc,
+                Symbol: "BTCUSDT",
+                Timeframe: "1m",
+                ExpectedOpenTimeUtc: candles[^1].CloseTimeUtc.AddMilliseconds(1),
+                ContinuityGapCount: 0),
+            cancellationToken: CancellationToken.None);
+
+        var snapshot = await harness.Service.CaptureAsync(
+            new TradingFeatureCaptureRequest(
+                harness.UserId,
+                harness.BotId,
+                "feature-strategy",
+                "BTCUSDT",
+                "1m",
+                evaluatedAtUtc,
+                harness.ExchangeAccountId,
+                ExchangeDataPlane.Futures,
+                HistoricalCandles: candles),
+            CancellationToken.None);
+
+        Assert.True(snapshot.TradingContext.HasOpenPosition);
+    }
+
+    [Fact]
     public async Task CaptureAsync_DoesNotCarryStaleRiskVeto_FromOldFeatureCycle()
     {
         await using var harness = await CreateHarnessAsync("feature-stale-veto-01");

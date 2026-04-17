@@ -67,6 +67,26 @@ public sealed record BotManagementRowViewModel(
     string DirectionModeSummary = "Bot sadece long yone izin verir.",
     string RuntimeDirectionLabel = "Neutral",
     string RuntimeDirectionTone = "neutral",
-    string RuntimeDirectionSummary = "Henüz runtime yönü yok.");
+    string RuntimeDirectionSummary = "Henüz runtime yönü yok.",
+    string? LongRegimeGateLabel = null,
+    string? LongRegimeGateTone = null,
+    string? LongRegimePolicySummary = null,
+    string? LongRegimeLiveSummary = null,
+    string? LongRegimeExplainSummary = null,
+    string LatestSignalText = "Yok",
+    string RuntimeDecisionCardText = "Yok",
+    string OrderStateCardText = "Yok",
+    string RejectionFailureCodeText = "Yok",
+    string? RuntimeDecisionCardSummary = null,
+    int EntryGeneratedCount = 0,
+    int EntrySkippedCount = 0,
+    int EntryVetoedCount = 0,
+    int EntryOrderedCount = 0,
+    int EntryFilledCount = 0,
+    int ExitGeneratedCount = 0,
+    int ExitSkippedCount = 0,
+    int ExitVetoedCount = 0,
+    int ExitOrderedCount = 0,
+    int ExitFilledCount = 0);
 
 

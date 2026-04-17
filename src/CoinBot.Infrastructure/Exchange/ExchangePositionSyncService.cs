@@ -68,6 +68,11 @@ public sealed class ExchangePositionSyncService(
             }
 
             existingPosition.IsDeleted = true;
+            existingPosition.Quantity = 0m;
+            existingPosition.EntryPrice = 0m;
+            existingPosition.BreakEvenPrice = 0m;
+            existingPosition.UnrealizedProfit = 0m;
+            existingPosition.IsolatedWallet = 0m;
             existingPosition.SyncedAtUtc = NormalizeTimestamp(snapshot.ReceivedAtUtc);
         }
 

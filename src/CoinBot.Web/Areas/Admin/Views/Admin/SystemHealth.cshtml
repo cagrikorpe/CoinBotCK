@@ -1,4 +1,74 @@
+@using CoinBot.Application.Abstractions.Monitoring
+@using CoinBot.Domain.Enums
 @{
+    var dashboard = ViewData["AdminMonitoringDashboardSnapshot"] as MonitoringDashboardSnapshot
+        ?? MonitoringDashboardSnapshot.Empty(DateTime.UtcNow);
+
+    string DescribeParityTone(string tone)
+    {
+        return tone.ToLowerInvariant() switch
+        {
+            "healthy" => "healthy",
+            "warning" => "warning",
+            "degraded" => "warning",
+            _ => "critical"
+        };
+    }
+
+    string ResolveCoreWorkerTone()
+    {
+        var workers = dashboard.WorkerHeartbeats
+            .Where(worker => !string.Equals(worker.WorkerKey, "market-scanner", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        if (workers.Length == 0)
+        {
+            return "critical";
+        }
+
+        var hasCritical = workers.Any(worker => worker.HealthState == MonitoringHealthState.Critical);
+        if (hasCritical)
+        {
+            return "critical";
+        }
+
+        var hasStale = workers.Any(worker => worker.FreshnessTier == MonitoringFreshnessTier.Stale);
+        return hasStale ? "warning" : "healthy";
+    }
+
+    string ResolveMarketScannerTone()
+    {
+        var scannerWorker = dashboard.WorkerHeartbeats.FirstOrDefault(worker =>
+            string.Equals(worker.WorkerKey, "market-scanner", StringComparison.OrdinalIgnoreCase));
+
+        if (scannerWorker is null)
+        {
+            return "critical";
+        }
+
+        if (scannerWorker.HealthState == MonitoringHealthState.Healthy &&
+            scannerWorker.FreshnessTier != MonitoringFreshnessTier.Stale)
+        {
+            return "healthy";
+        }
+
+        if (scannerWorker.HealthState == MonitoringHealthState.Critical ||
+            scannerWorker.FreshnessTier == MonitoringFreshnessTier.Stale)
+        {
+            return "critical";
+        }
+
+        return "warning";
+    }
+
+    var coreWorkerTone = ResolveCoreWorkerTone();
+    var marketScannerTone = ResolveMarketScannerTone();
+    var paritySummary = $"Core worker {DescribeParityTone(coreWorkerTone)}, market scanner {DescribeParityTone(marketScannerTone)}.";
+    var parityStripTone = coreWorkerTone == "critical" || marketScannerTone == "critical"
+        ? "critical"
+        : coreWorkerTone == "warning" || marketScannerTone == "warning"
+            ? "warning"
+            : "healthy";
     var headerModel = new AdminPageHeaderViewModel
     {
         Eyebrow = "Runtime Monitoring",
@@ -34,6 +104,18 @@
 
                 <div class="mt-6">
                     @await Html.PartialAsync("Foundation/_AdminSystemHealthFreshnessStrip")
+                </div>
+                <div class="mt-6" data-cb-system-health-parity>
+                    <span class="d-none" data-cb-system-health-parity-summary>@paritySummary</span>
+                    <span class="d-none" data-cb-system-health-core-tone>@coreWorkerTone</span>
+                    <span class="d-none" data-cb-system-health-market-scanner-tone>@marketScannerTone</span>
+                    @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                    {
+                        Tone = parityStripTone,
+                        Title = "Runtime parity",
+                        Message = paritySummary,
+                        Meta = $"Core={coreWorkerTone}; Scanner={marketScannerTone}"
+                    })
                 </div>
             </div>
         </div>

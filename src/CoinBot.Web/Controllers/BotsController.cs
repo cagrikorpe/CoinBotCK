@@ -285,7 +285,27 @@ public class BotsController(
                 BuildDirectionModeSummary(item.DirectionMode),
                 item.RuntimeDirectionLabel,
                 item.RuntimeDirectionTone,
-                item.RuntimeDirectionSummary))
+                item.RuntimeDirectionSummary,
+                item.LongRegimeGateLabel,
+                item.LongRegimeGateTone,
+                item.LongRegimePolicySummary,
+                item.LongRegimeLiveSummary,
+                item.LongRegimeExplainSummary,
+                BuildLatestSignalText(item, timeZoneInfo),
+                BuildRuntimeDecisionCardText(item),
+                BuildOrderStateCardText(item),
+                BuildRejectionFailureCodeText(item),
+                item.LatestRuntimeDecisionSummary,
+                item.EntryGeneratedCount,
+                item.EntrySkippedCount,
+                item.EntryVetoedCount,
+                item.EntryOrderedCount,
+                item.EntryFilledCount,
+                item.ExitGeneratedCount,
+                item.ExitSkippedCount,
+                item.ExitVetoedCount,
+                item.ExitOrderedCount,
+                item.ExitFilledCount))
             .ToArray();
 
         return new BotManagementIndexViewModel(rows);
@@ -483,6 +503,52 @@ public class BotsController(
             _ when string.IsNullOrWhiteSpace(code) || string.Equals(code, "None", StringComparison.OrdinalIgnoreCase) => "Sinyal bekleniyor.",
             _ => "Sistem hazir degil."
         };
+    }
+
+    private static string BuildLatestSignalText(BotManagementBotSnapshot snapshot, TimeZoneInfo timeZoneInfo)
+    {
+        if (string.IsNullOrWhiteSpace(snapshot.LatestSignalType))
+        {
+            return "Yok";
+        }
+
+        return snapshot.LatestSignalGeneratedAtUtc.HasValue
+            ? $"{snapshot.LatestSignalType.Trim()} · {FormatTimestamp(snapshot.LatestSignalGeneratedAtUtc, timeZoneInfo)}"
+            : snapshot.LatestSignalType.Trim();
+    }
+
+    private static string BuildRuntimeDecisionCardText(BotManagementBotSnapshot snapshot)
+    {
+        if (string.IsNullOrWhiteSpace(snapshot.LatestRuntimeDecisionOutcome))
+        {
+            return "Yok";
+        }
+
+        return string.IsNullOrWhiteSpace(snapshot.LatestRuntimeDecisionReasonCode)
+            ? snapshot.LatestRuntimeDecisionOutcome.Trim()
+            : $"{snapshot.LatestRuntimeDecisionOutcome.Trim()} · {snapshot.LatestRuntimeDecisionReasonCode.Trim()}";
+    }
+
+    private static string BuildOrderStateCardText(BotManagementBotSnapshot snapshot)
+    {
+        return string.IsNullOrWhiteSpace(snapshot.LatestOrderState)
+            ? "Yok"
+            : snapshot.LatestOrderState.Trim();
+    }
+
+    private static string BuildRejectionFailureCodeText(BotManagementBotSnapshot snapshot)
+    {
+        if (!string.IsNullOrWhiteSpace(snapshot.LatestOrderFailureCode))
+        {
+            return snapshot.LatestOrderFailureCode.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(snapshot.LatestRuntimeDecisionReasonCode))
+        {
+            return snapshot.LatestRuntimeDecisionReasonCode.Trim();
+        }
+
+        return "Yok";
     }
 
     private static TimeZoneInfo ResolveTimeZone(string? timeZoneId)

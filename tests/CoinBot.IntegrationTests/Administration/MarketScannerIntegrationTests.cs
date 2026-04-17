@@ -132,7 +132,7 @@ public sealed class MarketScannerIntegrationTests
                     MaxUniverseSymbols = 20,
                     Min24hQuoteVolume = 1_000m,
                     MaxDataAgeSeconds = 120,
-                    StrategyScoreWeight = 20_000m,
+                    StrategyScoreWeight = 2m,
                     AllowedQuoteAssets = ["USDT"],
                     HandoffEnabled = true
                 }),
@@ -163,21 +163,21 @@ public sealed class MarketScannerIntegrationTests
             var dashboardSnapshot = await readModelService.GetSnapshotAsync();
 
             Assert.Equal("BTCUSDT", cycle.BestCandidateSymbol);
-            Assert.Equal(2_900_000m, cycle.BestCandidateScore);
+            Assert.Equal(96.6667m, cycle.BestCandidateScore);
             Assert.Equal(["BTCUSDT", "ETHUSDT"], persistedCandidates.Select(candidate => candidate.Symbol).ToArray());
 
             var btc = persistedCandidates[0];
-            Assert.Equal(1_000_000m, btc.MarketScore);
+            Assert.Equal(100m, btc.MarketScore);
             Assert.Equal(95, btc.StrategyScore);
-            Assert.Equal(2_900_000m, btc.Score);
+            Assert.Equal(96.6667m, btc.Score);
             Assert.Contains("StrategyKey=scanner-btc", btc.ScoringSummary, StringComparison.Ordinal);
 
             Assert.Equal("BTCUSDT", dashboardSnapshot.MarketScanner.BestCandidateSymbol);
-            Assert.Equal(2_900_000m, dashboardSnapshot.MarketScanner.BestCandidateScore);
+            Assert.Equal(96.6667m, dashboardSnapshot.MarketScanner.BestCandidateScore);
             var topCandidate = Assert.Single(dashboardSnapshot.MarketScanner.TopCandidates, candidate => candidate.Symbol == "BTCUSDT");
-            Assert.Equal(1_000_000m, topCandidate.MarketScore);
+            Assert.Equal(100m, topCandidate.MarketScore);
             Assert.Equal(95, topCandidate.StrategyScore);
-            Assert.Equal(2_900_000m, topCandidate.Score);
+            Assert.Equal(96.6667m, topCandidate.Score);
             Assert.Contains("Outcome=EntryMatched", topCandidate.ScoringSummary, StringComparison.Ordinal);
         }
         finally

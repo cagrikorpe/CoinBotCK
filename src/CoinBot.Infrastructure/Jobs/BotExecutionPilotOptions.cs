@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Globalization;
 using CoinBot.Application.Abstractions.Strategies;
@@ -53,6 +54,10 @@ public sealed class BotExecutionPilotOptions
     public bool EnableEntryHysteresis { get; set; } = true;
 
     public bool EnableRegimeAwareEntryDiscipline { get; set; } = true;
+
+    public bool? LongRegimeFilterEnabled { get; set; }
+
+    public bool? ShortRegimeFilterEnabled { get; set; }
 
     [Range(0, 100)]
     public decimal TakeProfitPercentage { get; set; } = 0.60m;
@@ -201,6 +206,74 @@ public sealed class BotExecutionPilotOptions
             StrategyTradeDirection.Short => ShortRegimeMinPriceBelowMiddleBandPercentage ?? 0m,
             _ => 0m
         };
+    }
+
+
+    public bool IsRegimeAwareEntryDisciplineEnabled(StrategyTradeDirection direction)
+    {
+        return direction switch
+        {
+            StrategyTradeDirection.Long => LongRegimeFilterEnabled ?? EnableRegimeAwareEntryDiscipline,
+            StrategyTradeDirection.Short => ShortRegimeFilterEnabled ?? EnableRegimeAwareEntryDiscipline,
+            _ => EnableRegimeAwareEntryDiscipline
+        };
+    }
+
+    public string BuildRegimeThresholdSummary(StrategyTradeDirection direction)
+    {
+        if (!IsRegimeAwareEntryDisciplineEnabled(direction))
+        {
+            return $"{direction} regime filter disabled.";
+        }
+
+        var parts = new List<string>();
+        var rsiThreshold = ResolveRegimeMaxEntryRsi(direction);
+        var macdThreshold = ResolveRegimeMacdThreshold(direction);
+        var bollingerWidthThreshold = ResolveRegimeMinBollingerWidthPercentage(direction);
+        var middleBandThreshold = ResolveRegimeMinMiddleBandDislocationPercentage(direction);
+
+        if (direction == StrategyTradeDirection.Long)
+        {
+            if (rsiThreshold > 0m)
+            {
+                parts.Add($"RSI < {rsiThreshold.ToString("0.##", CultureInfo.InvariantCulture)}");
+            }
+
+            parts.Add($"MACD hist >= {macdThreshold.ToString("0.####", CultureInfo.InvariantCulture)}");
+
+            if (bollingerWidthThreshold > 0m)
+            {
+                parts.Add($"Bollinger width >= {bollingerWidthThreshold.ToString("0.####", CultureInfo.InvariantCulture)}%");
+            }
+
+            if (middleBandThreshold > 0m)
+            {
+                parts.Add($"Price vs middle band >= {middleBandThreshold.ToString("0.####", CultureInfo.InvariantCulture)}%");
+            }
+        }
+        else if (direction == StrategyTradeDirection.Short)
+        {
+            if (rsiThreshold > 0m)
+            {
+                parts.Add($"RSI > {rsiThreshold.ToString("0.##", CultureInfo.InvariantCulture)}");
+            }
+
+            parts.Add($"MACD hist <= {macdThreshold.ToString("0.####", CultureInfo.InvariantCulture)}");
+
+            if (bollingerWidthThreshold > 0m)
+            {
+                parts.Add($"Bollinger width >= {bollingerWidthThreshold.ToString("0.####", CultureInfo.InvariantCulture)}%");
+            }
+
+            if (middleBandThreshold > 0m)
+            {
+                parts.Add($"Price vs middle band >= {middleBandThreshold.ToString("0.####", CultureInfo.InvariantCulture)}%");
+            }
+        }
+
+        return parts.Count == 0
+            ? $"{direction} regime filter enabled with default thresholds."
+            : string.Join(" · ", parts);
     }
 
 

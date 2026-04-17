@@ -2,6 +2,7 @@ using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.Indicators;
+using CoinBot.Application.Abstractions.Features;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Infrastructure.Administration;
@@ -82,6 +83,8 @@ public sealed class StrategySignalServiceTests
         Assert.DoesNotContain("CurrentDailyLossAmount", persistedSignal.RiskEvaluationJson ?? string.Empty, StringComparison.Ordinal);
         Assert.Equal(signal.StrategySignalId, decisionTrace.StrategySignalId);
         Assert.Equal("Persisted", decisionTrace.DecisionOutcome);
+        Assert.Equal("CandidatePersisted", decisionTrace.DecisionReasonCode);
+        Assert.Equal("Strategy persisted a candidate signal. Runtime execution gating is pending.", decisionTrace.DecisionSummary);
         Assert.Equal("BTCUSDT", decisionTrace.Symbol);
         Assert.Contains("\"templateKey\":\"rsi-reversal\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
         Assert.Contains("\"templateRevisionNumber\":1", decisionTrace.SnapshotJson, StringComparison.Ordinal);
@@ -342,9 +345,126 @@ public sealed class StrategySignalServiceTests
         Assert.Equal("NoSignalCandidate", decisionTrace.DecisionOutcome);
         Assert.Equal("StrategyCandidate", decisionTrace.DecisionReasonType);
         Assert.Equal("NoSignalCandidate", decisionTrace.DecisionReasonCode);
-        Assert.Equal("Strategy did not produce an executable candidate.", decisionTrace.DecisionSummary);
+        Assert.StartsWith("Strategy did not produce an executable candidate.", decisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("Explainability:", decisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("Outcome=NoSignalCandidate", decisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.NotNull(decisionTrace.DecisionAtUtc);
         Assert.Contains("\"decisionOutcome\":\"NoSignalCandidate\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
+    }
+
+
+    [Fact]
+    public async Task GenerateAsync_SuppressesRepeatedExitNoOpenPositionTrace_WithinSuppressionWindow()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-signal-exit-repeat", "exit-repeat-core");
+        var version = CreateVersion(strategy, 1, CreateExitOnlyDefinitionJson(minimumSampleCount: 100));
+
+        dbContext.TradingStrategies.Add(strategy);
+        dbContext.TradingStrategyVersions.Add(version);
+        dbContext.RiskProfiles.Add(CreateRiskProfile(strategy.OwnerUserId, "Balanced", 5m, 80m, 2m));
+        dbContext.DemoWallets.Add(CreateDemoWallet(strategy.OwnerUserId, "USDT", 10000m));
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext, timeProvider);
+        var request = new GenerateStrategySignalsRequest(
+            version.Id,
+            CreateContext(ExecutionEnvironment.Demo, sampleCount: 120, rsiValue: 42m),
+            CreateFeatureSnapshot(hasOpenPosition: false));
+
+        await service.GenerateAsync(request);
+        timeProvider.Advance(TimeSpan.FromSeconds(30));
+        await service.GenerateAsync(request);
+
+        var decisionTraces = await dbContext.DecisionTraces
+            .OrderBy(entity => entity.CreatedAtUtc)
+            .ToListAsync();
+
+        Assert.Single(decisionTraces);
+        Assert.Equal("NoSignalCandidate", decisionTraces[0].DecisionOutcome);
+    }
+
+    [Fact]
+    public async Task GenerateAsync_SuppressesSameDirectionEntryCandidate_WhenOpenLongPositionAlreadyExists()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-signal-entry-existing-long", "entry-aware-core");
+        var version = CreateVersion(strategy, 1, CreateDefinitionJson(minimumSampleCount: 100));
+        var featureSnapshot = CreateFeatureSnapshot(hasOpenPosition: true);
+
+        dbContext.TradingStrategies.Add(strategy);
+        dbContext.TradingStrategyVersions.Add(version);
+        dbContext.RiskProfiles.Add(CreateRiskProfile(strategy.OwnerUserId, "Balanced", 5m, 80m, 2m));
+        dbContext.DemoWallets.Add(CreateDemoWallet(strategy.OwnerUserId, "USDT", 10000m));
+        dbContext.DemoPositions.Add(new DemoPosition
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = featureSnapshot.UserId,
+            BotId = featureSnapshot.BotId,
+            Symbol = featureSnapshot.Symbol,
+            Quantity = 0.5m,
+            AverageEntryPrice = 62000m,
+            LastMarkPrice = 62100m,
+            LastFilledAtUtc = timeProvider.GetUtcNow().UtcDateTime.AddMinutes(-5),
+            UpdatedDate = timeProvider.GetUtcNow().UtcDateTime.AddMinutes(-1),
+            CreatedDate = timeProvider.GetUtcNow().UtcDateTime.AddMinutes(-5)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext, timeProvider);
+        var result = await service.GenerateAsync(
+            new GenerateStrategySignalsRequest(
+                version.Id,
+                CreateContext(ExecutionEnvironment.Demo, sampleCount: 120, rsiValue: 28m),
+                featureSnapshot));
+
+        var decisionTrace = await dbContext.DecisionTraces.SingleAsync();
+
+        Assert.Empty(result.Signals);
+        Assert.Empty(result.Vetoes);
+        Assert.True(result.EvaluationResult.EntryMatched);
+        Assert.Equal(0, await dbContext.TradingStrategySignals.CountAsync());
+        Assert.Equal("NoSignalCandidate", decisionTrace.DecisionOutcome);
+        Assert.Equal(
+            "Strategy entry candidate was suppressed because an open long position already exists. Runtime entry persistence was skipped.",
+            decisionTrace.DecisionSummary);
+    }
+
+    [Fact]
+    public async Task GenerateAsync_SuppressesExitCandidate_WhenFeatureSnapshotShowsNoOpenPosition()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-signal-exit-none", "exit-aware-core");
+        var version = CreateVersion(strategy, 1, CreateExitOnlyDefinitionJson(minimumSampleCount: 100));
+
+        dbContext.TradingStrategies.Add(strategy);
+        dbContext.TradingStrategyVersions.Add(version);
+        dbContext.RiskProfiles.Add(CreateRiskProfile(strategy.OwnerUserId, "Balanced", 5m, 80m, 2m));
+        dbContext.DemoWallets.Add(CreateDemoWallet(strategy.OwnerUserId, "USDT", 10000m));
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext, timeProvider);
+        var result = await service.GenerateAsync(
+            new GenerateStrategySignalsRequest(
+                version.Id,
+                CreateContext(ExecutionEnvironment.Demo, sampleCount: 120, rsiValue: 42m),
+                CreateFeatureSnapshot(hasOpenPosition: false)));
+
+        var decisionTrace = await dbContext.DecisionTraces.SingleAsync();
+
+        Assert.Empty(result.Signals);
+        Assert.Empty(result.Vetoes);
+        Assert.True(result.EvaluationResult.ExitMatched);
+        Assert.Equal(0, await dbContext.TradingStrategySignals.CountAsync());
+        Assert.Equal("NoSignalCandidate", decisionTrace.DecisionOutcome);
+        Assert.Equal("StrategyCandidate", decisionTrace.DecisionReasonType);
+        Assert.Equal("NoSignalCandidate", decisionTrace.DecisionReasonCode);
+        Assert.Equal(
+            "Strategy exit candidate was suppressed because no open position exists. Runtime exit persistence was skipped.",
+            decisionTrace.DecisionSummary);
     }
 
     private static StrategySignalService CreateService(ApplicationDbContext dbContext, TimeProvider timeProvider)
@@ -534,6 +654,88 @@ public sealed class StrategySignalServiceTests
               }
             }
             """;
+    }
+
+
+    private static string CreateExitOnlyDefinitionJson(int minimumSampleCount)
+    {
+        return
+            $$"""
+            {
+              "schemaVersion": 2,
+              "metadata": {
+                "templateKey": "exit-only",
+                "templateName": "Exit Only",
+                "templateRevisionNumber": 1,
+                "templateSource": "BuiltIn"
+              },
+              "exit": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Demo"
+                  },
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": {{minimumSampleCount}}
+                  }
+                ]
+              },
+              "risk": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": {{minimumSampleCount}}
+                  }
+                ]
+              }
+            }
+            """;
+    }
+
+    private static TradingFeatureSnapshotModel CreateFeatureSnapshot(bool hasOpenPosition)
+    {
+        return new TradingFeatureSnapshotModel(
+            Guid.Parse("0a92c6a1-c84c-4d50-91e7-0fad0e7a4bcb"),
+            "user-feature",
+            Guid.Parse("05fb3ed0-c31b-4a95-a37b-18d19de57708"),
+            null,
+            "feature-core",
+            "BTCUSDT",
+            "1m",
+            new DateTime(2026, 3, 22, 12, 1, 0, DateTimeKind.Utc),
+            new DateTime(2026, 3, 22, 12, 1, 0, DateTimeKind.Utc),
+            "AI-1.v1",
+            FeatureSnapshotState.Ready,
+            DegradedModeReasonCode.None,
+            120,
+            120,
+            62000m,
+            new TradingTrendFeatureSnapshot(61980m, 61950m, 61800m, 61970m, 61910m),
+            new TradingMomentumFeatureSnapshot(42m, 1.4m, 1.1m, 0.3m, 58m, 55m, 64m, 0.22m),
+            new TradingVolatilityFeatureSnapshot(320m, 0.64m, 0.18m, 0.31m, 61750m, 61500m),
+            new TradingVolumeFeatureSnapshot(1.2m, 1.1m, 2100m),
+            new TradingContextFeatureSnapshot(
+                ExchangeDataPlane.Futures,
+                ExecutionEnvironment.Demo,
+                hasOpenPosition,
+                IsInCooldown: false,
+                LastVetoReasonCode: null,
+                LastDecisionOutcome: null,
+                LastDecisionCode: null,
+                LastExecutionState: null,
+                LastFailureCode: null),
+            "Feature snapshot ready.",
+            "Exit candidate should be suppressed when no position exists.",
+            "Range",
+            "Neutral",
+            "Elevated",
+            null);
     }
 
     private static string CreateDirectionalSchemaDefinitionJson()

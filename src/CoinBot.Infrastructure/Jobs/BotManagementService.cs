@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Globalization;
 using CoinBot.Application.Abstractions.Bots;
 using CoinBot.Application.Abstractions.Strategies;
@@ -116,6 +117,53 @@ public sealed class BotManagementService(
                 .ToListAsync(cancellationToken);
 
         var strategiesByKey = strategies.ToDictionary(entity => entity.StrategyKey, StringComparer.Ordinal);
+        var relevantStrategyIds = strategies
+            .Select(entity => entity.Id)
+            .Distinct()
+            .ToArray();
+        var relevantSymbols = bots
+            .Select(entity => NormalizeSymbol(entity.Symbol))
+            .Where(entity => !string.IsNullOrWhiteSpace(entity))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var strategySignals = relevantStrategyIds.Length == 0 || relevantSymbols.Length == 0
+            ? []
+            : await dbContext.TradingStrategySignals
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.OwnerUserId == ownerUserId &&
+                    !entity.IsDeleted &&
+                    relevantStrategyIds.Contains(entity.TradingStrategyId) &&
+                    relevantSymbols.Contains(entity.Symbol))
+                .OrderByDescending(entity => entity.GeneratedAtUtc)
+                .ThenByDescending(entity => entity.CreatedDate)
+                .ToListAsync(cancellationToken);
+        var strategySignalIds = strategySignals
+            .Select(entity => entity.Id)
+            .ToArray();
+        var decisionTracesBySignalId = strategySignalIds.Length == 0
+            ? new Dictionary<Guid, DecisionTrace[]>()
+            : (await dbContext.DecisionTraces
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    !entity.IsDeleted &&
+                    entity.StrategySignalId.HasValue &&
+                    strategySignalIds.Contains(entity.StrategySignalId.Value))
+                .OrderByDescending(entity => entity.DecisionAtUtc ?? entity.CreatedAtUtc)
+                .ThenByDescending(entity => entity.CreatedAtUtc)
+                .ToListAsync(cancellationToken))
+            .GroupBy(entity => entity.StrategySignalId!.Value)
+            .ToDictionary(
+                group => group.Key,
+                group => group.ToArray());
+        var strategySignalsByKey = strategySignals
+            .GroupBy(entity => BuildStrategySignalScopeKey(entity.TradingStrategyId, entity.Symbol))
+            .ToDictionary(
+                group => group.Key,
+                group => group.ToArray(),
+                StringComparer.Ordinal);
         var publishedStrategyIdSet = await LoadRuntimeReadyStrategyIdSetAsync(strategies, cancellationToken);
         var accountsById = accounts.ToDictionary(entity => entity.Id);
         var statesByBotId = states
@@ -135,6 +183,11 @@ public sealed class BotManagementService(
             .ToDictionary(
                 group => group.Key,
                 group => group.First());
+        var ordersBySignalId = latestOrders
+            .GroupBy(entity => entity.StrategySignalId)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderByDescending(entity => entity.CreatedDate).ToArray());
         var featureSnapshotsByBotId = latestFeatureSnapshots
             .GroupBy(entity => entity.BotId)
             .ToDictionary(
@@ -253,6 +306,25 @@ public sealed class BotManagementService(
                 var lastExecutionStaleReason = lastExecutionTransition?.Diagnostics.StaleReason ??
                     ExecutionDecisionDiagnostics.ResolveStaleReason(latencyReasonCode);
                 var runtimeDirection = ResolveRuntimeDirection(order ?? currentOrder);
+                var longRegimeGate = BuildLongRegimeGateSnapshot(
+                    bot,
+                    featureSnapshot);
+                var strategySignalsForBot = strategy is not null &&
+                    strategySignalsByKey.TryGetValue(BuildStrategySignalScopeKey(strategy.Id, bot.Symbol), out var resolvedSignals)
+                    ? resolvedSignals
+                    : [];
+                var latestSignal = strategySignalsForBot.FirstOrDefault();
+                var latestSignalDecision = latestSignal is not null && decisionTracesBySignalId.TryGetValue(latestSignal.Id, out var latestSignalDecisions)
+                    ? latestSignalDecisions.FirstOrDefault()
+                    : null;
+                var latestSignalOrder = latestSignal is not null && ordersBySignalId.TryGetValue(latestSignal.Id, out var latestSignalOrders)
+                    ? latestSignalOrders.FirstOrDefault(entity => entity.BotId == bot.Id) ?? latestSignalOrders.FirstOrDefault()
+                    : null;
+                var signalLifecycleMetrics = BuildSignalLifecycleMetrics(
+                    strategySignalsForBot,
+                    decisionTracesBySignalId,
+                    latestOrders,
+                    bot.Id);
 
                 return new BotManagementBotSnapshot(
                     bot.Id,
@@ -317,7 +389,30 @@ public sealed class BotManagementService(
                     runtimeDirection.Label,
                     runtimeDirection.Tone,
                     runtimeDirection.Summary,
-                    bot.DirectionMode);
+                    bot.DirectionMode,
+                    longRegimeGate.Label,
+                    longRegimeGate.Tone,
+                    longRegimeGate.PolicySummary,
+                    longRegimeGate.LiveSummary,
+                    longRegimeGate.ExplainSummary,
+                    latestSignal?.SignalType.ToString(),
+                    NormalizeUtcNullable(latestSignal?.GeneratedAtUtc),
+                    latestSignalDecision?.DecisionOutcome,
+                    latestSignalDecision?.DecisionReasonCode,
+                    latestSignalDecision?.DecisionSummary,
+                    NormalizeUtcNullable(latestSignalDecision?.DecisionAtUtc) ?? NormalizeUtcNullable(latestSignalDecision?.CreatedAtUtc),
+                    latestSignalOrder?.State.ToString(),
+                    latestSignalOrder?.FailureCode ?? latestSignalDecision?.DecisionReasonCode,
+                    signalLifecycleMetrics.EntryGeneratedCount,
+                    signalLifecycleMetrics.EntrySkippedCount,
+                    signalLifecycleMetrics.EntryVetoedCount,
+                    signalLifecycleMetrics.EntryOrderedCount,
+                    signalLifecycleMetrics.EntryFilledCount,
+                    signalLifecycleMetrics.ExitGeneratedCount,
+                    signalLifecycleMetrics.ExitSkippedCount,
+                    signalLifecycleMetrics.ExitVetoedCount,
+                    signalLifecycleMetrics.ExitOrderedCount,
+                    signalLifecycleMetrics.ExitFilledCount);
             })
             .ToArray();
 
@@ -887,6 +982,128 @@ public sealed class BotManagementService(
         }
     }
 
+    private static string BuildStrategySignalScopeKey(Guid tradingStrategyId, string? symbol)
+    {
+        return $"{tradingStrategyId:N}|{NormalizeSignalScopeSymbol(symbol)}";
+    }
+
+    private static string NormalizeSignalScopeSymbol(string? symbol)
+    {
+        return string.IsNullOrWhiteSpace(symbol)
+            ? string.Empty
+            : symbol.Trim().ToUpperInvariant();
+    }
+
+    private static BotSignalLifecycleMetrics BuildSignalLifecycleMetrics(
+        IReadOnlyCollection<TradingStrategySignal> signals,
+        IReadOnlyDictionary<Guid, DecisionTrace[]> decisionTracesBySignalId,
+        IReadOnlyCollection<ExecutionOrder> executionOrders,
+        Guid botId)
+    {
+        var entryGeneratedCount = signals.Count(entity => entity.SignalType == StrategySignalType.Entry);
+        var exitGeneratedCount = signals.Count(entity => entity.SignalType == StrategySignalType.Exit);
+
+        var entrySkippedCount = 0;
+        var entryVetoedCount = 0;
+        var exitSkippedCount = 0;
+        var exitVetoedCount = 0;
+
+        foreach (var signal in signals)
+        {
+            var latestDecision = decisionTracesBySignalId.TryGetValue(signal.Id, out var traces)
+                ? traces.FirstOrDefault()
+                : null;
+
+            if (latestDecision is null)
+            {
+                continue;
+            }
+
+            if (signal.SignalType == StrategySignalType.Entry)
+            {
+                if (IsSkippedDecisionOutcome(latestDecision.DecisionOutcome))
+                {
+                    entrySkippedCount++;
+                }
+                else if (IsVetoedDecisionOutcome(latestDecision.DecisionOutcome))
+                {
+                    entryVetoedCount++;
+                }
+            }
+            else if (signal.SignalType == StrategySignalType.Exit)
+            {
+                if (IsSkippedDecisionOutcome(latestDecision.DecisionOutcome))
+                {
+                    exitSkippedCount++;
+                }
+                else if (IsVetoedDecisionOutcome(latestDecision.DecisionOutcome))
+                {
+                    exitVetoedCount++;
+                }
+            }
+        }
+
+        var ordersForBot = executionOrders
+            .Where(entity => entity.BotId == botId)
+            .ToArray();
+
+        var entryOrderedCount = ordersForBot
+            .Where(entity => entity.SignalType == StrategySignalType.Entry)
+            .Select(entity => entity.StrategySignalId)
+            .Distinct()
+            .Count();
+        var entryFilledCount = ordersForBot
+            .Where(entity => entity.SignalType == StrategySignalType.Entry && entity.State == ExecutionOrderState.Filled)
+            .Select(entity => entity.StrategySignalId)
+            .Distinct()
+            .Count();
+        var exitOrderedCount = ordersForBot
+            .Where(entity => entity.SignalType == StrategySignalType.Exit)
+            .Select(entity => entity.StrategySignalId)
+            .Distinct()
+            .Count();
+        var exitFilledCount = ordersForBot
+            .Where(entity => entity.SignalType == StrategySignalType.Exit && entity.State == ExecutionOrderState.Filled)
+            .Select(entity => entity.StrategySignalId)
+            .Distinct()
+            .Count();
+
+        return new BotSignalLifecycleMetrics(
+            entryGeneratedCount,
+            entrySkippedCount,
+            entryVetoedCount,
+            entryOrderedCount,
+            entryFilledCount,
+            exitGeneratedCount,
+            exitSkippedCount,
+            exitVetoedCount,
+            exitOrderedCount,
+            exitFilledCount);
+    }
+
+    private static bool IsSkippedDecisionOutcome(string? decisionOutcome)
+    {
+        return string.Equals(decisionOutcome, "Skipped", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsVetoedDecisionOutcome(string? decisionOutcome)
+    {
+        return string.Equals(decisionOutcome, "Blocked", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(decisionOutcome, "Vetoed", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed record BotSignalLifecycleMetrics(
+        int EntryGeneratedCount,
+        int EntrySkippedCount,
+        int EntryVetoedCount,
+        int EntryOrderedCount,
+        int EntryFilledCount,
+        int ExitGeneratedCount,
+        int ExitSkippedCount,
+        int ExitVetoedCount,
+        int ExitOrderedCount,
+        int ExitFilledCount);
+
     private async Task<Guid?> ResolveSingleActiveExchangeAccountIdAsync(string ownerUserId, CancellationToken cancellationToken)
     {
         var accountIds = await dbContext.ExchangeAccounts
@@ -1278,6 +1495,115 @@ public sealed class BotManagementService(
             ? normalizedValue
             : normalizedValue[..maxLength];
     }
+
+    private LongRegimeGateSnapshot BuildLongRegimeGateSnapshot(
+        TradingBot bot,
+        TradingFeatureSnapshot? featureSnapshot)
+    {
+        if (bot.DirectionMode == TradingBotDirectionMode.ShortOnly)
+        {
+            return new LongRegimeGateSnapshot(
+                "N/A",
+                "neutral",
+                "Bu bot short-only; long regime gate uygulanmaz.",
+                null,
+                "Long regime kalibrasyonu bu bot icin devre disi.");
+        }
+
+        var policySummary = optionsValue.BuildRegimeThresholdSummary(StrategyTradeDirection.Long);
+
+        if (!optionsValue.IsRegimeAwareEntryDisciplineEnabled(StrategyTradeDirection.Long))
+        {
+            return new LongRegimeGateSnapshot(
+                "FILTER OFF",
+                "warning",
+                policySummary,
+                featureSnapshot is null ? null : BuildLongRegimeLiveSummary(featureSnapshot),
+                "Long regime filter policy seviyesinde kapali; runtime long entry bu guard ile bloklanmaz.");
+        }
+
+        if (featureSnapshot is null)
+        {
+            return new LongRegimeGateSnapshot(
+                "LIVE DATA YOK",
+                "warning",
+                policySummary,
+                null,
+                "Canli RSI / MACD / Bollinger genisligi olmadan long regime karari tek bakista dogrulanamaz.");
+        }
+
+        var blockers = EvaluateLongRegimeDrivers(featureSnapshot);
+        var liveSummary = BuildLongRegimeLiveSummary(featureSnapshot);
+
+        if (blockers.Count == 0)
+        {
+            return new LongRegimeGateSnapshot(
+                "PASS NOW",
+                "success",
+                policySummary,
+                liveSummary,
+                "Mevcut canli degerler long regime threshold'larini geciyor; ayni sinyal runtime order asamasina ilerleyebilir.");
+        }
+
+        var explainSummary = string.Join("; ", blockers);
+
+        return new LongRegimeGateSnapshot(
+            "BLOCKED NOW",
+            "danger",
+            policySummary,
+            liveSummary,
+            explainSummary);
+    }
+
+    private List<string> EvaluateLongRegimeDrivers(TradingFeatureSnapshot snapshot)
+    {
+        var drivers = new List<string>();
+        var rsiThreshold = optionsValue.ResolveRegimeMaxEntryRsi(StrategyTradeDirection.Long);
+        var macdThreshold = optionsValue.ResolveRegimeMacdThreshold(StrategyTradeDirection.Long);
+        var bollingerWidthThreshold = optionsValue.ResolveRegimeMinBollingerWidthPercentage(StrategyTradeDirection.Long);
+
+        if (snapshot.Rsi.HasValue && rsiThreshold > 0m && snapshot.Rsi.Value >= rsiThreshold)
+        {
+            drivers.Add($"RSI {snapshot.Rsi.Value.ToString("0.##", CultureInfo.InvariantCulture)} >= {rsiThreshold.ToString("0.##", CultureInfo.InvariantCulture)}");
+        }
+
+        if (snapshot.MacdHistogram.HasValue && snapshot.MacdHistogram.Value < macdThreshold)
+        {
+            drivers.Add($"MACD histogram {snapshot.MacdHistogram.Value.ToString("0.####", CultureInfo.InvariantCulture)} < {macdThreshold.ToString("0.####", CultureInfo.InvariantCulture)}");
+        }
+
+        if (snapshot.BollingerBandWidth.HasValue &&
+            bollingerWidthThreshold > 0m &&
+            snapshot.BollingerBandWidth.Value < bollingerWidthThreshold)
+        {
+            drivers.Add($"Bollinger width {snapshot.BollingerBandWidth.Value.ToString("0.####", CultureInfo.InvariantCulture)}% < {bollingerWidthThreshold.ToString("0.####", CultureInfo.InvariantCulture)}%");
+        }
+
+        return drivers;
+    }
+
+    private static string BuildLongRegimeLiveSummary(TradingFeatureSnapshot snapshot)
+    {
+        return string.Join(
+            " · ",
+            $"RSI={FormatLongRegimeMetric(snapshot.Rsi, "0.##")}",
+            $"MACD hist={FormatLongRegimeMetric(snapshot.MacdHistogram, "0.####")}",
+            $"Bollinger width={FormatLongRegimeMetric(snapshot.BollingerBandWidth, "0.####", suffix: "%")}");
+    }
+
+    private static string FormatLongRegimeMetric(decimal? value, string format, string suffix = "")
+    {
+        return value.HasValue
+            ? value.Value.ToString(format, CultureInfo.InvariantCulture) + suffix
+            : "n/a";
+    }
+
+    private sealed record LongRegimeGateSnapshot(
+        string Label,
+        string Tone,
+        string PolicySummary,
+        string? LiveSummary,
+        string ExplainSummary);
 
     private sealed record LastExecutionDiagnosticSnapshot(
         string? BlockDetail,

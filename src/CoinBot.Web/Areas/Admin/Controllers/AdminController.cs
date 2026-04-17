@@ -21,6 +21,7 @@ using CoinBot.Infrastructure.Exchange;
 using CoinBot.Infrastructure.Identity;
 using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.Mfa;
+using CoinBot.Web.StrategyBuilderSupport;
 using CoinBot.Web.ViewModels.Admin;
 using CoinBot.Web.ViewModels.Settings;
 using Microsoft.AspNetCore.Authorization;
@@ -44,6 +45,9 @@ public sealed class AdminController : Controller
     private const string MonitoringDashboardSnapshotViewDataKey = "AdminMonitoringDashboardSnapshot";
     private const string PilotOrderNotionalSummaryViewDataKey = "AdminPilotOrderNotionalSummary";
     private const string PilotOrderNotionalToneViewDataKey = "AdminPilotOrderNotionalTone";
+    private const string LongRegimePolicyStatusViewDataKey = "AdminLongRegimePolicyStatus";
+    private const string LongRegimePolicyToneViewDataKey = "AdminLongRegimePolicyTone";
+    private const string LongRegimePolicyDetailViewDataKey = "AdminLongRegimePolicyDetail";
     private const string GlobalPolicySnapshotViewDataKey = "AdminGlobalPolicySnapshot";
     private const string GlobalPolicySuccessTempDataKey = "AdminGlobalPolicySuccess";
     private const string GlobalPolicyErrorTempDataKey = "AdminGlobalPolicyError";
@@ -474,6 +478,9 @@ public sealed class AdminController : Controller
         ViewData[CrisisPreviewViewDataKey] = LoadCrisisPreviewViewModelFromTempData();
         ViewData[PilotOrderNotionalSummaryViewDataKey] = operationalContext.PilotOrderNotionalSummary;
         ViewData[PilotOrderNotionalToneViewDataKey] = operationalContext.PilotOrderNotionalTone;
+        ViewData[LongRegimePolicyStatusViewDataKey] = operationalContext.LongRegimePolicyStatus;
+        ViewData[LongRegimePolicyToneViewDataKey] = operationalContext.LongRegimePolicyTone;
+        ViewData[LongRegimePolicyDetailViewDataKey] = operationalContext.LongRegimePolicyDetail;
         ViewData["AdminActivationControlCenter"] = operationalContext.ActivationControlCenter;
         ViewData[RolloutClosureCenterViewDataKey] = AdminOperationsCenterComposer.BuildRolloutClosureCenter(
             operationalContext.ActivationControlCenter,
@@ -660,6 +667,7 @@ public sealed class AdminController : Controller
             breadcrumbItems: new[] { "Super Admin", "Strategy", "Strategy Templates" });
 
         var model = await BuildStrategyTemplateCatalogPageViewModelAsync(templateKey, cancellationToken);
+        ApplyStrategyBuilderRuntimeViewData(model.SelectedTemplate?.DefinitionJson);
         return View(model);
     }
 
@@ -673,7 +681,16 @@ public sealed class AdminController : Controller
             breadcrumbItems: new[] { "Super Admin", "Strategy", "Strategy Builder" });
 
         var model = await BuildStrategyTemplateCatalogPageViewModelAsync(templateKey, cancellationToken);
+        ApplyStrategyBuilderRuntimeViewData(model.SelectedTemplate?.DefinitionJson);
         return View(nameof(StrategyTemplates), model);
+    }
+
+    private void ApplyStrategyBuilderRuntimeViewData(string? definitionJson)
+    {
+        ViewData["AdminStrategyBuilderRuntimeConfig"] =
+            StrategyBuilderRuntimeParityHelper.BuildRuntimeConfig(pilotOptionsValue);
+        ViewData["AdminStrategyBuilderExplainability"] =
+            StrategyBuilderRuntimeParityHelper.BuildSnapshot(definitionJson, pilotOptionsValue);
     }
 
     [HttpPost]
@@ -1652,6 +1669,9 @@ public sealed class AdminController : Controller
         ViewData[CrisisPreviewViewDataKey] = LoadCrisisPreviewViewModelFromTempData();
         ViewData[PilotOrderNotionalSummaryViewDataKey] = operationalContext.PilotOrderNotionalSummary;
         ViewData[PilotOrderNotionalToneViewDataKey] = operationalContext.PilotOrderNotionalTone;
+        ViewData[LongRegimePolicyStatusViewDataKey] = operationalContext.LongRegimePolicyStatus;
+        ViewData[LongRegimePolicyToneViewDataKey] = operationalContext.LongRegimePolicyTone;
+        ViewData[LongRegimePolicyDetailViewDataKey] = operationalContext.LongRegimePolicyDetail;
         ViewData[AdminCanEditGlobalPolicyViewDataKey] = CanEditGlobalPolicy();
 
         return View(operationalContext.ActivationControlCenter);
@@ -3452,6 +3472,9 @@ public sealed class AdminController : Controller
         var driftGuardSnapshot = await LoadDriftGuardSnapshotSafeAsync(cancellationToken);
         var pilotOrderNotionalSummary = ResolvePilotOrderNotionalSummary();
         var pilotOrderNotionalTone = ResolvePilotOrderNotionalTone();
+        var longRegimePolicyStatus = ResolveLongRegimePolicyStatus();
+        var longRegimePolicyTone = ResolveLongRegimePolicyTone();
+        var longRegimePolicyDetail = ResolveLongRegimePolicyDetail();
         var clockDriftViewModel = BuildClockDriftInfoViewModel(clockDriftSnapshot);
         var driftGuardViewModel = BuildMarketDriftGuardInfoViewModel(driftGuardSnapshot);
         var activationControlCenter = AdminActivationControlCenterComposer.Compose(
@@ -3473,6 +3496,9 @@ public sealed class AdminController : Controller
             driftGuardViewModel,
             pilotOrderNotionalSummary,
             pilotOrderNotionalTone,
+            longRegimePolicyStatus,
+            longRegimePolicyTone,
+            longRegimePolicyDetail,
             activationControlCenter);
     }
 
@@ -3622,6 +3648,9 @@ public sealed class AdminController : Controller
         MarketDriftGuardInfoViewModel DriftGuardViewModel,
         string PilotOrderNotionalSummary,
         string PilotOrderNotionalTone,
+        string LongRegimePolicyStatus,
+        string LongRegimePolicyTone,
+        string LongRegimePolicyDetail,
         AdminActivationControlCenterViewModel ActivationControlCenter);
 
     private static string BuildStrategyTemplateFailureMessage(StrategyTemplateCatalogException exception)
@@ -4563,6 +4592,26 @@ public sealed class AdminController : Controller
         return pilotOptionsValue.TryResolveMaxPilotOrderNotional(out var maxPilotOrderNotional) && maxPilotOrderNotional > 0m
             ? "healthy"
             : "critical";
+    }
+
+    private string ResolveLongRegimePolicyStatus()
+    {
+        return pilotOptionsValue.IsRegimeAwareEntryDisciplineEnabled(StrategyTradeDirection.Long)
+            ? "Enabled"
+            : "Disabled";
+    }
+
+    private string ResolveLongRegimePolicyTone()
+    {
+        return pilotOptionsValue.IsRegimeAwareEntryDisciplineEnabled(StrategyTradeDirection.Long)
+            ? "healthy"
+            : "warning";
+    }
+
+    private string ResolveLongRegimePolicyDetail()
+    {
+        return pilotOptionsValue.BuildRegimeThresholdSummary(StrategyTradeDirection.Long) +
+               " | Runtime block ozetleri canli RSI/MACD/Bollinger width degerlerini ayni decision summary alaninda yazar.";
     }
 
     private ClockDriftInfoViewModel BuildClockDriftInfoViewModel(BinanceTimeSyncSnapshot snapshot)

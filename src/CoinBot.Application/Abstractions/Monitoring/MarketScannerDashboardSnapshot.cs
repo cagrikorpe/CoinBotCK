@@ -12,7 +12,9 @@ public sealed record MarketScannerDashboardSnapshot(
     IReadOnlyCollection<MarketScannerCandidateSnapshot> RejectedSamples,
     MarketScannerHandoffSnapshot LatestHandoff,
     MarketScannerHandoffSnapshot LastSuccessfulHandoff,
-    MarketScannerHandoffSnapshot LastBlockedHandoff)
+    MarketScannerHandoffSnapshot LastBlockedHandoff,
+    string? CycleSummary = null,
+    string? RejectionSummary = null)
 {
     public static MarketScannerDashboardSnapshot Empty()
     {
@@ -28,6 +30,8 @@ public sealed record MarketScannerDashboardSnapshot(
             RejectedSamples: Array.Empty<MarketScannerCandidateSnapshot>(),
             LatestHandoff: MarketScannerHandoffSnapshot.Empty(),
             LastSuccessfulHandoff: MarketScannerHandoffSnapshot.Empty(),
-            LastBlockedHandoff: MarketScannerHandoffSnapshot.Empty());
+            LastBlockedHandoff: MarketScannerHandoffSnapshot.Empty(),
+            CycleSummary: null,
+            RejectionSummary: null);
     }
 }

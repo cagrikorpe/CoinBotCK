@@ -76,6 +76,22 @@
                                         <td>
                                             <span class="cb-badge @stateBadgeClass" data-cb-bot-state-badge data-cb-bot-state-value="@bot.PilotStateLabel">@bot.PilotStateLabel</span>
                                             <div class="text-muted small mt-2" data-cb-bot-state-summary>@bot.PilotStateSummary</div>
+                                            @if (!string.IsNullOrWhiteSpace(bot.LongRegimeGateLabel))
+                                            {
+                                                var longRegimeBadgeClass = bot.LongRegimeGateTone == "success"
+                                                    ? "cb-badge-success"
+                                                    : bot.LongRegimeGateTone == "danger"
+                                                        ? "cb-badge-danger"
+                                                        : bot.LongRegimeGateTone == "warning"
+                                                            ? "cb-badge-warning"
+                                                            : "cb-badge-neutral";
+                                                <div class="mt-3" data-cb-bot-long-regime-card>
+                                                    <div><span class="cb-badge @longRegimeBadgeClass" data-cb-bot-long-regime-status>@bot.LongRegimeGateLabel</span></div>
+                                                    <div class="text-muted small mt-2" data-cb-bot-long-regime-policy>@bot.LongRegimePolicySummary</div>
+                                                    <div class="text-muted small mt-2" data-cb-bot-long-regime-live>@bot.LongRegimeLiveSummary</div>
+                                                    <div class="small mt-2" data-cb-bot-long-regime-explain>@bot.LongRegimeExplainSummary</div>
+                                                </div>
+                                            }
                                         </td>
                                         <td>
                                             <div class="font-weight-bolder" data-cb-bot-strategy>@bot.StrategyDisplayName</div>
@@ -92,6 +108,29 @@
                                         <td>
                                             <div class="font-weight-bolder" data-cb-bot-last-status>@(string.IsNullOrWhiteSpace(bot.LastJobErrorCode) ? bot.LastJobStatus : "Worker çalışmıyor")</div>
                                             <div class="text-muted small">@bot.UpdatedAtLabel</div>
+                                            <div class="cb-admin-info-strip mt-3" data-cb-bot-ops-card>
+                                                <div class="cb-admin-info-strip-title">Signal / Decision / Order</div>
+                                                <div class="small mt-2"><strong data-cb-bot-ops-signal-label>Son signal:</strong> <span data-cb-bot-ops-signal>@bot.LatestSignalText</span></div>
+                                                <div class="small mt-2"><strong data-cb-bot-ops-decision-label>Runtime decision:</strong> <span data-cb-bot-ops-decision>@bot.RuntimeDecisionCardText</span></div>
+                                                @if (!string.IsNullOrWhiteSpace(bot.RuntimeDecisionCardSummary))
+                                                {
+                                                    <div class="text-muted small mt-2" data-cb-bot-ops-decision-summary>@bot.RuntimeDecisionCardSummary</div>
+                                                }
+                                                <div class="small mt-2"><strong data-cb-bot-ops-order-label>Order state:</strong> <span data-cb-bot-ops-order>@bot.OrderStateCardText</span></div>
+                                                <div class="small mt-2"><strong data-cb-bot-ops-reason-label>Rejection / failure:</strong> <span data-cb-bot-ops-reason>@bot.RejectionFailureCodeText</span></div>
+                                                <div class="row mt-3" data-cb-bot-ops-counters>
+                                                    <div class="col-12 col-xl-6 mb-3 mb-xl-0" data-cb-bot-entry-counters>
+                                                        <div class="font-weight-bolder">Entry</div>
+                                                        <div class="text-muted small mt-2">generated: <span data-cb-bot-entry-generated>@bot.EntryGeneratedCount</span> · skipped: <span data-cb-bot-entry-skipped>@bot.EntrySkippedCount</span> · vetoed: <span data-cb-bot-entry-vetoed>@bot.EntryVetoedCount</span></div>
+                                                        <div class="text-muted small mt-1">ordered: <span data-cb-bot-entry-ordered>@bot.EntryOrderedCount</span> · filled: <span data-cb-bot-entry-filled>@bot.EntryFilledCount</span></div>
+                                                    </div>
+                                                    <div class="col-12 col-xl-6" data-cb-bot-exit-counters>
+                                                        <div class="font-weight-bolder">Exit</div>
+                                                        <div class="text-muted small mt-2">generated: <span data-cb-bot-exit-generated>@bot.ExitGeneratedCount</span> · skipped: <span data-cb-bot-exit-skipped>@bot.ExitSkippedCount</span> · vetoed: <span data-cb-bot-exit-vetoed>@bot.ExitVetoedCount</span></div>
+                                                        <div class="text-muted small mt-1">ordered: <span data-cb-bot-exit-ordered>@bot.ExitOrderedCount</span> · filled: <span data-cb-bot-exit-filled>@bot.ExitFilledCount</span></div>
+                                                    </div>
+                                                </div>
+                                            </div>
                                         </td>
                                         <td class="text-right">
                                             <div class="d-inline-flex align-items-center">

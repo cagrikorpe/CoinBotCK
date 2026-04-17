@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -1769,7 +1770,7 @@ public sealed class BotWorkerJobProcessor(
         summary = null;
         driverSummary = null;
 
-        if (!optionsValue.EnableRegimeAwareEntryDiscipline ||
+        if (!optionsValue.IsRegimeAwareEntryDisciplineEnabled(entryDirection) ||
             marketState.IndicatorSnapshot is null ||
             !IsActionableDirection(entryDirection))
         {
@@ -1853,7 +1854,14 @@ public sealed class BotWorkerJobProcessor(
         }
 
         driverSummary = string.Join("; ", drivers);
-        summary = $"Entry signal was skipped because regime-aware entry discipline blocked the {entryDirection.ToString().ToLowerInvariant()} request. {driverSummary}.";
+        var thresholdSummary = optionsValue.BuildRegimeThresholdSummary(entryDirection);
+        var liveSummary = BuildEntryRegimeLiveSummary(
+            indicatorSnapshot,
+            entryDirection,
+            referencePrice,
+            bollingerWidthPercentage,
+            regimeMiddleBandDislocationPercentage);
+        summary = $"Entry signal was skipped because regime-aware entry discipline blocked the {entryDirection.ToString().ToLowerInvariant()} request. Thresholds: {thresholdSummary}. Live: {liveSummary}. Drivers: {driverSummary}.";
         return true;
     }
 
@@ -2063,6 +2071,42 @@ public sealed class BotWorkerJobProcessor(
         return NormalizeDecimal(((snapshot.UpperBand.Value - snapshot.LowerBand.Value) / snapshot.MiddleBand.Value) * 100m);
     }
 
+    private string BuildEntryRegimeLiveSummary(
+        StrategyIndicatorSnapshot indicatorSnapshot,
+        StrategyTradeDirection entryDirection,
+        decimal? referencePrice,
+        decimal? bollingerWidthPercentage,
+        decimal regimeMiddleBandDislocationPercentage)
+    {
+        var parts = new List<string>();
+
+        parts.Add($"RSI={FormatRegimeMetric(indicatorSnapshot.Rsi.IsReady ? indicatorSnapshot.Rsi.Value : null, "0.##")}");
+        parts.Add($"MACD hist={FormatRegimeMetric(indicatorSnapshot.Macd.IsReady ? indicatorSnapshot.Macd.Histogram : null, "0.####")}");
+        parts.Add($"Bollinger width={FormatRegimeMetric(bollingerWidthPercentage, "0.####", suffix: "%")}");
+
+        if (referencePrice.HasValue &&
+            indicatorSnapshot.Bollinger.IsReady &&
+            indicatorSnapshot.Bollinger.MiddleBand.HasValue &&
+            indicatorSnapshot.Bollinger.MiddleBand.Value > 0m &&
+            regimeMiddleBandDislocationPercentage > 0m)
+        {
+            decimal middleBandDislocation = entryDirection == StrategyTradeDirection.Short
+                ? NormalizeDecimal(((indicatorSnapshot.Bollinger.MiddleBand.Value - referencePrice.Value) / indicatorSnapshot.Bollinger.MiddleBand.Value) * 100m)
+                : NormalizeDecimal(((referencePrice.Value - indicatorSnapshot.Bollinger.MiddleBand.Value) / indicatorSnapshot.Bollinger.MiddleBand.Value) * 100m);
+
+            parts.Add($"Price vs middle band={middleBandDislocation.ToString("0.####", CultureInfo.InvariantCulture)}%");
+        }
+
+        return string.Join(" · ", parts);
+    }
+
+    private static string FormatRegimeMetric(decimal? value, string format, string suffix = "")
+    {
+        return value.HasValue
+            ? value.Value.ToString(format, CultureInfo.InvariantCulture) + suffix
+            : "n/a";
+    }
+
     private async Task<PilotDispatchPlan> ResolvePilotDispatchPlanAsync(
         string ownerUserId,
         Guid exchangeAccountId,
@@ -2107,40 +2151,13 @@ public sealed class BotWorkerJobProcessor(
     {
         var normalizedSymbol = NormalizePositionSymbol(symbol);
 
-        var positionNetQuantity = (await dbContext.ExchangePositions
-                .AsNoTracking()
-                .IgnoreQueryFilters()
-                .Where(entity =>
-                    entity.OwnerUserId == ownerUserId &&
-                    entity.ExchangeAccountId == exchangeAccountId &&
-                    entity.Plane == ExchangeDataPlane.Futures &&
-                    !entity.IsDeleted)
-                .ToListAsync(cancellationToken))
-            .Where(entity => NormalizePositionSymbol(entity.Symbol) == normalizedSymbol)
-            .Sum(ResolveSignedPositionQuantity);
-
-        if (positionNetQuantity != 0m)
-        {
-            return positionNetQuantity;
-        }
-
-        return (await dbContext.ExecutionOrders
-                .AsNoTracking()
-                .IgnoreQueryFilters()
-                .Where(entity =>
-                    entity.OwnerUserId == ownerUserId &&
-                    entity.ExchangeAccountId == exchangeAccountId &&
-                    entity.Plane == ExchangeDataPlane.Futures &&
-                    !entity.IsDeleted &&
-                    entity.SubmittedToBroker &&
-                    (entity.State == ExecutionOrderState.Submitted ||
-                     entity.State == ExecutionOrderState.Dispatching ||
-                     entity.State == ExecutionOrderState.CancelRequested ||
-                     entity.State == ExecutionOrderState.PartiallyFilled ||
-                     entity.State == ExecutionOrderState.Filled))
-                .ToListAsync(cancellationToken))
-            .Where(entity => NormalizePositionSymbol(entity.Symbol) == normalizedSymbol)
-            .Sum(ResolveSignedOrderQuantity);
+        return await LivePositionTruthResolver.ResolveNetQuantityAsync(
+            dbContext,
+            ownerUserId,
+            ExchangeDataPlane.Futures,
+            exchangeAccountId,
+            normalizedSymbol,
+            cancellationToken);
     }
 
     private static decimal ResolveSignedOrderQuantity(ExecutionOrder entity)

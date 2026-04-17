@@ -131,6 +131,199 @@ public sealed class BotManagementServiceTests
         Assert.Null(state.IdempotencyKey);
     }
 
+
+    [Fact]
+    public async Task GetPageAsync_ExposesSingleScreenSignalOrderTraceParity()
+    {
+        await using var context = CreateContext();
+        var ownerUserId = "user-op-parity";
+        var exchangeAccountId = await SeedStrategyAndExchangeAccountAsync(context, ownerUserId, "pilot-op-parity");
+        var bot = await SeedBotAsync(context, ownerUserId, exchangeAccountId, isEnabled: true);
+        var strategy = await context.TradingStrategies.SingleAsync(entity => entity.OwnerUserId == ownerUserId && entity.StrategyKey == bot.StrategyKey);
+        var entrySignalId = Guid.NewGuid();
+        var exitSignalId = Guid.NewGuid();
+        var entryGeneratedAtUtc = new DateTime(2026, 4, 2, 12, 10, 0, DateTimeKind.Utc);
+        var exitGeneratedAtUtc = entryGeneratedAtUtc.AddMinutes(-1);
+
+        context.TradingStrategySignals.AddRange(
+            new TradingStrategySignal
+            {
+                Id = entrySignalId,
+                OwnerUserId = ownerUserId,
+                TradingStrategyId = strategy.Id,
+                TradingStrategyVersionId = context.TradingStrategyVersions.Single(entity => entity.TradingStrategyId == strategy.Id).Id,
+                StrategyVersionNumber = 1,
+                StrategySchemaVersion = 1,
+                SignalType = StrategySignalType.Entry,
+                ExecutionEnvironment = ExecutionEnvironment.Live,
+                Symbol = bot.Symbol!,
+                Timeframe = "1m",
+                IndicatorOpenTimeUtc = entryGeneratedAtUtc.AddMinutes(-1),
+                IndicatorCloseTimeUtc = entryGeneratedAtUtc,
+                IndicatorReceivedAtUtc = entryGeneratedAtUtc,
+                GeneratedAtUtc = entryGeneratedAtUtc,
+                IndicatorSnapshotJson = "{}",
+                RuleResultSnapshotJson = "{}"
+            },
+            new TradingStrategySignal
+            {
+                Id = exitSignalId,
+                OwnerUserId = ownerUserId,
+                TradingStrategyId = strategy.Id,
+                TradingStrategyVersionId = context.TradingStrategyVersions.Single(entity => entity.TradingStrategyId == strategy.Id).Id,
+                StrategyVersionNumber = 1,
+                StrategySchemaVersion = 1,
+                SignalType = StrategySignalType.Exit,
+                ExecutionEnvironment = ExecutionEnvironment.Live,
+                Symbol = bot.Symbol!,
+                Timeframe = "1m",
+                IndicatorOpenTimeUtc = exitGeneratedAtUtc.AddMinutes(-1),
+                IndicatorCloseTimeUtc = exitGeneratedAtUtc,
+                IndicatorReceivedAtUtc = exitGeneratedAtUtc,
+                GeneratedAtUtc = exitGeneratedAtUtc,
+                IndicatorSnapshotJson = "{}",
+                RuleResultSnapshotJson = "{}"
+            });
+
+        context.DecisionTraces.AddRange(
+            new DecisionTrace
+            {
+                Id = Guid.NewGuid(),
+                UserId = ownerUserId,
+                CorrelationId = "corr-entry-op",
+                DecisionId = "decision-entry-op",
+                StrategySignalId = entrySignalId,
+                Symbol = bot.Symbol!,
+                Timeframe = "1m",
+                StrategyVersion = "StrategyVersion:test",
+                SignalType = StrategySignalType.Entry.ToString(),
+                DecisionOutcome = "Skipped",
+                DecisionReasonCode = "LongEntryRegimeFilterBlocked",
+                DecisionSummary = "Entry blocked by regime filter.",
+                DecisionAtUtc = entryGeneratedAtUtc.AddSeconds(1),
+                SnapshotJson = "{}",
+                CreatedAtUtc = entryGeneratedAtUtc.AddSeconds(1)
+            },
+            new DecisionTrace
+            {
+                Id = Guid.NewGuid(),
+                UserId = ownerUserId,
+                CorrelationId = "corr-exit-op",
+                DecisionId = "decision-exit-op",
+                StrategySignalId = exitSignalId,
+                Symbol = bot.Symbol!,
+                Timeframe = "1m",
+                StrategyVersion = "StrategyVersion:test",
+                SignalType = StrategySignalType.Exit.ToString(),
+                DecisionOutcome = "Persisted",
+                DecisionReasonCode = "Allowed",
+                DecisionSummary = "Exit signal reached order stage.",
+                DecisionAtUtc = exitGeneratedAtUtc.AddSeconds(1),
+                SnapshotJson = "{}",
+                CreatedAtUtc = exitGeneratedAtUtc.AddSeconds(1)
+            });
+
+        context.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = ownerUserId,
+            BotId = bot.Id,
+            StrategySignalId = exitSignalId,
+            TradingStrategyId = strategy.Id,
+            TradingStrategyVersionId = context.TradingStrategyVersions.Single(entity => entity.TradingStrategyId == strategy.Id).Id,
+            SignalType = StrategySignalType.Exit,
+            StrategyKey = bot.StrategyKey,
+            Symbol = bot.Symbol!,
+            Timeframe = "1m",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Sell,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.001m,
+            Price = 62000m,
+            State = ExecutionOrderState.Filled,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            SubmittedToBroker = true,
+            IdempotencyKey = "idemp-op",
+            RootCorrelationId = "corr-exit-op",
+            CreatedDate = exitGeneratedAtUtc.AddSeconds(2),
+            UpdatedDate = exitGeneratedAtUtc.AddSeconds(3),
+            LastStateChangedAtUtc = exitGeneratedAtUtc.AddSeconds(3)
+        });
+
+        await context.SaveChangesAsync();
+        var service = CreateService(context, new FakeTimeProvider(new DateTimeOffset(entryGeneratedAtUtc.AddMinutes(1))));
+
+        var snapshot = await service.GetPageAsync(ownerUserId);
+        var row = Assert.Single(snapshot.Bots);
+
+        Assert.Equal("Entry", row.LatestSignalType);
+        Assert.Equal(entryGeneratedAtUtc, row.LatestSignalGeneratedAtUtc);
+        Assert.Equal("Skipped", row.LatestRuntimeDecisionOutcome);
+        Assert.Equal("LongEntryRegimeFilterBlocked", row.LatestRuntimeDecisionReasonCode);
+        Assert.Equal("Entry blocked by regime filter.", row.LatestRuntimeDecisionSummary);
+        Assert.Null(row.LatestOrderState);
+        Assert.Equal("LongEntryRegimeFilterBlocked", row.LatestOrderFailureCode);
+        Assert.Equal(1, row.EntryGeneratedCount);
+        Assert.Equal(1, row.EntrySkippedCount);
+        Assert.Equal(0, row.EntryVetoedCount);
+        Assert.Equal(0, row.EntryOrderedCount);
+        Assert.Equal(0, row.EntryFilledCount);
+        Assert.Equal(1, row.ExitGeneratedCount);
+        Assert.Equal(0, row.ExitSkippedCount);
+        Assert.Equal(0, row.ExitVetoedCount);
+        Assert.Equal(1, row.ExitOrderedCount);
+        Assert.Equal(1, row.ExitFilledCount);
+    }
+
+    [Fact]
+    public async Task GetPageAsync_ExposesLongRegimePolicyAndLiveMetrics()
+    {
+        await using var context = CreateContext();
+        var exchangeAccountId = await SeedStrategyAndExchangeAccountAsync(context, "user-regime-page", "pilot-regime-page");
+        var bot = await SeedBotAsync(context, "user-regime-page", exchangeAccountId, isEnabled: true);
+        context.TradingFeatureSnapshots.Add(new TradingFeatureSnapshot
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = bot.OwnerUserId,
+            BotId = bot.Id,
+            ExchangeAccountId = exchangeAccountId,
+            StrategyKey = bot.StrategyKey,
+            Symbol = bot.Symbol!,
+            Timeframe = "1m",
+            EvaluatedAtUtc = new DateTime(2026, 4, 2, 12, 0, 0, DateTimeKind.Utc),
+            MarketDataTimestampUtc = new DateTime(2026, 4, 2, 11, 59, 59, DateTimeKind.Utc),
+            FeatureVersion = "v1",
+            SnapshotState = FeatureSnapshotState.Ready,
+            QualityReasonCode = FeatureSnapshotQualityReason.None,
+            MarketDataReasonCode = DegradedModeReasonCode.None,
+            SampleCount = 200,
+            RequiredSampleCount = 200,
+            ReferencePrice = 64000m,
+            Rsi = 32m,
+            MacdHistogram = -0.0077m,
+            BollingerBandWidth = 0.0826m,
+            LastDecisionOutcome = "Skipped",
+            LastDecisionCode = "LongEntryRegimeFilterBlocked",
+            LastExecutionState = "Skipped",
+            FeatureSummary = "Long regime blocked."
+        });
+        await context.SaveChangesAsync();
+        var service = CreateService(context, new FakeTimeProvider(new DateTimeOffset(new DateTime(2026, 4, 2, 12, 0, 2, DateTimeKind.Utc))));
+
+        var snapshot = await service.GetPageAsync("user-regime-page");
+        var row = Assert.Single(snapshot.Bots);
+
+        Assert.Equal("BLOCKED NOW", row.LongRegimeGateLabel);
+        Assert.Equal("danger", row.LongRegimeGateTone);
+        Assert.Contains("MACD hist >= 0", row.LongRegimePolicySummary, StringComparison.Ordinal);
+        Assert.Contains("Bollinger width >= 0.2%", row.LongRegimePolicySummary, StringComparison.Ordinal);
+        Assert.Contains("MACD hist=-0.0077", row.LongRegimeLiveSummary, StringComparison.Ordinal);
+        Assert.Contains("Bollinger width=0.0826%", row.LongRegimeLiveSummary, StringComparison.Ordinal);
+        Assert.Contains("MACD histogram -0.0077 < 0", row.LongRegimeExplainSummary, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task UpdateAsync_ReturnsNotFound_WhenBotBelongsToAnotherUser()
     {

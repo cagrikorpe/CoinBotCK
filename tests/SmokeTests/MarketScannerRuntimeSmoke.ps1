@@ -48,6 +48,95 @@ function New-SqlConnection {
     return $connection
 }
 
+function Convert-ToSqlParameterValue {
+    param([object]$Value)
+
+    if ($null -eq $Value) {
+        return [DBNull]::Value
+    }
+
+    return $Value
+}
+
+function Get-ValueOrDefault {
+    param([object]$Value, [string]$DefaultValue)
+
+    if ($null -eq $Value -or [string]::IsNullOrWhiteSpace([string]$Value)) {
+        return $DefaultValue
+    }
+
+    return [string]$Value
+}
+
+function Read-FilePreview {
+    param([string]$Path, [int]$MaxChars = 2000)
+
+    if (-not (Test-Path $Path)) {
+        return ''
+    }
+
+    $content = Get-Content -Path $Path -Raw -ErrorAction SilentlyContinue
+    if ([string]::IsNullOrEmpty($content)) {
+        return ''
+    }
+
+    if ($content.Length -le $MaxChars) {
+        return $content
+    }
+
+    return $content.Substring(0, $MaxChars)
+}
+
+function Invoke-WebRequestCompat {
+    param(
+        [string]$Uri,
+        [string]$Method = 'Get',
+        [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+        [hashtable]$Body,
+        [int]$MaximumRedirection = 5
+    )
+
+    $invokeParams = @{
+        Uri = $Uri
+        Method = $Method
+        MaximumRedirection = $MaximumRedirection
+        ErrorAction = 'Stop'
+    }
+
+    if ($PSBoundParameters.ContainsKey('WebSession') -and $null -ne $WebSession) {
+        $invokeParams.WebSession = $WebSession
+    }
+
+    if ($PSBoundParameters.ContainsKey('Body') -and $null -ne $Body) {
+        $invokeParams.Body = $Body
+    }
+
+    try {
+        return Invoke-WebRequest @invokeParams
+    }
+    catch [System.Net.WebException] {
+        $response = $_.Exception.Response
+        if ($null -eq $response) {
+            throw
+        }
+
+        $stream = $response.GetResponseStream()
+        $reader = New-Object System.IO.StreamReader($stream)
+        try {
+            $content = $reader.ReadToEnd()
+        }
+        finally {
+            $reader.Dispose()
+            $stream.Dispose()
+        }
+
+        return [pscustomobject]@{
+            StatusCode = [int]$response.StatusCode
+            Content = $content
+        }
+    }
+}
+
 function Invoke-SqlNonQuery {
     param([string]$ConnectionString, [string]$CommandText, [hashtable]$Parameters = @{})
 
@@ -57,7 +146,7 @@ function Invoke-SqlNonQuery {
         $command.CommandTimeout = 120
         $command.CommandText = $CommandText
         foreach ($entry in $Parameters.GetEnumerator()) {
-            $null = $command.Parameters.AddWithValue("@$($entry.Key)", $entry.Value ?? [DBNull]::Value)
+            $null = $command.Parameters.AddWithValue("@$($entry.Key)", (Convert-ToSqlParameterValue -Value $entry.Value))
         }
 
         return $command.ExecuteNonQuery()
@@ -76,7 +165,7 @@ function Invoke-SqlRow {
         $command.CommandTimeout = 120
         $command.CommandText = $CommandText
         foreach ($entry in $Parameters.GetEnumerator()) {
-            $null = $command.Parameters.AddWithValue("@$($entry.Key)", $entry.Value ?? [DBNull]::Value)
+            $null = $command.Parameters.AddWithValue("@$($entry.Key)", (Convert-ToSqlParameterValue -Value $entry.Value))
         }
 
         $reader = $command.ExecuteReader()
@@ -106,7 +195,7 @@ function Invoke-SqlRows {
         $command.CommandTimeout = 120
         $command.CommandText = $CommandText
         foreach ($entry in $Parameters.GetEnumerator()) {
-            $null = $command.Parameters.AddWithValue("@$($entry.Key)", $entry.Value ?? [DBNull]::Value)
+            $null = $command.Parameters.AddWithValue("@$($entry.Key)", (Convert-ToSqlParameterValue -Value $entry.Value))
         }
 
         $rows = New-Object System.Collections.Generic.List[object]
@@ -144,7 +233,27 @@ function Ensure-SqlDatabaseExists {
 function Start-ManagedProcess {
     param([string]$FilePath, [string[]]$ArgumentList, [string]$WorkingDirectory, [string]$StandardOutputPath, [string]$StandardErrorPath, [hashtable]$EnvironmentVariables)
 
-    return Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -RedirectStandardOutput $StandardOutputPath -RedirectStandardError $StandardErrorPath -Environment $EnvironmentVariables -PassThru -WindowStyle Hidden
+    $previousEnvironment = @{}
+
+    if ($EnvironmentVariables) {
+        foreach ($entry in $EnvironmentVariables.GetEnumerator()) {
+            $previousEnvironment[$entry.Key] = [Environment]::GetEnvironmentVariable($entry.Key, 'Process')
+            [Environment]::SetEnvironmentVariable($entry.Key, [string](Get-ValueOrDefault -Value $entry.Value -DefaultValue ''), 'Process')
+        }
+    }
+
+    try {
+        $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -RedirectStandardOutput $StandardOutputPath -RedirectStandardError $StandardErrorPath -PassThru -WindowStyle Hidden
+        $process | Add-Member -NotePropertyName PreviousEnvironment -NotePropertyValue $previousEnvironment
+        return $process
+    }
+    catch {
+        foreach ($entry in $previousEnvironment.GetEnumerator()) {
+            [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, 'Process')
+        }
+
+        throw
+    }
 }
 
 function Stop-ManagedProcess {
@@ -154,11 +263,23 @@ function Stop-ManagedProcess {
 
     try {
         if (-not $Process.HasExited) {
+            try { $Process.CancelOutputRead() } catch {}
+            try { $Process.CancelErrorRead() } catch {}
             Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
             $null = $Process.WaitForExit(5000)
         }
+        else {
+            try { $Process.WaitForExit(1000) } catch {}
+        }
     } catch {
     } finally {
+        try {
+            if ($null -ne $Process.PreviousEnvironment) {
+                foreach ($entry in $Process.PreviousEnvironment.GetEnumerator()) {
+                    [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, 'Process')
+                }
+            }
+        } catch {}
         try { $Process.Dispose() } catch {}
     }
 }
@@ -454,16 +575,25 @@ $environmentVariables = @{
 }
 
 try {
+    Write-Host '[market-scanner-runtime-smoke] stage=start-web'
     $webProcess = Start-ManagedProcess -FilePath 'dotnet' -ArgumentList @('run', '--project', 'src\CoinBot.Web\CoinBot.Web.csproj', '--no-build', '--no-launch-profile') -WorkingDirectory $repoRoot -StandardOutputPath $webStdOutPath -StandardErrorPath $webStdErrPath -EnvironmentVariables $environmentVariables
 
     Wait-Until -Name 'web startup' -TimeoutSeconds 90 -Condition {
         try {
-            $response = Invoke-WebRequest -Uri ($baseUrl + '/Auth/Login') -MaximumRedirection 0 -SkipHttpErrorCheck
+            if ($null -ne $webProcess -and $webProcess.HasExited) {
+                $stderrPreview = Read-FilePreview -Path $webStdErrPath
+                $stdoutPreview = Read-FilePreview -Path $webStdOutPath
+                throw "Web process exited early. ExitCode=$($webProcess.ExitCode); StdErr=$stderrPreview; StdOut=$stdoutPreview"
+            }
+
+            $response = Invoke-WebRequestCompat -Uri ($baseUrl + '/Auth/Login') -MaximumRedirection 0
             return $response.StatusCode -in 200, 302
         } catch {
             return $false
         }
     } | Out-Null
+
+    Write-Host '[market-scanner-runtime-smoke] stage=web-ready'
 
     Wait-Until -Name 'MarketScannerCycles table' -TimeoutSeconds 90 -Condition {
         $row = Invoke-SqlRow -ConnectionString $connectionString -CommandText "SELECT COUNT(*) AS TableCount FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'MarketScannerCycles';"
@@ -597,6 +727,7 @@ try {
     }
 
     $summary | ConvertTo-Json -Depth 8 | Set-Content -Path $summaryPath -Encoding UTF8
+    Write-Host '[market-scanner-runtime-smoke] stage=summary-written'
 
     Write-Host ('SmokeDatabaseName=' + $summary.SmokeDatabaseName)
     Write-Host ('ScanCycleId=' + $summary.ScanCycleId)
@@ -608,7 +739,7 @@ try {
     Write-Host ('UiRejectedSummary=' + $summary.UiRejectedSummary)
     Write-Host ('HandoffStatusDb=' + $summary.LatestHandoffDb.ExecutionRequestStatus)
     Write-Host ('HandoffSymbolDb=' + $summary.LatestHandoffDb.SelectedSymbol)
-    Write-Host ('HandoffBlockerDb=' + ($summary.LatestHandoffDb.BlockerCode ?? 'none'))
+    Write-Host ('HandoffBlockerDb=' + (Get-ValueOrDefault -Value $summary.LatestHandoffDb.BlockerCode -DefaultValue 'none'))
     Write-Host ('UiHandoffStatus=' + $summary.UiHandoffStatus)
     Write-Host ('UiHandoffSymbol=' + $summary.UiHandoffSymbol)
     Write-Host ('UiHandoffBlocker=' + $summary.UiHandoffBlocker)
@@ -634,6 +765,20 @@ try {
     Write-Host ('UiTemplateCard=' + $summary.UiTemplateCardKey + '/' + $summary.UiTemplateCardValidation)
     Write-Host ('UiTemplateDraftSuccess=' + $summary.UiTemplateDraftSuccess)
     Write-Host ('SummaryPath=' + $summaryPath)
+}
+catch {
+    $failureSummary = [pscustomobject]@{
+        Error = $_.Exception.Message
+        WebStdOutPath = $webStdOutPath
+        WebStdErrPath = $webStdErrPath
+        WebStdOutPreview = Read-FilePreview -Path $webStdOutPath
+        WebStdErrPreview = Read-FilePreview -Path $webStdErrPath
+    }
+
+    $failureSummary | ConvertTo-Json -Depth 6 | Set-Content -Path $summaryPath -Encoding UTF8
+    Write-Host '[market-scanner-runtime-smoke] stage=failed'
+    Write-Host ('FailureSummaryPath=' + $summaryPath)
+    throw
 }
 finally {
     Stop-ManagedProcess -Process $webProcess

@@ -82,6 +82,8 @@ public sealed class ExchangePrivatePlaneSyncTests
         Assert.Single(activePositions);
         Assert.Equal("BTCUSDT", activePositions[0].Symbol);
         Assert.True(deletedPosition.IsDeleted);
+        Assert.Equal(0m, deletedPosition.Quantity);
+        Assert.Equal(0m, deletedPosition.EntryPrice);
     }
 
     [Fact]

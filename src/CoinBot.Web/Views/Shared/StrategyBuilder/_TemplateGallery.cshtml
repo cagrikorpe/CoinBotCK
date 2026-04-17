@@ -16,7 +16,8 @@
         Source = template.TemplateSource,
         CurrentRevision = template.ActiveRevisionNumber,
         LatestRevision = template.LatestRevisionNumber,
-        PublishedRevision = template.PublishedRevisionNumber
+        PublishedRevision = template.PublishedRevisionNumber,
+        DefinitionJson = template.DefinitionJson
     }).ToArray();
 }
 
@@ -49,7 +50,8 @@
                             data-cb-template-latest-revision="@template.LatestRevision"
                             data-cb-template-published-revision="@template.PublishedRevision"
                             data-cb-template-lifecycle="Active"
-                            data-cb-template-description="@template.Description">
+                            data-cb-template-description="@template.Description"
+                            data-cb-template-definition="@template.DefinitionJson">
                         <div class="cb-template-title-row">
                             <strong>@template.Name</strong>
                         </div>
@@ -59,31 +61,136 @@
             </div>
         }
 
-        <form asp-controller="StrategyBuilder"
-              asp-action="StartFromTemplate"
-              method="post"
-              class="mt-6"
-              data-cb-template-start-form>
-            @Html.AntiForgeryToken()
-            <input type="hidden"
-                   name="templateKey"
-                   value=""
-                   data-cb-template-start-template />
-            <div class="form-group">
-                <label class="text-muted font-size-sm mb-2" for="cb_strategy_start_name">Strateji adı</label>
-                <input class="form-control"
-                       id="cb_strategy_start_name"
-                       name="strategyName"
-                       maxlength="128"
-                       placeholder="Örn. BTC ana strateji" />
+        <div class="separator separator-dashed my-6"></div>
+        <div class="row align-items-start">
+            <div class="col-lg-7">
+                <div class="cb-section-title">Builder foundation</div>
+                <p class="cb-page-description mt-2">Seçilen şablon JSON’u form alanlarına açılır. Form girdileri validation sonrası canonical JSON olarak mevcut strategy version zincirine kaydedilir.</p>
+
+                <form asp-controller="StrategyBuilder"
+                      asp-action="StartFromTemplate"
+                      method="post"
+                      class="mt-6"
+                      data-cb-template-start-form>
+                    @Html.AntiForgeryToken()
+                    <input type="hidden"
+                           name="templateKey"
+                           value=""
+                           data-cb-template-start-template />
+                    <input type="hidden"
+                           name="definitionJson"
+                           value=""
+                           data-cb-builder-definition-json />
+                    <div class="form-row">
+                        <div class="form-group col-md-6">
+                            <label class="text-muted font-size-sm mb-2" for="cb_strategy_start_name">Strateji adı</label>
+                            <input class="form-control"
+                                   id="cb_strategy_start_name"
+                                   name="strategyName"
+                                   maxlength="128"
+                                   placeholder="Örn. BTC ana strateji"
+                                   data-cb-template-strategy-name />
+                        </div>
+                        <div class="form-group col-md-6">
+                            <label class="text-muted font-size-sm mb-2" for="cb_strategy_template_name">Preview template adı</label>
+                            <input class="form-control"
+                                   id="cb_strategy_template_name"
+                                   maxlength="128"
+                                   placeholder="Şablon adı"
+                                   data-cb-builder-template-name />
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group col-md-4">
+                            <label class="text-muted font-size-sm mb-2" for="cb_strategy_schema_version">Schema</label>
+                            <input class="form-control"
+                                   id="cb_strategy_schema_version"
+                                   readonly
+                                   data-cb-builder-schema-version />
+                        </div>
+                        <div class="form-group col-md-4">
+                            <label class="text-muted font-size-sm mb-2" for="cb_strategy_template_key">Template key</label>
+                            <input class="form-control"
+                                   id="cb_strategy_template_key"
+                                   readonly
+                                   data-cb-builder-template-key />
+                        </div>
+                        <div class="form-group col-md-4">
+                            <label class="text-muted font-size-sm mb-2" for="cb_strategy_section_count">Section</label>
+                            <input class="form-control"
+                                   id="cb_strategy_section_count"
+                                   readonly
+                                   data-cb-builder-section-count />
+                        </div>
+                    </div>
+
+                    <div data-cb-builder-form-root></div>
+
+                    <div class="cb-validation-summary cb-validation-summary-info mt-4" role="status" data-cb-builder-preview-status>
+                        Bir şablon seçtiğinizde form alanları mevcut JSON ile doldurulur.
+                    </div>
+                    <div class="cb-validation-summary cb-validation-summary-warning mt-4 d-none" role="alert" data-cb-builder-validation-summary>
+                        <div class="font-weight-bolder mb-2" data-cb-builder-validation-badge>Validation bekleniyor</div>
+                        <ul class="mb-0 pl-5" data-cb-builder-validation-list></ul>
+                    </div>
+
+                    <div class="cb-validation-summary cb-validation-summary-info mt-4" role="status" data-cb-builder-explainability-summary>
+                        <div class="font-weight-bolder mb-2" data-cb-builder-explainability-badge>Neden entry yok / neden blocked?</div>
+                        <ul class="mb-0 pl-5" data-cb-builder-explainability-list>
+                            <li>Bir şablon seçtiğinizde strategy input ve runtime gate parity özeti burada görünür.</li>
+                        </ul>
+                    </div>
+
+                    <div class="table-responsive mt-4">
+                        <table class="table table-borderless table-sm mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Metric</th>
+                                    <th>Strategy input</th>
+                                    <th>Runtime gate</th>
+                                    <th>Parity</th>
+                                </tr>
+                            </thead>
+                            <tbody data-cb-builder-parity-body>
+                                <tr>
+                                    <td colspan="4" class="text-muted font-size-sm">Parity tablosu şablon seçilince dolar.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <button type="submit"
+                            class="btn btn-primary font-weight-bolder mt-5"
+                            data-cb-template-start-submit
+                            disabled>
+                        Strateji taslağı oluştur
+                    </button>
+                </form>
             </div>
-            <button type="submit"
-                    class="btn btn-primary font-weight-bolder"
-                    data-cb-template-start-submit
-                    disabled>
-                Strateji taslağı oluştur
-            </button>
-        </form>
+            <div class="col-lg-5 mt-8 mt-lg-0">
+                <div class="d-flex align-items-center justify-content-between flex-wrap" style="gap:12px;">
+                    <div class="cb-section-title">Canlı preview JSON</div>
+                    <button type="button" class="btn btn-light-primary btn-sm font-weight-bolder" data-cb-builder-advanced-toggle>Advanced mode</button>
+                </div>
+                <p class="cb-page-description mt-2">Form alanları değiştikçe preview JSON güncellenir. Geçerli durumda save sırasında aynı içerik canonical JSON olarak persist edilir.</p>
+                <div class="text-muted font-size-sm mt-2" data-cb-builder-runtime-threshold-summary>Runtime gate threshold özeti şablon seçilince görünür.</div>
+                <div class="cb-code-block mt-4" style="max-height: 420px; overflow:auto;">
+                    <pre class="mb-0 font-size-sm" data-cb-builder-json-preview>{ }</pre>
+                </div>
+                <div class="cb-validation-summary cb-validation-summary-info mt-4 d-none" data-cb-builder-advanced-panel>
+                    <div class="d-flex align-items-start justify-content-between flex-wrap" style="gap:12px;">
+                        <div>
+                            <div class="font-weight-bolder">Advanced mode JSON editörü</div>
+                            <div class="text-muted font-size-sm mt-1">JSON’u burada düzenleyip forma kontrollü şekilde geri uygulayabilirsiniz.</div>
+                        </div>
+                        <button type="button" class="btn btn-light-primary btn-sm font-weight-bolder" data-cb-builder-advanced-apply>JSON’u forma uygula</button>
+                    </div>
+                    <textarea class="form-control font-size-sm mt-4" rows="18" data-cb-builder-advanced-json spellcheck="false"></textarea>
+                    <div class="text-muted font-size-sm mt-3" data-cb-builder-advanced-status>Advanced mode pasif.</div>
+                </div>
+            </div>
+        </div>
 
         @if (draftTargets.Count > 0)
         {
@@ -99,6 +206,10 @@
                        name="templateKey"
                        value=""
                        data-cb-template-draft-template />
+                <input type="hidden"
+                       name="definitionJson"
+                       value=""
+                       data-cb-builder-definition-json />
                 <div class="flex-grow-1" style="min-width: 240px;">
                     <label class="text-muted font-size-sm mb-2" for="cb_strategy_template_draft_target">Mevcut strateji</label>
                     <select class="form-control"

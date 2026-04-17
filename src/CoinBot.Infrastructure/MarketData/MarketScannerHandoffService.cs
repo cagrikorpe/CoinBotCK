@@ -66,13 +66,17 @@ public sealed class MarketScannerHandoffService(
                 cancellationToken);
         }
 
-        var candidates = await dbContext.MarketScannerCandidates
+        var cycleCandidates = await dbContext.MarketScannerCandidates
             .AsNoTracking()
-            .Where(entity => entity.ScanCycleId == scanCycleId && entity.IsEligible)
+            .Where(entity => entity.ScanCycleId == scanCycleId && entity.IsEligible && !entity.IsDeleted)
             .OrderBy(entity => entity.Rank ?? int.MaxValue)
             .ThenByDescending(entity => entity.Score)
             .ThenBy(entity => entity.Symbol)
             .ToListAsync(cancellationToken);
+
+        var candidates = cycleCandidates
+            .Where(entity => !MarketScannerCandidateIntegrityGuard.HasLegacyDirtyMarketScore(entity))
+            .ToList();
 
         if (candidates.Count == 0)
         {

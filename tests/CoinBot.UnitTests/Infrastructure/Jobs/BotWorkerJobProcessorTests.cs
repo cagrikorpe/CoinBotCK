@@ -1120,6 +1120,44 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal(StrategySignalType.Entry, persistedSignal.SignalType);
         Assert.Empty(harness.DbContext.ExecutionOrders);
         Assert.Equal("LongEntryRegimeFilterBlocked", latestDecisionTrace.DecisionReasonCode);
+        Assert.Contains("Thresholds:", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("Live:", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("Drivers:", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_SubmitsEntry_WhenLongRegimeFilterIsDisabled()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.LongRegimeFilterEnabled = false;
+        harness.PilotOptions.RegimeMinBollingerWidthPercentage = 0m;
+        harness.PilotOptions.LongRegimeMinBollingerWidthPercentage = 0.01m;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-regime-disabled-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-regime-disabled-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-regime-disabled-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Entry, persistedSignal.SignalType);
+        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.DoesNotContain("LongEntryRegimeFilterBlocked", latestDecisionTrace.DecisionSummary ?? string.Empty, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1275,7 +1313,7 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
-    public async Task ProcessAsync_PersistsSkippedExitDecision_WhenNoOpenShortPositionExists()
+    public async Task ProcessAsync_DoesNotPersistExitSignal_WhenNoOpenShortPositionExists()
     {
         await using var harness = CreateHarness();
         var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
@@ -1297,20 +1335,20 @@ public sealed class BotWorkerJobProcessorTests
             "job-bot-exit-no-short-position-1",
             CancellationToken.None);
 
-        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
-        var latestDecisionTrace = await harness.DbContext.DecisionTraces
-            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
-            .OrderByDescending(entity => entity.CreatedAtUtc)
-            .FirstAsync();
+        var decisionTrace = await harness.DbContext.DecisionTraces.SingleAsync();
 
         Assert.True(result.IsSuccessful);
-        Assert.Equal(StrategySignalType.Exit, persistedSignal.SignalType);
+        Assert.Empty(harness.DbContext.TradingStrategySignals);
         Assert.Empty(harness.DbContext.ExecutionOrders);
-        Assert.Equal("NoOpenPositionForExit", latestDecisionTrace.DecisionReasonCode);
+        Assert.Equal("NoSignalCandidate", decisionTrace.DecisionOutcome);
+        Assert.Equal("NoSignalCandidate", decisionTrace.DecisionReasonCode);
+        Assert.Equal(
+            "Strategy exit candidate was suppressed because no open position exists. Runtime exit persistence was skipped.",
+            decisionTrace.DecisionSummary);
     }
 
     [Fact]
-    public async Task ProcessAsync_PersistsSkippedExitDecision_WhenNoOpenPositionExists()
+    public async Task ProcessAsync_EmitsNoSignalCandidate_WhenNoOpenPositionExistsForExitOnlyStrategy()
     {
         await using var harness = CreateHarness();
         var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
@@ -1356,22 +1394,17 @@ public sealed class BotWorkerJobProcessorTests
             "job-bot-exit-no-position-1",
             CancellationToken.None);
 
-        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
-        var decisionTraces = await harness.DbContext.DecisionTraces
-            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
-            .OrderBy(entity => entity.CreatedAtUtc)
-            .ToListAsync();
-        var latestDecisionTrace = decisionTraces[^1];
+        var decisionTrace = await harness.DbContext.DecisionTraces.SingleAsync();
 
         Assert.True(result.IsSuccessful);
-        Assert.Equal(StrategySignalType.Exit, persistedSignal.SignalType);
+        Assert.Empty(harness.DbContext.TradingStrategySignals);
         Assert.Empty(harness.DbContext.ExecutionOrders);
-        Assert.Equal(2, decisionTraces.Count);
-        Assert.Equal("Persisted", decisionTraces[0].DecisionOutcome);
-        Assert.Equal("Allowed", decisionTraces[0].DecisionReasonCode);
-        Assert.Equal("Skipped", latestDecisionTrace.DecisionOutcome);
-        Assert.Equal("ExecutionSkip", latestDecisionTrace.DecisionReasonType);
-        Assert.Equal("NoOpenPositionForExit", latestDecisionTrace.DecisionReasonCode);
+        Assert.Equal("NoSignalCandidate", decisionTrace.DecisionOutcome);
+        Assert.Equal("StrategyCandidate", decisionTrace.DecisionReasonType);
+        Assert.Equal("NoSignalCandidate", decisionTrace.DecisionReasonCode);
+        Assert.Equal(
+            "Strategy exit candidate was suppressed because no open position exists. Runtime exit persistence was skipped.",
+            decisionTrace.DecisionSummary);
     }
 
     [Fact]

@@ -74,7 +74,30 @@ public sealed class BotsControllerTests
                         LastExecutionStaleThresholdMilliseconds: 3000,
                         LastExecutionContinuityGapStartedAtUtc: new DateTime(2026, 4, 2, 11, 58, 0, DateTimeKind.Utc),
                         LastExecutionContinuityGapLastSeenAtUtc: new DateTime(2026, 4, 2, 11, 59, 0, DateTimeKind.Utc),
-                        LastExecutionContinuityRecoveredAtUtc: new DateTime(2026, 4, 2, 11, 59, 30, DateTimeKind.Utc))
+                        LastExecutionContinuityRecoveredAtUtc: new DateTime(2026, 4, 2, 11, 59, 30, DateTimeKind.Utc),
+                        LongRegimeGateLabel: "BLOCKED NOW",
+                        LongRegimeGateTone: "danger",
+                        LongRegimePolicySummary: "RSI < 68 · MACD hist >= 0 · Bollinger width >= 0.2%",
+                        LongRegimeLiveSummary: "RSI=31.2 · MACD hist=-0.0077 · Bollinger width=0.0826%",
+                        LongRegimeExplainSummary: "MACD histogram -0.0077 < 0; Bollinger width 0.0826% < 0.2%",
+                        LatestSignalType: "Entry",
+                        LatestSignalGeneratedAtUtc: new DateTime(2026, 4, 2, 12, 1, 0, DateTimeKind.Utc),
+                        LatestRuntimeDecisionOutcome: "Skipped",
+                        LatestRuntimeDecisionReasonCode: "LongEntryRegimeFilterBlocked",
+                        LatestRuntimeDecisionSummary: "Entry signal skipped by long regime filter.",
+                        LatestRuntimeDecisionAtUtc: new DateTime(2026, 4, 2, 12, 1, 1, DateTimeKind.Utc),
+                        LatestOrderState: "Yok",
+                        LatestOrderFailureCode: "LongEntryRegimeFilterBlocked",
+                        EntryGeneratedCount: 8,
+                        EntrySkippedCount: 5,
+                        EntryVetoedCount: 1,
+                        EntryOrderedCount: 2,
+                        EntryFilledCount: 1,
+                        ExitGeneratedCount: 3,
+                        ExitSkippedCount: 2,
+                        ExitVetoedCount: 0,
+                        ExitOrderedCount: 1,
+                        ExitFilledCount: 1)
                 ])
         };
         var controller = CreateController(managementService, new FakeBotPilotControlService(), new FakeUserSettingsService(), "user-bot-01", "trace-bot-001");
@@ -114,6 +137,26 @@ public sealed class BotsControllerTests
         Assert.Equal("warning", row.PilotStateTone);
         Assert.Equal("Bot kapali.", row.PilotStateSummary);
         Assert.Equal("LongOnly", row.DirectionModeLabel);
+        Assert.Equal("BLOCKED NOW", row.LongRegimeGateLabel);
+        Assert.Equal("danger", row.LongRegimeGateTone);
+        Assert.Equal("RSI < 68 · MACD hist >= 0 · Bollinger width >= 0.2%", row.LongRegimePolicySummary);
+        Assert.Equal("RSI=31.2 · MACD hist=-0.0077 · Bollinger width=0.0826%", row.LongRegimeLiveSummary);
+        Assert.Equal("MACD histogram -0.0077 < 0; Bollinger width 0.0826% < 0.2%", row.LongRegimeExplainSummary);
+        Assert.Equal("Entry · 2026-04-02 12:01:00 Coordinated Universal Time", row.LatestSignalText);
+        Assert.Equal("Skipped · LongEntryRegimeFilterBlocked", row.RuntimeDecisionCardText);
+        Assert.Equal("Yok", row.OrderStateCardText);
+        Assert.Equal("LongEntryRegimeFilterBlocked", row.RejectionFailureCodeText);
+        Assert.Equal("Entry signal skipped by long regime filter.", row.RuntimeDecisionCardSummary);
+        Assert.Equal(8, row.EntryGeneratedCount);
+        Assert.Equal(5, row.EntrySkippedCount);
+        Assert.Equal(1, row.EntryVetoedCount);
+        Assert.Equal(2, row.EntryOrderedCount);
+        Assert.Equal(1, row.EntryFilledCount);
+        Assert.Equal(3, row.ExitGeneratedCount);
+        Assert.Equal(2, row.ExitSkippedCount);
+        Assert.Equal(0, row.ExitVetoedCount);
+        Assert.Equal(1, row.ExitOrderedCount);
+        Assert.Equal(1, row.ExitFilledCount);
     }
 
     [Fact]

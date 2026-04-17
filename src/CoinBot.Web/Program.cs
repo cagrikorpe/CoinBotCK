@@ -2,6 +2,7 @@ using System.Diagnostics;
 using CoinBot.Infrastructure;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
+using CoinBot.Infrastructure.MarketData;
 using CoinBot.Contracts.Common;
 using CoinBot.Web.Hubs;
 using Microsoft.Data.SqlClient;
@@ -49,6 +50,14 @@ try
     builder.Services.AddControllersWithViews();
     builder.Services.AddSignalR();
     builder.Services.AddInfrastructure(builder.Configuration);
+    var scannerWorkerDescriptors = builder.Services
+        .Where(descriptor => descriptor.ServiceType == typeof(IHostedService) && descriptor.ImplementationType == typeof(MarketScannerWorker))
+        .ToArray();
+    foreach (var scannerWorkerDescriptor in scannerWorkerDescriptors)
+    {
+        builder.Services.Remove(scannerWorkerDescriptor);
+    }
+
     builder.Services.AddHostedService<MarketDataHubBridgeService>();
     builder.Services.AddHostedService<UserOperationsHubBridgeService>();
 
