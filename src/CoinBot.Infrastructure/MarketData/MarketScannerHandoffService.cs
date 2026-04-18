@@ -30,7 +30,8 @@ public sealed class MarketScannerHandoffService(
     IOptions<BinanceMarketDataOptions> marketDataOptions,
     IOptions<BotExecutionPilotOptions> botExecutionPilotOptions,
     TimeProvider timeProvider,
-    ILogger<MarketScannerHandoffService> logger)
+    ILogger<MarketScannerHandoffService> logger,
+    ITradingModeResolver? tradingModeResolver = null)
 {
     private readonly MarketScannerOptions scannerOptionsValue = scannerOptions.Value;
     private readonly BotExecutionPilotOptions botExecutionOptionsValue = botExecutionPilotOptions.Value;
@@ -170,19 +171,25 @@ public sealed class MarketScannerHandoffService(
                     cancellationToken);
                 continue;
             }
-            var executionContext = new PreparedExecutionContext(
-                Side: ExecutionOrderSide.Buy,
-                OrderType: ExecutionOrderType.Market,
-                Environment: botExecutionOptionsValue.SignalEvaluationMode,
-                Quantity: ResolveHandoffQuantity(symbolMetadata, marketState.ReferencePrice.Value),
-                Price: marketState.ReferencePrice.Value);
-
             using var userScope = serviceScopeFactory.CreateScope();
             var dataScopeAccessor = userScope.ServiceProvider.GetRequiredService<IDataScopeContextAccessor>();
             using var scopeOverride = dataScopeAccessor.BeginScope(ownerBotMatch.OwnerUserId);
             var strategySignalService = userScope.ServiceProvider.GetRequiredService<IStrategySignalService>();
             var executionGate = userScope.ServiceProvider.GetRequiredService<IExecutionGate>();
             var userExecutionOverrideGuard = userScope.ServiceProvider.GetRequiredService<IUserExecutionOverrideGuard>();
+            var resolvedTradingModeResolver = tradingModeResolver ?? userScope.ServiceProvider.GetService<ITradingModeResolver>();
+            var executionEnvironment = resolvedTradingModeResolver is null
+                ? botExecutionOptionsValue.ExecutionDispatchMode
+                : await ResolveHandoffExecutionEnvironmentAsync(
+                    resolvedTradingModeResolver,
+                    ownerBotMatch,
+                    cancellationToken);
+            var executionContext = new PreparedExecutionContext(
+                Side: ExecutionOrderSide.Buy,
+                OrderType: ExecutionOrderType.Market,
+                Environment: executionEnvironment,
+                Quantity: ResolveHandoffQuantity(symbolMetadata, marketState.ReferencePrice.Value),
+                Price: marketState.ReferencePrice.Value);
 
             var strategyResult = await strategySignalService.GenerateAsync(
                 new GenerateStrategySignalsRequest(
@@ -961,6 +968,21 @@ public sealed class MarketScannerHandoffService(
         return $"ScannerHandoff=True | ScanCycleId={scanCycleId:N} | CandidateId={candidate.Id:N} | CandidateRank={candidate.Rank?.ToString(CultureInfo.InvariantCulture) ?? "n/a"} | BotId={botMatch.BotId:N}";
     }
 
+    private static async Task<ExecutionEnvironment> ResolveHandoffExecutionEnvironmentAsync(
+        ITradingModeResolver tradingModeResolver,
+        BotStrategyMatch botMatch,
+        CancellationToken cancellationToken)
+    {
+        var resolution = await tradingModeResolver.ResolveAsync(
+            new TradingModeResolutionRequest(
+                botMatch.OwnerUserId,
+                botMatch.BotId,
+                botMatch.StrategyKey),
+            cancellationToken);
+
+        return resolution.EffectiveMode;
+    }
+
     private string ResolveQuoteAsset(string symbol, SymbolMetadataSnapshot? symbolMetadata)
     {
         if (!string.IsNullOrWhiteSpace(symbolMetadata?.QuoteAsset))
@@ -1048,7 +1070,4 @@ public sealed class MarketScannerHandoffService(
         decimal Quantity,
         decimal Price);
 }
-
-
-
 

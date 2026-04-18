@@ -69,6 +69,37 @@ public sealed class MarketScannerHandoffServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_UsesResolvedTradingModeForExecutionGuards_WhenSignalEvaluationModeIsLive()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        await using var harness = CreateHarness(
+            nowUtc,
+            new BotExecutionPilotOptions
+            {
+                SignalEvaluationMode = ExecutionEnvironment.Live,
+                ExecutionDispatchMode = ExecutionEnvironment.Live,
+                PrimeHistoricalCandleCount = 34
+            },
+            ExecutionEnvironment.Demo);
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-demo", "SOLUSDT", "pilot-demo");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 10_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "SOLUSDT", "1m", harness.NowUtc));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
+        Assert.Equal(ExecutionEnvironment.Demo, attempt.ExecutionEnvironment);
+        Assert.Equal(ExecutionEnvironment.Live, harness.StrategySignalService.LastRequest?.EvaluationContext.Mode);
+        Assert.Equal(ExecutionEnvironment.Demo, harness.ExecutionGate.LastRequest?.Environment);
+        Assert.Equal(ExecutionEnvironment.Demo, harness.UserExecutionOverrideGuard.LastRequest?.Environment);
+    }
+
+    [Fact]
     public async Task RunOnceAsync_SkipsCooldownBlockedSymbolAndPreparesNextCandidate_WithoutCrossSymbolLeak()
     {
         await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
@@ -341,6 +372,7 @@ public sealed class MarketScannerHandoffServiceTests
         });
         services.AddSingleton<IExecutionGate>(executionGate);
         services.AddSingleton<IUserExecutionOverrideGuard>(userExecutionOverrideGuard);
+        services.AddSingleton<ITradingModeResolver>(new FakeTradingModeResolver(ExecutionEnvironment.Live));
         var serviceProvider = services.BuildServiceProvider();
         var service = new MarketScannerHandoffService(
             dbContext,
@@ -391,7 +423,10 @@ public sealed class MarketScannerHandoffServiceTests
             }
             """;
     }
-    private static TestHarness CreateHarness(DateTimeOffset nowUtc)
+    private static TestHarness CreateHarness(
+        DateTimeOffset nowUtc,
+        BotExecutionPilotOptions? pilotOptions = null,
+        ExecutionEnvironment resolvedTradingMode = ExecutionEnvironment.Live)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
@@ -411,6 +446,7 @@ public sealed class MarketScannerHandoffServiceTests
         services.AddSingleton<IStrategySignalService>(strategySignalService);
         services.AddSingleton<IExecutionGate>(executionGate);
         services.AddSingleton<IUserExecutionOverrideGuard>(userExecutionOverrideGuard);
+        services.AddSingleton<ITradingModeResolver>(new FakeTradingModeResolver(resolvedTradingMode));
         var serviceProvider = services.BuildServiceProvider();
         var service = new MarketScannerHandoffService(
             dbContext,
@@ -421,7 +457,7 @@ public sealed class MarketScannerHandoffServiceTests
             circuitBreaker,
             Options.Create(new MarketScannerOptions { HandoffEnabled = true, AllowedQuoteAssets = ["USDT"] }),
             Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m" }),
-            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live, PrimeHistoricalCandleCount = 34 }),
+            Options.Create(pilotOptions ?? new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live, PrimeHistoricalCandleCount = 34 }),
             new FixedTimeProvider(nowUtc),
             NullLogger<MarketScannerHandoffService>.Instance);
 
@@ -661,6 +697,24 @@ public sealed class MarketScannerHandoffServiceTests
         }
     }
 
+    private sealed class FakeTradingModeResolver(ExecutionEnvironment effectiveMode) : ITradingModeResolver
+    {
+        public Task<TradingModeResolution> ResolveAsync(
+            TradingModeResolutionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new TradingModeResolution(
+                effectiveMode,
+                UserOverrideMode: null,
+                BotOverrideMode: null,
+                StrategyPublishedMode: null,
+                effectiveMode,
+                TradingModeResolutionSource.GlobalDefault,
+                $"Resolved by unit test as {effectiveMode}.",
+                effectiveMode == ExecutionEnvironment.Live));
+        }
+    }
+
     private sealed class FakeIndicatorDataService(DateTime nowUtc) : IIndicatorDataService
     {
         private readonly Dictionary<string, StrategyIndicatorSnapshot> snapshots = new(StringComparer.Ordinal);
@@ -883,7 +937,4 @@ public sealed class MarketScannerHandoffServiceTests
         }
     }
 }
-
-
-
 
