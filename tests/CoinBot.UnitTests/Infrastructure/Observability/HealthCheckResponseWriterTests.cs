@@ -9,7 +9,7 @@ namespace CoinBot.UnitTests.Infrastructure.Observability;
 public sealed class HealthCheckResponseWriterTests
 {
     [Fact]
-    public async Task WriteAsync_OmitsCorrelationIdentifiersAndEntryData()
+    public async Task WriteAsync_IncludesSafeEntryData_AndOmitsSensitiveIdentifiers()
     {
         var context = new DefaultHttpContext();
         await using var body = new MemoryStream();
@@ -26,7 +26,12 @@ public sealed class HealthCheckResponseWriterTests
                     data: new Dictionary<string, object>
                     {
                         ["correlationId"] = "corr-123",
+                        ["reasonCode"] = "MarketDataUnavailable",
+                        ["signalFlowBlocked"] = true,
+                        ["stateCode"] = "Stopped",
+                        ["latestDataAgeMilliseconds"] = 3000,
                         ["traceId"] = "trace-123",
+                        ["apiKey"] = "key-123",
                         ["secret"] = "should-not-appear"
                     })
             },
@@ -43,9 +48,18 @@ public sealed class HealthCheckResponseWriterTests
         Assert.False(document.RootElement.TryGetProperty("correlationId", out _));
         Assert.False(document.RootElement.TryGetProperty("requestId", out _));
         Assert.False(document.RootElement.TryGetProperty("traceId", out _));
-        Assert.False(check.TryGetProperty("data", out _));
+        var data = check.GetProperty("data");
+        Assert.Equal("MarketDataUnavailable", data.GetProperty("reasonCode").GetString());
+        Assert.Equal("Stopped", data.GetProperty("stateCode").GetString());
+        Assert.True(data.GetProperty("signalFlowBlocked").GetBoolean());
+        Assert.Equal(3000, data.GetProperty("latestDataAgeMilliseconds").GetInt32());
+        Assert.False(data.TryGetProperty("correlationId", out _));
+        Assert.False(data.TryGetProperty("traceId", out _));
+        Assert.False(data.TryGetProperty("apiKey", out _));
+        Assert.False(data.TryGetProperty("secret", out _));
         Assert.DoesNotContain("corr-123", payload, StringComparison.Ordinal);
         Assert.DoesNotContain("trace-123", payload, StringComparison.Ordinal);
+        Assert.DoesNotContain("key-123", payload, StringComparison.Ordinal);
         Assert.DoesNotContain("should-not-appear", payload, StringComparison.Ordinal);
     }
 }

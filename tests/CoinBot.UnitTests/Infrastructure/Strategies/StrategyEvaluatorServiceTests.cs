@@ -88,14 +88,24 @@ public sealed class StrategyEvaluatorServiceTests
               "schemaVersion": 2,
               "direction": "Short",
               "entry": {
-                "path": "context.mode",
-                "comparison": "equals",
-                "value": "Live"
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Live"
+                  }
+                ]
               },
               "risk": {
-                "path": "indicator.sampleCount",
-                "comparison": "greaterThanOrEqual",
-                "value": 100
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 100
+                  }
+                ]
               }
             }
             """,
@@ -117,14 +127,24 @@ public sealed class StrategyEvaluatorServiceTests
               "schemaVersion": 2,
               "direction": "Short",
               "entry": {
-                "path": "context.mode",
-                "comparison": "equals",
-                "value": "Live"
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Live"
+                  }
+                ]
               },
               "risk": {
-                "path": "indicator.sampleCount",
-                "comparison": "greaterThan",
-                "value": 999
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThan",
+                    "value": 999
+                  }
+                ]
               }
             }
             """,
@@ -146,19 +166,34 @@ public sealed class StrategyEvaluatorServiceTests
             {
               "schemaVersion": 2,
               "longEntry": {
-                "path": "context.mode",
-                "comparison": "equals",
-                "value": "Demo"
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Demo"
+                  }
+                ]
               },
               "shortEntry": {
-                "path": "context.mode",
-                "comparison": "equals",
-                "value": "Live"
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Live"
+                  }
+                ]
               },
               "risk": {
-                "path": "indicator.sampleCount",
-                "comparison": "greaterThanOrEqual",
-                "value": 100
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 100
+                  }
+                ]
               }
             }
             """,
@@ -181,14 +216,24 @@ public sealed class StrategyEvaluatorServiceTests
             {
               "schemaVersion": 2,
               "shortExit": {
-                "path": "context.mode",
-                "comparison": "equals",
-                "value": "Live"
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Live"
+                  }
+                ]
               },
               "risk": {
-                "path": "indicator.sampleCount",
-                "comparison": "greaterThanOrEqual",
-                "value": 100
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 100
+                  }
+                ]
               }
             }
             """,
@@ -552,6 +597,5 @@ public sealed class StrategyEvaluatorServiceTests
             Source: "UnitTest");
     }
 }
-
 
 

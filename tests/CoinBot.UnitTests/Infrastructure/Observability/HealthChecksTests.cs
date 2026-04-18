@@ -236,6 +236,87 @@ public sealed class HealthChecksTests
         Assert.Equal(HealthStatus.Unhealthy, result.Status);
     }
 
+    [Fact]
+    public async Task WorkerHeartbeatHealthCheck_ReturnsHealthy_WhenHeartbeatsAreFresh()
+    {
+        var now = new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(now);
+        await using var dbContext = CreateDbContext();
+
+        dbContext.WorkerHeartbeats.Add(new WorkerHeartbeat
+        {
+            WorkerKey = "market-scanner",
+            WorkerName = "Market scanner",
+            HealthState = MonitoringHealthState.Healthy,
+            FreshnessTier = MonitoringFreshnessTier.Hot,
+            LastHeartbeatAtUtc = now.UtcDateTime.AddSeconds(-10),
+            LastUpdatedAtUtc = now.UtcDateTime.AddSeconds(-10)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var healthCheck = new WorkerHeartbeatHealthCheck(dbContext, timeProvider);
+        var result = await healthCheck.CheckHealthAsync(new HealthCheckContext());
+
+        Assert.Equal(HealthStatus.Healthy, result.Status);
+        Assert.Equal(1, result.Data["heartbeatCount"]);
+        Assert.Equal(0, result.Data["criticalCount"]);
+    }
+
+    [Fact]
+    public async Task WorkerHeartbeatHealthCheck_ReturnsUnhealthy_WhenCriticalHeartbeatIsStale()
+    {
+        var now = new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(now);
+        await using var dbContext = CreateDbContext();
+
+        dbContext.WorkerHeartbeats.Add(new WorkerHeartbeat
+        {
+            WorkerKey = "market-data-watchdog",
+            WorkerName = "Market data watchdog",
+            HealthState = MonitoringHealthState.Critical,
+            FreshnessTier = MonitoringFreshnessTier.Stale,
+            LastErrorCode = "MarketDataUnavailable",
+            LastHeartbeatAtUtc = now.UtcDateTime.AddMinutes(-10),
+            LastUpdatedAtUtc = now.UtcDateTime.AddMinutes(-10)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var healthCheck = new WorkerHeartbeatHealthCheck(dbContext, timeProvider);
+        var result = await healthCheck.CheckHealthAsync(new HealthCheckContext());
+
+        Assert.Equal(HealthStatus.Unhealthy, result.Status);
+        Assert.Equal(1, result.Data["criticalCount"]);
+        Assert.Contains("market-data-watchdog", result.Data["criticalWorkers"]?.ToString(), StringComparison.Ordinal);
+        Assert.Contains("MarketDataUnavailable", result.Data["criticalWorkers"]?.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task WorkerHeartbeatHealthCheck_ReturnsDegraded_WhenScannerHasNoUniverse()
+    {
+        var now = new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(now);
+        await using var dbContext = CreateDbContext();
+
+        dbContext.WorkerHeartbeats.Add(new WorkerHeartbeat
+        {
+            WorkerKey = "market-scanner",
+            WorkerName = "Market scanner",
+            HealthState = MonitoringHealthState.Warning,
+            FreshnessTier = MonitoringFreshnessTier.Warm,
+            LastErrorCode = "NoUniverseSymbols",
+            LastHeartbeatAtUtc = now.UtcDateTime.AddSeconds(-20),
+            LastUpdatedAtUtc = now.UtcDateTime.AddSeconds(-20)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var healthCheck = new WorkerHeartbeatHealthCheck(dbContext, timeProvider);
+        var result = await healthCheck.CheckHealthAsync(new HealthCheckContext());
+
+        Assert.Equal(HealthStatus.Degraded, result.Status);
+        Assert.Equal(1, result.Data["degradedCount"]);
+        Assert.Contains("NoUniverseSymbols", result.Data["degradedWorkers"]?.ToString(), StringComparison.Ordinal);
+    }
+
     private static MarketHealthCheck CreateMarketHealthCheck(
         ApplicationDbContext dbContext,
         IDataLatencyCircuitBreaker circuitBreaker,

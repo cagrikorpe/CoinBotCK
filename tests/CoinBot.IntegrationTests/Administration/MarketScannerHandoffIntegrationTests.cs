@@ -59,7 +59,7 @@ public sealed class MarketScannerHandoffIntegrationTests
                 EligibleCandidateCount = 1,
                 TopCandidateCount = 1,
                 BestCandidateSymbol = "BTCUSDT",
-                BestCandidateScore = 250_000m,
+                BestCandidateScore = 95m,
                 Summary = "integration-test"
             });
             dbContext.MarketScannerCandidates.Add(new MarketScannerCandidate
@@ -213,11 +213,11 @@ public sealed class MarketScannerHandoffIntegrationTests
                 LastCandleAtUtc = nowUtc.UtcDateTime,
                 LastPrice = 100m,
                 QuoteVolume24h = 250_000m,
-                MarketScore = 250_000m,
+                MarketScore = 90m,
                 StrategyScore = 90,
-                ScoringSummary = "MarketScore=250000; StrategyScore=90; CompositeScore=340000.",
+                ScoringSummary = "MarketScore=90; StrategyScore=90; CompositeScore=90.",
                 IsEligible = true,
-                Score = 340_000m,
+                Score = 90m,
                 Rank = 1,
                 IsTopCandidate = true
             });

@@ -94,7 +94,10 @@ public sealed class StrategySignalService(
         var candidateSignalTypes = GetCandidateSignalTypes(evaluationResult);
         var exitCandidateSuppressedByPositionAwareness =
             candidateSignalTypes.Contains(StrategySignalType.Exit) &&
-            ShouldSuppressExitCandidateForMissingOpenPosition(request.FeatureSnapshot);
+            await ShouldSuppressExitCandidateForMissingOpenPositionAsync(
+                request.FeatureSnapshot,
+                normalizedContext.Mode,
+                cancellationToken);
         if (exitCandidateSuppressedByPositionAwareness)
         {
             candidateSignalTypes = FilterCandidateSignalTypesForPositionAwareness(candidateSignalTypes, StrategySignalType.Exit);
@@ -415,9 +418,9 @@ public sealed class StrategySignalService(
                     CorrelationId: ResolveCorrelationId(),
                     RiskScore: confidenceSnapshot.ScorePercentage,
                     StrategySignalId: signal.Id,
-                    DecisionReasonType: "StrategyCandidate",
-                    DecisionReasonCode: "CandidatePersisted",
-                    DecisionSummary: "Strategy persisted a candidate signal. Runtime execution gating is pending.",
+                    DecisionReasonType: aiOverlayDecision.IsApplied ? aiOverlayDecision.ReasonType : "StrategyCandidate",
+                    DecisionReasonCode: aiOverlayDecision.IsApplied ? "Allowed" : "CandidatePersisted",
+                    DecisionSummary: aiOverlayDecision.IsApplied ? aiOverlayDecision.Summary : "Strategy persisted a candidate signal. Runtime execution gating is pending.",
                     DecisionAtUtc: now),
                 cancellationToken);
         }
@@ -615,9 +618,17 @@ public sealed class StrategySignalService(
                currentObservedAtUtc - latestObservedAtUtc >= TimeSpan.FromSeconds(RepeatedNoOpenPositionExitTraceSuppressionWindowSeconds);
     }
 
-    private static bool ShouldSuppressExitCandidateForMissingOpenPosition(TradingFeatureSnapshotModel? featureSnapshot)
+    private async Task<bool> ShouldSuppressExitCandidateForMissingOpenPositionAsync(
+        TradingFeatureSnapshotModel? featureSnapshot,
+        ExecutionEnvironment evaluationMode,
+        CancellationToken cancellationToken)
     {
-        return featureSnapshot is not null && !featureSnapshot.TradingContext.HasOpenPosition;
+        if (featureSnapshot is null || featureSnapshot.TradingContext.HasOpenPosition)
+        {
+            return false;
+        }
+
+        return await ResolveCurrentNetQuantityAsync(featureSnapshot, evaluationMode, cancellationToken) == 0m;
     }
 
     private async Task<string?> ResolveSameDirectionEntrySuppressionSummaryAsync(
@@ -651,7 +662,18 @@ public sealed class StrategySignalService(
         TradingFeatureSnapshotModel featureSnapshot,
         CancellationToken cancellationToken)
     {
-        if (featureSnapshot.TradingContext.TradingMode == ExecutionEnvironment.Demo)
+        return await ResolveCurrentNetQuantityAsync(
+            featureSnapshot,
+            featureSnapshot.TradingContext.TradingMode,
+            cancellationToken);
+    }
+
+    private async Task<decimal> ResolveCurrentNetQuantityAsync(
+        TradingFeatureSnapshotModel featureSnapshot,
+        ExecutionEnvironment evaluationMode,
+        CancellationToken cancellationToken)
+    {
+        if (evaluationMode == ExecutionEnvironment.Demo)
         {
             var quantity = await dbContext.DemoPositions
                 .IgnoreQueryFilters()
@@ -1515,8 +1537,6 @@ public sealed class StrategySignalService(
             SerializerOptions);
     }
 }
-
-
 
 
 

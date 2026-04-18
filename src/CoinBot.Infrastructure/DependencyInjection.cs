@@ -388,6 +388,7 @@ public static class DependencyInjection
             .AddCheck<DatabaseHealthCheck>("db", tags: ["ready", "db"])
             .AddCheck<MarketHealthCheck>("market", tags: ["ready", "market"])
             .AddCheck<DataLatencyHealthCheck>("data-latency", tags: ["ready", "market", "data-latency"])
+            .AddCheck<WorkerHeartbeatHealthCheck>("worker-heartbeats", tags: ["ready", "worker"])
             .AddCheck<DemoEngineHealthCheck>("demo-engine", tags: ["ready", "demo-engine"]);
 
         services

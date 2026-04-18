@@ -38,6 +38,7 @@ public sealed class UserExecutionOverrideGuard(
             normalizedSymbol,
             request.Environment,
             request.Plane,
+            request.ExchangeAccountId,
             request.Side,
             cancellationToken);
         var pilotGuardSummary = pilotContextRequested
@@ -567,6 +568,7 @@ public sealed class UserExecutionOverrideGuard(
         string symbol,
         ExecutionEnvironment environment,
         ExchangeDataPlane plane,
+        Guid? exchangeAccountId,
         ExecutionOrderSide side,
         CancellationToken cancellationToken)
     {
@@ -587,7 +589,7 @@ public sealed class UserExecutionOverrideGuard(
                     entity.Symbol == normalizedSymbol &&
                     !entity.IsDeleted)
                 .SumAsync(entity => entity.Quantity, cancellationToken)
-            : await ResolveLiveNetQuantityAsync(userId, normalizedSymbol, plane, cancellationToken);
+            : await ResolveLiveNetQuantityAsync(userId, normalizedSymbol, plane, exchangeAccountId, cancellationToken);
 
         if (netQuantity == 0m)
         {
@@ -603,13 +605,14 @@ public sealed class UserExecutionOverrideGuard(
         string userId,
         string normalizedSymbol,
         ExchangeDataPlane plane,
+        Guid? exchangeAccountId,
         CancellationToken cancellationToken)
     {
         return await LivePositionTruthResolver.ResolveNetQuantityAsync(
             dbContext,
             userId,
             plane,
-            exchangeAccountId: null,
+            exchangeAccountId,
             normalizedSymbol,
             cancellationToken);
     }
@@ -751,7 +754,5 @@ public sealed class UserExecutionOverrideGuard(
         return false;
     }
 }
-
-
 
 

@@ -201,7 +201,8 @@ public sealed class ExecutionEngine(
                         normalizedCommand.Timeframe,
                         order.Id,
                         normalizedCommand.ReplacesExecutionOrderId,
-                        executionPlane),
+                        executionPlane,
+                        normalizedCommand.ExchangeAccountId),
                     cancellationToken);
 
                 if (overrideEvaluation.IsBlocked)
@@ -1437,4 +1438,3 @@ public sealed class ExecutionEngine(
             transition.OccurredAtUtc);
     }
 }
-

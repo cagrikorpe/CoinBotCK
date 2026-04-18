@@ -11,5 +11,5 @@ public sealed class DataLatencyGuardOptions
     public int StopDataThresholdSeconds { get; set; } = 6;
 
     [Range(1, 60)]
-    public int ClockDriftThresholdSeconds { get; set; } = 2;
+    public int ClockDriftThresholdSeconds { get; set; } = 5;
 }

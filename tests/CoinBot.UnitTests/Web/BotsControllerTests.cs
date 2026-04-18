@@ -641,6 +641,7 @@ public sealed class BotsControllerTests
             Quantity = 0.001m,
             Leverage = 1m,
             MarginType = "ISOLATED",
+            DirectionMode = TradingBotDirectionMode.LongShort,
             IsEnabled = false
         };
     }

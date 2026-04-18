@@ -18,6 +18,8 @@ public sealed class BotExecutionPilotOptions
 
     public ExecutionEnvironment SignalEvaluationMode { get; set; } = ExecutionEnvironment.Live;
 
+    public ExecutionEnvironment ExecutionDispatchMode { get; set; } = ExecutionEnvironment.Live;
+
     [Required]
     public string DefaultSymbol { get; set; } = "BTCUSDT";
 
@@ -295,4 +297,3 @@ public sealed class BotExecutionPilotOptions
                    out value);
     }
 }
-

@@ -70,7 +70,7 @@
                                         <td>
                                             <div class="font-weight-bolder" data-cb-bot-name>@bot.Name</div>
                                             <div class="mt-2"><span class="cb-badge @(bot.RuntimeDirectionTone == "success" ? "cb-badge-success" : bot.RuntimeDirectionTone == "danger" ? "cb-badge-danger" : "cb-badge-neutral")" data-cb-bot-runtime-direction>@bot.RuntimeDirectionLabel</span></div>
-                                            <div class="mt-2"><span class="cb-badge @(bot.DirectionModeTone == "success" ? "cb-badge-success" : bot.DirectionModeTone == "danger" ? "cb-badge-danger" : bot.DirectionModeTone == "info" ? "cb-badge-info" : "cb-badge-neutral")" data-cb-bot-direction-mode>@bot.DirectionModeLabel</span></div>
+                                            <div class="mt-2"><span class="cb-badge @(bot.DirectionModeTone == "success" ? "cb-badge-success" : bot.DirectionModeTone == "danger" ? "cb-badge-danger" : bot.DirectionModeTone == "info" ? "cb-badge-info" : "cb-badge-neutral")" data-cb-bot-direction-mode data-cb-bot-direction-mode-select data-cb-bot-direction-mode-options="LongOnly,ShortOnly,LongShort">@bot.DirectionModeLabel</span></div>
                                             <div class="text-muted small mt-2">@enabledLabel · @bot.DirectionModeSummary · @bot.RuntimeDirectionSummary</div>
                                         </td>
                                         <td>

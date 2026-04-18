@@ -436,7 +436,7 @@ public sealed class StrategyDefinitionValidatorTests
             """));
 
         Assert.False(snapshot.IsValid);
-        Assert.Equal("MissingRuleGroup:entry-exit-risk", snapshot.StatusCode);
+        Assert.Equal("MissingRuleGroup:entry-exit-risk-directional", snapshot.StatusCode);
     }
 
     [Fact]

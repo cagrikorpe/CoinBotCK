@@ -784,12 +784,17 @@ public sealed class BotWorkerJobProcessor(
             return BackgroundJobProcessResult.Success();
         }
 
-        var pilotExecutionContext = BuildPilotExecutionContext(marginType!, leverage!.Value, pilotActivationEnabled);
+        var executionDispatchMode = optionsValue.ExecutionDispatchMode;
+        var pilotExecutionContext = BuildPilotExecutionContext(
+            marginType!,
+            leverage!.Value,
+            pilotActivationEnabled,
+            executionDispatchMode);
         var preSubmitPilotEvaluation = await userExecutionOverrideGuard.EvaluateAsync(
             new UserExecutionOverrideEvaluationRequest(
                 bot.OwnerUserId,
                 signal.Symbol,
-                ExecutionEnvironment.Live,
+                executionDispatchMode,
                 dispatchPlan.Side,
                 dispatchPlan.Quantity,
                 marketState.ReferencePrice.Value,
@@ -801,7 +806,8 @@ public sealed class BotWorkerJobProcessor(
                 signal.Timeframe,
                 CurrentExecutionOrderId: null,
                 ReplacesExecutionOrderId: null,
-                ExchangeDataPlane.Futures),
+                ExchangeDataPlane.Futures,
+                exchangeAccount.Id),
             cancellationToken);
 
         if (TryResolveCooldownSkip(preSubmitPilotEvaluation, out var cooldownReasonCode, out var cooldownSummary))
@@ -882,7 +888,7 @@ public sealed class BotWorkerJobProcessor(
                     Price: marketState.ReferencePrice.Value,
                     BotId: bot.Id,
                     ExchangeAccountId: exchangeAccount.Id,
-                    IsDemo: false,
+                    IsDemo: executionDispatchMode == ExecutionEnvironment.Demo,
                     IdempotencyKey: $"{idempotencyKey}:{signal.StrategySignalId:N}",
                     CorrelationId: null,
                     ParentCorrelationId: null,
@@ -2576,6 +2582,10 @@ public sealed class BotWorkerJobProcessor(
         var strategyDirection = ResolveStrategyDirection(signalGenerationResult.EvaluationResult);
         var aiEvaluation = ResolvePrimaryAiEvaluation(signalGenerationResult);
         var duplicateSuppressed = signalGenerationResult.SuppressedDuplicateCount > 0 && signalGenerationResult.Signals.Count == 0;
+        var hasEntryIntent = signal is { SignalType: StrategySignalType.Entry } ||
+                             (signal is null &&
+                              aiEvaluation?.IsFallback == true &&
+                              IsActionableDirection(strategyDirection));
         var hypotheticalEvaluation = await EvaluateHypotheticalSubmitAsync(
             shadowDecisionId,
             bot,
@@ -2589,8 +2599,7 @@ public sealed class BotWorkerJobProcessor(
             marginType,
             leverage,
             strategyTradeDirection,
-            shouldEvaluate: signal is not null &&
-                            signal.SignalType == StrategySignalType.Entry &&
+            shouldEvaluate: hasEntryIntent &&
                             IsActionableDirection(strategyDirection) &&
                             !duplicateSuppressed,
             cancellationToken);
@@ -2902,7 +2911,8 @@ public sealed class BotWorkerJobProcessor(
                 DecisionReasonType: ExitSkippedDecisionReasonType,
                 DecisionReasonCode: decisionReasonCode,
                 DecisionSummary: decisionSummary,
-                DecisionAtUtc: timeProvider.GetUtcNow().UtcDateTime),
+                DecisionAtUtc: timeProvider.GetUtcNow().UtcDateTime,
+                CreatedAtUtc: timeProvider.GetUtcNow().UtcDateTime.AddTicks(1)),
             cancellationToken);
     }
 
@@ -2953,7 +2963,8 @@ public sealed class BotWorkerJobProcessor(
                 DecisionReasonType: ExitSkippedDecisionReasonType,
                 DecisionReasonCode: decisionReasonCode,
                 DecisionSummary: decisionSummary,
-                DecisionAtUtc: timeProvider.GetUtcNow().UtcDateTime),
+                DecisionAtUtc: timeProvider.GetUtcNow().UtcDateTime,
+                CreatedAtUtc: timeProvider.GetUtcNow().UtcDateTime.AddTicks(1)),
             cancellationToken);
     }
 
@@ -3276,8 +3287,18 @@ public sealed class BotWorkerJobProcessor(
             : normalizedValue[..maxLength];
     }
 
-    private static string BuildPilotExecutionContext(string marginType, decimal leverage, bool pilotActivationEnabled)
+    private static string BuildPilotExecutionContext(
+        string marginType,
+        decimal leverage,
+        bool pilotActivationEnabled,
+        ExecutionEnvironment executionDispatchMode = ExecutionEnvironment.Live)
     {
+        if (executionDispatchMode == ExecutionEnvironment.Demo)
+        {
+            return FormattableString.Invariant(
+                $"ControlledDemoBootstrap=True | ExecutionDispatchMode=Demo | PilotActivationEnabled={pilotActivationEnabled} | PilotMarginType={marginType} | PilotLeverage={leverage:0.########}");
+        }
+
         return FormattableString.Invariant(
             $"DevelopmentFuturesTestnetPilot=True | PilotActivationEnabled={pilotActivationEnabled} | PilotMarginType={marginType} | PilotLeverage={leverage:0.########}");
     }
@@ -3476,4 +3497,3 @@ public sealed class BotWorkerJobProcessor(
         return allowedSymbols.Contains(symbol);
     }
 }
-

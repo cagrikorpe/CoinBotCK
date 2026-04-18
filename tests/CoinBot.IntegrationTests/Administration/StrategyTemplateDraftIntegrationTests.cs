@@ -309,14 +309,19 @@ public sealed class StrategyTemplateDraftIntegrationTests
                 "templateSource": "Custom"
               },
               "entry": {
-                "path": "context.mode",
-                "comparison": "equals",
-                "value": "Demo",
-                "ruleId": "entry-mode",
-                "ruleType": "context",
-                "timeframe": "30m",
-                "weight": 20,
-                "enabled": true
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Demo",
+                    "ruleId": "entry-mode",
+                    "ruleType": "context",
+                    "timeframe": "30m",
+                    "weight": 20,
+                    "enabled": true
+                  }
+                ]
               }
             }
             """;

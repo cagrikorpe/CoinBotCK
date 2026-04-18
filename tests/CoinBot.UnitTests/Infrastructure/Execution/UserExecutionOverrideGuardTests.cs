@@ -692,8 +692,7 @@ public sealed class UserExecutionOverrideGuardTests
             MarginType = "cross",
             IsolatedWallet = 0m,
             ExchangeUpdatedAtUtc = syncAtUtc,
-            SyncedAtUtc = syncAtUtc,
-            IsDeleted = true
+            SyncedAtUtc = syncAtUtc
         });
         dbContext.ExecutionOrders.Add(new ExecutionOrder
         {
@@ -728,10 +727,13 @@ public sealed class UserExecutionOverrideGuardTests
             UpdatedDate = exitFilledAtUtc
         });
         await dbContext.SaveChangesAsync();
+        var deletedExchangePosition = await dbContext.ExchangePositions.SingleAsync(entity => entity.Symbol == "ETHUSDT");
+        deletedExchangePosition.IsDeleted = true;
+        await dbContext.SaveChangesAsync();
 
         var guard = new UserExecutionOverrideGuard(
             dbContext,
-            new FakeTradingModeResolver(),
+            new FakeTradingModeResolver(ExecutionEnvironment.Live),
             logger: NullLogger<UserExecutionOverrideGuard>.Instance,
             botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
             {
@@ -750,7 +752,7 @@ public sealed class UserExecutionOverrideGuardTests
                 Plane: ExchangeDataPlane.Futures),
             CancellationToken.None);
 
-        Assert.False(result.IsBlocked);
+        Assert.False(result.IsBlocked, result.BlockCode);
         Assert.NotEqual("UserExecutionMaxOpenPositionsExceeded", result.BlockCode);
     }
 
@@ -1366,7 +1368,7 @@ public sealed class UserExecutionOverrideGuardTests
         return new ApplicationDbContext(options, new TestDataScopeContext());
     }
 
-    private sealed class FakeTradingModeResolver : ITradingModeResolver
+    private sealed class FakeTradingModeResolver(ExecutionEnvironment effectiveMode = ExecutionEnvironment.Demo) : ITradingModeResolver
     {
         public Task<TradingModeResolution> ResolveAsync(TradingModeResolutionRequest request, CancellationToken cancellationToken = default)
         {
@@ -1375,10 +1377,10 @@ public sealed class UserExecutionOverrideGuardTests
                 null,
                 null,
                 null,
-                ExecutionEnvironment.Demo,
+                effectiveMode,
                 TradingModeResolutionSource.GlobalDefault,
-                "Demo",
-                false));
+                effectiveMode == ExecutionEnvironment.Live ? "Live" : "Demo",
+                effectiveMode == ExecutionEnvironment.Live));
         }
     }
 
@@ -1430,8 +1432,3 @@ public sealed class UserExecutionOverrideGuardTests
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 }
-
-
-
-
-

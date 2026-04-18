@@ -168,6 +168,22 @@ public sealed class TradingFeatureSnapshotServiceTests
         await using var harness = await CreateHarnessAsync("feature-live-position-01");
         var evaluatedAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime;
         var candles = CreateCandles("BTCUSDT", "1m", evaluatedAtUtc.AddMinutes(-240), 240, 65000m, 3m, 110m);
+        var bot = await harness.DbContext.TradingBots.SingleAsync(entity => entity.Id == harness.BotId);
+        bot.TradingModeOverride = ExecutionEnvironment.Live;
+        bot.TradingModeApprovedAtUtc = evaluatedAtUtc;
+        bot.TradingModeApprovalReference = "feature-live-position";
+        harness.DbContext.TradingStrategies.Add(new TradingStrategy
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = harness.UserId,
+            StrategyKey = "feature-strategy",
+            DisplayName = "Feature Strategy",
+            PromotionState = StrategyPromotionState.LivePublished,
+            PublishedMode = ExecutionEnvironment.Live,
+            PublishedAtUtc = evaluatedAtUtc,
+            LivePromotionApprovedAtUtc = evaluatedAtUtc,
+            LivePromotionApprovalReference = "feature-live-position"
+        });
 
         harness.DbContext.ExecutionOrders.Add(new ExecutionOrder
         {

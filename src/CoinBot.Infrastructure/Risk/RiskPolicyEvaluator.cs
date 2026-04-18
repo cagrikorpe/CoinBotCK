@@ -103,6 +103,11 @@ public sealed class RiskPolicyEvaluator(
                     cancellationToken);
 
             var reasonCode = ResolveReasonCode(snapshot);
+            if (request.SignalType == StrategySignalType.Exit &&
+                reasonCode == RiskVetoReasonCode.MaxConcurrentPositionsBreached)
+            {
+                reasonCode = RiskVetoReasonCode.None;
+            }
             riskActivity.SetTag("coinbot.risk.reason", reasonCode.ToString());
             riskActivity.SetTag("coinbot.risk.is_vetoed", reasonCode != RiskVetoReasonCode.None);
 

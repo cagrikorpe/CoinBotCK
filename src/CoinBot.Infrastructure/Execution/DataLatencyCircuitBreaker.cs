@@ -60,7 +60,7 @@ public sealed class DataLatencyCircuitBreaker(
         return MapSnapshot(state, evaluationTimeUtc, isPersisted: true);
     }
 
-        private async Task<bool> TrySynchronizeScopedStateFromSharedKlineAsync(
+    private async Task<bool> TrySynchronizeScopedStateFromSharedKlineAsync(
         DegradedModeState state,
         DateTime evaluationTimeUtc,
         string? symbol,
@@ -86,13 +86,15 @@ public sealed class DataLatencyCircuitBreaker(
         var previousClockDriftMilliseconds = state.LatestClockDriftMilliseconds;
         var previousHeartbeatSource = state.LatestHeartbeatSource;
         var previousExpectedOpenTimeUtc = state.LatestExpectedOpenTimeUtc;
+        var previousContinuityGapCount = state.LatestContinuityGapCount;
 
         var sharedKlineRead = await marketDataService.ReadLatestKlineAsync(
             normalizedSymbol,
             normalizedTimeframe,
             cancellationToken);
 
-        if (sharedKlineRead.Status is SharedMarketDataCacheReadStatus.HitFresh or SharedMarketDataCacheReadStatus.HitStale &&
+        var hasSharedKlineHit = sharedKlineRead.Status is SharedMarketDataCacheReadStatus.HitFresh or SharedMarketDataCacheReadStatus.HitStale;
+        if (hasSharedKlineHit &&
             sharedKlineRead.Entry?.Payload is MarketCandleSnapshot sharedSnapshot)
         {
             var sharedDataTimestampUtc = NormalizeTimestamp(sharedKlineRead.Entry.UpdatedAtUtc);
@@ -103,13 +105,20 @@ public sealed class DataLatencyCircuitBreaker(
             state.LatestHeartbeatSource = sharedKlineRead.Entry.Source;
             state.LatestSymbol = normalizedSymbol;
             state.LatestTimeframe = normalizedTimeframe;
+            if (previousExpectedOpenTimeUtc.HasValue &&
+                HasReachedExpectedOpenTime(sharedDataTimestampUtc, sharedHeartbeatReceivedAtUtc, previousExpectedOpenTimeUtc.Value))
+            {
+                state.LatestContinuityGapCount = 0;
+            }
+
             state.LatestExpectedOpenTimeUtc = NormalizeTimestamp(sharedSnapshot.CloseTimeUtc).AddMilliseconds(1);
 
             return state.LatestDataTimestampAtUtc != previousDataTimestampUtc ||
                 state.LatestHeartbeatReceivedAtUtc != previousHeartbeatReceivedAtUtc ||
                 state.LatestClockDriftMilliseconds != previousClockDriftMilliseconds ||
                 !string.Equals(state.LatestHeartbeatSource, previousHeartbeatSource, StringComparison.Ordinal) ||
-                state.LatestExpectedOpenTimeUtc != previousExpectedOpenTimeUtc;
+                state.LatestExpectedOpenTimeUtc != previousExpectedOpenTimeUtc ||
+                state.LatestContinuityGapCount != previousContinuityGapCount;
         }
 
         if (sharedKlineRead.Status == SharedMarketDataCacheReadStatus.Miss ||
@@ -361,7 +370,8 @@ public sealed class DataLatencyCircuitBreaker(
         target.IsDeleted = false;
     }
 
-    private DesiredState EvaluateState(        DegradedModeState state,
+    private DesiredState EvaluateState(
+        DegradedModeState state,
         DateTime evaluationTimeUtc,
         DegradedModeStateCode? guardStateCode = null,
         DegradedModeReasonCode? guardReasonCode = null)
@@ -380,20 +390,36 @@ public sealed class DataLatencyCircuitBreaker(
             0,
             (evaluationTimeUtc - state.LatestDataTimestampAtUtc.Value).TotalMilliseconds));
 
-        if (guardReasonCode is DegradedModeReasonCode explicitGuardReasonCode)
+        if (state.LatestContinuityGapCount == 0 &&
+            IsMarketDataHeartbeatSource(state.LatestHeartbeatSource) &&
+            latestDataAgeMilliseconds < StaleDataThresholdMilliseconds)
         {
-            if (explicitGuardReasonCode != DegradedModeReasonCode.None)
-            {
-                return new DesiredState(
-                    guardStateCode ?? DegradedModeStateCode.Stopped,
-                    explicitGuardReasonCode,
-                    SignalFlowBlocked: true,
-                    ExecutionFlowBlocked: true,
-                    LatestDataAgeMilliseconds: latestDataAgeMilliseconds);
-            }
+            return new DesiredState(
+                DegradedModeStateCode.Normal,
+                DegradedModeReasonCode.None,
+                SignalFlowBlocked: false,
+                ExecutionFlowBlocked: false,
+                LatestDataAgeMilliseconds: latestDataAgeMilliseconds);
         }
-        else if (IsContinuityGuardReason(state.ReasonCode) &&
-                 ShouldKeepContinuityGuardActive(state))
+
+        var hasExplicitGuardReason = guardReasonCode.HasValue;
+        var explicitGuardReasonCode = guardReasonCode.GetValueOrDefault();
+
+        if (hasExplicitGuardReason &&
+            explicitGuardReasonCode != DegradedModeReasonCode.None &&
+            IsContinuityGuardReason(explicitGuardReasonCode))
+        {
+            return new DesiredState(
+                guardStateCode ?? DegradedModeStateCode.Stopped,
+                explicitGuardReasonCode,
+                SignalFlowBlocked: true,
+                ExecutionFlowBlocked: true,
+                LatestDataAgeMilliseconds: latestDataAgeMilliseconds);
+        }
+
+        if (!hasExplicitGuardReason &&
+            IsContinuityGuardReason(state.ReasonCode) &&
+            ShouldKeepContinuityGuardActive(state))
         {
             return new DesiredState(
                 state.StateCode == DegradedModeStateCode.Normal
@@ -405,7 +431,17 @@ public sealed class DataLatencyCircuitBreaker(
                 LatestDataAgeMilliseconds: latestDataAgeMilliseconds);
         }
 
-        if (ShouldTreatClockDriftAsBlocking(state, latestDataAgeMilliseconds))
+        if (hasExplicitGuardReason && explicitGuardReasonCode != DegradedModeReasonCode.None)
+        {
+            return new DesiredState(
+                guardStateCode ?? DegradedModeStateCode.Stopped,
+                explicitGuardReasonCode,
+                SignalFlowBlocked: true,
+                ExecutionFlowBlocked: true,
+                LatestDataAgeMilliseconds: latestDataAgeMilliseconds);
+        }
+
+        if (ShouldTreatClockDriftAsBlocking(state, latestDataAgeMilliseconds, guardReasonCode))
         {
             return new DesiredState(
                 DegradedModeStateCode.Stopped,
@@ -578,7 +614,10 @@ public sealed class DataLatencyCircuitBreaker(
 
     private int StopDataThresholdMilliseconds => checked(optionsValue.StopDataThresholdSeconds * 1000);
 
-    private bool ShouldTreatClockDriftAsBlocking(DegradedModeState state, int latestDataAgeMilliseconds)
+    private bool ShouldTreatClockDriftAsBlocking(
+        DegradedModeState state,
+        int latestDataAgeMilliseconds,
+        DegradedModeReasonCode? guardReasonCode)
     {
         if (state.LatestClockDriftMilliseconds is not int clockDriftMilliseconds ||
             clockDriftMilliseconds < ClockDriftThresholdMilliseconds)
@@ -587,6 +626,17 @@ public sealed class DataLatencyCircuitBreaker(
         }
 
         if (latestDataAgeMilliseconds < StaleDataThresholdMilliseconds)
+        {
+            return true;
+        }
+
+        if ((guardReasonCode.HasValue && guardReasonCode.Value != DegradedModeReasonCode.None) ||
+            state.ReasonCode == DegradedModeReasonCode.MarketDataLatencyCritical)
+        {
+            return true;
+        }
+
+        if (latestDataAgeMilliseconds >= StopDataThresholdMilliseconds)
         {
             return true;
         }
@@ -604,6 +654,7 @@ public sealed class DataLatencyCircuitBreaker(
         return heartbeatSource.StartsWith("binance:kline", StringComparison.OrdinalIgnoreCase) ||
                heartbeatSource.StartsWith("shared-cache:kline", StringComparison.OrdinalIgnoreCase) ||
                heartbeatSource.StartsWith("Binance.Rest.Kline", StringComparison.OrdinalIgnoreCase) ||
+               heartbeatSource.StartsWith("Binance.WebSocket.Kline", StringComparison.OrdinalIgnoreCase) ||
                heartbeatSource.StartsWith("binance:rest-backfill", StringComparison.OrdinalIgnoreCase) ||
                heartbeatSource.StartsWith("market-scanner:historical-candles", StringComparison.OrdinalIgnoreCase);
     }
@@ -639,6 +690,11 @@ public sealed class DataLatencyCircuitBreaker(
             return true;
         }
 
+        if (state.LatestContinuityGapCount == 0)
+        {
+            return false;
+        }
+
         if (state.LatestDataTimestampAtUtc is null)
         {
             return true;
@@ -646,10 +702,34 @@ public sealed class DataLatencyCircuitBreaker(
 
         if (state.LatestExpectedOpenTimeUtc is null)
         {
+            return true;
+        }
+
+        return !HasReachedExpectedOpenTime(state);
+    }
+
+    private static bool HasReachedExpectedOpenTime(DegradedModeState state)
+    {
+        if (state.LatestExpectedOpenTimeUtc is not DateTime expectedOpenTimeUtc)
+        {
             return false;
         }
 
-        return state.LatestDataTimestampAtUtc < state.LatestExpectedOpenTimeUtc;
+        if (state.LatestDataTimestampAtUtc?.AddMilliseconds(1) >= expectedOpenTimeUtc)
+        {
+            return true;
+        }
+
+        return state.LatestHeartbeatReceivedAtUtc?.AddMilliseconds(1) >= expectedOpenTimeUtc;
+    }
+
+    private static bool HasReachedExpectedOpenTime(
+        DateTime dataTimestampUtc,
+        DateTime heartbeatReceivedAtUtc,
+        DateTime expectedOpenTimeUtc)
+    {
+        return dataTimestampUtc.AddMilliseconds(1) >= expectedOpenTimeUtc ||
+               heartbeatReceivedAtUtc.AddMilliseconds(1) >= expectedOpenTimeUtc;
     }
 
     private static int ResolveHeartbeatClockDriftMilliseconds(
@@ -749,11 +829,3 @@ public sealed class DataLatencyCircuitBreaker(
         bool ExecutionFlowBlocked,
         int? LatestDataAgeMilliseconds);
 }
-
-
-
-
-
-
-
-

@@ -344,7 +344,9 @@ public sealed class AiShadowDecisionIntegrationTests
             MaxOrderNotional = 250m,
             MaxDailyLossPercentage = 5m,
             PrivatePlaneFreshnessThresholdSeconds = 120,
-            PrimeHistoricalCandleCount = 200
+            PrimeHistoricalCandleCount = 200,
+            RegimeMaxEntryRsi = 0m,
+            RegimeMinBollingerWidthPercentage = 0m
         };
         var privateDataOptions = Options.Create(new BinancePrivateDataOptions
         {
@@ -967,7 +969,6 @@ public sealed class AiShadowDecisionIntegrationTests
         }
     }
 }
-
 
 
 
