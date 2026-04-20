@@ -265,6 +265,8 @@ public sealed class ExecutionOrderLifecycleService(
             return;
         }
 
+        await UpdateBotRuntimeCountsAfterPersistAsync(order, cancellationToken);
+
         if (transition is not null)
         {
             await TrySendExecutionAlertAsync(order, transition, normalizedSnapshot, cancellationToken);
@@ -347,6 +349,48 @@ public sealed class ExecutionOrderLifecycleService(
                           !entity.IsDeleted &&
                           OpenStates.Contains(entity.State),
                 cancellationToken);
+    }
+
+    private async Task UpdateBotRuntimeCountsAfterPersistAsync(
+        ExecutionOrder order,
+        CancellationToken cancellationToken)
+    {
+        if (!order.BotId.HasValue)
+        {
+            return;
+        }
+
+        var bot = await dbContext.TradingBots
+            .IgnoreQueryFilters()
+            .SingleOrDefaultAsync(
+                entity => entity.Id == order.BotId.Value &&
+                          !entity.IsDeleted,
+                cancellationToken);
+
+        if (bot is null)
+        {
+            return;
+        }
+
+        bot.OpenOrderCount = await dbContext.ExecutionOrders
+            .IgnoreQueryFilters()
+            .CountAsync(
+                entity => entity.BotId == order.BotId.Value &&
+                          !entity.IsDeleted &&
+                          OpenStates.Contains(entity.State),
+                cancellationToken);
+
+        if (order.ExecutionEnvironment == ExecutionEnvironment.Live)
+        {
+            bot.OpenPositionCount = await LivePositionTruthResolver.ResolveOpenPositionCountAsync(
+                dbContext,
+                order.OwnerUserId,
+                order.Plane,
+                order.ExchangeAccountId,
+                cancellationToken);
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
     }
 
     private static bool IsDuplicateTransitionSequenceViolation(DbUpdateException exception)

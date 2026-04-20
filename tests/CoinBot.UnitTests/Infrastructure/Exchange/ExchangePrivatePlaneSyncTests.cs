@@ -87,6 +87,207 @@ public sealed class ExchangePrivatePlaneSyncTests
     }
 
     [Fact]
+    public async Task PositionSyncService_RefreshesLinkedBotCounters_FromLatestPrivatePlaneTruth()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        await using var context = CreateContext(databaseRoot);
+        var exchangeAccountId = Guid.NewGuid();
+        var botId = Guid.NewGuid();
+        var observedAtUtc = new DateTime(2026, 4, 20, 9, 0, 0, DateTimeKind.Utc);
+        var snapshot = new ExchangeAccountSnapshot(
+            exchangeAccountId,
+            "user-counter",
+            "Binance",
+            [],
+            [],
+            observedAtUtc,
+            observedAtUtc,
+            "Binance.PrivateRest.Account");
+
+        context.TradingBots.Add(new TradingBot
+        {
+            Id = botId,
+            OwnerUserId = "user-counter",
+            Name = "Counter bot",
+            StrategyKey = "counter-core",
+            Symbol = "SOLUSDT",
+            ExchangeAccountId = exchangeAccountId,
+            IsEnabled = true,
+            OpenOrderCount = 1,
+            OpenPositionCount = 1
+        });
+        context.ExchangePositions.Add(new ExchangePosition
+        {
+            OwnerUserId = "user-counter",
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "SOLUSDT",
+            PositionSide = "BOTH",
+            Quantity = 0.06m,
+            EntryPrice = 85m,
+            BreakEvenPrice = 85m,
+            MarginType = "isolated",
+            ExchangeUpdatedAtUtc = observedAtUtc.AddMinutes(-1),
+            SyncedAtUtc = observedAtUtc.AddMinutes(-1)
+        });
+        await context.SaveChangesAsync();
+
+        var positionSyncService = new ExchangePositionSyncService(context, NullLogger<ExchangePositionSyncService>.Instance);
+
+        await positionSyncService.ApplyAsync(snapshot);
+
+        var bot = await context.TradingBots.SingleAsync(entity => entity.Id == botId);
+        var position = await context.ExchangePositions.SingleAsync(entity => entity.ExchangeAccountId == exchangeAccountId);
+
+        Assert.True(position.IsDeleted);
+        Assert.Equal(0m, position.Quantity);
+        Assert.Equal(0, bot.OpenPositionCount);
+        Assert.Equal(0, bot.OpenOrderCount);
+    }
+
+    [Fact]
+    public async Task PositionSyncService_KeepsOpenOrderCounter_WhenSubmittedOrderIsAfterSnapshot()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        await using var context = CreateContext(databaseRoot);
+        var exchangeAccountId = Guid.NewGuid();
+        var botId = Guid.NewGuid();
+        var observedAtUtc = new DateTime(2026, 4, 20, 9, 0, 0, DateTimeKind.Utc);
+        var snapshot = new ExchangeAccountSnapshot(
+            exchangeAccountId,
+            "user-counter-open",
+            "Binance",
+            [],
+            [],
+            observedAtUtc,
+            observedAtUtc,
+            "Binance.PrivateRest.Account");
+
+        context.TradingBots.Add(new TradingBot
+        {
+            Id = botId,
+            OwnerUserId = "user-counter-open",
+            Name = "Counter open bot",
+            StrategyKey = "counter-open-core",
+            Symbol = "SOLUSDT",
+            ExchangeAccountId = exchangeAccountId,
+            IsEnabled = true
+        });
+        context.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "user-counter-open",
+            BotId = botId,
+            ExchangeAccountId = exchangeAccountId,
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            StrategyKey = "counter-open-core",
+            Symbol = "SOLUSDT",
+            Timeframe = "1m",
+            BaseAsset = "SOL",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.06m,
+            Price = 85m,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            State = ExecutionOrderState.Submitted,
+            SubmittedToBroker = true,
+            SubmittedAtUtc = observedAtUtc.AddSeconds(5),
+            LastStateChangedAtUtc = observedAtUtc.AddSeconds(5),
+            IdempotencyKey = "counter-open-order",
+            RootCorrelationId = "counter-open-root"
+        });
+        await context.SaveChangesAsync();
+
+        var positionSyncService = new ExchangePositionSyncService(context, NullLogger<ExchangePositionSyncService>.Instance);
+
+        await positionSyncService.ApplyAsync(snapshot);
+
+        var bot = await context.TradingBots.SingleAsync(entity => entity.Id == botId);
+
+        Assert.Equal(1, bot.OpenPositionCount);
+        Assert.Equal(1, bot.OpenOrderCount);
+    }
+
+    [Fact]
+    public async Task PositionSyncService_DoesNotCountFilledInSyncOrderAsOpenOrder()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        await using var context = CreateContext(databaseRoot);
+        var exchangeAccountId = Guid.NewGuid();
+        var botId = Guid.NewGuid();
+        var observedAtUtc = new DateTime(2026, 4, 20, 9, 0, 0, DateTimeKind.Utc);
+        var snapshot = new ExchangeAccountSnapshot(
+            exchangeAccountId,
+            "user-counter-filled",
+            "Binance",
+            [],
+            [],
+            observedAtUtc,
+            observedAtUtc,
+            "Binance.PrivateRest.Account");
+
+        context.TradingBots.Add(new TradingBot
+        {
+            Id = botId,
+            OwnerUserId = "user-counter-filled",
+            Name = "Counter filled bot",
+            StrategyKey = "counter-filled-core",
+            Symbol = "SOLUSDT",
+            ExchangeAccountId = exchangeAccountId,
+            IsEnabled = true,
+            OpenOrderCount = 1,
+            OpenPositionCount = 1
+        });
+        context.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "user-counter-filled",
+            BotId = botId,
+            ExchangeAccountId = exchangeAccountId,
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            StrategyKey = "counter-filled-core",
+            Symbol = "SOLUSDT",
+            Timeframe = "1m",
+            BaseAsset = "SOL",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.06m,
+            Price = 85m,
+            FilledQuantity = 0.06m,
+            AverageFillPrice = 85m,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            State = ExecutionOrderState.Filled,
+            SubmittedToBroker = true,
+            SubmittedAtUtc = observedAtUtc.AddMinutes(-1),
+            LastFilledAtUtc = observedAtUtc.AddMinutes(-1),
+            LastStateChangedAtUtc = observedAtUtc.AddMinutes(-1),
+            ReconciliationStatus = ExchangeStateDriftStatus.InSync,
+            IdempotencyKey = "counter-filled-order",
+            RootCorrelationId = "counter-filled-root"
+        });
+        await context.SaveChangesAsync();
+
+        var positionSyncService = new ExchangePositionSyncService(context, NullLogger<ExchangePositionSyncService>.Instance);
+
+        await positionSyncService.ApplyAsync(snapshot);
+
+        var bot = await context.TradingBots.SingleAsync(entity => entity.Id == botId);
+
+        Assert.Equal(0, bot.OpenPositionCount);
+        Assert.Equal(0, bot.OpenOrderCount);
+    }
+
+    [Fact]
     public async Task ExchangeAppStateSyncService_FlagsDrift_AndPublishesFreshSnapshot()
     {
         var databaseRoot = new InMemoryDatabaseRoot();
@@ -616,4 +817,3 @@ public sealed class ExchangePrivatePlaneSyncTests
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 }
-

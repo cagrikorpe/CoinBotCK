@@ -96,6 +96,52 @@ public sealed class ExecutionEngineTests
     }
 
     [Fact]
+    public async Task DispatchAsync_FailsClosedWithoutFillOrPosition_WhenDemoReserveBalanceIsUnavailable()
+    {
+        await using var harness = CreateHarness();
+        var botId = Guid.NewGuid();
+        await SeedBotAsync(harness.DbContext, "user-demo-reserve-fail", botId, "demo-reserve-fail");
+        await SeedDemoWalletAsync(harness.DbContext, "user-demo-reserve-fail", "USDT", 50m);
+        harness.MarketDataService.SetLatestPrice("AAVEUSDT", 100m, harness.TimeProvider.GetUtcNow().UtcDateTime, "unit-test");
+        harness.MarketDataService.SetSymbolMetadata("AAVEUSDT", "AAVE", "USDT", 0.01m, 0.001m);
+        await PrimeFreshMarketDataAsync(harness, "corr-demo-reserve-fail", "AAVEUSDT", "1m");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-demo-reserve-fail",
+            context: "Open demo execution",
+            correlationId: "corr-demo-reserve-fail-switch");
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-demo-reserve-fail",
+                strategyKey: "demo-reserve-fail",
+                botId: botId,
+                isDemo: true) with
+            {
+                Symbol = "AAVEUSDT",
+                BaseAsset = "AAVE",
+                QuoteAsset = "USDT",
+                Quantity = 1m,
+                Price = 100m
+            },
+            CancellationToken.None);
+
+        var order = await harness.DbContext.ExecutionOrders
+            .IgnoreQueryFilters()
+            .SingleAsync(entity => entity.Id == result.Order.ExecutionOrderId);
+        var bot = await harness.DbContext.TradingBots
+            .IgnoreQueryFilters()
+            .SingleAsync(entity => entity.Id == botId);
+
+        Assert.Equal(ExecutionOrderState.Failed, order.State);
+        Assert.Equal(0m, order.FilledQuantity);
+        Assert.Null(order.LastFilledAtUtc);
+        Assert.Equal(0, bot.OpenPositionCount);
+        Assert.Equal(0, bot.OpenOrderCount);
+        Assert.Empty(await harness.DbContext.DemoPositions.Where(entity => entity.BotId == botId && entity.Quantity != 0m).ToListAsync());
+    }
+
+    [Fact]
     public async Task DispatchAsync_ReservesBalanceAndKeepsDemoLimitOrderSubmitted_WhenPriceHasNotCrossedLimit()
     {
         await using var harness = CreateHarness();
@@ -1427,7 +1473,7 @@ public sealed class ExecutionEngineTests
             CanTrade = true,
             SupportsSpot = false,
             SupportsFutures = true,
-            EnvironmentScope = "Demo",
+            EnvironmentScope = "Testnet",
             IsEnvironmentMatch = true,
             ValidationStatus = "Valid",
             PermissionSummary = "Trade=Y; Futures=Y; Testnet=Y",
@@ -2084,4 +2130,3 @@ public sealed class ExecutionEngineTests
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 }
-

@@ -249,10 +249,13 @@ public sealed class BotWorkerJobProcessor(
             return BackgroundJobProcessResult.RetryableFailure("SignalGenerationFailed");
         }
 
+        var executionDispatchMode = optionsValue.ExecutionDispatchMode;
         var currentNetQuantity = await ResolveCurrentNetQuantityAsync(
             bot.OwnerUserId,
             exchangeAccount.Id,
+            bot.Id,
             normalizedSymbol,
+            executionDispatchMode,
             cancellationToken);
         var signal = await ResolveActionableSignalAsync(
             signalGenerationResult,
@@ -326,12 +329,13 @@ public sealed class BotWorkerJobProcessor(
         }
 
         var currentPosition = await ResolveCurrentPositionSnapshotAsync(
-            bot,
-            exchangeAccount,
-            normalizedSymbol,
-            currentNetQuantity,
-            marketState.ReferencePrice,
-            cancellationToken);
+                bot,
+                exchangeAccount,
+                normalizedSymbol,
+                currentNetQuantity,
+                executionDispatchMode,
+                marketState.ReferencePrice,
+                cancellationToken);
 
         if (currentPosition is not null)
         {
@@ -590,9 +594,11 @@ public sealed class BotWorkerJobProcessor(
             dispatchPlan = await ResolvePilotDispatchPlanAsync(
                 bot.OwnerUserId,
                 exchangeAccount.Id,
+                bot.Id,
                 signal,
                 symbolMetadata,
                 marketState.ReferencePrice.Value,
+                executionDispatchMode,
                 cancellationToken);
         }
         catch (ExecutionValidationException exception)
@@ -784,7 +790,6 @@ public sealed class BotWorkerJobProcessor(
             return BackgroundJobProcessResult.Success();
         }
 
-        var executionDispatchMode = optionsValue.ExecutionDispatchMode;
         var pilotExecutionContext = BuildPilotExecutionContext(
             marginType!,
             leverage!.Value,
@@ -1305,12 +1310,23 @@ public sealed class BotWorkerJobProcessor(
         ExchangeAccount exchangeAccount,
         string normalizedSymbol,
         decimal currentNetQuantity,
+        ExecutionEnvironment executionDispatchMode,
         decimal? referencePrice,
         CancellationToken cancellationToken)
     {
         if (currentNetQuantity == 0m)
         {
             return null;
+        }
+
+        if (executionDispatchMode == ExecutionEnvironment.Demo)
+        {
+            return await ResolveCurrentDemoPositionSnapshotAsync(
+                bot,
+                normalizedSymbol,
+                currentNetQuantity,
+                referencePrice,
+                cancellationToken);
         }
 
         var positionDirection = currentNetQuantity > 0m
@@ -1416,6 +1432,96 @@ public sealed class BotWorkerJobProcessor(
             resolvedBreakEvenPrice,
             resolvedUnrealizedProfit,
             resolvedEntryOpenedAtUtc,
+            latestFilledEntryOrder?.Id,
+            latestFilledEntryOrder?.CreatedDate);
+    }
+
+    private async Task<CurrentPositionSnapshot?> ResolveCurrentDemoPositionSnapshotAsync(
+        TradingBot bot,
+        string normalizedSymbol,
+        decimal currentNetQuantity,
+        decimal? referencePrice,
+        CancellationToken cancellationToken)
+    {
+        var positionDirection = currentNetQuantity > 0m
+            ? StrategyTradeDirection.Long
+            : StrategyTradeDirection.Short;
+        var demoPositions = await dbContext.DemoPositions
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.OwnerUserId == bot.OwnerUserId &&
+                entity.BotId == bot.Id &&
+                entity.Symbol == normalizedSymbol &&
+                !entity.IsDeleted)
+            .ToListAsync(cancellationToken);
+
+        var matchingPositions = demoPositions
+            .Where(entity =>
+                positionDirection == StrategyTradeDirection.Long
+                    ? entity.Quantity > 0m
+                    : entity.Quantity < 0m)
+            .ToArray();
+
+        if (matchingPositions.Length == 0)
+        {
+            return null;
+        }
+
+        var totalQuantity = matchingPositions.Sum(entity => Math.Abs(entity.Quantity));
+        if (totalQuantity <= 0m)
+        {
+            return null;
+        }
+
+        var weightedEntryPrice = matchingPositions.Sum(entity => Math.Abs(entity.Quantity) * entity.AverageEntryPrice) / totalQuantity;
+        var latestFillAtUtc = matchingPositions
+            .Select(entity => entity.LastFilledAtUtc)
+            .Where(value => value.HasValue)
+            .OrderByDescending(value => value)
+            .FirstOrDefault();
+        var latestFilledEntryOrder = await dbContext.ExecutionOrders
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.OwnerUserId == bot.OwnerUserId &&
+                entity.BotId == bot.Id &&
+                entity.Symbol == normalizedSymbol &&
+                entity.Plane == ExchangeDataPlane.Futures &&
+                entity.ExecutionEnvironment == ExecutionEnvironment.Demo &&
+                entity.ExecutorKind == ExecutionOrderExecutorKind.Virtual &&
+                !entity.ReduceOnly &&
+                entity.Side == (positionDirection == StrategyTradeDirection.Long ? ExecutionOrderSide.Buy : ExecutionOrderSide.Sell) &&
+                entity.State == ExecutionOrderState.Filled &&
+                !entity.IsDeleted)
+            .OrderByDescending(entity => entity.CreatedDate)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var resolvedEntryPrice = weightedEntryPrice > 0m
+            ? weightedEntryPrice
+            : latestFilledEntryOrder?.AverageFillPrice.GetValueOrDefault() > 0m
+                ? latestFilledEntryOrder!.AverageFillPrice.GetValueOrDefault()
+                : latestFilledEntryOrder?.Price ?? 0m;
+
+        if (resolvedEntryPrice <= 0m)
+        {
+            return null;
+        }
+
+        var unrealizedProfit = matchingPositions.Sum(entity => entity.UnrealizedPnl);
+        var resolvedUnrealizedProfit = unrealizedProfit != 0m || !referencePrice.HasValue
+            ? unrealizedProfit
+            : positionDirection == StrategyTradeDirection.Long
+                ? NormalizeDecimal((referencePrice.Value - resolvedEntryPrice) * Math.Abs(currentNetQuantity))
+                : NormalizeDecimal((resolvedEntryPrice - referencePrice.Value) * Math.Abs(currentNetQuantity));
+
+        return new CurrentPositionSnapshot(
+            positionDirection,
+            currentNetQuantity,
+            resolvedEntryPrice,
+            resolvedEntryPrice,
+            resolvedUnrealizedProfit,
+            latestFillAtUtc ?? latestFilledEntryOrder?.CreatedDate ?? timeProvider.GetUtcNow().UtcDateTime,
             latestFilledEntryOrder?.Id,
             latestFilledEntryOrder?.CreatedDate);
     }
@@ -2116,9 +2222,11 @@ public sealed class BotWorkerJobProcessor(
     private async Task<PilotDispatchPlan> ResolvePilotDispatchPlanAsync(
         string ownerUserId,
         Guid exchangeAccountId,
+        Guid botId,
         StrategySignalSnapshot signal,
         SymbolMetadataSnapshot symbolMetadata,
         decimal referencePrice,
+        ExecutionEnvironment executionDispatchMode,
         CancellationToken cancellationToken)
     {
         if (signal.SignalType == StrategySignalType.Entry)
@@ -2133,7 +2241,9 @@ public sealed class BotWorkerJobProcessor(
         var currentNetQuantity = await ResolveCurrentNetQuantityAsync(
             ownerUserId,
             exchangeAccountId,
+            botId,
             signal.Symbol,
+            executionDispatchMode,
             cancellationToken);
 
         if (currentNetQuantity == 0m)
@@ -2152,10 +2262,25 @@ public sealed class BotWorkerJobProcessor(
     private async Task<decimal> ResolveCurrentNetQuantityAsync(
         string ownerUserId,
         Guid exchangeAccountId,
+        Guid botId,
         string symbol,
+        ExecutionEnvironment executionDispatchMode,
         CancellationToken cancellationToken)
     {
         var normalizedSymbol = NormalizePositionSymbol(symbol);
+
+        if (executionDispatchMode == ExecutionEnvironment.Demo)
+        {
+            return await dbContext.DemoPositions
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.OwnerUserId == ownerUserId &&
+                    entity.BotId == botId &&
+                    entity.Symbol == normalizedSymbol &&
+                    !entity.IsDeleted)
+                .SumAsync(entity => entity.Quantity, cancellationToken);
+        }
 
         return await LivePositionTruthResolver.ResolveNetQuantityAsync(
             dbContext,

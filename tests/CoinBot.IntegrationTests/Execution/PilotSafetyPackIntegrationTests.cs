@@ -360,7 +360,7 @@ public sealed class PilotSafetyPackIntegrationTests
             CanTrade = true,
             SupportsSpot = false,
             SupportsFutures = true,
-            EnvironmentScope = "Demo",
+            EnvironmentScope = "Testnet",
             IsEnvironmentMatch = true,
             ValidationStatus = "Valid",
             PermissionSummary = "Trade=Y; Futures=Y; Testnet=Y",

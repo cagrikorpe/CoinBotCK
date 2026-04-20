@@ -431,7 +431,9 @@ public sealed class BinanceExecutor(
 
     private static int CountFractionalDigits(decimal value)
     {
-        return (decimal.GetBits(value)[3] >> 16) & 0x7F;
+        var formatted = FormatDecimal(Math.Abs(value));
+        var separatorIndex = formatted.IndexOf('.', StringComparison.Ordinal);
+        return separatorIndex < 0 ? 0 : formatted.Length - separatorIndex - 1;
     }
 
     private static string? Truncate(string? value, int maxLength)
@@ -463,4 +465,3 @@ public sealed class BinanceExecutor(
         return value.ToString("0.##################", CultureInfo.InvariantCulture);
     }
 }
-

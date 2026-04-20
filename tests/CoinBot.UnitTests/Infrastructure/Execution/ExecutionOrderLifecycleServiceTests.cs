@@ -119,6 +119,61 @@ public sealed class ExecutionOrderLifecycleServiceTests
     }
 
     [Fact]
+    public async Task ApplyExchangeUpdateAsync_RefreshesLiveBotOpenPositionCount_FromPrivatePlaneTruth()
+    {
+        await using var dbContext = CreateContext();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 5, 12, 0, 0, TimeSpan.Zero));
+        var lifecycleService = CreateService(dbContext, timeProvider);
+        var botId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        var orderId = await SeedOrderAsync(
+            dbContext,
+            ExecutionOrderState.Submitted,
+            filledQuantity: 0m,
+            botId: botId,
+            exchangeAccountId: exchangeAccountId);
+        dbContext.TradingBots.Add(new TradingBot
+        {
+            Id = botId,
+            OwnerUserId = "user-lifecycle",
+            Name = "Lifecycle bot",
+            StrategyKey = "lifecycle-core",
+            Symbol = "BTCUSDT",
+            ExchangeAccountId = exchangeAccountId,
+            IsEnabled = true,
+            OpenPositionCount = 0,
+            OpenOrderCount = 1
+        });
+        dbContext.ExchangePositions.Add(new ExchangePosition
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "user-lifecycle",
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "BTCUSDT",
+            PositionSide = "BOTH",
+            Quantity = 0.05m,
+            EntryPrice = 65000m,
+            BreakEvenPrice = 65000m,
+            MarginType = "isolated",
+            ExchangeUpdatedAtUtc = timeProvider.GetUtcNow().UtcDateTime,
+            SyncedAtUtc = timeProvider.GetUtcNow().UtcDateTime
+        });
+        await dbContext.SaveChangesAsync();
+
+        var applied = await lifecycleService.ApplyExchangeUpdateAsync(
+            CreateSnapshot(orderId, "FILLED", executedQuantity: 0.05m, timeProvider.GetUtcNow().UtcDateTime));
+
+        var bot = await dbContext.TradingBots.SingleAsync(entity => entity.Id == botId);
+        var order = await dbContext.ExecutionOrders.SingleAsync(entity => entity.Id == orderId);
+
+        Assert.True(applied);
+        Assert.Equal(ExecutionOrderState.Filled, order.State);
+        Assert.Equal(1, bot.OpenPositionCount);
+        Assert.Equal(0, bot.OpenOrderCount);
+    }
+
+    [Fact]
     public async Task ApplyExchangeUpdateAsync_WritesSpotPortfolioAudit_WithRootCorrelation()
     {
         await using var dbContext = CreateContext();
@@ -179,7 +234,9 @@ public sealed class ExecutionOrderLifecycleServiceTests
         ApplicationDbContext dbContext,
         ExecutionOrderState state,
         decimal filledQuantity,
-        ExchangeDataPlane plane = ExchangeDataPlane.Futures)
+        ExchangeDataPlane plane = ExchangeDataPlane.Futures,
+        Guid? botId = null,
+        Guid? exchangeAccountId = null)
     {
         var orderId = Guid.NewGuid();
         dbContext.ExecutionOrders.Add(new ExecutionOrder
@@ -190,7 +247,8 @@ public sealed class ExecutionOrderLifecycleServiceTests
             TradingStrategyVersionId = Guid.NewGuid(),
             StrategySignalId = Guid.NewGuid(),
             SignalType = StrategySignalType.Entry,
-            ExchangeAccountId = Guid.NewGuid(),
+            BotId = botId,
+            ExchangeAccountId = exchangeAccountId ?? Guid.NewGuid(),
             Plane = plane,
             StrategyKey = "lifecycle-core",
             Symbol = "BTCUSDT",

@@ -280,6 +280,89 @@ public sealed class ExecutionReconciliationServiceTests
         Assert.Equal("Reconciled:InSync", auditLog.Outcome);
     }
 
+    [Fact]
+    public async Task RunOnceAsync_ExcludesTerminalDispatchFailure_WhenBrokerIdentityIsMissing()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 20, 1, 0, 0, TimeSpan.Zero));
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+            .Options;
+        await using var dbContext = new ApplicationDbContext(options, new TestDataScopeContext());
+        var auditLogService = new AuditLogService(dbContext, new CorrelationContextAccessor());
+        var lifecycleService = new ExecutionOrderLifecycleService(
+            dbContext,
+            auditLogService,
+            timeProvider,
+            NullLogger<ExecutionOrderLifecycleService>.Instance);
+        var executionOrderId = new Guid("55555555-5555-5555-5555-555555555555");
+        var privateRestClient = new FakePrivateRestClient(
+            new BinanceOrderStatusSnapshot(
+                "BTCUSDT",
+                "binance-order-should-not-be-read",
+                ExecutionClientOrderId.Create(executionOrderId),
+                "FILLED",
+                0.05m,
+                0.05m,
+                3200m,
+                64000m,
+                0m,
+                0m,
+                timeProvider.GetUtcNow().UtcDateTime,
+                "Binance.PrivateRest.Order"));
+        var service = new ExecutionReconciliationService(
+            dbContext,
+            new FakeExchangeCredentialService(),
+            privateRestClient,
+            new FakeSpotPrivateRestClient(),
+            lifecycleService,
+            NullLogger<ExecutionReconciliationService>.Instance);
+
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = executionOrderId,
+            OwnerUserId = "user-dispatch-failed",
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            ExchangeAccountId = Guid.NewGuid(),
+            Plane = ExchangeDataPlane.Futures,
+            StrategyKey = "reconcile-dispatch-failed",
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.05m,
+            Price = 64000m,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            State = ExecutionOrderState.Failed,
+            FailureCode = "DispatchFailed",
+            FailureDetail = "Exchange credentials are unavailable because decryption failed.",
+            IdempotencyKey = $"reconcile_dispatch_failed_{executionOrderId:N}",
+            RootCorrelationId = "root-reconcile-dispatch-failed-correlation-1",
+            ExternalOrderId = null,
+            SubmittedToBroker = true,
+            ReconciliationStatus = ExchangeStateDriftStatus.Unknown,
+            LastStateChangedAtUtc = new DateTime(2026, 4, 20, 0, 56, 0, DateTimeKind.Utc)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var reconciledCount = await service.RunOnceAsync();
+
+        var order = await dbContext.ExecutionOrders.SingleAsync(entity => entity.Id == executionOrderId);
+        var auditLogCount = await dbContext.AuditLogs.CountAsync();
+
+        Assert.Equal(0, reconciledCount);
+        Assert.Equal(0, privateRestClient.GetOrderCalls);
+        Assert.Equal(0, auditLogCount);
+        Assert.Equal(ExecutionOrderState.Failed, order.State);
+        Assert.Equal(ExchangeStateDriftStatus.Unknown, order.ReconciliationStatus);
+        Assert.Null(order.LastReconciledAtUtc);
+    }
+
     private sealed class TestDataScopeContext : IDataScopeContext
     {
         public string? UserId => null;

@@ -14,6 +14,7 @@ public sealed class DemoConsistencyWatchdogService(
     TimeProvider timeProvider,
     ILogger<DemoConsistencyWatchdogService> logger)
 {
+    private static readonly TimeSpan InFlightFillSettlementGrace = TimeSpan.FromSeconds(30);
     private readonly DemoSessionOptions optionsValue = options.Value;
 
     public async Task<DemoConsistencyCheckResult> EvaluateAsync(
@@ -64,7 +65,11 @@ public sealed class DemoConsistencyWatchdogService(
                       transaction.CreatedDate >= sessionStartedAtUtc &&
                       transaction.OrderId != null &&
                       !entry.IsDeleted
-                select new DemoReservationEntry(transaction.OrderId!, entry.ReservedDelta))
+                select new DemoReservationEntry(
+                    transaction.OrderId!,
+                    entry.ReservedDelta,
+                    transaction.TransactionType,
+                    transaction.OccurredAtUtc))
             .ToListAsync(cancellationToken);
         var demoOrders = await dbContext.ExecutionOrders
             .IgnoreQueryFilters()
@@ -75,16 +80,16 @@ public sealed class DemoConsistencyWatchdogService(
                 entity.ExecutionEnvironment == ExecutionEnvironment.Demo &&
                 entity.CreatedDate >= sessionStartedAtUtc)
             .ToListAsync(cancellationToken);
+        var evaluatedAtUtc = NormalizeTimestamp(timeProvider.GetUtcNow().UtcDateTime);
         var walletMismatches = EvaluateWalletDrift(walletEntries, wallets);
         var positionMismatches = EvaluatePositionDrift(positionTransactions, positions);
-        var orderMismatches = EvaluateOrderDrift(reservationEntries, demoOrders);
+        var orderMismatches = EvaluateOrderDrift(reservationEntries, demoOrders, evaluatedAtUtc);
         var status = walletMismatches.Count == 0 &&
                      positionMismatches.Count == 0 &&
                      orderMismatches.Count == 0
             ? DemoConsistencyStatus.InSync
             : DemoConsistencyStatus.DriftDetected;
         var summary = BuildSummary(walletMismatches, positionMismatches, orderMismatches);
-        var evaluatedAtUtc = NormalizeTimestamp(timeProvider.GetUtcNow().UtcDateTime);
 
         if (status == DemoConsistencyStatus.DriftDetected)
         {
@@ -202,12 +207,20 @@ public sealed class DemoConsistencyWatchdogService(
 
     private List<string> EvaluateOrderDrift(
         IReadOnlyCollection<DemoReservationEntry> reservationEntries,
-        IReadOnlyCollection<ExecutionOrder> demoOrders)
+        IReadOnlyCollection<ExecutionOrder> demoOrders,
+        DateTime evaluatedAtUtc)
     {
         var openStates = new HashSet<ExecutionOrderState> { ExecutionOrderState.Submitted, ExecutionOrderState.PartiallyFilled };
         var outstandingByOrderId = reservationEntries
             .GroupBy(entity => entity.OrderId, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => ClampZero(group.Sum(entity => entity.ReservedDelta)), StringComparer.Ordinal);
+        var latestFillByOrderId = reservationEntries
+            .Where(entity => entity.TransactionType == DemoLedgerTransactionType.FillApplied)
+            .GroupBy(entity => entity.OrderId, StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Max(entity => NormalizeTimestamp(entity.OccurredAtUtc)),
+                StringComparer.Ordinal);
         var mismatches = new List<string>();
 
         foreach (var order in demoOrders)
@@ -218,6 +231,14 @@ public sealed class DemoConsistencyWatchdogService(
             {
                 if (Math.Abs(outstandingReservation) <= optionsValue.ConsistencyTolerance)
                 {
+                    if (latestFillByOrderId.TryGetValue(order.Id.ToString("N"), out var latestFillCreatedAtUtc) &&
+                        evaluatedAtUtc - latestFillCreatedAtUtc is var fillAge &&
+                        fillAge >= TimeSpan.Zero &&
+                        fillAge <= InFlightFillSettlementGrace)
+                    {
+                        continue;
+                    }
+
                     mismatches.Add($"Order[{order.Id:N}] MissingReservation");
                 }
 
@@ -291,7 +312,11 @@ public sealed class DemoConsistencyWatchdogService(
         };
     }
 
-    private sealed record DemoReservationEntry(string OrderId, decimal ReservedDelta);
+    private sealed record DemoReservationEntry(
+        string OrderId,
+        decimal ReservedDelta,
+        DemoLedgerTransactionType TransactionType,
+        DateTime OccurredAtUtc);
 }
 
 public sealed record DemoConsistencyCheckResult(

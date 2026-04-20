@@ -445,6 +445,8 @@ public sealed class ExecutionEngine(
         }
         catch (Exception exception)
         {
+            await DiscardTrackedDemoAccountingChangesAsync(cancellationToken);
+
             if (simulation.Reservation is not null)
             {
                 await TryReleaseDemoReservationAsync(order, simulation.Reservation, cancellationToken);
@@ -471,6 +473,28 @@ public sealed class ExecutionEngine(
             await TrySendExecutionAlertAsync(order, transition, cancellationToken);
             userOperationsStreamHub?.Publish(BuildOperationsUpdate(order, transition));
             return transition;
+        }
+    }
+
+    private async Task DiscardTrackedDemoAccountingChangesAsync(CancellationToken cancellationToken)
+    {
+        var entries = dbContext.ChangeTracker
+            .Entries()
+            .Where(entry => entry.Entity is DemoPosition or DemoWallet or DemoLedgerTransaction or DemoLedgerEntry)
+            .ToArray();
+
+        foreach (var entry in entries)
+        {
+            if (entry.State == EntityState.Added)
+            {
+                entry.State = EntityState.Detached;
+                continue;
+            }
+
+            if (entry.State != EntityState.Unchanged)
+            {
+                await entry.ReloadAsync(cancellationToken);
+            }
         }
     }
 

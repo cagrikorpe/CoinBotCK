@@ -367,6 +367,62 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_GeneratesExitSignal_AndSubmitsReduceOnlyVirtualSellOrder_ForOpenDemoLongPosition()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(
+            harness.DbContext,
+            bot,
+            CreateDirectionalRootPilotDefinitionJson("longEntry", "Live"));
+        await SeedDemoWalletAsync(harness.DbContext, bot.OwnerUserId, "USDT", 1000m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.ExecutionDispatchMode = ExecutionEnvironment.Demo;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-demo-exit-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-demo-exit-2");
+
+        var entryResult = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-demo-entry-1",
+            CancellationToken.None);
+        await SetPublishedStrategyDefinitionAsync(
+            harness.DbContext,
+            bot,
+            CreateDirectionalRootPilotDefinitionJson("longExit", "Live"));
+        harness.TimeProvider.Advance(TimeSpan.FromMinutes(1));
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-demo-exit-3", symbol: "SOLUSDT");
+
+        var exitResult = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-demo-exit-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync(entity => entity.SignalType == StrategySignalType.Exit);
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync(entity => entity.StrategySignalId == persistedSignal.Id);
+        var entryOrder = await harness.DbContext.ExecutionOrders.SingleAsync(entity => entity.SignalType == StrategySignalType.Entry);
+        var position = await harness.DbContext.DemoPositions.SingleAsync(entity => entity.BotId == bot.Id && entity.Symbol == "SOLUSDT");
+        var refreshedBot = await harness.DbContext.TradingBots.SingleAsync(entity => entity.Id == bot.Id);
+
+        Assert.True(entryResult.IsSuccessful);
+        Assert.True(exitResult.IsSuccessful);
+        Assert.Equal(StrategySignalType.Exit, persistedSignal.SignalType);
+        Assert.Equal(ExecutionEnvironment.Demo, persistedOrder.ExecutionEnvironment);
+        Assert.Equal(ExecutionOrderExecutorKind.Virtual, persistedOrder.ExecutorKind);
+        Assert.Equal(ExecutionOrderSide.Sell, persistedOrder.Side);
+        Assert.True(persistedOrder.ReduceOnly);
+        Assert.Equal(entryOrder.FilledQuantity, persistedOrder.Quantity);
+        Assert.Equal(ExecutionOrderState.Filled, persistedOrder.State);
+        Assert.Equal(0m, position.Quantity);
+        Assert.Equal(0, refreshedBot.OpenPositionCount);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
     public async Task ProcessAsync_GeneratesExitSignal_AndSubmitsReduceOnlyBuyOrder_ForOpenShortPosition()
     {
         await using var harness = CreateHarness();
@@ -1300,7 +1356,8 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Empty(harness.DbContext.TradingStrategySignals);
         Assert.Empty(harness.DbContext.ExecutionOrders);
         Assert.Equal("NoSignalCandidate", decisionTrace.DecisionOutcome);
-        Assert.Equal("NoSignalCandidate", decisionTrace.DecisionReasonCode);
+        //Assert.Equal("NoSignalCandidate", decisionTrace.DecisionReasonCode);
+        Assert.Equal("StrategyShortExitMatchedNoOpenPosition", decisionTrace.DecisionReasonCode);
         Assert.Equal(
             "Strategy exit candidate was suppressed because no open position exists. Runtime exit persistence was skipped.",
             decisionTrace.DecisionSummary);
@@ -1359,8 +1416,10 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Empty(harness.DbContext.TradingStrategySignals);
         Assert.Empty(harness.DbContext.ExecutionOrders);
         Assert.Equal("NoSignalCandidate", decisionTrace.DecisionOutcome);
-        Assert.Equal("StrategyCandidate", decisionTrace.DecisionReasonType);
-        Assert.Equal("NoSignalCandidate", decisionTrace.DecisionReasonCode);
+        //Assert.Equal("StrategyCandidate", decisionTrace.DecisionReasonType);
+        Assert.Equal("StrategyExit", decisionTrace.DecisionReasonType);
+        //Assert.Equal("NoSignalCandidate", decisionTrace.DecisionReasonCode);
+        Assert.Equal("StrategyLongExitMatchedNoOpenPosition", decisionTrace.DecisionReasonCode);
         Assert.Equal(
             "Strategy exit candidate was suppressed because no open position exists. Runtime exit persistence was skipped.",
             decisionTrace.DecisionSummary);
@@ -2301,7 +2360,7 @@ public sealed class BotWorkerJobProcessorTests
             CanTrade = true,
             SupportsSpot = false,
             SupportsFutures = true,
-            EnvironmentScope = "Demo",
+            EnvironmentScope = "Testnet",
             IsEnvironmentMatch = true,
             ValidationStatus = "Valid",
             PermissionSummary = "Trade=Y; Futures=Y; Testnet=Y",

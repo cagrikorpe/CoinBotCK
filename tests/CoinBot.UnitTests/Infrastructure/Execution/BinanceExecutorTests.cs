@@ -76,6 +76,30 @@ public sealed class BinanceExecutorTests
     }
 
     [Fact]
+    public async Task DispatchAsync_AllowsQuantity_WhenOnlyTrailingZerosExceedPrecision()
+    {
+        await using var harness = await CreateHarnessAsync(
+            metadata: CreateMetadata(stepSize: 0.01m, minQuantity: 0.01m, quantityPrecision: 2));
+
+        var result = await harness.Executor.DispatchAsync(
+            harness.Order,
+            CreateCommand(harness.ExchangeAccountId) with
+            {
+                SignalType = StrategySignalType.Exit,
+                Side = ExecutionOrderSide.Sell,
+                ReduceOnly = true,
+                Quantity = 0.660000000000000000m,
+                Price = 200m
+            },
+            CancellationToken.None);
+
+        Assert.Equal("binance-order-1", result.ExternalOrderId);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.NotNull(harness.PrivateRestClient.LastPlacementRequest);
+        Assert.Equal(0.660000000000000000m, harness.PrivateRestClient.LastPlacementRequest.Quantity);
+    }
+
+    [Fact]
     public async Task DispatchAsync_FailsClosed_WhenNotionalIsBelowMinimum()
     {
         await using var harness = await CreateHarnessAsync();
@@ -443,6 +467,8 @@ public sealed class BinanceExecutorTests
     {
         public int PlaceOrderCalls { get; private set; }
 
+        public BinanceOrderPlacementRequest? LastPlacementRequest { get; private set; }
+
         public Task EnsureMarginTypeAsync(
             Guid exchangeAccountId,
             string symbol,
@@ -470,6 +496,7 @@ public sealed class BinanceExecutorTests
             CancellationToken cancellationToken = default)
         {
             PlaceOrderCalls++;
+            LastPlacementRequest = request;
             return Task.FromResult(new BinanceOrderPlacementResult($"binance-order-{PlaceOrderCalls}", request.ClientOrderId, DateTime.UtcNow));
         }
 
@@ -657,4 +684,3 @@ public sealed class BinanceExecutorTests
     }
 
 }
-

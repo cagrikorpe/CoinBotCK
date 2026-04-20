@@ -493,11 +493,16 @@ public sealed class BinancePrivateRestClient(
         using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
         var root = document.RootElement;
         var balances = ParseBalances(root, observedAtUtc);
-        var positions = ParsePositions(root, observedAtUtc);
+        var positions = await GetPositionRiskSnapshotsAsync(
+            exchangeAccountId,
+            ownerUserId,
+            apiKey,
+            apiSecret,
+            cancellationToken);
         var receivedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
 
         logger.LogDebug(
-            "Binance private account snapshot refreshed. Balances={BalanceCount}, Positions={PositionCount}.",
+            "Binance private account snapshot refreshed. Balances={BalanceCount}, PositionRiskPositions={PositionCount}.",
             balances.Count,
             positions.Count);
 
@@ -509,7 +514,44 @@ public sealed class BinancePrivateRestClient(
             positions,
             observedAtUtc,
             receivedAtUtc,
-            "Binance.PrivateRest.Account");
+            "Binance.PrivateRest.Account+PositionRisk");
+    }
+
+    public async Task<IReadOnlyCollection<ExchangePositionSnapshot>> GetPositionRiskSnapshotsAsync(
+        Guid exchangeAccountId,
+        string ownerUserId,
+        string apiKey,
+        string apiSecret,
+        CancellationToken cancellationToken = default)
+    {
+        var observedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+        var timestamp = await GetTimestampAsync(cancellationToken);
+        var unsignedQuery = $"timestamp={timestamp}&recvWindow={optionsValue.RecvWindowMilliseconds.ToString(CultureInfo.InvariantCulture)}";
+        var signature = ComputeSignature(unsignedQuery, apiSecret);
+        var path = $"/fapi/v2/positionRisk?{unsignedQuery}&signature={signature}";
+
+        using var request = CreateApiKeyRequest(HttpMethod.Get, path, apiKey);
+        using var response = await SendAsyncWithTelemetryAsync(request, observedAtUtc, cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            await ThrowClockDriftAwareFailureAsync(
+                $"Binance position risk snapshot request failed with status {(int)response.StatusCode}.",
+                TryReadExchangeCode(responseBody),
+                responseBody,
+                cancellationToken);
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        var positions = ParsePositionRiskPositions(document.RootElement, observedAtUtc);
+
+        logger.LogDebug(
+            "Binance private position risk snapshot refreshed. Positions={PositionCount}.",
+            positions.Count);
+
+        return positions;
     }
 
     private static HttpRequestMessage CreateApiKeyRequest(HttpMethod method, string path, string apiKey)
@@ -766,6 +808,63 @@ public sealed class BinancePrivateRestClient(
             }
 
             positions.Add(snapshot);
+        }
+
+        return positions
+            .OrderBy(position => position.Symbol, StringComparer.Ordinal)
+            .ThenBy(position => position.PositionSide, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static IReadOnlyCollection<ExchangePositionSnapshot> ParsePositionRiskPositions(JsonElement root, DateTime fallbackTimestampUtc)
+    {
+        if (root.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<ExchangePositionSnapshot>();
+        }
+
+        var positions = new List<ExchangePositionSnapshot>();
+
+        foreach (var positionElement in root.EnumerateArray())
+        {
+            var symbol = positionElement.TryGetProperty("symbol", out var symbolElement)
+                ? NormalizeCode(symbolElement.GetString())
+                : null;
+            var positionSide = positionElement.TryGetProperty("positionSide", out var positionSideElement)
+                ? NormalizeCode(positionSideElement.GetString())
+                : "BOTH";
+            var marginType = positionElement.TryGetProperty("marginType", out var marginTypeElement)
+                ? NormalizeMarginType(marginTypeElement.GetString())
+                : "cross";
+            var quantity = TryReadDecimal(positionElement, "positionAmt");
+            var entryPrice = TryReadDecimal(positionElement, "entryPrice");
+            var breakEvenPrice = TryReadDecimal(positionElement, "breakEvenPrice") ?? entryPrice;
+            var unrealizedProfit = TryReadDecimal(positionElement, "unRealizedProfit") ??
+                                   TryReadDecimal(positionElement, "unrealizedProfit");
+            var isolatedWallet = TryReadDecimal(positionElement, "isolatedWallet") ?? 0m;
+            var exchangeUpdatedAtUtc = TryReadUnixMilliseconds(positionElement, "updateTime", fallbackTimestampUtc);
+
+            if (string.IsNullOrWhiteSpace(symbol) ||
+                string.IsNullOrWhiteSpace(positionSide) ||
+                quantity is null ||
+                quantity.Value == 0m ||
+                entryPrice is null ||
+                breakEvenPrice is null ||
+                unrealizedProfit is null)
+            {
+                continue;
+            }
+
+            positions.Add(new ExchangePositionSnapshot(
+                symbol,
+                positionSide,
+                quantity.Value,
+                entryPrice.Value,
+                breakEvenPrice.Value,
+                unrealizedProfit.Value,
+                marginType,
+                isolatedWallet,
+                exchangeUpdatedAtUtc));
         }
 
         return positions

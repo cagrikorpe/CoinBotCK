@@ -23,15 +23,15 @@ public sealed class DemoSessionService(
     private const string SystemActor = "system:demo-session";
     private const string PortfolioScopeKey = "portfolio";
     private readonly DemoSessionOptions optionsValue = options.Value;
-    private static readonly IReadOnlySet<ExecutionOrderState> OpenOrderStates = new HashSet<ExecutionOrderState>
-    {
+    private static readonly ExecutionOrderState[] OpenOrderStates =
+    [
         ExecutionOrderState.Received,
         ExecutionOrderState.GatePassed,
         ExecutionOrderState.Dispatching,
         ExecutionOrderState.Submitted,
         ExecutionOrderState.PartiallyFilled,
         ExecutionOrderState.CancelRequested
-    };
+    ];
 
     public async Task<DemoSessionSnapshot?> GetActiveSessionAsync(string ownerUserId, CancellationToken cancellationToken = default)
     {
@@ -53,6 +53,55 @@ public sealed class DemoSessionService(
         if (session is null)
         {
             return null;
+        }
+
+        await EnsureSeededPortfolioStateAsync(session, cancellationToken);
+        var leakReconciliation = await ReconcileFailedDemoOrderPositionLeaksAsync(session, cancellationToken);
+        var walletLeakReconciliation = await ReconcileFailedDemoOrderWalletLeaksAsync(session, cancellationToken);
+        var botStateRefreshes = leakReconciliation.OpenPositionCountsByBotId
+            .ToDictionary(item => item.Key, item => (int?)item.Value);
+
+        foreach (var staleBotId in await ResolveStaleDemoBotStateIdsAsync(session.OwnerUserId, cancellationToken))
+        {
+            botStateRefreshes.TryAdd(staleBotId, null);
+        }
+
+        if (botStateRefreshes.Count > 0 || walletLeakReconciliation.ReconciledOrderCount > 0)
+        {
+            foreach (var refresh in botStateRefreshes)
+            {
+                await UpdateBotStateAsync(refresh.Key, cancellationToken, refresh.Value);
+            }
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        if (leakReconciliation.ReconciledPositionCount > 0)
+        {
+            await auditLogService.WriteAsync(
+                new AuditLogWriteRequest(
+                    SystemActor,
+                    "DemoSession.FailedOrderLeakReconciled",
+                    $"DemoSession/{session.Id}",
+                    BuildFailedOrderLeakReconciliationContext(leakReconciliation.ReconciledPositionCount, leakReconciliation.SampleExecutionOrderId),
+                    CorrelationId: null,
+                    Outcome: "Applied",
+                    Environment: nameof(ExecutionEnvironment.Demo)),
+                cancellationToken);
+        }
+
+        if (walletLeakReconciliation.ReconciledOrderCount > 0)
+        {
+            await auditLogService.WriteAsync(
+                new AuditLogWriteRequest(
+                    SystemActor,
+                    "DemoSession.FailedOrderWalletLeakReconciled",
+                    $"DemoSession/{session.Id}",
+                    BuildFailedOrderWalletLeakReconciliationContext(walletLeakReconciliation.ReconciledOrderCount, walletLeakReconciliation.SampleExecutionOrderId),
+                    CorrelationId: null,
+                    Outcome: "Applied",
+                    Environment: nameof(ExecutionEnvironment.Demo)),
+                cancellationToken);
         }
 
         var previousStatus = session.ConsistencyStatus;
@@ -77,6 +126,369 @@ public sealed class DemoSessionService(
 
         return MapSnapshot(session);
     }
+
+    private async Task<FailedOrderLeakReconciliationResult> ReconcileFailedDemoOrderPositionLeaksAsync(
+        DemoSession session,
+        CancellationToken cancellationToken)
+    {
+        var sessionStartedAtUtc = NormalizeTimestamp(session.StartedAtUtc);
+        var positions = await dbContext.DemoPositions
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.OwnerUserId == session.OwnerUserId &&
+                !entity.IsDeleted &&
+                entity.BotId != null &&
+                entity.Quantity != 0m)
+            .ToListAsync(cancellationToken);
+
+        if (positions.Count == 0)
+        {
+            return FailedOrderLeakReconciliationResult.Empty;
+        }
+
+        var positionTransactions = await dbContext.DemoLedgerTransactions
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.OwnerUserId == session.OwnerUserId &&
+                !entity.IsDeleted &&
+                entity.CreatedDate >= sessionStartedAtUtc &&
+                entity.BotId != null &&
+                entity.Symbol != null &&
+                entity.OrderId != null &&
+                entity.PositionQuantityAfter != null &&
+                entity.PositionQuantityAfter != 0m)
+            .ToListAsync(cancellationToken);
+
+        if (positionTransactions.Count == 0)
+        {
+            return FailedOrderLeakReconciliationResult.Empty;
+        }
+
+        var failedOrders = (await dbContext.ExecutionOrders
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.OwnerUserId == session.OwnerUserId &&
+                    !entity.IsDeleted &&
+                    entity.ExecutionEnvironment == ExecutionEnvironment.Demo &&
+                    entity.ExecutorKind == ExecutionOrderExecutorKind.Virtual &&
+                    entity.CreatedDate >= sessionStartedAtUtc &&
+                    (entity.State == ExecutionOrderState.Failed ||
+                     entity.State == ExecutionOrderState.Rejected) &&
+                    entity.FailureCode == "VirtualWatchdogFailedClosed" &&
+                    (entity.FilledQuantity > 0m ||
+                     entity.LastFilledAtUtc != null))
+                .ToListAsync(cancellationToken))
+            .ToDictionary(entity => entity.Id.ToString("N"), StringComparer.Ordinal);
+
+        if (failedOrders.Count == 0)
+        {
+            return FailedOrderLeakReconciliationResult.Empty;
+        }
+
+        var affectedBotIds = new HashSet<Guid>();
+        var reconciledPositionCount = 0;
+        Guid? sampleExecutionOrderId = null;
+        var now = NormalizeTimestamp(timeProvider.GetUtcNow().UtcDateTime);
+
+        foreach (var position in positions)
+        {
+            var latestFillTransaction = positionTransactions
+                .Where(entity =>
+                    entity.BotId == position.BotId &&
+                    string.Equals(entity.PositionScopeKey, position.PositionScopeKey, StringComparison.Ordinal) &&
+                    string.Equals(entity.Symbol, position.Symbol, StringComparison.Ordinal))
+                .OrderByDescending(entity => NormalizeTimestamp(entity.CreatedDate))
+                .ThenByDescending(entity => NormalizeTimestamp(entity.OccurredAtUtc))
+                .ThenByDescending(entity => entity.Id)
+                .FirstOrDefault();
+
+            if (latestFillTransaction?.OrderId is null ||
+                !failedOrders.TryGetValue(NormalizeOrderId(latestFillTransaction.OrderId), out var failedOrder))
+            {
+                continue;
+            }
+
+            AddReconciliationTransaction(session.OwnerUserId, position, failedOrder.Id, now);
+            ClearFailedOrderFillProjection(failedOrder, now);
+            ClearPosition(position, now);
+            affectedBotIds.Add(position.BotId!.Value);
+            reconciledPositionCount++;
+            sampleExecutionOrderId ??= failedOrder.Id;
+        }
+
+        var openPositionCountsByBotId = affectedBotIds.ToDictionary(
+            botId => botId,
+            botId => positions.Count(position => position.BotId == botId && !position.IsDeleted && position.Quantity != 0m));
+
+        return reconciledPositionCount == 0
+            ? FailedOrderLeakReconciliationResult.Empty
+            : new FailedOrderLeakReconciliationResult(reconciledPositionCount, openPositionCountsByBotId, sampleExecutionOrderId);
+    }
+
+    private async Task<FailedOrderWalletLeakReconciliationResult> ReconcileFailedDemoOrderWalletLeaksAsync(
+        DemoSession session,
+        CancellationToken cancellationToken)
+    {
+        var sessionStartedAtUtc = NormalizeTimestamp(session.StartedAtUtc);
+        var failedOrders = await dbContext.ExecutionOrders
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.OwnerUserId == session.OwnerUserId &&
+                !entity.IsDeleted &&
+                entity.ExecutionEnvironment == ExecutionEnvironment.Demo &&
+                entity.ExecutorKind == ExecutionOrderExecutorKind.Virtual &&
+                entity.CreatedDate >= sessionStartedAtUtc &&
+                (entity.State == ExecutionOrderState.Failed ||
+                 entity.State == ExecutionOrderState.Rejected) &&
+                entity.FailureCode == "VirtualWatchdogFailedClosed")
+            .Select(entity => new { entity.Id })
+            .ToListAsync(cancellationToken);
+
+        if (failedOrders.Count == 0)
+        {
+            return FailedOrderWalletLeakReconciliationResult.Empty;
+        }
+
+        var failedOrderIds = failedOrders
+            .Select(entity => entity.Id.ToString("N"))
+            .ToArray();
+        var existingReconciliationOrderIds = await dbContext.DemoLedgerTransactions
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.OwnerUserId == session.OwnerUserId &&
+                !entity.IsDeleted &&
+                entity.TransactionType == DemoLedgerTransactionType.Reconciled &&
+                entity.OperationId.StartsWith("demo-reconcile:failed-order-wallet:") &&
+                entity.OrderId != null &&
+                failedOrderIds.Contains(entity.OrderId))
+            .Select(entity => entity.OrderId!)
+            .ToListAsync(cancellationToken);
+        var reconciledOrderIds = existingReconciliationOrderIds.ToHashSet(StringComparer.Ordinal);
+        var ledgerDeltas = await (
+                from transaction in dbContext.DemoLedgerTransactions.IgnoreQueryFilters().AsNoTracking()
+                join entry in dbContext.DemoLedgerEntries.IgnoreQueryFilters().AsNoTracking()
+                    on transaction.Id equals entry.DemoLedgerTransactionId
+                where transaction.OwnerUserId == session.OwnerUserId &&
+                      !transaction.IsDeleted &&
+                      transaction.CreatedDate >= sessionStartedAtUtc &&
+                      transaction.OrderId != null &&
+                      failedOrderIds.Contains(transaction.OrderId) &&
+                      transaction.TransactionType != DemoLedgerTransactionType.Reconciled &&
+                      !entry.IsDeleted
+                select new FailedOrderWalletLedgerDelta(
+                    transaction.OrderId!,
+                    entry.Asset,
+                    entry.AvailableDelta,
+                    entry.ReservedDelta))
+            .ToListAsync(cancellationToken);
+
+        if (ledgerDeltas.Count == 0)
+        {
+            return FailedOrderWalletLeakReconciliationResult.Empty;
+        }
+
+        var wallets = await dbContext.DemoWallets
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.OwnerUserId == session.OwnerUserId &&
+                !entity.IsDeleted)
+            .ToDictionaryAsync(entity => entity.Asset, StringComparer.Ordinal, cancellationToken);
+        var now = NormalizeTimestamp(timeProvider.GetUtcNow().UtcDateTime);
+        var reconciledOrderCount = 0;
+        Guid? sampleExecutionOrderId = null;
+
+        foreach (var failedOrder in failedOrders)
+        {
+            var orderId = failedOrder.Id.ToString("N");
+
+            if (reconciledOrderIds.Contains(orderId))
+            {
+                continue;
+            }
+
+            var deltas = ledgerDeltas
+                .Where(entity => string.Equals(entity.OrderId, orderId, StringComparison.Ordinal))
+                .GroupBy(entity => entity.Asset, StringComparer.Ordinal)
+                .Select(group => new
+                {
+                    Asset = group.Key,
+                    AvailableDelta = group.Sum(entity => entity.AvailableDelta),
+                    ReservedDelta = group.Sum(entity => entity.ReservedDelta)
+                })
+                .Where(entity =>
+                    Math.Abs(entity.AvailableDelta) > optionsValue.ConsistencyTolerance ||
+                    Math.Abs(entity.ReservedDelta) > optionsValue.ConsistencyTolerance)
+                .ToArray();
+
+            if (deltas.Length == 0)
+            {
+                continue;
+            }
+
+            var transactionId = Guid.NewGuid();
+            dbContext.DemoLedgerTransactions.Add(new DemoLedgerTransaction
+            {
+                Id = transactionId,
+                OwnerUserId = session.OwnerUserId,
+                OperationId = $"demo-reconcile:failed-order-wallet:{orderId}",
+                TransactionType = DemoLedgerTransactionType.Reconciled,
+                PositionScopeKey = PortfolioScopeKey,
+                OrderId = orderId,
+                OccurredAtUtc = now
+            });
+
+            foreach (var delta in deltas)
+            {
+                if (!wallets.TryGetValue(delta.Asset, out var wallet))
+                {
+                    wallet = new DemoWallet
+                    {
+                        OwnerUserId = session.OwnerUserId,
+                        Asset = delta.Asset
+                    };
+                    wallets[delta.Asset] = wallet;
+                    dbContext.DemoWallets.Add(wallet);
+                }
+
+                wallet.AvailableBalance = ClampToZero(wallet.AvailableBalance - delta.AvailableDelta);
+                wallet.ReservedBalance = ClampToZero(wallet.ReservedBalance - delta.ReservedDelta);
+                wallet.LastActivityAtUtc = now;
+                dbContext.DemoLedgerEntries.Add(new DemoLedgerEntry
+                {
+                    Id = Guid.NewGuid(),
+                    OwnerUserId = session.OwnerUserId,
+                    DemoLedgerTransactionId = transactionId,
+                    Asset = delta.Asset,
+                    AvailableDelta = ClampToZero(-delta.AvailableDelta),
+                    ReservedDelta = ClampToZero(-delta.ReservedDelta),
+                    AvailableBalanceAfter = wallet.AvailableBalance,
+                    ReservedBalanceAfter = wallet.ReservedBalance
+                });
+            }
+
+            await demoWalletValuationService.SyncAsync(wallets.Values, cancellationToken);
+            reconciledOrderCount++;
+            sampleExecutionOrderId ??= failedOrder.Id;
+        }
+
+        return reconciledOrderCount == 0
+            ? FailedOrderWalletLeakReconciliationResult.Empty
+            : new FailedOrderWalletLeakReconciliationResult(reconciledOrderCount, sampleExecutionOrderId);
+    }
+
+    private async Task<HashSet<Guid>> ResolveStaleDemoBotStateIdsAsync(string ownerUserId, CancellationToken cancellationToken)
+    {
+        var bots = await dbContext.TradingBots
+            .IgnoreQueryFilters()
+            .Where(entity => entity.OwnerUserId == ownerUserId && !entity.IsDeleted)
+            .Select(entity => new
+            {
+                entity.Id,
+                entity.OpenOrderCount,
+                entity.OpenPositionCount
+            })
+            .ToListAsync(cancellationToken);
+
+        if (bots.Count == 0)
+        {
+            return [];
+        }
+
+        var botIds = bots.Select(entity => entity.Id).ToArray();
+        var openPositionCounts = await dbContext.DemoPositions
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.BotId.HasValue &&
+                botIds.Contains(entity.BotId.Value) &&
+                !entity.IsDeleted &&
+                entity.Quantity != 0m)
+            .GroupBy(entity => entity.BotId!.Value)
+            .Select(group => new { BotId = group.Key, Count = group.Count() })
+            .ToDictionaryAsync(entity => entity.BotId, entity => entity.Count, cancellationToken);
+        var openOrderCounts = await dbContext.ExecutionOrders
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.BotId.HasValue &&
+                botIds.Contains(entity.BotId.Value) &&
+                !entity.IsDeleted &&
+                OpenOrderStates.Contains(entity.State))
+            .GroupBy(entity => entity.BotId!.Value)
+            .Select(group => new { BotId = group.Key, Count = group.Count() })
+            .ToDictionaryAsync(entity => entity.BotId, entity => entity.Count, cancellationToken);
+
+        return bots
+            .Where(entity =>
+                entity.OpenPositionCount != openPositionCounts.GetValueOrDefault(entity.Id) ||
+                entity.OpenOrderCount != openOrderCounts.GetValueOrDefault(entity.Id))
+            .Select(entity => entity.Id)
+            .ToHashSet();
+    }
+
+    private void AddReconciliationTransaction(
+        string ownerUserId,
+        DemoPosition position,
+        Guid executionOrderId,
+        DateTime occurredAtUtc)
+    {
+        dbContext.DemoLedgerTransactions.Add(new DemoLedgerTransaction
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = ownerUserId,
+            OperationId = $"demo-reconcile:failed-order-leak:{position.Id:N}:{executionOrderId:N}",
+            TransactionType = DemoLedgerTransactionType.Reconciled,
+            BotId = position.BotId,
+            PositionScopeKey = position.PositionScopeKey,
+            OrderId = executionOrderId.ToString("N"),
+            Symbol = position.Symbol,
+            BaseAsset = position.BaseAsset,
+            QuoteAsset = position.QuoteAsset,
+            PositionKind = DemoPositionKind.Spot,
+            PositionQuantityAfter = 0m,
+            PositionCostBasisAfter = 0m,
+            PositionAverageEntryPriceAfter = 0m,
+            CumulativeRealizedPnlAfter = 0m,
+            UnrealizedPnlAfter = 0m,
+            CumulativeFeesInQuoteAfter = 0m,
+            NetFundingInQuoteAfter = 0m,
+            OccurredAtUtc = occurredAtUtc
+        });
+    }
+
+    private static void ClearFailedOrderFillProjection(ExecutionOrder order, DateTime observedAtUtc)
+    {
+        order.FilledQuantity = 0m;
+        order.AverageFillPrice = null;
+        order.LastFilledAtUtc = null;
+        order.UpdatedDate = observedAtUtc;
+    }
+
+    private static void ClearPosition(DemoPosition position, DateTime observedAtUtc)
+    {
+        position.PositionKind = DemoPositionKind.Spot;
+        position.MarginMode = null;
+        position.Leverage = null;
+        position.Quantity = 0m;
+        position.CostBasis = 0m;
+        position.AverageEntryPrice = 0m;
+        position.RealizedPnl = 0m;
+        position.UnrealizedPnl = 0m;
+        position.TotalFeesInQuote = 0m;
+        position.NetFundingInQuote = 0m;
+        position.IsolatedMargin = null;
+        position.MaintenanceMarginRate = null;
+        position.MaintenanceMargin = null;
+        position.MarginBalance = null;
+        position.LiquidationPrice = null;
+        position.LastMarkPrice = null;
+        position.LastPrice = null;
+        position.LastFillPrice = null;
+        position.LastFundingRate = null;
+        position.LastFilledAtUtc = null;
+        position.LastValuationAtUtc = observedAtUtc;
+        position.LastFundingAppliedAtUtc = null;
+    }
+
+    private static string NormalizeOrderId(string value) => value.Trim().Replace("-", string.Empty, StringComparison.Ordinal).ToLowerInvariant();
 
     public async Task<DemoSessionSnapshot> ResetAsync(DemoSessionResetRequest request, CancellationToken cancellationToken = default)
     {
@@ -236,6 +648,33 @@ public sealed class DemoSessionService(
                               entity.TotalFeesInQuote != 0m ||
                               entity.NetFundingInQuote != 0m),
                    cancellationToken);
+    }
+
+    private async Task EnsureSeededPortfolioStateAsync(DemoSession session, CancellationToken cancellationToken)
+    {
+        var hasCurrentState = await HasCurrentDemoStateAsync(session.OwnerUserId, cancellationToken);
+        if (hasCurrentState)
+        {
+            return;
+        }
+
+        var sessionStartedAtUtc = NormalizeTimestamp(session.StartedAtUtc);
+        var hasLedgerActivity = await dbContext.DemoLedgerTransactions
+            .IgnoreQueryFilters()
+            .AnyAsync(
+                entity => entity.OwnerUserId == session.OwnerUserId &&
+                          !entity.IsDeleted &&
+                          entity.CreatedDate >= sessionStartedAtUtc,
+                cancellationToken);
+
+        if (hasLedgerActivity)
+        {
+            return;
+        }
+
+        var now = NormalizeTimestamp(timeProvider.GetUtcNow().UtcDateTime);
+        await SeedResetWalletAsync(session, session.SeedAsset, session.SeedAmount, now, cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
     }
 
     private async Task<int> ResolveNextSequenceNumberAsync(string ownerUserId, CancellationToken cancellationToken)
@@ -501,7 +940,7 @@ public sealed class DemoSessionService(
         });
     }
 
-    private async Task UpdateBotStateAsync(Guid botId, CancellationToken cancellationToken)
+    private async Task UpdateBotStateAsync(Guid botId, CancellationToken cancellationToken, int? openPositionCountOverride = null)
     {
         var bot = await dbContext.TradingBots
             .IgnoreQueryFilters()
@@ -515,7 +954,7 @@ public sealed class DemoSessionService(
         bot.OpenOrderCount = await dbContext.ExecutionOrders
             .IgnoreQueryFilters()
             .CountAsync(entity => entity.BotId == botId && !entity.IsDeleted && OpenOrderStates.Contains(entity.State), cancellationToken);
-        bot.OpenPositionCount = await dbContext.DemoPositions
+        bot.OpenPositionCount = openPositionCountOverride ?? await dbContext.DemoPositions
             .IgnoreQueryFilters()
             .CountAsync(entity => entity.BotId == botId && !entity.IsDeleted && entity.Quantity != 0m, cancellationToken);
     }
@@ -579,6 +1018,30 @@ public sealed class DemoSessionService(
 
     private static string BuildOrderResetDetail(string? resetReason) => string.IsNullOrWhiteSpace(resetReason) ? "Demo session reset applied." : $"Demo session reset applied. Reason={resetReason}";
 
+    private static string BuildFailedOrderLeakReconciliationContext(int reconciledPositionCount, Guid? sampleExecutionOrderId)
+    {
+        var parts = new List<string>
+        {
+            $"ReconciledPositions={reconciledPositionCount}",
+            "Reason=FailedDemoVirtualOrderLeak",
+            $"SampleExecutionOrder={(sampleExecutionOrderId.HasValue ? sampleExecutionOrderId.Value.ToString("N") : "none")}"
+        };
+
+        return Truncate(string.Join(" | ", parts), 2048) ?? "Failed demo virtual order leak reconciled.";
+    }
+
+    private static string BuildFailedOrderWalletLeakReconciliationContext(int reconciledOrderCount, Guid? sampleExecutionOrderId)
+    {
+        var parts = new List<string>
+        {
+            $"ReconciledOrders={reconciledOrderCount}",
+            "Reason=FailedDemoVirtualOrderWalletLeak",
+            $"SampleExecutionOrder={(sampleExecutionOrderId.HasValue ? sampleExecutionOrderId.Value.ToString("N") : "none")}"
+        };
+
+        return Truncate(string.Join(" | ", parts), 2048) ?? "Failed demo virtual order wallet leak reconciled.";
+    }
+
     private static string CreateCorrelationId() => Guid.NewGuid().ToString("N");
 
     private static string NormalizeRequired(string? value, string parameterName, int maxLength = 450)
@@ -610,6 +1073,8 @@ public sealed class DemoSessionService(
 
     private static string? Truncate(string? value, int maxLength) => string.IsNullOrWhiteSpace(value) ? null : value.Length <= maxLength ? value : value[..maxLength];
 
+    private decimal ClampToZero(decimal value) => Math.Abs(value) <= optionsValue.ConsistencyTolerance ? 0m : value;
+
     private static DateTime NormalizeTimestamp(DateTime value)
     {
         return value.Kind switch
@@ -619,4 +1084,25 @@ public sealed class DemoSessionService(
             _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
         };
     }
+
+    private sealed record FailedOrderLeakReconciliationResult(
+        int ReconciledPositionCount,
+        Dictionary<Guid, int> OpenPositionCountsByBotId,
+        Guid? SampleExecutionOrderId)
+    {
+        public static FailedOrderLeakReconciliationResult Empty => new(0, new Dictionary<Guid, int>(), null);
+    }
+
+    private sealed record FailedOrderWalletLeakReconciliationResult(
+        int ReconciledOrderCount,
+        Guid? SampleExecutionOrderId)
+    {
+        public static FailedOrderWalletLeakReconciliationResult Empty => new(0, null);
+    }
+
+    private sealed record FailedOrderWalletLedgerDelta(
+        string OrderId,
+        string Asset,
+        decimal AvailableDelta,
+        decimal ReservedDelta);
 }

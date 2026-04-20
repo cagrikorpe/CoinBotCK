@@ -234,6 +234,14 @@ public sealed class ExecutionGate(
             !string.IsNullOrWhiteSpace(request.UserId))
         {
             demoSessionSnapshot = await demoSessionService.RunConsistencyCheckAsync(request.UserId, cancellationToken);
+            demoSessionSnapshot ??= await demoSessionService.ResetAsync(
+                new DemoSessionResetRequest(
+                    request.UserId,
+                    ExecutionEnvironment.Demo,
+                    request.Actor,
+                    "Auto-bootstrap demo session for execution request.",
+                    request.CorrelationId),
+                cancellationToken);
 
             if (demoSessionSnapshot is not null &&
                 demoSessionSnapshot.ConsistencyStatus == DemoConsistencyStatus.DriftDetected)
@@ -557,10 +565,10 @@ public sealed class ExecutionGate(
             blockedReasons.Add(ExecutionGateBlockedReason.PilotConfigurationMissing);
         }
 
-        if (!string.Equals(privateRestEnvironmentScope, "Demo", StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(privateSocketEnvironmentScope, "Demo", StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(marketDataRestEnvironmentScope, "Demo", StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(marketDataSocketEnvironmentScope, "Demo", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(privateRestEnvironmentScope, "Testnet", StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(privateSocketEnvironmentScope, "Testnet", StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(marketDataRestEnvironmentScope, "Testnet", StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(marketDataSocketEnvironmentScope, "Testnet", StringComparison.OrdinalIgnoreCase))
         {
             blockedReasons.Add(ExecutionGateBlockedReason.PilotTestnetEndpointMismatch);
         }
@@ -607,7 +615,7 @@ public sealed class ExecutionGate(
                     blockedReasons.Add(ExecutionGateBlockedReason.PilotCredentialValidationUnavailable);
                 }
                 else if (!latestValidation.IsEnvironmentMatch ||
-                         !string.Equals(credentialEnvironmentScope, "Demo", StringComparison.OrdinalIgnoreCase))
+                         !string.Equals(credentialEnvironmentScope, "Testnet", StringComparison.OrdinalIgnoreCase))
                 {
                     blockedReasons.Add(ExecutionGateBlockedReason.PilotCredentialEnvironmentMismatch);
                 }
@@ -762,14 +770,14 @@ public sealed class ExecutionGate(
                 host.EndsWith(".binancefuture.com", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(host, "binancefuture.com", StringComparison.OrdinalIgnoreCase))
             {
-                return "Demo";
+                return "Testnet";
             }
         }
 
         return normalizedValue.Contains("testnet", StringComparison.OrdinalIgnoreCase) ||
                normalizedValue.Contains("demo", StringComparison.OrdinalIgnoreCase) ||
                normalizedValue.Contains("binancefuture.com", StringComparison.OrdinalIgnoreCase)
-            ? "Demo"
+            ? "Testnet"
             : "Live";
     }
     private static ExecutionGateBlockedReason? ResolveLatencyBlockedReason(DegradedModeSnapshot snapshot)
@@ -1445,8 +1453,6 @@ public sealed class ExecutionGate(
         return false;
     }
 }
-
-
 
 
 

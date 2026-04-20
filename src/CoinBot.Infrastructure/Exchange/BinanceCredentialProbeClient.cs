@@ -369,7 +369,7 @@ public sealed class BinanceCredentialProbeClient(
         var normalized = baseUrl.Trim();
         return normalized.Contains("testnet", StringComparison.OrdinalIgnoreCase) ||
                normalized.Contains("demo", StringComparison.OrdinalIgnoreCase)
-            ? "Demo"
+            ? "Testnet"
             : "Live";
     }
 

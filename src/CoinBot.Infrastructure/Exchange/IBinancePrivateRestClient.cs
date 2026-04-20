@@ -51,4 +51,14 @@ public interface IBinancePrivateRestClient
         string apiKey,
         string apiSecret,
         CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyCollection<ExchangePositionSnapshot>> GetPositionRiskSnapshotsAsync(
+        Guid exchangeAccountId,
+        string ownerUserId,
+        string apiKey,
+        string apiSecret,
+        CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult<IReadOnlyCollection<ExchangePositionSnapshot>>(Array.Empty<ExchangePositionSnapshot>());
+    }
 }

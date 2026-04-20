@@ -74,7 +74,7 @@ public sealed class ExecutionGateTests
             ExchangeAccountId = exchangeAccountId,
             OwnerUserId = "user-pilot-bypass",
             ValidationStatus = "Valid",
-            EnvironmentScope = "Demo",
+            EnvironmentScope = "Testnet",
             IsKeyValid = true,
             CanTrade = true,
             SupportsFutures = true,
@@ -217,6 +217,42 @@ public sealed class ExecutionGateTests
     }
 
     [Fact]
+    public async Task EnsureExecutionAllowedAsync_BootstrapsDemoSessionWallet_WhenDemoRequestHasNoSession()
+    {
+        await using var harness = CreateHarness();
+        await PrimeFreshMarketDataAsync(harness, "corr-demo-bootstrap-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-12",
+            context: "Demo execution window open",
+            correlationId: "corr-demo-bootstrap-2");
+
+        var snapshot = await harness.ExecutionGate.EnsureExecutionAllowedAsync(
+            new ExecutionGateRequest(
+                Actor: "system:market-scanner",
+                Action: "MarketScanner.Handoff",
+                Target: "MarketScannerCandidate/demo-bootstrap",
+                Environment: ExecutionEnvironment.Demo,
+                Context: "Demo scanner handoff",
+                CorrelationId: "corr-demo-bootstrap-3",
+                UserId: "user-demo-bootstrap",
+                Symbol: "BTCUSDT",
+                Timeframe: "1m"));
+
+        var wallet = await harness.DbContext.DemoWallets.SingleAsync(entity => entity.OwnerUserId == "user-demo-bootstrap");
+        var session = await harness.DbContext.DemoSessions.SingleAsync(entity => entity.OwnerUserId == "user-demo-bootstrap");
+        var sessionAudit = await harness.DbContext.AuditLogs.SingleAsync(entity => entity.Action == "DemoSession.ResetApplied");
+        Assert.True(snapshot.DemoModeEnabled);
+        Assert.Equal(DemoSessionState.Active, session.State);
+        Assert.Equal(DemoConsistencyStatus.InSync, session.ConsistencyStatus);
+        Assert.Equal("USDT", wallet.Asset);
+        Assert.Equal(10000m, wallet.AvailableBalance);
+        Assert.Equal(0m, wallet.ReservedBalance);
+        Assert.Equal("system:market-scanner", sessionAudit.Actor);
+        Assert.Equal(nameof(ExecutionEnvironment.Demo), sessionAudit.Environment);
+    }
+
+    [Fact]
     public async Task EnsureExecutionAllowedAsync_BlocksWhenDemoSessionDriftIsDetected()
     {
         await using var harness = CreateHarness();
@@ -345,7 +381,7 @@ public sealed class ExecutionGateTests
         Assert.Equal("Allowed", auditLog.Outcome);
         Assert.Contains("DecisionOutcome=Allow", auditLog.Context, StringComparison.Ordinal);
         Assert.Contains("PilotGuardSummary=PilotRequest=True", auditLog.Context, StringComparison.Ordinal);
-        Assert.Contains("EndpointScopes=PrivateRest:Demo/PrivateWs:Demo/MarketRest:Demo/MarketWs:Demo", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("EndpointScopes=PrivateRest:Testnet/PrivateWs:Testnet/MarketRest:Testnet/MarketWs:Testnet", auditLog.Context, StringComparison.Ordinal);
         Assert.Contains("PilotBlockedReasons=none", auditLog.Context, StringComparison.Ordinal);
         Assert.Equal("Allow", decisionTrace.DecisionOutcome);
         Assert.Contains("\"pilotSafety\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
@@ -1020,7 +1056,7 @@ public sealed class ExecutionGateTests
         string ownerUserId,
         Guid exchangeAccountId,
         DateTime? lastPrivateSyncAtUtc = null,
-        string environmentScope = "Demo",
+        string environmentScope = "Testnet",
         bool isEnvironmentMatch = true,
         bool canTrade = true,
         bool supportsFutures = true,
@@ -1174,9 +1210,5 @@ public sealed class ExecutionGateTests
         }
     }
 }
-
-
-
-
 
 

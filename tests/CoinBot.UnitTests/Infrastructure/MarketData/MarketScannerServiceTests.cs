@@ -276,6 +276,336 @@ public sealed class MarketScannerServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_ReportsNoEnabledBotForSymbol_DistinctFromNoPublishedStrategy()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        await dbContext.SaveChangesAsync();
+
+        var marketDataService = new FakeMarketDataService();
+        marketDataService.SetLatestPrice("BTCUSDT", 100m, nowUtc.UtcDateTime);
+
+        var service = new MarketScannerService(
+            dbContext,
+            marketDataService,
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("BTCUSDT", "Binance", "BTC", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 10,
+                Min24hQuoteVolume = 100m,
+                MaxDataAgeSeconds = 120,
+                StrategyScoreWeight = 2m,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = true
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["BTCUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance,
+            handoffService: null,
+            indicatorDataService: new FakeIndicatorDataService(),
+            strategyEvaluatorService: new FakeStrategyEvaluatorService(),
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }));
+
+        var cycle = await service.RunOnceAsync();
+
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+        Assert.False(candidate.IsEligible);
+        Assert.Equal("NoEnabledBotForSymbol", candidate.RejectionReason);
+        Assert.Contains("StrategyOutcome=NoEnabledBotForSymbol", candidate.ScoringSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_AcceptsActivePublishedVersion_WhenStrategyHeaderStateIsDraft()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        var strategyId = Guid.NewGuid();
+        var activeVersionId = Guid.NewGuid();
+        var marketDataService = new FakeMarketDataService();
+        marketDataService.SetLatestPrice("BTCUSDT", 100m, nowUtc.UtcDateTime);
+
+        dbContext.TradingStrategies.Add(new TradingStrategy
+        {
+            Id = strategyId,
+            OwnerUserId = "user-header-drift",
+            StrategyKey = "scanner-header-drift",
+            DisplayName = "scanner-header-drift",
+            PromotionState = StrategyPromotionState.Draft,
+            PublishedMode = null,
+            PublishedAtUtc = null,
+            UsesExplicitVersionLifecycle = true,
+            ActiveTradingStrategyVersionId = activeVersionId,
+            ActiveVersionActivatedAtUtc = nowUtc.UtcDateTime.AddMinutes(-5)
+        });
+        dbContext.TradingStrategyVersions.Add(new TradingStrategyVersion
+        {
+            Id = activeVersionId,
+            OwnerUserId = "user-header-drift",
+            TradingStrategyId = strategyId,
+            SchemaVersion = 2,
+            VersionNumber = 1,
+            Status = StrategyVersionStatus.Published,
+            DefinitionJson = "{\"schemaVersion\":2,\"metadata\":{\"templateKey\":\"active-v1\",\"templateName\":\"Active V1\"},\"entry\":{\"path\":\"context.mode\",\"comparison\":\"equals\",\"value\":\"Live\"}}",
+            PublishedAtUtc = nowUtc.UtcDateTime.AddMinutes(-5)
+        });
+        dbContext.TradingBots.Add(new TradingBot
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "user-header-drift",
+            Name = "scanner-header-drift bot",
+            StrategyKey = "scanner-header-drift",
+            Symbol = "BTCUSDT",
+            IsEnabled = true
+        });
+        SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        await dbContext.SaveChangesAsync();
+
+        var indicatorDataService = new FakeIndicatorDataService();
+        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", nowUtc.UtcDateTime));
+
+        var strategyEvaluatorService = new FakeStrategyEvaluatorService();
+        strategyEvaluatorService.SetReport("BTCUSDT", CreateEvaluationReport(strategyId, activeVersionId, "scanner-header-drift", "BTCUSDT", "1m", nowUtc.UtcDateTime, 95, "Active strategy accepted."));
+
+        var service = new MarketScannerService(
+            dbContext,
+            marketDataService,
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("BTCUSDT", "Binance", "BTC", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 10,
+                Min24hQuoteVolume = 1_000m,
+                MaxDataAgeSeconds = 120,
+                StrategyScoreWeight = 2m,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = true
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["BTCUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance,
+            handoffService: null,
+            indicatorDataService,
+            strategyEvaluatorService,
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }));
+
+        var cycle = await service.RunOnceAsync();
+
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+        Assert.True(candidate.IsEligible);
+        Assert.Null(candidate.RejectionReason);
+        Assert.Equal(activeVersionId, Assert.Single(strategyEvaluatorService.RequestedVersionIds));
+        Assert.Contains("StrategyKey=scanner-header-drift", candidate.ScoringSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_ReportsStrategyRiskVetoWithRuleScopedReason()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        var strategy = await SeedStrategyGraphAsync(dbContext, "user-risk", "SOLUSDT", "scanner-risk", "{}");
+        SeedCandles(dbContext, "SOLUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        await dbContext.SaveChangesAsync();
+
+        var marketDataService = new FakeMarketDataService();
+        marketDataService.SetLatestPrice("SOLUSDT", 100m, nowUtc.UtcDateTime);
+        var indicatorDataService = new FakeIndicatorDataService();
+        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", nowUtc.UtcDateTime));
+
+        var failedRiskRule = new StrategyRuleResultSnapshot(
+            false,
+            null,
+            "indicator.rsi.value",
+            StrategyRuleComparisonOperator.LessThan,
+            "30",
+            StrategyRuleOperandKind.Number,
+            "47.5",
+            "30",
+            Array.Empty<StrategyRuleResultSnapshot>(),
+            RuleId: "risk-rsi-floor",
+            RuleType: "risk",
+            Timeframe: "1m",
+            Group: "risk",
+            Reason: "RSI did not enter the risk-approved band.");
+        var riskResult = new StrategyRuleResultSnapshot(
+            false,
+            StrategyRuleGroupOperator.All,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            [failedRiskRule],
+            RuleId: "risk-root",
+            RuleType: "risk",
+            Timeframe: "1m",
+            Group: "risk",
+            Reason: "Risk root failed.");
+        var evaluationResult = new StrategyEvaluationResult(
+            HasEntryRules: true,
+            EntryMatched: false,
+            HasExitRules: false,
+            ExitMatched: false,
+            HasRiskRules: true,
+            RiskPassed: false,
+            EntryRuleResult: null,
+            ExitRuleResult: null,
+            RiskRuleResult: riskResult);
+
+        var strategyEvaluatorService = new FakeStrategyEvaluatorService();
+        strategyEvaluatorService.SetReport(
+            "SOLUSDT",
+            CreateEvaluationReport(
+                strategy.TradingStrategyId,
+                strategy.TradingStrategyVersionId,
+                "scanner-risk",
+                "SOLUSDT",
+                "1m",
+                nowUtc.UtcDateTime,
+                67,
+                "Risk rule failed.",
+                "RiskVetoed",
+                evaluationResult,
+                ["entry-ready [data-quality/1m] PASS w=10 :: ready"],
+                ["risk-rsi-floor [risk/1m] FAIL w=30 :: RSI did not enter the risk-approved band."]));
+
+        var service = new MarketScannerService(
+            dbContext,
+            marketDataService,
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("SOLUSDT", "Binance", "SOL", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 10,
+                Min24hQuoteVolume = 1_000m,
+                MaxDataAgeSeconds = 120,
+                StrategyScoreWeight = 2m,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = true
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["SOLUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance,
+            handoffService: null,
+            indicatorDataService,
+            strategyEvaluatorService,
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }));
+
+        var cycle = await service.RunOnceAsync();
+
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+        Assert.False(candidate.IsEligible);
+        Assert.Equal("StrategyRiskVetoedRiskRsiFloor", candidate.RejectionReason);
+        Assert.Contains("StrategyBlocker=StrategyRiskVetoedRiskRsiFloor", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("StrategyRiskVetoedRiskRsiFloor:1 [SOLUSDT]", cycle.Summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_ReportsExitMatchedWithDirectionScopedReason()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        var strategy = await SeedStrategyGraphAsync(dbContext, "user-exit", "SOLUSDT", "scanner-exit", "{}");
+        SeedCandles(dbContext, "SOLUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        await dbContext.SaveChangesAsync();
+
+        var marketDataService = new FakeMarketDataService();
+        marketDataService.SetLatestPrice("SOLUSDT", 100m, nowUtc.UtcDateTime);
+        var indicatorDataService = new FakeIndicatorDataService();
+        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", nowUtc.UtcDateTime));
+
+        var exitRule = new StrategyRuleResultSnapshot(
+            true,
+            null,
+            "indicator.rsi.value",
+            StrategyRuleComparisonOperator.GreaterThanOrEqual,
+            "45",
+            StrategyRuleOperandKind.Number,
+            "47.5",
+            "45",
+            Array.Empty<StrategyRuleResultSnapshot>(),
+            RuleId: "long-exit-rsi-recover",
+            RuleType: "exit",
+            Timeframe: "1m",
+            Group: "long-exit",
+            Reason: "Long exit RSI recovery matched.");
+        var evaluationResult = new StrategyEvaluationResult(
+            HasEntryRules: true,
+            EntryMatched: false,
+            HasExitRules: true,
+            ExitMatched: true,
+            HasRiskRules: true,
+            RiskPassed: true,
+            EntryRuleResult: null,
+            ExitRuleResult: exitRule,
+            RiskRuleResult: null,
+            Direction: StrategyTradeDirection.Long,
+            EntryDirection: StrategyTradeDirection.Neutral,
+            ExitDirection: StrategyTradeDirection.Long);
+
+        var strategyEvaluatorService = new FakeStrategyEvaluatorService();
+        strategyEvaluatorService.SetReport(
+            "SOLUSDT",
+            CreateEvaluationReport(
+                strategy.TradingStrategyId,
+                strategy.TradingStrategyVersionId,
+                "scanner-exit",
+                "SOLUSDT",
+                "1m",
+                nowUtc.UtcDateTime,
+                77,
+                "Long exit matched.",
+                "ExitMatched",
+                evaluationResult,
+                ["long-exit-rsi-recover [exit/1m] PASS w=60 :: Long exit RSI recovery matched."],
+                ["entry-rsi-soft [rsi/1m] FAIL w=30 :: Entry not matched."]));
+
+        var service = new MarketScannerService(
+            dbContext,
+            marketDataService,
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("SOLUSDT", "Binance", "SOL", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 10,
+                Min24hQuoteVolume = 1_000m,
+                MaxDataAgeSeconds = 120,
+                StrategyScoreWeight = 2m,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = true
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["SOLUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance,
+            handoffService: null,
+            indicatorDataService,
+            strategyEvaluatorService,
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }));
+
+        var cycle = await service.RunOnceAsync();
+
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+        Assert.False(candidate.IsEligible);
+        Assert.Equal("StrategyLongExitMatched", candidate.RejectionReason);
+        Assert.Contains("StrategyBlocker=StrategyLongExitMatched", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("StrategyLongExitMatched:1 [SOLUSDT]", cycle.Summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task RunOnceAsync_UsesActiveHistoricalQuerySet_ForUniverseAndQuoteVolume()
     {
         var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
@@ -1362,9 +1692,15 @@ public sealed class MarketScannerServiceTests
         string timeframe,
         DateTime evaluatedAtUtc,
         int aggregateScore,
-        string explanation)
+        string explanation,
+        string outcome = "EntryMatched",
+        StrategyEvaluationResult? ruleEvaluation = null,
+        IReadOnlyCollection<string>? passedRules = null,
+        IReadOnlyCollection<string>? failedRules = null)
     {
         var indicatorSnapshot = CreateIndicatorSnapshot(symbol, timeframe, evaluatedAtUtc);
+        var resolvedPassedRules = passedRules ?? new[] { "entry-mode [context/1m] PASS w=20 :: matched" };
+        var resolvedFailedRules = failedRules ?? Array.Empty<string>();
         return new StrategyEvaluationReportSnapshot(
             tradingStrategyId,
             tradingStrategyVersionId,
@@ -1376,14 +1712,14 @@ public sealed class MarketScannerServiceTests
             symbol,
             timeframe,
             evaluatedAtUtc,
-            "EntryMatched",
+            outcome,
             aggregateScore,
-            2,
-            0,
-            new StrategyEvaluationResult(true, true, false, false, true, true, null, null, null),
-            ["entry-mode [context/1m] PASS w=20 :: matched"],
-            [],
-            $"Strategy={strategyKey}; Symbol={indicatorSnapshot.Symbol}; Timeframe={indicatorSnapshot.Timeframe}; Outcome=EntryMatched; Score={aggregateScore}; {explanation}");
+            resolvedPassedRules.Count,
+            resolvedFailedRules.Count,
+            ruleEvaluation ?? new StrategyEvaluationResult(true, true, false, false, true, true, null, null, null),
+            resolvedPassedRules,
+            resolvedFailedRules,
+            $"Strategy={strategyKey}; Symbol={indicatorSnapshot.Symbol}; Timeframe={indicatorSnapshot.Timeframe}; Outcome={outcome}; Score={aggregateScore}; {explanation}");
     }
 
     private static IReadOnlyCollection<MarketCandleSnapshot> CreateClosedCandles(
@@ -1642,4 +1978,3 @@ public sealed class MarketScannerServiceTests
         }
     }
 }
-

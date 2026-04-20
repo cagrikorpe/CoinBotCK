@@ -16,6 +16,48 @@ namespace CoinBot.UnitTests.Infrastructure.Administration;
 public sealed class AdminWorkspaceReadModelServiceTests
 {
     [Fact]
+    public async Task GetBotOperationsAsync_ProjectsOpenCounters_ForOperationsUi()
+    {
+        var now = new DateTime(2026, 4, 20, 9, 30, 0, DateTimeKind.Utc);
+        await using var dbContext = CreateDbContext();
+        dbContext.Users.Add(new ApplicationUser
+        {
+            Id = "usr-ops",
+            UserName = "ops-user",
+            Email = "ops-user@coinbot.local",
+            FullName = "Ops User",
+            TradingModeOverride = ExecutionEnvironment.Live
+        });
+        dbContext.TradingBots.Add(new TradingBot
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "usr-ops",
+            Name = "SOL Ops Bot",
+            StrategyKey = "sol-ops",
+            Symbol = "SOLUSDT",
+            IsEnabled = true,
+            OpenOrderCount = 0,
+            OpenPositionCount = 0,
+            UpdatedDate = now
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminWorkspaceReadModelService(
+            dbContext,
+            new FakeAdminMonitoringReadModelService(now),
+            new FakeTradingModeResolver(),
+            new FixedTimeProvider(now));
+
+        var snapshot = await service.GetBotOperationsAsync("SOL Ops Bot");
+        var row = Assert.Single(snapshot.Bots);
+
+        Assert.Equal(0, row.OpenOrderCount);
+        Assert.Equal(0, row.OpenPositionCount);
+        Assert.Equal("Exposure yok", row.RiskLabel);
+        Assert.Equal("neutral", row.RiskTone);
+    }
+
+    [Fact]
     public async Task GetSupportLookupAsync_UsesRealBotAndExchangeCounts_AndOnlyReturnsActualFailures()
     {
         var now = new DateTime(2026, 3, 31, 10, 0, 0, DateTimeKind.Utc);

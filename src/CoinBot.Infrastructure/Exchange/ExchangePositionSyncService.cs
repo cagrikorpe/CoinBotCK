@@ -1,5 +1,6 @@
 using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Domain.Entities;
+using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -10,6 +11,16 @@ public sealed class ExchangePositionSyncService(
     ApplicationDbContext dbContext,
     ILogger<ExchangePositionSyncService> logger)
 {
+    private static readonly ExecutionOrderState[] OpenOrderStates =
+    [
+        ExecutionOrderState.Received,
+        ExecutionOrderState.GatePassed,
+        ExecutionOrderState.Dispatching,
+        ExecutionOrderState.Submitted,
+        ExecutionOrderState.PartiallyFilled,
+        ExecutionOrderState.CancelRequested
+    ];
+
     public async Task ApplyAsync(ExchangeAccountSnapshot snapshot, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
@@ -77,12 +88,157 @@ public sealed class ExchangePositionSyncService(
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);
+        await RefreshLinkedBotCountersAsync(snapshot, cancellationToken);
 
         logger.LogDebug(
             "Exchange positions synchronized for account {ExchangeAccountId}. Plane={Plane}. Count={PositionCount}.",
             snapshot.ExchangeAccountId,
             snapshot.Plane,
             snapshot.Positions.Count);
+    }
+
+    private async Task RefreshLinkedBotCountersAsync(ExchangeAccountSnapshot snapshot, CancellationToken cancellationToken)
+    {
+        var ownerUserId = snapshot.OwnerUserId.Trim();
+        var bots = await dbContext.TradingBots
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.OwnerUserId == ownerUserId &&
+                entity.ExchangeAccountId == snapshot.ExchangeAccountId &&
+                !entity.IsDeleted)
+            .ToListAsync(cancellationToken);
+
+        if (bots.Count == 0)
+        {
+            return;
+        }
+
+        var openPositionCount = await ResolveOpenPositionCountFromLatestSnapshotAsync(snapshot, cancellationToken);
+
+        foreach (var bot in bots)
+        {
+            bot.OpenOrderCount = await dbContext.ExecutionOrders
+                .IgnoreQueryFilters()
+                .CountAsync(
+                    entity => entity.BotId == bot.Id &&
+                              !entity.IsDeleted &&
+                              OpenOrderStates.Contains(entity.State),
+                    cancellationToken);
+            bot.OpenPositionCount = openPositionCount;
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task<int> ResolveOpenPositionCountFromLatestSnapshotAsync(
+        ExchangeAccountSnapshot snapshot,
+        CancellationToken cancellationToken)
+    {
+        var ownerUserId = snapshot.OwnerUserId.Trim();
+        var syncCutoffUtc = NormalizeTimestamp(snapshot.ReceivedAtUtc);
+        var projectedPositions = new Dictionary<string, decimal>(StringComparer.Ordinal);
+
+        var activePositions = await dbContext.ExchangePositions
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.OwnerUserId == ownerUserId &&
+                entity.ExchangeAccountId == snapshot.ExchangeAccountId &&
+                entity.Plane == snapshot.Plane &&
+                !entity.IsDeleted &&
+                entity.Quantity != 0m)
+            .ToListAsync(cancellationToken);
+
+        foreach (var position in activePositions)
+        {
+            var symbol = NormalizeCode(position.Symbol);
+            projectedPositions[symbol] = projectedPositions.GetValueOrDefault(symbol) +
+                ResolveSignedPositionQuantity(position.Quantity, position.PositionSide);
+        }
+
+        var liveOrdersAfterSnapshot = await dbContext.ExecutionOrders
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.OwnerUserId == ownerUserId &&
+                entity.ExchangeAccountId == snapshot.ExchangeAccountId &&
+                entity.Plane == snapshot.Plane &&
+                !entity.IsDeleted &&
+                entity.SubmittedToBroker &&
+                (entity.State == ExecutionOrderState.Submitted ||
+                 entity.State == ExecutionOrderState.Dispatching ||
+                 entity.State == ExecutionOrderState.CancelRequested ||
+                 entity.State == ExecutionOrderState.PartiallyFilled ||
+                 entity.State == ExecutionOrderState.Filled))
+            .ToListAsync(cancellationToken);
+
+        foreach (var order in liveOrdersAfterSnapshot)
+        {
+            if (ResolveOrderEffectiveAtUtc(order) <= syncCutoffUtc)
+            {
+                continue;
+            }
+
+            var quantity = ResolveSignedOrderQuantity(order);
+            if (quantity == 0m)
+            {
+                continue;
+            }
+
+            var symbol = NormalizeCode(order.Symbol);
+            projectedPositions[symbol] = projectedPositions.GetValueOrDefault(symbol) + quantity;
+        }
+
+        return projectedPositions.Values.Count(quantity => quantity != 0m);
+    }
+
+    private static decimal ResolveSignedPositionQuantity(decimal quantity, string? positionSide)
+    {
+        if (quantity == 0m)
+        {
+            return 0m;
+        }
+
+        return NormalizeCode(positionSide ?? "BOTH") == "SHORT"
+            ? -Math.Abs(quantity)
+            : quantity;
+    }
+
+    private static decimal ResolveSignedOrderQuantity(ExecutionOrder order)
+    {
+        var quantity = order.FilledQuantity > 0m
+            ? order.FilledQuantity
+            : ResolvePendingOrderQuantity(order);
+        if (quantity == 0m)
+        {
+            return 0m;
+        }
+
+        return order.Side == ExecutionOrderSide.Buy ? quantity : -quantity;
+    }
+
+    private static decimal ResolvePendingOrderQuantity(ExecutionOrder order)
+    {
+        if (order.ReduceOnly || order.OrderType != ExecutionOrderType.Market)
+        {
+            return 0m;
+        }
+
+        return order.State is ExecutionOrderState.Submitted or
+            ExecutionOrderState.Dispatching or
+            ExecutionOrderState.CancelRequested
+            ? order.Quantity
+            : 0m;
+    }
+
+    private static DateTime ResolveOrderEffectiveAtUtc(ExecutionOrder order)
+    {
+        return NormalizeTimestamp(
+            order.LastFilledAtUtc ??
+            order.SubmittedAtUtc ??
+            (order.LastStateChangedAtUtc != default ? order.LastStateChangedAtUtc : (DateTime?)null) ??
+            (order.UpdatedDate != default ? order.UpdatedDate : (DateTime?)null) ??
+            order.CreatedDate);
     }
 
     private static string CreateKey(string symbol, string positionSide)

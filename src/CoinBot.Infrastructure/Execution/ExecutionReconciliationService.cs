@@ -42,6 +42,7 @@ public sealed class ExecutionReconciliationService(
                 (OpenStates.Contains(entity.State) ||
                  (entity.SubmittedToBroker &&
                   TerminalStatesRequiringClosure.Contains(entity.State) &&
+                  !string.IsNullOrWhiteSpace(entity.ExternalOrderId) &&
                   (entity.LastReconciledAtUtc == null ||
                    entity.ReconciliationStatus == ExchangeStateDriftStatus.Unknown))))
             .OrderBy(entity => entity.LastReconciledAtUtc ?? DateTime.MinValue)

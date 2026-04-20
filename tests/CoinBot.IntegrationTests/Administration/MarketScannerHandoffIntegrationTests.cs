@@ -110,12 +110,14 @@ public sealed class MarketScannerHandoffIntegrationTests
             await dbContext.SaveChangesAsync();
 
             var strategySignalService = new FakeStrategySignalService(CreateSignal(strategyId, strategyVersionId, "BTCUSDT", "1m", nowUtc.UtcDateTime));
+            var executionEngine = new FakeExecutionEngine(options, nowUtc.UtcDateTime);
             var services = new ServiceCollection();
             services.AddScoped<IDataScopeContextAccessor, TestDataScopeContextAccessor>();
             services.AddScoped(provider => new ApplicationDbContext(options, provider.GetRequiredService<IDataScopeContextAccessor>()));
             services.AddSingleton<IStrategySignalService>(strategySignalService);
             services.AddSingleton<IExecutionGate>(new FakeExecutionGate(nowUtc.UtcDateTime));
             services.AddSingleton<IUserExecutionOverrideGuard>(new FakeUserExecutionOverrideGuard());
+            services.AddSingleton<IExecutionEngine>(executionEngine);
             await using var serviceProvider = services.BuildServiceProvider();
             var handoffService = new MarketScannerHandoffService(
                 dbContext,
@@ -139,6 +141,9 @@ public sealed class MarketScannerHandoffIntegrationTests
             Assert.Equal("BTCUSDT", persistedAttempt.SelectedSymbol);
             Assert.Equal("Prepared", persistedAttempt.ExecutionRequestStatus);
             Assert.Equal("Persisted", persistedAttempt.StrategyDecisionOutcome);
+            var executionOrder = await dbContext.ExecutionOrders.AsNoTracking().SingleAsync(entity => entity.StrategySignalId == persistedAttempt.StrategySignalId);
+            Assert.Equal(ExecutionEnvironment.Live, executionOrder.ExecutionEnvironment);
+            Assert.Equal(ExecutionOrderExecutorKind.Binance, executionOrder.ExecutorKind);
             Assert.Equal(strategyId, persistedAttempt.TradingStrategyId);
             Assert.Equal(strategyVersionId, persistedAttempt.TradingStrategyVersionId);
             Assert.Equal(ExecutionOrderSide.Buy, persistedAttempt.ExecutionSide);
@@ -302,6 +307,7 @@ public sealed class MarketScannerHandoffIntegrationTests
             services.AddScoped(provider => new ApplicationDbContext(options, provider.GetRequiredService<IDataScopeContextAccessor>()));
             services.AddSingleton<IStrategySignalService>(strategySignalService);
             services.AddSingleton<IExecutionGate>(new FakeExecutionGate(nowUtc.UtcDateTime));
+            services.AddSingleton<IExecutionEngine>(new FakeExecutionEngine(options, nowUtc.UtcDateTime));
             services.AddSingleton<IUserExecutionOverrideGuard>(new FakeUserExecutionOverrideGuard(
                 new UserExecutionOverrideEvaluationResult(
                     true,
@@ -561,6 +567,99 @@ public sealed class MarketScannerHandoffIntegrationTests
         }
     }
 
+    private sealed class FakeExecutionEngine(DbContextOptions<ApplicationDbContext> options, DateTime nowUtc) : IExecutionEngine
+    {
+        public async Task<ExecutionDispatchResult> DispatchAsync(ExecutionCommand command, CancellationToken cancellationToken = default)
+        {
+            await using var dbContext = new ApplicationDbContext(options, new TestDataScopeContextAccessor());
+            var order = new ExecutionOrder
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = command.OwnerUserId,
+                TradingStrategyId = command.TradingStrategyId,
+                TradingStrategyVersionId = command.TradingStrategyVersionId,
+                StrategySignalId = command.StrategySignalId,
+                SignalType = command.SignalType,
+                BotId = command.BotId,
+                ExchangeAccountId = command.ExchangeAccountId,
+                Plane = command.Plane,
+                StrategyKey = command.StrategyKey,
+                Symbol = command.Symbol,
+                Timeframe = command.Timeframe,
+                BaseAsset = command.BaseAsset,
+                QuoteAsset = command.QuoteAsset,
+                Side = command.Side,
+                OrderType = command.OrderType,
+                Quantity = command.Quantity,
+                Price = command.Price,
+                ReduceOnly = command.ReduceOnly,
+                ReplacesExecutionOrderId = command.ReplacesExecutionOrderId,
+                ExecutionEnvironment = command.IsDemo == true ? ExecutionEnvironment.Demo : ExecutionEnvironment.Live,
+                ExecutorKind = command.IsDemo == true ? ExecutionOrderExecutorKind.Virtual : ExecutionOrderExecutorKind.Binance,
+                State = ExecutionOrderState.Received,
+                IdempotencyKey = command.IdempotencyKey ?? command.StrategySignalId.ToString("N"),
+                RootCorrelationId = command.CorrelationId ?? Guid.NewGuid().ToString("N"),
+                ParentCorrelationId = command.ParentCorrelationId,
+                LastStateChangedAtUtc = nowUtc,
+                CreatedDate = nowUtc,
+                UpdatedDate = nowUtc
+            };
+            dbContext.ExecutionOrders.Add(order);
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            return new ExecutionDispatchResult(
+                new ExecutionOrderSnapshot(
+                    order.Id,
+                    order.TradingStrategyId,
+                    order.TradingStrategyVersionId,
+                    order.StrategySignalId,
+                    order.SignalType,
+                    order.BotId,
+                    order.ExchangeAccountId,
+                    order.StrategyKey,
+                    order.Symbol,
+                    order.Timeframe,
+                    order.BaseAsset,
+                    order.QuoteAsset,
+                    order.Side,
+                    order.OrderType,
+                    order.Quantity,
+                    order.Price,
+                    order.FilledQuantity,
+                    order.AverageFillPrice,
+                    order.LastFilledAtUtc,
+                    order.StopLossPrice,
+                    order.TakeProfitPrice,
+                    order.ReduceOnly,
+                    order.ReplacesExecutionOrderId,
+                    order.ExecutionEnvironment,
+                    order.ExecutorKind,
+                    order.State,
+                    order.IdempotencyKey,
+                    order.RootCorrelationId,
+                    order.ParentCorrelationId,
+                    order.ExternalOrderId,
+                    order.FailureCode,
+                    order.FailureDetail,
+                    order.RejectionStage,
+                    order.SubmittedToBroker,
+                    order.RetryEligible,
+                    order.CooldownApplied,
+                    order.DuplicateSuppressed,
+                    false,
+                    false,
+                    null,
+                    order.SubmittedAtUtc,
+                    order.LastReconciledAtUtc,
+                    order.ReconciliationStatus,
+                    order.ReconciliationSummary,
+                    order.LastDriftDetectedAtUtc,
+                    order.LastStateChangedAtUtc,
+                    Transitions: []),
+                IsDuplicate: false);
+        }
+    }
+
     private sealed class FakeIndicatorDataService(StrategyIndicatorSnapshot snapshot) : IIndicatorDataService
     {
         public ValueTask TrackSymbolAsync(string symbol, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
@@ -749,6 +848,7 @@ public sealed class MarketScannerHandoffIntegrationTests
         services.AddSingleton<IStrategySignalService>(strategySignalService);
         services.AddSingleton(executionGate);
         services.AddSingleton<IUserExecutionOverrideGuard>(new FakeUserExecutionOverrideGuard());
+        services.AddSingleton<IExecutionEngine>(new FakeExecutionEngine(options, nowUtc.UtcDateTime));
         var serviceProvider = services.BuildServiceProvider();
         var handoffService = new MarketScannerHandoffService(
             dbContext,

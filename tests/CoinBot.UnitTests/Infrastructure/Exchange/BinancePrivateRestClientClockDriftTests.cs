@@ -92,6 +92,60 @@ public sealed class BinancePrivateRestClientClockDriftTests
         Assert.Equal(0, handler.RequestCount);
     }
 
+    [Fact]
+    public async Task GetAccountSnapshotAsync_UsesPositionRiskForFuturesPositionTruth()
+    {
+        using var handler = new RecordingMessageHandler(request =>
+        {
+            var path = request.RequestUri?.AbsolutePath;
+            if (string.Equals(path, "/fapi/v3/account", StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """
+                        {"assets":[{"asset":"USDT","walletBalance":"100","crossWalletBalance":"100","availableBalance":"100","maxWithdrawAmount":"100","updateTime":1710000000123}],"positions":[]}
+                        """,
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+
+            if (string.Equals(path, "/fapi/v2/positionRisk", StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """
+                        [{"symbol":"SOLUSDT","positionSide":"BOTH","positionAmt":"0.600","entryPrice":"84.22","breakEvenPrice":"84.22","unRealizedProfit":"0","marginType":"cross","isolatedWallet":"0","updateTime":1710000000456}]
+                        """,
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+        using var client = new HttpClient(handler) { BaseAddress = new Uri("https://testnet.binancefuture.com") };
+        var timeSyncService = new FakeTimeSyncService(currentTimestampMilliseconds: 1_710_000_000_123L);
+        var sut = CreateClient(client, timeSyncService);
+
+        var snapshot = await sut.GetAccountSnapshotAsync(
+            Guid.NewGuid(),
+            "user-1",
+            "Binance",
+            "api-key",
+            "api-secret");
+
+        var position = Assert.Single(snapshot.Positions);
+        Assert.Equal("SOLUSDT", position.Symbol);
+        Assert.Equal("BOTH", position.PositionSide);
+        Assert.Equal(0.600m, position.Quantity);
+        Assert.Equal("Binance.PrivateRest.Account+PositionRisk", snapshot.Source);
+        Assert.Contains(handler.RequestUris, uri => uri.Contains("/fapi/v3/account?", StringComparison.Ordinal));
+        Assert.Contains(handler.RequestUris, uri => uri.Contains("/fapi/v2/positionRisk?", StringComparison.Ordinal));
+    }
+
     private static BinancePrivateRestClient CreateClient(HttpClient httpClient, IBinanceTimeSyncService timeSyncService)
     {
         return new BinancePrivateRestClient(
@@ -164,7 +218,11 @@ public sealed class BinancePrivateRestClientClockDriftTests
 
     private sealed class RecordingMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) : HttpMessageHandler
     {
+        private readonly List<string> requestUris = [];
+
         public string? LastRequestUri { get; private set; }
+
+        public IReadOnlyList<string> RequestUris => requestUris;
 
         public int RequestCount { get; private set; }
 
@@ -172,6 +230,11 @@ public sealed class BinancePrivateRestClientClockDriftTests
         {
             RequestCount++;
             LastRequestUri = request.RequestUri?.ToString();
+            if (LastRequestUri is not null)
+            {
+                requestUris.Add(LastRequestUri);
+            }
+
             return Task.FromResult(responder(request));
         }
     }

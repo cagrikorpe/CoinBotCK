@@ -1,6 +1,9 @@
 
 using System.Globalization;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using CoinBot.Application.Abstractions.DataScope;
+using CoinBot.Application.Abstractions.DemoPortfolio;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
@@ -33,6 +36,8 @@ public sealed class MarketScannerHandoffService(
     ILogger<MarketScannerHandoffService> logger,
     ITradingModeResolver? tradingModeResolver = null)
 {
+    private static readonly JsonSerializerOptions StrategySignalSerializerOptions = CreateStrategySignalSerializerOptions();
+
     private readonly MarketScannerOptions scannerOptionsValue = scannerOptions.Value;
     private readonly BotExecutionPilotOptions botExecutionOptionsValue = botExecutionPilotOptions.Value;
     private readonly string klineInterval = string.IsNullOrWhiteSpace(marketDataOptions.Value.KlineInterval)
@@ -81,6 +86,7 @@ public sealed class MarketScannerHandoffService(
 
         if (candidates.Count == 0)
         {
+            await RunDemoConsistencyForScanSymbolsAsync(scanCycleId, cancellationToken);
             return await PersistBlockedAttemptAsync(
                 scanCycleId,
                 selectedCandidate: null,
@@ -199,6 +205,16 @@ public sealed class MarketScannerHandoffService(
 
             var strategySignal = SelectActionableEntrySignal(strategyResult, symbol, klineInterval);
             var strategyVeto = SelectVeto(strategyResult, symbol, klineInterval);
+            var duplicateSignalResolution = DuplicateSignalResolution.None;
+
+            if (strategySignal is null && strategyResult.SuppressedDuplicateCount > 0)
+            {
+                duplicateSignalResolution = await ResolveDuplicateEntrySignalAsync(
+                    ownerBotMatch,
+                    marketState.IndicatorSnapshot,
+                    cancellationToken);
+                strategySignal = duplicateSignalResolution.Signal;
+            }
 
             if (strategySignal is null)
             {
@@ -221,10 +237,41 @@ public sealed class MarketScannerHandoffService(
                 continue;
             }
 
+            if (duplicateSignalResolution.HasExistingExecutionRequest)
+            {
+                latestAttempt = await PersistBlockedAttemptAsync(
+                    scanCycleId,
+                    candidate,
+                    ownerBotMatch.OwnerUserId,
+                    ownerBotMatch,
+                    symbolMetadata,
+                    executionContext,
+                    strategySignal,
+                    strategyVeto: null,
+                    strategyDecisionOutcome: "Persisted",
+                    executionStatus: "Blocked",
+                    blockerCode: "DuplicateExecutionRequestSuppressed",
+                    blockerDetail: "Scanner handoff skipped execution request creation because this strategy signal already has a prepared handoff or execution order.",
+                    guardSummary: Truncate(
+                        $"DuplicateExecutionRequest=Suppressed; StrategySignalId={strategySignal.StrategySignalId:N}; IndicatorCloseTimeUtc={strategySignal.IndicatorCloseTimeUtc:O}; Symbol={symbol}; Timeframe={klineInterval}",
+                        512)
+                        ?? $"DuplicateExecutionRequest=Suppressed; Symbol={symbol}; Timeframe={klineInterval}",
+                    cancellationToken);
+                continue;
+            }
+
             try
             {
-                var gateContext = BuildGateContext(scanCycleId, candidate, ownerBotMatch);
+                var gateContext = BuildGateContext(
+                    scanCycleId,
+                    candidate,
+                    ownerBotMatch,
+                    executionContext.Environment,
+                    botExecutionOptionsValue);
                 var correlationId = CreateCorrelationId();
+                var executionExchangeAccountId = executionContext.Environment == ExecutionEnvironment.Demo
+                    ? null
+                    : ownerBotMatch.ExchangeAccountId;
 
                 await executionGate.EnsureExecutionAllowedAsync(
                     new ExecutionGateRequest(
@@ -238,7 +285,9 @@ public sealed class MarketScannerHandoffService(
                         BotId: ownerBotMatch.BotId,
                         StrategyKey: ownerBotMatch.StrategyKey,
                         Symbol: symbol,
-                        Timeframe: klineInterval),
+                        Timeframe: klineInterval,
+                        ExchangeAccountId: executionExchangeAccountId,
+                        Plane: ExchangeDataPlane.Futures),
                     cancellationToken);
                 var latencySnapshot = await dataLatencyCircuitBreaker.GetSnapshotAsync(
                     correlationId,
@@ -285,6 +334,36 @@ public sealed class MarketScannerHandoffService(
                 continue;
             }
 
+                var executionEngine = userScope.ServiceProvider.GetRequiredService<IExecutionEngine>();
+                var dispatchResult = await executionEngine.DispatchAsync(
+                    new ExecutionCommand(
+                        Actor: "system:market-scanner",
+                        OwnerUserId: ownerBotMatch.OwnerUserId,
+                        TradingStrategyId: strategySignal.TradingStrategyId,
+                        TradingStrategyVersionId: strategySignal.TradingStrategyVersionId,
+                        StrategySignalId: strategySignal.StrategySignalId,
+                        SignalType: strategySignal.SignalType,
+                        StrategyKey: ownerBotMatch.StrategyKey,
+                        Symbol: symbol,
+                        Timeframe: klineInterval,
+                        BaseAsset: ResolveBaseAsset(symbol, symbolMetadata),
+                        QuoteAsset: ResolveQuoteAsset(symbol, symbolMetadata),
+                        Side: executionContext.Side,
+                        OrderType: executionContext.OrderType,
+                        Quantity: executionContext.Quantity,
+                        Price: executionContext.Price,
+                        BotId: ownerBotMatch.BotId,
+                        ExchangeAccountId: executionExchangeAccountId,
+                        IsDemo: executionContext.Environment == ExecutionEnvironment.Demo,
+                        IdempotencyKey: BuildScannerHandoffIdempotencyKey(strategySignal, executionContext),
+                        CorrelationId: correlationId,
+                        ParentCorrelationId: null,
+                        Context: Truncate(
+                            $"{gateContext}; MarketScannerHandoff=Prepared; ScanCycleId={scanCycleId:N}; CandidateId={candidate.Id:N}",
+                            1024),
+                        Plane: ExchangeDataPlane.Futures),
+                    cancellationToken);
+
                 latestAttempt = await PersistPreparedAttemptAsync(
                     scanCycleId,
                     candidate,
@@ -295,6 +374,7 @@ public sealed class MarketScannerHandoffService(
                     latencySnapshot,
                     strategySignal,
                     strategyResult,
+                    dispatchResult,
                     cancellationToken);
                 return latestAttempt;
             }
@@ -353,6 +433,49 @@ public sealed class MarketScannerHandoffService(
             cancellationToken);
     }
 
+    private async Task RunDemoConsistencyForScanSymbolsAsync(Guid scanCycleId, CancellationToken cancellationToken)
+    {
+        var candidateSymbols = (await dbContext.MarketScannerCandidates
+                .AsNoTracking()
+                .Where(entity => entity.ScanCycleId == scanCycleId && !entity.IsDeleted && entity.Symbol != null)
+                .Select(entity => entity.Symbol)
+                .ToListAsync(cancellationToken))
+            .Select(MarketDataSymbolNormalizer.Normalize)
+            .Where(symbol => !string.IsNullOrWhiteSpace(symbol))
+            .ToHashSet(StringComparer.Ordinal);
+
+        if (candidateSymbols.Count == 0)
+        {
+            return;
+        }
+
+        var ownerUserIds = (await dbContext.TradingBots
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity => entity.IsEnabled && !entity.IsDeleted && entity.Symbol != null)
+                .Select(entity => new { entity.OwnerUserId, entity.Symbol })
+                .ToListAsync(cancellationToken))
+            .Where(entity => candidateSymbols.Contains(MarketDataSymbolNormalizer.Normalize(entity.Symbol!)))
+            .Select(entity => entity.OwnerUserId)
+            .Where(ownerUserId => !string.IsNullOrWhiteSpace(ownerUserId))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        foreach (var ownerUserId in ownerUserIds)
+        {
+            using var userScope = serviceScopeFactory.CreateScope();
+            var dataScopeAccessor = userScope.ServiceProvider.GetRequiredService<IDataScopeContextAccessor>();
+            using var scopeOverride = dataScopeAccessor.BeginScope(ownerUserId);
+            var demoSessionService = userScope.ServiceProvider.GetService<IDemoSessionService>();
+            if (demoSessionService is null)
+            {
+                continue;
+            }
+
+            await demoSessionService.RunConsistencyCheckAsync(ownerUserId, cancellationToken);
+        }
+    }
+
     private async Task<BotStrategyMatch?> ResolveBotMatchAsync(string symbol, CancellationToken cancellationToken)
     {
         var candidateBots = await dbContext.TradingBots
@@ -366,7 +489,8 @@ public sealed class MarketScannerHandoffService(
                 entity.Id,
                 entity.OwnerUserId,
                 entity.StrategyKey,
-                entity.Symbol
+                entity.Symbol,
+                entity.ExchangeAccountId
             })
             .ToListAsync(cancellationToken);
 
@@ -407,6 +531,7 @@ public sealed class MarketScannerHandoffService(
                 bot.Id,
                 bot.OwnerUserId,
                 bot.StrategyKey,
+                bot.ExchangeAccountId,
                 strategy.Id,
                 strategyVersionId.Value);
         }
@@ -534,6 +659,54 @@ public sealed class MarketScannerHandoffService(
             .FirstOrDefault();
     }
 
+    private async Task<DuplicateSignalResolution> ResolveDuplicateEntrySignalAsync(
+        BotStrategyMatch botMatch,
+        StrategyIndicatorSnapshot indicatorSnapshot,
+        CancellationToken cancellationToken)
+    {
+        var signal = await dbContext.TradingStrategySignals
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.OwnerUserId == botMatch.OwnerUserId &&
+                entity.TradingStrategyVersionId == botMatch.TradingStrategyVersionId &&
+                entity.SignalType == StrategySignalType.Entry &&
+                entity.Symbol == indicatorSnapshot.Symbol &&
+                entity.Timeframe == indicatorSnapshot.Timeframe &&
+                entity.IndicatorCloseTimeUtc == indicatorSnapshot.CloseTimeUtc &&
+                !entity.IsDeleted)
+            .OrderByDescending(entity => entity.GeneratedAtUtc)
+            .ThenByDescending(entity => entity.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (signal is null)
+        {
+            return DuplicateSignalResolution.None;
+        }
+
+        var hasExistingExecutionRequest = await dbContext.ExecutionOrders
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .AnyAsync(
+                entity =>
+                    entity.OwnerUserId == botMatch.OwnerUserId &&
+                    entity.StrategySignalId == signal.Id &&
+                    !entity.IsDeleted,
+                cancellationToken)
+            || await dbContext.MarketScannerHandoffAttempts
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .AnyAsync(
+                    entity =>
+                        entity.OwnerUserId == botMatch.OwnerUserId &&
+                        entity.StrategySignalId == signal.Id &&
+                        entity.ExecutionRequestStatus == "Prepared" &&
+                        !entity.IsDeleted,
+                    cancellationToken);
+
+        return new DuplicateSignalResolution(ToStrategySignalSnapshot(signal), hasExistingExecutionRequest);
+    }
+
     private static StrategySignalVetoSnapshot? SelectVeto(
         StrategySignalGenerationResult strategyResult,
         string symbol,
@@ -588,6 +761,7 @@ public sealed class MarketScannerHandoffService(
         DegradedModeSnapshot latencySnapshot,
         StrategySignalSnapshot strategySignal,
         StrategySignalGenerationResult strategyResult,
+        ExecutionDispatchResult dispatchResult,
         CancellationToken cancellationToken)
     {
         var attempt = CreateAttempt(
@@ -603,7 +777,7 @@ public sealed class MarketScannerHandoffService(
             executionStatus: "Prepared",
             blockerCode: null,
             blockerDetail: null,
-            guardSummary: BuildPreparedGuardSummary(candidate.Symbol, strategyResult, strategySignal, latencySnapshot));
+            guardSummary: BuildPreparedGuardSummary(candidate.Symbol, strategyResult, strategySignal, latencySnapshot, dispatchResult));
 
         dbContext.MarketScannerHandoffAttempts.Add(attempt);
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -751,7 +925,8 @@ public sealed class MarketScannerHandoffService(
         string symbol,
         StrategySignalGenerationResult strategyResult,
         StrategySignalSnapshot strategySignal,
-        DegradedModeSnapshot latencySnapshot)
+        DegradedModeSnapshot latencySnapshot,
+        ExecutionDispatchResult dispatchResult)
     {
         var explainabilitySummary = BuildStrategyExplainabilitySummary(strategyResult.EvaluationReport);
         var signalSummary = string.IsNullOrWhiteSpace(strategySignal.ExplainabilityPayload.UiLog.Summary)
@@ -759,9 +934,116 @@ public sealed class MarketScannerHandoffService(
             : strategySignal.ExplainabilityPayload.UiLog.Summary;
 
         return Truncate(
-            $"ExecutionGate=Allowed; UserExecutionOverride=Allowed; Symbol={symbol}; Timeframe={klineInterval}; {BuildLatencyGuardSummarySnippet(latencySnapshot)}; StrategySignalSummary={signalSummary}; {explainabilitySummary}",
+            $"ExecutionGate=Allowed; UserExecutionOverride=Allowed; ExecutionDispatch=Dispatched; ExecutionOrderId={dispatchResult.Order.ExecutionOrderId:N}; ExecutionOrderState={dispatchResult.Order.State}; ExecutorKind={dispatchResult.Order.ExecutorKind}; DispatchDuplicate={dispatchResult.IsDuplicate}; Symbol={symbol}; Timeframe={klineInterval}; {BuildLatencyGuardSummarySnippet(latencySnapshot)}; StrategySignalSummary={signalSummary}; {explainabilitySummary}",
             512)
             ?? $"ExecutionGate=Allowed; UserExecutionOverride=Allowed; Symbol={symbol}; Timeframe={klineInterval}";
+    }
+
+    private static StrategySignalSnapshot ToStrategySignalSnapshot(TradingStrategySignal signal)
+    {
+        var indicatorSnapshot = DeserializeRequired<StrategyIndicatorSnapshot>(signal.IndicatorSnapshotJson);
+        var evaluationResult = DeserializeRequired<StrategyEvaluationResult>(signal.RuleResultSnapshotJson);
+        var confidenceSnapshot = DeserializeConfidenceSnapshot(signal.RiskEvaluationJson)
+            ?? CreateUnavailableConfidenceSnapshot();
+
+        return new StrategySignalSnapshot(
+            signal.Id,
+            signal.TradingStrategyId,
+            signal.TradingStrategyVersionId,
+            signal.StrategyVersionNumber,
+            signal.StrategySchemaVersion,
+            signal.SignalType,
+            signal.ExecutionEnvironment,
+            signal.Symbol,
+            signal.Timeframe,
+            signal.IndicatorOpenTimeUtc,
+            signal.IndicatorCloseTimeUtc,
+            signal.IndicatorReceivedAtUtc,
+            signal.GeneratedAtUtc,
+            new StrategySignalExplainabilityPayload(
+                signal.ExplainabilitySchemaVersion,
+                signal.TradingStrategyId,
+                signal.TradingStrategyVersionId,
+                signal.StrategyVersionNumber,
+                signal.StrategySchemaVersion,
+                signal.ExecutionEnvironment,
+                indicatorSnapshot,
+                evaluationResult,
+                confidenceSnapshot,
+                new StrategySignalLogExplainabilitySnapshot(
+                    $"{signal.SignalType} signal",
+                    confidenceSnapshot.Summary,
+                    [],
+                    []),
+                new StrategySignalDuplicateSuppressionSnapshot(
+                    true,
+                    false,
+                    CreateDuplicateFingerprint(
+                        signal.TradingStrategyVersionId,
+                        signal.SignalType,
+                        signal.Symbol,
+                        signal.Timeframe,
+                        signal.IndicatorCloseTimeUtc))));
+    }
+
+    private static T DeserializeRequired<T>(string json)
+    {
+        var value = JsonSerializer.Deserialize<T>(json, StrategySignalSerializerOptions);
+
+        return value is not null
+            ? value
+            : throw new InvalidOperationException($"Strategy signal JSON payload could not be deserialized as '{typeof(T).Name}'.");
+    }
+
+    private static StrategySignalConfidenceSnapshot? DeserializeConfidenceSnapshot(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<StrategySignalConfidenceSnapshot>(json, StrategySignalSerializerOptions);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static StrategySignalConfidenceSnapshot CreateUnavailableConfidenceSnapshot()
+    {
+        return new StrategySignalConfidenceSnapshot(
+            ScorePercentage: 0,
+            Band: StrategySignalConfidenceBand.Low,
+            MatchedRuleCount: 0,
+            TotalRuleCount: 0,
+            IsDeterministic: true,
+            IsRiskApproved: false,
+            IsVetoed: false,
+            RiskReasonCode: RiskVetoReasonCode.None,
+            IsVirtualRiskCheck: false,
+            Summary: "Confidence snapshot unavailable.",
+            AiEvaluation: null);
+    }
+
+    private static string CreateDuplicateFingerprint(
+        Guid tradingStrategyVersionId,
+        StrategySignalType signalType,
+        string symbol,
+        string timeframe,
+        DateTime indicatorCloseTimeUtc)
+    {
+        return $"{tradingStrategyVersionId:N}:{signalType}:{symbol}:{timeframe}:{indicatorCloseTimeUtc:O}";
+    }
+
+    private static JsonSerializerOptions CreateStrategySignalSerializerOptions()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new JsonStringEnumConverter());
+
+        return options;
     }
 
     private static string BuildLatencyGuardSummarySnippet(DegradedModeSnapshot latencySnapshot)
@@ -963,9 +1245,21 @@ public sealed class MarketScannerHandoffService(
         };
     }
 
-    private static string BuildGateContext(Guid scanCycleId, MarketScannerCandidate candidate, BotStrategyMatch botMatch)
+    private static string BuildGateContext(
+        Guid scanCycleId,
+        MarketScannerCandidate candidate,
+        BotStrategyMatch botMatch,
+        ExecutionEnvironment executionEnvironment,
+        BotExecutionPilotOptions pilotOptions)
     {
-        return $"ScannerHandoff=True | ScanCycleId={scanCycleId:N} | CandidateId={candidate.Id:N} | CandidateRank={candidate.Rank?.ToString(CultureInfo.InvariantCulture) ?? "n/a"} | BotId={botMatch.BotId:N}";
+        var context = $"ScannerHandoff=True | ScanCycleId={scanCycleId:N} | CandidateId={candidate.Id:N} | CandidateRank={candidate.Rank?.ToString(CultureInfo.InvariantCulture) ?? "n/a"} | BotId={botMatch.BotId:N}";
+        if (executionEnvironment != ExecutionEnvironment.Live || !pilotOptions.PilotActivationEnabled)
+        {
+            return context;
+        }
+
+        return FormattableString.Invariant(
+            $"{context} | DevelopmentFuturesTestnetPilot=True | PilotActivationEnabled={pilotOptions.PilotActivationEnabled} | PilotMarginType={pilotOptions.DefaultMarginType} | PilotLeverage={pilotOptions.DefaultLeverage:0.########}");
     }
 
     private static async Task<ExecutionEnvironment> ResolveHandoffExecutionEnvironmentAsync(
@@ -1009,6 +1303,13 @@ public sealed class MarketScannerHandoffService(
     private static string CreateCorrelationId()
     {
         return Guid.NewGuid().ToString("N");
+    }
+
+    private static string BuildScannerHandoffIdempotencyKey(
+        StrategySignalSnapshot strategySignal,
+        PreparedExecutionContext executionContext)
+    {
+        return $"scanner-handoff:{strategySignal.StrategySignalId:N}:{executionContext.Environment}:{executionContext.Side}";
     }
 
     private static string? BuildBlockerSummary(
@@ -1060,8 +1361,16 @@ public sealed class MarketScannerHandoffService(
         Guid BotId,
         string OwnerUserId,
         string StrategyKey,
+        Guid? ExchangeAccountId,
         Guid TradingStrategyId,
         Guid TradingStrategyVersionId);
+
+    private sealed record DuplicateSignalResolution(
+        StrategySignalSnapshot? Signal,
+        bool HasExistingExecutionRequest)
+    {
+        public static DuplicateSignalResolution None { get; } = new(null, false);
+    }
 
     private readonly record struct PreparedExecutionContext(
         ExecutionOrderSide Side,
@@ -1070,4 +1379,3 @@ public sealed class MarketScannerHandoffService(
         decimal Quantity,
         decimal Price);
 }
-

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using CoinBot.Application.Abstractions.Administration;
@@ -135,6 +136,11 @@ public sealed class StrategySignalService(
                 evaluationReport,
                 exitCandidateSuppressedByPositionAwareness,
                 sameDirectionEntrySuppressionSummary);
+            var noSignalDecision = ResolveNoSignalDecision(
+                evaluationReport,
+                exitCandidateSuppressedByPositionAwareness,
+                sameDirectionEntrySuppressionSummary,
+                noSignalSummary);
 
             var noSignalTraceRequest = new DecisionTraceWriteRequest(
                 version.OwnerUserId,
@@ -155,9 +161,10 @@ public sealed class StrategySignalService(
                     riskScore: null,
                     relatedEntityId: null),
                 (int)decisionStopwatch.ElapsedMilliseconds,
-                DecisionReasonType: "StrategyCandidate",
-                DecisionReasonCode: "NoSignalCandidate",
-                DecisionSummary: noSignalSummary,
+                VetoReasonCode: noSignalDecision.VetoReasonCode,
+                DecisionReasonType: noSignalDecision.ReasonType,
+                DecisionReasonCode: noSignalDecision.ReasonCode,
+                DecisionSummary: noSignalDecision.Summary,
                 DecisionAtUtc: now);
 
             if (await ShouldWriteNoSignalDecisionTraceAsync(
@@ -568,6 +575,150 @@ public sealed class StrategySignalService(
             : $"Strategy did not produce an executable candidate. Explainability: {explainabilitySummary}";
 
         return Truncate(summary, DecisionSummaryMaxLength) ?? "Strategy did not produce an executable candidate.";
+    }
+
+    private static NoSignalDecision ResolveNoSignalDecision(
+        StrategyEvaluationReportSnapshot evaluationReport,
+        bool exitCandidateSuppressedByPositionAwareness,
+        string? sameDirectionEntrySuppressionSummary,
+        string summary)
+    {
+        if (!string.IsNullOrWhiteSpace(sameDirectionEntrySuppressionSummary))
+        {
+            return new NoSignalDecision("StrategyCandidate", "NoSignalCandidate", null, summary);
+        }
+
+        if (exitCandidateSuppressedByPositionAwareness)
+        {
+            var exitReasonCode = TruncateReasonCode($"{ResolveStrategyExitRejectionReason(evaluationReport.RuleEvaluation)}NoOpenPosition");
+            return new NoSignalDecision("StrategyExit", exitReasonCode, null, summary);
+        }
+
+        if (string.Equals(evaluationReport.Outcome, "RiskVetoed", StringComparison.Ordinal))
+        {
+            var riskReasonCode = ResolveStrategyRiskVetoRejectionReason(evaluationReport.RuleEvaluation);
+            var enrichedSummary = Truncate(
+                $"Strategy risk vetoed ({riskReasonCode}). {summary}",
+                DecisionSummaryMaxLength)
+                ?? summary;
+            return new NoSignalDecision("StrategyRiskVeto", riskReasonCode, riskReasonCode, enrichedSummary);
+        }
+
+        if (string.Equals(evaluationReport.Outcome, "ExitMatched", StringComparison.Ordinal))
+        {
+            var exitReasonCode = ResolveStrategyExitRejectionReason(evaluationReport.RuleEvaluation);
+            return new NoSignalDecision("StrategyExit", exitReasonCode, null, summary);
+        }
+
+        if (string.Equals(evaluationReport.Outcome, "NoSignalCandidate", StringComparison.Ordinal))
+        {
+            return new NoSignalDecision("StrategyCandidate", "NoSignalCandidate", null, summary);
+        }
+
+        var fallbackReasonCode = TruncateReasonCode($"Strategy{ToReasonSegment(evaluationReport.Outcome, "OutcomeBlocked")}");
+        return new NoSignalDecision("StrategyCandidate", fallbackReasonCode, null, summary);
+    }
+
+    private static string ResolveStrategyRiskVetoRejectionReason(StrategyEvaluationResult result)
+    {
+        var failedRule = FindFirstFailedEnabledRule(result.RiskRuleResult);
+        var reasonSegment = ResolveRuleReasonSegment(failedRule)
+            ?? ResolveRuleReasonSegment(result.RiskRuleResult)
+            ?? "RiskRuleFailed";
+
+        return TruncateReasonCode($"StrategyRiskVetoed{reasonSegment}");
+    }
+
+    private static string ResolveStrategyExitRejectionReason(StrategyEvaluationResult result)
+    {
+        return result.ExitDirection switch
+        {
+            StrategyTradeDirection.Long => "StrategyLongExitMatched",
+            StrategyTradeDirection.Short => "StrategyShortExitMatched",
+            _ => "StrategyExitMatchedExitRule"
+        };
+    }
+
+    private static string ResolveStrategyNoSignalRejectionReason(StrategyEvaluationResult result)
+    {
+        if (result.HasEntryRules && !result.EntryMatched)
+        {
+            var failedRule = FindFirstFailedEnabledRule(result.EntryRuleResult);
+            var reasonSegment = ResolveRuleReasonSegment(failedRule)
+                ?? ResolveRuleReasonSegment(result.EntryRuleResult)
+                ?? "EntryRulesNotMatched";
+
+            return TruncateReasonCode($"StrategyNoSignal{reasonSegment}");
+        }
+
+        return "StrategyNoSignalCandidate";
+    }
+
+    private static StrategyRuleResultSnapshot? FindFirstFailedEnabledRule(StrategyRuleResultSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return null;
+        }
+
+        if (snapshot.Enabled && !snapshot.Matched && snapshot.Children.Count == 0)
+        {
+            return snapshot;
+        }
+
+        foreach (var child in snapshot.Children)
+        {
+            var failed = FindFirstFailedEnabledRule(child);
+            if (failed is not null)
+            {
+                return failed;
+            }
+        }
+
+        return snapshot.Enabled && !snapshot.Matched ? snapshot : null;
+    }
+
+    private static string? ResolveRuleReasonSegment(StrategyRuleResultSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return null;
+        }
+
+        return ToReasonSegment(snapshot.RuleId, null)
+            ?? ToReasonSegment(snapshot.RuleType, null)
+            ?? ToReasonSegment(snapshot.Group, null)
+            ?? ToReasonSegment(snapshot.Path, null);
+    }
+
+    private static string? ToReasonSegment(string? value, string? fallback)
+    {
+        var source = string.IsNullOrWhiteSpace(value) ? fallback : value;
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            return null;
+        }
+
+        var builder = new StringBuilder(source.Length);
+        var capitalizeNext = true;
+        foreach (var character in source.Trim())
+        {
+            if (char.IsLetterOrDigit(character))
+            {
+                builder.Append(capitalizeNext ? char.ToUpperInvariant(character) : character);
+                capitalizeNext = false;
+                continue;
+            }
+
+            capitalizeNext = builder.Length > 0;
+        }
+
+        return builder.Length == 0 ? null : builder.ToString();
+    }
+
+    private static string TruncateReasonCode(string value)
+    {
+        return value.Length <= 64 ? value : value[..64];
     }
 
     private static string? Truncate(string? value, int maxLength)
@@ -1429,6 +1580,8 @@ public sealed class StrategySignalService(
             : normalizedSummary;
     }
 
+    private sealed record NoSignalDecision(string ReasonType, string ReasonCode, string? VetoReasonCode, string Summary);
+
     private sealed record AiOverlayDecision(bool IsSuppressed, bool IsApplied, string? Disposition, int BoostPoints, string ReasonType, string ReasonCode, string Summary)
     {
         public static AiOverlayDecision NotApplied { get; } = new(false, false, null, 0, string.Empty, string.Empty, string.Empty);
@@ -1537,10 +1690,6 @@ public sealed class StrategySignalService(
             SerializerOptions);
     }
 }
-
-
-
-
 
 
 

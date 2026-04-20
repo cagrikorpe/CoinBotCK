@@ -1,5 +1,6 @@
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Ai;
+using CoinBot.Application.Abstractions.DemoPortfolio;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
@@ -18,6 +19,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace CoinBot.UnitTests.Infrastructure.MarketData;
 
@@ -27,7 +30,15 @@ public sealed class MarketScannerHandoffServiceTests
     public async Task RunOnceAsync_PreparesDeterministicTopCandidateAndPassesSelectedSymbolToStrategyAndGuards()
     {
         var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
-        await using var harness = CreateHarness(nowUtc);
+        await using var harness = CreateHarness(
+            nowUtc,
+            new BotExecutionPilotOptions
+            {
+                SignalEvaluationMode = ExecutionEnvironment.Live,
+                ExecutionDispatchMode = ExecutionEnvironment.Live,
+                PilotActivationEnabled = true,
+                PrimeHistoricalCandleCount = 34
+            });
         var scanCycleId = Guid.NewGuid();
         var btcBot = await SeedBotGraphAsync(harness.DbContext, "user-btc", "BTCUSDT", "pilot-btc");
         _ = await SeedBotGraphAsync(harness.DbContext, "user-eth", "ETHUSDT", "pilot-eth");
@@ -57,6 +68,7 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal("Allowed: execution request prepared.", persistedAttempt.BlockerSummary);
         Assert.Contains("Top-ranked eligible candidate selected", persistedAttempt.SelectionReason, StringComparison.Ordinal);
         Assert.Contains("ExecutionGate=Allowed", persistedAttempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ExecutionDispatch=Dispatched", persistedAttempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("LatencyReason=None", persistedAttempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("LastCandleAtUtc=", persistedAttempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("DataAgeMs=", persistedAttempt.GuardSummary, StringComparison.Ordinal);
@@ -64,8 +76,18 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal("BTCUSDT", harness.StrategySignalService.LastRequest?.EvaluationContext.IndicatorSnapshot.Symbol);
         Assert.Equal("BTCUSDT", harness.ExecutionGate.LastRequest?.Symbol);
         Assert.Equal("1m", harness.ExecutionGate.LastRequest?.Timeframe);
+        Assert.Equal(btcBot.ExchangeAccountId, harness.ExecutionGate.LastRequest?.ExchangeAccountId);
+        Assert.Equal(ExchangeDataPlane.Futures, harness.ExecutionGate.LastRequest?.Plane);
+        Assert.Contains("DevelopmentFuturesTestnetPilot=True", harness.ExecutionGate.LastRequest?.Context, StringComparison.Ordinal);
         Assert.Equal("BTCUSDT", harness.UserExecutionOverrideGuard.LastRequest?.Symbol);
         Assert.NotEqual(string.Empty, persistedAttempt.CorrelationId);
+        var order = await harness.DbContext.ExecutionOrders.SingleAsync(entity => entity.StrategySignalId == persistedAttempt.StrategySignalId);
+        Assert.Equal(ExecutionEnvironment.Live, order.ExecutionEnvironment);
+        Assert.Equal(ExecutionOrderExecutorKind.Binance, order.ExecutorKind);
+        Assert.Equal(persistedAttempt.BotId, order.BotId);
+        Assert.Equal(btcBot.ExchangeAccountId, order.ExchangeAccountId);
+        Assert.Equal(btcBot.ExchangeAccountId, harness.ExecutionEngine.LastCommand?.ExchangeAccountId);
+        Assert.Equal("scanner-handoff", order.IdempotencyKey.Split(':')[0]);
     }
 
     [Fact]
@@ -96,7 +118,13 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal(ExecutionEnvironment.Demo, attempt.ExecutionEnvironment);
         Assert.Equal(ExecutionEnvironment.Live, harness.StrategySignalService.LastRequest?.EvaluationContext.Mode);
         Assert.Equal(ExecutionEnvironment.Demo, harness.ExecutionGate.LastRequest?.Environment);
+        Assert.Null(harness.ExecutionGate.LastRequest?.ExchangeAccountId);
+        Assert.DoesNotContain("DevelopmentFuturesTestnetPilot=True", harness.ExecutionGate.LastRequest?.Context, StringComparison.Ordinal);
         Assert.Equal(ExecutionEnvironment.Demo, harness.UserExecutionOverrideGuard.LastRequest?.Environment);
+        var order = await harness.DbContext.ExecutionOrders.SingleAsync(entity => entity.StrategySignalId == attempt.StrategySignalId);
+        Assert.Equal(ExecutionEnvironment.Demo, order.ExecutionEnvironment);
+        Assert.Equal(ExecutionOrderExecutorKind.Virtual, order.ExecutorKind);
+        Assert.True(harness.ExecutionEngine.LastCommand?.IsDemo);
     }
 
     [Fact]
@@ -283,6 +311,75 @@ public sealed class MarketScannerHandoffServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_ReusesPersistedDuplicateSignal_WhenNoPreparedHandoffOrOrderExists()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-sol", "SOLUSDT", "pilot-sol");
+        var existingSignal = CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "SOLUSDT", "1m", harness.NowUtc);
+        SeedPersistedSignal(harness.DbContext, bot.OwnerUserId, existingSignal);
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 9_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetDuplicateSuppressed("SOLUSDT", "1m", 1);
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
+        Assert.Null(attempt.BlockerCode);
+        Assert.Equal("Persisted", attempt.StrategyDecisionOutcome);
+        Assert.Equal(existingSignal.StrategySignalId, attempt.StrategySignalId);
+        Assert.Equal("SOLUSDT", harness.ExecutionGate.LastRequest?.Symbol);
+        Assert.Equal("SOLUSDT", harness.UserExecutionOverrideGuard.LastRequest?.Symbol);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_BlocksDuplicateExecutionRequest_WhenPersistedSignalAlreadyHasPreparedHandoff()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-sol", "SOLUSDT", "pilot-sol");
+        var existingSignal = CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "SOLUSDT", "1m", harness.NowUtc);
+        SeedPersistedSignal(harness.DbContext, bot.OwnerUserId, existingSignal);
+        harness.DbContext.MarketScannerHandoffAttempts.Add(new MarketScannerHandoffAttempt
+        {
+            Id = Guid.NewGuid(),
+            ScanCycleId = Guid.NewGuid(),
+            SelectedSymbol = "SOLUSDT",
+            SelectedTimeframe = "1m",
+            SelectedAtUtc = harness.NowUtc.AddSeconds(-15),
+            SelectionReason = "unit-test",
+            OwnerUserId = bot.OwnerUserId,
+            BotId = bot.BotId,
+            StrategyKey = "pilot-sol",
+            TradingStrategyId = bot.TradingStrategyId,
+            TradingStrategyVersionId = bot.TradingStrategyVersionId,
+            StrategySignalId = existingSignal.StrategySignalId,
+            StrategyDecisionOutcome = "Persisted",
+            ExecutionRequestStatus = "Prepared",
+            ExecutionEnvironment = ExecutionEnvironment.Demo,
+            CorrelationId = Guid.NewGuid().ToString("N"),
+            CompletedAtUtc = harness.NowUtc.AddSeconds(-15)
+        });
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 9_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetDuplicateSuppressed("SOLUSDT", "1m", 1);
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("DuplicateExecutionRequestSuppressed", attempt.BlockerCode);
+        Assert.Equal(existingSignal.StrategySignalId, attempt.StrategySignalId);
+        Assert.Null(harness.ExecutionGate.LastRequest);
+        Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
+    }
+
+    [Fact]
     public async Task RunOnceAsync_PersistsNoEligibleCandidateBlocker_WhenLatestCycleHasNoEligibleCandidate()
     {
         await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
@@ -299,6 +396,24 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal("NoEligibleCandidate: Scanner handoff did not find an eligible candidate in the latest scan cycle.", attempt.BlockerSummary);
         Assert.Equal("CandidateSelection=None", attempt.GuardSummary);
         Assert.Null(attempt.SelectedSymbol);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_RunsDemoConsistencyForCandidateSymbolOwners_WhenNoEligibleCandidate()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        _ = await SeedBotGraphAsync(harness.DbContext, "user-sol", "SOLUSDT", "pilot-sol");
+        SeedScanCycle(harness.DbContext, scanCycleId, eligibleCandidateCount: 0, bestCandidateSymbol: null, bestCandidateScore: null);
+        SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: null, score: 0m, isEligible: false, rejectionReason: "StrategyRiskVetoedRiskLatencySoft");
+        await harness.DbContext.SaveChangesAsync();
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("NoEligibleCandidate", attempt.BlockerCode);
+        Assert.Contains("user-sol", harness.DemoSessionService.CheckedOwnerUserIds);
+        Assert.Null(harness.ExecutionGate.LastRequest);
     }
 
     [Fact]
@@ -339,6 +454,7 @@ public sealed class MarketScannerHandoffServiceTests
         var circuitBreaker = new FakeDataLatencyCircuitBreaker(nowUtc.UtcDateTime);
         var executionGate = new FakeExecutionGate(nowUtc.UtcDateTime);
         var userExecutionOverrideGuard = new FakeUserExecutionOverrideGuard();
+        var executionEngine = new FakeExecutionEngine(options, nowUtc.UtcDateTime);
         var timeProvider = new FixedTimeProvider(nowUtc);
         var aiOptions = new AiSignalOptions
         {
@@ -372,6 +488,7 @@ public sealed class MarketScannerHandoffServiceTests
         });
         services.AddSingleton<IExecutionGate>(executionGate);
         services.AddSingleton<IUserExecutionOverrideGuard>(userExecutionOverrideGuard);
+        services.AddSingleton<IExecutionEngine>(executionEngine);
         services.AddSingleton<ITradingModeResolver>(new FakeTradingModeResolver(ExecutionEnvironment.Live));
         var serviceProvider = services.BuildServiceProvider();
         var service = new MarketScannerHandoffService(
@@ -439,6 +556,8 @@ public sealed class MarketScannerHandoffServiceTests
         var strategySignalService = new FakeStrategySignalService();
         var executionGate = new FakeExecutionGate(nowUtc.UtcDateTime);
         var userExecutionOverrideGuard = new FakeUserExecutionOverrideGuard();
+        var executionEngine = new FakeExecutionEngine(options, nowUtc.UtcDateTime);
+        var demoSessionService = new FakeDemoSessionService(nowUtc.UtcDateTime);
 
         var services = new ServiceCollection();
         services.AddScoped<IDataScopeContextAccessor, TestDataScopeContextAccessor>();
@@ -446,6 +565,8 @@ public sealed class MarketScannerHandoffServiceTests
         services.AddSingleton<IStrategySignalService>(strategySignalService);
         services.AddSingleton<IExecutionGate>(executionGate);
         services.AddSingleton<IUserExecutionOverrideGuard>(userExecutionOverrideGuard);
+        services.AddSingleton<IExecutionEngine>(executionEngine);
+        services.AddSingleton<IDemoSessionService>(demoSessionService);
         services.AddSingleton<ITradingModeResolver>(new FakeTradingModeResolver(resolvedTradingMode));
         var serviceProvider = services.BuildServiceProvider();
         var service = new MarketScannerHandoffService(
@@ -461,7 +582,7 @@ public sealed class MarketScannerHandoffServiceTests
             new FixedTimeProvider(nowUtc),
             NullLogger<MarketScannerHandoffService>.Instance);
 
-        return new TestHarness(dbContext, service, serviceProvider, marketDataService, indicatorDataService, strategySignalService, executionGate, userExecutionOverrideGuard, nowUtc.UtcDateTime);
+        return new TestHarness(dbContext, service, serviceProvider, marketDataService, indicatorDataService, strategySignalService, executionGate, userExecutionOverrideGuard, executionEngine, demoSessionService, nowUtc.UtcDateTime);
     }
 
     private static async Task<BotGraph> SeedBotGraphAsync(ApplicationDbContext dbContext, string ownerUserId, string symbol, string strategyKey, string definitionJson = "{}")
@@ -469,6 +590,7 @@ public sealed class MarketScannerHandoffServiceTests
         var tradingStrategyId = Guid.NewGuid();
         var tradingStrategyVersionId = Guid.NewGuid();
         var botId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
 
         dbContext.TradingStrategies.Add(new TradingStrategy
         {
@@ -479,6 +601,15 @@ public sealed class MarketScannerHandoffServiceTests
             PromotionState = StrategyPromotionState.LivePublished,
             PublishedMode = ExecutionEnvironment.Live,
             PublishedAtUtc = new DateTime(2026, 4, 3, 11, 59, 0, DateTimeKind.Utc)
+        });
+        dbContext.ExchangeAccounts.Add(new ExchangeAccount
+        {
+            Id = exchangeAccountId,
+            OwnerUserId = ownerUserId,
+            ExchangeName = "Binance",
+            DisplayName = $"{strategyKey}-exchange",
+            IsReadOnly = false,
+            CredentialStatus = ExchangeCredentialStatus.Active
         });
         dbContext.TradingStrategyVersions.Add(new TradingStrategyVersion
         {
@@ -498,11 +629,12 @@ public sealed class MarketScannerHandoffServiceTests
             Name = strategyKey,
             StrategyKey = strategyKey,
             Symbol = symbol,
+            ExchangeAccountId = exchangeAccountId,
             IsEnabled = true
         });
         await dbContext.SaveChangesAsync();
 
-        return new BotGraph(botId, tradingStrategyId, tradingStrategyVersionId);
+        return new BotGraph(botId, ownerUserId, exchangeAccountId, tradingStrategyId, tradingStrategyVersionId);
     }
 
     private static void SeedScanCycle(ApplicationDbContext dbContext, Guid scanCycleId, int eligibleCandidateCount = 1, string? bestCandidateSymbol = "BTCUSDT", decimal? bestCandidateScore = 10_000m)
@@ -590,6 +722,41 @@ public sealed class MarketScannerHandoffServiceTests
                 new StrategySignalConfidenceSnapshot(91, StrategySignalConfidenceBand.High, 3, 3, true, true, false, RiskVetoReasonCode.None, false, "Entry accepted."),
                 new StrategySignalLogExplainabilitySnapshot("Entry", "Entry accepted", ["driver"], ["scanner"]),
                 new StrategySignalDuplicateSuppressionSnapshot(true, false, $"fp-{symbol}")));
+    }
+
+    private static void SeedPersistedSignal(ApplicationDbContext dbContext, string ownerUserId, StrategySignalSnapshot signal)
+    {
+        dbContext.TradingStrategySignals.Add(new TradingStrategySignal
+        {
+            Id = signal.StrategySignalId,
+            OwnerUserId = ownerUserId,
+            TradingStrategyId = signal.TradingStrategyId,
+            TradingStrategyVersionId = signal.TradingStrategyVersionId,
+            StrategyVersionNumber = signal.StrategyVersionNumber,
+            StrategySchemaVersion = signal.StrategySchemaVersion,
+            SignalType = signal.SignalType,
+            ExecutionEnvironment = signal.Mode,
+            Symbol = signal.Symbol,
+            Timeframe = signal.Timeframe,
+            IndicatorOpenTimeUtc = signal.IndicatorOpenTimeUtc,
+            IndicatorCloseTimeUtc = signal.IndicatorCloseTimeUtc,
+            IndicatorReceivedAtUtc = signal.IndicatorReceivedAtUtc,
+            GeneratedAtUtc = signal.GeneratedAtUtc,
+            ExplainabilitySchemaVersion = signal.ExplainabilityPayload.ExplainabilitySchemaVersion,
+            IndicatorSnapshotJson = JsonSerializer.Serialize(signal.ExplainabilityPayload.IndicatorSnapshot, StrategySignalSerializerOptions),
+            RuleResultSnapshotJson = JsonSerializer.Serialize(signal.ExplainabilityPayload.RuleResultSnapshot, StrategySignalSerializerOptions),
+            RiskEvaluationJson = JsonSerializer.Serialize(signal.ExplainabilityPayload.ConfidenceSnapshot, StrategySignalSerializerOptions)
+        });
+    }
+
+    private static readonly JsonSerializerOptions StrategySignalSerializerOptions = CreateStrategySignalSerializerOptions();
+
+    private static JsonSerializerOptions CreateStrategySignalSerializerOptions()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new JsonStringEnumConverter());
+
+        return options;
     }
 
     private static StrategySignalVetoSnapshot CreateVeto(Guid tradingStrategyId, Guid tradingStrategyVersionId, string symbol, string timeframe, DateTime evaluatedAtUtc, RiskVetoReasonCode reasonCode, string summary)
@@ -694,6 +861,146 @@ public sealed class MarketScannerHandoffServiceTests
             }
 
             return Task.FromResult(new UserExecutionOverrideEvaluationResult(false, null, null));
+        }
+    }
+
+    private sealed class FakeExecutionEngine(DbContextOptions<ApplicationDbContext> options, DateTime nowUtc) : IExecutionEngine
+    {
+        public ExecutionCommand? LastCommand { get; private set; }
+
+        public async Task<ExecutionDispatchResult> DispatchAsync(ExecutionCommand command, CancellationToken cancellationToken = default)
+        {
+            LastCommand = command;
+            await using var dbContext = new ApplicationDbContext(options, new TestDataScopeContextAccessor());
+            var order = new ExecutionOrder
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = command.OwnerUserId,
+                TradingStrategyId = command.TradingStrategyId,
+                TradingStrategyVersionId = command.TradingStrategyVersionId,
+                StrategySignalId = command.StrategySignalId,
+                SignalType = command.SignalType,
+                BotId = command.BotId,
+                ExchangeAccountId = command.ExchangeAccountId,
+                Plane = command.Plane,
+                StrategyKey = command.StrategyKey,
+                Symbol = command.Symbol,
+                Timeframe = command.Timeframe,
+                BaseAsset = command.BaseAsset,
+                QuoteAsset = command.QuoteAsset,
+                Side = command.Side,
+                OrderType = command.OrderType,
+                Quantity = command.Quantity,
+                Price = command.Price,
+                ReduceOnly = command.ReduceOnly,
+                ReplacesExecutionOrderId = command.ReplacesExecutionOrderId,
+                ExecutionEnvironment = command.IsDemo == true ? ExecutionEnvironment.Demo : ExecutionEnvironment.Live,
+                ExecutorKind = command.IsDemo == true ? ExecutionOrderExecutorKind.Virtual : ExecutionOrderExecutorKind.Binance,
+                State = ExecutionOrderState.Received,
+                IdempotencyKey = command.IdempotencyKey ?? command.StrategySignalId.ToString("N"),
+                RootCorrelationId = command.CorrelationId ?? Guid.NewGuid().ToString("N"),
+                ParentCorrelationId = command.ParentCorrelationId,
+                LastStateChangedAtUtc = nowUtc,
+                CreatedDate = nowUtc,
+                UpdatedDate = nowUtc
+            };
+            dbContext.ExecutionOrders.Add(order);
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            return new ExecutionDispatchResult(
+                new ExecutionOrderSnapshot(
+                    order.Id,
+                    order.TradingStrategyId,
+                    order.TradingStrategyVersionId,
+                    order.StrategySignalId,
+                    order.SignalType,
+                    order.BotId,
+                    order.ExchangeAccountId,
+                    order.StrategyKey,
+                    order.Symbol,
+                    order.Timeframe,
+                    order.BaseAsset,
+                    order.QuoteAsset,
+                    order.Side,
+                    order.OrderType,
+                    order.Quantity,
+                    order.Price,
+                    order.FilledQuantity,
+                    order.AverageFillPrice,
+                    order.LastFilledAtUtc,
+                    order.StopLossPrice,
+                    order.TakeProfitPrice,
+                    order.ReduceOnly,
+                    order.ReplacesExecutionOrderId,
+                    order.ExecutionEnvironment,
+                    order.ExecutorKind,
+                    order.State,
+                    order.IdempotencyKey,
+                    order.RootCorrelationId,
+                    order.ParentCorrelationId,
+                    order.ExternalOrderId,
+                    order.FailureCode,
+                    order.FailureDetail,
+                    order.RejectionStage,
+                    order.SubmittedToBroker,
+                    order.RetryEligible,
+                    order.CooldownApplied,
+                    order.DuplicateSuppressed,
+                    false,
+                    false,
+                    null,
+                    order.SubmittedAtUtc,
+                    order.LastReconciledAtUtc,
+                    order.ReconciliationStatus,
+                    order.ReconciliationSummary,
+                    order.LastDriftDetectedAtUtc,
+                    order.LastStateChangedAtUtc,
+                    Transitions: []),
+                IsDuplicate: false);
+        }
+    }
+
+    private sealed class FakeDemoSessionService(DateTime nowUtc) : IDemoSessionService
+    {
+        private readonly List<string> checkedOwnerUserIds = [];
+
+        public IReadOnlyCollection<string> CheckedOwnerUserIds => checkedOwnerUserIds;
+
+        public Task<DemoSessionSnapshot?> GetActiveSessionAsync(string ownerUserId, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<DemoSessionSnapshot?>(CreateSnapshot());
+        }
+
+        public Task<DemoSessionSnapshot> EnsureActiveSessionAsync(string ownerUserId, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(CreateSnapshot());
+        }
+
+        public Task<DemoSessionSnapshot?> RunConsistencyCheckAsync(string ownerUserId, CancellationToken cancellationToken = default)
+        {
+            checkedOwnerUserIds.Add(ownerUserId);
+            return Task.FromResult<DemoSessionSnapshot?>(CreateSnapshot());
+        }
+
+        public Task<DemoSessionSnapshot> ResetAsync(DemoSessionResetRequest request, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(CreateSnapshot());
+        }
+
+        private DemoSessionSnapshot CreateSnapshot()
+        {
+            return new DemoSessionSnapshot(
+                Guid.NewGuid(),
+                1,
+                "USDT",
+                10000m,
+                DemoSessionState.Active,
+                DemoConsistencyStatus.InSync,
+                nowUtc,
+                ClosedAtUtc: null,
+                LastConsistencyCheckedAtUtc: nowUtc,
+                LastDriftDetectedAtUtc: null,
+                LastDriftSummary: null);
         }
     }
 
@@ -870,7 +1177,7 @@ public sealed class MarketScannerHandoffServiceTests
         }
     }
 
-    private sealed record BotGraph(Guid BotId, Guid TradingStrategyId, Guid TradingStrategyVersionId);
+    private sealed record BotGraph(Guid BotId, string OwnerUserId, Guid ExchangeAccountId, Guid TradingStrategyId, Guid TradingStrategyVersionId);
 
     private sealed class AiEnabledTestHarness(
         ApplicationDbContext dbContext,
@@ -912,6 +1219,8 @@ public sealed class MarketScannerHandoffServiceTests
         FakeStrategySignalService strategySignalService,
         FakeExecutionGate executionGate,
         FakeUserExecutionOverrideGuard userExecutionOverrideGuard,
+        FakeExecutionEngine executionEngine,
+        FakeDemoSessionService demoSessionService,
         DateTime nowUtc) : IAsyncDisposable
     {
         public ApplicationDbContext DbContext { get; } = dbContext;
@@ -928,6 +1237,10 @@ public sealed class MarketScannerHandoffServiceTests
 
         public FakeUserExecutionOverrideGuard UserExecutionOverrideGuard { get; } = userExecutionOverrideGuard;
 
+        public FakeExecutionEngine ExecutionEngine { get; } = executionEngine;
+
+        public FakeDemoSessionService DemoSessionService { get; } = demoSessionService;
+
         public DateTime NowUtc { get; } = nowUtc;
 
         public async ValueTask DisposeAsync()
@@ -937,4 +1250,3 @@ public sealed class MarketScannerHandoffServiceTests
         }
     }
 }
-

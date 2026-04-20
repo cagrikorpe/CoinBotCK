@@ -48,7 +48,7 @@ public sealed class BinanceCredentialProbeClientTests
         Assert.True(snapshot.IsKeyValid);
         Assert.True(snapshot.SupportsFutures);
         Assert.False(snapshot.SupportsSpot);
-        Assert.Equal("Demo", snapshot.FuturesEnvironmentScope);
+        Assert.Equal("Testnet", snapshot.FuturesEnvironmentScope);
         Assert.False(snapshot.HasIpRestrictionIssue);
         Assert.False(snapshot.HasTimestampSkew);
     }

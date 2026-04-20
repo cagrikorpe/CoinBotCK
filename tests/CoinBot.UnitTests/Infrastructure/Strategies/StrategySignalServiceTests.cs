@@ -182,6 +182,47 @@ public sealed class StrategySignalServiceTests
     }
 
     [Fact]
+    public async Task GenerateAsync_PersistsNewSignal_ForDifferentIndicatorCloseTime()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-signal-different-close", "breakout-core");
+        var version = CreateVersion(strategy, 1, CreateDefinitionJson(minimumSampleCount: 100));
+
+        dbContext.TradingStrategies.Add(strategy);
+        dbContext.TradingStrategyVersions.Add(version);
+        dbContext.RiskProfiles.Add(CreateRiskProfile(strategy.OwnerUserId, "Breakout", 5m, 80m, 2m));
+        dbContext.DemoWallets.Add(CreateDemoWallet(strategy.OwnerUserId, "USDT", 10000m));
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext, timeProvider);
+
+        var firstResult = await service.GenerateAsync(
+            new GenerateStrategySignalsRequest(
+                version.Id,
+                CreateContext(
+                    ExecutionEnvironment.Demo,
+                    sampleCount: 120,
+                    rsiValue: 28m,
+                    closeTimeUtc: new DateTime(2026, 3, 22, 12, 1, 0, DateTimeKind.Utc))));
+        timeProvider.Advance(TimeSpan.FromMinutes(1));
+        var secondResult = await service.GenerateAsync(
+            new GenerateStrategySignalsRequest(
+                version.Id,
+                CreateContext(
+                    ExecutionEnvironment.Demo,
+                    sampleCount: 120,
+                    rsiValue: 28m,
+                    closeTimeUtc: new DateTime(2026, 3, 22, 12, 2, 0, DateTimeKind.Utc))));
+
+        Assert.Single(firstResult.Signals);
+        Assert.Single(secondResult.Signals);
+        Assert.Equal(0, firstResult.SuppressedDuplicateCount);
+        Assert.Equal(0, secondResult.SuppressedDuplicateCount);
+        Assert.Equal(2, await dbContext.TradingStrategySignals.CountAsync());
+    }
+
+    [Fact]
     public async Task GenerateAsync_PersistsVetoReport_WhenRiskFails()
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
@@ -352,6 +393,35 @@ public sealed class StrategySignalServiceTests
         Assert.Contains("\"decisionOutcome\":\"NoSignalCandidate\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task GenerateAsync_PersistsStrategyRiskVetoTrace_WithRuleScopedReasonCode()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-signal-strategy-risk", "strategy-risk-core");
+        var version = CreateVersion(strategy, 1, CreateDefinitionJson(minimumSampleCount: 200));
+
+        dbContext.TradingStrategies.Add(strategy);
+        dbContext.TradingStrategyVersions.Add(version);
+        dbContext.RiskProfiles.Add(CreateRiskProfile(strategy.OwnerUserId, "Balanced", 5m, 80m, 2m));
+        dbContext.DemoWallets.Add(CreateDemoWallet(strategy.OwnerUserId, "USDT", 10000m));
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext, timeProvider);
+        var result = await service.GenerateAsync(
+            new GenerateStrategySignalsRequest(version.Id, CreateContext(ExecutionEnvironment.Demo, sampleCount: 120, rsiValue: 28m)));
+        var decisionTrace = await dbContext.DecisionTraces.SingleAsync();
+
+        Assert.Empty(result.Signals);
+        Assert.Empty(result.Vetoes);
+        Assert.False(result.EvaluationResult.RiskPassed);
+        Assert.Equal("NoSignalCandidate", decisionTrace.DecisionOutcome);
+        Assert.Equal("StrategyRiskVeto", decisionTrace.DecisionReasonType);
+        Assert.Equal("StrategyRiskVetoedIndicatorSampleCount", decisionTrace.DecisionReasonCode);
+        Assert.Equal("StrategyRiskVetoedIndicatorSampleCount", decisionTrace.VetoReasonCode);
+        Assert.StartsWith("Strategy risk vetoed (StrategyRiskVetoedIndicatorSampleCount).", decisionTrace.DecisionSummary, StringComparison.Ordinal);
+    }
+
 
     [Fact]
     public async Task GenerateAsync_SuppressesRepeatedExitNoOpenPositionTrace_WithinSuppressionWindow()
@@ -460,8 +530,8 @@ public sealed class StrategySignalServiceTests
         Assert.True(result.EvaluationResult.ExitMatched);
         Assert.Equal(0, await dbContext.TradingStrategySignals.CountAsync());
         Assert.Equal("NoSignalCandidate", decisionTrace.DecisionOutcome);
-        Assert.Equal("StrategyCandidate", decisionTrace.DecisionReasonType);
-        Assert.Equal("NoSignalCandidate", decisionTrace.DecisionReasonCode);
+        Assert.Equal("StrategyExit", decisionTrace.DecisionReasonType);
+        Assert.Equal("StrategyLongExitMatchedNoOpenPosition", decisionTrace.DecisionReasonCode);
         Assert.Equal(
             "Strategy exit candidate was suppressed because no open position exists. Runtime exit persistence was skipped.",
             decisionTrace.DecisionSummary);
@@ -577,19 +647,21 @@ public sealed class StrategySignalServiceTests
         };
     }
 
-    private static StrategyEvaluationContext CreateContext(ExecutionEnvironment mode, int sampleCount, decimal? rsiValue)
+    private static StrategyEvaluationContext CreateContext(ExecutionEnvironment mode, int sampleCount, decimal? rsiValue, DateTime? closeTimeUtc = null)
     {
-        return new StrategyEvaluationContext(mode, CreateIndicatorSnapshot(sampleCount, rsiValue));
+        return new StrategyEvaluationContext(mode, CreateIndicatorSnapshot(sampleCount, rsiValue, closeTimeUtc));
     }
 
-    private static StrategyIndicatorSnapshot CreateIndicatorSnapshot(int sampleCount, decimal? rsiValue)
+    private static StrategyIndicatorSnapshot CreateIndicatorSnapshot(int sampleCount, decimal? rsiValue, DateTime? closeTimeUtc = null)
     {
+        var resolvedCloseTimeUtc = closeTimeUtc ?? new DateTime(2026, 3, 22, 12, 1, 0, DateTimeKind.Utc);
+
         return new StrategyIndicatorSnapshot(
             Symbol: "btcusdt",
             Timeframe: "1m",
-            OpenTimeUtc: new DateTime(2026, 3, 22, 12, 0, 0, DateTimeKind.Utc),
-            CloseTimeUtc: new DateTime(2026, 3, 22, 12, 1, 0, DateTimeKind.Utc),
-            ReceivedAtUtc: new DateTime(2026, 3, 22, 12, 1, 1, DateTimeKind.Utc),
+            OpenTimeUtc: resolvedCloseTimeUtc.AddMinutes(-1),
+            CloseTimeUtc: resolvedCloseTimeUtc,
+            ReceivedAtUtc: resolvedCloseTimeUtc.AddSeconds(1),
             SampleCount: sampleCount,
             RequiredSampleCount: 120,
             State: IndicatorDataState.Ready,
@@ -883,8 +955,6 @@ public sealed class StrategySignalServiceTests
         }
     }
 }
-
-
 
 
 

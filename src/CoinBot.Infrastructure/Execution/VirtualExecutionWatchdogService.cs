@@ -153,6 +153,13 @@ public sealed class VirtualExecutionWatchdogService(
     {
         try
         {
+            await dbContext.Entry(order).ReloadAsync(cancellationToken);
+
+            if (!OpenOrderStates.Contains(order.State))
+            {
+                return false;
+            }
+
             var simulation = await demoFillSimulator.SimulateOnNextPriceAsync(order, cancellationToken);
 
             if (simulation is null)
@@ -180,6 +187,18 @@ public sealed class VirtualExecutionWatchdogService(
                 "Virtual execution watchdog failed closed for order {ExecutionOrderId}.",
                 order.Id);
 
+            await dbContext.Entry(order).ReloadAsync(cancellationToken);
+
+            if (!OpenOrderStates.Contains(order.State))
+            {
+                logger.LogInformation(
+                    "Virtual execution watchdog skipped fail-closed transition for order {ExecutionOrderId} because the order is already {ExecutionOrderState}.",
+                    order.Id,
+                    order.State);
+                return false;
+            }
+
+            await DiscardTrackedDemoAccountingChangesAsync(cancellationToken);
             await TryReleaseOutstandingReservationAsync(order, cancellationToken);
             order.FailureCode = ResolveFailureCode(exception);
             order.FailureDetail = Truncate(exception.Message, 512);
@@ -196,6 +215,28 @@ public sealed class VirtualExecutionWatchdogService(
             await dbContext.SaveChangesAsync(cancellationToken);
 
             return false;
+        }
+    }
+
+    private async Task DiscardTrackedDemoAccountingChangesAsync(CancellationToken cancellationToken)
+    {
+        var entries = dbContext.ChangeTracker
+            .Entries()
+            .Where(entry => entry.Entity is DemoPosition or DemoWallet or DemoLedgerTransaction or DemoLedgerEntry)
+            .ToArray();
+
+        foreach (var entry in entries)
+        {
+            if (entry.State == EntityState.Added)
+            {
+                entry.State = EntityState.Detached;
+                continue;
+            }
+
+            if (entry.State != EntityState.Unchanged)
+            {
+                await entry.ReloadAsync(cancellationToken);
+            }
         }
     }
 

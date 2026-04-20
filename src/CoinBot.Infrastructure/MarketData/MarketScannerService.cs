@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Application.Abstractions.Strategies;
@@ -1547,13 +1548,16 @@ public sealed class MarketScannerService(
                 "StrategyScoring=Skipped; Reason=ScannerHandoffDisabled");
         }
 
-        var strategyBinding = await ResolveStrategyBindingAsync(symbol, cancellationToken);
-        if (strategyBinding is null)
+        var strategyBindingResolution = await ResolveStrategyBindingAsync(symbol, cancellationToken);
+        if (strategyBindingResolution.Binding is null)
         {
             return MarketScannerStrategyScoreSummary.Rejected(
-                "NoPublishedStrategy",
-                $"StrategyScore=n/a; StrategyOutcome=NoPublishedStrategy; Symbol={symbol}; Timeframe={klineInterval}");
+                strategyBindingResolution.RejectionReason ?? "NoPublishedStrategy",
+                strategyBindingResolution.ScoringSummary
+                    ?? $"StrategyScore=n/a; StrategyOutcome=NoPublishedStrategy; Symbol={symbol}; Timeframe={klineInterval}");
         }
+
+        var strategyBinding = strategyBindingResolution.Binding;
 
         if (indicatorDataService is null || strategyEvaluatorService is null)
         {
@@ -1612,14 +1616,17 @@ public sealed class MarketScannerService(
                     new StrategyEvaluationContext(signalEvaluationMode, indicatorSnapshot),
                     nowUtc));
 
+            var strategyBlockerReason = string.Equals(report.Outcome, "EntryMatched", StringComparison.Ordinal)
+                ? null
+                : ResolveStrategyOutcomeRejectionReason(report);
             var summary = Truncate(
-                $"StrategyKey={strategyBinding.StrategyKey}; Template={report.TemplateKey ?? "custom"}; Outcome={report.Outcome}; StrategyScore={report.AggregateScore}; Passed={report.PassedRuleCount}; Failed={report.FailedRuleCount}; {report.ExplainabilitySummary}",
+                $"StrategyKey={strategyBinding.StrategyKey}; Template={report.TemplateKey ?? "custom"}; Outcome={report.Outcome}; StrategyBlocker={strategyBlockerReason ?? "none"}; StrategyScore={report.AggregateScore}; Passed={report.PassedRuleCount}; Failed={report.FailedRuleCount}; {report.ExplainabilitySummary}",
                 512);
 
             if (!string.Equals(report.Outcome, "EntryMatched", StringComparison.Ordinal))
             {
                 return MarketScannerStrategyScoreSummary.Rejected(
-                    $"Strategy{report.Outcome}",
+                    strategyBlockerReason ?? $"Strategy{report.Outcome}",
                     summary ?? $"StrategyKey={strategyBinding.StrategyKey}; Outcome={report.Outcome}; StrategyScore={report.AggregateScore}");
             }
 
@@ -1647,7 +1654,7 @@ public sealed class MarketScannerService(
         }
     }
 
-    private async Task<MarketScannerStrategyBinding?> ResolveStrategyBindingAsync(
+    private async Task<MarketScannerStrategyBindingResolution> ResolveStrategyBindingAsync(
         string symbol,
         CancellationToken cancellationToken)
     {
@@ -1665,6 +1672,7 @@ public sealed class MarketScannerService(
                 entity.Symbol
             })
             .ToListAsync(cancellationToken);
+        MarketScannerStrategyBindingResolution? bindingMiss = null;
 
         foreach (var bot in candidateBots)
         {
@@ -1692,6 +1700,10 @@ public sealed class MarketScannerService(
 
             if (strategy is null)
             {
+                bindingMiss = new MarketScannerStrategyBindingResolution(
+                    null,
+                    "NoStrategyForEnabledBot",
+                    $"StrategyScore=n/a; StrategyOutcome=NoStrategyForEnabledBot; Symbol={symbol}; Timeframe={klineInterval}; StrategyKey={bot.StrategyKey}");
                 continue;
             }
 
@@ -1702,19 +1714,142 @@ public sealed class MarketScannerService(
 
             if (strategyVersion is null)
             {
+                bindingMiss = new MarketScannerStrategyBindingResolution(
+                    null,
+                    "NoPublishedStrategy",
+                    $"StrategyScore=n/a; StrategyOutcome=NoPublishedStrategy; StrategyKey={strategy.StrategyKey}; Symbol={symbol}; Timeframe={klineInterval}");
                 continue;
             }
 
-            return new MarketScannerStrategyBinding(
-                strategy.Id,
-                strategyVersion.Id,
-                strategyVersion.VersionNumber,
-                strategy.StrategyKey,
-                string.IsNullOrWhiteSpace(strategy.DisplayName) ? strategy.StrategyKey : strategy.DisplayName,
-                strategyVersion.DefinitionJson);
+            return new MarketScannerStrategyBindingResolution(
+                new MarketScannerStrategyBinding(
+                    strategy.Id,
+                    strategyVersion.Id,
+                    strategyVersion.VersionNumber,
+                    strategy.StrategyKey,
+                    string.IsNullOrWhiteSpace(strategy.DisplayName) ? strategy.StrategyKey : strategy.DisplayName,
+                    strategyVersion.DefinitionJson),
+                null,
+                null);
         }
 
-        return null;
+        return bindingMiss ?? new MarketScannerStrategyBindingResolution(
+            null,
+            "NoEnabledBotForSymbol",
+            $"StrategyScore=n/a; StrategyOutcome=NoEnabledBotForSymbol; Symbol={symbol}; Timeframe={klineInterval}");
+    }
+
+    private static string ResolveStrategyOutcomeRejectionReason(StrategyEvaluationReportSnapshot report)
+    {
+        return report.Outcome switch
+        {
+            "RiskVetoed" => ResolveStrategyRiskVetoRejectionReason(report.RuleEvaluation),
+            "ExitMatched" => ResolveStrategyExitRejectionReason(report.RuleEvaluation),
+            "NoSignalCandidate" => ResolveStrategyNoSignalRejectionReason(report.RuleEvaluation),
+            _ => $"Strategy{ToReasonSegment(report.Outcome, "OutcomeBlocked")}"
+        };
+    }
+
+    private static string ResolveStrategyRiskVetoRejectionReason(StrategyEvaluationResult result)
+    {
+        var failedRule = FindFirstFailedEnabledRule(result.RiskRuleResult);
+        var reasonSegment = ResolveRuleReasonSegment(failedRule)
+            ?? ResolveRuleReasonSegment(result.RiskRuleResult)
+            ?? "RiskRuleFailed";
+
+        return TruncateReasonCode($"StrategyRiskVetoed{reasonSegment}");
+    }
+
+    private static string ResolveStrategyExitRejectionReason(StrategyEvaluationResult result)
+    {
+        return result.ExitDirection switch
+        {
+            StrategyTradeDirection.Long => "StrategyLongExitMatched",
+            StrategyTradeDirection.Short => "StrategyShortExitMatched",
+            _ => "StrategyExitMatchedExitRule"
+        };
+    }
+
+    private static string ResolveStrategyNoSignalRejectionReason(StrategyEvaluationResult result)
+    {
+        if (result.HasEntryRules && !result.EntryMatched)
+        {
+            var failedRule = FindFirstFailedEnabledRule(result.EntryRuleResult);
+            var reasonSegment = ResolveRuleReasonSegment(failedRule)
+                ?? ResolveRuleReasonSegment(result.EntryRuleResult)
+                ?? "EntryRulesNotMatched";
+
+            return TruncateReasonCode($"StrategyNoSignal{reasonSegment}");
+        }
+
+        return "StrategyNoSignalCandidate";
+    }
+
+    private static StrategyRuleResultSnapshot? FindFirstFailedEnabledRule(StrategyRuleResultSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return null;
+        }
+
+        if (snapshot.Enabled && !snapshot.Matched && snapshot.Children.Count == 0)
+        {
+            return snapshot;
+        }
+
+        foreach (var child in snapshot.Children)
+        {
+            var failed = FindFirstFailedEnabledRule(child);
+            if (failed is not null)
+            {
+                return failed;
+            }
+        }
+
+        return snapshot.Enabled && !snapshot.Matched ? snapshot : null;
+    }
+
+    private static string? ResolveRuleReasonSegment(StrategyRuleResultSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return null;
+        }
+
+        return ToReasonSegment(snapshot.RuleId, null)
+            ?? ToReasonSegment(snapshot.RuleType, null)
+            ?? ToReasonSegment(snapshot.Group, null)
+            ?? ToReasonSegment(snapshot.Path, null);
+    }
+
+    private static string? ToReasonSegment(string? value, string? fallback)
+    {
+        var source = string.IsNullOrWhiteSpace(value) ? fallback : value;
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            return null;
+        }
+
+        var builder = new StringBuilder(source.Length);
+        var capitalizeNext = true;
+        foreach (var character in source.Trim())
+        {
+            if (char.IsLetterOrDigit(character))
+            {
+                builder.Append(capitalizeNext ? char.ToUpperInvariant(character) : character);
+                capitalizeNext = false;
+                continue;
+            }
+
+            capitalizeNext = builder.Length > 0;
+        }
+
+        return builder.Length == 0 ? null : builder.ToString();
+    }
+
+    private static string TruncateReasonCode(string value)
+    {
+        return value.Length <= 64 ? value : value[..64];
     }
 
     private decimal ResolveMarketScore(decimal? quoteVolume)
@@ -1999,6 +2134,11 @@ public sealed class MarketScannerService(
         string DisplayName,
         string DefinitionJson);
 
+    private sealed record MarketScannerStrategyBindingResolution(
+        MarketScannerStrategyBinding? Binding,
+        string? RejectionReason,
+        string? ScoringSummary);
+
     private sealed record MarketScannerStrategyScoreSummary(
         int? StrategyScore,
         string? RejectionReason,
@@ -2014,6 +2154,3 @@ public sealed class MarketScannerService(
             new(null, rejectionReason, scoringSummary);
     }
 }
-
-
-

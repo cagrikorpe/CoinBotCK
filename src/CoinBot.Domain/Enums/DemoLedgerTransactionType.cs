@@ -8,5 +8,6 @@ public enum DemoLedgerTransactionType
     FillApplied = 3,
     MarkPriceUpdated = 4,
     Liquidated = 5,
-    SessionBootstrapped = 6
+    SessionBootstrapped = 6,
+    Reconciled = 7
 }

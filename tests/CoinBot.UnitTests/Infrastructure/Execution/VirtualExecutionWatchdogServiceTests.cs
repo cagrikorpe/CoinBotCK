@@ -80,6 +80,81 @@ public sealed class VirtualExecutionWatchdogServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_FailsSubmittedVirtualOrderWithoutLeakingFillOrPosition_WhenReservedBalanceIsUnavailable()
+    {
+        await using var harness = CreateHarness();
+        var botId = Guid.NewGuid();
+        await SeedBotAsync(harness.DbContext, "user-watchdog-reserve-fail", botId, "watchdog-reserve-fail");
+        await SeedDemoWalletAsync(harness.DbContext, "user-watchdog-reserve-fail", "USDT", 0m);
+        harness.MarketDataService.SetLatestPrice("AAVEUSDT", 99m, harness.TimeProvider.GetUtcNow().UtcDateTime, "unit-test");
+        harness.MarketDataService.SetSymbolMetadata("AAVEUSDT", "AAVE", "USDT", 0.01m, 0.001m);
+        await PrimeFreshMarketDataAsync(harness, "AAVEUSDT", "corr-vw-reserve-fail");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-vw-reserve-fail",
+            context: "Open demo execution",
+            correlationId: "corr-vw-reserve-fail-switch");
+        var order = new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "user-watchdog-reserve-fail",
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            BotId = botId,
+            StrategyKey = "watchdog-reserve-fail",
+            Symbol = "AAVEUSDT",
+            Timeframe = "1m",
+            BaseAsset = "AAVE",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Limit,
+            Quantity = 1m,
+            Price = 100m,
+            ExecutionEnvironment = ExecutionEnvironment.Demo,
+            ExecutorKind = ExecutionOrderExecutorKind.Virtual,
+            State = ExecutionOrderState.Submitted,
+            IdempotencyKey = Guid.NewGuid().ToString("N"),
+            RootCorrelationId = Guid.NewGuid().ToString("N"),
+            ExternalOrderId = "virtual-reserve-fail",
+            SubmittedToBroker = true,
+            SubmittedAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime,
+            LastStateChangedAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime
+        };
+        harness.DbContext.ExecutionOrders.Add(order);
+        harness.DbContext.ExecutionOrderTransitions.Add(new ExecutionOrderTransition
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = order.OwnerUserId,
+            ExecutionOrderId = order.Id,
+            SequenceNumber = 1,
+            State = ExecutionOrderState.Submitted,
+            EventCode = "Submitted",
+            CorrelationId = order.RootCorrelationId,
+            OccurredAtUtc = order.SubmittedAtUtc.Value
+        });
+        await harness.DbContext.SaveChangesAsync();
+
+        var cycleResult = await harness.WatchdogService.RunOnceAsync();
+        var persistedOrder = await harness.DbContext.ExecutionOrders
+            .IgnoreQueryFilters()
+            .SingleAsync(entity => entity.Id == order.Id);
+        var bot = await harness.DbContext.TradingBots
+            .IgnoreQueryFilters()
+            .SingleAsync(entity => entity.Id == botId);
+
+        Assert.Equal(0, cycleResult.AdvancedOrderCount);
+        Assert.Equal(ExecutionOrderState.Failed, persistedOrder.State);
+        Assert.Equal("VirtualWatchdogFailedClosed", persistedOrder.FailureCode);
+        Assert.Equal(0m, persistedOrder.FilledQuantity);
+        Assert.Null(persistedOrder.LastFilledAtUtc);
+        Assert.Equal(0, bot.OpenPositionCount);
+        Assert.Equal(0, bot.OpenOrderCount);
+        Assert.Empty(await harness.DbContext.DemoPositions.Where(entity => entity.BotId == botId && entity.Quantity != 0m).ToListAsync());
+    }
+
+    [Fact]
     public async Task RunOnceAsync_TriggersTakeProfitClose_ForFilledDemoSpotPosition()
     {
         await using var harness = CreateHarness();
@@ -276,6 +351,25 @@ public sealed class VirtualExecutionWatchdogServiceTests
             AvailableBalance = availableBalance,
             ReservedBalance = 0m,
             LastActivityAtUtc = new DateTime(2026, 3, 23, 12, 0, 0, DateTimeKind.Utc)
+        });
+
+        await dbContext.SaveChangesAsync();
+    }
+
+    private static async Task SeedBotAsync(
+        ApplicationDbContext dbContext,
+        string ownerUserId,
+        Guid botId,
+        string strategyKey)
+    {
+        dbContext.TradingBots.Add(new TradingBot
+        {
+            Id = botId,
+            OwnerUserId = ownerUserId,
+            Name = $"{strategyKey}-bot",
+            StrategyKey = strategyKey,
+            Symbol = "AAVEUSDT",
+            IsEnabled = true
         });
 
         await dbContext.SaveChangesAsync();
