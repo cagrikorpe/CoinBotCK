@@ -146,7 +146,7 @@ public sealed class ExchangePrivatePlaneSyncTests
     }
 
     [Fact]
-    public async Task PositionSyncService_KeepsOpenOrderCounter_WhenSubmittedOrderIsAfterSnapshot()
+    public async Task PositionSyncService_DoesNotTreatSubmittedOrderAsOpenPosition_WhenOrderIsAfterSnapshot()
     {
         var databaseRoot = new InMemoryDatabaseRoot();
         await using var context = CreateContext(databaseRoot);
@@ -209,8 +209,66 @@ public sealed class ExchangePrivatePlaneSyncTests
 
         var bot = await context.TradingBots.SingleAsync(entity => entity.Id == botId);
 
-        Assert.Equal(1, bot.OpenPositionCount);
+        Assert.Equal(0, bot.OpenPositionCount);
         Assert.Equal(1, bot.OpenOrderCount);
+    }
+
+    [Fact]
+    public async Task PositionSyncService_RefreshesLinkedBotCounters_ByBotSymbol()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        await using var context = CreateContext(databaseRoot);
+        var exchangeAccountId = Guid.NewGuid();
+        var solBotId = Guid.NewGuid();
+        var ethBotId = Guid.NewGuid();
+        var observedAtUtc = new DateTime(2026, 4, 20, 9, 0, 0, DateTimeKind.Utc);
+        var snapshot = new ExchangeAccountSnapshot(
+            exchangeAccountId,
+            "user-counter-symbol",
+            "Binance",
+            [],
+            [
+                new ExchangePositionSnapshot("SOLUSDT", "BOTH", 0.06m, 85m, 85m, 0.12m, "isolated", 5.10m, observedAtUtc)
+            ],
+            observedAtUtc,
+            observedAtUtc,
+            "Binance.PrivateRest.Account+PositionRisk");
+
+        context.TradingBots.AddRange(
+            new TradingBot
+            {
+                Id = solBotId,
+                OwnerUserId = "user-counter-symbol",
+                Name = "SOL bot",
+                StrategyKey = "counter-symbol-sol",
+                Symbol = "SOLUSDT",
+                ExchangeAccountId = exchangeAccountId,
+                IsEnabled = true
+            },
+            new TradingBot
+            {
+                Id = ethBotId,
+                OwnerUserId = "user-counter-symbol",
+                Name = "ETH bot",
+                StrategyKey = "counter-symbol-eth",
+                Symbol = "ETHUSDT",
+                ExchangeAccountId = exchangeAccountId,
+                IsEnabled = true,
+                OpenPositionCount = 1
+            });
+        await context.SaveChangesAsync();
+
+        var positionSyncService = new ExchangePositionSyncService(context, NullLogger<ExchangePositionSyncService>.Instance);
+
+        await positionSyncService.ApplyAsync(snapshot);
+
+        var solBot = await context.TradingBots.SingleAsync(entity => entity.Id == solBotId);
+        var ethBot = await context.TradingBots.SingleAsync(entity => entity.Id == ethBotId);
+
+        Assert.Equal(1, solBot.OpenPositionCount);
+        Assert.Equal(0, ethBot.OpenPositionCount);
+        Assert.Equal(0, solBot.OpenOrderCount);
+        Assert.Equal(0, ethBot.OpenOrderCount);
     }
 
     [Fact]
@@ -368,6 +426,132 @@ public sealed class ExchangePrivatePlaneSyncTests
     }
 
     [Fact]
+    public async Task ExchangeAppStateSyncService_DoesNotFlagDrift_WhenOnlyVolatilePositionFieldsChange()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        var exchangeAccountId = Guid.NewGuid();
+        var observedAtUtc = new DateTime(2026, 4, 20, 10, 0, 0, DateTimeKind.Utc);
+        await using var context = CreateContext(databaseRoot);
+        context.ExchangeAccounts.Add(new ExchangeAccount
+        {
+            Id = exchangeAccountId,
+            OwnerUserId = "user-volatile-drift",
+            ExchangeName = "Binance",
+            DisplayName = "Primary",
+            ApiKeyCiphertext = "cipher-api-key",
+            ApiSecretCiphertext = "cipher-api-secret",
+            CredentialStatus = ExchangeCredentialStatus.Active
+        });
+        context.ExchangePositions.Add(new ExchangePosition
+        {
+            OwnerUserId = "user-volatile-drift",
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "SOLUSDT",
+            PositionSide = "BOTH",
+            Quantity = 0.06m,
+            EntryPrice = 85m,
+            BreakEvenPrice = 85.02m,
+            UnrealizedProfit = 0.10m,
+            MarginType = "isolated",
+            IsolatedWallet = 5.10m,
+            ExchangeUpdatedAtUtc = observedAtUtc.AddSeconds(-5),
+            SyncedAtUtc = observedAtUtc.AddSeconds(-5)
+        });
+        await context.SaveChangesAsync();
+
+        var snapshot = new ExchangeAccountSnapshot(
+            exchangeAccountId,
+            "user-volatile-drift",
+            "Binance",
+            [],
+            [
+                new ExchangePositionSnapshot("SOLUSDT", "BOTH", 0.06m, 85m, 85.02m, 0.15m, "isolated", 5.20m, observedAtUtc)
+            ],
+            observedAtUtc,
+            observedAtUtc,
+            "Binance.PrivateRest.Account+PositionRisk");
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(observedAtUtc));
+        var service = new ExchangeAppStateSyncService(
+            context,
+            new FakeExchangeCredentialService(exchangeAccountId),
+            new FakePrivateRestClient(snapshot),
+            new ExchangeAccountSnapshotHub(),
+            new ExchangeAccountSyncStateService(context),
+            timeProvider,
+            NullLogger<ExchangeAppStateSyncService>.Instance);
+
+        await service.RunOnceAsync();
+
+        var state = await context.ExchangeAccountSyncStates.SingleAsync(entity => entity.ExchangeAccountId == exchangeAccountId);
+
+        Assert.Equal(ExchangeStateDriftStatus.InSync, state.DriftStatus);
+        Assert.Contains("PositionMismatches=0", state.DriftSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExchangeAppStateSyncService_DoesNotFlagDrift_WhenPersistedZeroQuantityPositionMissingFromSnapshot()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        var exchangeAccountId = Guid.NewGuid();
+        var observedAtUtc = new DateTime(2026, 4, 20, 10, 15, 0, DateTimeKind.Utc);
+        await using var context = CreateContext(databaseRoot);
+        context.ExchangeAccounts.Add(new ExchangeAccount
+        {
+            Id = exchangeAccountId,
+            OwnerUserId = "user-zero-drift",
+            ExchangeName = "Binance",
+            DisplayName = "Primary",
+            ApiKeyCiphertext = "cipher-api-key",
+            ApiSecretCiphertext = "cipher-api-secret",
+            CredentialStatus = ExchangeCredentialStatus.Active
+        });
+        context.ExchangePositions.Add(new ExchangePosition
+        {
+            OwnerUserId = "user-zero-drift",
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "SOLUSDT",
+            PositionSide = "BOTH",
+            Quantity = 0m,
+            EntryPrice = 85m,
+            BreakEvenPrice = 85m,
+            UnrealizedProfit = 0m,
+            MarginType = "isolated",
+            IsolatedWallet = 0m,
+            ExchangeUpdatedAtUtc = observedAtUtc.AddSeconds(-5),
+            SyncedAtUtc = observedAtUtc.AddSeconds(-5)
+        });
+        await context.SaveChangesAsync();
+
+        var snapshot = new ExchangeAccountSnapshot(
+            exchangeAccountId,
+            "user-zero-drift",
+            "Binance",
+            [],
+            [],
+            observedAtUtc,
+            observedAtUtc,
+            "Binance.PrivateRest.Account+PositionRisk");
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(observedAtUtc));
+        var service = new ExchangeAppStateSyncService(
+            context,
+            new FakeExchangeCredentialService(exchangeAccountId),
+            new FakePrivateRestClient(snapshot),
+            new ExchangeAccountSnapshotHub(),
+            new ExchangeAccountSyncStateService(context),
+            timeProvider,
+            NullLogger<ExchangeAppStateSyncService>.Instance);
+
+        await service.RunOnceAsync();
+
+        var state = await context.ExchangeAccountSyncStates.SingleAsync(entity => entity.ExchangeAccountId == exchangeAccountId);
+
+        Assert.Equal(ExchangeStateDriftStatus.InSync, state.DriftStatus);
+        Assert.Contains("PositionMismatches=0", state.DriftSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ExchangeAppStateSyncService_ProjectsMissingOpenPosition_FromFilledExecutionOrders()
     {
         var databaseRoot = new InMemoryDatabaseRoot();
@@ -423,6 +607,11 @@ public sealed class ExchangePrivatePlaneSyncTests
         Assert.Equal(0.06m, projectedPosition.Quantity);
         Assert.Equal(83.54m, projectedPosition.EntryPrice);
         Assert.Contains("Fallback=LocalExecutionProjection", publishedSnapshot.Source, StringComparison.Ordinal);
+
+        var state = await context.ExchangeAccountSyncStates.SingleAsync(entity => entity.ExchangeAccountId == exchangeAccountId);
+
+        Assert.Equal(ExchangeStateDriftStatus.InSync, state.DriftStatus);
+        Assert.DoesNotContain("Fallback=LocalExecutionProjection", state.DriftSummary, StringComparison.Ordinal);
     }
 
 

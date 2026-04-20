@@ -382,12 +382,22 @@ public sealed class ExecutionOrderLifecycleService(
 
         if (order.ExecutionEnvironment == ExecutionEnvironment.Live)
         {
-            bot.OpenPositionCount = await LivePositionTruthResolver.ResolveOpenPositionCountAsync(
-                dbContext,
-                order.OwnerUserId,
-                order.Plane,
-                order.ExchangeAccountId,
-                cancellationToken);
+            var botSymbol = string.IsNullOrWhiteSpace(bot.Symbol) ? order.Symbol : bot.Symbol;
+            if (string.IsNullOrWhiteSpace(botSymbol))
+            {
+                bot.OpenPositionCount = 0;
+            }
+            else
+            {
+                var botNetQuantity = await LivePositionTruthResolver.ResolveNetQuantityAsync(
+                    dbContext,
+                    order.OwnerUserId,
+                    order.Plane,
+                    order.ExchangeAccountId,
+                    botSymbol,
+                    cancellationToken);
+                bot.OpenPositionCount = botNetQuantity == 0m ? 0 : 1;
+            }
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);

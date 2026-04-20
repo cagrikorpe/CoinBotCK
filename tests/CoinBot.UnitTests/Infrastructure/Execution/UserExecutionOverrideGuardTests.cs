@@ -1209,7 +1209,7 @@ public sealed class UserExecutionOverrideGuardTests
     }
 
     [Fact]
-    public async Task EvaluateAsync_AllowsPilotReduceOnlyOrder_WhenOpenPositionIsOnlyVisibleThroughSubmittedMarketOrderFallback()
+    public async Task EvaluateAsync_BlocksPilotOrder_WhenOnlyUnfilledSubmittedMarketOrderExists()
     {
         await using var dbContext = CreateDbContext();
         var botId = Guid.NewGuid();
@@ -1309,8 +1309,8 @@ public sealed class UserExecutionOverrideGuardTests
                 Plane: ExchangeDataPlane.Futures),
             CancellationToken.None);
 
-        Assert.False(result.IsBlocked);
-        Assert.Null(result.BlockCode);
+        Assert.True(result.IsBlocked);
+        Assert.Equal("UserExecutionPilotNotionalHardCapExceeded", result.BlockCode);
         Assert.Contains("RequestedNotional=8125", result.GuardSummary, StringComparison.Ordinal);
     }
 

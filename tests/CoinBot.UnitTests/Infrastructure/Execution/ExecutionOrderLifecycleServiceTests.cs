@@ -174,6 +174,70 @@ public sealed class ExecutionOrderLifecycleServiceTests
     }
 
     [Fact]
+    public async Task ApplyExchangeUpdateAsync_RefreshesLiveBotOpenPositionCount_ForBotSymbolOnly()
+    {
+        await using var dbContext = CreateContext();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 5, 12, 0, 0, TimeSpan.Zero));
+        var lifecycleService = CreateService(dbContext, timeProvider);
+        var botId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        var orderId = await SeedOrderAsync(
+            dbContext,
+            ExecutionOrderState.Submitted,
+            filledQuantity: 0m,
+            botId: botId,
+            exchangeAccountId: exchangeAccountId,
+            symbol: "ETHUSDT",
+            baseAsset: "ETH",
+            price: 3200m);
+        dbContext.TradingBots.Add(new TradingBot
+        {
+            Id = botId,
+            OwnerUserId = "user-lifecycle",
+            Name = "Lifecycle ETH bot",
+            StrategyKey = "lifecycle-core",
+            Symbol = "ETHUSDT",
+            ExchangeAccountId = exchangeAccountId,
+            IsEnabled = true,
+            OpenPositionCount = 1,
+            OpenOrderCount = 1
+        });
+        dbContext.ExchangePositions.Add(new ExchangePosition
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "user-lifecycle",
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "BTCUSDT",
+            PositionSide = "BOTH",
+            Quantity = 0.05m,
+            EntryPrice = 65000m,
+            BreakEvenPrice = 65000m,
+            MarginType = "isolated",
+            ExchangeUpdatedAtUtc = timeProvider.GetUtcNow().UtcDateTime,
+            SyncedAtUtc = timeProvider.GetUtcNow().UtcDateTime
+        });
+        await dbContext.SaveChangesAsync();
+
+        var applied = await lifecycleService.ApplyExchangeUpdateAsync(
+            CreateSnapshot(
+                orderId,
+                "CANCELED",
+                executedQuantity: 0m,
+                timeProvider.GetUtcNow().UtcDateTime,
+                symbol: "ETHUSDT",
+                price: 3200m));
+
+        var bot = await dbContext.TradingBots.SingleAsync(entity => entity.Id == botId);
+        var order = await dbContext.ExecutionOrders.SingleAsync(entity => entity.Id == orderId);
+
+        Assert.True(applied);
+        Assert.Equal(ExecutionOrderState.Cancelled, order.State);
+        Assert.Equal(0, bot.OpenPositionCount);
+        Assert.Equal(0, bot.OpenOrderCount);
+    }
+
+    [Fact]
     public async Task ApplyExchangeUpdateAsync_WritesSpotPortfolioAudit_WithRootCorrelation()
     {
         await using var dbContext = CreateContext();
@@ -236,7 +300,10 @@ public sealed class ExecutionOrderLifecycleServiceTests
         decimal filledQuantity,
         ExchangeDataPlane plane = ExchangeDataPlane.Futures,
         Guid? botId = null,
-        Guid? exchangeAccountId = null)
+        Guid? exchangeAccountId = null,
+        string symbol = "BTCUSDT",
+        string baseAsset = "BTC",
+        decimal price = 65000m)
     {
         var orderId = Guid.NewGuid();
         dbContext.ExecutionOrders.Add(new ExecutionOrder
@@ -251,14 +318,14 @@ public sealed class ExecutionOrderLifecycleServiceTests
             ExchangeAccountId = exchangeAccountId ?? Guid.NewGuid(),
             Plane = plane,
             StrategyKey = "lifecycle-core",
-            Symbol = "BTCUSDT",
+            Symbol = symbol,
             Timeframe = "1m",
-            BaseAsset = "BTC",
+            BaseAsset = baseAsset,
             QuoteAsset = "USDT",
             Side = ExecutionOrderSide.Buy,
             OrderType = ExecutionOrderType.Market,
             Quantity = 0.05m,
-            Price = 65000m,
+            Price = price,
             FilledQuantity = filledQuantity,
             ExecutionEnvironment = ExecutionEnvironment.Live,
             ExecutorKind = ExecutionOrderExecutorKind.Binance,
@@ -280,17 +347,19 @@ public sealed class ExecutionOrderLifecycleServiceTests
         string status,
         decimal executedQuantity,
         DateTime eventTimeUtc,
-        ExchangeDataPlane plane = ExchangeDataPlane.Futures)
+        ExchangeDataPlane plane = ExchangeDataPlane.Futures,
+        string symbol = "BTCUSDT",
+        decimal price = 65000m)
     {
         return new BinanceOrderStatusSnapshot(
-            "BTCUSDT",
+            symbol,
             "binance-order-1",
             ExecutionClientOrderId.Create(orderId),
             status,
             0.05m,
             executedQuantity,
             0m,
-            executedQuantity > 0m ? 65000m : 0m,
+            executedQuantity > 0m ? price : 0m,
             0m,
             0m,
             eventTimeUtc,

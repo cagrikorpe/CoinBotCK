@@ -622,7 +622,7 @@ public sealed class AiShadowDecisionIntegrationTests
             CanTrade = true,
             SupportsSpot = false,
             SupportsFutures = true,
-            EnvironmentScope = "Demo",
+            EnvironmentScope = "Testnet",
             IsEnvironmentMatch = true,
             ValidationStatus = "Valid",
             PermissionSummary = "Trade=Y; Futures=Y; Testnet=Y",
@@ -969,7 +969,6 @@ public sealed class AiShadowDecisionIntegrationTests
         }
     }
 }
-
 
 
 

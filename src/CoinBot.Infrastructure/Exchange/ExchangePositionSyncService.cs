@@ -113,8 +113,6 @@ public sealed class ExchangePositionSyncService(
             return;
         }
 
-        var openPositionCount = await ResolveOpenPositionCountFromLatestSnapshotAsync(snapshot, cancellationToken);
-
         foreach (var bot in bots)
         {
             bot.OpenOrderCount = await dbContext.ExecutionOrders
@@ -124,7 +122,10 @@ public sealed class ExchangePositionSyncService(
                               !entity.IsDeleted &&
                               OpenOrderStates.Contains(entity.State),
                     cancellationToken);
-            bot.OpenPositionCount = openPositionCount;
+            bot.OpenPositionCount = await ResolveOpenPositionCountFromLatestSnapshotAsync(
+                snapshot,
+                bot.Symbol,
+                cancellationToken);
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -132,22 +133,26 @@ public sealed class ExchangePositionSyncService(
 
     private async Task<int> ResolveOpenPositionCountFromLatestSnapshotAsync(
         ExchangeAccountSnapshot snapshot,
+        string? botSymbol,
         CancellationToken cancellationToken)
     {
         var ownerUserId = snapshot.OwnerUserId.Trim();
+        var normalizedSymbol = string.IsNullOrWhiteSpace(botSymbol) ? null : NormalizeCode(botSymbol);
         var syncCutoffUtc = NormalizeTimestamp(snapshot.ReceivedAtUtc);
         var projectedPositions = new Dictionary<string, decimal>(StringComparer.Ordinal);
 
-        var activePositions = await dbContext.ExchangePositions
-            .AsNoTracking()
-            .IgnoreQueryFilters()
-            .Where(entity =>
-                entity.OwnerUserId == ownerUserId &&
-                entity.ExchangeAccountId == snapshot.ExchangeAccountId &&
-                entity.Plane == snapshot.Plane &&
-                !entity.IsDeleted &&
-                entity.Quantity != 0m)
-            .ToListAsync(cancellationToken);
+        var activePositions = (await dbContext.ExchangePositions
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.OwnerUserId == ownerUserId &&
+                    entity.ExchangeAccountId == snapshot.ExchangeAccountId &&
+                    entity.Plane == snapshot.Plane &&
+                    !entity.IsDeleted &&
+                    entity.Quantity != 0m)
+                .ToListAsync(cancellationToken))
+            .Where(entity => normalizedSymbol is null || NormalizeCode(entity.Symbol) == normalizedSymbol)
+            .ToList();
 
         foreach (var position in activePositions)
         {
@@ -156,21 +161,23 @@ public sealed class ExchangePositionSyncService(
                 ResolveSignedPositionQuantity(position.Quantity, position.PositionSide);
         }
 
-        var liveOrdersAfterSnapshot = await dbContext.ExecutionOrders
-            .AsNoTracking()
-            .IgnoreQueryFilters()
-            .Where(entity =>
-                entity.OwnerUserId == ownerUserId &&
-                entity.ExchangeAccountId == snapshot.ExchangeAccountId &&
-                entity.Plane == snapshot.Plane &&
-                !entity.IsDeleted &&
-                entity.SubmittedToBroker &&
-                (entity.State == ExecutionOrderState.Submitted ||
-                 entity.State == ExecutionOrderState.Dispatching ||
-                 entity.State == ExecutionOrderState.CancelRequested ||
-                 entity.State == ExecutionOrderState.PartiallyFilled ||
-                 entity.State == ExecutionOrderState.Filled))
-            .ToListAsync(cancellationToken);
+        var liveOrdersAfterSnapshot = (await dbContext.ExecutionOrders
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.OwnerUserId == ownerUserId &&
+                    entity.ExchangeAccountId == snapshot.ExchangeAccountId &&
+                    entity.Plane == snapshot.Plane &&
+                    !entity.IsDeleted &&
+                    entity.SubmittedToBroker &&
+                    (entity.State == ExecutionOrderState.Submitted ||
+                     entity.State == ExecutionOrderState.Dispatching ||
+                     entity.State == ExecutionOrderState.CancelRequested ||
+                     entity.State == ExecutionOrderState.PartiallyFilled ||
+                     entity.State == ExecutionOrderState.Filled))
+                .ToListAsync(cancellationToken))
+            .Where(entity => normalizedSymbol is null || NormalizeCode(entity.Symbol) == normalizedSymbol)
+            .ToList();
 
         foreach (var order in liveOrdersAfterSnapshot)
         {
@@ -206,29 +213,13 @@ public sealed class ExchangePositionSyncService(
 
     private static decimal ResolveSignedOrderQuantity(ExecutionOrder order)
     {
-        var quantity = order.FilledQuantity > 0m
-            ? order.FilledQuantity
-            : ResolvePendingOrderQuantity(order);
+        var quantity = order.FilledQuantity;
         if (quantity == 0m)
         {
             return 0m;
         }
 
         return order.Side == ExecutionOrderSide.Buy ? quantity : -quantity;
-    }
-
-    private static decimal ResolvePendingOrderQuantity(ExecutionOrder order)
-    {
-        if (order.ReduceOnly || order.OrderType != ExecutionOrderType.Market)
-        {
-            return 0m;
-        }
-
-        return order.State is ExecutionOrderState.Submitted or
-            ExecutionOrderState.Dispatching or
-            ExecutionOrderState.CancelRequested
-            ? order.Quantity
-            : 0m;
     }
 
     private static DateTime ResolveOrderEffectiveAtUtc(ExecutionOrder order)

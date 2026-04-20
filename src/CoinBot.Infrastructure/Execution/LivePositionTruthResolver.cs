@@ -231,10 +231,7 @@ internal static class LivePositionTruthResolver
 
     private static decimal ResolveSignedOrderQuantity(RawOrder entity)
     {
-        var filledQuantity = (decimal)entity.FilledQuantity;
-        var quantity = filledQuantity > 0m
-            ? filledQuantity
-            : ResolvePendingExposureQuantity(entity);
+        var quantity = (decimal)entity.FilledQuantity;
         if (quantity == 0m)
         {
             return 0m;
@@ -243,21 +240,6 @@ internal static class LivePositionTruthResolver
         return entity.Side == ExecutionOrderSide.Buy
             ? quantity
             : -quantity;
-    }
-
-    private static decimal ResolvePendingExposureQuantity(RawOrder entity)
-    {
-        if ((bool)entity.ReduceOnly ||
-            entity.OrderType != ExecutionOrderType.Market)
-        {
-            return 0m;
-        }
-
-        return entity.State is ExecutionOrderState.Submitted or
-            ExecutionOrderState.Dispatching or
-            ExecutionOrderState.CancelRequested
-            ? (decimal)entity.Quantity
-            : 0m;
     }
 
     private static decimal ResolveSignedPositionQuantity(decimal quantity, string? positionSide)

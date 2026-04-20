@@ -832,7 +832,7 @@ public sealed class ExecutionEngineTests
     }
 
     [Fact]
-    public async Task DispatchAsync_AllowsReduceOnlyClose_WhenLiveExposureIsOnlyVisibleThroughSubmittedMarketOrderFallback()
+    public async Task DispatchAsync_RejectsReduceOnlyClose_WhenOnlyUnfilledSubmittedMarketOrderExists()
     {
         await using var harness = CreateHarness();
         var strategyId = Guid.NewGuid();
@@ -869,14 +869,14 @@ public sealed class ExecutionEngineTests
             },
             CancellationToken.None);
 
-        Assert.Equal(ExecutionOrderState.Submitted, result.Order.State);
+        Assert.Equal(ExecutionOrderState.Rejected, result.Order.State);
+        Assert.Equal("ReduceOnlyWithoutOpenPosition", result.Order.FailureCode);
         Assert.True(result.Order.ReduceOnly);
-        Assert.True(result.Order.SubmittedToBroker);
-        Assert.Equal(ExecutionRejectionStage.None, result.Order.RejectionStage);
-        Assert.True(result.Order.CooldownApplied);
-        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
-        Assert.NotNull(harness.PrivateRestClient.LastPlacementRequest);
-        Assert.True(harness.PrivateRestClient.LastPlacementRequest.ReduceOnly);
+        Assert.False(result.Order.SubmittedToBroker);
+        Assert.Equal(ExecutionRejectionStage.PreSubmit, result.Order.RejectionStage);
+        Assert.False(result.Order.CooldownApplied);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Null(harness.PrivateRestClient.LastPlacementRequest);
     }
 
     [Fact]

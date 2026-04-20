@@ -51,7 +51,7 @@ public sealed class ExchangeAppStateSyncService(
                     cancellationToken);
                 var enrichedSnapshot = await EnrichSnapshotWithLocalPositionProjectionAsync(snapshot, cancellationToken);
 
-                var drift = await DetectDriftAsync(enrichedSnapshot, cancellationToken);
+                var drift = await DetectDriftAsync(snapshot, cancellationToken);
                 snapshotHub.Publish(enrichedSnapshot);
 
                 await syncStateService.RecordReconciliationAsync(
@@ -366,12 +366,16 @@ public sealed class ExchangeAppStateSyncService(
         IReadOnlyCollection<ExchangePositionSnapshot> expectedPositions,
         IReadOnlyCollection<ExchangePositionSnapshot> actualPositions)
     {
-        var expected = expectedPositions.ToDictionary(
-            position => CreatePositionKey(position.Symbol, position.PositionSide),
-            StringComparer.Ordinal);
-        var actual = actualPositions.ToDictionary(
-            position => CreatePositionKey(position.Symbol, position.PositionSide),
-            StringComparer.Ordinal);
+        var expected = expectedPositions
+            .Where(position => position.Quantity != 0m)
+            .ToDictionary(
+                position => CreatePositionKey(position.Symbol, position.PositionSide),
+                StringComparer.Ordinal);
+        var actual = actualPositions
+            .Where(position => position.Quantity != 0m)
+            .ToDictionary(
+                position => CreatePositionKey(position.Symbol, position.PositionSide),
+                StringComparer.Ordinal);
         var mismatchCount = 0;
 
         foreach (var key in expected.Keys.Union(actual.Keys, StringComparer.Ordinal))
@@ -385,9 +389,7 @@ public sealed class ExchangeAppStateSyncService(
 
             if (expectedPosition.Quantity != actualPosition.Quantity ||
                 expectedPosition.EntryPrice != actualPosition.EntryPrice ||
-                expectedPosition.BreakEvenPrice != actualPosition.BreakEvenPrice ||
-                expectedPosition.UnrealizedProfit != actualPosition.UnrealizedProfit ||
-                expectedPosition.IsolatedWallet != actualPosition.IsolatedWallet)
+                expectedPosition.BreakEvenPrice != actualPosition.BreakEvenPrice)
             {
                 mismatchCount++;
             }

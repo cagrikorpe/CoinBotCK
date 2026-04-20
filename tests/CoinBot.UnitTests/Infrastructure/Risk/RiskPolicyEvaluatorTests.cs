@@ -198,6 +198,80 @@ public sealed class RiskPolicyEvaluatorTests
     }
 
     [Fact]
+    public async Task EvaluateAsync_DoesNotCountUnfilledSubmittedLiveMarketOrder_AsOpenPosition()
+    {
+        await using var dbContext = CreateDbContext();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 20, 8, 0, 0, TimeSpan.Zero));
+        var exchangeAccountId = Guid.NewGuid();
+        dbContext.RiskProfiles.Add(CreateRiskProfile(
+            "user-live-pending",
+            10m,
+            200m,
+            5m,
+            maxConcurrentPositions: 1));
+        dbContext.ExchangeBalances.Add(new ExchangeBalance
+        {
+            OwnerUserId = "user-live-pending",
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            Asset = "USDT",
+            WalletBalance = 1000m,
+            CrossWalletBalance = 1000m,
+            ExchangeUpdatedAtUtc = timeProvider.GetUtcNow().UtcDateTime.AddMinutes(-1),
+            SyncedAtUtc = timeProvider.GetUtcNow().UtcDateTime.AddMinutes(-1)
+        });
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "user-live-pending",
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            StrategyKey = "risk-pending",
+            Symbol = "SOLUSDT",
+            Timeframe = "1m",
+            BaseAsset = "SOL",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.06m,
+            Price = 85m,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            State = ExecutionOrderState.Submitted,
+            SubmittedToBroker = true,
+            SubmittedAtUtc = timeProvider.GetUtcNow().UtcDateTime.AddSeconds(-10),
+            LastStateChangedAtUtc = timeProvider.GetUtcNow().UtcDateTime.AddSeconds(-10),
+            IdempotencyKey = "risk-pending-order",
+            RootCorrelationId = "risk-pending-root"
+        });
+        await dbContext.SaveChangesAsync();
+
+        var evaluator = CreateEvaluator(dbContext, timeProvider);
+
+        var result = await evaluator.EvaluateAsync(
+            new RiskPolicyEvaluationRequest(
+                "user-live-pending",
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                StrategySignalType.Entry,
+                ExecutionEnvironment.Live,
+                "SOLUSDT",
+                "1m",
+                Side: ExecutionOrderSide.Buy,
+                Quantity: 0.06m,
+                Price: 85m));
+
+        Assert.False(result.IsVetoed);
+        Assert.Equal(0, result.Snapshot.OpenPositionCount);
+        Assert.Equal(1, result.Snapshot.ProjectedOpenPositionCount);
+        Assert.Equal(0m, result.Snapshot.CurrentSymbolExposureAmount);
+    }
+
+    [Fact]
     public async Task EvaluateAsync_VetoesProjectedLeverage_UsingRequestNotional()
     {
         await using var dbContext = CreateDbContext();

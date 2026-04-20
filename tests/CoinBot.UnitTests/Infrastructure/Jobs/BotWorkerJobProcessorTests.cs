@@ -465,7 +465,7 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
-    public async Task ProcessAsync_GeneratesExitSignal_AndSubmitsReduceOnlySellOrder_WhenOpenLongPositionIsOnlyVisibleThroughSubmittedMarketOrderFallback()
+    public async Task ProcessAsync_DoesNotGenerateExitSignal_WhenOnlyUnfilledSubmittedMarketOrderExists()
     {
         await using var harness = CreateHarness();
         var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
@@ -496,17 +496,11 @@ public sealed class BotWorkerJobProcessorTests
         var persistedOrders = await harness.DbContext.ExecutionOrders
             .OrderBy(entity => entity.CreatedDate)
             .ToListAsync();
-        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
-        var persistedOrder = Assert.Single(persistedOrders.Where(entity => entity.StrategySignalId == persistedSignal.Id));
 
         Assert.True(result.IsSuccessful);
-        Assert.Equal(StrategySignalType.Exit, persistedSignal.SignalType);
-        Assert.Equal(ExecutionOrderSide.Sell, persistedOrder.Side);
-        Assert.True(persistedOrder.ReduceOnly);
-        Assert.Equal(1.250m, persistedOrder.Quantity);
-        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
-        Assert.Equal(2, persistedOrders.Count);
-        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Empty(harness.DbContext.TradingStrategySignals);
+        Assert.Single(persistedOrders);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
     }
     [Fact]
     public async Task ProcessAsync_ResolvesExitAgainstBotExchangeAccount_WhenAnotherAccountOffsetsOwnerLevelPositionNetQuantity()
@@ -561,7 +555,7 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
-    public async Task ProcessAsync_UsesAccountScopedSubmittedOrderFallback_WhenAnotherAccountOffsetsOwnerLevelExposure()
+    public async Task ProcessAsync_DoesNotUseSubmittedOrdersAsAccountScopedPositionFallback()
     {
         await using var harness = CreateHarness();
         var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
@@ -600,18 +594,11 @@ public sealed class BotWorkerJobProcessorTests
         var persistedOrders = await harness.DbContext.ExecutionOrders
             .OrderBy(entity => entity.CreatedDate)
             .ToListAsync();
-        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
-        var persistedOrder = Assert.Single(persistedOrders.Where(entity => entity.StrategySignalId == persistedSignal.Id));
 
         Assert.True(result.IsSuccessful);
-        Assert.Equal(StrategySignalType.Exit, persistedSignal.SignalType);
-        Assert.Equal(ExecutionOrderSide.Sell, persistedOrder.Side);
-        Assert.True(persistedOrder.ReduceOnly);
-        Assert.Equal(bot.ExchangeAccountId, persistedOrder.ExchangeAccountId);
-        Assert.Equal(1.250m, persistedOrder.Quantity);
-        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
-        Assert.Equal(3, persistedOrders.Count);
-        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Empty(harness.DbContext.TradingStrategySignals);
+        Assert.Equal(2, persistedOrders.Count);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
     }
 
 
@@ -832,6 +819,74 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal("ReverseBlockedOpenPositionExists", latestDecisionTrace.DecisionReasonCode);
         Assert.Contains("CurrentPositionDirection=Long", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("RequestedEntryDirection=Short", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_DoesNotSuppressEntry_WhenOnlyUnfilledSubmittedMarketOrderExists()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(harness.DbContext, bot, CreateDirectionalPilotDefinitionJson("long"));
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.EnableRuntimeExitQuality = false;
+        harness.PilotOptions.EnableEntryHysteresis = false;
+        harness.PilotOptions.EnableRegimeAwareEntryDiscipline = false;
+        harness.PilotOptions.PerBotCooldownSeconds = 0;
+        harness.PilotOptions.PerSymbolCooldownSeconds = 0;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-entry-pending-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-entry-pending-2");
+        harness.DbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = bot.OwnerUserId,
+            BotId = bot.Id,
+            ExchangeAccountId = bot.ExchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            StrategyKey = bot.StrategyKey,
+            Symbol = bot.Symbol,
+            Timeframe = "1m",
+            BaseAsset = "SOL",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.125m,
+            Price = 80m,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            State = ExecutionOrderState.Submitted,
+            SubmittedToBroker = true,
+            SubmittedAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime.AddMinutes(-30),
+            LastStateChangedAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime.AddMinutes(-30),
+            IdempotencyKey = "stale-pending-entry",
+            RootCorrelationId = "stale-pending-root"
+        });
+        await harness.DbContext.SaveChangesAsync();
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-entry-pending-1",
+            CancellationToken.None);
+
+        var orders = await harness.DbContext.ExecutionOrders.ToListAsync();
+        var newOrder = orders.Single(entity => entity.IdempotencyKey.StartsWith("job-bot-entry-pending-1:", StringComparison.Ordinal));
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.Equal(2, orders.Count);
+        Assert.Equal(StrategySignalType.Entry, newOrder.SignalType);
+        Assert.Equal(ExecutionOrderExecutorKind.Binance, newOrder.ExecutorKind);
+        Assert.NotEqual("SameDirectionLongEntrySuppressed", latestDecisionTrace.DecisionReasonCode);
+        Assert.NotEqual("ReverseBlockedOpenPositionExists", latestDecisionTrace.DecisionReasonCode);
     }
 
     [Fact]
