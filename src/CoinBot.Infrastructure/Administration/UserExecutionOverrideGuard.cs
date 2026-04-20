@@ -33,14 +33,15 @@ public sealed class UserExecutionOverrideGuard(
         var normalizedUserId = NormalizeRequired(request.UserId, nameof(request.UserId));
         var normalizedSymbol = NormalizeRequired(request.Symbol, nameof(request.Symbol)).ToUpperInvariant();
         var pilotContextRequested = IsPilotContextRequested(request.Context);
-        var isReduceOnlyOrder = await IsReduceOnlyOrderAsync(
-            normalizedUserId,
-            normalizedSymbol,
-            request.Environment,
-            request.Plane,
-            request.ExchangeAccountId,
-            request.Side,
-            cancellationToken);
+        var isReduceOnlyOrder = request.ReduceOnly ??
+            await IsReduceOnlyOrderAsync(
+                normalizedUserId,
+                normalizedSymbol,
+                request.Environment,
+                request.Plane,
+                request.ExchangeAccountId,
+                request.Side,
+                cancellationToken);
         var pilotGuardSummary = pilotContextRequested
             ? BuildPilotGuardSummary(request, normalizedUserId, normalizedSymbol)
             : null;
@@ -344,7 +345,8 @@ public sealed class UserExecutionOverrideGuard(
             blockedReasons.Add("UserExecutionPilotMaxOpenPositionsConfigurationInvalid");
         }
 
-        if (optionsValue.PerBotCooldownSeconds <= 0 || optionsValue.PerSymbolCooldownSeconds <= 0)
+        if (!isReduceOnlyOrder &&
+            (optionsValue.PerBotCooldownSeconds <= 0 || optionsValue.PerSymbolCooldownSeconds <= 0))
         {
             blockedReasons.Add("UserExecutionPilotCooldownConfigurationInvalid");
         }
@@ -754,5 +756,3 @@ public sealed class UserExecutionOverrideGuard(
         return false;
     }
 }
-
-

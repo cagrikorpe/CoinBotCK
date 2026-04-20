@@ -94,13 +94,13 @@ public sealed class StrategyDefinitionValidator : IStrategyDefinitionValidator
             failures.Add("MissingRuleRoot:entry-exit-risk-directional");
         }
 
-        enabledRuleCount += ValidateNode(document.Entry, "entry", null, ruleIds, failures);
-        enabledRuleCount += ValidateNode(document.Exit, "exit", null, ruleIds, failures);
-        enabledRuleCount += ValidateNode(document.Risk, "risk", null, ruleIds, failures);
-        enabledRuleCount += ValidateNode(document.LongEntry, "longEntry", null, ruleIds, failures);
-        enabledRuleCount += ValidateNode(document.LongExit, "longExit", null, ruleIds, failures);
-        enabledRuleCount += ValidateNode(document.ShortEntry, "shortEntry", null, ruleIds, failures);
-        enabledRuleCount += ValidateNode(document.ShortExit, "shortExit", null, ruleIds, failures);
+        enabledRuleCount += ValidateNode(document.Entry, "entry", null, null, ruleIds, failures);
+        enabledRuleCount += ValidateNode(document.Exit, "exit", null, null, ruleIds, failures);
+        enabledRuleCount += ValidateNode(document.Risk, "risk", null, null, ruleIds, failures);
+        enabledRuleCount += ValidateNode(document.LongEntry, "longEntry", null, null, ruleIds, failures);
+        enabledRuleCount += ValidateNode(document.LongExit, "longExit", null, null, ruleIds, failures);
+        enabledRuleCount += ValidateNode(document.ShortEntry, "shortEntry", null, null, ruleIds, failures);
+        enabledRuleCount += ValidateNode(document.ShortExit, "shortExit", null, null, ruleIds, failures);
 
         if (!ContainsRuleGroup(document.Entry) &&
             !ContainsRuleGroup(document.Exit) &&
@@ -202,6 +202,7 @@ public sealed class StrategyDefinitionValidator : IStrategyDefinitionValidator
         StrategyRuleNode? node,
         string location,
         StrategyRuleGroupOperator? parentOperator,
+        string? parentTimeframe,
         ISet<string> ruleIds,
         ICollection<string> failures)
     {
@@ -213,7 +214,7 @@ public sealed class StrategyDefinitionValidator : IStrategyDefinitionValidator
         return node switch
         {
             StrategyRuleGroup group => ValidateGroup(group, location, ruleIds, failures),
-            StrategyRuleCondition condition => ValidateCondition(condition, location, parentOperator, ruleIds, failures),
+            StrategyRuleCondition condition => ValidateCondition(condition, location, parentOperator, parentTimeframe, ruleIds, failures),
             _ => AddUnsupportedNodeFailure(node, location, failures)
         };
     }
@@ -225,6 +226,7 @@ public sealed class StrategyDefinitionValidator : IStrategyDefinitionValidator
         ICollection<string> failures)
     {
         var metadata = ValidateRuleMetadata(group.Metadata, location, failures, expectedType: "group");
+        var groupTimeframe = NormalizeTimeframe(metadata.Timeframe);
 
         if (group.Rules.Count == 0)
         {
@@ -240,7 +242,8 @@ public sealed class StrategyDefinitionValidator : IStrategyDefinitionValidator
         {
             var childLocation = $"{location}.rules[{index}]";
             var childNode = group.Rules[index];
-            enabledRuleCount += ValidateNode(childNode, childLocation, group.Operator, ruleIds, failures);
+            ValidateChildTimeframeAlignment(groupTimeframe, childNode, childLocation, failures);
+            enabledRuleCount += ValidateNode(childNode, childLocation, group.Operator, groupTimeframe, ruleIds, failures);
 
             if (childNode is not StrategyRuleCondition childCondition)
             {
@@ -289,6 +292,7 @@ public sealed class StrategyDefinitionValidator : IStrategyDefinitionValidator
         StrategyRuleCondition condition,
         string location,
         StrategyRuleGroupOperator? parentOperator,
+        string? parentTimeframe,
         ISet<string> ruleIds,
         ICollection<string> failures)
     {
@@ -357,6 +361,8 @@ public sealed class StrategyDefinitionValidator : IStrategyDefinitionValidator
             failures.Add($"InvalidRsiThreshold:{location}:{condition.Operand.Value}");
         }
 
+        ValidateRuntimeTimeframeReference(condition, location, parentTimeframe, metadata, failures);
+
         return metadata.Enabled ? 1 : 0;
     }
 
@@ -393,6 +399,76 @@ public sealed class StrategyDefinitionValidator : IStrategyDefinitionValidator
         }
 
         return normalizedMetadata;
+    }
+
+    private static void ValidateChildTimeframeAlignment(
+        string? groupTimeframe,
+        StrategyRuleNode childNode,
+        string childLocation,
+        ICollection<string> failures)
+    {
+        if (groupTimeframe is null)
+        {
+            return;
+        }
+
+        var childTimeframe = ResolveNodeTimeframe(childNode);
+        if (childTimeframe is not null &&
+            !string.Equals(groupTimeframe, childTimeframe, StringComparison.OrdinalIgnoreCase))
+        {
+            failures.Add($"RuleGroupTimeframeMismatch:{childLocation}:group={groupTimeframe}:rule={childTimeframe}");
+        }
+    }
+
+    private static void ValidateRuntimeTimeframeReference(
+        StrategyRuleCondition condition,
+        string location,
+        string? parentTimeframe,
+        StrategyRuleMetadata metadata,
+        ICollection<string> failures)
+    {
+        if (!condition.Path.Equals("indicator.timeframe", StringComparison.OrdinalIgnoreCase) ||
+            condition.Comparison != StrategyRuleComparisonOperator.Equals ||
+            condition.Operand.Kind != StrategyRuleOperandKind.String)
+        {
+            return;
+        }
+
+        var referencedTimeframe = NormalizeTimeframe(condition.Operand.Value);
+        if (referencedTimeframe is null)
+        {
+            return;
+        }
+
+        var ruleTimeframe = NormalizeTimeframe(metadata.Timeframe);
+        if (ruleTimeframe is not null &&
+            !string.Equals(ruleTimeframe, referencedTimeframe, StringComparison.OrdinalIgnoreCase))
+        {
+            failures.Add($"RuleTimeframeMismatch:{location}:rule={ruleTimeframe}:indicator={referencedTimeframe}");
+        }
+
+        if (parentTimeframe is not null &&
+            !string.Equals(parentTimeframe, referencedTimeframe, StringComparison.OrdinalIgnoreCase))
+        {
+            failures.Add($"RuleGroupTimeframeMismatch:{location}:group={parentTimeframe}:indicator={referencedTimeframe}");
+        }
+    }
+
+    private static string? ResolveNodeTimeframe(StrategyRuleNode node)
+    {
+        return node switch
+        {
+            StrategyRuleGroup group => NormalizeTimeframe(group.Metadata?.Timeframe),
+            StrategyRuleCondition condition => NormalizeTimeframe(condition.Metadata?.Timeframe),
+            _ => null
+        };
+    }
+
+    private static string? NormalizeTimeframe(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? null
+            : value.Trim();
     }
 
     private static void ValidateDefinitionMetadata(

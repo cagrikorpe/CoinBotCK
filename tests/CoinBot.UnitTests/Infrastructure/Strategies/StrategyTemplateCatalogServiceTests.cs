@@ -19,6 +19,7 @@ public sealed class StrategyTemplateCatalogServiceTests
         var templates = await service.ListAsync();
 
         Assert.True(templates.Count >= 3);
+        Assert.Contains(templates, template => template.TemplateKey == "rsi-basic" && template.TemplateName == "RSI Basic" && template.Validation.IsValid && template.SchemaVersion == 2);
         Assert.Contains(templates, template => template.TemplateKey == "rsi-reversal" && template.Validation.IsValid && template.SchemaVersion == 2);
         Assert.All(templates, template =>
         {
@@ -50,6 +51,26 @@ public sealed class StrategyTemplateCatalogServiceTests
 
         Assert.Equal("TemplatePersistenceUnavailable", exception.FailureCode);
         Assert.Contains("unknown-template", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task GetAsync_ReturnsRsiBasicBuiltIn_WithAlignedOneMinuteRuleGroups()
+    {
+        var parser = new StrategyRuleParser();
+        var service = new StrategyTemplateCatalogService(parser, new StrategyDefinitionValidator());
+
+        var template = await service.GetAsync("rsi-basic");
+        var document = parser.Parse(template.DefinitionJson);
+        var longEntry = Assert.IsType<StrategyRuleGroup>(document.LongEntry);
+        var risk = Assert.IsType<StrategyRuleGroup>(document.Risk);
+
+        Assert.Equal("RSI Basic", template.TemplateName);
+        Assert.Equal(1, template.PublishedRevisionNumber);
+        Assert.Equal("1m", longEntry.Metadata?.Timeframe);
+        Assert.Equal("1m", risk.Metadata?.Timeframe);
+        Assert.All(longEntry.Rules, rule => Assert.Equal("1m", ResolveTimeframe(rule)));
+        Assert.All(risk.Rules, rule => Assert.Equal("1m", ResolveTimeframe(rule)));
+        Assert.DoesNotContain("\"timeframe\": \"5m\"", template.DefinitionJson, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -606,6 +627,16 @@ public sealed class StrategyTemplateCatalogServiceTests
               }
             }
             """;
+    }
+
+    private static string? ResolveTimeframe(StrategyRuleNode node)
+    {
+        return node switch
+        {
+            StrategyRuleGroup group => group.Metadata?.Timeframe,
+            StrategyRuleCondition condition => condition.Metadata?.Timeframe,
+            _ => null
+        };
     }
 
     private sealed class TestDataScopeContext(string? userId, bool hasIsolationBypass) : IDataScopeContext

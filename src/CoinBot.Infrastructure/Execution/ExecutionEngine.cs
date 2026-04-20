@@ -202,7 +202,8 @@ public sealed class ExecutionEngine(
                         order.Id,
                         normalizedCommand.ReplacesExecutionOrderId,
                         executionPlane,
-                        normalizedCommand.ExchangeAccountId),
+                        normalizedCommand.ExchangeAccountId,
+                        normalizedCommand.ReduceOnly),
                     cancellationToken);
 
                 if (overrideEvaluation.IsBlocked)

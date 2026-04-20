@@ -342,6 +342,8 @@ public sealed class BotWorkerJobProcessorTests
             entryPrice: 80m);
         ConfigurePilotScope(harness, bot);
         harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.PerBotCooldownSeconds = 0;
+        harness.PilotOptions.PerSymbolCooldownSeconds = 0;
         await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-exit-1", symbol: "SOLUSDT");
         await harness.SwitchService.SetTradeMasterStateAsync(
             TradeMasterSwitchState.Armed,
@@ -364,6 +366,63 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal(1.250m, persistedOrder.Quantity);
         Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
         Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_SkipsExitWithoutRejectedOrder_WhenPreSubmitOverrideBlocksReduceOnlyExit()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(
+            harness.DbContext,
+            bot,
+            CreateDirectionalRootPilotDefinitionJson("longExit", "Live"));
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot,
+            quantity: 1.250m,
+            entryPrice: 80m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.DbContext.UserExecutionOverrides.Add(new UserExecutionOverride
+        {
+            UserId = bot.OwnerUserId,
+            AllowedSymbolsCsv = string.Empty,
+            DeniedSymbolsCsv = string.Empty,
+            SessionDisabled = true,
+            ReduceOnly = false
+        });
+        await harness.DbContext.SaveChangesAsync();
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-exit-block-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-exit-block-2");
+
+        var firstResult = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-exit-block-1",
+            CancellationToken.None);
+        var secondResult = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-exit-block-2",
+            CancellationToken.None);
+
+        var exitSignals = await harness.DbContext.TradingStrategySignals
+            .Where(entity => entity.SignalType == StrategySignalType.Exit)
+            .ToListAsync();
+        var exitTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.DecisionReasonCode == "UserExecutionSessionDisabled")
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(firstResult.IsSuccessful);
+        Assert.True(secondResult.IsSuccessful);
+        Assert.NotEmpty(exitSignals);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Contains("session is disabled", exitTrace.DecisionSummary, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -832,8 +891,8 @@ public sealed class BotWorkerJobProcessorTests
         harness.PilotOptions.EnableRuntimeExitQuality = false;
         harness.PilotOptions.EnableEntryHysteresis = false;
         harness.PilotOptions.EnableRegimeAwareEntryDiscipline = false;
-        harness.PilotOptions.PerBotCooldownSeconds = 0;
-        harness.PilotOptions.PerSymbolCooldownSeconds = 0;
+        harness.PilotOptions.PerBotCooldownSeconds = 300;
+        harness.PilotOptions.PerSymbolCooldownSeconds = 300;
         await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-entry-pending-1", symbol: "SOLUSDT");
         await harness.SwitchService.SetTradeMasterStateAsync(
             TradeMasterSwitchState.Armed,

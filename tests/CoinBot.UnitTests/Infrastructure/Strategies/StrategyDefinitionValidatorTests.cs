@@ -326,6 +326,103 @@ public sealed class StrategyDefinitionValidatorTests
     }
 
     [Fact]
+    public void Validate_FailsClosed_WhenRuleGroupTimeframeDiffersFromIndicatorRuleTimeframe()
+    {
+        var parser = new StrategyRuleParser();
+        var validator = new StrategyDefinitionValidator();
+
+        var snapshot = validator.Validate(parser.Parse(
+            """
+            {
+              "schemaVersion": 2,
+              "longEntry": {
+                "operator": "all",
+                "ruleId": "longEntry-root",
+                "ruleType": "group",
+                "timeframe": "5m",
+                "weight": 1,
+                "enabled": true,
+                "rules": [
+                  {
+                    "ruleId": "longEntry-rsi",
+                    "ruleType": "rsi",
+                    "path": "indicator.rsi.value",
+                    "comparison": "lessThanOrEqual",
+                    "value": 30,
+                    "timeframe": "1m",
+                    "weight": 10,
+                    "enabled": true
+                  }
+                ]
+              },
+              "risk": {
+                "operator": "all",
+                "ruleId": "risk-root",
+                "ruleType": "group",
+                "timeframe": "5m",
+                "weight": 1,
+                "enabled": true,
+                "rules": [
+                  {
+                    "ruleId": "risk-sample",
+                    "ruleType": "data-quality",
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 34,
+                    "timeframe": "1m",
+                    "weight": 10,
+                    "enabled": true
+                  }
+                ]
+              }
+            }
+            """));
+
+        Assert.False(snapshot.IsValid);
+        Assert.Equal("RuleGroupTimeframeMismatch:risk.rules[0]:group=5m:rule=1m", snapshot.StatusCode);
+        Assert.Contains(snapshot.FailureReasons, reason => reason == "RuleGroupTimeframeMismatch:longEntry.rules[0]:group=5m:rule=1m");
+        Assert.Contains(snapshot.FailureReasons, reason => reason == "RuleGroupTimeframeMismatch:risk.rules[0]:group=5m:rule=1m");
+    }
+
+    [Fact]
+    public void Validate_FailsClosed_WhenRuleGroupTimeframeDiffersFromRuntimeTimeframeReference()
+    {
+        var parser = new StrategyRuleParser();
+        var validator = new StrategyDefinitionValidator();
+
+        var snapshot = validator.Validate(parser.Parse(
+            """
+            {
+              "schemaVersion": 2,
+              "entry": {
+                "operator": "all",
+                "ruleId": "entry-root",
+                "ruleType": "group",
+                "timeframe": "5m",
+                "weight": 1,
+                "enabled": true,
+                "rules": [
+                  {
+                    "ruleId": "entry-timeframe",
+                    "ruleType": "data-quality",
+                    "path": "indicator.timeframe",
+                    "comparison": "equals",
+                    "value": "1m",
+                    "timeframe": "5m",
+                    "weight": 10,
+                    "enabled": true
+                  }
+                ]
+              }
+            }
+            """));
+
+        Assert.False(snapshot.IsValid);
+        Assert.Contains(snapshot.FailureReasons, reason => reason == "RuleTimeframeMismatch:entry.rules[0]:rule=5m:indicator=1m");
+        Assert.Contains(snapshot.FailureReasons, reason => reason == "RuleGroupTimeframeMismatch:entry.rules[0]:group=5m:indicator=1m");
+    }
+
+    [Fact]
     public void Validate_Passes_ForExpandedBreadth_PathsOperators_AndTimeframes()
     {
         var parser = new StrategyRuleParser();

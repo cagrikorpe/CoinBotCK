@@ -812,7 +812,8 @@ public sealed class BotWorkerJobProcessor(
                 CurrentExecutionOrderId: null,
                 ReplacesExecutionOrderId: null,
                 ExchangeDataPlane.Futures,
-                exchangeAccount.Id),
+                exchangeAccount.Id,
+                dispatchPlan.ReduceOnly),
             cancellationToken);
 
         if (TryResolveCooldownSkip(preSubmitPilotEvaluation, out var cooldownReasonCode, out var cooldownSummary))
@@ -870,6 +871,51 @@ public sealed class BotWorkerJobProcessor(
                 preSubmitPilotEvaluation.BlockCode ?? "UserExecutionPilotNotionalHardCapExceeded");
             return BackgroundJobProcessResult.PermanentFailure(
                 preSubmitPilotEvaluation.BlockCode ?? "UserExecutionPilotNotionalHardCapExceeded");
+        }
+
+        if (preSubmitPilotEvaluation.IsBlocked)
+        {
+            var blockCode = preSubmitPilotEvaluation.BlockCode ?? "UserExecutionOverrideBlocked";
+            var blockSummary = preSubmitPilotEvaluation.Message ?? "Execution blocked by user execution override guard.";
+
+            if (signal.SignalType == StrategySignalType.Exit)
+            {
+                await WriteExitSkippedDecisionTraceAsync(
+                    bot.OwnerUserId,
+                    publishedVersion,
+                    signal,
+                    correlationId,
+                    strategyDecisionTrace,
+                    blockCode,
+                    blockSummary,
+                    currentNetQuantity,
+                    cancellationToken,
+                    requestedQuantity: dispatchPlan.Quantity,
+                    referencePrice: marketState.ReferencePrice.Value);
+            }
+            else
+            {
+                await WriteEntrySkippedDecisionTraceAsync(
+                    bot.OwnerUserId,
+                    publishedVersion,
+                    signal,
+                    correlationId,
+                    strategyDecisionTrace,
+                    blockSummary,
+                    currentNetQuantity,
+                    cancellationToken,
+                    decisionReasonCode: blockCode,
+                    requestedQuantity: dispatchPlan.Quantity,
+                    referencePrice: marketState.ReferencePrice.Value);
+            }
+
+            logger.LogInformation(
+                "Bot execution pilot skipped {SignalType} dispatch for BotId {BotId} because pre-submit override guard blocked the request. Symbol={Symbol} BlockCode={BlockCode}.",
+                signal.SignalType,
+                bot.Id,
+                signal.Symbol,
+                blockCode);
+            return BackgroundJobProcessResult.Success();
         }
 
         try

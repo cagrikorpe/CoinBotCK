@@ -18,4 +18,5 @@ public sealed record UserExecutionOverrideEvaluationRequest(
     Guid? CurrentExecutionOrderId = null,
     Guid? ReplacesExecutionOrderId = null,
     ExchangeDataPlane Plane = ExchangeDataPlane.Futures,
-    Guid? ExchangeAccountId = null);
+    Guid? ExchangeAccountId = null,
+    bool? ReduceOnly = null);

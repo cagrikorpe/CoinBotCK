@@ -832,6 +832,75 @@ public sealed class ExecutionEngineTests
     }
 
     [Fact]
+    public async Task DispatchAsync_AllowsPilotReduceOnlyClose_WhenCooldownConfigurationIsZero()
+    {
+        await using var harness = CreateHarness(environmentName: Environments.Development);
+        var strategyId = Guid.NewGuid();
+        var botId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        harness.PilotOptions.PerBotCooldownSeconds = 0;
+        harness.PilotOptions.PerSymbolCooldownSeconds = 0;
+        await SeedUserAsync(harness.DbContext, "user-reduce-live-pilot-zero-cooldown");
+        await SeedBotAsync(harness.DbContext, "user-reduce-live-pilot-zero-cooldown", botId, "reduce-live-pilot-zero-cooldown");
+        await SeedLiveStrategyAsync(harness.DbContext, "user-reduce-live-pilot-zero-cooldown", strategyId, "reduce-live-pilot-zero-cooldown");
+        await SeedExchangeAccountAsync(harness.DbContext, "user-reduce-live-pilot-zero-cooldown", exchangeAccountId);
+        await SeedPilotSafetyPrerequisitesAsync(
+            harness.DbContext,
+            "user-reduce-live-pilot-zero-cooldown",
+            exchangeAccountId,
+            harness.TimeProvider.GetUtcNow().UtcDateTime);
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            "user-reduce-live-pilot-zero-cooldown",
+            exchangeAccountId,
+            "BTCUSDT",
+            "LONG",
+            0.05m,
+            65000m);
+        await PrimeFreshMarketDataAsync(harness, "corr-reduce-live-pilot-zero-cooldown-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-reduce-live-pilot-zero-cooldown",
+            context: "Open live reduce-only pilot execution",
+            correlationId: "corr-reduce-live-pilot-zero-cooldown-2");
+        await harness.SwitchService.SetDemoModeAsync(
+            isEnabled: false,
+            actor: "admin-reduce-live-pilot-zero-cooldown",
+            liveApproval: new TradingModeLiveApproval("reduce-live-pilot-zero-cooldown-approval"),
+            context: "Switch to live reduce-only pilot",
+            correlationId: "corr-reduce-live-pilot-zero-cooldown-3");
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-reduce-live-pilot-zero-cooldown",
+                strategyId: strategyId,
+                strategyKey: "reduce-live-pilot-zero-cooldown",
+                botId: botId,
+                exchangeAccountId: exchangeAccountId,
+                isDemo: null) with
+            {
+                Actor = "system:bot-worker",
+                Context = "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                ReduceOnly = true,
+                Side = ExecutionOrderSide.Sell,
+                Quantity = 0.02m,
+                Price = 65000m
+            },
+            CancellationToken.None);
+
+        Assert.True(
+            result.Order.State == ExecutionOrderState.Submitted,
+            $"Expected Submitted but was {result.Order.State}. FailureCode={result.Order.FailureCode}; FailureDetail={result.Order.FailureDetail}");
+        Assert.True(result.Order.ReduceOnly);
+        Assert.True(result.Order.SubmittedToBroker);
+        Assert.Equal(ExecutionRejectionStage.None, result.Order.RejectionStage);
+        Assert.NotEqual("UserExecutionPilotCooldownConfigurationInvalid", result.Order.FailureCode);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.NotNull(harness.PrivateRestClient.LastPlacementRequest);
+        Assert.True(harness.PrivateRestClient.LastPlacementRequest.ReduceOnly);
+    }
+
+    [Fact]
     public async Task DispatchAsync_RejectsReduceOnlyClose_WhenOnlyUnfilledSubmittedMarketOrderExists()
     {
         await using var harness = CreateHarness();

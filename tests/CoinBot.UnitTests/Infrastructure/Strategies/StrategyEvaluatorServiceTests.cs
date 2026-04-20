@@ -369,6 +369,32 @@ public sealed class StrategyEvaluatorServiceTests
     }
 
     [Fact]
+    public async Task EvaluateReport_RsiBasicBuiltInOneMinute_DoesNotVetoForTimeframeMismatch()
+    {
+        var parser = new StrategyRuleParser();
+        var templateCatalog = new StrategyTemplateCatalogService(parser, new StrategyDefinitionValidator());
+        var template = await templateCatalog.GetAsync("rsi-basic");
+        var service = new StrategyEvaluatorService(parser, new StrategyDefinitionValidator());
+
+        var report = service.EvaluateReport(new StrategyEvaluationReportRequest(
+            Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            1,
+            "rsi-basic",
+            "RSI Basic",
+            template.DefinitionJson,
+            CreateContext(ExecutionEnvironment.Live),
+            new DateTime(2026, 4, 20, 10, 0, 0, DateTimeKind.Utc)));
+
+        Assert.Equal("RSI Basic", report.TemplateName);
+        Assert.Equal("1m", report.Timeframe);
+        Assert.Equal("EntryMatched", report.Outcome);
+        Assert.True(report.RuleEvaluation.RiskPassed);
+        Assert.True(report.RuleEvaluation.LongEntryRuleResult?.Matched == true);
+        Assert.DoesNotContain("Rule group timeframe", report.ExplainabilitySummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Evaluate_RejectsInvalidStrategyDefinition_BeforeRuleEvaluation()
     {
         var service = new StrategyEvaluatorService(new StrategyRuleParser(), new StrategyDefinitionValidator());
@@ -597,5 +623,3 @@ public sealed class StrategyEvaluatorServiceTests
             Source: "UnitTest");
     }
 }
-
-

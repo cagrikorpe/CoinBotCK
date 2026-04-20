@@ -1209,6 +1209,156 @@ public sealed class UserExecutionOverrideGuardTests
     }
 
     [Fact]
+    public async Task EvaluateAsync_AllowsPilotReduceOnlyExit_WhenCooldownConfigurationIsZero()
+    {
+        await using var dbContext = CreateDbContext();
+        var botId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        var evaluatedAtUtc = new DateTime(2026, 4, 20, 11, 0, 0, DateTimeKind.Utc);
+        dbContext.ExchangePositions.Add(new ExchangePosition
+        {
+            ExchangeAccountId = exchangeAccountId,
+            OwnerUserId = "user-pilot-exit-zero-cooldown",
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "SOLUSDT",
+            PositionSide = "BOTH",
+            Quantity = 0.06m,
+            EntryPrice = 84m,
+            BreakEvenPrice = 84m,
+            UnrealizedProfit = 0.05m,
+            MarginType = "isolated",
+            IsolatedWallet = 5m,
+            ExchangeUpdatedAtUtc = evaluatedAtUtc,
+            SyncedAtUtc = evaluatedAtUtc
+        });
+        await dbContext.SaveChangesAsync();
+
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            hostEnvironment: new TestHostEnvironment(Environments.Development),
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                AllowedUserIds = ["user-pilot-exit-zero-cooldown"],
+                AllowedBotIds = [botId.ToString("N")],
+                AllowedSymbols = ["SOLUSDT"],
+                MaxPilotOrderNotional = "250",
+                MaxOpenPositionsPerUser = 1,
+                PerBotCooldownSeconds = 0,
+                PerSymbolCooldownSeconds = 0,
+                MaxDailyLossPercentage = 5m
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-pilot-exit-zero-cooldown",
+                "SOLUSDT",
+                ExecutionEnvironment.Live,
+                ExecutionOrderSide.Sell,
+                0.06m,
+                85m,
+                BotId: botId,
+                StrategyKey: "pilot-core",
+                Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                Plane: ExchangeDataPlane.Futures,
+                ExchangeAccountId: exchangeAccountId),
+            CancellationToken.None);
+
+        Assert.False(result.IsBlocked, result.BlockCode);
+        Assert.DoesNotContain("UserExecutionPilotCooldownConfigurationInvalid", result.BlockReasons ?? Array.Empty<string>(), StringComparer.Ordinal);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_UsesExplicitReduceOnlyFlag_ForPilotCooldownConfiguration()
+    {
+        await using var dbContext = CreateDbContext();
+        var botId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            hostEnvironment: new TestHostEnvironment(Environments.Development),
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                AllowedUserIds = ["user-pilot-explicit-reduce-only"],
+                AllowedBotIds = [botId.ToString("N")],
+                AllowedSymbols = ["SOLUSDT"],
+                MaxPilotOrderNotional = "250",
+                MaxOpenPositionsPerUser = 1,
+                PerBotCooldownSeconds = 0,
+                PerSymbolCooldownSeconds = 0,
+                MaxDailyLossPercentage = 5m
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-pilot-explicit-reduce-only",
+                "SOLUSDT",
+                ExecutionEnvironment.Live,
+                ExecutionOrderSide.Sell,
+                0.06m,
+                85m,
+                BotId: botId,
+                StrategyKey: "pilot-core",
+                Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                Plane: ExchangeDataPlane.Futures,
+                ExchangeAccountId: exchangeAccountId,
+                ReduceOnly: true),
+            CancellationToken.None);
+
+        Assert.False(result.IsBlocked, result.BlockCode);
+        Assert.DoesNotContain("UserExecutionPilotCooldownConfigurationInvalid", result.BlockReasons ?? Array.Empty<string>(), StringComparer.Ordinal);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_BlocksPilotEntry_WhenCooldownConfigurationIsZero()
+    {
+        await using var dbContext = CreateDbContext();
+        var botId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            hostEnvironment: new TestHostEnvironment(Environments.Development),
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                AllowedUserIds = ["user-pilot-entry-zero-cooldown"],
+                AllowedBotIds = [botId.ToString("N")],
+                AllowedSymbols = ["SOLUSDT"],
+                MaxPilotOrderNotional = "250",
+                MaxOpenPositionsPerUser = 1,
+                PerBotCooldownSeconds = 0,
+                PerSymbolCooldownSeconds = 0,
+                MaxDailyLossPercentage = 5m
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-pilot-entry-zero-cooldown",
+                "SOLUSDT",
+                ExecutionEnvironment.Live,
+                ExecutionOrderSide.Buy,
+                0.06m,
+                85m,
+                BotId: botId,
+                StrategyKey: "pilot-core",
+                Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                Plane: ExchangeDataPlane.Futures,
+                ExchangeAccountId: exchangeAccountId),
+            CancellationToken.None);
+
+        Assert.True(result.IsBlocked);
+        Assert.Equal("UserExecutionPilotCooldownConfigurationInvalid", result.BlockCode);
+        Assert.Contains("UserExecutionPilotCooldownConfigurationInvalid", result.BlockReasons!, StringComparer.Ordinal);
+    }
+
+    [Fact]
     public async Task EvaluateAsync_BlocksPilotOrder_WhenOnlyUnfilledSubmittedMarketOrderExists()
     {
         await using var dbContext = CreateDbContext();

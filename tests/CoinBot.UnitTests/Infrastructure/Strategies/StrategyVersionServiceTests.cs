@@ -233,6 +233,73 @@ public sealed class StrategyVersionServiceTests
     }
 
     [Fact]
+    public async Task CreateDraftAsync_RejectsRuleGroupTimeframeMismatch_FailFast()
+    {
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-invalid-timeframe", "rsi-basic");
+        dbContext.TradingStrategies.Add(strategy);
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext, new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 20, 10, 0, 0, TimeSpan.Zero)));
+
+        var exception = await Assert.ThrowsAsync<StrategyDefinitionValidationException>(() => service.CreateDraftAsync(
+            strategy.Id,
+            """
+            {
+              "schemaVersion": 2,
+              "metadata": {
+                "templateKey": "rsi-basic",
+                "templateName": "RSI Basic"
+              },
+              "longEntry": {
+                "operator": "all",
+                "ruleId": "longEntry-root",
+                "ruleType": "group",
+                "timeframe": "5m",
+                "weight": 1,
+                "enabled": true,
+                "rules": [
+                  {
+                    "ruleId": "longEntry-rsi",
+                    "ruleType": "rsi",
+                    "path": "indicator.rsi.value",
+                    "comparison": "lessThanOrEqual",
+                    "value": 30,
+                    "timeframe": "1m",
+                    "weight": 10,
+                    "enabled": true
+                  }
+                ]
+              },
+              "risk": {
+                "operator": "all",
+                "ruleId": "risk-root",
+                "ruleType": "group",
+                "timeframe": "5m",
+                "weight": 1,
+                "enabled": true,
+                "rules": [
+                  {
+                    "ruleId": "risk-sample",
+                    "ruleType": "data-quality",
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 34,
+                    "timeframe": "1m",
+                    "weight": 10,
+                    "enabled": true
+                  }
+                ]
+              }
+            }
+            """));
+
+        Assert.Equal("RuleGroupTimeframeMismatch:risk.rules[0]:group=5m:rule=1m", exception.StatusCode);
+        Assert.Contains("RuleGroupTimeframeMismatch:longEntry.rules[0]:group=5m:rule=1m", exception.Message, StringComparison.Ordinal);
+        Assert.Empty(await dbContext.TradingStrategyVersions.ToListAsync());
+    }
+
+    [Fact]
     public async Task PublishAsync_PublishesDraft_ActivatesVersion_AndPreservesPreviousPublishedHistory()
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
@@ -496,5 +563,3 @@ public sealed class StrategyVersionServiceTests
         public bool HasIsolationBypass => true;
     }
 }
-
-

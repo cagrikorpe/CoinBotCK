@@ -26,6 +26,86 @@ public sealed class StrategyTemplateCatalogService(
     private static readonly IReadOnlyCollection<(string Key, string Name, string Description, string Category, string DefinitionJson)> BuiltInTemplates =
     [
         (
+            "rsi-basic",
+            "RSI Basic",
+            "Basic RSI long-entry template with deterministic ready-state and sample-count guards.",
+            "Reversal",
+            """
+            {
+              "schemaVersion": 2,
+              "metadata": {
+                "templateKey": "rsi-basic",
+                "templateName": "RSI Basic"
+              },
+              "longEntry": {
+                "operator": "all",
+                "ruleId": "longEntry-root",
+                "ruleType": "group",
+                "timeframe": "1m",
+                "weight": 1,
+                "enabled": true,
+                "group": "longEntry",
+                "rules": [
+                  {
+                    "ruleId": "longEntry-mode-live",
+                    "ruleType": "context",
+                    "path": "context.mode",
+                    "comparison": "equals",
+                    "value": "Live",
+                    "timeframe": "1m",
+                    "weight": 5,
+                    "enabled": true,
+                    "group": "longEntry"
+                  },
+                  {
+                    "ruleId": "longEntry-rsi-ready",
+                    "ruleType": "rsi",
+                    "path": "indicator.rsi.isReady",
+                    "comparison": "equals",
+                    "value": true,
+                    "timeframe": "1m",
+                    "weight": 15,
+                    "enabled": true,
+                    "group": "longEntry"
+                  },
+                  {
+                    "ruleId": "longEntry-rsi-oversold",
+                    "ruleType": "rsi",
+                    "path": "indicator.rsi.value",
+                    "comparison": "lessThanOrEqual",
+                    "value": 30,
+                    "timeframe": "1m",
+                    "weight": 80,
+                    "enabled": true,
+                    "group": "longEntry"
+                  }
+                ]
+              },
+              "risk": {
+                "operator": "all",
+                "ruleId": "risk-root",
+                "ruleType": "group",
+                "timeframe": "1m",
+                "weight": 1,
+                "enabled": true,
+                "group": "risk",
+                "rules": [
+                  {
+                    "ruleId": "risk-sample-count",
+                    "ruleType": "data-quality",
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": 34,
+                    "timeframe": "1m",
+                    "weight": 10,
+                    "enabled": true,
+                    "group": "risk"
+                  }
+                ]
+              }
+            }
+            """),
+        (
             "rsi-reversal",
             "RSI Reversal",
             "RSI oversold entry with deterministic sample-count risk guard.",
