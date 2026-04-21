@@ -1,0 +1,1261 @@
+--- origextract/StrategyTemplates.cshtml	2026-04-20 17:46:38.552345944 +0000
++++ workzip/src/CoinBot.Web/Areas/Admin/Views/Admin/StrategyTemplates.cshtml	2026-04-20 17:46:07.403631701 +0000
+@@ -1,539 +1,719 @@
+-@using CoinBot.Web.StrategyBuilderSupport
+-@model CoinBot.Web.ViewModels.Admin.AdminStrategyTemplateCatalogPageViewModel
+-@{
+-    var selectedTemplate = Model.SelectedTemplate;
+-    var runtimeConfig = ViewData["AdminStrategyBuilderRuntimeConfig"] as StrategyBuilderRuntimeConfig;
+-    var explainability = ViewData["AdminStrategyBuilderExplainability"] as StrategyBuilderExplainabilitySnapshot;
+-    var successMessage = TempData["AdminStrategyTemplateSuccess"] as string;
+-    var errorMessage = TempData["AdminStrategyTemplateError"] as string;
+-    var hasTemplates = Model.Templates.Count > 0;
+-    var hasCatalogLoadIssue = !string.IsNullOrWhiteSpace(errorMessage) && !hasTemplates;
+-
+-    var headerModel = new AdminPageHeaderViewModel
+-    {
+-        Eyebrow = "Strategy Catalog",
+-        Title = "Strategy Templates",
+-        Description = "Built-in ve custom template katalogunu revision history ile yoneten admin katalog yuzeyi.",
+-        StatusBadge = new AdminBadgeViewModel
+-        {
+-            Label = Model.CanManageTemplates ? "Write" : "Read-only",
+-            Tone = Model.CanManageTemplates ? "warning" : "info",
+-            IconText = Model.CanManageTemplates ? "RW" : "RO"
+-        },
+-        MetaBadges = new[]
+-        {
+-            new AdminBadgeViewModel { Label = "Revisioned", Tone = "info", IconText = "RV" },
+-            new AdminBadgeViewModel { Label = "Published", Tone = "healthy", IconText = "PB" },
+-            new AdminBadgeViewModel { Label = "Audit Bound", Tone = "critical", IconText = "AU" }
+-        },
+-        SecondaryActionText = "Strategy / AI izleme",
+-        SecondaryActionHref = Url.Action("StrategyAiMonitoring", "Admin", new { area = "Admin" }),
+-        PrimaryActionText = "Strategy Builder",
+-        PrimaryActionHref = Url.Action("StrategyBuilder", "Admin", new { area = "Admin" })
+-    };
+-}
+-
+-<div class="row">
+-    <div class="col-12">
+-        <div class="card card-custom gutter-b cb-card cb-admin-card">
+-            <div class="card-body">
+-                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+-                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+-                {
+-                    Tone = Model.CanManageTemplates ? "warning" : "info",
+-                    Title = "Template catalog foundation",
+-                    Message = "Create, revise, publish ve archive aksiyonlari mevcut strategy template catalog service ve audit reason zinciri ile calisir. Built-in template'ler yalnizca read-only gorunur.",
+-                    Meta = Model.CanManageTemplates ? "Platform admin write" : "Admin read-only"
+-                })
+-
+-                @if (!Model.CanManageTemplates)
+-                {
+-                    <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6">
+-                        <div>
+-                            <div class="cb-admin-info-strip-title">Read-only catalog visibility</div>
+-                            <div class="cb-admin-info-strip-text">Template detaylari, published pointer ve revision history izlenebilir. Write aksiyonlari yalnizca platform admin + MFA kapsaminda aciktir.</div>
+-                        </div>
+-                        <span class="cb-admin-info-strip-meta">Read-only</span>
+-                    </div>
+-                }
+-
+-                @if (!string.IsNullOrWhiteSpace(successMessage))
+-                {
+-                    <div class="cb-admin-info-strip cb-admin-info-strip-healthy mt-6">
+-                        <div>
+-                            <div class="cb-admin-info-strip-title">Catalog update</div>
+-                            <div class="cb-admin-info-strip-text">@successMessage</div>
+-                        </div>
+-                        <span class="cb-admin-info-strip-meta">Applied</span>
+-                    </div>
+-                }
+-
+-                @if (!string.IsNullOrWhiteSpace(errorMessage))
+-                {
+-                    <div class="cb-admin-info-strip cb-admin-info-strip-danger mt-6">
+-                        <div>
+-                            <div class="cb-admin-info-strip-title">@(hasCatalogLoadIssue ? "Catalog load blocked" : "Catalog update blocked")</div>
+-                            <div class="cb-admin-info-strip-text">@errorMessage</div>
+-                        </div>
+-                        <span class="cb-admin-info-strip-meta">@(hasCatalogLoadIssue ? "Load" : "Blocked")</span>
+-                    </div>
+-                }
+-
+-                @if (hasCatalogLoadIssue)
+-                {
+-                    <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-6">
+-                        <div>
+-                            <div class="cb-admin-info-strip-title">Fail-soft catalog mode</div>
+-                            <div class="cb-admin-info-strip-text">Katalog verisi tamamen render edilemedi. Sayfa ayakta tutuldu. Muhtemel sebep gecersiz bir template definition veya revision kaydidir.</div>
+-                        </div>
+-                        <span class="cb-admin-info-strip-meta">Recovery</span>
+-                    </div>
+-                }
+-            </div>
+-        </div>
+-    </div>
+-</div>
+-
+-<div class="row">
+-    <div class="col-xl-5">
+-        <div class="card card-custom gutter-b cb-card cb-admin-card">
+-            <div class="card-body">
+-                <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
+-                    <div>
+-                        <div class="cb-admin-section-kicker">Catalog list</div>
+-                        <div class="cb-admin-section-title">Template inventory</div>
+-                        <p class="cb-admin-section-description">Archive edilmis custom template'ler listede isaretli kalir. Kullanici clone flow'u yalniz published revision'dan beslenir.</p>
+-                    </div>
+-                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+-                    {
+-                        Label = $"{Model.Templates.Count} template",
+-                        Tone = "info",
+-                        IconText = "CT"
+-                    })
+-                </div>
+-
+-                <div class="table-responsive mt-5">
+-                    <table class="table table-borderless align-middle mb-0">
+-                        <thead>
+-                            <tr>
+-                                <th>Template</th>
+-                                <th>Category</th>
+-                                <th>State</th>
+-                                <th>Revision surface</th>
+-                                <th></th>
+-                            </tr>
+-                        </thead>
+-                        <tbody>
+-                            @if (!hasTemplates)
+-                            {
+-                                <tr>
+-                                    <td colspan="5">
+-                                        <div class="cb-admin-info-strip @(hasCatalogLoadIssue ? "cb-admin-info-strip-danger" : "cb-admin-info-strip-info") mb-0">
+-                                            <div>
+-                                                <div class="cb-admin-info-strip-title">@(hasCatalogLoadIssue ? "Template catalog render edilemedi" : "Template bulunamadi")</div>
+-                                                <div class="cb-admin-info-strip-text">
+-                                                    @(hasCatalogLoadIssue
+-                                                        ? "Listeleme guvenli sekilde bos donduruldu. Once hatali template/revision kaydini duzeltin, sonra sayfayi yenileyin."
+-                                                        : "Katalogda gosterilecek template kaydi bulunmuyor.")
+-                                                </div>
+-                                            </div>
+-                                            <span class="cb-admin-info-strip-meta">@(hasCatalogLoadIssue ? "Load" : "Empty")</span>
+-                                        </div>
+-                                    </td>
+-                                </tr>
+-                            }
+-                            else
+-                            {
+-                                @foreach (var template in Model.Templates)
+-                                {
+-                                    var isSelected = string.Equals(Model.SelectedTemplateKey, template.TemplateKey, StringComparison.OrdinalIgnoreCase);
+-                                    var stateTone = template.IsActive ? "healthy" : "critical";
+-                                    var stateLabel = template.IsActive ? "Active" : "Archived";
+-
+-                                    <tr class="@(isSelected ? "table-active" : string.Empty)">
+-                                        <td>
+-                                            <div class="font-weight-bolder">@template.TemplateName</div>
+-                                            <div class="text-muted small">@template.TemplateKey · @template.TemplateSource</div>
+-                                        </td>
+-                                        <td>@template.Category</td>
+-                                        <td>
+-                                            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+-                                            {
+-                                                Label = stateLabel,
+-                                                Tone = stateTone,
+-                                                IconText = template.IsBuiltIn ? "BI" : "TM"
+-                                            })
+-                                        </td>
+-                                        <td>
+-                                            <div class="font-weight-bolder">Published r@(template.PublishedRevisionNumber <= 0 ? 0 : template.PublishedRevisionNumber)</div>
+-                                            <div class="text-muted small">Current r@(template.ActiveRevisionNumber <= 0 ? 0 : template.ActiveRevisionNumber) · Latest r@template.LatestRevisionNumber</div>
+-                                        </td>
+-                                        <td class="text-right">
+-                                            <a asp-area="Admin"
+-                                               asp-controller="Admin"
+-                                               asp-action="StrategyTemplates"
+-                                               asp-route-templateKey="@template.TemplateKey"
+-                                               class="btn btn-sm btn-light-primary font-weight-bold">
+-                                                Detay
+-                                            </a>
+-                                        </td>
+-                                    </tr>
+-                                }
+-                            }
+-                        </tbody>
+-                    </table>
+-                </div>
+-            </div>
+-        </div>
+-
+-        <div class="card card-custom gutter-b cb-card cb-admin-card">
+-            <div class="card-body">
+-                <div class="cb-admin-section-kicker">Create</div>
+-                <div class="cb-admin-section-title">Yeni template olustur</div>
+-                <p class="cb-admin-section-description">Template key duplicate olamaz. Ilk revision current + published olarak olusur; sonraki draft revision'lar explicit publish gerektirir.</p>
+-
+-                @if (runtimeConfig is not null)
+-                {
+-                    <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
+-                        <div>
+-                            <div class="cb-admin-info-strip-title">Runtime gate threshold parity</div>
+-                            <div class="cb-admin-info-strip-text">Long: @runtimeConfig.Long.Summary<br />Short: @runtimeConfig.Short.Summary</div>
+-                        </div>
+-                        <span class="cb-admin-info-strip-meta">Parity</span>
+-                    </div>
+-                }
+-
+-                @if (Model.CanManageTemplates)
+-                {
+-                    <form asp-area="Admin" asp-controller="Admin" asp-action="CreateStrategyTemplate" method="post" class="mt-5">
+-                        @Html.AntiForgeryToken()
+-                        <div class="form-group">
+-                            <label>Template key</label>
+-                            <input name="templateKey" class="form-control" maxlength="128" />
+-                        </div>
+-                        <div class="form-group">
+-                            <label>Template name</label>
+-                            <input name="templateName" class="form-control" maxlength="128" />
+-                        </div>
+-                        <div class="form-group">
+-                            <label>Description</label>
+-                            <textarea name="description" class="form-control" rows="3" maxlength="512"></textarea>
+-                        </div>
+-                        <div class="form-group">
+-                            <label>Category</label>
+-                            <input name="category" class="form-control" maxlength="64" />
+-                        </div>
+-                        <div class="form-group">
+-                            <label>Definition JSON</label>
+-                            <textarea name="definitionJson" class="form-control font-size-sm" rows="14"></textarea>
+-                        </div>
+-                        <div class="form-group">
+-                            <label>Audit reason</label>
+-                            <input name="reason" class="form-control" maxlength="256" />
+-                        </div>
+-                        <button type="submit" class="btn btn-light-warning font-weight-bold">Template olustur</button>
+-                    </form>
+-                }
+-                else
+-                {
+-                    <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
+-                        <div>
+-                            <div class="cb-admin-info-strip-title">Write disabled</div>
+-                            <div class="cb-admin-info-strip-text">Bu rolde create form gorunur ancak POST aksiyonlari policy ve MFA ile kapatilidir.</div>
+-                        </div>
+-                        <span class="cb-admin-info-strip-meta">Guarded</span>
+-                    </div>
+-                }
+-            </div>
+-        </div>
+-    </div>
+-
+-    <div class="col-xl-7">
+-        <div class="card card-custom gutter-b cb-card cb-admin-card">
+-            <div class="card-body">
+-                <div class="cb-admin-section-kicker">Detail</div>
+-                <div class="cb-admin-section-title">@(selectedTemplate?.TemplateName ?? "Template secilmedi")</div>
+-                <p class="cb-admin-section-description">Detay paneli selected template definition, lifecycle ve published/current lineage bilgisini gosterir.</p>
+-
+-                @if (selectedTemplate is not null)
+-                {
+-                    <div class="cb-admin-settings-switch-grid mt-5">
+-                        <div class="cb-admin-summary-card">
+-                            <span class="cb-admin-summary-label">Template key</span>
+-                            <strong>@selectedTemplate.TemplateKey</strong>
+-                            <small>@selectedTemplate.TemplateSource · @selectedTemplate.Category</small>
+-                        </div>
+-                        <div class="cb-admin-summary-card">
+-                            <span class="cb-admin-summary-label">Lifecycle</span>
+-                            <strong>@(selectedTemplate.IsActive ? "Active" : "Archived")</strong>
+-                            <small>Clone readiness: @(selectedTemplate.IsActive ? "Published revision eligible" : "Archived template clone icin uygun degil")</small>
+-                        </div>
+-                        <div class="cb-admin-summary-card">
+-                            <span class="cb-admin-summary-label">Current / Published</span>
+-                            <strong>r@(selectedTemplate.ActiveRevisionNumber <= 0 ? 0 : selectedTemplate.ActiveRevisionNumber) / r@(selectedTemplate.PublishedRevisionNumber <= 0 ? 0 : selectedTemplate.PublishedRevisionNumber)</strong>
+-                            <small>Latest revision: r@selectedTemplate.LatestRevisionNumber</small>
+-                        </div>
+-                        <div class="cb-admin-summary-card">
+-                            <span class="cb-admin-summary-label">Created / Updated</span>
+-                            <strong>@(selectedTemplate.CreatedAtUtc?.ToString("yyyy-MM-dd HH:mm:ss 'UTC'") ?? "Built-in")</strong>
+-                            <small>@(selectedTemplate.UpdatedAtUtc?.ToString("yyyy-MM-dd HH:mm:ss 'UTC'") ?? "Built-in")</small>
+-                        </div>
+-                    </div>
+-
+-                    <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
+-                        <div>
+-                            <div class="cb-admin-info-strip-title">Description</div>
+-                            <div class="cb-admin-info-strip-text">@selectedTemplate.Description</div>
+-                        </div>
+-                        <span class="cb-admin-info-strip-meta">@selectedTemplate.Validation.StatusCode</span>
+-                    </div>
+-
+-                    <div class="table-responsive mt-5">
+-                        <table class="table table-borderless mb-0">
+-                            <tbody>
+-                                <tr><td class="font-weight-bolder">Source lineage</td><td>@(selectedTemplate.SourceTemplateKey ?? "self")</td></tr>
+-                                <tr><td class="font-weight-bolder">Schema version</td><td>@selectedTemplate.SchemaVersion</td></tr>
+-                                <tr><td class="font-weight-bolder">Published revision</td><td>@(selectedTemplate.PublishedRevisionNumber > 0 ? $"r{selectedTemplate.PublishedRevisionNumber}" : "Unpublished")</td></tr>
+-                                <tr><td class="font-weight-bolder">Archived at</td><td>@(selectedTemplate.ArchivedAtUtc?.ToString("yyyy-MM-dd HH:mm:ss 'UTC'") ?? "n/a")</td></tr>
+-                                <tr><td class="font-weight-bolder">Validation</td><td>@selectedTemplate.Validation.Summary</td></tr>
+-                            </tbody>
+-                        </table>
+-                    </div>
+-
+-                    @if (runtimeConfig is not null)
+-                    {
+-                        <div class="cb-admin-settings-switch-grid mt-5">
+-                            <div class="cb-admin-summary-card">
+-                                <span class="cb-admin-summary-label">Long runtime gate</span>
+-                                <strong>@runtimeConfig.Long.Summary</strong>
+-                                <small>Strategy threshold ile runtime gate threshold ayni ekranda gorunur.</small>
+-                            </div>
+-                            <div class="cb-admin-summary-card">
+-                                <span class="cb-admin-summary-label">Short runtime gate</span>
+-                                <strong>@runtimeConfig.Short.Summary</strong>
+-                                <small>Blocked ozeti bu threshold'larla uretilir.</small>
+-                            </div>
+-                        </div>
+-                    }
+-
+-                    @if (explainability is not null)
+-                    {
+-                        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
+-                            <div>
+-                                <div class="cb-admin-info-strip-title">Neden entry yok / neden blocked?</div>
+-                                <div class="cb-admin-info-strip-text">
+-                                    <ul class="mb-0 pl-5">
+-                                        @foreach (var message in explainability.Messages)
+-                                        {
+-                                            <li>@message.Message</li>
+-                                        }
+-                                    </ul>
+-                                </div>
+-                            </div>
+-                            <span class="cb-admin-info-strip-meta">Explain</span>
+-                        </div>
+-
+-                        <div class="table-responsive mt-5">
+-                            <table class="table table-borderless table-sm mb-0">
+-                                <thead>
+-                                    <tr>
+-                                        <th>Metric</th>
+-                                        <th>Strategy input</th>
+-                                        <th>Runtime gate</th>
+-                                        <th>Parity</th>
+-                                    </tr>
+-                                </thead>
+-                                <tbody>
+-                                    @foreach (var row in explainability.LongRows.Concat(explainability.ShortRows))
+-                                    {
+-                                        <tr>
+-                                            <td>
+-                                                <div class="font-weight-bolder">@row.Direction · @row.MetricLabel</div>
+-                                                <div class="text-muted small">@row.Summary</div>
+-                                            </td>
+-                                            <td>
+-                                                <div class="font-weight-bolder">@row.StrategyThreshold</div>
+-                                                <div class="text-muted small">@row.StrategyInputLabel</div>
+-                                            </td>
+-                                            <td>@row.RuntimeThreshold</td>
+-                                            <td>@row.Status</td>
+-                                        </tr>
+-                                    }
+-                                </tbody>
+-                            </table>
+-                        </div>
+-                    }
+-
+-                    <div class="form-group mt-5">
+-                        <label class="font-weight-bolder">Definition JSON (current revision surface)</label>
+-                        <textarea class="form-control font-size-sm" rows="16" readonly>@selectedTemplate.DefinitionJson</textarea>
+-                    </div>
+-                }
+-                else
+-                {
+-                    <div class="cb-admin-info-strip @(hasCatalogLoadIssue ? "cb-admin-info-strip-danger" : "cb-admin-info-strip-info") mt-5">
+-                        <div>
+-                            <div class="cb-admin-info-strip-title">@(hasCatalogLoadIssue ? "Template detail render edilemedi" : "Template secimi bekleniyor")</div>
+-                            <div class="cb-admin-info-strip-text">
+-                                @(hasCatalogLoadIssue
+-                                    ? "Detay paneli fail-soft modda bos donduruldu. Once hatali template/revision kaydini duzeltin."
+-                                    : "Sol listeden bir template secerek revision history ve definition detaylarini goruntuleyin.")
+-                            </div>
+-                        </div>
+-                        <span class="cb-admin-info-strip-meta">@(hasCatalogLoadIssue ? "Load" : "Idle")</span>
+-                    </div>
+-                }
+-            </div>
+-        </div>
+-
+-        @if (selectedTemplate is not null)
+-        {
+-            <div class="card card-custom gutter-b cb-card cb-admin-card">
+-                <div class="card-body">
+-                    <div class="cb-admin-section-kicker">Revision history</div>
+-                    <div class="cb-admin-section-title">Revision listesi</div>
+-
+-                    <div class="table-responsive mt-5">
+-                        <table class="table table-borderless align-middle mb-0">
+-                            <thead>
+-                                <tr>
+-                                    <th>Revision</th>
+-                                    <th>Status</th>
+-                                    <th>Validation</th>
+-                                    <th>Source</th>
+-                                    <th>Archived at</th>
+-                                    <th></th>
+-                                </tr>
+-                            </thead>
+-                            <tbody>
+-                                @foreach (var revision in Model.SelectedTemplateRevisions)
+-                                {
+-                                    var statusParts = new List<string>();
+-                                    if (revision.IsActive) { statusParts.Add("Current"); }
+-                                    if (revision.IsPublished) { statusParts.Add("Published"); }
+-                                    if (revision.IsLatest) { statusParts.Add("Latest"); }
+-                                    if (revision.IsArchived) { statusParts.Add("Archived"); }
+-                                    if (statusParts.Count == 0) { statusParts.Add("Inactive"); }
+-
+-                                    <tr>
+-                                        <td>#@revision.RevisionNumber</td>
+-                                        <td>@string.Join(" · ", statusParts)</td>
+-                                        <td>@revision.ValidationStatusCode</td>
+-                                        <td>@(revision.SourceTemplateKey is null ? "self" : $"{revision.SourceTemplateKey} r{revision.SourceRevisionNumber}")</td>
+-                                        <td>@(revision.ArchivedAtUtc?.ToString("yyyy-MM-dd HH:mm:ss 'UTC'") ?? "n/a")</td>
+-                                        <td class="text-right">
+-                                            @if (Model.CanManageTemplates && !selectedTemplate.IsBuiltIn && selectedTemplate.IsActive && !revision.IsArchived && !revision.IsPublished)
+-                                            {
+-                                                <form asp-area="Admin" asp-controller="Admin" asp-action="PublishStrategyTemplate" method="post" class="d-inline-flex align-items-center" style="gap: 8px;">
+-                                                    @Html.AntiForgeryToken()
+-                                                    <input type="hidden" name="templateKey" value="@selectedTemplate.TemplateKey" />
+-                                                    <input type="hidden" name="revisionNumber" value="@revision.RevisionNumber" />
+-                                                    <input name="reason" class="form-control form-control-sm" maxlength="256" placeholder="Audit reason" style="min-width: 150px;" />
+-                                                    <button type="submit" class="btn btn-sm btn-light-success font-weight-bold">Publish</button>
+-                                                </form>
+-                                            }
+-                                            else if (revision.IsPublished)
+-                                            {
+-                                                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+-                                                {
+-                                                    Label = "Published",
+-                                                    Tone = "healthy",
+-                                                    IconText = "PB"
+-                                                })
+-                                            }
+-                                            else
+-                                            {
+-                                                <span class="text-muted small">-</span>
+-                                            }
+-                                        </td>
+-                                    </tr>
+-                                }
+-                            </tbody>
+-                        </table>
+-                    </div>
+-                </div>
+-            </div>
+-
+-            @if (Model.CanManageTemplates && !selectedTemplate.IsBuiltIn && selectedTemplate.IsActive)
+-            {
+-                <div class="card card-custom gutter-b cb-card cb-admin-card">
+-                    <div class="card-body">
+-                        <div class="cb-admin-section-kicker">Revise</div>
+-                        <div class="cb-admin-section-title">Template revize et</div>
+-
+-                        <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-5">
+-                            <div>
+-                                <div class="cb-admin-info-strip-title">Draft revision behavior</div>
+-                                <div class="cb-admin-info-strip-text">Revision olusturmak published pointer'i otomatik oynatmaz. Kullanici clone flow'u explicit publish edilene kadar son published revision'da kalir.</div>
+-                            </div>
+-                            <span class="cb-admin-info-strip-meta">Guarded</span>
+-                        </div>
+-
+-                        <form asp-area="Admin" asp-controller="Admin" asp-action="ReviseStrategyTemplate" method="post" class="mt-5">
+-                            @Html.AntiForgeryToken()
+-                            <input type="hidden" name="templateKey" value="@selectedTemplate.TemplateKey" />
+-                            <div class="form-group">
+-                                <label>Template name</label>
+-                                <input name="templateName" class="form-control" maxlength="128" value="@selectedTemplate.TemplateName" />
+-                            </div>
+-                            <div class="form-group">
+-                                <label>Description</label>
+-                                <textarea name="description" class="form-control" rows="3" maxlength="512">@selectedTemplate.Description</textarea>
+-                            </div>
+-                            <div class="form-group">
+-                                <label>Category</label>
+-                                <input name="category" class="form-control" maxlength="64" value="@selectedTemplate.Category" />
+-                            </div>
+-
+-                            @if (runtimeConfig is not null)
+-                            {
+-                                <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
+-                                    <div>
+-                                        <div class="cb-admin-info-strip-title">Runtime parity reminder</div>
+-                                        <div class="cb-admin-info-strip-text">Long: @runtimeConfig.Long.Summary<br />Short: @runtimeConfig.Short.Summary</div>
+-                                    </div>
+-                                    <span class="cb-admin-info-strip-meta">Parity</span>
+-                                </div>
+-                            }
+-
+-                            <div class="form-group">
+-                                <label>Definition JSON</label>
+-                                <textarea name="definitionJson" class="form-control font-size-sm" rows="14">@selectedTemplate.DefinitionJson</textarea>
+-                            </div>
+-                            <div class="form-group">
+-                                <label>Audit reason</label>
+-                                <input name="reason" class="form-control" maxlength="256" />
+-                            </div>
+-                            <button type="submit" class="btn btn-light-warning font-weight-bold">Revision olustur</button>
+-                        </form>
+-                    </div>
+-                </div>
+-
+-                <div class="card card-custom gutter-b cb-card cb-admin-card">
+-                    <div class="card-body">
+-                        <div class="cb-admin-section-kicker">Archive</div>
+-                        <div class="cb-admin-section-title">Template archive et</div>
+-
+-                        <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-5">
+-                            <div>
+-                                <div class="cb-admin-info-strip-title">Archive davranisi</div>
+-                                <div class="cb-admin-info-strip-text">Archive edilen template listede kalir, publish/revise edilemez ve clone icin uygun degil olarak isaretlenir.</div>
+-                            </div>
+-                            <span class="cb-admin-info-strip-meta">Foundation</span>
+-                        </div>
+-
+-                        <form asp-area="Admin" asp-controller="Admin" asp-action="ArchiveStrategyTemplate" method="post" class="mt-5">
+-                            @Html.AntiForgeryToken()
+-                            <input type="hidden" name="templateKey" value="@selectedTemplate.TemplateKey" />
+-                            <div class="form-group">
+-                                <label>Audit reason</label>
+-                                <input name="reason" class="form-control" maxlength="256" />
+-                            </div>
+-                            <button type="submit" class="btn btn-light-danger font-weight-bold">Archive et</button>
+-                        </form>
+-                    </div>
+-                </div>
+-            }
+-        }
+-    </div>
+-</div>
++@using CoinBot.Web.StrategyBuilderSupport
++@model CoinBot.Web.ViewModels.Admin.AdminStrategyTemplateCatalogPageViewModel
++@{
++    var selectedTemplate = Model.SelectedTemplate;
++    var runtimeConfig = ViewData["AdminStrategyBuilderRuntimeConfig"] as StrategyBuilderRuntimeConfig;
++    var explainability = ViewData["AdminStrategyBuilderExplainability"] as StrategyBuilderExplainabilitySnapshot;
++    var successMessage = TempData["AdminStrategyTemplateSuccess"] as string;
++    var errorMessage = TempData["AdminStrategyTemplateError"] as string;
++    var hasTemplates = Model.Templates.Count > 0;
++    var hasCatalogLoadIssue = !string.IsNullOrWhiteSpace(errorMessage) && !hasTemplates;
++
++    var headerModel = new AdminPageHeaderViewModel
++    {
++        Eyebrow = "Strategy Catalog",
++        Title = "Strategy Templates",
++        Description = "Built-in ve custom template katalogunu revision history ile yoneten admin katalog yuzeyi.",
++        StatusBadge = new AdminBadgeViewModel
++        {
++            Label = Model.CanManageTemplates ? "Write" : "Read-only",
++            Tone = Model.CanManageTemplates ? "warning" : "info",
++            IconText = Model.CanManageTemplates ? "RW" : "RO"
++        },
++        MetaBadges = new[]
++        {
++            new AdminBadgeViewModel { Label = "Revisioned", Tone = "info", IconText = "RV" },
++            new AdminBadgeViewModel { Label = "Published", Tone = "healthy", IconText = "PB" },
++            new AdminBadgeViewModel { Label = "Audit Bound", Tone = "critical", IconText = "AU" }
++        },
++        SecondaryActionText = "Strategy / AI izleme",
++        SecondaryActionHref = Url.Action("StrategyAiMonitoring", "Admin", new { area = "Admin" }),
++        PrimaryActionText = "Strategy Builder",
++        PrimaryActionHref = Url.Action("StrategyBuilder", "Admin", new { area = "Admin" })
++    };
++}
++
++<div class="row">
++    <div class="col-12">
++        <div class="card card-custom gutter-b cb-card cb-admin-card">
++            <div class="card-body">
++                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
++                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
++                {
++                    Tone = Model.CanManageTemplates ? "warning" : "info",
++                    Title = "Template catalog foundation",
++                    Message = "Create, revise, publish ve archive aksiyonlari mevcut strategy template catalog service ve audit reason zinciri ile calisir. Built-in template'ler yalnizca read-only gorunur.",
++                    Meta = Model.CanManageTemplates ? "Platform admin write" : "Admin read-only"
++                })
++
++                @if (!Model.CanManageTemplates)
++                {
++                    <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6">
++                        <div>
++                            <div class="cb-admin-info-strip-title">Read-only catalog visibility</div>
++                            <div class="cb-admin-info-strip-text">Template detaylari, published pointer ve revision history izlenebilir. Write aksiyonlari yalnizca platform admin + MFA kapsaminda aciktir.</div>
++                        </div>
++                        <span class="cb-admin-info-strip-meta">Read-only</span>
++                    </div>
++                }
++
++                @if (!string.IsNullOrWhiteSpace(successMessage))
++                {
++                    <div class="cb-admin-info-strip cb-admin-info-strip-healthy mt-6">
++                        <div>
++                            <div class="cb-admin-info-strip-title">Catalog update</div>
++                            <div class="cb-admin-info-strip-text">@successMessage</div>
++                        </div>
++                        <span class="cb-admin-info-strip-meta">Applied</span>
++                    </div>
++                }
++
++                @if (!string.IsNullOrWhiteSpace(errorMessage))
++                {
++                    <div class="cb-admin-info-strip cb-admin-info-strip-danger mt-6">
++                        <div>
++                            <div class="cb-admin-info-strip-title">@(hasCatalogLoadIssue ? "Catalog load blocked" : "Catalog update blocked")</div>
++                            <div class="cb-admin-info-strip-text">@errorMessage</div>
++                        </div>
++                        <span class="cb-admin-info-strip-meta">@(hasCatalogLoadIssue ? "Load" : "Blocked")</span>
++                    </div>
++                }
++
++                @if (hasCatalogLoadIssue)
++                {
++                    <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-6">
++                        <div>
++                            <div class="cb-admin-info-strip-title">Fail-soft catalog mode</div>
++                            <div class="cb-admin-info-strip-text">Katalog verisi tamamen render edilemedi. Sayfa ayakta tutuldu. Muhtemel sebep gecersiz bir template definition veya revision kaydidir.</div>
++                        </div>
++                        <span class="cb-admin-info-strip-meta">Recovery</span>
++                    </div>
++                }
++            </div>
++        </div>
++    </div>
++</div>
++
++<div class="row">
++    <div class="col-xl-5">
++        <div class="card card-custom gutter-b cb-card cb-admin-card">
++            <div class="card-body">
++                <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
++                    <div>
++                        <div class="cb-admin-section-kicker">Catalog list</div>
++                        <div class="cb-admin-section-title">Template inventory</div>
++                        <p class="cb-admin-section-description">Archive edilmis custom template'ler listede isaretli kalir. Kullanici clone flow'u yalniz published revision'dan beslenir.</p>
++                    </div>
++                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
++                    {
++                        Label = $"{Model.Templates.Count} template",
++                        Tone = "info",
++                        IconText = "CT"
++                    })
++                </div>
++
++                <div class="table-responsive mt-5">
++                    <table class="table table-borderless align-middle mb-0">
++                        <thead>
++                            <tr>
++                                <th>Template</th>
++                                <th>Category</th>
++                                <th>State</th>
++                                <th>Revision surface</th>
++                                <th></th>
++                            </tr>
++                        </thead>
++                        <tbody>
++                            @if (!hasTemplates)
++                            {
++                                <tr>
++                                    <td colspan="5">
++                                        <div class="cb-admin-info-strip @(hasCatalogLoadIssue ? "cb-admin-info-strip-danger" : "cb-admin-info-strip-info") mb-0">
++                                            <div>
++                                                <div class="cb-admin-info-strip-title">@(hasCatalogLoadIssue ? "Template catalog render edilemedi" : "Template bulunamadi")</div>
++                                                <div class="cb-admin-info-strip-text">
++                                                    @(hasCatalogLoadIssue
++                                                        ? "Listeleme guvenli sekilde bos donduruldu. Once hatali template/revision kaydini duzeltin, sonra sayfayi yenileyin."
++                                                        : "Katalogda gosterilecek template kaydi bulunmuyor.")
++                                                </div>
++                                            </div>
++                                            <span class="cb-admin-info-strip-meta">@(hasCatalogLoadIssue ? "Load" : "Empty")</span>
++                                        </div>
++                                    </td>
++                                </tr>
++                            }
++                            else
++                            {
++                                @foreach (var template in Model.Templates)
++                                {
++                                    var isSelected = string.Equals(Model.SelectedTemplateKey, template.TemplateKey, StringComparison.OrdinalIgnoreCase);
++                                    var stateTone = template.IsActive ? "healthy" : "critical";
++                                    var stateLabel = template.IsActive ? "Active" : "Archived";
++
++                                    <tr class="@(isSelected ? "table-active" : string.Empty)">
++                                        <td>
++                                            <div class="font-weight-bolder">@template.TemplateName</div>
++                                            <div class="text-muted small">@template.TemplateKey · @template.TemplateSource</div>
++                                        </td>
++                                        <td>@template.Category</td>
++                                        <td>
++                                            @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
++                                            {
++                                                Label = stateLabel,
++                                                Tone = stateTone,
++                                                IconText = template.IsBuiltIn ? "BI" : "TM"
++                                            })
++                                        </td>
++                                        <td>
++                                            <div class="font-weight-bolder">Published r@(template.PublishedRevisionNumber <= 0 ? 0 : template.PublishedRevisionNumber)</div>
++                                            <div class="text-muted small">Current r@(template.ActiveRevisionNumber <= 0 ? 0 : template.ActiveRevisionNumber) · Latest r@template.LatestRevisionNumber</div>
++                                        </td>
++                                        <td class="text-right">
++                                            <a asp-area="Admin"
++                                               asp-controller="Admin"
++                                               asp-action="StrategyTemplates"
++                                               asp-route-templateKey="@template.TemplateKey"
++                                               class="btn btn-sm btn-light-primary font-weight-bold">
++                                                Detay
++                                            </a>
++                                        </td>
++                                    </tr>
++                                }
++                            }
++                        </tbody>
++                    </table>
++                </div>
++            </div>
++        </div>
++
++        <div class="card card-custom gutter-b cb-card cb-admin-card">
++            <div class="card-body">
++                <div class="cb-admin-section-kicker">Create</div>
++                <div class="cb-admin-section-title">Yeni template olustur</div>
++                <p class="cb-admin-section-description">Template key duplicate olamaz. Ilk revision current + published olarak olusur; sonraki draft revision'lar explicit publish gerektirir.</p>
++
++                @if (runtimeConfig is not null)
++                {
++                    <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
++                        <div>
++                            <div class="cb-admin-info-strip-title">Runtime gate threshold parity</div>
++                            <div class="cb-admin-info-strip-text">Long: @runtimeConfig.Long.Summary<br />Short: @runtimeConfig.Short.Summary</div>
++                        </div>
++                        <span class="cb-admin-info-strip-meta">Parity</span>
++                    </div>
++                }
++
++                @if (Model.CanManageTemplates)
++                {
++                    <form asp-area="Admin" asp-controller="Admin" asp-action="CreateStrategyTemplate" method="post" class="mt-5">
++                        @Html.AntiForgeryToken()
++                        <div class="form-group">
++                            <label>Template key</label>
++                            <input name="templateKey" class="form-control" maxlength="128" />
++                        </div>
++                        <div class="form-group">
++                            <label>Template name</label>
++                            <input name="templateName" class="form-control" maxlength="128" />
++                        </div>
++                        <div class="form-group">
++                            <label>Description</label>
++                            <textarea name="description" class="form-control" rows="3" maxlength="512"></textarea>
++                        </div>
++                        <div class="form-group">
++                            <label>Category</label>
++                            <input name="category" class="form-control" maxlength="64" />
++                        </div>
++                        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
++                            <div>
++                                <div class="cb-admin-info-strip-title">Input-first builder</div>
++                                <div class="cb-admin-info-strip-text">Timeframe ve RSI esiklerini buradan secin. Definition JSON submit oncesi otomatik uretilir.</div>
++                            </div>
++                            <span class="cb-admin-info-strip-meta">Builder</span>
++                        </div>
++                        <div class="cb-admin-settings-switch-grid mt-5" data-cb-template-builder data-cb-template-builder-mode="create">
++                            <div class="cb-admin-summary-card">
++                                <span class="cb-admin-summary-label">Indikator</span>
++                                <select class="form-control" data-cb-builder-indicator>
++                                    <option value="rsi-basic" selected>RSI Basic</option>
++                                </select>
++                                <small>Ilk surum minimal patch: RSI Basic</small>
++                            </div>
++                            <div class="cb-admin-summary-card">
++                                <span class="cb-admin-summary-label">Timeframe</span>
++                                <select class="form-control" data-cb-builder-timeframe>
++                                    <option value="1m" selected>1m</option>
++                                    <option value="5m">5m</option>
++                                </select>
++                                <small>Worker ile ayni timeframe burada uretilir.</small>
++                            </div>
++                            <div class="cb-admin-summary-card">
++                                <span class="cb-admin-summary-label">RSI period</span>
++                                <input type="number" class="form-control" min="2" max="200" step="1" value="14" data-cb-builder-rsi-period />
++                                <small>Varsayilan 14</small>
++                            </div>
++                            <div class="cb-admin-summary-card">
++                                <span class="cb-admin-summary-label">Long entry RSI <=</span>
++                                <input type="number" class="form-control" min="0" max="100" step="0.01" value="30" data-cb-builder-long-threshold />
++                                <small>Oversold esigi</small>
++                            </div>
++                            <div class="cb-admin-summary-card">
++                                <span class="cb-admin-summary-label">Short entry RSI >=</span>
++                                <input type="number" class="form-control" min="0" max="100" step="0.01" value="70" data-cb-builder-short-threshold />
++                                <small>Overbought esigi</small>
++                            </div>
++                        </div>
++                        <div class="form-group mt-5">
++                            <label>Generated Definition JSON</label>
++                            <textarea name="definitionJson" class="form-control font-size-sm" rows="14" data-cb-builder-definition readonly></textarea>
++                        </div>
++                        <div class="form-group">
++                            <label>Audit reason</label>
++                            <input name="reason" class="form-control" maxlength="256" />
++                        </div>
++                        <button type="submit" class="btn btn-light-warning font-weight-bold">Template olustur</button>
++                    </form>
++                }
++                else
++                {
++                    <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
++                        <div>
++                            <div class="cb-admin-info-strip-title">Write disabled</div>
++                            <div class="cb-admin-info-strip-text">Bu rolde create form gorunur ancak POST aksiyonlari policy ve MFA ile kapatilidir.</div>
++                        </div>
++                        <span class="cb-admin-info-strip-meta">Guarded</span>
++                    </div>
++                }
++            </div>
++        </div>
++    </div>
++
++    <div class="col-xl-7">
++        <div class="card card-custom gutter-b cb-card cb-admin-card">
++            <div class="card-body">
++                <div class="cb-admin-section-kicker">Detail</div>
++                <div class="cb-admin-section-title">@(selectedTemplate?.TemplateName ?? "Template secilmedi")</div>
++                <p class="cb-admin-section-description">Detay paneli selected template definition, lifecycle ve published/current lineage bilgisini gosterir.</p>
++
++                @if (selectedTemplate is not null)
++                {
++                    <div class="cb-admin-settings-switch-grid mt-5">
++                        <div class="cb-admin-summary-card">
++                            <span class="cb-admin-summary-label">Template key</span>
++                            <strong>@selectedTemplate.TemplateKey</strong>
++                            <small>@selectedTemplate.TemplateSource · @selectedTemplate.Category</small>
++                        </div>
++                        <div class="cb-admin-summary-card">
++                            <span class="cb-admin-summary-label">Lifecycle</span>
++                            <strong>@(selectedTemplate.IsActive ? "Active" : "Archived")</strong>
++                            <small>Clone readiness: @(selectedTemplate.IsActive ? "Published revision eligible" : "Archived template clone icin uygun degil")</small>
++                        </div>
++                        <div class="cb-admin-summary-card">
++                            <span class="cb-admin-summary-label">Current / Published</span>
++                            <strong>r@(selectedTemplate.ActiveRevisionNumber <= 0 ? 0 : selectedTemplate.ActiveRevisionNumber) / r@(selectedTemplate.PublishedRevisionNumber <= 0 ? 0 : selectedTemplate.PublishedRevisionNumber)</strong>
++                            <small>Latest revision: r@selectedTemplate.LatestRevisionNumber</small>
++                        </div>
++                        <div class="cb-admin-summary-card">
++                            <span class="cb-admin-summary-label">Created / Updated</span>
++                            <strong>@(selectedTemplate.CreatedAtUtc?.ToString("yyyy-MM-dd HH:mm:ss 'UTC'") ?? "Built-in")</strong>
++                            <small>@(selectedTemplate.UpdatedAtUtc?.ToString("yyyy-MM-dd HH:mm:ss 'UTC'") ?? "Built-in")</small>
++                        </div>
++                    </div>
++
++                    <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
++                        <div>
++                            <div class="cb-admin-info-strip-title">Description</div>
++                            <div class="cb-admin-info-strip-text">@selectedTemplate.Description</div>
++                        </div>
++                        <span class="cb-admin-info-strip-meta">@selectedTemplate.Validation.StatusCode</span>
++                    </div>
++
++                    <div class="table-responsive mt-5">
++                        <table class="table table-borderless mb-0">
++                            <tbody>
++                                <tr><td class="font-weight-bolder">Source lineage</td><td>@(selectedTemplate.SourceTemplateKey ?? "self")</td></tr>
++                                <tr><td class="font-weight-bolder">Schema version</td><td>@selectedTemplate.SchemaVersion</td></tr>
++                                <tr><td class="font-weight-bolder">Published revision</td><td>@(selectedTemplate.PublishedRevisionNumber > 0 ? $"r{selectedTemplate.PublishedRevisionNumber}" : "Unpublished")</td></tr>
++                                <tr><td class="font-weight-bolder">Archived at</td><td>@(selectedTemplate.ArchivedAtUtc?.ToString("yyyy-MM-dd HH:mm:ss 'UTC'") ?? "n/a")</td></tr>
++                                <tr><td class="font-weight-bolder">Validation</td><td>@selectedTemplate.Validation.Summary</td></tr>
++                            </tbody>
++                        </table>
++                    </div>
++
++                    @if (runtimeConfig is not null)
++                    {
++                        <div class="cb-admin-settings-switch-grid mt-5">
++                            <div class="cb-admin-summary-card">
++                                <span class="cb-admin-summary-label">Long runtime gate</span>
++                                <strong>@runtimeConfig.Long.Summary</strong>
++                                <small>Strategy threshold ile runtime gate threshold ayni ekranda gorunur.</small>
++                            </div>
++                            <div class="cb-admin-summary-card">
++                                <span class="cb-admin-summary-label">Short runtime gate</span>
++                                <strong>@runtimeConfig.Short.Summary</strong>
++                                <small>Blocked ozeti bu threshold'larla uretilir.</small>
++                            </div>
++                        </div>
++                    }
++
++                    @if (explainability is not null)
++                    {
++                        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
++                            <div>
++                                <div class="cb-admin-info-strip-title">Neden entry yok / neden blocked?</div>
++                                <div class="cb-admin-info-strip-text">
++                                    <ul class="mb-0 pl-5">
++                                        @foreach (var message in explainability.Messages)
++                                        {
++                                            <li>@message.Message</li>
++                                        }
++                                    </ul>
++                                </div>
++                            </div>
++                            <span class="cb-admin-info-strip-meta">Explain</span>
++                        </div>
++
++                        <div class="table-responsive mt-5">
++                            <table class="table table-borderless table-sm mb-0">
++                                <thead>
++                                    <tr>
++                                        <th>Metric</th>
++                                        <th>Strategy input</th>
++                                        <th>Runtime gate</th>
++                                        <th>Parity</th>
++                                    </tr>
++                                </thead>
++                                <tbody>
++                                    @foreach (var row in explainability.LongRows.Concat(explainability.ShortRows))
++                                    {
++                                        <tr>
++                                            <td>
++                                                <div class="font-weight-bolder">@row.Direction · @row.MetricLabel</div>
++                                                <div class="text-muted small">@row.Summary</div>
++                                            </td>
++                                            <td>
++                                                <div class="font-weight-bolder">@row.StrategyThreshold</div>
++                                                <div class="text-muted small">@row.StrategyInputLabel</div>
++                                            </td>
++                                            <td>@row.RuntimeThreshold</td>
++                                            <td>@row.Status</td>
++                                        </tr>
++                                    }
++                                </tbody>
++                            </table>
++                        </div>
++                    }
++
++                    <div class="form-group mt-5">
++                        <label class="font-weight-bolder">Definition JSON (current revision surface)</label>
++                        <textarea class="form-control font-size-sm" rows="16" readonly>@selectedTemplate.DefinitionJson</textarea>
++                    </div>
++                }
++                else
++                {
++                    <div class="cb-admin-info-strip @(hasCatalogLoadIssue ? "cb-admin-info-strip-danger" : "cb-admin-info-strip-info") mt-5">
++                        <div>
++                            <div class="cb-admin-info-strip-title">@(hasCatalogLoadIssue ? "Template detail render edilemedi" : "Template secimi bekleniyor")</div>
++                            <div class="cb-admin-info-strip-text">
++                                @(hasCatalogLoadIssue
++                                    ? "Detay paneli fail-soft modda bos donduruldu. Once hatali template/revision kaydini duzeltin."
++                                    : "Sol listeden bir template secerek revision history ve definition detaylarini goruntuleyin.")
++                            </div>
++                        </div>
++                        <span class="cb-admin-info-strip-meta">@(hasCatalogLoadIssue ? "Load" : "Idle")</span>
++                    </div>
++                }
++            </div>
++        </div>
++
++        @if (selectedTemplate is not null)
++        {
++            <div class="card card-custom gutter-b cb-card cb-admin-card">
++                <div class="card-body">
++                    <div class="cb-admin-section-kicker">Revision history</div>
++                    <div class="cb-admin-section-title">Revision listesi</div>
++
++                    <div class="table-responsive mt-5">
++                        <table class="table table-borderless align-middle mb-0">
++                            <thead>
++                                <tr>
++                                    <th>Revision</th>
++                                    <th>Status</th>
++                                    <th>Validation</th>
++                                    <th>Source</th>
++                                    <th>Archived at</th>
++                                    <th></th>
++                                </tr>
++                            </thead>
++                            <tbody>
++                                @foreach (var revision in Model.SelectedTemplateRevisions)
++                                {
++                                    var statusParts = new List<string>();
++                                    if (revision.IsActive) { statusParts.Add("Current"); }
++                                    if (revision.IsPublished) { statusParts.Add("Published"); }
++                                    if (revision.IsLatest) { statusParts.Add("Latest"); }
++                                    if (revision.IsArchived) { statusParts.Add("Archived"); }
++                                    if (statusParts.Count == 0) { statusParts.Add("Inactive"); }
++
++                                    <tr>
++                                        <td>#@revision.RevisionNumber</td>
++                                        <td>@string.Join(" · ", statusParts)</td>
++                                        <td>@revision.ValidationStatusCode</td>
++                                        <td>@(revision.SourceTemplateKey is null ? "self" : $"{revision.SourceTemplateKey} r{revision.SourceRevisionNumber}")</td>
++                                        <td>@(revision.ArchivedAtUtc?.ToString("yyyy-MM-dd HH:mm:ss 'UTC'") ?? "n/a")</td>
++                                        <td class="text-right">
++                                            @if (Model.CanManageTemplates && !selectedTemplate.IsBuiltIn && selectedTemplate.IsActive && !revision.IsArchived && !revision.IsPublished)
++                                            {
++                                                <form asp-area="Admin" asp-controller="Admin" asp-action="PublishStrategyTemplate" method="post" class="d-inline-flex align-items-center" style="gap: 8px;">
++                                                    @Html.AntiForgeryToken()
++                                                    <input type="hidden" name="templateKey" value="@selectedTemplate.TemplateKey" />
++                                                    <input type="hidden" name="revisionNumber" value="@revision.RevisionNumber" />
++                                                    <input name="reason" class="form-control form-control-sm" maxlength="256" placeholder="Audit reason" style="min-width: 150px;" />
++                                                    <button type="submit" class="btn btn-sm btn-light-success font-weight-bold">Publish</button>
++                                                </form>
++                                            }
++                                            else if (revision.IsPublished)
++                                            {
++                                                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
++                                                {
++                                                    Label = "Published",
++                                                    Tone = "healthy",
++                                                    IconText = "PB"
++                                                })
++                                            }
++                                            else
++                                            {
++                                                <span class="text-muted small">-</span>
++                                            }
++                                        </td>
++                                    </tr>
++                                }
++                            </tbody>
++                        </table>
++                    </div>
++                </div>
++            </div>
++
++            @if (Model.CanManageTemplates && !selectedTemplate.IsBuiltIn && selectedTemplate.IsActive)
++            {
++                <div class="card card-custom gutter-b cb-card cb-admin-card">
++                    <div class="card-body">
++                        <div class="cb-admin-section-kicker">Revise</div>
++                        <div class="cb-admin-section-title">Template revize et</div>
++
++                        <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-5">
++                            <div>
++                                <div class="cb-admin-info-strip-title">Draft revision behavior</div>
++                                <div class="cb-admin-info-strip-text">Revision olusturmak published pointer'i otomatik oynatmaz. Kullanici clone flow'u explicit publish edilene kadar son published revision'da kalir.</div>
++                            </div>
++                            <span class="cb-admin-info-strip-meta">Guarded</span>
++                        </div>
++
++                        <form asp-area="Admin" asp-controller="Admin" asp-action="ReviseStrategyTemplate" method="post" class="mt-5">
++                            @Html.AntiForgeryToken()
++                            <input type="hidden" name="templateKey" value="@selectedTemplate.TemplateKey" />
++                            <div class="form-group">
++                                <label>Template name</label>
++                                <input name="templateName" class="form-control" maxlength="128" value="@selectedTemplate.TemplateName" />
++                            </div>
++                            <div class="form-group">
++                                <label>Description</label>
++                                <textarea name="description" class="form-control" rows="3" maxlength="512">@selectedTemplate.Description</textarea>
++                            </div>
++                            <div class="form-group">
++                                <label>Category</label>
++                                <input name="category" class="form-control" maxlength="64" value="@selectedTemplate.Category" />
++                            </div>
++
++                            @if (runtimeConfig is not null)
++                            {
++                                <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
++                                    <div>
++                                        <div class="cb-admin-info-strip-title">Runtime parity reminder</div>
++                                        <div class="cb-admin-info-strip-text">Long: @runtimeConfig.Long.Summary<br />Short: @runtimeConfig.Short.Summary</div>
++                                    </div>
++                                    <span class="cb-admin-info-strip-meta">Parity</span>
++                                </div>
++                            }
++
++                            <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
++                                <div>
++                                    <div class="cb-admin-info-strip-title">Input-first builder</div>
++                                    <div class="cb-admin-info-strip-text">Revize ederken timeframe ve RSI esikleri once builder'dan uretilir, sonra definition JSON otomatik guncellenir.</div>
++                                </div>
++                                <span class="cb-admin-info-strip-meta">Builder</span>
++                            </div>
++                            <div class="cb-admin-settings-switch-grid mt-5" data-cb-template-builder data-cb-template-builder-mode="revise">
++                                <div class="cb-admin-summary-card">
++                                    <span class="cb-admin-summary-label">Indikator</span>
++                                    <select class="form-control" data-cb-builder-indicator>
++                                        <option value="rsi-basic" selected>RSI Basic</option>
++                                    </select>
++                                    <small>Revize patch'i RSI Basic icin optimize edildi.</small>
++                                </div>
++                                <div class="cb-admin-summary-card">
++                                    <span class="cb-admin-summary-label">Timeframe</span>
++                                    <select class="form-control" data-cb-builder-timeframe>
++                                        <option value="1m">1m</option>
++                                        <option value="5m">5m</option>
++                                    </select>
++                                    <small>Eski JSON load edilip bu alana hydrate edilir.</small>
++                                </div>
++                                <div class="cb-admin-summary-card">
++                                    <span class="cb-admin-summary-label">RSI period</span>
++                                    <input type="number" class="form-control" min="2" max="200" step="1" value="14" data-cb-builder-rsi-period />
++                                    <small>Varsayilan 14</small>
++                                </div>
++                                <div class="cb-admin-summary-card">
++                                    <span class="cb-admin-summary-label">Long entry RSI <=</span>
++                                    <input type="number" class="form-control" min="0" max="100" step="0.01" value="30" data-cb-builder-long-threshold />
++                                    <small>Oversold esigi</small>
++                                </div>
++                                <div class="cb-admin-summary-card">
++                                    <span class="cb-admin-summary-label">Short entry RSI >=</span>
++                                    <input type="number" class="form-control" min="0" max="100" step="0.01" value="70" data-cb-builder-short-threshold />
++                                    <small>Overbought esigi</small>
++                                </div>
++                            </div>
++                            <div class="form-group mt-5">
++                                <label>Generated Definition JSON</label>
++                                <textarea name="definitionJson" class="form-control font-size-sm" rows="14" data-cb-builder-definition readonly>@selectedTemplate.DefinitionJson</textarea>
++                            </div>
++                            <div class="form-group">
++                                <label>Audit reason</label>
++                                <input name="reason" class="form-control" maxlength="256" />
++                            </div>
++                            <button type="submit" class="btn btn-light-warning font-weight-bold">Revision olustur</button>
++                        </form>
++                    </div>
++                </div>
++
++                <div class="card card-custom gutter-b cb-card cb-admin-card">
++                    <div class="card-body">
++                        <div class="cb-admin-section-kicker">Archive</div>
++                        <div class="cb-admin-section-title">Template archive et</div>
++
++                        <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-5">
++                            <div>
++                                <div class="cb-admin-info-strip-title">Archive davranisi</div>
++                                <div class="cb-admin-info-strip-text">Archive edilen template listede kalir, publish/revise edilemez ve clone icin uygun degil olarak isaretlenir.</div>
++                            </div>
++                            <span class="cb-admin-info-strip-meta">Foundation</span>
++                        </div>
++
++                        <form asp-area="Admin" asp-controller="Admin" asp-action="ArchiveStrategyTemplate" method="post" class="mt-5">
++                            @Html.AntiForgeryToken()
++                            <input type="hidden" name="templateKey" value="@selectedTemplate.TemplateKey" />
++                            <div class="form-group">
++                                <label>Audit reason</label>
++                                <input name="reason" class="form-control" maxlength="256" />
++                            </div>
++                            <button type="submit" class="btn btn-light-danger font-weight-bold">Archive et</button>
++                        </form>
++                    </div>
++                </div>
++            }
++        }
++    </div>
++</div>
++
++<script>
++(function () {
++    function closestForm(element) { return element ? element.closest('form') : null; }
++    function parseNumber(value, fallback) { var n = Number(value); return Number.isFinite(n) ? n : fallback; }
++    function stringifyValue(value) { return Number.isInteger(value) ? value : Number(value.toFixed(4)); }
++    function buildRuleGroup(groupName, timeframe, period, threshold, comparison) {
++        var prefix = groupName === 'risk' ? 'risk' : groupName;
++        var rules = [
++            { ruleId: prefix + '-state-ready', ruleType: 'data-quality', path: 'indicator.state', comparison: 'equals', timeframe: timeframe, weight: 10, enabled: true, group: groupName, value: 'Ready' },
++            { ruleId: prefix + '-sample-count', ruleType: 'data-quality', path: 'indicator.sampleCount', comparison: 'greaterThanOrEqual', timeframe: timeframe, weight: 10, enabled: true, group: groupName, value: period }
++        ];
++        if (groupName !== 'risk') {
++            rules.push({ ruleId: prefix + '-rsi-period', ruleType: 'rsi', path: 'indicator.rsi.period', comparison: 'equals', timeframe: timeframe, weight: 10, enabled: true, group: groupName, value: period });
++            rules.push({ ruleId: prefix + '-rsi-ready', ruleType: 'rsi', path: 'indicator.rsi.isReady', comparison: 'equals', timeframe: timeframe, weight: 10, enabled: true, group: groupName, value: true });
++            rules.push({ ruleId: prefix + '-rsi-threshold', ruleType: 'rsi', path: 'indicator.rsi.value', comparison: comparison, timeframe: timeframe, weight: 10, enabled: true, group: groupName, value: stringifyValue(threshold) });
++        }
++        return { operator: 'all', ruleId: prefix + '-root', ruleType: 'group', timeframe: timeframe, weight: 1, enabled: true, group: groupName, rules: rules };
++    }
++    function buildDefinition(form, builder) {
++        var timeframe = builder.timeframe.value || '1m';
++        var period = parseNumber(builder.period.value, 14);
++        var longThreshold = parseNumber(builder.longThreshold.value, 30);
++        var shortThreshold = parseNumber(builder.shortThreshold.value, 70);
++        var templateKeyInput = form.querySelector('[name="templateKey"]');
++        var templateNameInput = form.querySelector('[name="templateName"]');
++        var existing = builder.definition.value || '';
++        var revisionNumber = 1;
++        try {
++            var parsed = JSON.parse(existing);
++            revisionNumber = parseNumber(parsed && parsed.metadata ? parsed.metadata.templateRevisionNumber : 1, 1);
++        } catch (e) { }
++        return {
++            schemaVersion: 2,
++            metadata: {
++                templateKey: templateKeyInput ? (templateKeyInput.value || 'rsi-basic') : 'rsi-basic',
++                templateName: templateNameInput ? (templateNameInput.value || 'RSI Basic') : 'RSI Basic',
++                templateRevisionNumber: revisionNumber,
++                templateSource: 'Custom'
++            },
++            direction: 'neutral',
++            longEntry: buildRuleGroup('longEntry', timeframe, period, longThreshold, 'lessThanOrEqual'),
++            shortEntry: buildRuleGroup('shortEntry', timeframe, period, shortThreshold, 'greaterThanOrEqual'),
++            risk: buildRuleGroup('risk', timeframe, period, 0, 'equals')
++        };
++    }
++    function extractThreshold(node, fallback) {
++        if (!node || !Array.isArray(node.rules)) { return fallback; }
++        var match = node.rules.find(function (rule) { return rule && rule.ruleId && String(rule.ruleId).indexOf('-rsi-threshold') >= 0; });
++        return match ? parseNumber(match.value, fallback) : fallback;
++    }
++    function extractPeriod(node, fallback) {
++        if (!node || !Array.isArray(node.rules)) { return fallback; }
++        var match = node.rules.find(function (rule) { return rule && rule.path === 'indicator.rsi.period'; });
++        return match ? parseNumber(match.value, fallback) : fallback;
++    }
++    function hydrate(builder) {
++        var raw = builder.definition.value;
++        if (!raw) { return; }
++        try {
++            var parsed = JSON.parse(raw);
++            builder.timeframe.value = (parsed.longEntry && parsed.longEntry.timeframe) || (parsed.risk && parsed.risk.timeframe) || '1m';
++            builder.period.value = extractPeriod(parsed.longEntry, 14);
++            builder.longThreshold.value = extractThreshold(parsed.longEntry, 30);
++            builder.shortThreshold.value = extractThreshold(parsed.shortEntry, 70);
++        } catch (e) { }
++    }
++    function refresh(builder) {
++        var form = closestForm(builder.root);
++        if (!form) { return; }
++        builder.definition.value = JSON.stringify(buildDefinition(form, builder), null, 2);
++    }
++    Array.prototype.forEach.call(document.querySelectorAll('[data-cb-template-builder]'), function (root) {
++        var form = closestForm(root);
++        var builder = {
++            root: root,
++            indicator: root.querySelector('[data-cb-builder-indicator]'),
++            timeframe: root.querySelector('[data-cb-builder-timeframe]'),
++            period: root.querySelector('[data-cb-builder-rsi-period]'),
++            longThreshold: root.querySelector('[data-cb-builder-long-threshold]'),
++            shortThreshold: root.querySelector('[data-cb-builder-short-threshold]'),
++            definition: form ? form.querySelector('[data-cb-builder-definition]') : null
++        };
++        if (!builder.definition) { return; }
++        hydrate(builder);
++        refresh(builder);
++        [builder.indicator, builder.timeframe, builder.period, builder.longThreshold, builder.shortThreshold].forEach(function (element) {
++            if (!element) { return; }
++            element.addEventListener('change', function () { refresh(builder); });
++            element.addEventListener('input', function () { refresh(builder); });
++        });
++        if (form) {
++            ['templateKey', 'templateName'].forEach(function (name) {
++                var input = form.querySelector('[name="' + name + '"]');
++                if (!input) { return; }
++                input.addEventListener('input', function () { refresh(builder); });
++            });
++            form.addEventListener('submit', function () { refresh(builder); });
++        }
++    });
++})();
++</script>

@@ -459,7 +459,7 @@ public sealed class AdminControllerTests
         var call = Assert.Single(templateService.CreateCalls);
         var audit = Assert.Single(auditLogService.Requests);
 
-        Assert.Equal(nameof(AdminController.StrategyTemplates), redirect.ActionName);
+        Assert.Equal(nameof(AdminController.StrategyTemplateDetail), redirect.ActionName);
         Assert.Equal("custom-template", call.TemplateKey);
         Assert.Equal("Admin.StrategyTemplates.Create", audit.ActionType);
         Assert.Equal("Create reason", audit.Reason);
@@ -467,7 +467,7 @@ public sealed class AdminControllerTests
     }
 
     [Fact]
-    public async Task ReviseStrategyTemplate_CreatesNewRevision_AndRedirects()
+    public async Task ReviseStrategyTemplate_UpdatesCurrentTemplate_AndRedirects()
     {
         var templateService = new FakeStrategyTemplateCatalogService();
         templateService.Templates.Add(CreateStrategyTemplateSnapshot("revisioned-template", "Revisioned Template"));
@@ -485,18 +485,16 @@ public sealed class AdminControllerTests
             "Updated description",
             "Momentum",
             "{\"schemaVersion\":2,\"entry\":{\"path\":\"indicator.rsi.value\",\"comparison\":\"lessThanOrEqual\",\"value\":28,\"ruleId\":\"entry-rsi\",\"ruleType\":\"rsi\",\"weight\":10,\"enabled\":true}}",
-            "Revise reason",
             CancellationToken.None);
 
         var redirect = Assert.IsType<RedirectToActionResult>(result);
         var call = Assert.Single(templateService.ReviseCalls);
         var audit = Assert.Single(auditLogService.Requests);
 
-        Assert.Equal(nameof(AdminController.StrategyTemplates), redirect.ActionName);
+        Assert.Equal(nameof(AdminController.StrategyTemplateDetail), redirect.ActionName);
         Assert.Equal("revisioned-template", call.TemplateKey);
-        Assert.Equal("Admin.StrategyTemplates.Revise", audit.ActionType);
-        Assert.Equal("Revise reason", audit.Reason);
-        Assert.Equal("Strategy template 'Revisioned Template v2' revision 2 olarak guncellendi.", controller.TempData["AdminStrategyTemplateSuccess"]);
+        Assert.Equal("Admin.StrategyTemplates.Save", audit.ActionType);
+        Assert.Equal("Template guncellendi: Revisioned Template v2 (revisioned-template). Mevcut kayit dogrudan guncellendi. Current r1 · Published r1 · Latest r1.", controller.TempData["AdminStrategyTemplateSuccess"]);
     }
 
     [Fact]
@@ -3476,6 +3474,27 @@ public sealed class AdminControllerTests
                 new StrategyTemplateRevisionSnapshot(Guid.NewGuid(), revised.TemplateId, revised.TemplateKey, current.PublishedRevisionNumber, revised.SchemaVersion, revised.Validation.StatusCode, revised.Validation.Summary, IsActive: false, IsLatest: false, IsArchived: false, IsPublished: true)
             ];
             return Task.FromResult(revised);
+        }
+
+        public Task<StrategyTemplateSnapshot> UpdateCurrentAsync(string templateKey, string templateName, string description, string category, string definitionJson, CancellationToken cancellationToken = default)
+        {
+            if (ReviseException is not null)
+            {
+                throw ReviseException;
+            }
+
+            ReviseCalls.Add((templateKey, templateName, description, category, definitionJson));
+            var current = Templates.Single(item => string.Equals(item.TemplateKey, templateKey, StringComparison.OrdinalIgnoreCase));
+            var updated = current with
+            {
+                TemplateName = templateName,
+                Description = description,
+                Category = category,
+                UpdatedAtUtc = new DateTime(2026, 4, 8, 10, 0, 0, DateTimeKind.Utc)
+            };
+            Templates.Remove(current);
+            Templates.Add(updated);
+            return Task.FromResult(updated);
         }
 
         public Task<StrategyTemplateSnapshot> PublishAsync(string templateKey, int revisionNumber, CancellationToken cancellationToken = default)

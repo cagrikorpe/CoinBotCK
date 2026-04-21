@@ -25,12 +25,28 @@ try
     var sqlConnectionStringBuilder = string.IsNullOrWhiteSpace(connectionString)
         ? null
         : new SqlConnectionStringBuilder(connectionString);
+    var scannerHandoffEnabled = builder.Configuration.GetValue<bool>("MarketData:Scanner:HandoffEnabled");
+    var marketDataRestBaseUrl = builder.Configuration.GetValue<string>("MarketData:Binance:RestBaseUrl") ?? "unknown";
+    var marketDataWebSocketBaseUrl = builder.Configuration.GetValue<string>("MarketData:Binance:WebSocketBaseUrl") ?? "unknown";
+    var exchangeSyncRestBaseUrl = builder.Configuration.GetValue<string>("ExchangeSync:Binance:RestBaseUrl") ?? "unknown";
+    var exchangeSyncWebSocketBaseUrl = builder.Configuration.GetValue<string>("ExchangeSync:Binance:WebSocketBaseUrl") ?? "unknown";
+    var contentRootPath = builder.Environment.ContentRootPath;
+    var appBaseDirectory = AppContext.BaseDirectory;
+    var processPath = Environment.ProcessPath ?? "unknown";
 
     Log.Information(
-        "Runtime configuration resolved. Environment={EnvironmentName} MarketDataBinanceEnabled={MarketDataBinanceEnabled} ExchangeSyncBinanceEnabled={ExchangeSyncBinanceEnabled} DbServer={DbServer} DbName={DbName}",
+        "Runtime configuration resolved. Environment={EnvironmentName} MarketDataBinanceEnabled={MarketDataBinanceEnabled} ScannerHandoffEnabled={ScannerHandoffEnabled} MarketDataRestBaseUrl={MarketDataRestBaseUrl} MarketDataWebSocketBaseUrl={MarketDataWebSocketBaseUrl} ExchangeSyncBinanceEnabled={ExchangeSyncBinanceEnabled} ExchangeSyncRestBaseUrl={ExchangeSyncRestBaseUrl} ExchangeSyncWebSocketBaseUrl={ExchangeSyncWebSocketBaseUrl} ContentRootPath={ContentRootPath} AppBaseDirectory={AppBaseDirectory} ProcessPath={ProcessPath} DbServer={DbServer} DbName={DbName}",
         builder.Environment.EnvironmentName,
         builder.Configuration.GetValue<bool>("MarketData:Binance:Enabled"),
+        scannerHandoffEnabled,
+        marketDataRestBaseUrl,
+        marketDataWebSocketBaseUrl,
         builder.Configuration.GetValue<bool>("ExchangeSync:Binance:Enabled"),
+        exchangeSyncRestBaseUrl,
+        exchangeSyncWebSocketBaseUrl,
+        contentRootPath,
+        appBaseDirectory,
+        processPath,
         sqlConnectionStringBuilder?.DataSource ?? "unknown",
         sqlConnectionStringBuilder?.InitialCatalog ?? "unknown");
 

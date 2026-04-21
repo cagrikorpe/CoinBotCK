@@ -98,6 +98,8 @@ public sealed class MarketScannerServiceTests
         Assert.False(sol.IsEligible);
         Assert.Equal("LowQuoteVolume", sol.RejectionReason);
         Assert.Equal(MonitoringHealthState.Healthy, heartbeat.HealthState);
+        Assert.Contains("Timeframe=1m", heartbeat.Detail ?? string.Empty, StringComparison.Ordinal);
+        Assert.Contains("HandoffEnabled=False", heartbeat.Detail ?? string.Empty, StringComparison.Ordinal);
         Assert.Contains("BestCandidate=ADAUSDT", heartbeat.Detail ?? string.Empty, StringComparison.Ordinal);
         Assert.Equal(4, marketDataService.SharedPriceReadCount);
         Assert.Equal(0, marketDataService.LegacyPriceReadCount);
@@ -250,6 +252,7 @@ public sealed class MarketScannerServiceTests
             .Where(entity => entity.ScanCycleId == cycle.Id && entity.IsEligible)
             .OrderBy(entity => entity.Rank)
             .ToListAsync();
+        var heartbeat = await dbContext.WorkerHeartbeats.SingleAsync(entity => entity.WorkerKey == MarketScannerService.WorkerKey);
 
         Assert.Equal("BTCUSDT", cycle.BestCandidateSymbol);
         Assert.Equal(["BTCUSDT", "ETHUSDT"], rankedCandidates.Select(candidate => candidate.Symbol).ToArray());
@@ -271,6 +274,7 @@ public sealed class MarketScannerServiceTests
         Assert.InRange(btc.Score, 0m, 100m);
         Assert.InRange(eth.Score, 0m, 100m);
         Assert.True(btc.Score > eth.Score);
+        Assert.Contains("HandoffEnabled=True", heartbeat.Detail ?? string.Empty, StringComparison.Ordinal);
         Assert.Equal("BTCUSDT", strategyEvaluatorService.RequestedSymbols[0]);
         Assert.Equal("ETHUSDT", strategyEvaluatorService.RequestedSymbols[1]);
     }

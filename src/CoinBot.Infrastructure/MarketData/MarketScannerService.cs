@@ -678,7 +678,14 @@ public sealed class MarketScannerService(
         entity.SnapshotAgeSeconds = 0;
         entity.Detail = freshnessPause is not null
             ? Truncate(freshnessPause.Detail, 2048)
-            : Truncate(BuildCycleDetail(cycle, candidates), 2048);
+            : Truncate(
+                BuildCycleDetail(
+                    cycle,
+                    candidates,
+                    scannerOptionsValue.HandoffEnabled,
+                    scannerOptionsValue.ExecutionHost,
+                    klineInterval),
+                2048);
     }
 
     private static void AddSymbols(IDictionary<string, SortedSet<string>> universe, IEnumerable<string> symbols, string source)
@@ -1545,7 +1552,7 @@ public sealed class MarketScannerService(
         {
             return MarketScannerStrategyScoreSummary.Accepted(
                 0,
-                "StrategyScoring=Skipped; Reason=ScannerHandoffDisabled");
+                "StrategyScoring=Skipped; Reason=ScannerHandoffDisabled; HandoffEnabled=False");
         }
 
         var strategyBindingResolution = await ResolveStrategyBindingAsync(symbol, cancellationToken);
@@ -2020,11 +2027,19 @@ public sealed class MarketScannerService(
             : $"Market scanner evaluated {cycle.ScannedSymbolCount} symbols and found no eligible candidates. Reasons={rejectionSummary}.";
     }
 
-    private static string BuildCycleDetail(MarketScannerCycle cycle, IReadOnlyCollection<MarketScannerCandidate> candidates)
+    private static string BuildCycleDetail(
+        MarketScannerCycle cycle,
+        IReadOnlyCollection<MarketScannerCandidate> candidates,
+        bool handoffEnabled,
+        string? executionHost,
+        string timeframe)
     {
         var rejectedReason = BuildRejectionBreakdown(candidates, maxEntries: 6, maxSymbolsPerReason: 3) ?? "none";
+        var normalizedExecutionHost = string.IsNullOrWhiteSpace(executionHost)
+            ? "n/a"
+            : executionHost.Trim();
 
-        return $"ScanCycleId={cycle.Id}; UniverseSource={cycle.UniverseSource}; Scanned={cycle.ScannedSymbolCount}; Eligible={cycle.EligibleCandidateCount}; Top={cycle.TopCandidateCount}; BestCandidate={cycle.BestCandidateSymbol ?? "n/a"}; BestScore={cycle.BestCandidateScore?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a"}; TopRejectReason={rejectedReason}; CompletedAtUtc={cycle.CompletedAtUtc:O}";
+        return $"ScanCycleId={cycle.Id}; Timeframe={timeframe}; HandoffEnabled={handoffEnabled}; ExecutionHost={normalizedExecutionHost}; UniverseSource={cycle.UniverseSource}; Scanned={cycle.ScannedSymbolCount}; Eligible={cycle.EligibleCandidateCount}; Top={cycle.TopCandidateCount}; BestCandidate={cycle.BestCandidateSymbol ?? "n/a"}; BestScore={cycle.BestCandidateScore?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a"}; TopRejectReason={rejectedReason}; CompletedAtUtc={cycle.CompletedAtUtc:O}";
     }
 
     private static string? ResolveDominantRejectionReason(IReadOnlyCollection<MarketScannerCandidate> candidates)

@@ -1,0 +1,214 @@
+@using CoinBot.Web.StrategyBuilderSupport
+@model CoinBot.Web.ViewModels.Admin.AdminStrategyTemplateCatalogPageViewModel
+@{
+    var runtimeConfig = ViewData["AdminStrategyBuilderRuntimeConfig"] as StrategyBuilderRuntimeConfig;
+    var successMessage = TempData["AdminStrategyTemplateSuccess"] as string;
+    var errorMessage = TempData["AdminStrategyTemplateError"] as string;
+    var hasTemplates = Model.Templates.Count > 0;
+    var hasCatalogLoadIssue = !string.IsNullOrWhiteSpace(errorMessage) && !hasTemplates;
+
+    var headerModel = new AdminPageHeaderViewModel
+    {
+        Eyebrow = "Strategy Catalog",
+        Title = "Yeni template oluştur",
+        Description = "Bu ekran yalnizca yeni template olusturma icindir; revise ve archive burada yer almaz.",
+        StatusBadge = new AdminBadgeViewModel
+        {
+            Label = Model.CanManageTemplates ? "Write" : "Read-only",
+            Tone = Model.CanManageTemplates ? "warning" : "info",
+            IconText = Model.CanManageTemplates ? "RW" : "RO"
+        },
+        MetaBadges = new[]
+        {
+            new AdminBadgeViewModel { Label = "Create", Tone = "info", IconText = "CR" },
+            new AdminBadgeViewModel { Label = "Input-first", Tone = "warning", IconText = "IF" },
+            new AdminBadgeViewModel { Label = "Catalog", Tone = "healthy", IconText = "IV" }
+        },
+        SecondaryActionText = "Listeye don",
+        SecondaryActionHref = Url.Action("StrategyTemplates", "Admin", new { area = "Admin" }),
+        PrimaryActionText = "Liste ekranı",
+        PrimaryActionHref = Url.Action("StrategyTemplates", "Admin", new { area = "Admin" })
+    };
+}
+
+<div class="row">
+    <div class="col-12">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                @await Html.PartialAsync("Foundation/_AdminPageHeader", headerModel)
+                @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                {
+                    Tone = Model.CanManageTemplates ? "warning" : "info",
+                    Title = "Yeni template oluştur",
+                    Message = "Bu sayfada sadece create formu vardir. Revize ve archive islemleri burada gosterilmez; onlar sadece secili template detay ekranindadir.",
+                    Meta = Model.CanManageTemplates ? "Create-only" : "Read-only"
+                })
+
+                @if (!string.IsNullOrWhiteSpace(successMessage))
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-healthy mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Islem basarili</div>
+                            <div class="cb-admin-info-strip-text">@successMessage</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Applied</span>
+                    </div>
+                }
+
+                @if (!string.IsNullOrWhiteSpace(errorMessage))
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-danger mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">@(hasCatalogLoadIssue ? "Catalog yuklenemedi" : "Islem engellendi")</div>
+                            <div class="cb-admin-info-strip-text">@errorMessage</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">@(hasCatalogLoadIssue ? "Load" : "Blocked")</span>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-xl-8">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Create</div>
+                <div class="cb-admin-section-title">Yeni template oluştur</div>
+                <p class="cb-admin-section-description">Bu form sadece yeni template oluşturur. Mevcut bir template'i değiştirmez; revize işlemi yalnızca detay ekranında yapılır.</p>
+
+                @if (runtimeConfig is not null)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Runtime gate threshold parity</div>
+                            <div class="cb-admin-info-strip-text">Long: @runtimeConfig.Long.Summary<br />Short: @runtimeConfig.Short.Summary</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Parity</span>
+                    </div>
+                }
+
+                @if (Model.CanManageTemplates)
+                {
+                    <form asp-area="Admin" asp-controller="Admin" asp-action="CreateStrategyTemplate" method="post" class="mt-5">
+                        @Html.AntiForgeryToken()
+                        <div class="form-group">
+                            <label>Template key</label>
+                            <input name="templateKey" class="form-control" maxlength="128" />
+                        </div>
+                        <div class="form-group">
+                            <label>Template name</label>
+                            <input name="templateName" class="form-control" maxlength="128" />
+                        </div>
+                        <div class="form-group">
+                            <label>Description</label>
+                            <textarea name="description" class="form-control" rows="3" maxlength="512"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Category</label>
+                            <input name="category" class="form-control" maxlength="64" />
+                        </div>
+                        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
+                            <div>
+                                <div class="cb-admin-info-strip-title">Input-first builder</div>
+                                <div class="cb-admin-info-strip-text">Timeframe ve RSI esiklerini buradan secin. Definition JSON submit oncesi otomatik uretilir.</div>
+                            </div>
+                            <span class="cb-admin-info-strip-meta">Builder</span>
+                        </div>
+                        <div class="cb-admin-settings-switch-grid mt-5" data-cb-template-builder data-cb-template-builder-mode="create">
+                            <div class="cb-admin-summary-card">
+                                <span class="cb-admin-summary-label">Indikator</span>
+                                <select class="form-control" data-cb-builder-indicator>
+                                    <option value="rsi-basic" selected>RSI Basic</option>
+                                </select>
+                                <small>Ilk surum minimal patch: RSI Basic</small>
+                            </div>
+                            <div class="cb-admin-summary-card">
+                                <span class="cb-admin-summary-label">Timeframe</span>
+                                <select class="form-control" data-cb-builder-timeframe>
+                                    <option value="1m" selected>1m</option>
+                                    <option value="5m">5m</option>
+                                </select>
+                                <small>Worker ile ayni timeframe burada uretilir.</small>
+                            </div>
+                            <div class="cb-admin-summary-card">
+                                <span class="cb-admin-summary-label">RSI period</span>
+                                <input type="number" class="form-control" min="2" max="200" step="1" value="14" data-cb-builder-rsi-period />
+                                <small>Varsayilan 14</small>
+                            </div>
+                            <div class="cb-admin-summary-card">
+                                <span class="cb-admin-summary-label">Long entry RSI &lt;=</span>
+                                <input type="number" class="form-control" min="0" max="100" step="0.01" value="30" data-cb-builder-long-threshold />
+                                <small>Oversold esigi</small>
+                            </div>
+                            <div class="cb-admin-summary-card">
+                                <span class="cb-admin-summary-label">Short entry RSI >=</span>
+                                <input type="number" class="form-control" min="0" max="100" step="0.01" value="70" data-cb-builder-short-threshold />
+                                <small>Overbought esigi</small>
+                            </div>
+                        </div>
+                        <div class="form-group mt-5">
+                            <label>Generated Definition JSON</label>
+                            <input type="hidden" name="definitionJson" data-cb-builder-definition-input />
+                            <input type="hidden" value="" data-cb-builder-definition-source />
+                            <textarea class="form-control font-size-sm" rows="14" data-cb-builder-definition-preview readonly></textarea>
+                            <small class="form-text text-muted">Bu alan preview'dur. Submit edilen gercek definitionJson builder tarafindan otomatik uretilir.</small>
+                        </div>
+                        <div class="form-group">
+                            <label>Audit reason</label>
+                            <input name="reason" class="form-control" maxlength="256" />
+                        </div>
+                        <button type="submit" class="btn btn-light-warning font-weight-bold">Template olustur</button>
+                    </form>
+                }
+                else
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Write disabled</div>
+                            <div class="cb-admin-info-strip-text">Bu rolde create form gorunur ancak POST aksiyonlari policy ve MFA ile kapatilidir.</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Guarded</span>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-4">
+        <div class="card card-custom gutter-b cb-card cb-admin-card">
+            <div class="card-body">
+                <div class="cb-admin-section-kicker">Inventory</div>
+                <div class="cb-admin-section-title">Mevcut template'ler</div>
+                <p class="cb-admin-section-description">Olusturma tamamlandiginda ilgili template detay ekranina yonlendirilirsiniz.</p>
+
+                @if (!hasTemplates)
+                {
+                    <div class="cb-admin-info-strip @(hasCatalogLoadIssue ? "cb-admin-info-strip-danger" : "cb-admin-info-strip-info") mt-5">
+                        <div>
+                            <div class="cb-admin-info-strip-title">@(hasCatalogLoadIssue ? "Catalog load blocked" : "Template bulunamadi")</div>
+                            <div class="cb-admin-info-strip-text">@(hasCatalogLoadIssue ? "Liste fail-soft modda bos dondu." : "Katalogda gosterilecek template kaydi bulunmuyor.")</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">@(hasCatalogLoadIssue ? "Load" : "Empty")</span>
+                    </div>
+                }
+                else
+                {
+                    <div class="list-group list-group-flush mt-4">
+                        @foreach (var template in Model.Templates.OrderBy(t => t.TemplateName, StringComparer.Ordinal))
+                        {
+                            <a asp-area="Admin" asp-controller="Admin" asp-action="StrategyTemplates" asp-route-templateKey="@template.TemplateKey" class="list-group-item list-group-item-action px-0">
+                                <div class="font-weight-bolder">@template.TemplateName</div>
+                                <div class="text-muted small">@(template.IsBuiltIn ? "Built-in / Read-only" : "Custom / Editable") · @template.Category</div>
+                            </a>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@await Html.PartialAsync("_StrategyTemplateBuilderScript")
+

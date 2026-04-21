@@ -68,7 +68,7 @@ public sealed class MarketScannerHandoffService(
                 executionStatus: "Disabled",
                 blockerCode: "ScannerHandoffDisabled",
                 blockerDetail: "Scanner handoff is disabled by configuration.",
-                guardSummary: "Handoff disabled by MarketData:Scanner:HandoffEnabled.",
+                guardSummary: "HandoffEnabled=False; Source=MarketData:Scanner:HandoffEnabled.",
                 cancellationToken);
         }
 

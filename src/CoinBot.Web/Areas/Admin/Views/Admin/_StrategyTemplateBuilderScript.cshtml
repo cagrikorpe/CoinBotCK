@@ -1,0 +1,140 @@
+<script>
+(function () {
+    function closestForm(element) { return element ? element.closest('form') : null; }
+    function parseNumber(value, fallback) {
+        var n = Number(value);
+        return Number.isFinite(n) ? n : fallback;
+    }
+    function stringifyValue(value) {
+        return Number.isInteger(value) ? value : Number(value.toFixed(4));
+    }
+    function readDefinitionSource(builder) {
+        if (builder.source && builder.source.value) { return builder.source.value; }
+        if (builder.input && builder.input.value) { return builder.input.value; }
+        if (builder.preview && builder.preview.value) { return builder.preview.value; }
+        return '';
+    }
+    function buildRuleGroup(groupName, timeframe, period, threshold, comparison) {
+        var prefix = groupName === 'risk' ? 'risk' : groupName;
+        var rules = [
+            { ruleId: prefix + '-state-ready', ruleType: 'data-quality', path: 'indicator.state', comparison: 'equals', timeframe: timeframe, weight: 10, enabled: true, group: groupName, value: 'Ready' },
+            { ruleId: prefix + '-sample-count', ruleType: 'data-quality', path: 'indicator.sampleCount', comparison: 'greaterThanOrEqual', timeframe: timeframe, weight: 10, enabled: true, group: groupName, value: period }
+        ];
+        if (groupName !== 'risk') {
+            rules.push({ ruleId: prefix + '-rsi-period', ruleType: 'rsi', path: 'indicator.rsi.period', comparison: 'equals', timeframe: timeframe, weight: 10, enabled: true, group: groupName, value: period });
+            rules.push({ ruleId: prefix + '-rsi-ready', ruleType: 'rsi', path: 'indicator.rsi.isReady', comparison: 'equals', timeframe: timeframe, weight: 10, enabled: true, group: groupName, value: true });
+            rules.push({ ruleId: prefix + '-rsi-threshold', ruleType: 'rsi', path: 'indicator.rsi.value', comparison: comparison, timeframe: timeframe, weight: 10, enabled: true, group: groupName, value: stringifyValue(threshold) });
+        }
+        return { operator: 'all', ruleId: prefix + '-root', ruleType: 'group', timeframe: timeframe, weight: 1, enabled: true, group: groupName, rules: rules };
+    }
+    function buildDefinition(form, builder) {
+        var timeframe = builder.timeframe && builder.timeframe.value ? builder.timeframe.value : '1m';
+        var period = parseNumber(builder.period && builder.period.value, 14);
+        var longThreshold = parseNumber(builder.longThreshold && builder.longThreshold.value, 30);
+        var shortThreshold = parseNumber(builder.shortThreshold && builder.shortThreshold.value, 70);
+        var templateKeyInput = form.querySelector('[name="templateKey"]');
+        var templateNameInput = form.querySelector('[name="templateName"]');
+        var existing = readDefinitionSource(builder);
+        var revisionNumber = 1;
+        try {
+            var parsed = JSON.parse(existing);
+            revisionNumber = parseNumber(parsed && parsed.metadata ? parsed.metadata.templateRevisionNumber : 1, 1);
+        } catch (e) { }
+
+        return {
+            schemaVersion: 2,
+            metadata: {
+                templateKey: templateKeyInput ? (templateKeyInput.value || 'rsi-basic') : 'rsi-basic',
+                templateName: templateNameInput ? (templateNameInput.value || 'RSI Basic') : 'RSI Basic',
+                templateRevisionNumber: revisionNumber,
+                templateSource: 'Custom'
+            },
+            direction: 'neutral',
+            longEntry: buildRuleGroup('longEntry', timeframe, period, longThreshold, 'lessThanOrEqual'),
+            shortEntry: buildRuleGroup('shortEntry', timeframe, period, shortThreshold, 'greaterThanOrEqual'),
+            risk: buildRuleGroup('risk', timeframe, period, 0, 'equals')
+        };
+    }
+    function extractThreshold(node, fallback) {
+        if (!node || !Array.isArray(node.rules)) { return fallback; }
+        var match = node.rules.find(function (rule) { return rule && rule.ruleId && String(rule.ruleId).indexOf('-rsi-threshold') >= 0; });
+        return match ? parseNumber(match.value, fallback) : fallback;
+    }
+    function extractPeriod(node, fallback) {
+        if (!node || !Array.isArray(node.rules)) { return fallback; }
+        var match = node.rules.find(function (rule) { return rule && rule.path === 'indicator.rsi.period'; });
+        return match ? parseNumber(match.value, fallback) : fallback;
+    }
+    function hydrate(builder) {
+        var raw = readDefinitionSource(builder);
+        if (!raw) { return; }
+
+        try {
+            var parsed = JSON.parse(raw);
+            if (builder.timeframe) {
+                builder.timeframe.value = (parsed.longEntry && parsed.longEntry.timeframe) || (parsed.risk && parsed.risk.timeframe) || '1m';
+            }
+            if (builder.period) {
+                builder.period.value = extractPeriod(parsed.longEntry, 14);
+            }
+            if (builder.longThreshold) {
+                builder.longThreshold.value = extractThreshold(parsed.longEntry, 30);
+            }
+            if (builder.shortThreshold) {
+                builder.shortThreshold.value = extractThreshold(parsed.shortEntry, 70);
+            }
+        } catch (e) { }
+    }
+    function refresh(builder) {
+        var form = closestForm(builder.root);
+        if (!form) { return; }
+
+        var json = JSON.stringify(buildDefinition(form, builder), null, 2);
+        if (builder.input) {
+            builder.input.value = json;
+        }
+        if (builder.preview) {
+            builder.preview.value = json;
+        }
+    }
+
+    Array.prototype.forEach.call(document.querySelectorAll('[data-cb-template-builder]'), function (root) {
+        var form = closestForm(root);
+        var builder = {
+            root: root,
+            indicator: root.querySelector('[data-cb-builder-indicator]'),
+            timeframe: root.querySelector('[data-cb-builder-timeframe]'),
+            period: root.querySelector('[data-cb-builder-rsi-period]'),
+            longThreshold: root.querySelector('[data-cb-builder-long-threshold]'),
+            shortThreshold: root.querySelector('[data-cb-builder-short-threshold]'),
+            input: form ? form.querySelector('[data-cb-builder-definition-input]') : null,
+            source: form ? form.querySelector('[data-cb-builder-definition-source]') : null,
+            preview: form ? form.querySelector('[data-cb-builder-definition-preview]') : null
+        };
+
+        if (!builder.input || !builder.preview) { return; }
+
+        hydrate(builder);
+        refresh(builder);
+
+        [builder.indicator, builder.timeframe, builder.period, builder.longThreshold, builder.shortThreshold].forEach(function (element) {
+            if (!element) { return; }
+            element.addEventListener('change', function () { refresh(builder); });
+            element.addEventListener('input', function () { refresh(builder); });
+        });
+
+        if (form) {
+            ['templateKey', 'templateName'].forEach(function (name) {
+                var input = form.querySelector('[name="' + name + '"]');
+                if (!input) { return; }
+                input.addEventListener('input', function () { refresh(builder); });
+                input.addEventListener('change', function () { refresh(builder); });
+            });
+
+            form.addEventListener('submit', function () {
+                refresh(builder);
+            });
+        }
+    });
+})();
+</script>

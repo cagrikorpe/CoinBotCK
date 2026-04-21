@@ -36,6 +36,15 @@ public interface IStrategyTemplateCatalogService
         string definitionJson,
         CancellationToken cancellationToken = default);
 
+
+    Task<StrategyTemplateSnapshot> UpdateCurrentAsync(
+        string templateKey,
+        string templateName,
+        string description,
+        string category,
+        string definitionJson,
+        CancellationToken cancellationToken = default);
+
     Task<StrategyTemplateSnapshot> PublishAsync(
         string templateKey,
         int revisionNumber,
