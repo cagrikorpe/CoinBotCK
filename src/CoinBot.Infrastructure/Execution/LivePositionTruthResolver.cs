@@ -57,6 +57,36 @@ internal static class LivePositionTruthResolver
             .Sum(row => row.NetQuantity);
     }
 
+    public static async Task<int> ResolveBotScopedOpenPositionCountAsync(
+        ApplicationDbContext dbContext,
+        string ownerUserId,
+        ExchangeDataPlane plane,
+        Guid? exchangeAccountId,
+        string? symbol,
+        CancellationToken cancellationToken)
+    {
+        var normalizedOwnerUserId = ownerUserId.Trim();
+        var normalizedSymbol = NormalizeSymbol(symbol);
+        if (!exchangeAccountId.HasValue || normalizedSymbol.Length == 0)
+        {
+            return 0;
+        }
+
+        var hasActivePosition = await dbContext.ExchangePositions
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .AnyAsync(
+                entity =>
+                    entity.OwnerUserId == normalizedOwnerUserId &&
+                    entity.ExchangeAccountId == exchangeAccountId.Value &&
+                    !entity.IsDeleted &&
+                    entity.Quantity != 0m &&
+                    entity.Symbol == normalizedSymbol,
+                cancellationToken);
+
+        return hasActivePosition ? 1 : 0;
+    }
+
     public static async Task<IReadOnlyCollection<ProjectedPositionRow>> ResolveProjectedPositionsAsync(
         ApplicationDbContext dbContext,
         string ownerUserId,
@@ -135,6 +165,7 @@ internal static class LivePositionTruthResolver
                 .Where(entity =>
                     entity.OwnerUserId == normalizedOwnerUserId &&
                     entity.Plane == plane &&
+                    entity.ExecutionEnvironment == ExecutionEnvironment.Live &&
                     !entity.IsDeleted &&
                     entity.SubmittedToBroker &&
                     (!exchangeAccountId.HasValue || entity.ExchangeAccountId == exchangeAccountId.Value) &&

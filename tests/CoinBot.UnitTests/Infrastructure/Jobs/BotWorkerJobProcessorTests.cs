@@ -56,6 +56,7 @@ public sealed class BotWorkerJobProcessorTests
 
         Assert.True(result.IsSuccessful);
         Assert.Equal(StrategySignalType.Entry, persistedSignal.SignalType);
+        Assert.Equal(ExecutionEnvironment.Live, persistedSignal.ExecutionEnvironment);
         Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
         Assert.Equal(ExecutionEnvironment.Live, persistedOrder.ExecutionEnvironment);
         Assert.Equal(ExecutionOrderExecutorKind.Binance, persistedOrder.ExecutorKind);
@@ -361,6 +362,7 @@ public sealed class BotWorkerJobProcessorTests
 
         Assert.True(result.IsSuccessful);
         Assert.Equal(StrategySignalType.Exit, persistedSignal.SignalType);
+        Assert.Equal(ExecutionEnvironment.Live, persistedSignal.ExecutionEnvironment);
         Assert.Equal(ExecutionOrderSide.Sell, persistedOrder.Side);
         Assert.True(persistedOrder.ReduceOnly);
         Assert.Equal(1.250m, persistedOrder.Quantity);
@@ -479,6 +481,59 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal(0m, position.Quantity);
         Assert.Equal(0, refreshedBot.OpenPositionCount);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_SubmitsReduceOnlyBrokerBackedDemoExitOrder_WhenInternalDemoExecutionIsDisabled()
+    {
+        await using var harness = CreateHarness(
+            environmentName: Environments.Development,
+            allowInternalDemoExecution: false);
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(
+            harness.DbContext,
+            bot,
+            CreateDirectionalRootPilotDefinitionJson("longExit", "Live"));
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot,
+            quantity: 0.120m,
+            entryPrice: 83.54m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.ExecutionDispatchMode = ExecutionEnvironment.Demo;
+        harness.PilotOptions.PerBotCooldownSeconds = 0;
+        harness.PilotOptions.PerSymbolCooldownSeconds = 0;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-demo-broker-exit-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-demo-broker-exit-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-demo-broker-exit-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync(entity => entity.SignalType == StrategySignalType.Exit);
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync(entity => entity.StrategySignalId == persistedSignal.Id);
+        var persistedDecisionTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Exit, persistedSignal.SignalType);
+        Assert.Equal(ExecutionEnvironment.Demo, persistedSignal.ExecutionEnvironment);
+        Assert.Equal(ExecutionEnvironment.Demo, persistedOrder.ExecutionEnvironment);
+        Assert.Equal(ExecutionOrderExecutorKind.Binance, persistedOrder.ExecutorKind);
+        Assert.Equal(ExecutionOrderSide.Sell, persistedOrder.Side);
+        Assert.True(persistedOrder.ReduceOnly);
+        Assert.Equal(0.120m, persistedOrder.Quantity);
+        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.Contains("Demo", persistedDecisionTrace.SnapshotJson, StringComparison.Ordinal);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
     }
 
     [Fact]
@@ -1409,6 +1464,38 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_SubmitsShortEntryOrder_WhenShortRegimeFilterIsDisabled()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(harness.DbContext, bot, CreateDirectionalPilotDefinitionJson("short"));
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.ShortRegimeFilterEnabled = false;
+        harness.PilotOptions.ShortRegimeMinEntryRsi = 90m;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-short-regime-disabled-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-short-regime-disabled-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-short-regime-disabled-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(StrategySignalType.Entry, persistedSignal.SignalType);
+        Assert.Equal(ExecutionEnvironment.Live, persistedOrder.ExecutionEnvironment);
+        Assert.Equal(ExecutionOrderSide.Sell, persistedOrder.Side);
+        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+    }
+
+    [Fact]
     public async Task ProcessAsync_PersistsSkippedShortEntryDecision_WhenShortEntrySizingExceedsPilotCap()
     {
         await using var harness = CreateHarness();
@@ -1608,7 +1695,7 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
-    public async Task ProcessAsync_SkipsExitDispatch_WhenReduceOnlyExitNotionalIsBelowMinimum()
+    public async Task ProcessAsync_DispatchesExit_WhenReduceOnlyExitNotionalIsBelowMinimum()
     {
         await using var harness = CreateHarness();
         var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
@@ -1660,16 +1747,15 @@ public sealed class BotWorkerJobProcessorTests
             CancellationToken.None);
 
         var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
-        var latestDecisionTrace = await harness.DbContext.DecisionTraces
-            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
-            .OrderByDescending(entity => entity.CreatedAtUtc)
-            .FirstAsync();
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync(entity => entity.StrategySignalId == persistedSignal.Id);
 
         Assert.True(result.IsSuccessful);
         Assert.Equal(StrategySignalType.Exit, persistedSignal.SignalType);
-        Assert.Empty(harness.DbContext.ExecutionOrders);
-        Assert.Equal("Skipped", latestDecisionTrace.DecisionOutcome);
-        Assert.Equal("ExitNotionalBelowMinimum", latestDecisionTrace.DecisionReasonCode);
+        Assert.Equal(ExecutionOrderSide.Sell, persistedOrder.Side);
+        Assert.True(persistedOrder.ReduceOnly);
+        Assert.Equal(0.125m, persistedOrder.Quantity);
+        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
     }
 
     [Fact]
@@ -2114,7 +2200,8 @@ public sealed class BotWorkerJobProcessorTests
         AiSignalOptions? aiSignalOptions = null,
         ITradingFeatureSnapshotService? featureSnapshotServiceOverride = null,
         IAiSignalEvaluator? aiSignalEvaluatorOverride = null,
-        string? environmentName = null)
+        string? environmentName = null,
+        bool allowInternalDemoExecution = true)
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 1, 12, 0, 0, TimeSpan.Zero));
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -2156,6 +2243,10 @@ public sealed class BotWorkerJobProcessorTests
             dbContext,
             correlationContextAccessor,
             timeProvider);
+        var executionRuntimeOptions = Options.Create(new ExecutionRuntimeOptions
+        {
+            AllowInternalDemoExecution = allowInternalDemoExecution
+        });
         var pilotOptions = new BotExecutionPilotOptions
         {
             Enabled = true,
@@ -2207,19 +2298,22 @@ public sealed class BotWorkerJobProcessorTests
             dbContext,
             privateDataOptions,
             marketDataOptions,
-            Options.Create(pilotOptions));
+            Options.Create(pilotOptions),
+            executionRuntimeOptions);
         var userExecutionOverrideGuard = new UserExecutionOverrideGuard(
             dbContext,
             tradingModeService,
             logger: NullLogger<UserExecutionOverrideGuard>.Instance,
             hostEnvironment: hostEnvironment,
             riskPolicyEvaluator: riskPolicyEvaluator,
-            botExecutionPilotOptions: Options.Create(pilotOptions));
+            botExecutionPilotOptions: Options.Create(pilotOptions),
+            executionRuntimeOptions: executionRuntimeOptions);
         var lifecycleService = new ExecutionOrderLifecycleService(
             dbContext,
             auditLogService,
             timeProvider,
-            NullLogger<ExecutionOrderLifecycleService>.Instance);
+            NullLogger<ExecutionOrderLifecycleService>.Instance,
+            executionRuntimeOptions: executionRuntimeOptions);
         var demoPortfolioAccountingService = new DemoPortfolioAccountingService(
             dbContext,
             demoSessionService,
@@ -2243,7 +2337,8 @@ public sealed class BotWorkerJobProcessorTests
             aiSignalEvaluatorOverride ?? CreateAiSignalEvaluator(timeProvider, resolvedAiSignalOptions),
             Options.Create(resolvedAiSignalOptions),
             timeProvider,
-            NullLogger<StrategySignalService>.Instance);
+            NullLogger<StrategySignalService>.Instance,
+            executionRuntimeOptions);
         var executionEngine = new ExecutionEngine(
             dbContext,
             executionGate,
@@ -2259,7 +2354,8 @@ public sealed class BotWorkerJobProcessorTests
                 credentialService,
                 privateRestClient,
                 NullLogger<BinanceExecutor>.Instance,
-                marketDataService: marketDataService),
+                marketDataService: marketDataService,
+                privateDataOptions: privateDataOptions),
             new BinanceSpotExecutor(
                 dbContext,
                 credentialService,
@@ -2268,7 +2364,8 @@ public sealed class BotWorkerJobProcessorTests
                 marketDataService: marketDataService),
             lifecycleService,
             timeProvider,
-            NullLogger<ExecutionEngine>.Instance);
+            NullLogger<ExecutionEngine>.Instance,
+            runtimeOptions: executionRuntimeOptions);
         var featureSnapshotService = featureSnapshotServiceOverride ?? new TradingFeatureSnapshotService(
             dbContext,
             circuitBreaker,
@@ -2276,7 +2373,8 @@ public sealed class BotWorkerJobProcessorTests
             historicalKlineClient,
             Options.Create(pilotOptions),
             timeProvider,
-            NullLogger<TradingFeatureSnapshotService>.Instance);
+            NullLogger<TradingFeatureSnapshotService>.Instance,
+            executionRuntimeOptions);
         var aiShadowDecisionService = new AiShadowDecisionService(dbContext, TimeProvider.System);
         var processor = new BotWorkerJobProcessor(
             dbContext,
@@ -2301,7 +2399,8 @@ public sealed class BotWorkerJobProcessorTests
             Options.Create(resolvedAiSignalOptions),
             hostEnvironment,
             timeProvider,
-            NullLogger<BotWorkerJobProcessor>.Instance);
+            NullLogger<BotWorkerJobProcessor>.Instance,
+            executionRuntimeOptions);
 
         return new TestHarness(
             dbContext,

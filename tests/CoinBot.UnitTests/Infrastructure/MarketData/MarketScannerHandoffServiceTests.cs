@@ -9,6 +9,7 @@ using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
 using CoinBot.Infrastructure.Ai;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Observability;
@@ -74,6 +75,7 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Contains("DataAgeMs=", persistedAttempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ContinuityGapCount=0", persistedAttempt.GuardSummary, StringComparison.Ordinal);
         Assert.Equal("BTCUSDT", harness.StrategySignalService.LastRequest?.EvaluationContext.IndicatorSnapshot.Symbol);
+        Assert.Equal(ExecutionEnvironment.Live, harness.StrategySignalService.LastRequest?.EffectiveExecutionEnvironment);
         Assert.Equal("BTCUSDT", harness.ExecutionGate.LastRequest?.Symbol);
         Assert.Equal("1m", harness.ExecutionGate.LastRequest?.Timeframe);
         Assert.Equal(btcBot.ExchangeAccountId, harness.ExecutionGate.LastRequest?.ExchangeAccountId);
@@ -91,7 +93,7 @@ public sealed class MarketScannerHandoffServiceTests
     }
 
     [Fact]
-    public async Task RunOnceAsync_UsesResolvedTradingModeForExecutionGuards_WhenSignalEvaluationModeIsLive()
+    public async Task RunOnceAsync_PropagatesBotExchangeAccountId_ToDemoExecutionOrder_WhenResolvedTradingModeIsDemo()
     {
         var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
         await using var harness = CreateHarness(
@@ -117,14 +119,17 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
         Assert.Equal(ExecutionEnvironment.Demo, attempt.ExecutionEnvironment);
         Assert.Equal(ExecutionEnvironment.Live, harness.StrategySignalService.LastRequest?.EvaluationContext.Mode);
+        Assert.Equal(ExecutionEnvironment.Demo, harness.StrategySignalService.LastRequest?.EffectiveExecutionEnvironment);
         Assert.Equal(ExecutionEnvironment.Demo, harness.ExecutionGate.LastRequest?.Environment);
-        Assert.Null(harness.ExecutionGate.LastRequest?.ExchangeAccountId);
+        Assert.Equal(bot.ExchangeAccountId, harness.ExecutionGate.LastRequest?.ExchangeAccountId);
         Assert.DoesNotContain("DevelopmentFuturesTestnetPilot=True", harness.ExecutionGate.LastRequest?.Context, StringComparison.Ordinal);
         Assert.Equal(ExecutionEnvironment.Demo, harness.UserExecutionOverrideGuard.LastRequest?.Environment);
         var order = await harness.DbContext.ExecutionOrders.SingleAsync(entity => entity.StrategySignalId == attempt.StrategySignalId);
         Assert.Equal(ExecutionEnvironment.Demo, order.ExecutionEnvironment);
+        Assert.Equal(bot.ExchangeAccountId, order.ExchangeAccountId);
         Assert.Equal(ExecutionOrderExecutorKind.Virtual, order.ExecutorKind);
         Assert.True(harness.ExecutionEngine.LastCommand?.IsDemo);
+        Assert.Equal(bot.ExchangeAccountId, harness.ExecutionEngine.LastCommand?.ExchangeAccountId);
     }
 
     [Fact]
@@ -316,7 +321,13 @@ public sealed class MarketScannerHandoffServiceTests
         await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
         var scanCycleId = Guid.NewGuid();
         var bot = await SeedBotGraphAsync(harness.DbContext, "user-sol", "SOLUSDT", "pilot-sol");
-        var existingSignal = CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "SOLUSDT", "1m", harness.NowUtc);
+        var existingSignal = CreateEntrySignal(
+            bot.TradingStrategyId,
+            bot.TradingStrategyVersionId,
+            "SOLUSDT",
+            "1m",
+            harness.NowUtc,
+            ExecutionEnvironment.Live);
         SeedPersistedSignal(harness.DbContext, bot.OwnerUserId, existingSignal);
         SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
         SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 9_000m);
@@ -359,7 +370,7 @@ public sealed class MarketScannerHandoffServiceTests
             StrategySignalId = existingSignal.StrategySignalId,
             StrategyDecisionOutcome = "Persisted",
             ExecutionRequestStatus = "Prepared",
-            ExecutionEnvironment = ExecutionEnvironment.Demo,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
             CorrelationId = Guid.NewGuid().ToString("N"),
             CompletedAtUtc = harness.NowUtc.AddSeconds(-15)
         });
@@ -377,6 +388,72 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal(existingSignal.StrategySignalId, attempt.StrategySignalId);
         Assert.Null(harness.ExecutionGate.LastRequest);
         Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_DoesNotTreatLiveExecutionRequestAsDuplicate_WhenDemoHandoffUsesSameSignal()
+    {
+        await using var harness = CreateHarness(
+            new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero),
+            new BotExecutionPilotOptions
+            {
+                SignalEvaluationMode = ExecutionEnvironment.Live,
+                ExecutionDispatchMode = ExecutionEnvironment.Live,
+                PrimeHistoricalCandleCount = 34
+            },
+            ExecutionEnvironment.Demo);
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-sol", "SOLUSDT", "pilot-sol");
+        var existingSignal = CreateEntrySignal(
+            bot.TradingStrategyId,
+            bot.TradingStrategyVersionId,
+            "SOLUSDT",
+            "1m",
+            harness.NowUtc,
+            ExecutionEnvironment.Demo);
+        SeedPersistedSignal(harness.DbContext, bot.OwnerUserId, existingSignal);
+        harness.DbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = bot.OwnerUserId,
+            TradingStrategyId = bot.TradingStrategyId,
+            TradingStrategyVersionId = bot.TradingStrategyVersionId,
+            StrategySignalId = existingSignal.StrategySignalId,
+            SignalType = StrategySignalType.Entry,
+            BotId = bot.BotId,
+            ExchangeAccountId = bot.ExchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            StrategyKey = "pilot-sol",
+            Symbol = "SOLUSDT",
+            Timeframe = "1m",
+            BaseAsset = "SOL",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 1m,
+            Price = 100m,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            State = ExecutionOrderState.Submitted,
+            IdempotencyKey = Guid.NewGuid().ToString("N"),
+            RootCorrelationId = Guid.NewGuid().ToString("N"),
+            LastStateChangedAtUtc = harness.NowUtc,
+            CreatedDate = harness.NowUtc,
+            UpdatedDate = harness.NowUtc
+        });
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 9_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetDuplicateSuppressed("SOLUSDT", "1m", 1);
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
+        Assert.Null(attempt.BlockerCode);
+        Assert.Equal(existingSignal.StrategySignalId, attempt.StrategySignalId);
+        Assert.Equal(ExecutionEnvironment.Demo, attempt.ExecutionEnvironment);
     }
 
     [Fact]
@@ -414,6 +491,25 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal("NoEligibleCandidate", attempt.BlockerCode);
         Assert.Contains("user-sol", harness.DemoSessionService.CheckedOwnerUserIds);
         Assert.Null(harness.ExecutionGate.LastRequest);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_SkipsDemoConsistency_WhenInternalDemoExecutionIsDisabled_AndNoEligibleCandidate()
+    {
+        await using var harness = CreateHarness(
+            new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero),
+            allowInternalDemoExecution: false);
+        var scanCycleId = Guid.NewGuid();
+        _ = await SeedBotGraphAsync(harness.DbContext, "user-sol", "SOLUSDT", "pilot-sol");
+        SeedScanCycle(harness.DbContext, scanCycleId, eligibleCandidateCount: 0, bestCandidateSymbol: null, bestCandidateScore: null);
+        SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: null, score: 0m, isEligible: false, rejectionReason: "StrategyNoSignalLongEntryRsiThreshold");
+        await harness.DbContext.SaveChangesAsync();
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("NoEligibleCandidate", attempt.BlockerCode);
+        Assert.Empty(harness.DemoSessionService.CheckedOwnerUserIds);
     }
 
     [Fact]
@@ -543,7 +639,8 @@ public sealed class MarketScannerHandoffServiceTests
     private static TestHarness CreateHarness(
         DateTimeOffset nowUtc,
         BotExecutionPilotOptions? pilotOptions = null,
-        ExecutionEnvironment resolvedTradingMode = ExecutionEnvironment.Live)
+        ExecutionEnvironment resolvedTradingMode = ExecutionEnvironment.Live,
+        bool allowInternalDemoExecution = true)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
@@ -580,7 +677,11 @@ public sealed class MarketScannerHandoffServiceTests
             Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m" }),
             Options.Create(pilotOptions ?? new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live, PrimeHistoricalCandleCount = 34 }),
             new FixedTimeProvider(nowUtc),
-            NullLogger<MarketScannerHandoffService>.Instance);
+            NullLogger<MarketScannerHandoffService>.Instance,
+            executionRuntimeOptions: Options.Create(new ExecutionRuntimeOptions
+            {
+                AllowInternalDemoExecution = allowInternalDemoExecution
+            }));
 
         return new TestHarness(dbContext, service, serviceProvider, marketDataService, indicatorDataService, strategySignalService, executionGate, userExecutionOverrideGuard, executionEngine, demoSessionService, nowUtc.UtcDateTime);
     }
@@ -693,7 +794,7 @@ public sealed class MarketScannerHandoffServiceTests
             "unit-test");
     }
 
-    private static StrategySignalSnapshot CreateEntrySignal(Guid tradingStrategyId, Guid tradingStrategyVersionId, string symbol, string timeframe, DateTime generatedAtUtc)
+    private static StrategySignalSnapshot CreateEntrySignal(Guid tradingStrategyId, Guid tradingStrategyVersionId, string symbol, string timeframe, DateTime generatedAtUtc, ExecutionEnvironment environment = ExecutionEnvironment.Live)
     {
         var indicatorSnapshot = CreateIndicatorSnapshot(symbol, timeframe, generatedAtUtc);
         return new StrategySignalSnapshot(
@@ -703,7 +804,7 @@ public sealed class MarketScannerHandoffServiceTests
             1,
             1,
             StrategySignalType.Entry,
-            ExecutionEnvironment.Live,
+            environment,
             symbol,
             timeframe,
             indicatorSnapshot.OpenTimeUtc,
@@ -716,7 +817,7 @@ public sealed class MarketScannerHandoffServiceTests
                 tradingStrategyVersionId,
                 1,
                 1,
-                ExecutionEnvironment.Live,
+                environment,
                 indicatorSnapshot,
                 new StrategyEvaluationResult(true, true, false, false, true, true, null, null, null),
                 new StrategySignalConfidenceSnapshot(91, StrategySignalConfidenceBand.High, 3, 3, true, true, false, RiskVetoReasonCode.None, false, "Entry accepted."),

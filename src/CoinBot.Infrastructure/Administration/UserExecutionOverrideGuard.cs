@@ -20,9 +20,11 @@ public sealed class UserExecutionOverrideGuard(
     ILogger<UserExecutionOverrideGuard>? logger = null,
     IHostEnvironment? hostEnvironment = null,
     IRiskPolicyEvaluator? riskPolicyEvaluator = null,
-    IOptions<BotExecutionPilotOptions>? botExecutionPilotOptions = null) : IUserExecutionOverrideGuard
+    IOptions<BotExecutionPilotOptions>? botExecutionPilotOptions = null,
+    IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null) : IUserExecutionOverrideGuard
 {
     private readonly BotExecutionPilotOptions optionsValue = botExecutionPilotOptions?.Value ?? new BotExecutionPilotOptions();
+    private readonly ExecutionRuntimeOptions executionRuntimeOptionsValue = executionRuntimeOptions?.Value ?? new ExecutionRuntimeOptions();
 
     public async Task<UserExecutionOverrideEvaluationResult> EvaluateAsync(
         UserExecutionOverrideEvaluationRequest request,
@@ -529,7 +531,7 @@ public sealed class UserExecutionOverrideGuard(
         ExecutionEnvironment environment,
         CancellationToken cancellationToken)
     {
-        if (environment == ExecutionEnvironment.Demo)
+        if (UsesInternalDemoExecution(environment))
         {
             return await dbContext.DemoPositions
                 .AsNoTracking()
@@ -582,7 +584,7 @@ public sealed class UserExecutionOverrideGuard(
 
         var normalizedSymbol = NormalizePositionSymbol(symbol);
 
-        var netQuantity = environment == ExecutionEnvironment.Demo
+        var netQuantity = UsesInternalDemoExecution(environment)
             ? await dbContext.DemoPositions
                 .AsNoTracking()
                 .IgnoreQueryFilters()
@@ -617,6 +619,12 @@ public sealed class UserExecutionOverrideGuard(
             exchangeAccountId,
             normalizedSymbol,
             cancellationToken);
+    }
+
+    private bool UsesInternalDemoExecution(ExecutionEnvironment environment)
+    {
+        return environment == ExecutionEnvironment.Demo &&
+            executionRuntimeOptionsValue.AllowInternalDemoExecution;
     }
 
     private static decimal ResolveSignedOrderQuantity(ExecutionOrder entity)

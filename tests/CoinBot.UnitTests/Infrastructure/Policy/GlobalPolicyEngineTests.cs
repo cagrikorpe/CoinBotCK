@@ -1,13 +1,16 @@
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Policy;
+using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.Infrastructure.Policy;
 using CoinBot.UnitTests.Infrastructure.Mfa;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace CoinBot.UnitTests.Infrastructure.Policy;
 
@@ -120,6 +123,69 @@ public sealed class GlobalPolicyEngineTests
 
         Assert.Equal("GlobalRiskPolicy", snapshot.Policy.PolicyKey);
         Assert.Equal(snapshot.CurrentVersion, cachedSnapshot.CurrentVersion);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_AllowsBrokerBackedDemoReduceOnlyClose_WhenInternalDemoExecutionIsDisabled()
+    {
+        await using var dbContext = CreateDbContext();
+        using var memoryCache = new MemoryCache(new MemoryCacheOptions());
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 1, 20, 0, 0, TimeSpan.Zero));
+        var engine = new GlobalPolicyEngine(
+            dbContext,
+            memoryCache,
+            new FakeAdminAuditLogService(),
+            timeProvider,
+            NullLogger<GlobalPolicyEngine>.Instance,
+            Options.Create(new ExecutionRuntimeOptions
+            {
+                AllowInternalDemoExecution = false
+            }));
+
+        dbContext.ExchangePositions.Add(new ExchangePosition
+        {
+            OwnerUserId = "user-broker-demo-policy",
+            ExchangeAccountId = Guid.NewGuid(),
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "BTCUSDT",
+            PositionSide = "BOTH",
+            Quantity = 0.25m,
+            EntryPrice = 100m,
+            BreakEvenPrice = 100m,
+            UnrealizedProfit = 0m,
+            MarginType = "cross",
+            ExchangeUpdatedAtUtc = timeProvider.GetUtcNow().UtcDateTime,
+            SyncedAtUtc = timeProvider.GetUtcNow().UtcDateTime
+        });
+        await dbContext.SaveChangesAsync();
+
+        await engine.UpdateAsync(
+            new GlobalPolicyUpdateRequest(
+                new RiskPolicySnapshot(
+                    "GlobalRiskPolicy",
+                    new ExecutionGuardPolicy(250_000m, 500_000m, 20, CloseOnlyBlocksNewPositions: true),
+                    new AutonomyPolicy(AutonomyPolicyMode.LowRiskAutoAct, RequireManualApprovalForLive: true),
+                    [
+                        new SymbolRestriction("BTCUSDT", SymbolRestrictionState.CloseOnly, "demo-close-only", timeProvider.GetUtcNow().UtcDateTime, "super-admin")
+                    ]),
+                "super-admin",
+                "Set close-only",
+                "corr-policy-broker-demo",
+                "UnitTest"),
+            CancellationToken.None);
+
+        var result = await engine.EvaluateAsync(
+            new GlobalPolicyEvaluationRequest(
+                "user-broker-demo-policy",
+                "BTCUSDT",
+                ExecutionEnvironment.Demo,
+                ExecutionOrderSide.Sell,
+                0.25m,
+                100m),
+            CancellationToken.None);
+
+        Assert.False(result.IsBlocked);
+        Assert.False(result.IsAdvisory);
     }
 
     private static ApplicationDbContext CreateDbContext()

@@ -30,7 +30,8 @@ public sealed class StrategySignalService(
     IAiSignalEvaluator aiSignalEvaluator,
     IOptions<AiSignalOptions> aiSignalOptions,
     TimeProvider timeProvider,
-    ILogger<StrategySignalService> logger) : IStrategySignalService
+    ILogger<StrategySignalService> logger,
+    IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null) : IStrategySignalService
 {
     private const int ExplainabilitySchemaVersion = 1;
     private const int RepeatedNoOpenPositionExitTraceSuppressionWindowSeconds = 120;
@@ -39,6 +40,7 @@ public sealed class StrategySignalService(
     private static readonly JsonSerializerOptions SerializerOptions = CreateSerializerOptions();
 
     private readonly AiSignalOptions aiSignalOptionsValue = aiSignalOptions.Value;
+    private readonly ExecutionRuntimeOptions executionRuntimeOptionsValue = executionRuntimeOptions?.Value ?? new ExecutionRuntimeOptions();
 
     public async Task<StrategySignalGenerationResult> GenerateAsync(
         GenerateStrategySignalsRequest request,
@@ -76,6 +78,7 @@ public sealed class StrategySignalService(
         }
 
         var normalizedContext = NormalizeContext(request.EvaluationContext);
+        var persistedExecutionEnvironment = request.EffectiveExecutionEnvironment ?? normalizedContext.Mode;
         var now = timeProvider.GetUtcNow().UtcDateTime;
         signalActivity.SetTag("coinbot.signal.strategy_id", strategy.Id.ToString());
         signalActivity.SetTag("coinbot.signal.environment", normalizedContext.Mode.ToString());
@@ -149,14 +152,15 @@ public sealed class StrategySignalService(
                 BuildStrategyVersionLabel(version),
                 "None",
                 "NoSignalCandidate",
-                BuildDecisionSnapshotJson(
-                    strategy,
-                    version,
-                    evaluationReport,
-                    normalizedContext,
-                    evaluationResult,
-                    signalType: null,
-                    decisionOutcome: "NoSignalCandidate",
+                        BuildDecisionSnapshotJson(
+                            strategy,
+                            version,
+                            evaluationReport,
+                            normalizedContext,
+                            persistedExecutionEnvironment,
+                            evaluationResult,
+                            signalType: null,
+                            decisionOutcome: "NoSignalCandidate",
                     vetoReasonCode: null,
                     riskScore: null,
                     relatedEntityId: null),
@@ -203,10 +207,11 @@ public sealed class StrategySignalService(
         {
             var signalScopedEvaluationResult = CreateSignalScopedEvaluationResult(signalType, evaluationResult);
             var duplicateExists = await dbContext.TradingStrategySignals.AnyAsync(
-                entity =>
-                    entity.TradingStrategyVersionId == version.Id &&
-                    entity.SignalType == signalType &&
-                    entity.Symbol == normalizedContext.IndicatorSnapshot.Symbol &&
+                    entity =>
+                        entity.TradingStrategyVersionId == version.Id &&
+                        entity.SignalType == signalType &&
+                        entity.ExecutionEnvironment == persistedExecutionEnvironment &&
+                        entity.Symbol == normalizedContext.IndicatorSnapshot.Symbol &&
                     entity.Timeframe == normalizedContext.IndicatorSnapshot.Timeframe &&
                     entity.IndicatorCloseTimeUtc == normalizedContext.IndicatorSnapshot.CloseTimeUtc &&
                     !entity.IsDeleted,
@@ -237,6 +242,7 @@ public sealed class StrategySignalService(
                             version,
                             evaluationReport,
                             normalizedContext,
+                            persistedExecutionEnvironment,
                             signalScopedEvaluationResult,
                             signalType,
                             "SuppressedDuplicate",
@@ -289,6 +295,7 @@ public sealed class StrategySignalService(
                                 version,
                                 evaluationReport,
                                 normalizedContext,
+                                persistedExecutionEnvironment,
                                 signalScopedEvaluationResult,
                                 signalType,
                                 "SuppressedByAi",
@@ -330,6 +337,7 @@ public sealed class StrategySignalService(
                         entity =>
                             entity.TradingStrategyVersionId == version.Id &&
                             entity.SignalType == signalType &&
+                            entity.ExecutionEnvironment == persistedExecutionEnvironment &&
                             entity.Symbol == normalizedContext.IndicatorSnapshot.Symbol &&
                             entity.Timeframe == normalizedContext.IndicatorSnapshot.Timeframe &&
                             entity.IndicatorCloseTimeUtc == normalizedContext.IndicatorSnapshot.CloseTimeUtc &&
@@ -339,7 +347,7 @@ public sealed class StrategySignalService(
 
                 if (veto is null)
                 {
-                    veto = CreateVetoEntity(strategy, version, signalType, normalizedContext, riskEvaluation, confidenceSnapshot);
+                    veto = CreateVetoEntity(strategy, version, signalType, normalizedContext, persistedExecutionEnvironment, riskEvaluation, confidenceSnapshot);
                     dbContext.TradingStrategySignalVetoes.Add(veto);
                     hasPendingChanges = true;
                 }
@@ -367,6 +375,7 @@ public sealed class StrategySignalService(
                             version,
                             evaluationReport,
                             normalizedContext,
+                            persistedExecutionEnvironment,
                             signalScopedEvaluationResult,
                             signalType,
                             "Vetoed",
@@ -393,6 +402,7 @@ public sealed class StrategySignalService(
                 version,
                 signalType,
                 normalizedContext,
+                persistedExecutionEnvironment,
                 signalScopedEvaluationResult,
                 confidenceSnapshot,
                 riskEvaluation.Snapshot.EvaluatedAtUtc);
@@ -413,6 +423,7 @@ public sealed class StrategySignalService(
                         version,
                         evaluationReport,
                         normalizedContext,
+                        persistedExecutionEnvironment,
                         evaluationResult,
                         signalType,
                         "Persisted",
@@ -824,7 +835,7 @@ public sealed class StrategySignalService(
         ExecutionEnvironment evaluationMode,
         CancellationToken cancellationToken)
     {
-        if (evaluationMode == ExecutionEnvironment.Demo)
+        if (UsesInternalDemoExecution(evaluationMode))
         {
             var quantity = await dbContext.DemoPositions
                 .IgnoreQueryFilters()
@@ -866,6 +877,12 @@ public sealed class StrategySignalService(
             cancellationToken);
     }
 
+    private bool UsesInternalDemoExecution(ExecutionEnvironment evaluationMode)
+    {
+        return evaluationMode == ExecutionEnvironment.Demo &&
+            executionRuntimeOptionsValue.AllowInternalDemoExecution;
+    }
+
     private static IReadOnlyCollection<StrategySignalType> FilterCandidateSignalTypesForPositionAwareness(
         IReadOnlyCollection<StrategySignalType> candidateSignalTypes,
         StrategySignalType suppressedSignalType)
@@ -898,6 +915,7 @@ public sealed class StrategySignalService(
         TradingStrategyVersion version,
         StrategySignalType signalType,
         StrategyEvaluationContext context,
+        ExecutionEnvironment persistedExecutionEnvironment,
         StrategyEvaluationResult evaluationResult,
         StrategySignalConfidenceSnapshot confidenceSnapshot,
         DateTime generatedAtUtc)
@@ -911,7 +929,7 @@ public sealed class StrategySignalService(
             StrategyVersionNumber = version.VersionNumber,
             StrategySchemaVersion = version.SchemaVersion,
             SignalType = signalType,
-            ExecutionEnvironment = context.Mode,
+            ExecutionEnvironment = persistedExecutionEnvironment,
             Symbol = context.IndicatorSnapshot.Symbol,
             Timeframe = context.IndicatorSnapshot.Timeframe,
             IndicatorOpenTimeUtc = context.IndicatorSnapshot.OpenTimeUtc,
@@ -930,6 +948,7 @@ public sealed class StrategySignalService(
         TradingStrategyVersion version,
         StrategySignalType signalType,
         StrategyEvaluationContext context,
+        ExecutionEnvironment persistedExecutionEnvironment,
         RiskVetoResult riskEvaluation,
         StrategySignalConfidenceSnapshot confidenceSnapshot)
     {
@@ -942,7 +961,7 @@ public sealed class StrategySignalService(
             StrategyVersionNumber = version.VersionNumber,
             StrategySchemaVersion = version.SchemaVersion,
             SignalType = signalType,
-            ExecutionEnvironment = context.Mode,
+            ExecutionEnvironment = persistedExecutionEnvironment,
             Symbol = context.IndicatorSnapshot.Symbol,
             Timeframe = context.IndicatorSnapshot.Timeframe,
             IndicatorOpenTimeUtc = context.IndicatorSnapshot.OpenTimeUtc,
@@ -1612,6 +1631,7 @@ public sealed class StrategySignalService(
         TradingStrategyVersion version,
         StrategyEvaluationReportSnapshot report,
         StrategyEvaluationContext context,
+        ExecutionEnvironment persistedExecutionEnvironment,
         StrategyEvaluationResult evaluationResult,
         StrategySignalType? signalType,
         string decisionOutcome,
@@ -1645,7 +1665,7 @@ public sealed class StrategySignalService(
                 report.ExplainabilitySummary,
                 PassedRules = report.PassedRules.Take(3).ToArray(),
                 FailedRules = report.FailedRules.Take(3).ToArray(),
-                ExecutionEnvironment = context.Mode.ToString(),
+                ExecutionEnvironment = persistedExecutionEnvironment.ToString(),
                 context.IndicatorSnapshot.Symbol,
                 context.IndicatorSnapshot.Timeframe,
                 context.IndicatorSnapshot.CloseTimeUtc,
@@ -1690,11 +1710,6 @@ public sealed class StrategySignalService(
             SerializerOptions);
     }
 }
-
-
-
-
-
 
 
 

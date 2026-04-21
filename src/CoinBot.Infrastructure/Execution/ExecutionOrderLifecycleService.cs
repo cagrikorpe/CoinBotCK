@@ -9,6 +9,7 @@ using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace CoinBot.Infrastructure.Execution;
 
@@ -20,7 +21,8 @@ public sealed class ExecutionOrderLifecycleService(
     IAlertDispatchCoordinator? alertDispatchCoordinator = null,
     IHostEnvironment? hostEnvironment = null,
     UserOperationsStreamHub? userOperationsStreamHub = null,
-    ISpotPortfolioAccountingService? spotPortfolioAccountingService = null)
+    ISpotPortfolioAccountingService? spotPortfolioAccountingService = null,
+    IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null)
 {
     private const string SystemActor = "system:execution-order-lifecycle";
     private static readonly ExecutionOrderState[] OpenStates =
@@ -32,6 +34,7 @@ public sealed class ExecutionOrderLifecycleService(
         ExecutionOrderState.PartiallyFilled,
         ExecutionOrderState.CancelRequested
     ];
+    private readonly ExecutionRuntimeOptions executionRuntimeOptionsValue = executionRuntimeOptions?.Value ?? new ExecutionRuntimeOptions();
 
     public async Task<bool> ApplyExchangeUpdateAsync(
         BinanceOrderStatusSnapshot snapshot,
@@ -380,24 +383,18 @@ public sealed class ExecutionOrderLifecycleService(
                           OpenStates.Contains(entity.State),
                 cancellationToken);
 
-        if (order.ExecutionEnvironment == ExecutionEnvironment.Live)
+        if (order.ExecutionEnvironment == ExecutionEnvironment.Live ||
+            (order.ExecutionEnvironment == ExecutionEnvironment.Demo &&
+             !executionRuntimeOptionsValue.AllowInternalDemoExecution))
         {
             var botSymbol = string.IsNullOrWhiteSpace(bot.Symbol) ? order.Symbol : bot.Symbol;
-            if (string.IsNullOrWhiteSpace(botSymbol))
-            {
-                bot.OpenPositionCount = 0;
-            }
-            else
-            {
-                var botNetQuantity = await LivePositionTruthResolver.ResolveNetQuantityAsync(
-                    dbContext,
-                    order.OwnerUserId,
-                    order.Plane,
-                    order.ExchangeAccountId,
-                    botSymbol,
-                    cancellationToken);
-                bot.OpenPositionCount = botNetQuantity == 0m ? 0 : 1;
-            }
+            bot.OpenPositionCount = await LivePositionTruthResolver.ResolveBotScopedOpenPositionCountAsync(
+                dbContext,
+                order.OwnerUserId,
+                order.Plane,
+                order.ExchangeAccountId,
+                botSymbol,
+                cancellationToken);
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);

@@ -1,6 +1,7 @@
 using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -136,100 +137,13 @@ public sealed class ExchangePositionSyncService(
         string? botSymbol,
         CancellationToken cancellationToken)
     {
-        var ownerUserId = snapshot.OwnerUserId.Trim();
-        var normalizedSymbol = string.IsNullOrWhiteSpace(botSymbol) ? null : NormalizeCode(botSymbol);
-        var syncCutoffUtc = NormalizeTimestamp(snapshot.ReceivedAtUtc);
-        var projectedPositions = new Dictionary<string, decimal>(StringComparer.Ordinal);
-
-        var activePositions = (await dbContext.ExchangePositions
-                .AsNoTracking()
-                .IgnoreQueryFilters()
-                .Where(entity =>
-                    entity.OwnerUserId == ownerUserId &&
-                    entity.ExchangeAccountId == snapshot.ExchangeAccountId &&
-                    entity.Plane == snapshot.Plane &&
-                    !entity.IsDeleted &&
-                    entity.Quantity != 0m)
-                .ToListAsync(cancellationToken))
-            .Where(entity => normalizedSymbol is null || NormalizeCode(entity.Symbol) == normalizedSymbol)
-            .ToList();
-
-        foreach (var position in activePositions)
-        {
-            var symbol = NormalizeCode(position.Symbol);
-            projectedPositions[symbol] = projectedPositions.GetValueOrDefault(symbol) +
-                ResolveSignedPositionQuantity(position.Quantity, position.PositionSide);
-        }
-
-        var liveOrdersAfterSnapshot = (await dbContext.ExecutionOrders
-                .AsNoTracking()
-                .IgnoreQueryFilters()
-                .Where(entity =>
-                    entity.OwnerUserId == ownerUserId &&
-                    entity.ExchangeAccountId == snapshot.ExchangeAccountId &&
-                    entity.Plane == snapshot.Plane &&
-                    !entity.IsDeleted &&
-                    entity.SubmittedToBroker &&
-                    (entity.State == ExecutionOrderState.Submitted ||
-                     entity.State == ExecutionOrderState.Dispatching ||
-                     entity.State == ExecutionOrderState.CancelRequested ||
-                     entity.State == ExecutionOrderState.PartiallyFilled ||
-                     entity.State == ExecutionOrderState.Filled))
-                .ToListAsync(cancellationToken))
-            .Where(entity => normalizedSymbol is null || NormalizeCode(entity.Symbol) == normalizedSymbol)
-            .ToList();
-
-        foreach (var order in liveOrdersAfterSnapshot)
-        {
-            if (ResolveOrderEffectiveAtUtc(order) <= syncCutoffUtc)
-            {
-                continue;
-            }
-
-            var quantity = ResolveSignedOrderQuantity(order);
-            if (quantity == 0m)
-            {
-                continue;
-            }
-
-            var symbol = NormalizeCode(order.Symbol);
-            projectedPositions[symbol] = projectedPositions.GetValueOrDefault(symbol) + quantity;
-        }
-
-        return projectedPositions.Values.Count(quantity => quantity != 0m);
-    }
-
-    private static decimal ResolveSignedPositionQuantity(decimal quantity, string? positionSide)
-    {
-        if (quantity == 0m)
-        {
-            return 0m;
-        }
-
-        return NormalizeCode(positionSide ?? "BOTH") == "SHORT"
-            ? -Math.Abs(quantity)
-            : quantity;
-    }
-
-    private static decimal ResolveSignedOrderQuantity(ExecutionOrder order)
-    {
-        var quantity = order.FilledQuantity;
-        if (quantity == 0m)
-        {
-            return 0m;
-        }
-
-        return order.Side == ExecutionOrderSide.Buy ? quantity : -quantity;
-    }
-
-    private static DateTime ResolveOrderEffectiveAtUtc(ExecutionOrder order)
-    {
-        return NormalizeTimestamp(
-            order.LastFilledAtUtc ??
-            order.SubmittedAtUtc ??
-            (order.LastStateChangedAtUtc != default ? order.LastStateChangedAtUtc : (DateTime?)null) ??
-            (order.UpdatedDate != default ? order.UpdatedDate : (DateTime?)null) ??
-            order.CreatedDate);
+        return await LivePositionTruthResolver.ResolveBotScopedOpenPositionCountAsync(
+            dbContext,
+            snapshot.OwnerUserId,
+            snapshot.Plane,
+            snapshot.ExchangeAccountId,
+            botSymbol,
+            cancellationToken);
     }
 
     private static string CreateKey(string symbol, string positionSide)

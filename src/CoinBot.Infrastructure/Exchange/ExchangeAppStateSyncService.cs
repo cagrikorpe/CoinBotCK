@@ -49,10 +49,8 @@ public sealed class ExchangeAppStateSyncService(
                     credentialAccess.ApiKey,
                     credentialAccess.ApiSecret,
                     cancellationToken);
-                var enrichedSnapshot = await EnrichSnapshotWithLocalPositionProjectionAsync(snapshot, cancellationToken);
-
                 var drift = await DetectDriftAsync(snapshot, cancellationToken);
-                snapshotHub.Publish(enrichedSnapshot);
+                snapshotHub.Publish(snapshot);
 
                 await syncStateService.RecordReconciliationAsync(
                     account,

@@ -2,12 +2,14 @@ using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Risk;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.Infrastructure.Risk;
 using CoinBot.UnitTests.Infrastructure.Mfa;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace CoinBot.UnitTests.Infrastructure.Risk;
 
@@ -272,6 +274,83 @@ public sealed class RiskPolicyEvaluatorTests
     }
 
     [Fact]
+    public async Task EvaluateAsync_IgnoresDemoExecutionOrders_WhenProjectingLivePositions()
+    {
+        await using var dbContext = CreateDbContext();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 20, 8, 0, 0, TimeSpan.Zero));
+        var exchangeAccountId = Guid.NewGuid();
+        dbContext.RiskProfiles.Add(CreateRiskProfile(
+            "user-live-isolation",
+            10m,
+            200m,
+            5m,
+            maxConcurrentPositions: 1));
+        dbContext.ExchangeBalances.Add(new ExchangeBalance
+        {
+            OwnerUserId = "user-live-isolation",
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            Asset = "USDT",
+            WalletBalance = 1000m,
+            CrossWalletBalance = 1000m,
+            ExchangeUpdatedAtUtc = timeProvider.GetUtcNow().UtcDateTime.AddMinutes(-1),
+            SyncedAtUtc = timeProvider.GetUtcNow().UtcDateTime.AddMinutes(-1)
+        });
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "user-live-isolation",
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            StrategyKey = "risk-demo-leak",
+            Symbol = "SOLUSDT",
+            Timeframe = "1m",
+            BaseAsset = "SOL",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.06m,
+            FilledQuantity = 0.06m,
+            AverageFillPrice = 85m,
+            Price = 85m,
+            ExecutionEnvironment = ExecutionEnvironment.Demo,
+            ExecutorKind = ExecutionOrderExecutorKind.Virtual,
+            State = ExecutionOrderState.Filled,
+            SubmittedToBroker = true,
+            SubmittedAtUtc = timeProvider.GetUtcNow().UtcDateTime.AddSeconds(-10),
+            LastFilledAtUtc = timeProvider.GetUtcNow().UtcDateTime.AddSeconds(-9),
+            LastStateChangedAtUtc = timeProvider.GetUtcNow().UtcDateTime.AddSeconds(-9),
+            IdempotencyKey = "risk-demo-leak-order",
+            RootCorrelationId = "risk-demo-leak-root"
+        });
+        await dbContext.SaveChangesAsync();
+
+        var evaluator = CreateEvaluator(dbContext, timeProvider);
+
+        var result = await evaluator.EvaluateAsync(
+            new RiskPolicyEvaluationRequest(
+                "user-live-isolation",
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                StrategySignalType.Entry,
+                ExecutionEnvironment.Live,
+                "SOLUSDT",
+                "1m",
+                Side: ExecutionOrderSide.Buy,
+                Quantity: 0.06m,
+                Price: 85m));
+
+        Assert.False(result.IsVetoed);
+        Assert.Equal(0, result.Snapshot.OpenPositionCount);
+        Assert.Equal(1, result.Snapshot.ProjectedOpenPositionCount);
+        Assert.Equal(0m, result.Snapshot.CurrentSymbolExposureAmount);
+    }
+
+    [Fact]
     public async Task EvaluateAsync_VetoesProjectedLeverage_UsingRequestNotional()
     {
         await using var dbContext = CreateDbContext();
@@ -394,6 +473,42 @@ public sealed class RiskPolicyEvaluatorTests
         Assert.Equal(2, result.Snapshot.ProjectedOpenPositionCount);
         Assert.Equal(1, result.Snapshot.MaxConcurrentPositions);
         Assert.Contains("OpenPositions=1->2/1", result.ReasonSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_UsesBrokerBackedDemoPositions_WhenInternalDemoExecutionIsDisabled()
+    {
+        await using var dbContext = CreateDbContext();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        dbContext.RiskProfiles.Add(CreateRiskProfile(
+            "user-broker-demo-risk",
+            10m,
+            200m,
+            10m,
+            maxConcurrentPositions: 1));
+        dbContext.ExchangeBalances.Add(CreateExchangeBalance("user-broker-demo-risk", "USDT", 1000m));
+        dbContext.ExchangePositions.Add(CreateExchangePosition("user-broker-demo-risk", "BTCUSDT", 1m, 100m, 0m));
+        await dbContext.SaveChangesAsync();
+
+        var evaluator = CreateEvaluator(dbContext, timeProvider, allowInternalDemoExecution: false);
+
+        var result = await evaluator.EvaluateAsync(
+            new RiskPolicyEvaluationRequest(
+                "user-broker-demo-risk",
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                StrategySignalType.Entry,
+                ExecutionEnvironment.Demo,
+                "ETHUSDT",
+                "1m",
+                Quantity: 1m,
+                Price: 100m));
+
+        Assert.True(result.IsVetoed);
+        Assert.Equal(RiskVetoReasonCode.MaxConcurrentPositionsBreached, result.ReasonCode);
+        Assert.False(result.Snapshot.IsVirtualCheck);
+        Assert.Equal(1, result.Snapshot.OpenPositionCount);
+        Assert.Equal(2, result.Snapshot.ProjectedOpenPositionCount);
     }
 
     [Fact]
@@ -593,12 +708,16 @@ public sealed class RiskPolicyEvaluatorTests
         Assert.Equal(1m, result.Snapshot.CurrentLeverage);
     }
 
-    private static RiskPolicyEvaluator CreateEvaluator(ApplicationDbContext dbContext, TimeProvider timeProvider)
+    private static RiskPolicyEvaluator CreateEvaluator(ApplicationDbContext dbContext, TimeProvider timeProvider, bool allowInternalDemoExecution = true)
     {
         return new RiskPolicyEvaluator(
             dbContext,
             timeProvider,
-            NullLogger<RiskPolicyEvaluator>.Instance);
+            NullLogger<RiskPolicyEvaluator>.Instance,
+            Options.Create(new ExecutionRuntimeOptions
+            {
+                AllowInternalDemoExecution = allowInternalDemoExecution
+            }));
     }
 
     private static ApplicationDbContext CreateDbContext(

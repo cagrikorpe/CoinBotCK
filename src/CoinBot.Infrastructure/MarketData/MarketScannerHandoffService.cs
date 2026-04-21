@@ -34,7 +34,8 @@ public sealed class MarketScannerHandoffService(
     IOptions<BotExecutionPilotOptions> botExecutionPilotOptions,
     TimeProvider timeProvider,
     ILogger<MarketScannerHandoffService> logger,
-    ITradingModeResolver? tradingModeResolver = null)
+    ITradingModeResolver? tradingModeResolver = null,
+    IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null)
 {
     private static readonly JsonSerializerOptions StrategySignalSerializerOptions = CreateStrategySignalSerializerOptions();
 
@@ -50,6 +51,7 @@ public sealed class MarketScannerHandoffService(
         .OrderByDescending(item => item.Length)
         .ThenBy(item => item, StringComparer.Ordinal)
         .ToArray();
+    private readonly ExecutionRuntimeOptions executionRuntimeOptionsValue = executionRuntimeOptions?.Value ?? new ExecutionRuntimeOptions();
 
     public async Task<MarketScannerHandoffAttempt> RunOnceAsync(Guid scanCycleId, CancellationToken cancellationToken = default)
     {
@@ -200,7 +202,8 @@ public sealed class MarketScannerHandoffService(
             var strategyResult = await strategySignalService.GenerateAsync(
                 new GenerateStrategySignalsRequest(
                     ownerBotMatch.TradingStrategyVersionId,
-                    new StrategyEvaluationContext(botExecutionOptionsValue.SignalEvaluationMode, marketState.IndicatorSnapshot)),
+                    new StrategyEvaluationContext(botExecutionOptionsValue.SignalEvaluationMode, marketState.IndicatorSnapshot),
+                    EffectiveExecutionEnvironment: executionContext.Environment),
                 cancellationToken);
 
             var strategySignal = SelectActionableEntrySignal(strategyResult, symbol, klineInterval);
@@ -212,6 +215,7 @@ public sealed class MarketScannerHandoffService(
                 duplicateSignalResolution = await ResolveDuplicateEntrySignalAsync(
                     ownerBotMatch,
                     marketState.IndicatorSnapshot,
+                    executionContext.Environment,
                     cancellationToken);
                 strategySignal = duplicateSignalResolution.Signal;
             }
@@ -269,9 +273,7 @@ public sealed class MarketScannerHandoffService(
                     executionContext.Environment,
                     botExecutionOptionsValue);
                 var correlationId = CreateCorrelationId();
-                var executionExchangeAccountId = executionContext.Environment == ExecutionEnvironment.Demo
-                    ? null
-                    : ownerBotMatch.ExchangeAccountId;
+                var executionExchangeAccountId = ownerBotMatch.ExchangeAccountId;
 
                 await executionGate.EnsureExecutionAllowedAsync(
                     new ExecutionGateRequest(
@@ -435,6 +437,11 @@ public sealed class MarketScannerHandoffService(
 
     private async Task RunDemoConsistencyForScanSymbolsAsync(Guid scanCycleId, CancellationToken cancellationToken)
     {
+        if (!executionRuntimeOptionsValue.AllowInternalDemoExecution)
+        {
+            return;
+        }
+
         var candidateSymbols = (await dbContext.MarketScannerCandidates
                 .AsNoTracking()
                 .Where(entity => entity.ScanCycleId == scanCycleId && !entity.IsDeleted && entity.Symbol != null)
@@ -662,6 +669,7 @@ public sealed class MarketScannerHandoffService(
     private async Task<DuplicateSignalResolution> ResolveDuplicateEntrySignalAsync(
         BotStrategyMatch botMatch,
         StrategyIndicatorSnapshot indicatorSnapshot,
+        ExecutionEnvironment executionEnvironment,
         CancellationToken cancellationToken)
     {
         var signal = await dbContext.TradingStrategySignals
@@ -671,6 +679,7 @@ public sealed class MarketScannerHandoffService(
                 entity.OwnerUserId == botMatch.OwnerUserId &&
                 entity.TradingStrategyVersionId == botMatch.TradingStrategyVersionId &&
                 entity.SignalType == StrategySignalType.Entry &&
+                entity.ExecutionEnvironment == executionEnvironment &&
                 entity.Symbol == indicatorSnapshot.Symbol &&
                 entity.Timeframe == indicatorSnapshot.Timeframe &&
                 entity.IndicatorCloseTimeUtc == indicatorSnapshot.CloseTimeUtc &&
@@ -691,6 +700,7 @@ public sealed class MarketScannerHandoffService(
                 entity =>
                     entity.OwnerUserId == botMatch.OwnerUserId &&
                     entity.StrategySignalId == signal.Id &&
+                    entity.ExecutionEnvironment == executionEnvironment &&
                     !entity.IsDeleted,
                 cancellationToken)
             || await dbContext.MarketScannerHandoffAttempts
@@ -700,6 +710,7 @@ public sealed class MarketScannerHandoffService(
                     entity =>
                         entity.OwnerUserId == botMatch.OwnerUserId &&
                         entity.StrategySignalId == signal.Id &&
+                        entity.ExecutionEnvironment == executionEnvironment &&
                         entity.ExecutionRequestStatus == "Prepared" &&
                         !entity.IsDeleted,
                     cancellationToken);

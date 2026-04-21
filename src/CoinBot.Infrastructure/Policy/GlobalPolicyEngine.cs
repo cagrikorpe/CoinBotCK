@@ -10,6 +10,7 @@ using CoinBot.Infrastructure.Execution;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace CoinBot.Infrastructure.Policy;
 
@@ -18,7 +19,8 @@ public sealed class GlobalPolicyEngine(
     IMemoryCache memoryCache,
     IAdminAuditLogService adminAuditLogService,
     TimeProvider timeProvider,
-    ILogger<GlobalPolicyEngine> logger) : IGlobalPolicyEngine
+    ILogger<GlobalPolicyEngine> logger,
+    IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null) : IGlobalPolicyEngine
 {
     private static readonly object CacheKey = new();
     private static readonly MemoryCacheEntryOptions SnapshotCacheOptions = new MemoryCacheEntryOptions()
@@ -28,6 +30,7 @@ public sealed class GlobalPolicyEngine(
     {
         PropertyNameCaseInsensitive = true
     };
+    private readonly ExecutionRuntimeOptions executionRuntimeOptionsValue = executionRuntimeOptions?.Value ?? new ExecutionRuntimeOptions();
 
     public async Task<GlobalPolicySnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
     {
@@ -391,7 +394,7 @@ public sealed class GlobalPolicyEngine(
     {
         var normalizedSymbol = NormalizeSymbol(request.Symbol);
 
-        if (request.Environment == ExecutionEnvironment.Demo)
+        if (UsesInternalDemoExecution(request.Environment))
         {
             return await dbContext.DemoPositions
                 .AsNoTracking()
@@ -410,6 +413,12 @@ public sealed class GlobalPolicyEngine(
             exchangeAccountId: null,
             normalizedSymbol,
             cancellationToken);
+    }
+
+    private bool UsesInternalDemoExecution(ExecutionEnvironment environment)
+    {
+        return environment == ExecutionEnvironment.Demo &&
+            executionRuntimeOptionsValue.AllowInternalDemoExecution;
     }
 
     private static decimal ResolveSignedOrderQuantity(ExecutionOrder entity)

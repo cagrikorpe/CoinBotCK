@@ -93,6 +93,65 @@ public sealed class ExecutionEngineTests
                 ExecutionOrderState.Filled
             ],
             result.Order.Transitions.Select(transition => transition.State).ToArray());
+        var traces = await harness.DbContext.ExecutionTraces
+            .Where(entity => entity.ExecutionOrderId == result.Order.ExecutionOrderId)
+            .OrderBy(entity => entity.CreatedAtUtc)
+            .ToListAsync();
+        Assert.Collection(
+            traces,
+            dispatchTrace =>
+            {
+                Assert.Equal("VirtualExecutor", dispatchTrace.Provider);
+                Assert.Equal("internal://virtual-executor/dispatch", dispatchTrace.Endpoint);
+                Assert.Contains("OutboundBrokerRequested=False", dispatchTrace.RequestMasked, StringComparison.Ordinal);
+                Assert.Contains("SimulatedFillPathUsed=True", dispatchTrace.ResponseMasked, StringComparison.Ordinal);
+            },
+            fillTrace =>
+            {
+                Assert.Equal("DemoFillSimulator", fillTrace.Provider);
+                Assert.Equal("internal://demo-fill-simulator/submission", fillTrace.Endpoint);
+                Assert.Contains("Phase=SubmissionFill", fillTrace.RequestMasked, StringComparison.Ordinal);
+                Assert.Contains("State=Filled", fillTrace.ResponseMasked, StringComparison.Ordinal);
+            });
+    }
+
+    [Fact]
+    public async Task DispatchAsync_RoutesDemoRuntimeToBinanceExecutor_WhenInternalDemoExecutionIsDisabled()
+    {
+        await using var harness = CreateHarness(
+            environmentName: Environments.Development,
+            allowInternalDemoExecution: false);
+        var exchangeAccountId = Guid.NewGuid();
+        await SeedExchangeAccountAsync(harness.DbContext, "user-demo-runtime", exchangeAccountId);
+        await PrimeFreshMarketDataAsync(harness, "corr-demo-runtime-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-demo-runtime",
+            context: "Open runtime demo execution",
+            correlationId: "corr-demo-runtime-2");
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-demo-runtime",
+                strategyKey: "demo-runtime",
+                exchangeAccountId: exchangeAccountId,
+                isDemo: true),
+            CancellationToken.None);
+
+        var traces = await harness.DbContext.ExecutionTraces
+            .Where(entity => entity.ExecutionOrderId == result.Order.ExecutionOrderId)
+            .OrderBy(entity => entity.CreatedAtUtc)
+            .ToListAsync();
+
+        Assert.False(result.IsDuplicate);
+        Assert.Equal(ExecutionEnvironment.Demo, result.Order.ExecutionEnvironment);
+        Assert.Equal(ExecutionOrderExecutorKind.Binance, result.Order.ExecutorKind);
+        Assert.Equal(exchangeAccountId, result.Order.ExchangeAccountId);
+        Assert.Equal(ExecutionOrderState.Submitted, result.Order.State);
+        Assert.Null(result.Order.FailureCode);
+        Assert.Null(result.Order.FailureDetail);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Empty(traces);
     }
 
     [Fact]
@@ -1236,7 +1295,8 @@ public sealed class ExecutionEngineTests
     private static TestHarness CreateHarness(
         string environmentName = "Production",
         RecordingAlertDispatchCoordinator? alertDispatchCoordinator = null,
-        bool enableRiskPolicyEvaluator = false)
+        bool enableRiskPolicyEvaluator = false,
+        bool allowInternalDemoExecution = true)
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -1292,11 +1352,16 @@ public sealed class ExecutionEngineTests
             dbContext,
             correlationContextAccessor,
             timeProvider);
+        var executionRuntimeOptions = Options.Create(new ExecutionRuntimeOptions
+        {
+            AllowInternalDemoExecution = allowInternalDemoExecution
+        });
         var lifecycleService = new ExecutionOrderLifecycleService(
             dbContext,
             auditLogService,
             timeProvider,
-            NullLogger<ExecutionOrderLifecycleService>.Instance);
+            NullLogger<ExecutionOrderLifecycleService>.Instance,
+            executionRuntimeOptions: executionRuntimeOptions);
         var pilotOptions = new BotExecutionPilotOptions
         {
             Enabled = true,
@@ -1348,7 +1413,8 @@ public sealed class ExecutionEngineTests
             dbContext,
             privateDataOptions,
             marketDataOptions,
-            Options.Create(pilotOptions));
+            Options.Create(pilotOptions),
+            executionRuntimeOptions);
         var demoPortfolioAccountingService = new DemoPortfolioAccountingService(
             dbContext,
             demoSessionService,
@@ -1366,7 +1432,8 @@ public sealed class ExecutionEngineTests
             logger: NullLogger<UserExecutionOverrideGuard>.Instance,
             hostEnvironment: runtimeEnvironment,
             riskPolicyEvaluator: riskPolicyEvaluator,
-            botExecutionPilotOptions: Options.Create(pilotOptions));
+            botExecutionPilotOptions: Options.Create(pilotOptions),
+            executionRuntimeOptions: executionRuntimeOptions);
         var credentialService = new FakeExchangeCredentialService();
         var privateRestClient = new FakePrivateRestClient(timeProvider);
         var spotPrivateRestClient = new FakeSpotPrivateRestClient(timeProvider);
@@ -1385,7 +1452,8 @@ public sealed class ExecutionEngineTests
                 credentialService,
                 privateRestClient,
                 NullLogger<BinanceExecutor>.Instance,
-                marketDataService: marketDataService),
+                marketDataService: marketDataService,
+                privateDataOptions: privateDataOptions),
             new BinanceSpotExecutor(
                 dbContext,
                 credentialService,
@@ -1396,7 +1464,8 @@ public sealed class ExecutionEngineTests
             timeProvider,
             NullLogger<ExecutionEngine>.Instance,
             alertDispatchCoordinator,
-            runtimeEnvironment);
+            runtimeEnvironment,
+            runtimeOptions: executionRuntimeOptions);
 
         return new TestHarness(
             dbContext,

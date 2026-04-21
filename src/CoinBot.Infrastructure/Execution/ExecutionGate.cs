@@ -33,7 +33,8 @@ public sealed class ExecutionGate(
     ApplicationDbContext? applicationDbContext = null,
     IOptions<BinancePrivateDataOptions>? privateDataOptions = null,
     IOptions<BinanceMarketDataOptions>? marketDataOptions = null,
-    IOptions<BotExecutionPilotOptions>? botExecutionPilotOptions = null) : IExecutionGate
+    IOptions<BotExecutionPilotOptions>? botExecutionPilotOptions = null,
+    IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null) : IExecutionGate
 {
     private readonly ITraceService? traceWriter = traceService;
     private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
@@ -42,6 +43,7 @@ public sealed class ExecutionGate(
     private readonly BinancePrivateDataOptions privateDataOptionsValue = privateDataOptions?.Value ?? new BinancePrivateDataOptions();
     private readonly BinanceMarketDataOptions marketDataOptionsValue = marketDataOptions?.Value ?? new BinanceMarketDataOptions();
     private readonly BotExecutionPilotOptions pilotOptionsValue = botExecutionPilotOptions?.Value ?? new BotExecutionPilotOptions();
+    private readonly ExecutionRuntimeOptions executionRuntimeOptionsValue = executionRuntimeOptions?.Value ?? new ExecutionRuntimeOptions();
     private readonly int privatePlaneFreshnessThresholdMilliseconds = checked((botExecutionPilotOptions?.Value ?? new BotExecutionPilotOptions()).PrivatePlaneFreshnessThresholdSeconds * 1000);
 
     public async Task<GlobalExecutionSwitchSnapshot> EnsureExecutionAllowedAsync(
@@ -231,6 +233,7 @@ public sealed class ExecutionGate(
         DemoSessionSnapshot? demoSessionSnapshot = null;
 
         if (request.Environment == ExecutionEnvironment.Demo &&
+            executionRuntimeOptionsValue.AllowInternalDemoExecution &&
             !string.IsNullOrWhiteSpace(request.UserId))
         {
             demoSessionSnapshot = await demoSessionService.RunConsistencyCheckAsync(request.UserId, cancellationToken);
@@ -1453,7 +1456,6 @@ public sealed class ExecutionGate(
         return false;
     }
 }
-
 
 
 

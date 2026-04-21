@@ -14,6 +14,7 @@ using CoinBot.Infrastructure.Exchange;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace CoinBot.Infrastructure.Execution;
 
@@ -34,7 +35,8 @@ public sealed class ExecutionEngine(
     ILogger<ExecutionEngine> logger,
     IAlertDispatchCoordinator? alertDispatchCoordinator = null,
     IHostEnvironment? hostEnvironment = null,
-    UserOperationsStreamHub? userOperationsStreamHub = null) : IExecutionEngine
+    UserOperationsStreamHub? userOperationsStreamHub = null,
+    IOptions<ExecutionRuntimeOptions>? runtimeOptions = null) : IExecutionEngine
 {
     private static readonly ExecutionOrderState[] OpenStates =
     [
@@ -45,6 +47,7 @@ public sealed class ExecutionEngine(
         ExecutionOrderState.PartiallyFilled,
         ExecutionOrderState.CancelRequested
     ];
+    private readonly ExecutionRuntimeOptions runtimeOptionsValue = runtimeOptions?.Value ?? new ExecutionRuntimeOptions();
 
     public async Task<ExecutionDispatchResult> DispatchAsync(
         ExecutionCommand command,
@@ -258,10 +261,35 @@ public sealed class ExecutionEngine(
                 lastTransition.CorrelationId,
                 cancellationToken);
 
+            if (UsesInternalDemoExecution(requestedEnvironment))
+            {
+                await WriteInternalExecutionTraceAsync(
+                    order,
+                    provider: nameof(VirtualExecutor),
+                    endpoint: "internal://virtual-executor/dispatch",
+                    requestMasked: BuildInternalExecutionTraceRequest(
+                        order,
+                        executorName: nameof(VirtualExecutor),
+                        outboundBrokerRequested: false,
+                        simulatedFillPathUsed: true,
+                        phase: "DispatchAccepted"),
+                    responseMasked: BuildInternalExecutionTraceResponse(
+                        order,
+                        requestedEnvironment,
+                        executorName: nameof(VirtualExecutor),
+                        outboundBrokerRequested: false,
+                        simulatedFillPathUsed: true,
+                        phase: "DispatchAccepted",
+                        eventCode: "Submitted",
+                        detail: dispatchResult.Detail),
+                    executionAttemptId: $"demo-dispatch:{order.Id:N}",
+                    cancellationToken);
+            }
+
             await TrySendExecutionAlertAsync(order, lastTransition, cancellationToken);
             userOperationsStreamHub?.Publish(BuildOperationsUpdate(order, lastTransition));
 
-            if (requestedEnvironment == ExecutionEnvironment.Demo)
+            if (UsesInternalDemoExecution(requestedEnvironment))
             {
                 lastTransition = await HandleDemoSubmissionAsync(
                     order,
@@ -438,6 +466,28 @@ public sealed class ExecutionEngine(
                 fill.EventCode,
                 fillDetail,
                 lastTransition.CorrelationId,
+                cancellationToken);
+
+            await WriteInternalExecutionTraceAsync(
+                order,
+                provider: nameof(DemoFillSimulator),
+                endpoint: "internal://demo-fill-simulator/submission",
+                requestMasked: BuildInternalExecutionTraceRequest(
+                    order,
+                    executorName: nameof(VirtualExecutor),
+                    outboundBrokerRequested: false,
+                    simulatedFillPathUsed: true,
+                    phase: "SubmissionFill"),
+                responseMasked: BuildInternalExecutionTraceResponse(
+                    order,
+                    ExecutionEnvironment.Demo,
+                    executorName: nameof(VirtualExecutor),
+                    outboundBrokerRequested: false,
+                    simulatedFillPathUsed: true,
+                    phase: "SubmissionFill",
+                    eventCode: fill.EventCode,
+                    detail: fillDetail),
+                executionAttemptId: $"demo-fill:{order.Id:N}:{transition.SequenceNumber}",
                 cancellationToken);
 
             await TrySendExecutionAlertAsync(order, transition, cancellationToken);
@@ -782,8 +832,25 @@ public sealed class ExecutionEngine(
         ExecutionEnvironment requestedEnvironment,
         CancellationToken cancellationToken)
     {
+        ValidateRuntimeDemoExecution(command, requestedEnvironment);
         ValidateProtectiveTargets(command);
         await ValidateReduceOnlyOrderAsync(command, requestedEnvironment, command.Plane, cancellationToken);
+    }
+
+    private void ValidateRuntimeDemoExecution(ExecutionCommand command, ExecutionEnvironment requestedEnvironment)
+    {
+        if (requestedEnvironment != ExecutionEnvironment.Demo ||
+            runtimeOptionsValue.AllowInternalDemoExecution)
+        {
+            return;
+        }
+
+        if (command.Plane != ExchangeDataPlane.Futures)
+        {
+            throw new ExecutionValidationException(
+                "RuntimeDemoFuturesOnly",
+                "Execution blocked because runtime demo execution requires Binance USD-M futures.");
+        }
     }
 
     private async Task ValidateReduceOnlyOrderAsync(
@@ -850,7 +917,7 @@ public sealed class ExecutionEngine(
     {
         var normalizedSymbol = NormalizePositionSymbol(symbol);
 
-        if (requestedEnvironment == ExecutionEnvironment.Demo)
+        if (UsesInternalDemoExecution(requestedEnvironment))
         {
             return await dbContext.DemoPositions
                 .AsNoTracking()
@@ -976,11 +1043,17 @@ public sealed class ExecutionEngine(
         ExecutionEnvironment requestedEnvironment,
         ExchangeDataPlane plane)
     {
-        return requestedEnvironment == ExecutionEnvironment.Demo
+        return UsesInternalDemoExecution(requestedEnvironment)
             ? virtualExecutor
             : plane == ExchangeDataPlane.Spot
                 ? binanceSpotExecutor
                 : binanceExecutor;
+    }
+
+    private bool UsesInternalDemoExecution(ExecutionEnvironment requestedEnvironment)
+    {
+        return requestedEnvironment == ExecutionEnvironment.Demo &&
+            runtimeOptionsValue.AllowInternalDemoExecution;
     }
 
     private static DemoTradeSide MapTradeSide(ExecutionOrderSide side)
@@ -1032,6 +1105,54 @@ public sealed class ExecutionEngine(
         return sequenceNumber.HasValue
             ? $"execution-{phase}:{orderId:N}:{sequenceNumber.Value}"
             : $"execution-{phase}:{orderId:N}";
+    }
+
+    private Task WriteInternalExecutionTraceAsync(
+        ExecutionOrder order,
+        string provider,
+        string endpoint,
+        string requestMasked,
+        string responseMasked,
+        string executionAttemptId,
+        CancellationToken cancellationToken)
+    {
+        return traceService.WriteExecutionTraceAsync(
+            new ExecutionTraceWriteRequest(
+                order.IdempotencyKey,
+                order.OwnerUserId,
+                provider,
+                endpoint,
+                Truncate(requestMasked, 4096),
+                Truncate(responseMasked, 4096),
+                order.RootCorrelationId,
+                executionAttemptId,
+                order.Id),
+            cancellationToken);
+    }
+
+    private static string BuildInternalExecutionTraceRequest(
+        ExecutionOrder order,
+        string executorName,
+        bool outboundBrokerRequested,
+        bool simulatedFillPathUsed,
+        string phase)
+    {
+        return FormattableString.Invariant(
+            $"Environment={order.ExecutionEnvironment}; Executor={executorName}; OutboundBrokerRequested={outboundBrokerRequested}; SimulatedFillPathUsed={simulatedFillPathUsed}; TracePersisted=True; Phase={phase}; Symbol={order.Symbol}; Side={order.Side}; OrderType={order.OrderType}; ReduceOnly={order.ReduceOnly}");
+    }
+
+    private static string BuildInternalExecutionTraceResponse(
+        ExecutionOrder order,
+        ExecutionEnvironment environment,
+        string executorName,
+        bool outboundBrokerRequested,
+        bool simulatedFillPathUsed,
+        string phase,
+        string eventCode,
+        string? detail)
+    {
+        return FormattableString.Invariant(
+            $"Environment={environment}; Executor={executorName}; OutboundBrokerRequested={outboundBrokerRequested}; SimulatedFillPathUsed={simulatedFillPathUsed}; TracePersisted=True; Phase={phase}; State={order.State}; EventCode={eventCode}; Detail={Truncate(detail, 512) ?? "none"}");
     }
 
     private static string AppendProtectiveRule(string detail, ExecutionOrder order)

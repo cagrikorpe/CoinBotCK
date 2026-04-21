@@ -44,7 +44,8 @@ public sealed class BotWorkerJobProcessor(
     IOptions<AiSignalOptions> aiSignalOptions,
     IHostEnvironment hostEnvironment,
     TimeProvider timeProvider,
-    ILogger<BotWorkerJobProcessor> logger) : IBotWorkerJobProcessor
+    ILogger<BotWorkerJobProcessor> logger,
+    IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null) : IBotWorkerJobProcessor
 {
     private const string ExitSkippedDecisionOutcome = "Skipped";
     private const string ExitSkippedDecisionReasonType = "ExecutionSkip";
@@ -54,7 +55,6 @@ public sealed class BotWorkerJobProcessor(
     private const string BotCooldownActiveDecisionCode = "BotCooldownActive";
     private const string SymbolCooldownActiveDecisionCode = "SymbolCooldownActive";
     private const string EntryNotionalSafetyBlockedDecisionCode = "EntryNotionalSafetyBlocked";
-    private const string ExitNotionalBelowMinimumDecisionCode = "ExitNotionalBelowMinimum";
     private const string EntryQuantitySizingFailedDecisionCode = "EntryQuantitySizingFailedClosed";
     private const string TakeProfitTriggeredDecisionCode = "TakeProfitTriggered";
     private const string StopLossTriggeredDecisionCode = "StopLossTriggered";
@@ -78,6 +78,7 @@ public sealed class BotWorkerJobProcessor(
 
     private readonly BotExecutionPilotOptions optionsValue = options.Value;
     private readonly AiSignalOptions aiSignalOptionsValue = aiSignalOptions.Value;
+    private readonly ExecutionRuntimeOptions executionRuntimeOptionsValue = executionRuntimeOptions?.Value ?? new ExecutionRuntimeOptions();
 
     public async Task<BackgroundJobProcessResult> ProcessAsync(
         TradingBot bot,
@@ -227,6 +228,8 @@ public sealed class BotWorkerJobProcessor(
                 correlationId,
                 null));
 
+        var executionDispatchMode = optionsValue.ExecutionDispatchMode;
+        var signalPersistenceEnvironment = executionDispatchMode;
         StrategySignalGenerationResult signalGenerationResult;
 
         try
@@ -237,7 +240,8 @@ public sealed class BotWorkerJobProcessor(
                     new StrategyEvaluationContext(
                         optionsValue.SignalEvaluationMode,
                         marketState.IndicatorSnapshot),
-                    featureSnapshot),
+                    featureSnapshot,
+                    signalPersistenceEnvironment),
                 cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -249,7 +253,6 @@ public sealed class BotWorkerJobProcessor(
             return BackgroundJobProcessResult.RetryableFailure("SignalGenerationFailed");
         }
 
-        var executionDispatchMode = optionsValue.ExecutionDispatchMode;
         var currentNetQuantity = await ResolveCurrentNetQuantityAsync(
             bot.OwnerUserId,
             exchangeAccount.Id,
@@ -263,6 +266,7 @@ public sealed class BotWorkerJobProcessor(
             normalizedSymbol,
             timeframe,
             marketState.IndicatorSnapshot.CloseTimeUtc,
+            signalPersistenceEnvironment,
             preferExitSignal: currentNetQuantity != 0m,
             cancellationToken);
         var strategyDecisionTrace = await ResolveLatestDecisionTraceAsync(
@@ -380,6 +384,7 @@ public sealed class BotWorkerJobProcessor(
                         signal,
                         marketState,
                         runtimeExitQualityTrigger,
+                        signalPersistenceEnvironment,
                         correlationId,
                         cancellationToken);
                     strategyDecisionTrace = await ResolveLatestDecisionTraceAsync(
@@ -1309,6 +1314,7 @@ public sealed class BotWorkerJobProcessor(
         string symbol,
         string timeframe,
         DateTime indicatorCloseTimeUtc,
+        ExecutionEnvironment executionEnvironment,
         bool preferExitSignal,
         CancellationToken cancellationToken)
     {
@@ -1335,6 +1341,7 @@ public sealed class BotWorkerJobProcessor(
                 .Where(entity =>
                     entity.TradingStrategyVersionId == tradingStrategyVersionId &&
                     entity.SignalType == signalType &&
+                    entity.ExecutionEnvironment == executionEnvironment &&
                     entity.Symbol == symbol &&
                     entity.Timeframe == timeframe &&
                     entity.IndicatorCloseTimeUtc == indicatorCloseTimeUtc &&
@@ -1365,7 +1372,7 @@ public sealed class BotWorkerJobProcessor(
             return null;
         }
 
-        if (executionDispatchMode == ExecutionEnvironment.Demo)
+        if (UsesInternalDemoExecution(executionDispatchMode))
         {
             return await ResolveCurrentDemoPositionSnapshotAsync(
                 bot,
@@ -1764,6 +1771,7 @@ public sealed class BotWorkerJobProcessor(
         StrategySignalSnapshot? sourceSignal,
         MarketStateResolution marketState,
         RuntimeExitQualityTrigger trigger,
+        ExecutionEnvironment executionEnvironment,
         string correlationId,
         CancellationToken cancellationToken)
     {
@@ -1777,6 +1785,7 @@ public sealed class BotWorkerJobProcessor(
             .Where(entity =>
                 entity.TradingStrategyVersionId == publishedVersion.Id &&
                 entity.SignalType == StrategySignalType.Exit &&
+                entity.ExecutionEnvironment == executionEnvironment &&
                 entity.Symbol == indicatorSnapshot.Symbol &&
                 entity.Timeframe == indicatorSnapshot.Timeframe &&
                 entity.IndicatorCloseTimeUtc == indicatorSnapshot.CloseTimeUtc &&
@@ -1838,7 +1847,7 @@ public sealed class BotWorkerJobProcessor(
             StrategyVersionNumber = publishedVersion.VersionNumber,
             StrategySchemaVersion = publishedVersion.SchemaVersion,
             SignalType = StrategySignalType.Exit,
-            ExecutionEnvironment = sourceSignal?.Mode ?? optionsValue.SignalEvaluationMode,
+            ExecutionEnvironment = sourceSignal?.Mode ?? executionEnvironment,
             Symbol = indicatorSnapshot.Symbol,
             Timeframe = indicatorSnapshot.Timeframe,
             IndicatorOpenTimeUtc = indicatorSnapshot.OpenTimeUtc,
@@ -1865,6 +1874,7 @@ public sealed class BotWorkerJobProcessor(
                 JsonSerializer.Serialize(new
                 {
                     RuntimeSignal = true,
+                    ExecutionEnvironment = (sourceSignal?.Mode ?? executionEnvironment).ToString(),
                     TriggerDirection = trigger.Direction.ToString(),
                     TriggerReasonCode = trigger.DecisionReasonCode,
                     TriggerSummary = trigger.DecisionSummary,
@@ -2315,7 +2325,7 @@ public sealed class BotWorkerJobProcessor(
     {
         var normalizedSymbol = NormalizePositionSymbol(symbol);
 
-        if (executionDispatchMode == ExecutionEnvironment.Demo)
+        if (UsesInternalDemoExecution(executionDispatchMode))
         {
             return await dbContext.DemoPositions
                 .AsNoTracking()
@@ -2335,6 +2345,12 @@ public sealed class BotWorkerJobProcessor(
             exchangeAccountId,
             normalizedSymbol,
             cancellationToken);
+    }
+
+    private bool UsesInternalDemoExecution(ExecutionEnvironment executionDispatchMode)
+    {
+        return executionDispatchMode == ExecutionEnvironment.Demo &&
+            executionRuntimeOptionsValue.AllowInternalDemoExecution;
     }
 
     private static decimal ResolveSignedOrderQuantity(ExecutionOrder entity)
@@ -2566,13 +2582,6 @@ public sealed class BotWorkerJobProcessor(
             }
 
             return false;
-        }
-
-        if (symbolMetadata.MinNotional is decimal minNotional && orderNotional < minNotional)
-        {
-            decisionReasonCode = ExitNotionalBelowMinimumDecisionCode;
-            decisionSummary = $"Exit signal was skipped because reduce-only exit notional {orderNotional:0.########} is below the minimum notional {minNotional:0.########} for {signal.Symbol}.";
-            return true;
         }
 
         return false;

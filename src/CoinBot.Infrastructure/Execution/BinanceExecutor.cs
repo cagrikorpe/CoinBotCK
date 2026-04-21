@@ -10,6 +10,7 @@ using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace CoinBot.Infrastructure.Execution;
 
@@ -20,9 +21,11 @@ public sealed class BinanceExecutor(
     ILogger<BinanceExecutor> logger,
     IDependencyCircuitBreakerStateManager? dependencyCircuitBreakerStateManager = null,
     IMarketDataService? marketDataService = null,
-    IBinanceExchangeInfoClient? exchangeInfoClient = null) : IExecutionTargetExecutor
+    IBinanceExchangeInfoClient? exchangeInfoClient = null,
+    IOptions<BinancePrivateDataOptions>? privateDataOptions = null) : IExecutionTargetExecutor
 {
     private const string BreakerActor = "system:order-execution";
+    private readonly BinancePrivateDataOptions? privateDataOptionsValue = privateDataOptions?.Value;
 
     public ExecutionOrderExecutorKind Kind => ExecutionOrderExecutorKind.Binance;
 
@@ -34,8 +37,10 @@ public sealed class BinanceExecutor(
         ArgumentNullException.ThrowIfNull(order);
         ArgumentNullException.ThrowIfNull(command);
 
+        ValidateRuntimeEnvironmentScope(order.ExecutionEnvironment);
+
         var exchangeAccountId = command.ExchangeAccountId
-            ?? throw new InvalidOperationException("Live execution requires an exchange account.");
+            ?? throw new InvalidOperationException("Broker execution requires an exchange account.");
         var exchangeAccount = await dbContext.ExchangeAccounts
             .IgnoreQueryFilters()
             .SingleOrDefaultAsync(
@@ -147,6 +152,49 @@ public sealed class BinanceExecutor(
 
             throw;
         }
+    }
+
+    private void ValidateRuntimeEnvironmentScope(ExecutionEnvironment requestedEnvironment)
+    {
+        if (requestedEnvironment != ExecutionEnvironment.Demo || privateDataOptionsValue is null)
+        {
+            return;
+        }
+
+        if (!string.Equals(ResolveEnvironmentScope(privateDataOptionsValue.RestBaseUrl), "Testnet", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ExecutionValidationException(
+                "DemoExecutionEndpointMisconfigured",
+                "Execution blocked because runtime demo futures execution requires Binance demo/testnet private REST configuration.");
+        }
+    }
+
+    private static string ResolveEnvironmentScope(string? baseUrl)
+    {
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            return "Unknown";
+        }
+
+        var normalizedValue = baseUrl.Trim();
+
+        if (Uri.TryCreate(normalizedValue, UriKind.Absolute, out var uri))
+        {
+            var host = uri.Host.Trim();
+            if (host.Contains("testnet", StringComparison.OrdinalIgnoreCase) ||
+                host.Contains("demo", StringComparison.OrdinalIgnoreCase) ||
+                host.EndsWith(".binancefuture.com", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(host, "binancefuture.com", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Testnet";
+            }
+        }
+
+        return normalizedValue.Contains("testnet", StringComparison.OrdinalIgnoreCase) ||
+               normalizedValue.Contains("demo", StringComparison.OrdinalIgnoreCase) ||
+               normalizedValue.Contains("binancefuture.com", StringComparison.OrdinalIgnoreCase)
+            ? "Testnet"
+            : "Live";
     }
 
     private async Task<SymbolMetadataSnapshot> ResolveSymbolMetadataAsync(

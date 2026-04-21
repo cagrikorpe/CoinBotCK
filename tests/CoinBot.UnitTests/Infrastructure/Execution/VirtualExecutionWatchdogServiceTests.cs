@@ -77,6 +77,19 @@ public sealed class VirtualExecutionWatchdogServiceTests
         Assert.Equal(1m, aaveWallet.AvailableBalance);
         Assert.Equal(1m, position.Quantity);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+        var traces = await harness.DbContext.ExecutionTraces
+            .Where(entity => entity.ExecutionOrderId == order.Id)
+            .OrderBy(entity => entity.CreatedAtUtc)
+            .ToListAsync();
+        Assert.Collection(
+            traces,
+            dispatchTrace => Assert.Equal("internal://virtual-executor/dispatch", dispatchTrace.Endpoint),
+            fillTrace =>
+            {
+                Assert.Equal("DemoFillSimulator", fillTrace.Provider);
+                Assert.Equal("internal://demo-fill-simulator/watchdog", fillTrace.Endpoint);
+                Assert.Contains("State=Filled", fillTrace.ResponseMasked, StringComparison.Ordinal);
+            });
     }
 
     [Fact]
@@ -314,7 +327,8 @@ public sealed class VirtualExecutionWatchdogServiceTests
             Options.Create(new DemoFillSimulatorOptions()),
             demoFillSimulator,
             timeProvider,
-            NullLogger<VirtualExecutionWatchdogService>.Instance);
+            NullLogger<VirtualExecutionWatchdogService>.Instance,
+            traceService);
 
         return new TestHarness(
             dbContext,

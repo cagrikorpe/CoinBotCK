@@ -4,6 +4,7 @@ using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.Features;
 using CoinBot.Application.Abstractions.MarketData;
+using CoinBot.Application.Abstractions.Risk;
 using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Infrastructure.Administration;
 using CoinBot.Infrastructure.Ai;
@@ -220,6 +221,101 @@ public sealed class StrategySignalServiceTests
         Assert.Equal(0, firstResult.SuppressedDuplicateCount);
         Assert.Equal(0, secondResult.SuppressedDuplicateCount);
         Assert.Equal(2, await dbContext.TradingStrategySignals.CountAsync());
+    }
+
+    [Fact]
+    public async Task GenerateAsync_DoesNotSuppressDuplicateAcrossExecutionEnvironments_ForSameIndicatorCloseTime()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-signal-env-split", "breakout-core");
+        var version = CreateVersion(strategy, 1, CreateEnvironmentAgnosticDefinitionJson(minimumSampleCount: 100));
+
+        dbContext.TradingStrategies.Add(strategy);
+        dbContext.TradingStrategyVersions.Add(version);
+        dbContext.RiskProfiles.Add(CreateRiskProfile(strategy.OwnerUserId, "Balanced", 5m, 80m, 2m));
+        dbContext.DemoWallets.Add(CreateDemoWallet(strategy.OwnerUserId, "USDT", 10000m));
+        dbContext.ExchangeBalances.Add(new ExchangeBalance
+        {
+            OwnerUserId = strategy.OwnerUserId,
+            ExchangeAccountId = Guid.NewGuid(),
+            Plane = ExchangeDataPlane.Futures,
+            Asset = "USDT",
+            WalletBalance = 10000m,
+            CrossWalletBalance = 10000m,
+            AvailableBalance = 10000m,
+            MaxWithdrawAmount = 10000m,
+            ExchangeUpdatedAtUtc = timeProvider.GetUtcNow().UtcDateTime,
+            SyncedAtUtc = timeProvider.GetUtcNow().UtcDateTime
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext, timeProvider, new AlwaysAllowRiskPolicyEvaluator(timeProvider));
+        var closeTimeUtc = new DateTime(2026, 3, 22, 12, 1, 0, DateTimeKind.Utc);
+
+        var demoResult = await service.GenerateAsync(
+            new GenerateStrategySignalsRequest(
+                version.Id,
+                CreateContext(ExecutionEnvironment.Demo, sampleCount: 120, rsiValue: 28m, closeTimeUtc: closeTimeUtc)));
+        var liveResult = await service.GenerateAsync(
+            new GenerateStrategySignalsRequest(
+                version.Id,
+                CreateContext(ExecutionEnvironment.Live, sampleCount: 120, rsiValue: 28m, closeTimeUtc: closeTimeUtc)));
+
+        Assert.Single(demoResult.Signals);
+        Assert.Single(liveResult.Signals);
+        Assert.Equal(0, demoResult.SuppressedDuplicateCount);
+        Assert.Equal(0, liveResult.SuppressedDuplicateCount);
+        Assert.Equal(
+            [ExecutionEnvironment.Demo, ExecutionEnvironment.Live],
+            await dbContext.TradingStrategySignals
+                .OrderBy(entity => entity.ExecutionEnvironment)
+                .Select(entity => entity.ExecutionEnvironment)
+                .ToListAsync());
+    }
+
+    [Fact]
+    public async Task GenerateAsync_PersistsSignalUsingEffectiveExecutionEnvironmentOverride_WhenEvaluationContextModeDiffers()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("user-signal-effective-env", "breakout-core");
+        var version = CreateVersion(strategy, 1, CreateEnvironmentAgnosticDefinitionJson(minimumSampleCount: 100));
+
+        dbContext.TradingStrategies.Add(strategy);
+        dbContext.TradingStrategyVersions.Add(version);
+        dbContext.RiskProfiles.Add(CreateRiskProfile(strategy.OwnerUserId, "Balanced", 5m, 80m, 2m));
+        dbContext.DemoWallets.Add(CreateDemoWallet(strategy.OwnerUserId, "USDT", 10000m));
+        dbContext.ExchangeBalances.Add(new ExchangeBalance
+        {
+            OwnerUserId = strategy.OwnerUserId,
+            ExchangeAccountId = Guid.NewGuid(),
+            Plane = ExchangeDataPlane.Futures,
+            Asset = "USDT",
+            WalletBalance = 10000m,
+            CrossWalletBalance = 10000m,
+            AvailableBalance = 10000m,
+            MaxWithdrawAmount = 10000m,
+            ExchangeUpdatedAtUtc = timeProvider.GetUtcNow().UtcDateTime,
+            SyncedAtUtc = timeProvider.GetUtcNow().UtcDateTime
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext, timeProvider, new AlwaysAllowRiskPolicyEvaluator(timeProvider));
+        var result = await service.GenerateAsync(
+            new GenerateStrategySignalsRequest(
+                version.Id,
+                CreateContext(ExecutionEnvironment.Live, sampleCount: 120, rsiValue: 28m),
+                EffectiveExecutionEnvironment: ExecutionEnvironment.Demo));
+
+        var signal = Assert.Single(result.Signals);
+        var persistedSignal = await dbContext.TradingStrategySignals.SingleAsync();
+        var decisionTrace = await dbContext.DecisionTraces.SingleAsync();
+
+        Assert.Equal(ExecutionEnvironment.Demo, signal.Mode);
+        Assert.Equal(ExecutionEnvironment.Demo, signal.ExplainabilityPayload.Mode);
+        Assert.Equal(ExecutionEnvironment.Demo, persistedSignal.ExecutionEnvironment);
+        Assert.Contains("Demo", decisionTrace.SnapshotJson, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -537,14 +633,17 @@ public sealed class StrategySignalServiceTests
             decisionTrace.DecisionSummary);
     }
 
-    private static StrategySignalService CreateService(ApplicationDbContext dbContext, TimeProvider timeProvider)
+    private static StrategySignalService CreateService(
+        ApplicationDbContext dbContext,
+        TimeProvider timeProvider,
+        IRiskPolicyEvaluator? riskPolicyEvaluator = null)
     {
         var correlationContextAccessor = new CorrelationContextAccessor();
 
         return new StrategySignalService(
             dbContext,
             new StrategyEvaluatorService(new StrategyRuleParser()),
-            new RiskPolicyEvaluator(
+            riskPolicyEvaluator ?? new RiskPolicyEvaluator(
                 dbContext,
                 timeProvider,
                 NullLogger<RiskPolicyEvaluator>.Instance),
@@ -652,6 +751,41 @@ public sealed class StrategySignalServiceTests
         return new StrategyEvaluationContext(mode, CreateIndicatorSnapshot(sampleCount, rsiValue, closeTimeUtc));
     }
 
+    private sealed class AlwaysAllowRiskPolicyEvaluator(TimeProvider timeProvider) : IRiskPolicyEvaluator
+    {
+        public Task<RiskVetoResult> EvaluateAsync(
+            RiskPolicyEvaluationRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            var snapshot = new PreTradeRiskSnapshot(
+                IsVirtualCheck: request.Environment == ExecutionEnvironment.Demo,
+                RiskProfileId: Guid.NewGuid(),
+                RiskProfileName: "AlwaysAllow",
+                KillSwitchEnabled: false,
+                CurrentEquity: 10000m,
+                CurrentGrossExposure: 0m,
+                CurrentLeverage: 0m,
+                CurrentExposurePercentage: 0m,
+                CurrentDailyLossAmount: 0m,
+                CurrentDailyLossPercentage: 0m,
+                MaxDailyLossPercentage: 10m,
+                MaxExposurePercentage: 100m,
+                MaxLeverage: 5m,
+                OpenPositionCount: 0,
+                EvaluatedAtUtc: timeProvider.GetUtcNow().UtcDateTime,
+                OwnerUserId: request.OwnerUserId,
+                Symbol: request.Symbol,
+                BaseAsset: "BTC",
+                Timeframe: request.Timeframe,
+                Side: request.Side,
+                RequestedQuantity: request.Quantity,
+                RequestedPrice: request.Price,
+                RequestedNotional: request.Quantity.GetValueOrDefault() * request.Price.GetValueOrDefault());
+
+            return Task.FromResult(new RiskVetoResult(false, RiskVetoReasonCode.None, snapshot, "Reason=None"));
+        }
+    }
+
     private static StrategyIndicatorSnapshot CreateIndicatorSnapshot(int sampleCount, decimal? rsiValue, DateTime? closeTimeUtc = null)
     {
         var resolvedCloseTimeUtc = closeTimeUtc ?? new DateTime(2026, 3, 22, 12, 1, 0, DateTimeKind.Utc);
@@ -707,6 +841,43 @@ public sealed class StrategySignalServiceTests
                     "comparison": "equals",
                     "value": "Demo"
                   },
+                  {
+                    "path": "indicator.rsi.value",
+                    "comparison": "lessThanOrEqual",
+                    "value": {{rsiThreshold}}
+                  }
+                ]
+              },
+              "risk": {
+                "operator": "all",
+                "rules": [
+                  {
+                    "path": "indicator.sampleCount",
+                    "comparison": "greaterThanOrEqual",
+                    "value": {{minimumSampleCount}}
+                  }
+                ]
+              }
+            }
+            """;
+    }
+
+    private static string CreateEnvironmentAgnosticDefinitionJson(int minimumSampleCount, decimal rsiThreshold = 30m, string direction = "long")
+    {
+        return
+            $$"""
+            {
+              "schemaVersion": 2,
+              "metadata": {
+                "templateKey": "rsi-reversal-env-agnostic",
+                "templateName": "RSI Reversal Env Agnostic",
+                "templateRevisionNumber": 1,
+                "templateSource": "BuiltIn"
+              },
+              "direction": "{{direction}}",
+              "entry": {
+                "operator": "all",
+                "rules": [
                   {
                     "path": "indicator.rsi.value",
                     "comparison": "lessThanOrEqual",
@@ -955,9 +1126,3 @@ public sealed class StrategySignalServiceTests
         }
     }
 }
-
-
-
-
-
-

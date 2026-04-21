@@ -66,7 +66,8 @@ public sealed class UserDashboardPortfolioReadModelService(
             .Where(entity =>
                 entity.OwnerUserId == normalizedUserId &&
                 activeAccounts.Contains(entity.ExchangeAccountId) &&
-                !entity.IsDeleted)
+                !entity.IsDeleted &&
+                entity.Quantity != 0m)
             .OrderByDescending(entity => Math.Abs(entity.UnrealizedProfit))
             .ThenBy(entity => entity.Symbol)
             .ToListAsync(cancellationToken);
@@ -1179,7 +1180,6 @@ public sealed class UserDashboardPortfolioReadModelService(
         return normalized.Length <= maxLength ? normalized : normalized[..maxLength];
     }
 }
-
 
 
 

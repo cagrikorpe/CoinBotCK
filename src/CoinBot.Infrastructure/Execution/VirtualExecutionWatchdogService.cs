@@ -1,4 +1,5 @@
 using System.Globalization;
+using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.DemoPortfolio;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.MarketData;
@@ -19,7 +20,9 @@ public sealed class VirtualExecutionWatchdogService(
     IOptions<DemoFillSimulatorOptions> fillOptions,
     DemoFillSimulator demoFillSimulator,
     TimeProvider timeProvider,
-    ILogger<VirtualExecutionWatchdogService> logger)
+    ILogger<VirtualExecutionWatchdogService> logger,
+    ITraceService? traceService = null,
+    IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null)
 {
     private const string SystemActor = "system:virtual-watchdog";
     private static readonly ExecutionOrderState[] OpenOrderStates =
@@ -30,9 +33,15 @@ public sealed class VirtualExecutionWatchdogService(
     ];
 
     private readonly DemoFillSimulatorOptions fillOptionsValue = fillOptions.Value;
+    private readonly ExecutionRuntimeOptions executionRuntimeOptionsValue = executionRuntimeOptions?.Value ?? new ExecutionRuntimeOptions();
 
     public async Task<VirtualExecutionWatchdogRunResult> RunOnceAsync(CancellationToken cancellationToken = default)
     {
+        if (!executionRuntimeOptionsValue.AllowInternalDemoExecution)
+        {
+            return new VirtualExecutionWatchdogRunResult(0, 0, 0);
+        }
+
         var openOrders = await dbContext.ExecutionOrders
             .IgnoreQueryFilters()
             .Where(entity =>
@@ -292,6 +301,13 @@ public sealed class VirtualExecutionWatchdogService(
             cancellationToken);
         await UpdateBotOpenOrderCountAsync(order.BotId, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
+        await WriteInternalExecutionTraceAsync(
+            order,
+            endpoint: "internal://demo-fill-simulator/watchdog",
+            requestMasked: BuildInternalExecutionTraceRequest(order, phase: "WatchdogFill"),
+            responseMasked: BuildInternalExecutionTraceResponse(order, simulation),
+            executionAttemptId: $"vw-fill:{order.Id:N}:{simulation.EventCode}",
+            cancellationToken);
     }
 
     private async Task<bool> TryDispatchProtectiveCloseAsync(
@@ -337,7 +353,8 @@ public sealed class VirtualExecutionWatchdogService(
                 IdempotencyKey: BuildProtectiveIdempotencyKey(sourceOrder.Id, triggerKind, latestPrice.ObservedAtUtc),
                 CorrelationId: CreateCorrelationId(),
                 ParentCorrelationId: sourceOrder.RootCorrelationId,
-                Context: BuildProtectiveContext(triggerKind, sourceOrder, latestPrice)),
+                Context: BuildProtectiveContext(triggerKind, sourceOrder, latestPrice),
+                ReduceOnly: true),
             cancellationToken);
 
         if (dispatchResult.IsDuplicate)
@@ -635,6 +652,42 @@ public sealed class VirtualExecutionWatchdogService(
         return combined.Length <= 512
             ? combined
             : combined[..512];
+    }
+
+    private Task WriteInternalExecutionTraceAsync(
+        ExecutionOrder order,
+        string endpoint,
+        string requestMasked,
+        string responseMasked,
+        string executionAttemptId,
+        CancellationToken cancellationToken)
+    {
+        return traceService is null
+            ? Task.CompletedTask
+            : traceService.WriteExecutionTraceAsync(
+                new ExecutionTraceWriteRequest(
+                    order.IdempotencyKey,
+                    order.OwnerUserId,
+                    nameof(DemoFillSimulator),
+                    endpoint,
+                    Truncate(requestMasked, 4096),
+                    Truncate(responseMasked, 4096),
+                    order.RootCorrelationId,
+                    executionAttemptId,
+                    order.Id),
+                cancellationToken);
+    }
+
+    private static string BuildInternalExecutionTraceRequest(ExecutionOrder order, string phase)
+    {
+        return FormattableString.Invariant(
+            $"Environment={order.ExecutionEnvironment}; Executor={nameof(VirtualExecutor)}; OutboundBrokerRequested=False; SimulatedFillPathUsed=True; TracePersisted=True; Phase={phase}; Symbol={order.Symbol}; Side={order.Side}; OrderType={order.OrderType}; ReduceOnly={order.ReduceOnly}");
+    }
+
+    private static string BuildInternalExecutionTraceResponse(ExecutionOrder order, DemoFillSimulation simulation)
+    {
+        return FormattableString.Invariant(
+            $"Environment={order.ExecutionEnvironment}; Executor={nameof(VirtualExecutor)}; OutboundBrokerRequested=False; SimulatedFillPathUsed=True; TracePersisted=True; Phase=WatchdogFill; State={order.State}; EventCode={simulation.EventCode}; FillQuantity={simulation.FillQuantity:0.##################}; FillPrice={simulation.FillPrice:0.##################}; Detail={Truncate(simulation.Detail, 512) ?? "none"}");
     }
 
     private static string FormatNullableDecimal(decimal? value)

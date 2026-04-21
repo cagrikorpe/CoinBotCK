@@ -88,6 +88,85 @@ public sealed class UserDashboardPortfolioReadModelServiceTests
     }
 
     [Fact]
+    public async Task GetSnapshotAsync_ExcludesZeroQuantityLiveRows_AndDoesNotLeakSameSymbolFromOtherAccount()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        await using var context = CreateContext(databaseRoot);
+        var exchangeAccountId = Guid.NewGuid();
+        var otherAccountId = Guid.NewGuid();
+        var syncedAtUtc = new DateTime(2026, 4, 21, 10, 0, 0, DateTimeKind.Utc);
+
+        context.ExchangeAccounts.Add(new ExchangeAccount
+        {
+            Id = exchangeAccountId,
+            OwnerUserId = "user-dashboard-filter",
+            ExchangeName = "Binance",
+            DisplayName = "Primary",
+            CredentialStatus = ExchangeCredentialStatus.Active,
+            ApiKeyCiphertext = "cipher-api-key",
+            ApiSecretCiphertext = "cipher-api-secret"
+        });
+        context.ExchangePositions.AddRange(
+            new ExchangePosition
+            {
+                OwnerUserId = "user-dashboard-filter",
+                ExchangeAccountId = exchangeAccountId,
+                Plane = ExchangeDataPlane.Futures,
+                Symbol = "BTCUSDT",
+                PositionSide = "LONG",
+                Quantity = 0.25m,
+                EntryPrice = 65000m,
+                BreakEvenPrice = 65010m,
+                UnrealizedProfit = 35m,
+                MarginType = "cross",
+                IsolatedWallet = 0m,
+                ExchangeUpdatedAtUtc = syncedAtUtc,
+                SyncedAtUtc = syncedAtUtc
+            },
+            new ExchangePosition
+            {
+                OwnerUserId = "user-dashboard-filter",
+                ExchangeAccountId = exchangeAccountId,
+                Plane = ExchangeDataPlane.Futures,
+                Symbol = "SOLUSDT",
+                PositionSide = "LONG",
+                Quantity = 0m,
+                EntryPrice = 100m,
+                BreakEvenPrice = 100m,
+                UnrealizedProfit = 0m,
+                MarginType = "cross",
+                IsolatedWallet = 0m,
+                ExchangeUpdatedAtUtc = syncedAtUtc,
+                SyncedAtUtc = syncedAtUtc
+            },
+            new ExchangePosition
+            {
+                OwnerUserId = "user-other-dashboard-filter",
+                ExchangeAccountId = otherAccountId,
+                Plane = ExchangeDataPlane.Futures,
+                Symbol = "BTCUSDT",
+                PositionSide = "LONG",
+                Quantity = 1m,
+                EntryPrice = 60000m,
+                BreakEvenPrice = 60000m,
+                UnrealizedProfit = 10m,
+                MarginType = "cross",
+                IsolatedWallet = 0m,
+                ExchangeUpdatedAtUtc = syncedAtUtc,
+                SyncedAtUtc = syncedAtUtc
+            });
+        await context.SaveChangesAsync();
+
+        var service = new UserDashboardPortfolioReadModelService(context);
+
+        var snapshot = await service.GetSnapshotAsync("user-dashboard-filter");
+
+        var livePosition = Assert.Single(snapshot.Positions, entity => entity.Plane == ExchangeDataPlane.Futures);
+        Assert.Equal("BTCUSDT", livePosition.Symbol);
+        Assert.Equal(0.25m, livePosition.Quantity);
+    }
+
+    [Fact]
     public async Task GetSnapshotAsync_ProjectsTradeHistoryReasonChainAndAiPlaceholder_WithoutCrossUserLeak()
     {
         var databaseRoot = new InMemoryDatabaseRoot();
@@ -1200,7 +1279,6 @@ public sealed class UserDashboardPortfolioReadModelServiceTests
         }
     }
 }
-
 
 
 

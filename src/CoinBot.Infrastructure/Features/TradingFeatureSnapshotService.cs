@@ -22,7 +22,8 @@ public sealed class TradingFeatureSnapshotService(
     IBinanceHistoricalKlineClient historicalKlineClient,
     IOptions<BotExecutionPilotOptions> pilotOptions,
     TimeProvider timeProvider,
-    ILogger<TradingFeatureSnapshotService> logger) : ITradingFeatureSnapshotService
+    ILogger<TradingFeatureSnapshotService> logger,
+    IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null) : ITradingFeatureSnapshotService
 {
     private const string FeatureVersionValue = "AI-1.v1";
     private const int RequiredSampleCount = 200;
@@ -48,6 +49,7 @@ public sealed class TradingFeatureSnapshotService(
     private const decimal PmaxAtrMultiplier = 3m;
     private static readonly TimeSpan MaxVetoCarryForwardAge = TimeSpan.FromMinutes(2);
     private readonly BotExecutionPilotOptions pilotOptionsValue = pilotOptions.Value;
+    private readonly ExecutionRuntimeOptions executionRuntimeOptionsValue = executionRuntimeOptions?.Value ?? new ExecutionRuntimeOptions();
 
     public async Task<TradingFeatureSnapshotModel> CaptureAsync(
         TradingFeatureCaptureRequest request,
@@ -407,7 +409,7 @@ public sealed class TradingFeatureSnapshotService(
         ExecutionEnvironment tradingMode,
         CancellationToken cancellationToken)
     {
-        if (tradingMode == ExecutionEnvironment.Demo)
+        if (UsesInternalDemoExecution(tradingMode))
         {
             return await dbContext.DemoPositions
                 .IgnoreQueryFilters()
@@ -441,6 +443,12 @@ public sealed class TradingFeatureSnapshotService(
             exchangeAccountId,
             symbol,
             cancellationToken) != 0m;
+    }
+
+    private bool UsesInternalDemoExecution(ExecutionEnvironment tradingMode)
+    {
+        return tradingMode == ExecutionEnvironment.Demo &&
+            executionRuntimeOptionsValue.AllowInternalDemoExecution;
     }
 
     private async Task<bool> ResolveCooldownActiveAsync(

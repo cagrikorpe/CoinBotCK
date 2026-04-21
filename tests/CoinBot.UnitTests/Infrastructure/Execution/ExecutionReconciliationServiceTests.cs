@@ -12,6 +12,7 @@ using CoinBot.Infrastructure.Persistence;
 using CoinBot.UnitTests.Infrastructure.Mfa;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace CoinBot.UnitTests.Infrastructure.Execution;
 
@@ -278,6 +279,89 @@ public sealed class ExecutionReconciliationServiceTests
         Assert.Contains("FilledQuantity=0.05", order.ReconciliationSummary, StringComparison.Ordinal);
         Assert.Equal("ExecutionOrder.Reconciliation", auditLog.Action);
         Assert.Equal("Reconciled:InSync", auditLog.Outcome);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_ReconcilesDemoBrokerOrder_WhenInternalDemoExecutionIsDisabled()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 21, 8, 0, 0, TimeSpan.Zero));
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+            .Options;
+        await using var dbContext = new ApplicationDbContext(options, new TestDataScopeContext());
+        var auditLogService = new AuditLogService(dbContext, new CorrelationContextAccessor());
+        var runtimeOptions = Options.Create(new ExecutionRuntimeOptions
+        {
+            AllowInternalDemoExecution = false
+        });
+        var lifecycleService = new ExecutionOrderLifecycleService(
+            dbContext,
+            auditLogService,
+            timeProvider,
+            NullLogger<ExecutionOrderLifecycleService>.Instance,
+            executionRuntimeOptions: runtimeOptions);
+        var executionOrderId = new Guid("66666666-6666-6666-6666-666666666666");
+        var service = new ExecutionReconciliationService(
+            dbContext,
+            new FakeExchangeCredentialService(),
+            new FakePrivateRestClient(
+                new BinanceOrderStatusSnapshot(
+                    "BTCUSDT",
+                    "binance-order-demo-1",
+                    ExecutionClientOrderId.Create(executionOrderId),
+                    "FILLED",
+                    0.05m,
+                    0.05m,
+                    3200m,
+                    64000m,
+                    0m,
+                    0m,
+                    timeProvider.GetUtcNow().UtcDateTime,
+                    "Binance.PrivateRest.Order")),
+            new FakeSpotPrivateRestClient(),
+            lifecycleService,
+            NullLogger<ExecutionReconciliationService>.Instance,
+            runtimeOptions);
+
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = executionOrderId,
+            OwnerUserId = "user-reconcile-demo-runtime",
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            ExchangeAccountId = Guid.NewGuid(),
+            Plane = ExchangeDataPlane.Futures,
+            StrategyKey = "reconcile-demo-runtime",
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.05m,
+            Price = 64000m,
+            ExecutionEnvironment = ExecutionEnvironment.Demo,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            State = ExecutionOrderState.Submitted,
+            IdempotencyKey = $"reconcile_demo_runtime_{executionOrderId:N}",
+            RootCorrelationId = "root-reconcile-demo-runtime-correlation-1",
+            ExternalOrderId = "binance-order-demo-1",
+            SubmittedToBroker = true,
+            SubmittedAtUtc = new DateTime(2026, 4, 21, 7, 55, 0, DateTimeKind.Utc),
+            ReconciliationStatus = ExchangeStateDriftStatus.Unknown,
+            LastStateChangedAtUtc = new DateTime(2026, 4, 21, 7, 56, 0, DateTimeKind.Utc)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var reconciledCount = await service.RunOnceAsync();
+        var order = await dbContext.ExecutionOrders.SingleAsync(entity => entity.Id == executionOrderId);
+
+        Assert.Equal(1, reconciledCount);
+        Assert.Equal(ExecutionOrderState.Filled, order.State);
+        Assert.Equal(ExchangeStateDriftStatus.DriftDetected, order.ReconciliationStatus);
+        Assert.NotNull(order.LastReconciledAtUtc);
     }
 
     [Fact]

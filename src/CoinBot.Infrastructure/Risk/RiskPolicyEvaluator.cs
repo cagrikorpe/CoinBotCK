@@ -8,13 +8,15 @@ using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace CoinBot.Infrastructure.Risk;
 
 public sealed class RiskPolicyEvaluator(
     ApplicationDbContext dbContext,
     TimeProvider timeProvider,
-    ILogger<RiskPolicyEvaluator> logger) : IRiskPolicyEvaluator
+    ILogger<RiskPolicyEvaluator> logger,
+    IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null) : IRiskPolicyEvaluator
 {
     private static readonly string[] QuoteAssetSuffixes =
     [
@@ -28,6 +30,7 @@ public sealed class RiskPolicyEvaluator(
         "ETH",
         "BNB"
     ];
+    private readonly ExecutionRuntimeOptions executionRuntimeOptionsValue = executionRuntimeOptions?.Value ?? new ExecutionRuntimeOptions();
 
     public async Task<RiskVetoResult> EvaluateAsync(
         RiskPolicyEvaluationRequest request,
@@ -80,7 +83,7 @@ public sealed class RiskPolicyEvaluator(
             }
 
             var coinSpecificLimits = ParseCoinSpecificLimits(riskProfile.CoinSpecificExposureLimitsJson);
-            var snapshot = request.Environment == ExecutionEnvironment.Demo
+            var snapshot = UsesInternalDemoExecution(request.Environment)
                 ? await BuildDemoSnapshotAsync(
                     normalizedUserId,
                     normalizedSymbol,
@@ -165,6 +168,12 @@ public sealed class RiskPolicyEvaluator(
                 fallbackSnapshot,
                 BuildReasonSummary(RiskVetoReasonCode.AccountEquityUnavailable, fallbackSnapshot));
         }
+    }
+
+    private bool UsesInternalDemoExecution(ExecutionEnvironment environment)
+    {
+        return environment == ExecutionEnvironment.Demo &&
+            executionRuntimeOptionsValue.AllowInternalDemoExecution;
     }
 
     private async Task<PreTradeRiskSnapshot> BuildDemoSnapshotAsync(

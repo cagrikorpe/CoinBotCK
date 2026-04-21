@@ -103,6 +103,8 @@ public static class DependencyInjection
             .Validate(
                 options => options.StopDataThresholdSeconds >= options.StaleDataThresholdSeconds,
                 "StopDataThresholdSeconds must be greater than or equal to StaleDataThresholdSeconds.");
+        services.AddOptions<ExecutionRuntimeOptions>()
+            .Bind(configuration.GetSection("ExecutionSafety:Runtime"));
         services.AddOptions<DemoFillSimulatorOptions>()
             .Bind(configuration.GetSection("ExecutionSafety:DemoFillSimulator"))
             .ValidateDataAnnotations();
@@ -375,7 +377,10 @@ public static class DependencyInjection
         services.AddHostedService<ExecutionReconciliationWorker>();
         services.AddHostedService<MonitoringSnapshotWorker>();
         services.AddHostedService<LogCenterRetentionWorker>();
-        services.AddHostedService<VirtualExecutionWatchdogWorker>();
+        if (configuration.GetValue("ExecutionSafety:Runtime:AllowInternalDemoExecution", true))
+        {
+            services.AddHostedService<VirtualExecutionWatchdogWorker>();
+        }
         services.AddHostedService<AutonomySelfHealingWorker>();
         services.AddHostedService<MarketAnomalyWorker>();
 

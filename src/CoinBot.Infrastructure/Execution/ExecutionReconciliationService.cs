@@ -4,6 +4,7 @@ using CoinBot.Infrastructure.Exchange;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace CoinBot.Infrastructure.Execution;
 
@@ -13,7 +14,8 @@ public sealed class ExecutionReconciliationService(
     IBinancePrivateRestClient privateRestClient,
     IBinanceSpotPrivateRestClient spotPrivateRestClient,
     ExecutionOrderLifecycleService executionOrderLifecycleService,
-    ILogger<ExecutionReconciliationService> logger)
+    ILogger<ExecutionReconciliationService> logger,
+    IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null)
 {
     private const string SystemActor = "system:execution-reconciliation";
     private static readonly ExecutionOrderState[] OpenStates =
@@ -29,14 +31,18 @@ public sealed class ExecutionReconciliationService(
         ExecutionOrderState.Rejected,
         ExecutionOrderState.Failed
     ];
+    private readonly ExecutionRuntimeOptions executionRuntimeOptionsValue = executionRuntimeOptions?.Value ?? new ExecutionRuntimeOptions();
 
     internal async Task<int> RunOnceAsync(CancellationToken cancellationToken = default)
     {
+        var includeBrokerBackedDemoOrders = !executionRuntimeOptionsValue.AllowInternalDemoExecution;
         var orders = await dbContext.ExecutionOrders
             .AsNoTracking()
             .Where(entity =>
                 !entity.IsDeleted &&
-                entity.ExecutionEnvironment == ExecutionEnvironment.Live &&
+                (entity.ExecutionEnvironment == ExecutionEnvironment.Live ||
+                 (includeBrokerBackedDemoOrders &&
+                  entity.ExecutionEnvironment == ExecutionEnvironment.Demo)) &&
                 entity.ExecutorKind == ExecutionOrderExecutorKind.Binance &&
                 entity.ExchangeAccountId.HasValue &&
                 (OpenStates.Contains(entity.State) ||

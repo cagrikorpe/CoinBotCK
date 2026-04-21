@@ -10,6 +10,7 @@ using CoinBot.Infrastructure.Persistence;
 using CoinBot.UnitTests.Infrastructure.Mfa;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace CoinBot.UnitTests.Infrastructure.Execution;
 
@@ -238,6 +239,89 @@ public sealed class ExecutionOrderLifecycleServiceTests
     }
 
     [Fact]
+    public async Task ApplyExchangeUpdateAsync_RefreshesBrokerBackedDemoBotOpenPositionCount_FromExchangePositions()
+    {
+        await using var dbContext = CreateContext();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 5, 12, 0, 0, TimeSpan.Zero));
+        var lifecycleService = CreateService(
+            dbContext,
+            timeProvider,
+            executionRuntimeOptions: new ExecutionRuntimeOptions
+            {
+                AllowInternalDemoExecution = false
+            });
+        var botId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        var orderId = await SeedOrderAsync(
+            dbContext,
+            ExecutionOrderState.Submitted,
+            filledQuantity: 0m,
+            botId: botId,
+            exchangeAccountId: exchangeAccountId,
+            symbol: "SOLUSDT",
+            baseAsset: "SOL",
+            price: 85m,
+            executionEnvironment: ExecutionEnvironment.Demo);
+        dbContext.TradingBots.Add(new TradingBot
+        {
+            Id = botId,
+            OwnerUserId = "user-lifecycle",
+            Name = "Lifecycle demo bot",
+            StrategyKey = "lifecycle-demo-core",
+            Symbol = "SOLUSDT",
+            ExchangeAccountId = exchangeAccountId,
+            IsEnabled = true,
+            OpenPositionCount = 0,
+            OpenOrderCount = 1
+        });
+        dbContext.ExchangePositions.Add(new ExchangePosition
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "user-lifecycle",
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "SOLUSDT",
+            PositionSide = "BOTH",
+            Quantity = 0.06m,
+            EntryPrice = 85m,
+            BreakEvenPrice = 85m,
+            MarginType = "isolated",
+            ExchangeUpdatedAtUtc = timeProvider.GetUtcNow().UtcDateTime,
+            SyncedAtUtc = timeProvider.GetUtcNow().UtcDateTime
+        });
+        dbContext.DemoPositions.Add(new DemoPosition
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "user-lifecycle",
+            BotId = botId,
+            PositionScopeKey = "demo:lifecycle",
+            Symbol = "SOLUSDT",
+            BaseAsset = "SOL",
+            QuoteAsset = "USDT",
+            PositionKind = DemoPositionKind.Futures,
+            Quantity = 1.25m
+        });
+        await dbContext.SaveChangesAsync();
+
+        var applied = await lifecycleService.ApplyExchangeUpdateAsync(
+            CreateSnapshot(
+                orderId,
+                "FILLED",
+                executedQuantity: 0.06m,
+                timeProvider.GetUtcNow().UtcDateTime,
+                symbol: "SOLUSDT",
+                price: 85m));
+
+        var bot = await dbContext.TradingBots.SingleAsync(entity => entity.Id == botId);
+        var order = await dbContext.ExecutionOrders.SingleAsync(entity => entity.Id == orderId);
+
+        Assert.True(applied);
+        Assert.Equal(ExecutionOrderState.Filled, order.State);
+        Assert.Equal(1, bot.OpenPositionCount);
+        Assert.Equal(0, bot.OpenOrderCount);
+    }
+
+    [Fact]
     public async Task ApplyExchangeUpdateAsync_WritesSpotPortfolioAudit_WithRootCorrelation()
     {
         await using var dbContext = CreateContext();
@@ -275,14 +359,16 @@ public sealed class ExecutionOrderLifecycleServiceTests
     private static ExecutionOrderLifecycleService CreateService(
         ApplicationDbContext dbContext,
         TimeProvider timeProvider,
-        ISpotPortfolioAccountingService? spotPortfolioAccountingService = null)
+        ISpotPortfolioAccountingService? spotPortfolioAccountingService = null,
+        ExecutionRuntimeOptions? executionRuntimeOptions = null)
     {
         return new ExecutionOrderLifecycleService(
             dbContext,
             new AuditLogService(dbContext, new CorrelationContextAccessor()),
             timeProvider,
             NullLogger<ExecutionOrderLifecycleService>.Instance,
-            spotPortfolioAccountingService: spotPortfolioAccountingService);
+            spotPortfolioAccountingService: spotPortfolioAccountingService,
+            executionRuntimeOptions: Options.Create(executionRuntimeOptions ?? new ExecutionRuntimeOptions()));
     }
 
     private static ApplicationDbContext CreateContext()
@@ -303,7 +389,8 @@ public sealed class ExecutionOrderLifecycleServiceTests
         Guid? exchangeAccountId = null,
         string symbol = "BTCUSDT",
         string baseAsset = "BTC",
-        decimal price = 65000m)
+        decimal price = 65000m,
+        ExecutionEnvironment executionEnvironment = ExecutionEnvironment.Live)
     {
         var orderId = Guid.NewGuid();
         dbContext.ExecutionOrders.Add(new ExecutionOrder
@@ -327,7 +414,7 @@ public sealed class ExecutionOrderLifecycleServiceTests
             Quantity = 0.05m,
             Price = price,
             FilledQuantity = filledQuantity,
-            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutionEnvironment = executionEnvironment,
             ExecutorKind = ExecutionOrderExecutorKind.Binance,
             State = state,
             IdempotencyKey = $"lifecycle_{orderId:N}",
