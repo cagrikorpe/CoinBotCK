@@ -417,6 +417,11 @@ public sealed class StrategyTemplateCatalogService(
             var visibleCustomTemplate = await FindVisibleCustomTemplateAsync(normalizedTemplateKey, includeArchived, cancellationToken);
             if (visibleCustomTemplate is not null)
             {
+                if (!includeArchived && !visibleCustomTemplate.IsActive)
+                {
+                    throw new StrategyTemplateCatalogException("TemplateArchived", $"Strategy template '{normalizedTemplateKey}' is archived and cannot be used for clone or publish flows.");
+                }
+
                 var visibleCustomRevisions = await LoadRevisionsAsync([visibleCustomTemplate.Id], cancellationToken);
                 var visibleCustomSnapshot = BuildCustomSnapshot(visibleCustomTemplate, visibleCustomRevisions, preferPublishedDefinition);
                 if (!requirePublishedRevision || visibleCustomSnapshot.PublishedRevisionNumber > 0)
@@ -1378,7 +1383,6 @@ public sealed class StrategyTemplateCatalogService(
             : normalized[..maxLength];
     }
 }
-
 
 
 

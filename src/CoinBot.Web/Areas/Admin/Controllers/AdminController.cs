@@ -70,6 +70,14 @@ public sealed class AdminController : Controller
     private const string CrisisPreviewTempDataKey = "AdminCrisisEscalationPreviewState";
     private const string StrategyTemplateSuccessTempDataKey = "AdminStrategyTemplateSuccess";
     private const string StrategyTemplateErrorTempDataKey = "AdminStrategyTemplateError";
+    private const string UltraDebugLogSuccessTempDataKey = "AdminUltraDebugLogSuccess";
+    private const string UltraDebugLogErrorTempDataKey = "AdminUltraDebugLogError";
+    private const string UltraDebugLogManualDisableReason = "manual_disable";
+    private const string UltraDebugLogDurationExpiredReason = "duration_expired";
+    private const string UltraDebugLogRuntimeErrorReason = "runtime_error";
+    private const string UltraDebugLogDiskPressureReason = "disk_pressure";
+    private const string UltraDebugLogRuntimeWriteFailureReason = "ultra_runtime_write_failure";
+    private const string UltraDebugLogSizeLimitExceededReason = "ultra_size_limit_exceeded";
 
 
     private const string CriticalActionConfirmationPhrase = "ONAYLA";
@@ -90,6 +98,7 @@ public sealed class AdminController : Controller
     private readonly ILogCenterReadModelService? logCenterReadModelService;
     private readonly ILogCenterRetentionService? logCenterRetentionService;
     private readonly IGlobalPolicyEngine? globalPolicyEngine;
+    private readonly IUltraDebugLogService? ultraDebugLogService;
     private readonly IGlobalExecutionSwitchService globalExecutionSwitchService;
     private readonly IGlobalSystemStateService globalSystemStateService;
     private readonly IBinanceTimeSyncService binanceTimeSyncService;
@@ -128,7 +137,8 @@ public sealed class AdminController : Controller
         IOptions<BinancePrivateDataOptions>? privateDataOptions = null,
         IBinanceCredentialProbeClient? binanceCredentialProbeClient = null,
         IUserExchangeCommandCenterService? userExchangeCommandCenterService = null,
-        UserManager<ApplicationUser>? userManager = null)
+        UserManager<ApplicationUser>? userManager = null,
+        IUltraDebugLogService? ultraDebugLogService = null)
     {
         this.globalExecutionSwitchService = globalExecutionSwitchService;
         this.globalSystemStateService = globalSystemStateService;
@@ -155,6 +165,7 @@ public sealed class AdminController : Controller
         this.binanceCredentialProbeClient = binanceCredentialProbeClient;
         this.userExchangeCommandCenterService = userExchangeCommandCenterService;
         this.userManager = userManager;
+        this.ultraDebugLogService = ultraDebugLogService;
     }
 
     [AllowAnonymous]
@@ -1194,7 +1205,36 @@ public sealed class AdminController : Controller
         return View("SystemHealth");
     }
 
-        [Authorize(Policy = ApplicationPolicies.AuditRead)]
+    [Authorize(Policy = ApplicationPolicies.AuditRead)]
+    [HttpGet("/admin/audit-logs")]
+    public Task<IActionResult> AuditLogs(
+        string? query,
+        string? correlationId,
+        string? decisionId,
+        string? executionAttemptId,
+        string? userId,
+        string? symbol,
+        string? outcome,
+        string? reasonCode,
+        string? focus,
+        int take = 120,
+        CancellationToken cancellationToken = default)
+    {
+        return Audit(
+            query,
+            correlationId,
+            decisionId,
+            executionAttemptId,
+            userId,
+            symbol,
+            outcome,
+            reasonCode,
+            focus,
+            take,
+            cancellationToken);
+    }
+
+    [Authorize(Policy = ApplicationPolicies.AuditRead)]
     public async Task<IActionResult> Audit(
         string? query,
         string? correlationId,
@@ -1263,9 +1303,154 @@ public sealed class AdminController : Controller
             traceDetail,
             approvalDetail,
             incidentDetail,
-            evaluatedAtUtc);
+            evaluatedAtUtc) with
+        {
+            UltraDebugLog = await LoadUltraDebugLogViewModelAsync(cancellationToken)
+        };
 
-        return View(model);
+        return View("Audit", model);
+    }
+
+    [HttpPost("/admin/audit-logs/ultra-log/enable")]
+    [Authorize(Policy = ApplicationPolicies.PlatformAdministration)]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> EnableUltraDebugLog(
+        string? durationKey,
+        int? normalLogsLimitMb,
+        int? ultraLogsLimitMb,
+        CancellationToken cancellationToken)
+    {
+        var mfaResult = await EnforcePlatformAdminMfaAsync(
+            "AuditLogs.UltraDebugLog.Enable",
+            UltraDebugLogErrorTempDataKey,
+            nameof(AuditLogs),
+            new { area = "Admin" },
+            cancellationToken);
+
+        if (mfaResult is not null)
+        {
+            return mfaResult;
+        }
+
+        var normalizedDurationKey = NormalizeOptionalInput(durationKey, 16);
+        var actorUserId = ResolveAdminUserId();
+
+        if (string.IsNullOrWhiteSpace(normalizedDurationKey))
+        {
+            TempData[UltraDebugLogErrorTempDataKey] = "Aktivasyon başarısız: süre seçilmedi";
+            await adminAuditLogService.WriteAsync(
+                BuildAdminAuditLogWriteRequest(
+                    actorUserId,
+                    "ultra_log_enable_failed_validation",
+                    "UltraDebugLog",
+                    "singleton",
+                    oldValueSummary: null,
+                    newValueSummary: null,
+                    "Ultra log activation failed because no duration was selected.",
+                    HttpContext.TraceIdentifier),
+                cancellationToken);
+            return RedirectToAction(nameof(AuditLogs), new { area = "Admin" });
+        }
+
+        if (!TryResolveUltraDebugLogSizeLimit(normalLogsLimitMb, out var normalizedNormalLogsLimitMb))
+        {
+            TempData[UltraDebugLogErrorTempDataKey] = "Aktivasyon başarısız: normal logs limiti seçilmedi";
+            await adminAuditLogService.WriteAsync(
+                BuildAdminAuditLogWriteRequest(
+                    actorUserId,
+                    "ultra_log_enable_failed_validation",
+                    "UltraDebugLog",
+                    "singleton",
+                    oldValueSummary: null,
+                    newValueSummary: null,
+                    "Ultra log activation failed because no valid normal logs limit was selected.",
+                    HttpContext.TraceIdentifier),
+                cancellationToken);
+            return RedirectToAction(nameof(AuditLogs), new { area = "Admin" });
+        }
+
+        if (!TryResolveUltraDebugLogSizeLimit(ultraLogsLimitMb, out var normalizedUltraLogsLimitMb))
+        {
+            TempData[UltraDebugLogErrorTempDataKey] = "Aktivasyon başarısız: ultra logs limiti seçilmedi";
+            await adminAuditLogService.WriteAsync(
+                BuildAdminAuditLogWriteRequest(
+                    actorUserId,
+                    "ultra_log_enable_failed_validation",
+                    "UltraDebugLog",
+                    "singleton",
+                    oldValueSummary: null,
+                    newValueSummary: null,
+                    "Ultra log activation failed because no valid ultra debug logs limit was selected.",
+                    HttpContext.TraceIdentifier),
+                cancellationToken);
+            return RedirectToAction(nameof(AuditLogs), new { area = "Admin" });
+        }
+
+        if (ultraDebugLogService is null)
+        {
+            TempData[UltraDebugLogErrorTempDataKey] = "Ultra log runtime hatası nedeniyle kapatıldı";
+            return RedirectToAction(nameof(AuditLogs), new { area = "Admin" });
+        }
+
+        try
+        {
+            await ultraDebugLogService.EnableAsync(
+                new UltraDebugLogEnableRequest(
+                    normalizedDurationKey,
+                    actorUserId,
+                    ResolveAdminEmail(),
+                    ResolveMaskedRemoteIpAddress(),
+                    ResolveMaskedUserAgent(),
+                    HttpContext.TraceIdentifier,
+                    normalizedNormalLogsLimitMb,
+                    normalizedUltraLogsLimitMb),
+                cancellationToken);
+
+            TempData[UltraDebugLogSuccessTempDataKey] = "Ultra log aktif";
+        }
+        catch (UltraDebugLogOperationException)
+        {
+            TempData[UltraDebugLogErrorTempDataKey] = "Ultra log runtime hatası nedeniyle kapatıldı";
+        }
+
+        return RedirectToAction(nameof(AuditLogs), new { area = "Admin" });
+    }
+
+    [HttpPost("/admin/audit-logs/ultra-log/disable")]
+    [Authorize(Policy = ApplicationPolicies.PlatformAdministration)]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> DisableUltraDebugLog(CancellationToken cancellationToken)
+    {
+        var mfaResult = await EnforcePlatformAdminMfaAsync(
+            "AuditLogs.UltraDebugLog.Disable",
+            UltraDebugLogErrorTempDataKey,
+            nameof(AuditLogs),
+            new { area = "Admin" },
+            cancellationToken);
+
+        if (mfaResult is not null)
+        {
+            return mfaResult;
+        }
+
+        if (ultraDebugLogService is null)
+        {
+            TempData[UltraDebugLogErrorTempDataKey] = "Ultra log runtime hatası nedeniyle kapatıldı";
+            return RedirectToAction(nameof(AuditLogs), new { area = "Admin" });
+        }
+
+        await ultraDebugLogService.DisableAsync(
+            new UltraDebugLogDisableRequest(
+                ResolveAdminUserId(),
+                ResolveAdminEmail(),
+                ResolveMaskedRemoteIpAddress(),
+                ResolveMaskedUserAgent(),
+                HttpContext.TraceIdentifier,
+                UltraDebugLogManualDisableReason),
+            cancellationToken);
+
+        TempData[UltraDebugLogSuccessTempDataKey] = "Admin tarafından kapatıldı";
+        return RedirectToAction(nameof(AuditLogs), new { area = "Admin" });
     }
 
     private static int NormalizeAuditTake(int take)
@@ -1320,11 +1505,243 @@ public sealed class AdminController : Controller
         return await adminGovernanceReadModelService.GetIncidentDetailAsync(detail.IncidentReference, cancellationToken);
     }
 
+    private async Task<AdminUltraDebugLogViewModel> LoadUltraDebugLogViewModelAsync(CancellationToken cancellationToken)
+    {
+        var snapshot = ultraDebugLogService is null
+            ? new UltraDebugLogSnapshot(false, null, null, null, null, null, null, null, false, null, null)
+            : await ultraDebugLogService.GetSnapshotAsync(cancellationToken);
+        var nowUtc = DateTime.UtcNow;
+        var remaining = snapshot.IsEnabled && snapshot.ExpiresAtUtc.HasValue && snapshot.ExpiresAtUtc.Value > nowUtc
+            ? snapshot.ExpiresAtUtc.Value - nowUtc
+            : TimeSpan.Zero;
+        var statusLabel = snapshot.IsEnabled ? "Açık" : "Kapalı";
+        var statusTone = snapshot.IsEnabled
+            ? "healthy"
+            : string.Equals(snapshot.AutoDisabledReason, UltraDebugLogDurationExpiredReason, StringComparison.OrdinalIgnoreCase)
+                ? "warning"
+                : string.Equals(snapshot.AutoDisabledReason, UltraDebugLogDiskPressureReason, StringComparison.OrdinalIgnoreCase)
+                    ? "critical"
+                : string.Equals(snapshot.AutoDisabledReason, UltraDebugLogRuntimeWriteFailureReason, StringComparison.OrdinalIgnoreCase)
+                    ? "critical"
+                : string.Equals(snapshot.AutoDisabledReason, UltraDebugLogSizeLimitExceededReason, StringComparison.OrdinalIgnoreCase)
+                    ? "critical"
+                : string.Equals(snapshot.AutoDisabledReason, UltraDebugLogRuntimeErrorReason, StringComparison.OrdinalIgnoreCase)
+                    ? "critical"
+                    : "neutral";
+        var statusMessage = snapshot.IsEnabled
+            ? "Ultra log aktif"
+            : string.Equals(snapshot.AutoDisabledReason, UltraDebugLogDurationExpiredReason, StringComparison.OrdinalIgnoreCase)
+                ? "Süre dolduğu için kapandı"
+                : string.Equals(snapshot.AutoDisabledReason, UltraDebugLogDiskPressureReason, StringComparison.OrdinalIgnoreCase)
+                    ? "Disk baskısı nedeniyle kapandı"
+                : string.Equals(snapshot.AutoDisabledReason, UltraDebugLogRuntimeWriteFailureReason, StringComparison.OrdinalIgnoreCase)
+                    ? "Ultra log write failure nedeniyle kapandı"
+                : string.Equals(snapshot.AutoDisabledReason, UltraDebugLogSizeLimitExceededReason, StringComparison.OrdinalIgnoreCase)
+                    ? "Ultra log limit aşıldığı için kapandı"
+                : string.Equals(snapshot.AutoDisabledReason, UltraDebugLogManualDisableReason, StringComparison.OrdinalIgnoreCase)
+                    ? "Admin tarafından kapatıldı"
+                    : string.Equals(snapshot.AutoDisabledReason, UltraDebugLogRuntimeErrorReason, StringComparison.OrdinalIgnoreCase)
+                        ? "Ultra log runtime hatası nedeniyle kapatıldı"
+                        : "Kapalı";
+
+        return new AdminUltraDebugLogViewModel(
+            snapshot.IsEnabled,
+            statusLabel,
+            statusTone,
+            statusMessage,
+            snapshot.EnabledByAdminEmail ?? snapshot.EnabledByAdminId ?? "Bilinmiyor",
+            snapshot.StartedAtUtc?.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", CultureInfo.InvariantCulture) ?? "n/a",
+            snapshot.ExpiresAtUtc?.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", CultureInfo.InvariantCulture) ?? "n/a",
+            snapshot.IsEnabled ? FormatRemainingDuration(remaining) : "0 dk",
+            ResolveUltraDebugDurationLabel(snapshot.DurationKey),
+            ResolveUltraDebugLogSizeLimitLabel(snapshot.NormalLogsLimitMb),
+            ResolveUltraDebugLogSizeLimitLabel(snapshot.UltraLogsLimitMb),
+            ResolveUltraDebugUsageLabel(snapshot.NormalLogsUsageBytes, snapshot.NormalLogsLimitMb),
+            ResolveUltraDebugUsageLabel(snapshot.UltraLogsUsageBytes, snapshot.UltraLogsLimitMb),
+            ResolveUltraDebugDiskFreeSpaceLabel(snapshot.DiskFreeSpaceBytes),
+            ResolveUltraDebugSafetyModeLabel(snapshot.IsNormalFallbackMode),
+            ResolveUltraDebugReasonLabel(snapshot.AutoDisabledReason),
+            (ultraDebugLogService?.GetDurationOptions() ?? GetUltraDebugDurationOptions())
+                .Select(item => new AdminUltraDebugLogDurationOptionViewModel(
+                    item.Key,
+                    item.Label,
+                    string.Equals(item.Key, snapshot.DurationKey, StringComparison.OrdinalIgnoreCase)))
+                .ToArray(),
+            (ultraDebugLogService?.GetLogSizeLimitOptions() ?? GetUltraDebugLogSizeLimitOptions())
+                .Select(item => new AdminUltraDebugLogSizeLimitOptionViewModel(
+                    item.ValueMb,
+                    item.Label,
+                    item.ValueMb == snapshot.NormalLogsLimitMb))
+                .ToArray(),
+            (ultraDebugLogService?.GetLogSizeLimitOptions() ?? GetUltraDebugLogSizeLimitOptions())
+                .Select(item => new AdminUltraDebugLogSizeLimitOptionViewModel(
+                    item.ValueMb,
+                    item.Label,
+                    item.ValueMb == snapshot.UltraLogsLimitMb))
+                .ToArray(),
+            MapUltraDebugStructuredEvent(snapshot.LatestStructuredEvent),
+            snapshot.LatestCategoryEvents?
+                .Select(MapUltraDebugStructuredEvent)
+                .Where(item => item is not null)
+                .Cast<AdminUltraDebugStructuredEventViewModel>()
+                .ToArray());
+    }
+
     private static string? NormalizeUnavailableReference(string? value)
     {
         return string.IsNullOrWhiteSpace(value) || string.Equals(value, "Unavailable", StringComparison.OrdinalIgnoreCase)
             ? null
             : value;
+    }
+
+    private static string ResolveUltraDebugDurationLabel(string? durationKey)
+    {
+        var option = GetUltraDebugDurationOptions()
+            .SingleOrDefault(item => string.Equals(item.Key, durationKey, StringComparison.OrdinalIgnoreCase));
+
+        return option is not null
+            ? option.Label
+            : "Seçilmedi";
+    }
+
+    private static bool TryResolveUltraDebugLogSizeLimit(int? valueMb, out int resolvedValueMb)
+    {
+        var option = GetUltraDebugLogSizeLimitOptions()
+            .SingleOrDefault(item => item.ValueMb == valueMb);
+        resolvedValueMb = option?.ValueMb ?? 0;
+        return resolvedValueMb > 0;
+    }
+
+    private static string ResolveUltraDebugLogSizeLimitLabel(int? valueMb)
+    {
+        var option = GetUltraDebugLogSizeLimitOptions()
+            .SingleOrDefault(item => item.ValueMb == valueMb);
+
+        return option is not null
+            ? option.Label
+            : "Seçilmedi";
+    }
+
+    private static string ResolveUltraDebugUsageLabel(long usageBytes, int? limitMb)
+    {
+        var usageLabel = $"{Math.Round(usageBytes / (1024d * 1024d), 2):0.##} MB";
+        return limitMb.HasValue && limitMb.Value > 0
+            ? $"{usageLabel} / {limitMb.Value} MB"
+            : $"{usageLabel} / Seçilmedi";
+    }
+
+    private static string ResolveUltraDebugDiskFreeSpaceLabel(long? bytes)
+    {
+        if (!bytes.HasValue)
+        {
+            return "n/a";
+        }
+
+        return $"{Math.Round(bytes.Value / (1024d * 1024d), 2):0.##} MB";
+    }
+
+    private static string ResolveUltraDebugSafetyModeLabel(bool isFallbackActive)
+    {
+        return isFallbackActive ? "Curated fallback aktif" : "Normal";
+    }
+
+    private static AdminUltraDebugStructuredEventViewModel? MapUltraDebugStructuredEvent(UltraDebugLogEventSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return null;
+        }
+
+        return new AdminUltraDebugStructuredEventViewModel(
+            CategoryLabel: ResolveUltraDebugCategoryLabel(snapshot.Category),
+            EventName: snapshot.EventName,
+            Summary: snapshot.Summary,
+            OccurredAtUtcLabel: snapshot.OccurredAtUtc?.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", CultureInfo.InvariantCulture) ?? "n/a",
+            SymbolLabel: snapshot.Symbol ?? "n/a",
+            TimeframeLabel: snapshot.Timeframe ?? "n/a",
+            SourceLayerLabel: snapshot.SourceLayer ?? "n/a",
+            DecisionReasonCodeLabel: snapshot.DecisionReasonCode ?? "n/a",
+            BlockerCodeLabel: snapshot.BlockerCode ?? "n/a",
+            LatencyBreakdownLabel: snapshot.LatencyBreakdownLabel ?? "n/a");
+    }
+
+    private static string ResolveUltraDebugCategoryLabel(string category)
+    {
+        return category switch
+        {
+            "scanner" => "Scanner",
+            "strategy" => "Strategy",
+            "handoff" => "Handoff",
+            "execution" => "Execution",
+            "exchange" => "Exchange",
+            "runtime" => "Runtime",
+            _ => category
+        };
+    }
+
+    private static string ResolveUltraDebugReasonLabel(string? reasonCode)
+    {
+        return reasonCode switch
+        {
+            UltraDebugLogManualDisableReason => "Admin tarafından kapatıldı",
+            UltraDebugLogDurationExpiredReason => "Süre doldu",
+            UltraDebugLogDiskPressureReason => "Disk pressure",
+            UltraDebugLogRuntimeWriteFailureReason => "Runtime write failure",
+            UltraDebugLogRuntimeErrorReason => "Runtime hatası",
+            UltraDebugLogSizeLimitExceededReason => "Ultra logs limiti aşıldı",
+            null => "none",
+            "" => "none",
+            _ => reasonCode
+        };
+    }
+
+    private static IReadOnlyCollection<UltraDebugLogDurationOption> GetUltraDebugDurationOptions()
+    {
+        return
+        [
+            new UltraDebugLogDurationOption("1h", "1 saat", TimeSpan.FromHours(1)),
+            new UltraDebugLogDurationOption("3h", "3 saat", TimeSpan.FromHours(3)),
+            new UltraDebugLogDurationOption("5h", "5 saat", TimeSpan.FromHours(5)),
+            new UltraDebugLogDurationOption("8h", "8 saat", TimeSpan.FromHours(8)),
+            new UltraDebugLogDurationOption("12h", "12 saat", TimeSpan.FromHours(12)),
+            new UltraDebugLogDurationOption("1d", "1 gün", TimeSpan.FromDays(1)),
+            new UltraDebugLogDurationOption("3d", "3 gün", TimeSpan.FromDays(3)),
+            new UltraDebugLogDurationOption("5d", "5 gün", TimeSpan.FromDays(5)),
+            new UltraDebugLogDurationOption("7d", "7 gün", TimeSpan.FromDays(7))
+        ];
+    }
+
+    private static IReadOnlyCollection<UltraDebugLogSizeLimitOption> GetUltraDebugLogSizeLimitOptions()
+    {
+        return
+        [
+            new UltraDebugLogSizeLimitOption(128, "128 MB"),
+            new UltraDebugLogSizeLimitOption(256, "256 MB"),
+            new UltraDebugLogSizeLimitOption(512, "512 MB"),
+            new UltraDebugLogSizeLimitOption(1024, "1024 MB"),
+            new UltraDebugLogSizeLimitOption(2048, "2048 MB"),
+            new UltraDebugLogSizeLimitOption(4096, "4096 MB")
+        ];
+    }
+
+    private static string FormatRemainingDuration(TimeSpan duration)
+    {
+        if (duration <= TimeSpan.Zero)
+        {
+            return "0 dk";
+        }
+
+        if (duration.TotalDays >= 1d)
+        {
+            return $"{Math.Floor(duration.TotalDays):0} gün";
+        }
+
+        if (duration.TotalHours >= 1d)
+        {
+            return $"{Math.Floor(duration.TotalHours):0} saat";
+        }
+
+        return $"{Math.Max(1, (int)Math.Ceiling(duration.TotalMinutes)):0} dk";
     }
 
     [Authorize(Policy = ApplicationPolicies.AuditRead)]
@@ -4309,6 +4726,18 @@ public sealed class AdminController : Controller
     {
         var subjectId = User.FindFirstValue(ClaimTypes.NameIdentifier)?.Trim();
         return string.IsNullOrWhiteSpace(subjectId) ? "admin:unknown" : subjectId;
+    }
+
+    private string? ResolveAdminEmail()
+    {
+        var email = User.FindFirstValue(ClaimTypes.Email)?.Trim();
+        if (!string.IsNullOrWhiteSpace(email))
+        {
+            return email;
+        }
+
+        var identityName = User.Identity?.Name?.Trim();
+        return string.IsNullOrWhiteSpace(identityName) ? null : identityName;
     }
 
     private string ResolveExecutionActor()

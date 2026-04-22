@@ -12,7 +12,11 @@ public static class SensitivePayloadMasker
         "authheader",
         "bearer",
         "clientsecret",
+        "cookie",
+        "csrf",
         "password",
+        "privatekey",
+        "refreshtoken",
         "secret",
         "session",
         "signature",
@@ -143,6 +147,11 @@ public static class SensitivePayloadMasker
 
     private static string MaskDelimitedSegments(string rawValue)
     {
+        if (LooksLikeConnectionString(rawValue))
+        {
+            return MaskConnectionStringSegments(rawValue);
+        }
+
         var querySeparatorIndex = rawValue.IndexOf('?');
         var path = querySeparatorIndex >= 0
             ? rawValue[..(querySeparatorIndex + 1)]
@@ -158,6 +167,39 @@ public static class SensitivePayloadMasker
         }
 
         return path + string.Join("&", ampersandSegments);
+    }
+
+    private static string MaskConnectionStringSegments(string rawValue)
+    {
+        var segments = rawValue.Split(';');
+
+        for (var index = 0; index < segments.Length; index++)
+        {
+            var segment = segments[index];
+
+            if (string.IsNullOrWhiteSpace(segment))
+            {
+                continue;
+            }
+
+            var separatorIndex = segment.IndexOf('=');
+            if (separatorIndex <= 0)
+            {
+                continue;
+            }
+
+            var key = segment[..separatorIndex].Trim();
+            var normalizedKey = string.Concat(key.Where(char.IsLetterOrDigit)).ToLowerInvariant();
+            if (normalizedKey is "userid" or "uid" or "username" or "user")
+            {
+                segments[index] = $"{key}=***REDACTED***";
+                continue;
+            }
+
+            segments[index] = MaskSegment(segment);
+        }
+
+        return string.Join(";", segments);
     }
 
     private static string MaskSegment(string segment)
@@ -216,5 +258,14 @@ public static class SensitivePayloadMasker
     private static bool ContainsSensitiveFragment(string value)
     {
         return SensitiveNameFragments.Any(fragment => value.Contains(fragment, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool LooksLikeConnectionString(string value)
+    {
+        return value.Contains(';', StringComparison.Ordinal) &&
+               (value.Contains("Password=", StringComparison.OrdinalIgnoreCase) ||
+                value.Contains("Pwd=", StringComparison.OrdinalIgnoreCase) ||
+                value.Contains("User Id=", StringComparison.OrdinalIgnoreCase) ||
+                value.Contains("Uid=", StringComparison.OrdinalIgnoreCase));
     }
 }

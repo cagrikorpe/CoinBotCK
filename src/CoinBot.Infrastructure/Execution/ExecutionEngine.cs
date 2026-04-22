@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -36,7 +37,8 @@ public sealed class ExecutionEngine(
     IAlertDispatchCoordinator? alertDispatchCoordinator = null,
     IHostEnvironment? hostEnvironment = null,
     UserOperationsStreamHub? userOperationsStreamHub = null,
-    IOptions<ExecutionRuntimeOptions>? runtimeOptions = null) : IExecutionEngine
+    IOptions<ExecutionRuntimeOptions>? runtimeOptions = null,
+    IUltraDebugLogService? ultraDebugLogService = null) : IExecutionEngine
 {
     private static readonly ExecutionOrderState[] OpenStates =
     [
@@ -55,12 +57,27 @@ public sealed class ExecutionEngine(
     {
         ArgumentNullException.ThrowIfNull(command);
 
+        var dispatchStopwatch = Stopwatch.StartNew();
         var normalizedCommand = NormalizeCommand(command);
         var decisionTrace = string.IsNullOrWhiteSpace(normalizedCommand.CorrelationId)
             ? await traceService.GetDecisionTraceByStrategySignalIdAsync(normalizedCommand.StrategySignalId, cancellationToken)
             : null;
         var rootCorrelationId = ResolveRootCorrelationId(normalizedCommand.CorrelationId, decisionTrace?.CorrelationId);
         var idempotencyKey = ResolveIdempotencyKey(normalizedCommand);
+        object BuildExecutionLatencyBreakdown()
+        {
+            var elapsedMilliseconds = (int)dispatchStopwatch.ElapsedMilliseconds;
+            return new
+            {
+                totalMs = elapsedMilliseconds,
+                scannerMs = (int?)null,
+                strategyMs = (int?)null,
+                handoffMs = (int?)null,
+                executionMs = elapsedMilliseconds,
+                exchangeMs = (int?)null,
+                persistMs = (int?)null
+            };
+        }
         var existingOrderId = await dbContext.ExecutionOrders
             .IgnoreQueryFilters()
             .AsNoTracking()
@@ -79,6 +96,44 @@ public sealed class ExecutionEngine(
                 normalizedCommand.StrategySignalId);
 
             await MarkDuplicateSuppressedAsync(existingOrderId, cancellationToken);
+
+            if (ultraDebugLogService is not null)
+            {
+                await ultraDebugLogService.WriteAsync(
+                    new UltraDebugLogEntry(
+                        Category: "execution.dispatch",
+                        EventName: "execution_duplicate_suppressed",
+                        Summary: $"Execution duplicate was suppressed for {normalizedCommand.Symbol}.",
+                        CorrelationId: rootCorrelationId,
+                        Symbol: normalizedCommand.Symbol,
+                        StrategySignalId: normalizedCommand.StrategySignalId.ToString("N"),
+                        Detail: new
+                        {
+                            category = "execution",
+                            sourceLayer = nameof(ExecutionEngine),
+                            symbol = normalizedCommand.Symbol,
+                            timeframe = normalizedCommand.Timeframe,
+                            botId = normalizedCommand.BotId,
+                            strategyId = normalizedCommand.TradingStrategyId,
+                            strategyVersionId = normalizedCommand.TradingStrategyVersionId,
+                            strategyKey = normalizedCommand.StrategyKey,
+                            decisionOutcome = "DuplicateSuppressed",
+                            decisionReasonType = "DuplicateSuppression",
+                            decisionReasonCode = "SuppressedDuplicate",
+                            existingOrderId,
+                            strategySignalId = normalizedCommand.StrategySignalId,
+                            requestedEnvironment = normalizedCommand.IsDemo.HasValue
+                                ? (normalizedCommand.IsDemo.Value
+                                    ? ExecutionEnvironment.Demo.ToString()
+                                    : ExecutionEnvironment.Live.ToString())
+                                : null,
+                            side = normalizedCommand.Side.ToString(),
+                            reduceOnly = normalizedCommand.ReduceOnly,
+                            plane = normalizedCommand.Plane.ToString(),
+                            latencyBreakdown = BuildExecutionLatencyBreakdown()
+                        }),
+                    cancellationToken);
+            }
 
             return new ExecutionDispatchResult(
                 await GetSnapshotAsync(existingOrderId, cancellationToken),
@@ -232,6 +287,46 @@ public sealed class ExecutionEngine(
                         order.Id,
                         overrideEvaluation.BlockCode);
 
+                    if (ultraDebugLogService is not null)
+                    {
+                        await ultraDebugLogService.WriteAsync(
+                            new UltraDebugLogEntry(
+                                Category: "execution.dispatch",
+                                EventName: "execution_blocked_user_override",
+                                Summary: $"Execution blocked by user override guard for {order.Symbol}.",
+                                CorrelationId: rootCorrelationId,
+                                Symbol: order.Symbol,
+                                ExecutionAttemptId: order.Id.ToString("N"),
+                                StrategySignalId: order.StrategySignalId.ToString("N"),
+                                Detail: new
+                                {
+                                    category = "execution",
+                                    sourceLayer = nameof(ExecutionEngine),
+                                    symbol = order.Symbol,
+                                    timeframe = order.Timeframe,
+                                    executionOrderId = order.Id,
+                                    orderId = order.Id,
+                                    botId = order.BotId,
+                                    strategyId = order.TradingStrategyId,
+                                    strategyVersionId = order.TradingStrategyVersionId,
+                                    strategyKey = order.StrategyKey,
+                                    decisionOutcome = "Blocked",
+                                    decisionReasonType = "UserExecutionOverride",
+                                    decisionReasonCode = overrideEvaluation.BlockCode,
+                                    blockCode = overrideEvaluation.BlockCode,
+                                    blockerCode = overrideEvaluation.BlockCode,
+                                    blockerSummary = overrideEvaluation.Message,
+                                    guardSummary = overrideEvaluation.Message,
+                                    message = overrideEvaluation.Message,
+                                    side = order.Side.ToString(),
+                                    reduceOnly = order.ReduceOnly,
+                                    environment = order.ExecutionEnvironment.ToString(),
+                                    plane = order.Plane.ToString(),
+                                    latencyBreakdown = BuildExecutionLatencyBreakdown()
+                                }),
+                            cancellationToken);
+                    }
+
                     await UpdateBotOpenOrderCountAsync(order.BotId, cancellationToken);
                     await dbContext.SaveChangesAsync(cancellationToken);
 
@@ -251,6 +346,44 @@ public sealed class ExecutionEngine(
             order.ExternalOrderId = NormalizeOptional(dispatchResult.ExternalOrderId);
             order.SubmittedAtUtc = dispatchResult.SubmittedAtUtc;
             order.CooldownApplied = true;
+
+            if (ultraDebugLogService is not null)
+            {
+                await ultraDebugLogService.WriteAsync(
+                    new UltraDebugLogEntry(
+                        Category: "execution.dispatch",
+                        EventName: "execution_dispatch_submitted",
+                        Summary: $"Execution dispatch submitted {order.Symbol} via {executor.Kind}.",
+                        CorrelationId: rootCorrelationId,
+                        Symbol: order.Symbol,
+                        ExecutionAttemptId: order.Id.ToString("N"),
+                        StrategySignalId: order.StrategySignalId.ToString("N"),
+                        Detail: new
+                        {
+                            category = "execution",
+                            sourceLayer = nameof(ExecutionEngine),
+                            symbol = order.Symbol,
+                            timeframe = order.Timeframe,
+                            executionOrderId = order.Id,
+                            orderId = order.Id,
+                            botId = order.BotId,
+                            strategyId = order.TradingStrategyId,
+                            strategyVersionId = order.TradingStrategyVersionId,
+                            strategyKey = order.StrategyKey,
+                            decisionOutcome = "Submitted",
+                            decisionReasonType = "Dispatch",
+                            decisionReasonCode = "Submitted",
+                            executorKind = executor.Kind.ToString(),
+                            externalOrderId = dispatchResult.ExternalOrderId,
+                            submittedAtUtc = dispatchResult.SubmittedAtUtc,
+                            side = order.Side.ToString(),
+                            reduceOnly = order.ReduceOnly,
+                            environment = order.ExecutionEnvironment.ToString(),
+                            plane = order.Plane.ToString(),
+                            latencyBreakdown = BuildExecutionLatencyBreakdown()
+                        }),
+                    cancellationToken);
+            }
 
             lastTransition = await PersistTransitionAsync(
                 order,
@@ -325,6 +458,45 @@ public sealed class ExecutionEngine(
                 "Execution engine rejected order {ExecutionOrderId} before broker submission with validation reason {ReasonCode}.",
                 order.Id,
                 exception.ReasonCode);
+
+            if (ultraDebugLogService is not null)
+            {
+                await ultraDebugLogService.WriteAsync(
+                    new UltraDebugLogEntry(
+                        Category: "execution.dispatch",
+                        EventName: "execution_validation_rejected",
+                        Summary: $"Execution validation rejected {order.Symbol} before broker submission.",
+                        CorrelationId: rootCorrelationId,
+                        Symbol: order.Symbol,
+                        ExecutionAttemptId: order.Id.ToString("N"),
+                        StrategySignalId: order.StrategySignalId.ToString("N"),
+                        Detail: new
+                        {
+                            category = "execution",
+                            sourceLayer = nameof(ExecutionEngine),
+                            symbol = order.Symbol,
+                            timeframe = order.Timeframe,
+                            executionOrderId = order.Id,
+                            orderId = order.Id,
+                            botId = order.BotId,
+                            strategyId = order.TradingStrategyId,
+                            strategyVersionId = order.TradingStrategyVersionId,
+                            strategyKey = order.StrategyKey,
+                            decisionOutcome = "Rejected",
+                            decisionReasonType = "Validation",
+                            decisionReasonCode = exception.ReasonCode,
+                            reasonCode = exception.ReasonCode,
+                            blockerCode = exception.ReasonCode,
+                            blockerSummary = exception.Message,
+                            message = exception.Message,
+                            side = order.Side.ToString(),
+                            reduceOnly = order.ReduceOnly,
+                            environment = order.ExecutionEnvironment.ToString(),
+                            plane = order.Plane.ToString(),
+                            latencyBreakdown = BuildExecutionLatencyBreakdown()
+                        }),
+                    cancellationToken);
+            }
         }
         catch (ExecutionGateRejectedException exception)
         {
@@ -348,6 +520,43 @@ public sealed class ExecutionEngine(
                 "Execution engine rejected order {ExecutionOrderId} with reason {Reason}.",
                 order.Id,
                 exception.Reason);
+
+            if (ultraDebugLogService is not null)
+            {
+                await ultraDebugLogService.WriteAsync(
+                    new UltraDebugLogEntry(
+                        Category: "execution.dispatch",
+                        EventName: "execution_gate_rejected",
+                        Summary: $"Execution gate rejected {order.Symbol}.",
+                        CorrelationId: rootCorrelationId,
+                        Symbol: order.Symbol,
+                        ExecutionAttemptId: order.Id.ToString("N"),
+                        StrategySignalId: order.StrategySignalId.ToString("N"),
+                        Detail: new
+                        {
+                            category = "execution",
+                            sourceLayer = nameof(ExecutionEngine),
+                            symbol = order.Symbol,
+                            timeframe = order.Timeframe,
+                            executionOrderId = order.Id,
+                            orderId = order.Id,
+                            botId = order.BotId,
+                            strategyId = order.TradingStrategyId,
+                            strategyVersionId = order.TradingStrategyVersionId,
+                            strategyKey = order.StrategyKey,
+                            decisionOutcome = "Rejected",
+                            decisionReasonType = "ExecutionGate",
+                            decisionReasonCode = exception.Reason.ToString(),
+                            reason = exception.Reason.ToString(),
+                            blockerCode = exception.Reason.ToString(),
+                            blockerSummary = exception.Message,
+                            message = exception.Message,
+                            environment = order.ExecutionEnvironment.ToString(),
+                            plane = order.Plane.ToString(),
+                            latencyBreakdown = BuildExecutionLatencyBreakdown()
+                        }),
+                    cancellationToken);
+            }
         }
         catch (Exception exception)
         {
@@ -385,6 +594,45 @@ public sealed class ExecutionEngine(
                 exception,
                 "Execution engine failed closed for order {ExecutionOrderId}.",
                 order.Id);
+
+            if (ultraDebugLogService is not null)
+            {
+                await ultraDebugLogService.WriteAsync(
+                    new UltraDebugLogEntry(
+                        Category: "execution.dispatch",
+                        EventName: "execution_failed_closed",
+                        Summary: $"Execution failed closed for {order.Symbol}.",
+                        CorrelationId: rootCorrelationId,
+                        Symbol: order.Symbol,
+                        ExecutionAttemptId: order.Id.ToString("N"),
+                        StrategySignalId: order.StrategySignalId.ToString("N"),
+                        Detail: new
+                        {
+                            category = "execution",
+                            sourceLayer = nameof(ExecutionEngine),
+                            symbol = order.Symbol,
+                            timeframe = order.Timeframe,
+                            executionOrderId = order.Id,
+                            orderId = order.Id,
+                            botId = order.BotId,
+                            strategyId = order.TradingStrategyId,
+                            strategyVersionId = order.TradingStrategyVersionId,
+                            strategyKey = order.StrategyKey,
+                            decisionOutcome = order.SubmittedToBroker ? "Failed" : "Rejected",
+                            decisionReasonType = "RuntimeFailure",
+                            decisionReasonCode = order.FailureCode,
+                            failureCode = order.FailureCode,
+                            blockerCode = order.FailureCode,
+                            blockerSummary = order.FailureDetail,
+                            failureDetail = order.FailureDetail,
+                            submittedToBroker = order.SubmittedToBroker,
+                            rejectionStage = order.RejectionStage.ToString(),
+                            environment = order.ExecutionEnvironment.ToString(),
+                            plane = order.Plane.ToString(),
+                            latencyBreakdown = BuildExecutionLatencyBreakdown()
+                        }),
+                    cancellationToken);
+            }
         }
 
         await UpdateBotOpenOrderCountAsync(order.BotId, cancellationToken);

@@ -125,6 +125,8 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
     public DbSet<TradingStrategyVersion> TradingStrategyVersions => Set<TradingStrategyVersion>();
 
+    public DbSet<UltraDebugLogState> UltraDebugLogStates => Set<UltraDebugLogState>();
+
     public DbSet<WorkerHeartbeat> WorkerHeartbeats => Set<WorkerHeartbeat>();
 
     public string EnsureCurrentUserScope(string userId)
@@ -219,6 +221,7 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         ConfigureTradingStrategySignals(builder.Entity<TradingStrategySignal>());
         ConfigureTradingStrategySignalVetoes(builder.Entity<TradingStrategySignalVeto>());
         ConfigureTradingStrategyVersions(builder.Entity<TradingStrategyVersion>());
+        ConfigureUltraDebugLogStates(builder.Entity<UltraDebugLogState>());
         ConfigureWorkerHeartbeats(builder.Entity<WorkerHeartbeat>());
         ConfigureUserExecutionOverrides(builder.Entity<UserExecutionOverride>());
     }
@@ -831,6 +834,28 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         builder.HasIndex(entity => entity.StrategySignalId);
         builder.HasIndex(entity => new { entity.DecisionReasonCode, entity.CreatedAtUtc });
         builder.HasIndex(entity => new { entity.DecisionReasonType, entity.CreatedAtUtc });
+    }
+
+    private static void ConfigureUltraDebugLogStates(EntityTypeBuilder<UltraDebugLogState> builder)
+    {
+        builder.ToTable("UltraDebugLogStates");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.DurationKey)
+            .HasMaxLength(16);
+
+        builder.Property(entity => entity.EnabledByAdminId)
+            .HasMaxLength(450);
+
+        builder.Property(entity => entity.EnabledByAdminEmail)
+            .HasMaxLength(256);
+
+        builder.Property(entity => entity.AutoDisabledReason)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.NormalLogsLimitMb);
+
+        builder.Property(entity => entity.UltraLogsLimitMb);
     }
 
     private static void ConfigureIncidentEvents(EntityTypeBuilder<IncidentEvent> builder)

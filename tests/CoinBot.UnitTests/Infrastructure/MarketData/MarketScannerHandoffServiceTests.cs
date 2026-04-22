@@ -133,6 +133,71 @@ public sealed class MarketScannerHandoffServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_PreparesShortEntryOrder_WhenStrategyDirectionIsShort()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-short", "SOLUSDT", "pilot-short");
+        var botEntity = await harness.DbContext.TradingBots.SingleAsync(entity => entity.Id == bot.BotId);
+        botEntity.DirectionMode = TradingBotDirectionMode.LongShort;
+        await harness.DbContext.SaveChangesAsync();
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 10_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(
+            bot.TradingStrategyId,
+            bot.TradingStrategyVersionId,
+            "SOLUSDT",
+            "1m",
+            harness.NowUtc,
+            direction: StrategyTradeDirection.Short));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        var order = await harness.DbContext.ExecutionOrders.SingleAsync(entity => entity.StrategySignalId == attempt.StrategySignalId);
+        Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
+        Assert.Equal(ExecutionOrderSide.Sell, attempt.ExecutionSide);
+        Assert.Equal(ExecutionOrderSide.Sell, order.Side);
+        Assert.False(order.ReduceOnly);
+        Assert.Equal(ExecutionOrderSide.Sell, harness.ExecutionEngine.LastCommand?.Side);
+        Assert.False(harness.ExecutionEngine.LastCommand?.ReduceOnly);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_BlocksShortEntry_WhenBotDirectionModeIsLongOnly()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-short-block", "SOLUSDT", "pilot-short-block");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 10_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(
+            bot.TradingStrategyId,
+            bot.TradingStrategyVersionId,
+            "SOLUSDT",
+            "1m",
+            harness.NowUtc,
+            direction: StrategyTradeDirection.Short));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("EntryDirectionModeBlocked", attempt.BlockerCode);
+        Assert.Equal("Persisted", attempt.StrategyDecisionOutcome);
+        Assert.Equal(ExecutionOrderSide.Sell, attempt.ExecutionSide);
+        Assert.Contains("does not allow short entries", attempt.BlockerDetail, StringComparison.Ordinal);
+        Assert.Null(harness.ExecutionGate.LastRequest);
+        Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
+        Assert.Null(harness.ExecutionEngine.LastCommand);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+    }
+
+    [Fact]
     public async Task RunOnceAsync_SkipsCooldownBlockedSymbolAndPreparesNextCandidate_WithoutCrossSymbolLeak()
     {
         await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
@@ -794,7 +859,14 @@ public sealed class MarketScannerHandoffServiceTests
             "unit-test");
     }
 
-    private static StrategySignalSnapshot CreateEntrySignal(Guid tradingStrategyId, Guid tradingStrategyVersionId, string symbol, string timeframe, DateTime generatedAtUtc, ExecutionEnvironment environment = ExecutionEnvironment.Live)
+    private static StrategySignalSnapshot CreateEntrySignal(
+        Guid tradingStrategyId,
+        Guid tradingStrategyVersionId,
+        string symbol,
+        string timeframe,
+        DateTime generatedAtUtc,
+        ExecutionEnvironment environment = ExecutionEnvironment.Live,
+        StrategyTradeDirection direction = StrategyTradeDirection.Long)
     {
         var indicatorSnapshot = CreateIndicatorSnapshot(symbol, timeframe, generatedAtUtc);
         return new StrategySignalSnapshot(
@@ -819,7 +891,19 @@ public sealed class MarketScannerHandoffServiceTests
                 1,
                 environment,
                 indicatorSnapshot,
-                new StrategyEvaluationResult(true, true, false, false, true, true, null, null, null),
+                new StrategyEvaluationResult(
+                    true,
+                    true,
+                    false,
+                    false,
+                    true,
+                    true,
+                    null,
+                    null,
+                    null,
+                    direction,
+                    direction,
+                    StrategyTradeDirection.Neutral),
                 new StrategySignalConfidenceSnapshot(91, StrategySignalConfidenceBand.High, 3, 3, true, true, false, RiskVetoReasonCode.None, false, "Entry accepted."),
                 new StrategySignalLogExplainabilitySnapshot("Entry", "Entry accepted", ["driver"], ["scanner"]),
                 new StrategySignalDuplicateSuppressionSnapshot(true, false, $"fp-{symbol}")));

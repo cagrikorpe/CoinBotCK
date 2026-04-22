@@ -225,6 +225,7 @@ public static class DependencyInjection
         services.AddScoped<IExchangeCredentialService, ExchangeCredentialService>();
         services.AddScoped<IUserExchangeCommandCenterService, UserExchangeCommandCenterService>();
         services.AddScoped<IUserSettingsService, UserSettingsService>();
+        services.AddSingleton<IUltraDebugLogService, UltraDebugLogService>();
         services.AddScoped<IBotManagementService, BotManagementService>();
         services.AddScoped<IBotPilotControlService, BotPilotControlService>();
         services.AddScoped<IUserDashboardPortfolioReadModelService, UserDashboardPortfolioReadModelService>();
@@ -377,6 +378,7 @@ public static class DependencyInjection
         services.AddHostedService<ExecutionReconciliationWorker>();
         services.AddHostedService<MonitoringSnapshotWorker>();
         services.AddHostedService<LogCenterRetentionWorker>();
+        services.AddHostedService<UltraDebugLogRecoveryWorker>();
         if (configuration.GetValue("ExecutionSafety:Runtime:AllowInternalDemoExecution", true))
         {
             services.AddHostedService<VirtualExecutionWatchdogWorker>();

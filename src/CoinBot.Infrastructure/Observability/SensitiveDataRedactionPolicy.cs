@@ -13,12 +13,14 @@ public sealed class SensitiveDataRedactionPolicy : IDestructuringPolicy
         "bearer",
         "clientsecret",
         "cookie",
+        "csrf",
         "password",
         "privatekey",
         "refreshtoken",
         "secret",
         "session",
         "setcookie",
+        "signature",
         "token"
     ];
 

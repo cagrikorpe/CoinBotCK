@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Globalization;
+using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Autonomy;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.ExchangeCredentials;
@@ -22,7 +24,8 @@ public sealed class BinanceExecutor(
     IDependencyCircuitBreakerStateManager? dependencyCircuitBreakerStateManager = null,
     IMarketDataService? marketDataService = null,
     IBinanceExchangeInfoClient? exchangeInfoClient = null,
-    IOptions<BinancePrivateDataOptions>? privateDataOptions = null) : IExecutionTargetExecutor
+    IOptions<BinancePrivateDataOptions>? privateDataOptions = null,
+    IUltraDebugLogService? ultraDebugLogService = null) : IExecutionTargetExecutor
 {
     private const string BreakerActor = "system:order-execution";
     private readonly BinancePrivateDataOptions? privateDataOptionsValue = privateDataOptions?.Value;
@@ -36,6 +39,7 @@ public sealed class BinanceExecutor(
     {
         ArgumentNullException.ThrowIfNull(order);
         ArgumentNullException.ThrowIfNull(command);
+        var exchangeStopwatch = Stopwatch.StartNew();
 
         ValidateRuntimeEnvironmentScope(order.ExecutionEnvironment);
 
@@ -95,6 +99,55 @@ public sealed class BinanceExecutor(
                     cancellationToken);
             }
 
+            if (ultraDebugLogService is not null)
+            {
+                await ultraDebugLogService.WriteAsync(
+                    new UltraDebugLogEntry(
+                        Category: "exchange.execution",
+                        EventName: "binance_order_request",
+                        Summary: $"Binance executor is placing {command.Symbol} {command.Side} {command.OrderType}.",
+                        CorrelationId: order.RootCorrelationId,
+                        Symbol: command.Symbol,
+                        ExecutionAttemptId: order.Id.ToString("N"),
+                        StrategySignalId: order.StrategySignalId.ToString("N"),
+                        Detail: new
+                        {
+                            category = "exchange",
+                            sourceLayer = nameof(BinanceExecutor),
+                            symbol = command.Symbol,
+                            timeframe = command.Timeframe,
+                            executionOrderId = order.Id,
+                            orderId = order.Id,
+                            botId = order.BotId,
+                            strategyId = order.TradingStrategyId,
+                            strategyVersionId = order.TradingStrategyVersionId,
+                            strategyKey = order.StrategyKey,
+                            decisionOutcome = "DispatchRequested",
+                            decisionReasonType = "ExchangeRequest",
+                            decisionReasonCode = "BinanceOrderRequest",
+                            executionEnvironment = order.ExecutionEnvironment.ToString(),
+                            plane = order.Plane.ToString(),
+                            side = command.Side.ToString(),
+                            orderType = command.OrderType.ToString(),
+                            quantity = command.Quantity,
+                            price = command.Price,
+                            reduceOnly = command.ReduceOnly,
+                            marginType = marginType,
+                            leverage,
+                            latencyBreakdown = new
+                            {
+                                totalMs = (int)exchangeStopwatch.ElapsedMilliseconds,
+                                scannerMs = (int?)null,
+                                strategyMs = (int?)null,
+                                handoffMs = (int?)null,
+                                executionMs = (int?)null,
+                                exchangeMs = (int)exchangeStopwatch.ElapsedMilliseconds,
+                                persistMs = (int?)null
+                            }
+                        }),
+                    cancellationToken);
+            }
+
             var placementResult = await privateRestClient.PlaceOrderAsync(
                 new BinanceOrderPlacementRequest(
                     exchangeAccountId,
@@ -129,6 +182,49 @@ public sealed class BinanceExecutor(
                 order.Id,
                 command.Symbol);
 
+            if (ultraDebugLogService is not null)
+            {
+                await ultraDebugLogService.WriteAsync(
+                    new UltraDebugLogEntry(
+                        Category: "exchange.execution",
+                        EventName: "binance_order_response",
+                        Summary: $"Binance executor received an accepted response for {command.Symbol}.",
+                        CorrelationId: order.RootCorrelationId,
+                        Symbol: command.Symbol,
+                        ExecutionAttemptId: order.Id.ToString("N"),
+                        StrategySignalId: order.StrategySignalId.ToString("N"),
+                        Detail: new
+                        {
+                            category = "exchange",
+                            sourceLayer = nameof(BinanceExecutor),
+                            symbol = command.Symbol,
+                            timeframe = command.Timeframe,
+                            executionOrderId = order.Id,
+                            orderId = order.Id,
+                            botId = order.BotId,
+                            strategyId = order.TradingStrategyId,
+                            strategyVersionId = order.TradingStrategyVersionId,
+                            strategyKey = order.StrategyKey,
+                            decisionOutcome = "Submitted",
+                            decisionReasonType = "ExchangeResponse",
+                            decisionReasonCode = "Accepted",
+                            externalOrderId = placementResult.OrderId,
+                            submittedAtUtc = placementResult.SubmittedAtUtc,
+                            snapshotStatus = placementResult.Snapshot?.Status,
+                            latencyBreakdown = new
+                            {
+                                totalMs = (int)exchangeStopwatch.ElapsedMilliseconds,
+                                scannerMs = (int?)null,
+                                strategyMs = (int?)null,
+                                handoffMs = (int?)null,
+                                executionMs = (int?)null,
+                                exchangeMs = (int)exchangeStopwatch.ElapsedMilliseconds,
+                                persistMs = (int?)null
+                            }
+                        }),
+                    cancellationToken);
+            }
+
             return new ExecutionTargetDispatchResult(
                 placementResult.OrderId,
                 placementResult.SubmittedAtUtc,
@@ -147,6 +243,51 @@ public sealed class BinanceExecutor(
                         ResolveFailureCode(exception),
                         Truncate(exception.Message, 512) ?? "Order execution failed.",
                         order.RootCorrelationId),
+                    cancellationToken);
+            }
+
+            if (ultraDebugLogService is not null)
+            {
+                await ultraDebugLogService.WriteAsync(
+                    new UltraDebugLogEntry(
+                        Category: "exchange.execution",
+                        EventName: "binance_order_failed",
+                        Summary: $"Binance executor failed closed for {command.Symbol}.",
+                        CorrelationId: order.RootCorrelationId,
+                        Symbol: command.Symbol,
+                        ExecutionAttemptId: order.Id.ToString("N"),
+                        StrategySignalId: order.StrategySignalId.ToString("N"),
+                        Detail: new
+                        {
+                            category = "exchange",
+                            sourceLayer = nameof(BinanceExecutor),
+                            symbol = command.Symbol,
+                            timeframe = command.Timeframe,
+                            executionOrderId = order.Id,
+                            orderId = order.Id,
+                            botId = order.BotId,
+                            strategyId = order.TradingStrategyId,
+                            strategyVersionId = order.TradingStrategyVersionId,
+                            strategyKey = order.StrategyKey,
+                            decisionOutcome = "Failed",
+                            decisionReasonType = "ExchangeFailure",
+                            decisionReasonCode = ResolveFailureCode(exception),
+                            failureCode = ResolveFailureCode(exception),
+                            blockerCode = ResolveFailureCode(exception),
+                            blockerSummary = exception.Message,
+                            message = exception.Message,
+                            reduceOnly = command.ReduceOnly,
+                            latencyBreakdown = new
+                            {
+                                totalMs = (int)exchangeStopwatch.ElapsedMilliseconds,
+                                scannerMs = (int?)null,
+                                strategyMs = (int?)null,
+                                handoffMs = (int?)null,
+                                executionMs = (int?)null,
+                                exchangeMs = (int)exchangeStopwatch.ElapsedMilliseconds,
+                                persistMs = (int?)null
+                            }
+                        }),
                     cancellationToken);
             }
 

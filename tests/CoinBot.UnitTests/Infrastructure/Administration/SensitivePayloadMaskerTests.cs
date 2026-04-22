@@ -62,4 +62,26 @@ public sealed class SensitivePayloadMaskerTests
         Assert.Contains("signature=***REDACTED***", masked, StringComparison.Ordinal);
         Assert.Contains("apiKey=***REDACTED***", masked, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Mask_RedactsCookieRefreshTokenCsrfAndConnectionStringCredentials()
+    {
+        var masked = SensitivePayloadMasker.Mask(
+            """
+            {
+              "cookie": "session-cookie",
+              "refreshToken": "plain-refresh-token",
+              "csrfToken": "plain-csrf-token",
+              "connectionString": "Server=localhost;User Id=local-user;Password=plain-db-password;TrustServerCertificate=true;"
+            }
+            """);
+
+        Assert.NotNull(masked);
+        Assert.DoesNotContain("session-cookie", masked, StringComparison.Ordinal);
+        Assert.DoesNotContain("plain-refresh-token", masked, StringComparison.Ordinal);
+        Assert.DoesNotContain("plain-csrf-token", masked, StringComparison.Ordinal);
+        Assert.DoesNotContain("plain-db-password", masked, StringComparison.Ordinal);
+        Assert.DoesNotContain("local-user", masked, StringComparison.Ordinal);
+        Assert.Contains("***REDACTED***", masked, StringComparison.Ordinal);
+    }
 }

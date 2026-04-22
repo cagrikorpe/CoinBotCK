@@ -488,7 +488,13 @@ public sealed class MarketScannerHandoffIntegrationTests
             "integration-test");
     }
 
-    private static StrategySignalSnapshot CreateSignal(Guid strategyId, Guid versionId, string symbol, string timeframe, DateTime generatedAtUtc)
+    private static StrategySignalSnapshot CreateSignal(
+        Guid strategyId,
+        Guid versionId,
+        string symbol,
+        string timeframe,
+        DateTime generatedAtUtc,
+        StrategyTradeDirection direction = StrategyTradeDirection.Long)
     {
         var indicatorSnapshot = CreateIndicatorSnapshot(symbol, timeframe, generatedAtUtc);
         return new StrategySignalSnapshot(
@@ -513,7 +519,19 @@ public sealed class MarketScannerHandoffIntegrationTests
                 1,
                 ExecutionEnvironment.Live,
                 indicatorSnapshot,
-                new StrategyEvaluationResult(true, true, false, false, true, true, null, null, null),
+                new StrategyEvaluationResult(
+                    true,
+                    true,
+                    false,
+                    false,
+                    true,
+                    true,
+                    null,
+                    null,
+                    null,
+                    direction,
+                    direction,
+                    StrategyTradeDirection.Neutral),
                 new StrategySignalConfidenceSnapshot(95, StrategySignalConfidenceBand.High, 3, 3, true, true, false, RiskVetoReasonCode.None, false, "Integration entry."),
                 new StrategySignalLogExplainabilitySnapshot("Entry", "Integration entry", ["driver"], ["scanner"]),
                 new StrategySignalDuplicateSuppressionSnapshot(true, false, "fp-BTCUSDT")));
@@ -527,7 +545,7 @@ public sealed class MarketScannerHandoffIntegrationTests
         {
             LastRequest = request;
             return Task.FromResult(new StrategySignalGenerationResult(
-                new StrategyEvaluationResult(true, true, false, false, true, true, null, null, null),
+                signal.ExplainabilityPayload.RuleResultSnapshot,
                 [signal],
                 [],
                 0));

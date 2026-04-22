@@ -3,6 +3,7 @@ using CoinBot.Infrastructure;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.Contracts.Common;
+using CoinBot.Web;
 using CoinBot.Web.Hubs;
 using Microsoft.Data.SqlClient;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -20,11 +21,12 @@ Log.Logger = new LoggerConfiguration()
 
 try
 {
-    var builder = WebApplication.CreateBuilder(args);
-    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-    var sqlConnectionStringBuilder = string.IsNullOrWhiteSpace(connectionString)
-        ? null
-        : new SqlConnectionStringBuilder(connectionString);
+    var builder = WebApplication.CreateBuilder(WebHostBootstrap.CreateOptions(args));
+    var connectionAudit = ConnectionSourceDiagnostics.Describe(
+        builder.Configuration,
+        builder.Environment.EnvironmentName,
+        builder.Environment.ContentRootPath,
+        args);
     var scannerHandoffEnabled = builder.Configuration.GetValue<bool>("MarketData:Scanner:HandoffEnabled");
     var marketDataRestBaseUrl = builder.Configuration.GetValue<string>("MarketData:Binance:RestBaseUrl") ?? "unknown";
     var marketDataWebSocketBaseUrl = builder.Configuration.GetValue<string>("MarketData:Binance:WebSocketBaseUrl") ?? "unknown";
@@ -35,7 +37,7 @@ try
     var processPath = Environment.ProcessPath ?? "unknown";
 
     Log.Information(
-        "Runtime configuration resolved. Environment={EnvironmentName} MarketDataBinanceEnabled={MarketDataBinanceEnabled} ScannerHandoffEnabled={ScannerHandoffEnabled} MarketDataRestBaseUrl={MarketDataRestBaseUrl} MarketDataWebSocketBaseUrl={MarketDataWebSocketBaseUrl} ExchangeSyncBinanceEnabled={ExchangeSyncBinanceEnabled} ExchangeSyncRestBaseUrl={ExchangeSyncRestBaseUrl} ExchangeSyncWebSocketBaseUrl={ExchangeSyncWebSocketBaseUrl} ContentRootPath={ContentRootPath} AppBaseDirectory={AppBaseDirectory} ProcessPath={ProcessPath} DbServer={DbServer} DbName={DbName}",
+        "Runtime configuration resolved. Environment={EnvironmentName} MarketDataBinanceEnabled={MarketDataBinanceEnabled} ScannerHandoffEnabled={ScannerHandoffEnabled} MarketDataRestBaseUrl={MarketDataRestBaseUrl} MarketDataWebSocketBaseUrl={MarketDataWebSocketBaseUrl} ExchangeSyncBinanceEnabled={ExchangeSyncBinanceEnabled} ExchangeSyncRestBaseUrl={ExchangeSyncRestBaseUrl} ExchangeSyncWebSocketBaseUrl={ExchangeSyncWebSocketBaseUrl} ContentRootPath={ContentRootPath} AppBaseDirectory={AppBaseDirectory} ProcessPath={ProcessPath} EffectiveConnectionSource={EffectiveConnectionSource} DbServer={DbServer} DbName={DbName} AuthMode={AuthMode} UserPresent={UserPresent} PasswordPresent={PasswordPresent} EnvironmentConnectionOverridePresent={EnvironmentConnectionOverridePresent}",
         builder.Environment.EnvironmentName,
         builder.Configuration.GetValue<bool>("MarketData:Binance:Enabled"),
         scannerHandoffEnabled,
@@ -47,8 +49,13 @@ try
         contentRootPath,
         appBaseDirectory,
         processPath,
-        sqlConnectionStringBuilder?.DataSource ?? "unknown",
-        sqlConnectionStringBuilder?.InitialCatalog ?? "unknown");
+        connectionAudit.SourceCategory,
+        connectionAudit.DbServer,
+        connectionAudit.DbName,
+        connectionAudit.AuthMode,
+        connectionAudit.UserPresent,
+        connectionAudit.PasswordPresent,
+        connectionAudit.EnvironmentOverridePresent);
 
     builder.Host.UseSerilog((context, _, loggerConfiguration) =>
     {

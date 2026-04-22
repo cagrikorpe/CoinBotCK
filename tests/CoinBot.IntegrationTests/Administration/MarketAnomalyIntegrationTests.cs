@@ -5,6 +5,7 @@ using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
 using CoinBot.Infrastructure.Autonomy;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
@@ -64,6 +65,8 @@ public sealed class MarketAnomalyIntegrationTests
                         IsPersisted: true)),
                 Options.Create(new MarketAnomalyOptions()),
                 Options.Create(new AutonomyOptions()),
+                Options.Create(new MarketScannerOptions()),
+                Options.Create(new DataLatencyGuardOptions()),
                 Options.Create(new BinanceMarketDataOptions()),
                 timeProvider,
                 NullLogger<MarketAnomalyService>.Instance);

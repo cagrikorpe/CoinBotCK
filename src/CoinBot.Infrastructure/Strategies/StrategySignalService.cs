@@ -31,7 +31,8 @@ public sealed class StrategySignalService(
     IOptions<AiSignalOptions> aiSignalOptions,
     TimeProvider timeProvider,
     ILogger<StrategySignalService> logger,
-    IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null) : IStrategySignalService
+    IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null,
+    IUltraDebugLogService? ultraDebugLogService = null) : IStrategySignalService
 {
     private const int ExplainabilitySchemaVersion = 1;
     private const int RepeatedNoOpenPositionExitTraceSuppressionWindowSeconds = 120;
@@ -185,6 +186,56 @@ public sealed class StrategySignalService(
                     version.Id,
                     normalizedContext.IndicatorSnapshot.Symbol,
                     normalizedContext.IndicatorSnapshot.Timeframe);
+            }
+
+            if (ultraDebugLogService is not null)
+            {
+                var noSignalLatencyMs = (int)decisionStopwatch.ElapsedMilliseconds;
+                await ultraDebugLogService.WriteAsync(
+                    new UltraDebugLogEntry(
+                        Category: "strategy.signal",
+                        EventName: "strategy_no_signal_candidate",
+                        Summary: noSignalDecision.Summary,
+                        CorrelationId: ResolveCorrelationId(),
+                        Symbol: normalizedContext.IndicatorSnapshot.Symbol,
+                        Detail: new
+                        {
+                            category = "strategy",
+                            sourceLayer = nameof(StrategySignalService),
+                            symbol = normalizedContext.IndicatorSnapshot.Symbol,
+                            timeframe = normalizedContext.IndicatorSnapshot.Timeframe,
+                            strategyId = strategy.Id,
+                            strategyVersionId = version.Id,
+                            strategyKey = strategy.StrategyKey,
+                            environment = persistedExecutionEnvironment.ToString(),
+                            plane = request.FeatureSnapshot?.TradingContext.Plane.ToString(),
+                            decisionOutcome = "NoSignalCandidate",
+                            signalEvaluationMode = persistedExecutionEnvironment.ToString(),
+                            outcome = evaluationReport.Outcome,
+                            decisionReasonType = noSignalDecision.ReasonType,
+                            decisionReasonCode = noSignalDecision.ReasonCode,
+                            vetoReasonCode = noSignalDecision.VetoReasonCode,
+                            blockerCode = noSignalDecision.VetoReasonCode,
+                            blockerSummary = noSignalDecision.Summary,
+                            lastCandleAtUtc = normalizedContext.IndicatorSnapshot.CloseTimeUtc,
+                            dataAgeMs = Math.Max(
+                                0,
+                                (long)Math.Round(
+                                    (now - normalizedContext.IndicatorSnapshot.CloseTimeUtc).TotalMilliseconds,
+                                    MidpointRounding.AwayFromZero)),
+                            latencyBreakdown = new
+                            {
+                                totalMs = noSignalLatencyMs,
+                                scannerMs = (int?)null,
+                                strategyMs = noSignalLatencyMs,
+                                handoffMs = (int?)null,
+                                executionMs = (int?)null,
+                                exchangeMs = (int?)null,
+                                persistMs = (int?)null
+                            },
+                            explainability = evaluationReport.ExplainabilitySummary
+                        }),
+                    cancellationToken);
             }
 
             return new StrategySignalGenerationResult(
@@ -477,6 +528,79 @@ public sealed class StrategySignalService(
                 signal.TradingStrategyVersionId,
                 signal.Symbol,
                 signal.Timeframe);
+        }
+
+        if (ultraDebugLogService is not null)
+        {
+            var strategyLatencyMs = (int)decisionStopwatch.ElapsedMilliseconds;
+            var primaryPersistedSignal = snapshots.FirstOrDefault();
+            await ultraDebugLogService.WriteAsync(
+                new UltraDebugLogEntry(
+                    Category: "strategy.signal",
+                    EventName: snapshots.Length > 0
+                        ? "strategy_signal_persisted"
+                        : vetoSnapshots.Count > 0
+                            ? "strategy_signal_vetoed"
+                            : "strategy_signal_suppressed",
+                    Summary: snapshots.Length > 0
+                        ? $"Strategy persisted {snapshots.Length} signal(s) for {normalizedContext.IndicatorSnapshot.Symbol}."
+                        : vetoSnapshots.Count > 0
+                            ? $"Strategy vetoed {vetoSnapshots.Count} candidate signal(s) for {normalizedContext.IndicatorSnapshot.Symbol}."
+                            : $"Strategy suppressed {suppressedDuplicateCount} duplicate signal(s) for {normalizedContext.IndicatorSnapshot.Symbol}.",
+                    CorrelationId: ResolveCorrelationId(),
+                    Symbol: normalizedContext.IndicatorSnapshot.Symbol,
+                    StrategySignalId: primaryPersistedSignal?.StrategySignalId.ToString("N"),
+                    Detail: new
+                    {
+                        category = "strategy",
+                        sourceLayer = nameof(StrategySignalService),
+                        symbol = normalizedContext.IndicatorSnapshot.Symbol,
+                        timeframe = normalizedContext.IndicatorSnapshot.Timeframe,
+                        strategyId = strategy.Id,
+                        strategyVersionId = version.Id,
+                        strategyKey = strategy.StrategyKey,
+                        environment = persistedExecutionEnvironment.ToString(),
+                        plane = request.FeatureSnapshot?.TradingContext.Plane.ToString(),
+                        decisionOutcome = snapshots.Length > 0
+                            ? "Persisted"
+                            : vetoSnapshots.Count > 0
+                                ? "Vetoed"
+                                : "SuppressedDuplicate",
+                        decisionReasonType = snapshots.Length > 0
+                            ? "StrategyCandidate"
+                            : vetoSnapshots.Count > 0
+                                ? "RiskVeto"
+                                : "DuplicateSuppression",
+                        decisionReasonCode = snapshots.Length > 0
+                            ? "CandidatePersisted"
+                            : vetoSnapshots.Count > 0
+                                ? "RiskVeto"
+                                : "SuppressedDuplicate",
+                        blockerCode = vetoSnapshots.Count > 0 ? "RiskVeto" : null,
+                        selectedSymbol = normalizedContext.IndicatorSnapshot.Symbol,
+                        evaluationMode = persistedExecutionEnvironment.ToString(),
+                        persistedSignalIds = snapshots.Select(item => item.StrategySignalId).ToArray(),
+                        vetoIds = vetoSnapshots.Select(item => item.StrategySignalVetoId).ToArray(),
+                        lastCandleAtUtc = normalizedContext.IndicatorSnapshot.CloseTimeUtc,
+                        dataAgeMs = Math.Max(
+                            0,
+                            (long)Math.Round(
+                                (now - normalizedContext.IndicatorSnapshot.CloseTimeUtc).TotalMilliseconds,
+                                MidpointRounding.AwayFromZero)),
+                        latencyBreakdown = new
+                        {
+                            totalMs = strategyLatencyMs,
+                            scannerMs = (int?)null,
+                            strategyMs = strategyLatencyMs,
+                            handoffMs = (int?)null,
+                            executionMs = (int?)null,
+                            exchangeMs = (int?)null,
+                            persistMs = (int?)null
+                        },
+                        suppressedDuplicateCount,
+                        aiEvaluationCount = aiEvaluations.Count
+                    }),
+                cancellationToken);
         }
 
         return new StrategySignalGenerationResult(
@@ -1710,6 +1834,3 @@ public sealed class StrategySignalService(
             SerializerOptions);
     }
 }
-
-
-

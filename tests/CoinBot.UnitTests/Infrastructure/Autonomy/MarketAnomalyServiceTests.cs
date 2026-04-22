@@ -7,6 +7,7 @@ using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
 using CoinBot.Infrastructure.Autonomy;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
@@ -73,6 +74,38 @@ public sealed class MarketAnomalyServiceTests
         Assert.Empty(await harness.DbContext.Incidents.ToListAsync());
         Assert.Empty(await harness.DbContext.AutonomyReviewQueueEntries.ToListAsync());
         Assert.Equal(MonitoringHealthState.Healthy, workerHeartbeat.HealthState);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_DoesNotQueueStaleReview_WhenRecentClosedCandleIsWithinScannerFreshnessWindow()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 31, 10, 20, 22, TimeSpan.Zero));
+        var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
+        await using var harness = CreateHarness(
+            timeProvider,
+            ["BTCUSDT"],
+            marketScannerOptions: new MarketScannerOptions
+            {
+                MaxDataAgeSeconds = 120
+            },
+            dataLatencyGuardOptions: new DataLatencyGuardOptions
+            {
+                StaleDataThresholdSeconds = 60,
+                StopDataThresholdSeconds = 120
+            });
+        SeedCandles(harness.DbContext, "BTCUSDT", nowUtc.AddSeconds(-22), stableVolume: 1_000m, lastVolume: 980m, lastHigh: 101.2m, lastLow: 99.4m);
+        harness.MarketDataService.SetLatestPrice("BTCUSDT", 100.4m, nowUtc.AddSeconds(-1));
+
+        var result = await harness.Service.RunOnceAsync();
+        var evaluation = Assert.Single(result.Evaluations);
+
+        Assert.Equal(MarketAnomalyDecision.NoAction, evaluation.Decision);
+        Assert.Equal(0, result.ReviewQueuedCount);
+        Assert.Equal(0, result.PolicyUpdatedCount);
+        Assert.Null(evaluation.ProposedState);
+        Assert.DoesNotContain("StaleData", evaluation.TriggerLabels);
+        Assert.Empty(await harness.DbContext.AutonomyReviewQueueEntries.ToListAsync());
+        Assert.Empty(await harness.DbContext.Incidents.ToListAsync());
     }
 
     [Fact]
@@ -156,7 +189,12 @@ public sealed class MarketAnomalyServiceTests
         Assert.Contains("market anomaly failure", heartbeat.Detail ?? string.Empty, StringComparison.Ordinal);
     }
 
-    private static TestHarness CreateHarness(AdjustableTimeProvider timeProvider, IReadOnlyCollection<string> symbols)
+    private static TestHarness CreateHarness(
+        AdjustableTimeProvider timeProvider,
+        IReadOnlyCollection<string> symbols,
+        MarketAnomalyOptions? marketAnomalyOptions = null,
+        MarketScannerOptions? marketScannerOptions = null,
+        DataLatencyGuardOptions? dataLatencyGuardOptions = null)
     {
         var dbContext = CreateDbContext();
         var auditService = new AdminAuditLogService(dbContext, new CorrelationContextAccessor(), timeProvider);
@@ -189,8 +227,10 @@ public sealed class MarketAnomalyServiceTests
             reviewQueueService,
             new AutonomyIncidentHook(dbContext, auditService, timeProvider),
             latencyCircuitBreaker,
-            Options.Create(new MarketAnomalyOptions()),
+            Options.Create(marketAnomalyOptions ?? new MarketAnomalyOptions()),
             Options.Create(new AutonomyOptions()),
+            Options.Create(marketScannerOptions ?? new MarketScannerOptions()),
+            Options.Create(dataLatencyGuardOptions ?? new DataLatencyGuardOptions()),
             Options.Create(new BinanceMarketDataOptions()),
             timeProvider,
             NullLogger<MarketAnomalyService>.Instance);

@@ -419,7 +419,7 @@ public sealed class AdminControllerTests
     }
 
     [Fact]
-    public async Task StrategyBuilder_AdminAlias_RendersStrategyTemplatesView()
+    public async Task StrategyBuilder_AdminAlias_RendersStrategyTemplateCreateView()
     {
         var templateService = new FakeStrategyTemplateCatalogService();
         templateService.Templates.Add(CreateStrategyTemplateSnapshot("built-in-template", "Built In", isBuiltIn: true));
@@ -428,7 +428,7 @@ public sealed class AdminControllerTests
         var result = await controller.StrategyBuilder("built-in-template", CancellationToken.None);
 
         var view = Assert.IsType<ViewResult>(result);
-        Assert.Equal(nameof(AdminController.StrategyTemplates), view.ViewName);
+        Assert.Equal("StrategyTemplateCreate", view.ViewName);
         var model = Assert.IsType<AdminStrategyTemplateCatalogPageViewModel>(view.Model);
         Assert.Equal("built-in-template", model.SelectedTemplateKey);
         Assert.Equal("StrategyTemplates", controller.ViewData["AdminActiveNav"]);
@@ -463,7 +463,9 @@ public sealed class AdminControllerTests
         Assert.Equal("custom-template", call.TemplateKey);
         Assert.Equal("Admin.StrategyTemplates.Create", audit.ActionType);
         Assert.Equal("Create reason", audit.Reason);
-        Assert.Equal("Strategy template 'Custom Template' revision 1 olarak olusturuldu.", controller.TempData["AdminStrategyTemplateSuccess"]);
+        Assert.Equal(
+            "Yeni template olusturuldu: Custom Template (custom-template). Olusan revision r1. Current r1 · Published r1 · Latest r1.",
+            controller.TempData["AdminStrategyTemplateSuccess"]);
     }
 
     [Fact]
@@ -521,11 +523,13 @@ public sealed class AdminControllerTests
         var call = Assert.Single(templateService.PublishCalls);
         var audit = Assert.Single(auditLogService.Requests);
 
-        Assert.Equal(nameof(AdminController.StrategyTemplates), redirect.ActionName);
+        Assert.Equal(nameof(AdminController.StrategyTemplateDetail), redirect.ActionName);
         Assert.Equal(("publishable-template", 2), call);
         Assert.Equal("Admin.StrategyTemplates.Publish", audit.ActionType);
         Assert.Equal("Publish reason", audit.Reason);
-        Assert.Equal("Strategy template 'Publishable Template' revision 2 olarak publish edildi.", controller.TempData["AdminStrategyTemplateSuccess"]);
+        Assert.Equal(
+            "Template publish edildi: Publishable Template (publishable-template). Published revision artik r2. Current r2 · Published r2 · Latest r2.",
+            controller.TempData["AdminStrategyTemplateSuccess"]);
     }
 
     [Fact]
@@ -547,11 +551,13 @@ public sealed class AdminControllerTests
         var call = Assert.Single(templateService.ArchiveCalls);
         var audit = Assert.Single(auditLogService.Requests);
 
-        Assert.Equal(nameof(AdminController.StrategyTemplates), redirect.ActionName);
+        Assert.Equal(nameof(AdminController.StrategyTemplateDetail), redirect.ActionName);
         Assert.Equal("archivable-template", call);
         Assert.Equal("Admin.StrategyTemplates.Archive", audit.ActionType);
         Assert.Equal("Archive reason", audit.Reason);
-        Assert.Equal("Strategy template 'Archivable Template' archive olarak isaretlendi.", controller.TempData["AdminStrategyTemplateSuccess"]);
+        Assert.Equal(
+            "Template archive edildi: Archivable Template (archivable-template). Template pasif duruma alindi. Current r0 · Published r1 · Latest r1.",
+            controller.TempData["AdminStrategyTemplateSuccess"]);
     }
 
     [Fact]
@@ -582,7 +588,9 @@ public sealed class AdminControllerTests
         Assert.Equal("Admin.StrategyTemplates.CreateBlocked", audit.ActionType);
         Assert.Equal("custom-template", audit.TargetId);
         Assert.Contains("FailureCode=TemplateKeyAlreadyExists", audit.NewValueSummary, StringComparison.Ordinal);
-        Assert.Equal("TemplateKeyAlreadyExists: Strategy template 'custom-template' already exists.", controller.TempData["AdminStrategyTemplateError"]);
+        Assert.Equal(
+            "Create blocked: secilen template key zaten var. Farkli bir key ile tekrar deneyin.",
+            controller.TempData["AdminStrategyTemplateError"]);
     }
 
 
@@ -616,7 +624,7 @@ public sealed class AdminControllerTests
 
         var redirect = Assert.IsType<RedirectToActionResult>(result);
 
-        Assert.Equal(nameof(AdminController.StrategyTemplates), redirect.ActionName);
+        Assert.Equal(nameof(AdminController.StrategyTemplateDetail), redirect.ActionName);
         Assert.Empty(templateService.CreateCalls);
         Assert.Empty(auditLogService.Requests);
         Assert.Equal("Bu islem icin MFA zorunludur.", controller.TempData["AdminStrategyTemplateError"]);
@@ -645,7 +653,9 @@ public sealed class AdminControllerTests
             CancellationToken.None);
 
         Assert.IsType<RedirectToActionResult>(result);
-        Assert.Equal("Strategy template islemi tamamlanamadi.", controller.TempData["AdminStrategyTemplateError"]);
+        Assert.Equal(
+            "Create islemi tamamlanamadi. Template=custom-template. Teknik hata nedeniyle islem sonuclanamadi.",
+            controller.TempData["AdminStrategyTemplateError"]);
     }
 
     [Fact]
@@ -1779,6 +1789,238 @@ public sealed class AdminControllerTests
     }
 
     [Fact]
+    public async Task Audit_LoadsUltraDebugLogStatus_FromService()
+    {
+        var ultraDebugLogService = new FakeUltraDebugLogService
+        {
+            Snapshot = new UltraDebugLogSnapshot(
+                IsEnabled: true,
+                StartedAtUtc: new DateTime(2026, 4, 22, 8, 0, 0, DateTimeKind.Utc),
+                ExpiresAtUtc: new DateTime(2026, 4, 22, 13, 0, 0, DateTimeKind.Utc),
+                DurationKey: "5h",
+                EnabledByAdminId: "admin-01",
+                EnabledByAdminEmail: "super-admin@coinbot.test",
+                AutoDisabledReason: null,
+                UpdatedAtUtc: new DateTime(2026, 4, 22, 8, 0, 0, DateTimeKind.Utc),
+                IsPersisted: true,
+                NormalLogsLimitMb: 512,
+                UltraLogsLimitMb: 2048,
+                NormalLogsUsageBytes: 3L * 1024L * 1024L,
+                UltraLogsUsageBytes: 2L * 1024L * 1024L,
+                DiskFreeSpaceBytes: 8L * 1024L * 1024L * 1024L,
+                LatestStructuredEvent: new UltraDebugLogEventSnapshot(
+                    Category: "execution",
+                    EventName: "execution_dispatch_submitted",
+                    Summary: "Execution dispatch submitted SOLUSDT.",
+                    OccurredAtUtc: new DateTime(2026, 4, 22, 8, 5, 0, DateTimeKind.Utc),
+                    CorrelationId: "corr-ultra-admin-1",
+                    Symbol: "SOLUSDT",
+                    Timeframe: "1m",
+                    SourceLayer: "ExecutionEngine",
+                    DecisionReasonCode: "Submitted",
+                    BlockerCode: null,
+                    LatencyBreakdownLabel: "total=120ms | execution=120ms"),
+                LatestCategoryEvents:
+                [
+                    new UltraDebugLogEventSnapshot(
+                        Category: "scanner",
+                        EventName: "scanner_cycle_completed",
+                        Summary: "Scanner cycle completed.",
+                        OccurredAtUtc: new DateTime(2026, 4, 22, 8, 1, 0, DateTimeKind.Utc),
+                        Symbol: "SOLUSDT",
+                        Timeframe: "1m",
+                        SourceLayer: "MarketScannerService",
+                        DecisionReasonCode: "CandidateSelected",
+                        LatencyBreakdownLabel: "total=12ms | scanner=12ms"),
+                    new UltraDebugLogEventSnapshot(
+                        Category: "execution",
+                        EventName: "execution_dispatch_submitted",
+                        Summary: "Execution dispatch submitted SOLUSDT.",
+                        OccurredAtUtc: new DateTime(2026, 4, 22, 8, 5, 0, DateTimeKind.Utc),
+                        Symbol: "SOLUSDT",
+                        Timeframe: "1m",
+                        SourceLayer: "ExecutionEngine",
+                        DecisionReasonCode: "Submitted",
+                        LatencyBreakdownLabel: "total=120ms | execution=120ms")
+                ])
+        };
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            ultraDebugLogService: ultraDebugLogService);
+
+        var result = await controller.Audit(null, null, null, null, null, null, null, null, null, 120, CancellationToken.None);
+
+        var viewResult = Assert.IsType<ViewResult>(result);
+        var model = Assert.IsType<AdminIncidentAuditDecisionCenterViewModel>(viewResult.Model);
+        Assert.NotNull(model.UltraDebugLog);
+        Assert.True(model.UltraDebugLog!.IsEnabled);
+        Assert.Equal("Açık", model.UltraDebugLog.StatusLabel);
+        Assert.Equal("super-admin@coinbot.test", model.UltraDebugLog.StartedByAdmin);
+        Assert.Equal("5 saat", model.UltraDebugLog.DurationLabel);
+        Assert.Equal("512 MB", model.UltraDebugLog.NormalLogsLimitLabel);
+        Assert.Equal("2048 MB", model.UltraDebugLog.UltraLogsLimitLabel);
+        Assert.Equal("3 MB / 512 MB", model.UltraDebugLog.NormalLogsUsageLabel);
+        Assert.Equal("2 MB / 2048 MB", model.UltraDebugLog.UltraLogsUsageLabel);
+        Assert.Equal("8192 MB", model.UltraDebugLog.DiskFreeSpaceLabel);
+        Assert.Equal("Normal", model.UltraDebugLog.SafetyModeLabel);
+        Assert.NotNull(model.UltraDebugLog.LatestStructuredEvent);
+        Assert.Equal("Execution", model.UltraDebugLog.LatestStructuredEvent!.CategoryLabel);
+        Assert.Equal("SOLUSDT", model.UltraDebugLog.LatestStructuredEvent.SymbolLabel);
+        Assert.Equal("Submitted", model.UltraDebugLog.LatestStructuredEvent.DecisionReasonCodeLabel);
+        Assert.Equal("ExecutionEngine", model.UltraDebugLog.LatestStructuredEvent.SourceLayerLabel);
+        Assert.Equal("total=120ms | execution=120ms", model.UltraDebugLog.LatestStructuredEvent.LatencyBreakdownLabel);
+        Assert.Equal(2, model.UltraDebugLog.LatestCategoryEvents?.Count);
+    }
+
+    [Fact]
+    public async Task Audit_LoadsUltraDebugLogDiskPressureStatus_FromService()
+    {
+        var ultraDebugLogService = new FakeUltraDebugLogService
+        {
+            Snapshot = new UltraDebugLogSnapshot(
+                IsEnabled: false,
+                StartedAtUtc: new DateTime(2026, 4, 22, 8, 0, 0, DateTimeKind.Utc),
+                ExpiresAtUtc: new DateTime(2026, 4, 22, 13, 0, 0, DateTimeKind.Utc),
+                DurationKey: "5h",
+                EnabledByAdminId: "admin-01",
+                EnabledByAdminEmail: "super-admin@coinbot.test",
+                AutoDisabledReason: "disk_pressure",
+                UpdatedAtUtc: new DateTime(2026, 4, 22, 8, 10, 0, DateTimeKind.Utc),
+                IsPersisted: true,
+                NormalLogsLimitMb: 512,
+                UltraLogsLimitMb: 2048,
+                DiskFreeSpaceBytes: 400L * 1024L * 1024L,
+                IsNormalFallbackMode: true)
+        };
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            ultraDebugLogService: ultraDebugLogService);
+
+        var result = await controller.Audit(null, null, null, null, null, null, null, null, null, 120, CancellationToken.None);
+
+        var viewResult = Assert.IsType<ViewResult>(result);
+        var model = Assert.IsType<AdminIncidentAuditDecisionCenterViewModel>(viewResult.Model);
+        Assert.NotNull(model.UltraDebugLog);
+        Assert.False(model.UltraDebugLog!.IsEnabled);
+        Assert.Equal("Kapalı", model.UltraDebugLog.StatusLabel);
+        Assert.Equal("Disk baskısı nedeniyle kapandı", model.UltraDebugLog.StatusMessage);
+        Assert.Equal("Disk pressure", model.UltraDebugLog.AutoDisabledReasonCode);
+        Assert.Equal("400 MB", model.UltraDebugLog.DiskFreeSpaceLabel);
+        Assert.Equal("Curated fallback aktif", model.UltraDebugLog.SafetyModeLabel);
+    }
+
+    [Fact]
+    public async Task EnableUltraDebugLog_WhenDurationMissing_FailsClosed_AndWritesAudit()
+    {
+        var auditLogService = new FakeAdminAuditLogService();
+        var ultraDebugLogService = new FakeUltraDebugLogService();
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            auditLogService: auditLogService,
+            ultraDebugLogService: ultraDebugLogService);
+
+        var result = await controller.EnableUltraDebugLog(null, 256, 1024, CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.AuditLogs), redirectResult.ActionName);
+        Assert.Equal("Aktivasyon başarısız: süre seçilmedi", controller.TempData["AdminUltraDebugLogError"]);
+        Assert.Null(ultraDebugLogService.EnableRequest);
+        var audit = Assert.Single(auditLogService.Requests);
+        Assert.Equal("ultra_log_enable_failed_validation", audit.ActionType);
+    }
+
+    [Fact]
+    public async Task EnableUltraDebugLog_WhenNormalLogsLimitMissing_FailsClosed_AndWritesAudit()
+    {
+        var auditLogService = new FakeAdminAuditLogService();
+        var ultraDebugLogService = new FakeUltraDebugLogService();
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            auditLogService: auditLogService,
+            ultraDebugLogService: ultraDebugLogService);
+
+        var result = await controller.EnableUltraDebugLog("1h", null, 1024, CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.AuditLogs), redirectResult.ActionName);
+        Assert.Equal("Aktivasyon başarısız: normal logs limiti seçilmedi", controller.TempData["AdminUltraDebugLogError"]);
+        Assert.Null(ultraDebugLogService.EnableRequest);
+        var audit = Assert.Single(auditLogService.Requests);
+        Assert.Equal("ultra_log_enable_failed_validation", audit.ActionType);
+    }
+
+    [Fact]
+    public async Task EnableUltraDebugLog_WhenUltraLogsLimitMissing_FailsClosed_AndWritesAudit()
+    {
+        var auditLogService = new FakeAdminAuditLogService();
+        var ultraDebugLogService = new FakeUltraDebugLogService();
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            auditLogService: auditLogService,
+            ultraDebugLogService: ultraDebugLogService);
+
+        var result = await controller.EnableUltraDebugLog("1h", 256, null, CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.AuditLogs), redirectResult.ActionName);
+        Assert.Equal("Aktivasyon başarısız: ultra logs limiti seçilmedi", controller.TempData["AdminUltraDebugLogError"]);
+        Assert.Null(ultraDebugLogService.EnableRequest);
+        var audit = Assert.Single(auditLogService.Requests);
+        Assert.Equal("ultra_log_enable_failed_validation", audit.ActionType);
+    }
+
+    [Fact]
+    public async Task EnableUltraDebugLog_EnablesMode_AndRedirectsToAuditLogs()
+    {
+        var ultraDebugLogService = new FakeUltraDebugLogService
+        {
+            EnableSnapshot = new UltraDebugLogSnapshot(
+                IsEnabled: true,
+                StartedAtUtc: new DateTime(2026, 4, 22, 9, 0, 0, DateTimeKind.Utc),
+                ExpiresAtUtc: new DateTime(2026, 4, 22, 10, 0, 0, DateTimeKind.Utc),
+                DurationKey: "1h",
+                EnabledByAdminId: "admin-01",
+                EnabledByAdminEmail: "super-admin@coinbot.test",
+                AutoDisabledReason: null,
+                UpdatedAtUtc: new DateTime(2026, 4, 22, 9, 0, 0, DateTimeKind.Utc),
+                IsPersisted: true,
+                NormalLogsLimitMb: 256,
+                UltraLogsLimitMb: 1024)
+        };
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            ultraDebugLogService: ultraDebugLogService);
+
+        var result = await controller.EnableUltraDebugLog("1h", 256, 1024, CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.AuditLogs), redirectResult.ActionName);
+        Assert.Equal("Ultra log aktif", controller.TempData["AdminUltraDebugLogSuccess"]);
+        Assert.NotNull(ultraDebugLogService.EnableRequest);
+        Assert.Equal("1h", ultraDebugLogService.EnableRequest!.DurationKey);
+        Assert.Equal("super-admin@coinbot.test", ultraDebugLogService.EnableRequest.ActorEmail);
+        Assert.Equal(256, ultraDebugLogService.EnableRequest.NormalLogsLimitMb);
+        Assert.Equal(1024, ultraDebugLogService.EnableRequest.UltraLogsLimitMb);
+    }
+
+    [Fact]
+    public async Task DisableUltraDebugLog_DisablesMode_AndRedirectsToAuditLogs()
+    {
+        var ultraDebugLogService = new FakeUltraDebugLogService();
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            ultraDebugLogService: ultraDebugLogService);
+
+        var result = await controller.DisableUltraDebugLog(CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.AuditLogs), redirectResult.ActionName);
+        Assert.Equal("Admin tarafından kapatıldı", controller.TempData["AdminUltraDebugLogSuccess"]);
+        Assert.NotNull(ultraDebugLogService.DisableRequest);
+        Assert.Equal("manual_disable", ultraDebugLogService.DisableRequest!.ReasonCode);
+    }
+
+    [Fact]
     public async Task Search_WhenQueryMissing_ReturnsRealSearchView()
     {
         var controller = CreateController(new FakeGlobalExecutionSwitchService());
@@ -2688,8 +2930,10 @@ public sealed class AdminControllerTests
         FakeDataLatencyCircuitBreaker? dataLatencyCircuitBreaker = null,
         FakeGlobalPolicyEngine? globalPolicyEngine = null,
         FakeCrisisEscalationService? crisisEscalationService = null,
+        FakeUltraDebugLogService? ultraDebugLogService = null,
         BotExecutionPilotOptions? pilotOptions = null,
         string userId = "admin-01",
+        string? email = "super-admin@coinbot.test",
         string traceIdentifier = "trace-001",
         string[]? roles = null,
         string[]? permissions = null,
@@ -2707,6 +2951,10 @@ public sealed class AdminControllerTests
         if (isAuthenticated)
         {
             claims.Add(new Claim(ClaimTypes.NameIdentifier, userId));
+            if (!string.IsNullOrWhiteSpace(email))
+            {
+                claims.Add(new Claim(ClaimTypes.Email, email));
+            }
             claims.AddRange(roles.Select(role => new Claim(ClaimTypes.Role, role)));
             claims.AddRange(permissions.Select(permission => new Claim(ApplicationClaimTypes.Permission, permission)));
         }
@@ -2748,7 +2996,8 @@ public sealed class AdminControllerTests
             privateDataOptions: Options.Create(new BinancePrivateDataOptions
             {
                 ServerTimeSyncRefreshSeconds = 30
-            }))
+            }),
+            ultraDebugLogService: ultraDebugLogService)
         {
             ControllerContext = new ControllerContext
             {
@@ -3197,6 +3446,89 @@ public sealed class AdminControllerTests
         {
             CapturedRequest = request;
             return Task.FromResult(Snapshot);
+        }
+    }
+
+    private sealed class FakeUltraDebugLogService : IUltraDebugLogService
+    {
+        public UltraDebugLogSnapshot Snapshot { get; set; } = new(
+            IsEnabled: false,
+            StartedAtUtc: null,
+            ExpiresAtUtc: null,
+            DurationKey: null,
+            EnabledByAdminId: null,
+            EnabledByAdminEmail: null,
+            AutoDisabledReason: null,
+            UpdatedAtUtc: null,
+            IsPersisted: false,
+            NormalLogsLimitMb: null,
+            UltraLogsLimitMb: null);
+
+        public UltraDebugLogSnapshot EnableSnapshot { get; set; } = new(
+            IsEnabled: true,
+            StartedAtUtc: new DateTime(2026, 4, 22, 9, 0, 0, DateTimeKind.Utc),
+            ExpiresAtUtc: new DateTime(2026, 4, 22, 10, 0, 0, DateTimeKind.Utc),
+            DurationKey: "1h",
+            EnabledByAdminId: "admin-01",
+            EnabledByAdminEmail: "super-admin@coinbot.test",
+            AutoDisabledReason: null,
+            UpdatedAtUtc: new DateTime(2026, 4, 22, 9, 0, 0, DateTimeKind.Utc),
+            IsPersisted: true,
+            NormalLogsLimitMb: 256,
+            UltraLogsLimitMb: 1024);
+
+        public UltraDebugLogEnableRequest? EnableRequest { get; private set; }
+
+        public UltraDebugLogDisableRequest? DisableRequest { get; private set; }
+
+        public List<UltraDebugLogEntry> Entries { get; } = [];
+
+        public IReadOnlyCollection<UltraDebugLogDurationOption> GetDurationOptions()
+        {
+            return
+            [
+                new UltraDebugLogDurationOption("1h", "1 saat", TimeSpan.FromHours(1)),
+                new UltraDebugLogDurationOption("3h", "3 saat", TimeSpan.FromHours(3)),
+                new UltraDebugLogDurationOption("5h", "5 saat", TimeSpan.FromHours(5))
+            ];
+        }
+
+        public IReadOnlyCollection<UltraDebugLogSizeLimitOption> GetLogSizeLimitOptions()
+        {
+            return
+            [
+                new UltraDebugLogSizeLimitOption(128, "128 MB"),
+                new UltraDebugLogSizeLimitOption(256, "256 MB"),
+                new UltraDebugLogSizeLimitOption(512, "512 MB"),
+                new UltraDebugLogSizeLimitOption(1024, "1024 MB"),
+                new UltraDebugLogSizeLimitOption(2048, "2048 MB"),
+                new UltraDebugLogSizeLimitOption(4096, "4096 MB")
+            ];
+        }
+
+        public Task<UltraDebugLogSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(Snapshot);
+        }
+
+        public Task<UltraDebugLogSnapshot> EnableAsync(UltraDebugLogEnableRequest request, CancellationToken cancellationToken = default)
+        {
+            EnableRequest = request;
+            Snapshot = EnableSnapshot;
+            return Task.FromResult(EnableSnapshot);
+        }
+
+        public Task<UltraDebugLogSnapshot> DisableAsync(UltraDebugLogDisableRequest request, CancellationToken cancellationToken = default)
+        {
+            DisableRequest = request;
+            Snapshot = Snapshot with { IsEnabled = false, AutoDisabledReason = request.ReasonCode };
+            return Task.FromResult(Snapshot);
+        }
+
+        public Task WriteAsync(UltraDebugLogEntry entry, CancellationToken cancellationToken = default)
+        {
+            Entries.Add(entry);
+            return Task.CompletedTask;
         }
     }
 

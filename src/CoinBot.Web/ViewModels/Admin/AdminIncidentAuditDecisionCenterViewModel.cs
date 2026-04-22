@@ -11,7 +11,53 @@ public sealed record AdminIncidentAuditDecisionCenterViewModel(
     IReadOnlyCollection<AdminOperationsSummaryCardViewModel> SummaryCards,
     IReadOnlyCollection<AdminIncidentAuditDecisionRowViewModel> Rows,
     AdminIncidentAuditDecisionDetailViewModel Detail,
-    string EmptyStateMessage);
+    string EmptyStateMessage,
+    AdminUltraDebugLogViewModel? UltraDebugLog = null);
+
+public sealed record AdminUltraDebugLogViewModel(
+    bool IsEnabled,
+    string StatusLabel,
+    string StatusTone,
+    string StatusMessage,
+    string StartedByAdmin,
+    string StartedAtUtcLabel,
+    string ExpiresAtUtcLabel,
+    string RemainingLabel,
+    string DurationLabel,
+    string NormalLogsLimitLabel,
+    string UltraLogsLimitLabel,
+    string NormalLogsUsageLabel,
+    string UltraLogsUsageLabel,
+    string DiskFreeSpaceLabel,
+    string SafetyModeLabel,
+    string AutoDisabledReasonCode,
+    IReadOnlyCollection<AdminUltraDebugLogDurationOptionViewModel> DurationOptions,
+    IReadOnlyCollection<AdminUltraDebugLogSizeLimitOptionViewModel> NormalLogsLimitOptions,
+    IReadOnlyCollection<AdminUltraDebugLogSizeLimitOptionViewModel> UltraLogsLimitOptions,
+    AdminUltraDebugStructuredEventViewModel? LatestStructuredEvent = null,
+    IReadOnlyCollection<AdminUltraDebugStructuredEventViewModel>? LatestCategoryEvents = null);
+
+public sealed record AdminUltraDebugStructuredEventViewModel(
+    string CategoryLabel,
+    string EventName,
+    string Summary,
+    string OccurredAtUtcLabel,
+    string SymbolLabel,
+    string TimeframeLabel,
+    string SourceLayerLabel,
+    string DecisionReasonCodeLabel,
+    string BlockerCodeLabel,
+    string LatencyBreakdownLabel);
+
+public sealed record AdminUltraDebugLogDurationOptionViewModel(
+    string Key,
+    string Label,
+    bool IsSelected);
+
+public sealed record AdminUltraDebugLogSizeLimitOptionViewModel(
+    int ValueMb,
+    string Label,
+    bool IsSelected);
 
 public sealed record AdminIncidentAuditDecisionFilterViewModel(
     string? Query,

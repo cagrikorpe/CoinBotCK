@@ -6,6 +6,7 @@ using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Application.Abstractions.Policy;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -24,6 +25,8 @@ public sealed class MarketAnomalyService(
     IDataLatencyCircuitBreaker dataLatencyCircuitBreaker,
     IOptions<MarketAnomalyOptions> options,
     IOptions<AutonomyOptions> autonomyOptions,
+    IOptions<MarketScannerOptions> scannerOptions,
+    IOptions<DataLatencyGuardOptions> dataLatencyGuardOptions,
     IOptions<BinanceMarketDataOptions> marketDataOptions,
     TimeProvider timeProvider,
     ILogger<MarketAnomalyService> logger)
@@ -34,6 +37,14 @@ public sealed class MarketAnomalyService(
     private const string PolicySource = "Autonomy.MarketAnomaly";
     private readonly MarketAnomalyOptions optionsValue = options.Value;
     private readonly AutonomyOptions autonomyOptionsValue = autonomyOptions.Value;
+    private readonly int staleDataWarningSeconds = Math.Max(
+        options.Value.StaleDataWarningSeconds,
+        dataLatencyGuardOptions.Value.StaleDataThresholdSeconds);
+    private readonly int staleDataCriticalSeconds = Math.Max(
+        options.Value.StaleDataCriticalSeconds,
+        Math.Max(
+            scannerOptions.Value.MaxDataAgeSeconds,
+            dataLatencyGuardOptions.Value.StopDataThresholdSeconds));
     private readonly string candleInterval = string.IsNullOrWhiteSpace(marketDataOptions.Value.KlineInterval)
         ? "1m"
         : marketDataOptions.Value.KlineInterval.Trim();
@@ -76,6 +87,11 @@ public sealed class MarketAnomalyService(
     {
         var normalizedSymbol = NormalizeSymbol(symbol);
         var correlationId = $"market-anomaly:{normalizedSymbol}:{nowUtc:yyyyMMddHHmmss}";
+        var scopedLatencySnapshot = await dataLatencyCircuitBreaker.GetSnapshotAsync(
+            correlationId: correlationId,
+            symbol: normalizedSymbol,
+            timeframe: candleInterval,
+            cancellationToken: cancellationToken);
         var latestPrice = await marketDataService.GetLatestPriceAsync(normalizedSymbol, cancellationToken);
         var recentCandles = await dbContext.HistoricalMarketCandles
             .AsNoTracking()
@@ -93,7 +109,7 @@ public sealed class MarketAnomalyService(
 
         var signalLabels = new List<string>(4);
         var metrics = new MarketAnomalyMetrics();
-        var staleDataCritical = ApplyStaleDataSignals(latencySnapshot, latestPrice, recentCandles, nowUtc, signalLabels, metrics);
+        var staleDataCritical = ApplyStaleDataSignals(scopedLatencySnapshot, latestPrice, recentCandles, nowUtc, signalLabels, metrics);
         var usedLatestPrice = latestPrice is not null;
         var usedHistoricalCandles = recentCandles.Count > 0;
         const bool usedDegradedMode = true;
@@ -333,18 +349,20 @@ public sealed class MarketAnomalyService(
             : latestPrice.ReceivedAtUtc > latestPrice.ObservedAtUtc
                 ? latestPrice.ReceivedAtUtc
                 : latestPrice.ObservedAtUtc;
-        var latestCandleReceivedAtUtc = recentCandles.Count == 0 ? (DateTime?)null : recentCandles[^1].ReceivedAtUtc;
+        var latestCandleCloseTimeUtc = recentCandles.Count == 0
+            ? (DateTime?)null
+            : NormalizeUtc(recentCandles[^1].CloseTimeUtc);
 
         metrics.PriceAgeSeconds = latestObservedAtUtc.HasValue
             ? Math.Max(0, (int)Math.Round((nowUtc - latestObservedAtUtc.Value).TotalSeconds, MidpointRounding.AwayFromZero))
             : null;
-        metrics.CandleAgeSeconds = latestCandleReceivedAtUtc.HasValue
-            ? Math.Max(0, (int)Math.Round((nowUtc - latestCandleReceivedAtUtc.Value).TotalSeconds, MidpointRounding.AwayFromZero))
+        metrics.CandleAgeSeconds = latestCandleCloseTimeUtc.HasValue
+            ? Math.Max(0, (int)Math.Round((nowUtc - latestCandleCloseTimeUtc.Value).TotalSeconds, MidpointRounding.AwayFromZero))
             : null;
 
         var isCritical = !latencySnapshot.IsNormal ||
-                         metrics.PriceAgeSeconds >= optionsValue.StaleDataCriticalSeconds ||
-                         metrics.CandleAgeSeconds >= optionsValue.StaleDataCriticalSeconds;
+                         metrics.PriceAgeSeconds >= staleDataCriticalSeconds ||
+                         metrics.CandleAgeSeconds >= staleDataCriticalSeconds;
 
         if (isCritical)
         {
@@ -353,8 +371,8 @@ public sealed class MarketAnomalyService(
             return true;
         }
 
-        if (metrics.PriceAgeSeconds >= optionsValue.StaleDataWarningSeconds ||
-            metrics.CandleAgeSeconds >= optionsValue.StaleDataWarningSeconds)
+        if (metrics.PriceAgeSeconds >= staleDataWarningSeconds ||
+            metrics.CandleAgeSeconds >= staleDataWarningSeconds)
         {
             signalLabels.Add("DataAge");
             metrics.SeverityScore += 1;
@@ -619,6 +637,16 @@ public sealed class MarketAnomalyService(
         return ordered.Length % 2 == 0
             ? (ordered[middle - 1] + ordered[middle]) / 2m
             : ordered[middle];
+    }
+
+    private static DateTime NormalizeUtc(DateTime value)
+    {
+        return value.Kind switch
+        {
+            DateTimeKind.Utc => value,
+            DateTimeKind.Local => value.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+        };
     }
 
     private static string NormalizeSymbol(string symbol)

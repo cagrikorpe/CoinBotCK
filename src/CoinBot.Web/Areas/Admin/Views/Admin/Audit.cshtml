@@ -3,7 +3,7 @@
 @{
     string BuildFocusHref(string focusReference)
     {
-        return Url.Action("Audit", "Admin", new
+        return Url.Action("AuditLogs", "Admin", new
         {
             area = "Admin",
             query = Model.Filters.Query,
@@ -18,6 +18,8 @@
             focus = focusReference
         }) ?? "#";
     }
+
+    var ultraLog = Model.UltraDebugLog;
 
     string? traceDetailHref = Model.Detail.HasSelection && !string.Equals(Model.Detail.CorrelationId, "Unavailable", StringComparison.OrdinalIgnoreCase)
         ? Url.Action("TraceDetail", "Admin", new
@@ -88,6 +90,205 @@
                         </div>
                     }
                 </div>
+
+                @if (TempData["AdminUltraDebugLogSuccess"] is string ultraLogSuccessMessage)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-healthy mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Ultra log durumu</div>
+                            <div class="cb-admin-info-strip-text">@ultraLogSuccessMessage</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Applied</span>
+                    </div>
+                }
+
+                @if (TempData["AdminUltraDebugLogError"] is string ultraLogErrorMessage)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-danger mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Ultra log rejected</div>
+                            <div class="cb-admin-info-strip-text">@ultraLogErrorMessage</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Blocked</span>
+                    </div>
+                }
+
+                @if (ultraLog is not null)
+                {
+                    <div class="cb-admin-table-header mt-6 mb-4">
+                        <div>
+                            <div class="cb-admin-section-kicker">Ultra Debug Log</div>
+                            <div class="cb-admin-section-title">Süreli ve kalıcı ultra debug mode</div>
+                            <p class="cb-admin-section-description mb-0">Normal bucket yazımı sürer. Ultra bucket yalnız süreli mode açıkken güvenli özetler yazar.</p>
+                        </div>
+                        @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+                        {
+                            Label = ultraLog.StatusLabel,
+                            Tone = ultraLog.StatusTone,
+                            IconText = "UL"
+                        })
+                    </div>
+
+                    <div class="cb-admin-summary-grid">
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">Durum</span>
+                            <strong>@ultraLog.StatusLabel</strong>
+                            <small>@ultraLog.StatusMessage</small>
+                        </div>
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">Başlatan admin</span>
+                            <strong>@ultraLog.StartedByAdmin</strong>
+                            <small>Duration=@ultraLog.DurationLabel</small>
+                        </div>
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">Normal logs limiti</span>
+                            <strong>@ultraLog.NormalLogsLimitLabel</strong>
+                            <small>Her zaman yazan bucket</small>
+                        </div>
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">Ultra logs limiti</span>
+                            <strong>@ultraLog.UltraLogsLimitLabel</strong>
+                            <small>Yalnız ultra mode açıkken</small>
+                        </div>
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">Normal logs kullanım</span>
+                            <strong>@ultraLog.NormalLogsUsageLabel</strong>
+                            <small>Limit=@ultraLog.NormalLogsLimitLabel</small>
+                        </div>
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">Ultra logs kullanım</span>
+                            <strong>@ultraLog.UltraLogsUsageLabel</strong>
+                            <small>Limit=@ultraLog.UltraLogsLimitLabel</small>
+                        </div>
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">Disk free space</span>
+                            <strong>@ultraLog.DiskFreeSpaceLabel</strong>
+                            <small>Log root için kullanılabilir alan</small>
+                        </div>
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">Safety mode</span>
+                            <strong>@ultraLog.SafetyModeLabel</strong>
+                            <small>Disk pressure / write failure fallback</small>
+                        </div>
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">Başlangıç</span>
+                            <strong>@ultraLog.StartedAtUtcLabel</strong>
+                            <small>Bitiş=@ultraLog.ExpiresAtUtcLabel</small>
+                        </div>
+                        <div class="cb-admin-summary-card">
+                            <span class="cb-admin-summary-label">Kalan süre</span>
+                            <strong>@ultraLog.RemainingLabel</strong>
+                            <small>Reason=@ultraLog.AutoDisabledReasonCode</small>
+                        </div>
+                    </div>
+
+                    @if (ultraLog.LatestStructuredEvent is not null)
+                    {
+                        <div class="cb-admin-table-header mt-6 mb-4">
+                            <div>
+                                <div class="cb-admin-section-kicker">Structured Observability</div>
+                                <div class="cb-admin-section-title">Son ultra-debug event özeti</div>
+                                <p class="cb-admin-section-description mb-0">Category, blocker ve latency özeti tek yüzeyde görünür. Alanlar masked NDJSON kaydından derive edilir.</p>
+                            </div>
+                        </div>
+
+                        <div class="cb-admin-summary-grid">
+                            <div class="cb-admin-summary-card">
+                                <span class="cb-admin-summary-label">Son category</span>
+                                <strong>@ultraLog.LatestStructuredEvent.CategoryLabel</strong>
+                                <small>@ultraLog.LatestStructuredEvent.EventName</small>
+                            </div>
+                            <div class="cb-admin-summary-card">
+                                <span class="cb-admin-summary-label">Son symbol / timeframe</span>
+                                <strong>@ultraLog.LatestStructuredEvent.SymbolLabel</strong>
+                                <small>@ultraLog.LatestStructuredEvent.TimeframeLabel</small>
+                            </div>
+                            <div class="cb-admin-summary-card">
+                                <span class="cb-admin-summary-label">Son source layer</span>
+                                <strong>@ultraLog.LatestStructuredEvent.SourceLayerLabel</strong>
+                                <small>@ultraLog.LatestStructuredEvent.OccurredAtUtcLabel</small>
+                            </div>
+                            <div class="cb-admin-summary-card">
+                                <span class="cb-admin-summary-label">Son reason / blocker</span>
+                                <strong>@ultraLog.LatestStructuredEvent.DecisionReasonCodeLabel</strong>
+                                <small>@ultraLog.LatestStructuredEvent.BlockerCodeLabel</small>
+                            </div>
+                            <div class="cb-admin-summary-card">
+                                <span class="cb-admin-summary-label">Son latency breakdown</span>
+                                <strong>@ultraLog.LatestStructuredEvent.LatencyBreakdownLabel</strong>
+                                <small>@ultraLog.LatestStructuredEvent.Summary</small>
+                            </div>
+                        </div>
+                    }
+
+                    @if (ultraLog.LatestCategoryEvents?.Count > 0)
+                    {
+                        <div class="cb-admin-summary-grid mt-4">
+                            @foreach (var categoryEvent in ultraLog.LatestCategoryEvents)
+                            {
+                                <div class="cb-admin-summary-card">
+                                    <span class="cb-admin-summary-label">@categoryEvent.CategoryLabel</span>
+                                    <strong>@categoryEvent.EventName</strong>
+                                    <small>@categoryEvent.SymbolLabel · @categoryEvent.TimeframeLabel · @categoryEvent.LatencyBreakdownLabel</small>
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    <div class="row mt-4">
+                        <div class="col-lg-8">
+                            <form asp-area="Admin" asp-controller="Admin" asp-action="EnableUltraDebugLog" method="post" class="row">
+                                @Html.AntiForgeryToken()
+                                <div class="col-md-3 mb-4">
+                                    <label class="form-label">Ultra Detaylı Log Modu</label>
+                                    <div class="form-control d-flex align-items-center gap-2">
+                                        <input type="checkbox" @(ultraLog.IsEnabled ? "checked" : null) @(ultraLog.IsEnabled ? "disabled" : null) />
+                                        <span>@(ultraLog.IsEnabled ? "Açık" : "Kapalı")</span>
+                                    </div>
+                                </div>
+                                <div class="col-md-3 mb-4">
+                                    <label class="form-label">Süre</label>
+                                    <select name="durationKey" class="form-control" required>
+                                        <option value="">Süre seçin</option>
+                                        @foreach (var duration in ultraLog.DurationOptions)
+                                        {
+                                            <option value="@duration.Key" selected="@duration.IsSelected">@duration.Label</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="col-md-3 mb-4">
+                                    <label class="form-label">Normal Logs Limiti (MB)</label>
+                                    <select name="normalLogsLimitMb" class="form-control" required>
+                                        <option value="">Limit seçin</option>
+                                        @foreach (var limit in ultraLog.NormalLogsLimitOptions)
+                                        {
+                                            <option value="@limit.ValueMb" selected="@limit.IsSelected">@limit.Label</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="col-md-3 mb-4">
+                                    <label class="form-label">Ultra Logs Limiti (MB)</label>
+                                    <select name="ultraLogsLimitMb" class="form-control" required>
+                                        <option value="">Limit seçin</option>
+                                        @foreach (var limit in ultraLog.UltraLogsLimitOptions)
+                                        {
+                                            <option value="@limit.ValueMb" selected="@limit.IsSelected">@limit.Label</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="col-md-12 mb-4 d-flex align-items-end">
+                                    <button type="submit" class="btn btn-primary font-weight-bolder w-100" @(ultraLog.IsEnabled ? "disabled" : null)>Ultra log aç</button>
+                                </div>
+                            </form>
+                        </div>
+                        <div class="col-lg-4">
+                            <form asp-area="Admin" asp-controller="Admin" asp-action="DisableUltraDebugLog" method="post" class="h-100 d-flex align-items-end">
+                                @Html.AntiForgeryToken()
+                                <button type="submit" class="btn btn-light-danger font-weight-bolder w-100" @(!ultraLog.IsEnabled ? "disabled" : null)>Ultra log kapat</button>
+                            </form>
+                        </div>
+                    </div>
+                }
             </div>
         </div>
     </div>
@@ -113,7 +314,7 @@
                     })
                 </div>
 
-                <form asp-area="Admin" asp-controller="Admin" asp-action="Audit" method="get" class="row">
+                <form asp-area="Admin" asp-controller="Admin" asp-action="AuditLogs" method="get" class="row">
                     <div class="col-md-3 mb-4">
                         <label class="form-label">Query</label>
                         <input name="query" class="form-control" value="@Model.Filters.Query" maxlength="128" placeholder="Correlation / action / summary" />
@@ -158,7 +359,7 @@
                     </div>
                     <div class="col-md-2 mb-4 d-flex align-items-end gap-2">
                         <button type="submit" class="btn btn-primary font-weight-bolder">Uygula</button>
-                        <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" class="btn btn-light font-weight-bold">Temizle</a>
+                        <a asp-area="Admin" asp-controller="Admin" asp-action="AuditLogs" class="btn btn-light font-weight-bold">Temizle</a>
                     </div>
                 </form>
             </div>

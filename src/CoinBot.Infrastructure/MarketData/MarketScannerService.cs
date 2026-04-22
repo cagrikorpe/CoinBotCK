@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Application.Abstractions.Strategies;
@@ -26,7 +27,8 @@ public sealed class MarketScannerService(
     IIndicatorDataService? indicatorDataService = null,
     IStrategyEvaluatorService? strategyEvaluatorService = null,
     IOptions<BotExecutionPilotOptions>? botExecutionPilotOptions = null,
-    IBinanceHistoricalKlineClient? historicalKlineClient = null)
+    IBinanceHistoricalKlineClient? historicalKlineClient = null,
+    IUltraDebugLogService? ultraDebugLogService = null)
 {
     internal const string WorkerKey = "market-scanner";
     internal const string WorkerName = "Market Scanner";
@@ -130,6 +132,83 @@ public sealed class MarketScannerService(
             cycle.EligibleCandidateCount,
             cycle.TopCandidateCount,
             cycle.BestCandidateSymbol ?? "n/a");
+
+        if (ultraDebugLogService is not null)
+        {
+            var cycleDurationMilliseconds = Math.Max(
+                0,
+                (int)Math.Round(
+                    (cycle.CompletedAtUtc - startedAtUtc).TotalMilliseconds,
+                    MidpointRounding.AwayFromZero));
+            var latestCandleAtUtc = candidates
+                .Where(item => item.LastCandleAtUtc.HasValue)
+                .OrderByDescending(item => item.LastCandleAtUtc)
+                .Select(item => item.LastCandleAtUtc)
+                .FirstOrDefault();
+            var rejectionSummary = candidates
+                .Where(item => !item.IsEligible && !string.IsNullOrWhiteSpace(item.RejectionReason))
+                .GroupBy(item => item.RejectionReason!, StringComparer.Ordinal)
+                .Select(group => new
+                {
+                    reason = group.Key,
+                    count = group.Count(),
+                    symbols = group.Select(item => item.Symbol).Take(3).ToArray()
+                })
+                .OrderByDescending(item => item.count)
+                .ThenBy(item => item.reason, StringComparer.Ordinal)
+                .Take(5)
+                .ToArray();
+
+            await ultraDebugLogService.WriteAsync(
+                new UltraDebugLogEntry(
+                    Category: "scanner",
+                    EventName: freshnessPause is null ? "scanner_cycle_completed" : "scanner_cycle_freshness_pause",
+                    Summary: freshnessPause is null
+                        ? $"Scanner cycle persisted {cycle.ScannedSymbolCount} symbols and {cycle.EligibleCandidateCount} eligible candidates."
+                        : freshnessPause.Summary,
+                    CorrelationId: cycle.Id.ToString("N"),
+                    Detail: new
+                    {
+                        category = "scanner",
+                        sourceLayer = nameof(MarketScannerService),
+                        timeframe = klineInterval,
+                        decisionOutcome = freshnessPause is null ? "Persisted" : "FreshnessPause",
+                        decisionReasonType = freshnessPause is null ? null : "FreshnessGuard",
+                        decisionReasonCode = freshnessPause is null ? null : "StaleMarketData",
+                        candidateCount = cycle.ScannedSymbolCount,
+                        scanCycleId = cycle.Id,
+                        scannedSymbolCount = cycle.ScannedSymbolCount,
+                        eligibleCandidateCount = cycle.EligibleCandidateCount,
+                        topCandidateCount = cycle.TopCandidateCount,
+                        bestCandidateSymbol = cycle.BestCandidateSymbol,
+                        bestCandidateScore = cycle.BestCandidateScore,
+                        selectedSymbol = cycle.BestCandidateSymbol,
+                        environment = signalEvaluationMode.ToString(),
+                        plane = ExchangeDataPlane.Futures.ToString(),
+                        lastCandleAtUtc = latestCandleAtUtc,
+                        dataAgeMs = latestCandleAtUtc.HasValue
+                            ? (long?)Math.Max(
+                                0,
+                                (long)Math.Round(
+                                    (cycle.CompletedAtUtc - latestCandleAtUtc.Value).TotalMilliseconds,
+                                    MidpointRounding.AwayFromZero))
+                            : null,
+                        latencyBreakdown = new
+                        {
+                            totalMs = cycleDurationMilliseconds,
+                            scannerMs = cycleDurationMilliseconds,
+                            strategyMs = (int?)null,
+                            handoffMs = (int?)null,
+                            executionMs = (int?)null,
+                            exchangeMs = (int?)null,
+                            persistMs = (int?)null
+                        },
+                        cycleDurationMilliseconds,
+                        cycleSummary = cycle.Summary,
+                        rejectionSummary
+                    }),
+                cancellationToken);
+        }
 
         return cycle;
     }

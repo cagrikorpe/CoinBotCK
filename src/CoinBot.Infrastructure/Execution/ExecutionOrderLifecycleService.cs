@@ -1,4 +1,5 @@
 using System.Globalization;
+using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Auditing;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
@@ -22,7 +23,8 @@ public sealed class ExecutionOrderLifecycleService(
     IHostEnvironment? hostEnvironment = null,
     UserOperationsStreamHub? userOperationsStreamHub = null,
     ISpotPortfolioAccountingService? spotPortfolioAccountingService = null,
-    IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null)
+    IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null,
+    IUltraDebugLogService? ultraDebugLogService = null)
 {
     private const string SystemActor = "system:execution-order-lifecycle";
     private static readonly ExecutionOrderState[] OpenStates =
@@ -266,6 +268,59 @@ public sealed class ExecutionOrderLifecycleService(
 
             dbContext.ChangeTracker.Clear();
             return;
+        }
+
+        if (ultraDebugLogService is not null &&
+            (stateChanged || fillProgressAdvanced || reconciliationStatus.HasValue))
+        {
+            await ultraDebugLogService.WriteAsync(
+                new UltraDebugLogEntry(
+                    Category: "execution.lifecycle",
+                    EventName: reconciliationStatus.HasValue
+                        ? "execution_reconciliation_applied"
+                        : "execution_exchange_update_applied",
+                    Summary: $"Execution lifecycle synchronized {order.Symbol} to {order.State}.",
+                    CorrelationId: order.RootCorrelationId,
+                    Symbol: order.Symbol,
+                    ExecutionAttemptId: order.Id.ToString("N"),
+                    StrategySignalId: order.StrategySignalId.ToString("N"),
+                    Detail: new
+                    {
+                        category = "execution",
+                        sourceLayer = nameof(ExecutionOrderLifecycleService),
+                        symbol = order.Symbol,
+                        timeframe = order.Timeframe,
+                        executionOrderId = order.Id,
+                        orderId = order.Id,
+                        botId = order.BotId,
+                        strategyId = order.TradingStrategyId,
+                        strategyVersionId = order.TradingStrategyVersionId,
+                        strategyKey = order.StrategyKey,
+                        decisionOutcome = order.State.ToString(),
+                        decisionReasonType = reconciliationStatus.HasValue ? "Reconciliation" : "ExchangeUpdate",
+                        decisionReasonCode = reconciliationStatus?.ToString() ?? order.State.ToString(),
+                        previousState = previousState.ToString(),
+                        currentState = order.State.ToString(),
+                        fillProgressAdvanced,
+                        filledQuantity = order.FilledQuantity,
+                        submittedToBroker = order.SubmittedToBroker,
+                        reconciliationStatus = reconciliationStatus?.ToString(),
+                        reconciliationSummary,
+                        externalOrderId = order.ExternalOrderId,
+                        environment = order.ExecutionEnvironment.ToString(),
+                        plane = order.Plane.ToString(),
+                        latencyBreakdown = new
+                        {
+                            totalMs = (int?)null,
+                            scannerMs = (int?)null,
+                            strategyMs = (int?)null,
+                            handoffMs = (int?)null,
+                            executionMs = (int?)null,
+                            exchangeMs = (int?)null,
+                            persistMs = (int?)null
+                        }
+                    }),
+                cancellationToken);
         }
 
         await UpdateBotRuntimeCountsAfterPersistAsync(order, cancellationToken);
