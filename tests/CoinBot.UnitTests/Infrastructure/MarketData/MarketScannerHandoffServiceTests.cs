@@ -93,6 +93,124 @@ public sealed class MarketScannerHandoffServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_UsesBotLeverageAndMarginType_InLiveHandoffContext_InsteadOfPilotDefaults()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        await using var harness = CreateHarness(
+            nowUtc,
+            new BotExecutionPilotOptions
+            {
+                SignalEvaluationMode = ExecutionEnvironment.Live,
+                ExecutionDispatchMode = ExecutionEnvironment.Live,
+                PilotActivationEnabled = true,
+                DefaultLeverage = 5m,
+                DefaultMarginType = "CROSS",
+                PrimeHistoricalCandleCount = 34
+            });
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-btc", "BTCUSDT", "pilot-btc-source");
+        var botEntity = await harness.DbContext.TradingBots.SingleAsync(entity => entity.Id == bot.BotId);
+        botEntity.Leverage = 1m;
+        botEntity.MarginType = "isolated";
+        await harness.DbContext.SaveChangesAsync();
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "BTCUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "BTCUSDT", rank: 1, score: 10_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("BTCUSDT", "BTC", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "BTCUSDT", "1m", harness.NowUtc));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
+        Assert.Contains("PilotMarginType=ISOLATED", harness.ExecutionGate.LastRequest?.Context, StringComparison.Ordinal);
+        Assert.Contains("PilotLeverage=1", harness.ExecutionGate.LastRequest?.Context, StringComparison.Ordinal);
+        Assert.DoesNotContain("PilotMarginType=CROSS", harness.ExecutionGate.LastRequest?.Context, StringComparison.Ordinal);
+        Assert.DoesNotContain("PilotLeverage=5", harness.ExecutionGate.LastRequest?.Context, StringComparison.Ordinal);
+        Assert.Contains("PilotMarginType=ISOLATED", harness.ExecutionEngine.LastCommand?.Context, StringComparison.Ordinal);
+        Assert.Contains("PilotLeverage=1", harness.ExecutionEngine.LastCommand?.Context, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_BlocksLegacyBot_WhenPilotLeverageIsInvalid()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-legacy", "SOLUSDT", "pilot-legacy");
+        var botEntity = await harness.DbContext.TradingBots.SingleAsync(entity => entity.Id == bot.BotId);
+        botEntity.Leverage = 5m;
+        await harness.DbContext.SaveChangesAsync();
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 10_000m);
+        await harness.DbContext.SaveChangesAsync();
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("PilotLeverageMustBeOne", attempt.BlockerCode);
+        Assert.Equal("NotEvaluated", attempt.StrategyDecisionOutcome);
+        Assert.Contains("leverage must resolve to 1x", attempt.BlockerDetail, StringComparison.Ordinal);
+        Assert.Null(harness.ExecutionGate.LastRequest);
+        Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
+        Assert.Null(harness.ExecutionEngine.LastCommand);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_UsesProtectedMinNotionalSizingParity_ForEntryQuantity()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-sizing", "BTCUSDT", "pilot-sizing");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "BTCUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "BTCUSDT", rank: 1, score: 10_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("BTCUSDT", "BTC", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "BTCUSDT", "1m", harness.NowUtc));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        var order = await harness.DbContext.ExecutionOrders.SingleAsync(entity => entity.StrategySignalId == attempt.StrategySignalId);
+        Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
+        Assert.Equal(1.020m, order.Quantity);
+        Assert.Equal(1.020m, harness.ExecutionEngine.LastCommand?.Quantity);
+        Assert.Equal(1.020m, harness.UserExecutionOverrideGuard.LastRequest?.Quantity);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_FallsBackToExchangeInfoMetadata_WhenCacheMetadataIsMissing()
+    {
+        var metadata = new SymbolMetadataSnapshot("BTCUSDT", "Binance", "BTC", "USDT", 0.1m, 0.001m, "TRADING", true, new DateTime(2026, 4, 3, 12, 0, 0, DateTimeKind.Utc))
+        {
+            MinQuantity = 0.001m,
+            MinNotional = 100m,
+            QuantityPrecision = 3
+        };
+        await using var harness = CreateHarness(
+            new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero),
+            exchangeInfoClient: new FakeExchangeInfoClient(new Dictionary<string, SymbolMetadataSnapshot>(StringComparer.Ordinal)
+            {
+                ["BTCUSDT"] = metadata
+            }));
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-fallback", "BTCUSDT", "pilot-fallback");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "BTCUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "BTCUSDT", rank: 1, score: 10_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetPrice("BTCUSDT", 100m);
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "BTCUSDT", "1m", harness.NowUtc));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
+        Assert.Equal(1.020m, harness.ExecutionEngine.LastCommand?.Quantity);
+        Assert.Equal("BTC", harness.ExecutionEngine.LastCommand?.BaseAsset);
+        Assert.Equal("USDT", harness.ExecutionEngine.LastCommand?.QuoteAsset);
+    }
+
+    [Fact]
     public async Task RunOnceAsync_PropagatesBotExchangeAccountId_ToDemoExecutionOrder_WhenResolvedTradingModeIsDemo()
     {
         var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
@@ -195,6 +313,183 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
         Assert.Null(harness.ExecutionEngine.LastCommand);
         Assert.Empty(harness.DbContext.ExecutionOrders);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_SuppressesSameDirectionLongEntry_WhenLiveLongPositionAlreadyExists()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-long-open", "BTCUSDT", "pilot-long-open");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "BTCUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "BTCUSDT", rank: 1, score: 10_000m);
+        await SeedExchangePositionAsync(harness.DbContext, bot, "BTCUSDT", quantity: 0.020m, entryPrice: 100m, positionSide: "BOTH", observedAtUtc: harness.NowUtc);
+        harness.MarketDataService.SetMetadata("BTCUSDT", "BTC", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "BTCUSDT", "1m", harness.NowUtc));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("SameDirectionLongEntrySuppressed", attempt.BlockerCode);
+        Assert.Equal("Persisted", attempt.StrategyDecisionOutcome);
+        Assert.Contains("open long position already exists", attempt.BlockerDetail, StringComparison.Ordinal);
+        Assert.Null(harness.ExecutionGate.LastRequest);
+        Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
+        Assert.Null(harness.ExecutionEngine.LastCommand);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_SuppressesSameDirectionShortEntry_WhenLiveShortPositionAlreadyExists()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-short-open", "SOLUSDT", "pilot-short-open");
+        var botEntity = await harness.DbContext.TradingBots.SingleAsync(entity => entity.Id == bot.BotId);
+        botEntity.DirectionMode = TradingBotDirectionMode.LongShort;
+        await harness.DbContext.SaveChangesAsync();
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 10_000m);
+        await SeedExchangePositionAsync(harness.DbContext, bot, "SOLUSDT", quantity: 0.030m, entryPrice: 100m, positionSide: "SHORT", observedAtUtc: harness.NowUtc);
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(
+            bot.TradingStrategyId,
+            bot.TradingStrategyVersionId,
+            "SOLUSDT",
+            "1m",
+            harness.NowUtc,
+            direction: StrategyTradeDirection.Short));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("SameDirectionShortEntrySuppressed", attempt.BlockerCode);
+        Assert.Equal("Persisted", attempt.StrategyDecisionOutcome);
+        Assert.Contains("open short position already exists", attempt.BlockerDetail, StringComparison.Ordinal);
+        Assert.Null(harness.ExecutionGate.LastRequest);
+        Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
+        Assert.Null(harness.ExecutionEngine.LastCommand);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_SuppressesReverseEntry_WhenLivePositionExistsInOppositeDirection()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-reverse", "BTCUSDT", "pilot-reverse");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "BTCUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "BTCUSDT", rank: 1, score: 10_000m);
+        await SeedExchangePositionAsync(harness.DbContext, bot, "BTCUSDT", quantity: 0.020m, entryPrice: 100m, positionSide: "SHORT", observedAtUtc: harness.NowUtc);
+        harness.MarketDataService.SetMetadata("BTCUSDT", "BTC", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "BTCUSDT", "1m", harness.NowUtc));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("ReverseBlockedOpenPositionExists", attempt.BlockerCode);
+        Assert.Equal("Persisted", attempt.StrategyDecisionOutcome);
+        Assert.Contains("reverse entries are disabled", attempt.BlockerDetail, StringComparison.Ordinal);
+        Assert.Contains("CurrentPositionDirection=Short", attempt.BlockerDetail, StringComparison.Ordinal);
+        Assert.Null(harness.ExecutionGate.LastRequest);
+        Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
+        Assert.Null(harness.ExecutionEngine.LastCommand);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_BlocksLongReentry_WhenEntryHysteresisIsActive()
+    {
+        await using var harness = CreateHarness(
+            new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero),
+            new BotExecutionPilotOptions
+            {
+                SignalEvaluationMode = ExecutionEnvironment.Live,
+                PrimeHistoricalCandleCount = 34,
+                EnableEntryHysteresis = true,
+                EntryHysteresisCooldownMinutes = 0,
+                EntryHysteresisReentryBufferPercentage = 0m,
+                LongEntryHysteresisCooldownMinutes = 0,
+                LongEntryHysteresisReentryBufferPercentage = 0.20m
+            });
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-long-hysteresis", "BTCUSDT", "pilot-long-hysteresis");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "BTCUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "BTCUSDT", rank: 1, score: 10_000m);
+        await SeedFilledReduceOnlyExitOrderAsync(
+            harness.DbContext,
+            bot,
+            "BTCUSDT",
+            price: 100m,
+            createdAtUtc: harness.NowUtc.AddMinutes(-10));
+        harness.MarketDataService.SetMetadata("BTCUSDT", "BTC", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "BTCUSDT", "1m", harness.NowUtc));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("LongEntryHysteresisActive", attempt.BlockerCode);
+        Assert.Equal("Persisted", attempt.StrategyDecisionOutcome);
+        Assert.Contains("long rearm", attempt.BlockerDetail, StringComparison.Ordinal);
+        Assert.Null(harness.ExecutionGate.LastRequest);
+        Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
+        Assert.Null(harness.ExecutionEngine.LastCommand);
+        Assert.False(await harness.DbContext.ExecutionOrders.AnyAsync(entity => entity.StrategySignalId == attempt.StrategySignalId));
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_BlocksShortReentry_WhenEntryHysteresisIsActive()
+    {
+        await using var harness = CreateHarness(
+            new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero),
+            new BotExecutionPilotOptions
+            {
+                SignalEvaluationMode = ExecutionEnvironment.Live,
+                PrimeHistoricalCandleCount = 34,
+                EnableEntryHysteresis = true,
+                EntryHysteresisCooldownMinutes = 0,
+                EntryHysteresisReentryBufferPercentage = 0m,
+                ShortEntryHysteresisCooldownMinutes = 0,
+                ShortEntryHysteresisReentryBufferPercentage = 0.20m
+            });
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-short-hysteresis", "SOLUSDT", "pilot-short-hysteresis");
+        var botEntity = await harness.DbContext.TradingBots.SingleAsync(entity => entity.Id == bot.BotId);
+        botEntity.DirectionMode = TradingBotDirectionMode.LongShort;
+        await harness.DbContext.SaveChangesAsync();
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 10_000m);
+        await SeedFilledReduceOnlyExitOrderAsync(
+            harness.DbContext,
+            bot,
+            "SOLUSDT",
+            price: 100m,
+            createdAtUtc: harness.NowUtc.AddMinutes(-10),
+            side: ExecutionOrderSide.Buy);
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(
+            bot.TradingStrategyId,
+            bot.TradingStrategyVersionId,
+            "SOLUSDT",
+            "1m",
+            harness.NowUtc,
+            direction: StrategyTradeDirection.Short));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("ShortEntryHysteresisActive", attempt.BlockerCode);
+        Assert.Equal("Persisted", attempt.StrategyDecisionOutcome);
+        Assert.Contains("short rearm", attempt.BlockerDetail, StringComparison.Ordinal);
+        Assert.Null(harness.ExecutionGate.LastRequest);
+        Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
+        Assert.Null(harness.ExecutionEngine.LastCommand);
+        Assert.False(await harness.DbContext.ExecutionOrders.AnyAsync(entity => entity.StrategySignalId == attempt.StrategySignalId));
     }
 
     [Fact]
@@ -456,6 +751,351 @@ public sealed class MarketScannerHandoffServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_ReusesExistingPreparedAttempt_WhenSameSignalReplaysSameExecutionIntent()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var firstScanCycleId = Guid.NewGuid();
+        var replayScanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-sol", "SOLUSDT", "pilot-sol");
+        var signal = CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "SOLUSDT", "1m", harness.NowUtc);
+
+        SeedScanCycle(harness.DbContext, firstScanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, firstScanCycleId, "SOLUSDT", rank: 1, score: 9_000m);
+        SeedScanCycle(harness.DbContext, replayScanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, replayScanCycleId, "SOLUSDT", rank: 1, score: 9_100m);
+        await harness.DbContext.SaveChangesAsync();
+
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(signal);
+
+        var firstAttempt = await harness.Service.RunOnceAsync(firstScanCycleId);
+        var replayAttempt = await harness.Service.RunOnceAsync(replayScanCycleId);
+
+        var preparedAttempts = await harness.DbContext.MarketScannerHandoffAttempts
+            .Where(entity =>
+                entity.StrategySignalId == signal.StrategySignalId &&
+                entity.ExecutionRequestStatus == "Prepared" &&
+                entity.ExecutionEnvironment == ExecutionEnvironment.Live &&
+                entity.ExecutionSide == ExecutionOrderSide.Buy)
+            .ToListAsync();
+
+        Assert.Equal(firstAttempt.Id, replayAttempt.Id);
+        Assert.Single(preparedAttempts);
+        Assert.Single(harness.DbContext.ExecutionOrders.Where(entity => entity.StrategySignalId == signal.StrategySignalId));
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_ReusesExistingPreparedAttempt_WhenSameSignalReplayOccursAfterNewerBlockedAttempt()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var firstScanCycleId = Guid.NewGuid();
+        var replayScanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-sol", "SOLUSDT", "pilot-sol");
+        var signal = CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "SOLUSDT", "1m", harness.NowUtc);
+
+        SeedScanCycle(harness.DbContext, firstScanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, firstScanCycleId, "SOLUSDT", rank: 1, score: 9_000m);
+        SeedScanCycle(harness.DbContext, replayScanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, replayScanCycleId, "SOLUSDT", rank: 1, score: 9_100m);
+        await harness.DbContext.SaveChangesAsync();
+
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(signal);
+
+        var firstAttempt = await harness.Service.RunOnceAsync(firstScanCycleId);
+        harness.DbContext.MarketScannerHandoffAttempts.Add(new MarketScannerHandoffAttempt
+        {
+            Id = Guid.NewGuid(),
+            ScanCycleId = Guid.NewGuid(),
+            SelectedSymbol = "SOLUSDT",
+            SelectedTimeframe = "1m",
+            SelectedAtUtc = harness.NowUtc.AddSeconds(30),
+            SelectionReason = "unit-test-newer-blocked",
+            OwnerUserId = bot.OwnerUserId,
+            BotId = bot.BotId,
+            StrategyKey = "pilot-sol",
+            TradingStrategyId = bot.TradingStrategyId,
+            TradingStrategyVersionId = bot.TradingStrategyVersionId,
+            StrategySignalId = signal.StrategySignalId,
+            StrategyDecisionOutcome = "Persisted",
+            ExecutionRequestStatus = "Blocked",
+            ExecutionSide = ExecutionOrderSide.Buy,
+            ExecutionOrderType = ExecutionOrderType.Market,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            BlockerCode = "UserExecutionBotCooldownActive",
+            BlockerDetail = "unit-test",
+            CorrelationId = Guid.NewGuid().ToString("N"),
+            CompletedAtUtc = harness.NowUtc.AddSeconds(30)
+        });
+        await harness.DbContext.SaveChangesAsync();
+
+        var replayAttempt = await harness.Service.RunOnceAsync(replayScanCycleId);
+
+        var preparedAttempts = await harness.DbContext.MarketScannerHandoffAttempts
+            .Where(entity =>
+                entity.StrategySignalId == signal.StrategySignalId &&
+                entity.ExecutionRequestStatus == "Prepared" &&
+                entity.ExecutionEnvironment == ExecutionEnvironment.Live &&
+                entity.ExecutionSide == ExecutionOrderSide.Buy)
+            .ToListAsync();
+
+        Assert.Equal(firstAttempt.Id, replayAttempt.Id);
+        Assert.Single(preparedAttempts);
+        Assert.Single(harness.DbContext.ExecutionOrders.Where(entity => entity.StrategySignalId == signal.StrategySignalId));
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_BlocksDuplicateExecutionRequest_WhenSameSignalReplayAlreadyHasExecutionOrderIntent()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-sol", "SOLUSDT", "pilot-sol");
+        var signal = CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "SOLUSDT", "1m", harness.NowUtc);
+
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 9_000m);
+        harness.DbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = bot.OwnerUserId,
+            TradingStrategyId = bot.TradingStrategyId,
+            TradingStrategyVersionId = bot.TradingStrategyVersionId,
+            StrategySignalId = signal.StrategySignalId,
+            SignalType = StrategySignalType.Entry,
+            BotId = bot.BotId,
+            ExchangeAccountId = bot.ExchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            StrategyKey = "pilot-sol",
+            Symbol = "SOLUSDT",
+            Timeframe = "1m",
+            BaseAsset = "SOL",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 1m,
+            Price = 100m,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            State = ExecutionOrderState.Submitted,
+            IdempotencyKey = Guid.NewGuid().ToString("N"),
+            RootCorrelationId = Guid.NewGuid().ToString("N"),
+            LastStateChangedAtUtc = harness.NowUtc,
+            CreatedDate = harness.NowUtc,
+            UpdatedDate = harness.NowUtc
+        });
+        await harness.DbContext.SaveChangesAsync();
+
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(signal);
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("DuplicateExecutionRequestSuppressed", attempt.BlockerCode);
+        Assert.Equal(signal.StrategySignalId, attempt.StrategySignalId);
+        Assert.Null(harness.ExecutionGate.LastRequest);
+        Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
+        Assert.Null(harness.ExecutionEngine.LastCommand);
+        Assert.Single(harness.DbContext.ExecutionOrders.Where(entity => entity.StrategySignalId == signal.StrategySignalId));
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_AllowsNewPreparedAttempt_WhenSignalIdChanges()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var firstScanCycleId = Guid.NewGuid();
+        var secondScanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-sol", "SOLUSDT", "pilot-sol");
+        var firstSignal = CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "SOLUSDT", "1m", harness.NowUtc);
+        var secondSignal = CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "SOLUSDT", "1m", harness.NowUtc.AddMinutes(1));
+
+        SeedScanCycle(harness.DbContext, firstScanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, firstScanCycleId, "SOLUSDT", rank: 1, score: 9_000m);
+        SeedScanCycle(harness.DbContext, secondScanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, secondScanCycleId, "SOLUSDT", rank: 1, score: 9_200m);
+        await harness.DbContext.SaveChangesAsync();
+
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(firstSignal);
+
+        var firstAttempt = await harness.Service.RunOnceAsync(firstScanCycleId);
+
+        harness.StrategySignalService.SetSignal(secondSignal);
+        var secondAttempt = await harness.Service.RunOnceAsync(secondScanCycleId);
+
+        var preparedAttempts = await harness.DbContext.MarketScannerHandoffAttempts
+            .Where(entity =>
+                entity.ExecutionRequestStatus == "Prepared" &&
+                entity.ExecutionEnvironment == ExecutionEnvironment.Live &&
+                entity.SelectedSymbol == "SOLUSDT")
+            .OrderBy(entity => entity.CreatedDate)
+            .ToListAsync();
+
+        Assert.NotEqual(firstAttempt.Id, secondAttempt.Id);
+        Assert.Equal(firstSignal.StrategySignalId, firstAttempt.StrategySignalId);
+        Assert.Equal(secondSignal.StrategySignalId, secondAttempt.StrategySignalId);
+        Assert.Equal(2, preparedAttempts.Count);
+        Assert.Equal(2, harness.DbContext.ExecutionOrders.Count(entity => entity.Symbol == "SOLUSDT"));
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_ReusesBlockedAttempt_WhenSameSignalReplaysSameDuplicateExecutionBlocker_EvenIfNewerPreparedAttemptExists()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-sol", "SOLUSDT", "pilot-sol");
+        var existingSignal = CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "SOLUSDT", "1m", harness.NowUtc);
+        SeedPersistedSignal(harness.DbContext, bot.OwnerUserId, existingSignal);
+        harness.DbContext.MarketScannerHandoffAttempts.Add(new MarketScannerHandoffAttempt
+        {
+            Id = Guid.NewGuid(),
+            ScanCycleId = Guid.NewGuid(),
+            SelectedSymbol = "SOLUSDT",
+            SelectedTimeframe = "1m",
+            SelectedAtUtc = harness.NowUtc.AddSeconds(-30),
+            SelectionReason = "unit-test",
+            OwnerUserId = bot.OwnerUserId,
+            BotId = bot.BotId,
+            StrategyKey = "pilot-sol",
+            TradingStrategyId = bot.TradingStrategyId,
+            TradingStrategyVersionId = bot.TradingStrategyVersionId,
+            StrategySignalId = existingSignal.StrategySignalId,
+            StrategyDecisionOutcome = "Persisted",
+            ExecutionRequestStatus = "Prepared",
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            CorrelationId = Guid.NewGuid().ToString("N"),
+            CompletedAtUtc = harness.NowUtc.AddSeconds(-30)
+        });
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 9_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetDuplicateSuppressed("SOLUSDT", "1m", 1);
+
+        var firstAttempt = await harness.Service.RunOnceAsync(scanCycleId);
+        harness.DbContext.MarketScannerHandoffAttempts.Add(new MarketScannerHandoffAttempt
+        {
+            Id = Guid.NewGuid(),
+            ScanCycleId = Guid.NewGuid(),
+            SelectedSymbol = "SOLUSDT",
+            SelectedTimeframe = "1m",
+            SelectedAtUtc = harness.NowUtc.AddSeconds(30),
+            SelectionReason = "unit-test-replay-prepared",
+            OwnerUserId = bot.OwnerUserId,
+            BotId = bot.BotId,
+            StrategyKey = "pilot-sol",
+            TradingStrategyId = bot.TradingStrategyId,
+            TradingStrategyVersionId = bot.TradingStrategyVersionId,
+            StrategySignalId = existingSignal.StrategySignalId,
+            StrategyDecisionOutcome = "Persisted",
+            ExecutionRequestStatus = "Prepared",
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            CorrelationId = Guid.NewGuid().ToString("N"),
+            CompletedAtUtc = harness.NowUtc.AddSeconds(30)
+        });
+        await harness.DbContext.SaveChangesAsync();
+
+        var replayAttempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        var blockedAttempts = await harness.DbContext.MarketScannerHandoffAttempts
+            .Where(entity =>
+                entity.StrategySignalId == existingSignal.StrategySignalId &&
+                entity.BlockerCode == "DuplicateExecutionRequestSuppressed")
+            .ToListAsync();
+
+        Assert.Equal(firstAttempt.Id, replayAttempt.Id);
+        Assert.Single(blockedAttempts);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_PersistsNewBlockedAttempt_WhenSameSignalTransitionsToDifferentBlocker()
+    {
+        await using var harness = CreateHarness(
+            new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero),
+            new BotExecutionPilotOptions
+            {
+                SignalEvaluationMode = ExecutionEnvironment.Live,
+                PrimeHistoricalCandleCount = 34,
+                EnableEntryHysteresis = true,
+                EntryHysteresisCooldownMinutes = 0,
+                EntryHysteresisReentryBufferPercentage = 0m,
+                LongEntryHysteresisCooldownMinutes = 0,
+                LongEntryHysteresisReentryBufferPercentage = 0.20m
+            });
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-transition", "BTCUSDT", "pilot-transition");
+        var signal = CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "BTCUSDT", "1m", harness.NowUtc);
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "BTCUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "BTCUSDT", rank: 1, score: 10_000m);
+        await SeedExchangePositionAsync(harness.DbContext, bot, "BTCUSDT", quantity: 0.020m, entryPrice: 100m, positionSide: "BOTH", observedAtUtc: harness.NowUtc);
+        harness.MarketDataService.SetMetadata("BTCUSDT", "BTC", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(signal);
+
+        var firstAttempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        harness.DbContext.ExchangePositions.RemoveRange(harness.DbContext.ExchangePositions);
+        await harness.DbContext.SaveChangesAsync();
+        await SeedFilledReduceOnlyExitOrderAsync(
+            harness.DbContext,
+            bot,
+            "BTCUSDT",
+            price: 100m,
+            createdAtUtc: harness.NowUtc.AddMinutes(-10));
+
+        var secondAttempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        var blockedAttempts = await harness.DbContext.MarketScannerHandoffAttempts
+            .Where(entity => entity.StrategySignalId == signal.StrategySignalId && entity.ExecutionRequestStatus == "Blocked")
+            .OrderBy(entity => entity.CreatedDate)
+            .ToListAsync();
+
+        Assert.NotEqual(firstAttempt.Id, secondAttempt.Id);
+        Assert.Equal(new[] { "SameDirectionLongEntrySuppressed", "LongEntryHysteresisActive" }, blockedAttempts.Select(entity => entity.BlockerCode).ToArray());
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_PersistsNewBlockedAttempt_WhenNewSignalHitsSameBlocker()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var nextScanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-new-signal", "BTCUSDT", "pilot-new-signal");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "BTCUSDT");
+        SeedScanCycle(harness.DbContext, nextScanCycleId, bestCandidateSymbol: "BTCUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "BTCUSDT", rank: 1, score: 10_000m);
+        SeedCandidate(harness.DbContext, nextScanCycleId, "BTCUSDT", rank: 1, score: 10_000m);
+        await SeedExchangePositionAsync(harness.DbContext, bot, "BTCUSDT", quantity: 0.020m, entryPrice: 100m, positionSide: "BOTH", observedAtUtc: harness.NowUtc);
+        harness.MarketDataService.SetMetadata("BTCUSDT", "BTC", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", harness.NowUtc));
+        var firstSignal = CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "BTCUSDT", "1m", harness.NowUtc);
+        harness.StrategySignalService.SetSignal(firstSignal);
+
+        var firstAttempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        var nextSignalTimeUtc = harness.NowUtc.AddMinutes(1);
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", nextSignalTimeUtc));
+        var secondSignal = CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "BTCUSDT", "1m", nextSignalTimeUtc);
+        harness.StrategySignalService.SetSignal(secondSignal);
+
+        var secondAttempt = await harness.Service.RunOnceAsync(nextScanCycleId);
+
+        var blockedAttempts = await harness.DbContext.MarketScannerHandoffAttempts
+            .Where(entity => entity.BlockerCode == "SameDirectionLongEntrySuppressed")
+            .OrderBy(entity => entity.CreatedDate)
+            .ToListAsync();
+
+        Assert.NotEqual(firstAttempt.Id, secondAttempt.Id);
+        Assert.Equal(2, blockedAttempts.Count);
+        Assert.Equal(new[] { firstSignal.StrategySignalId, secondSignal.StrategySignalId }, blockedAttempts.Select(entity => entity.StrategySignalId!.Value).ToArray());
+    }
+
+    [Fact]
     public async Task RunOnceAsync_DoesNotTreatLiveExecutionRequestAsDuplicate_WhenDemoHandoffUsesSameSignal()
     {
         await using var harness = CreateHarness(
@@ -705,7 +1345,8 @@ public sealed class MarketScannerHandoffServiceTests
         DateTimeOffset nowUtc,
         BotExecutionPilotOptions? pilotOptions = null,
         ExecutionEnvironment resolvedTradingMode = ExecutionEnvironment.Live,
-        bool allowInternalDemoExecution = true)
+        bool allowInternalDemoExecution = true,
+        FakeExchangeInfoClient? exchangeInfoClient = null)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
@@ -720,6 +1361,7 @@ public sealed class MarketScannerHandoffServiceTests
         var userExecutionOverrideGuard = new FakeUserExecutionOverrideGuard();
         var executionEngine = new FakeExecutionEngine(options, nowUtc.UtcDateTime);
         var demoSessionService = new FakeDemoSessionService(nowUtc.UtcDateTime);
+        exchangeInfoClient ??= new FakeExchangeInfoClient(new Dictionary<string, SymbolMetadataSnapshot>(StringComparer.Ordinal));
 
         var services = new ServiceCollection();
         services.AddScoped<IDataScopeContextAccessor, TestDataScopeContextAccessor>();
@@ -743,6 +1385,7 @@ public sealed class MarketScannerHandoffServiceTests
             Options.Create(pilotOptions ?? new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live, PrimeHistoricalCandleCount = 34 }),
             new FixedTimeProvider(nowUtc),
             NullLogger<MarketScannerHandoffService>.Instance,
+            exchangeInfoClient,
             executionRuntimeOptions: Options.Create(new ExecutionRuntimeOptions
             {
                 AllowInternalDemoExecution = allowInternalDemoExecution
@@ -932,6 +1575,81 @@ public sealed class MarketScannerHandoffServiceTests
             RuleResultSnapshotJson = JsonSerializer.Serialize(signal.ExplainabilityPayload.RuleResultSnapshot, StrategySignalSerializerOptions),
             RiskEvaluationJson = JsonSerializer.Serialize(signal.ExplainabilityPayload.ConfidenceSnapshot, StrategySignalSerializerOptions)
         });
+    }
+
+    private static async Task SeedExchangePositionAsync(
+        ApplicationDbContext dbContext,
+        BotGraph bot,
+        string symbol,
+        decimal quantity,
+        decimal entryPrice,
+        string positionSide,
+        DateTime observedAtUtc)
+    {
+        dbContext.ExchangePositions.Add(new ExchangePosition
+        {
+            ExchangeAccountId = bot.ExchangeAccountId,
+            OwnerUserId = bot.OwnerUserId,
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = symbol,
+            PositionSide = positionSide,
+            Quantity = quantity,
+            EntryPrice = entryPrice,
+            BreakEvenPrice = entryPrice,
+            UnrealizedProfit = 0m,
+            MarginType = "isolated",
+            IsolatedWallet = 10m,
+            ExchangeUpdatedAtUtc = observedAtUtc,
+            SyncedAtUtc = observedAtUtc
+        });
+        await dbContext.SaveChangesAsync();
+    }
+
+    private static async Task SeedFilledReduceOnlyExitOrderAsync(
+        ApplicationDbContext dbContext,
+        BotGraph bot,
+        string symbol,
+        decimal price,
+        DateTime createdAtUtc,
+        ExecutionOrderSide side = ExecutionOrderSide.Sell)
+    {
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = bot.OwnerUserId,
+            BotId = bot.BotId,
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Exit,
+            StrategyKey = "scanner-handoff-test",
+            Symbol = symbol,
+            Timeframe = "1m",
+            BaseAsset = symbol[..^4],
+            QuoteAsset = "USDT",
+            Side = side,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.002m,
+            Price = price,
+            ExchangeAccountId = bot.ExchangeAccountId,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            Plane = ExchangeDataPlane.Futures,
+            ReduceOnly = true,
+            SubmittedToBroker = true,
+            State = ExecutionOrderState.Filled,
+            FilledQuantity = 0.002m,
+            AverageFillPrice = price,
+            IdempotencyKey = $"seed-filled-exit-{Guid.NewGuid():N}",
+            RootCorrelationId = "seed-filled-exit-order",
+            ExternalOrderId = $"binance:{Guid.NewGuid():N}",
+            SubmittedAtUtc = createdAtUtc,
+            LastStateChangedAtUtc = createdAtUtc,
+            CreatedDate = createdAtUtc,
+            UpdatedDate = createdAtUtc
+        });
+
+        await dbContext.SaveChangesAsync();
     }
 
     private static readonly JsonSerializerOptions StrategySignalSerializerOptions = CreateStrategySignalSerializerOptions();
@@ -1242,6 +1960,11 @@ public sealed class MarketScannerHandoffServiceTests
         private readonly Dictionary<string, MarketPriceSnapshot> prices = new(StringComparer.Ordinal);
         private readonly Dictionary<string, SymbolMetadataSnapshot> metadata = new(StringComparer.Ordinal);
 
+        public void SetPrice(string symbol, decimal price)
+        {
+            prices[symbol] = new MarketPriceSnapshot(symbol, price, nowUtc, nowUtc, "unit-test");
+        }
+
         public void SetMetadata(string symbol, string baseAsset, string quoteAsset)
         {
             metadata[symbol] = new SymbolMetadataSnapshot(symbol, "Binance", baseAsset, quoteAsset, 0.1m, 0.001m, "TRADING", true, nowUtc)
@@ -1250,7 +1973,7 @@ public sealed class MarketScannerHandoffServiceTests
                 MinNotional = 100m,
                 QuantityPrecision = 3
             };
-            prices[symbol] = new MarketPriceSnapshot(symbol, 100m, nowUtc, nowUtc, "unit-test");
+            SetPrice(symbol, 100m);
         }
 
         public ValueTask TrackSymbolAsync(string symbol, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
@@ -1273,6 +1996,25 @@ public sealed class MarketScannerHandoffServiceTests
         {
             await Task.CompletedTask;
             yield break;
+        }
+    }
+
+    private sealed class FakeExchangeInfoClient(IReadOnlyDictionary<string, SymbolMetadataSnapshot> metadata) : IBinanceExchangeInfoClient
+    {
+        public Task<IReadOnlyCollection<SymbolMetadataSnapshot>> GetSymbolMetadataAsync(
+            IReadOnlyCollection<string> symbols,
+            CancellationToken cancellationToken = default)
+        {
+            IReadOnlyCollection<SymbolMetadataSnapshot> snapshots = symbols
+                .Where(symbol => metadata.ContainsKey(symbol))
+                .Select(symbol => metadata[symbol])
+                .ToArray();
+            return Task.FromResult(snapshots);
+        }
+
+        public Task<DateTime?> GetServerTimeUtcAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<DateTime?>(null);
         }
     }
 

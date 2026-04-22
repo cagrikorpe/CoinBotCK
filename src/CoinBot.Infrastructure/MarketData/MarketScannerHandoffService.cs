@@ -18,6 +18,7 @@ using CoinBot.Infrastructure.Persistence;
 using CoinBot.Infrastructure.Strategies;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -35,11 +36,25 @@ public sealed class MarketScannerHandoffService(
     IOptions<BotExecutionPilotOptions> botExecutionPilotOptions,
     TimeProvider timeProvider,
     ILogger<MarketScannerHandoffService> logger,
+    IBinanceExchangeInfoClient? exchangeInfoClient = null,
+    IHostEnvironment? hostEnvironment = null,
     ITradingModeResolver? tradingModeResolver = null,
     IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null,
     IUltraDebugLogService? ultraDebugLogService = null)
 {
     private static readonly JsonSerializerOptions StrategySignalSerializerOptions = CreateStrategySignalSerializerOptions();
+    private static readonly HashSet<string> ReplaySuppressedBlockedAttemptCodes = new(StringComparer.Ordinal)
+    {
+        "DuplicateExecutionRequestSuppressed",
+        "LongEntryHysteresisActive",
+        "ShortEntryHysteresisActive",
+        "UserExecutionBotCooldownActive",
+        "UserExecutionSymbolCooldownActive",
+        "UserExecutionMaxOpenPositionsExceeded",
+        "SameDirectionLongEntrySuppressed",
+        "SameDirectionShortEntrySuppressed",
+        "ReverseBlockedOpenPositionExists"
+    };
 
     private readonly MarketScannerOptions scannerOptionsValue = scannerOptions.Value;
     private readonly BotExecutionPilotOptions botExecutionOptionsValue = botExecutionPilotOptions.Value;
@@ -136,10 +151,49 @@ public sealed class MarketScannerHandoffService(
                 continue;
             }
 
+            if (!TryResolvePilotExecutionParameters(ownerBotMatch, out var leverage, out var marginType, out var parameterFailureCode))
+            {
+                latestAttempt = await PersistBlockedAttemptAsync(
+                    scanCycleId,
+                    candidate,
+                    ownerBotMatch.OwnerUserId,
+                    ownerBotMatch,
+                    symbolMetadata: null,
+                    executionContext: null,
+                    strategySignal: null,
+                    strategyVeto: null,
+                    strategyDecisionOutcome: "NotEvaluated",
+                    executionStatus: "Blocked",
+                    blockerCode: parameterFailureCode ?? "PilotParametersInvalid",
+                    blockerDetail: BuildPilotParameterFailureDetail(parameterFailureCode),
+                    guardSummary: $"PilotExecutionParameters={parameterFailureCode ?? "Invalid"}; Symbol={symbol}; BotId={ownerBotMatch.BotId:N}",
+                    cancellationToken);
+                continue;
+            }
+
             await marketDataService.TrackSymbolAsync(symbol, cancellationToken);
             await indicatorDataService.TrackSymbolAsync(symbol, cancellationToken);
 
             var symbolMetadata = await ResolveSymbolMetadataAsync(symbol, cancellationToken);
+            if (symbolMetadata is null)
+            {
+                latestAttempt = await PersistBlockedAttemptAsync(
+                    scanCycleId,
+                    candidate,
+                    ownerBotMatch.OwnerUserId,
+                    ownerBotMatch,
+                    symbolMetadata: null,
+                    executionContext: null,
+                    strategySignal: null,
+                    strategyVeto: null,
+                    strategyDecisionOutcome: "NotEvaluated",
+                    executionStatus: "Blocked",
+                    blockerCode: "SymbolMetadataUnavailable",
+                    blockerDetail: $"Scanner handoff could not resolve symbol metadata for {symbol}.",
+                    guardSummary: $"SymbolMetadata=Unavailable; Symbol={symbol}",
+                    cancellationToken);
+                continue;
+            }
             var marketState = await ResolveMarketStateAsync(symbol, klineInterval, cancellationToken);
 
             if (marketState.IndicatorSnapshot is null)
@@ -291,7 +345,30 @@ public sealed class MarketScannerHandoffService(
                 continue;
             }
 
-            if (duplicateSignalResolution.HasExistingExecutionRequest)
+            var replayPreparedAttempt = await ResolveReplaySuppressedPreparedAttemptAsync(
+                ownerBotMatch.OwnerUserId,
+                strategySignal,
+                executionContext,
+                cancellationToken);
+            if (replayPreparedAttempt is not null)
+            {
+                logger.LogInformation(
+                    "Market scanner handoff skipped duplicate prepared replay. ExistingHandoffAttemptId={HandoffAttemptId} StrategySignalId={StrategySignalId} ExecutionEnvironment={ExecutionEnvironment} ExecutionSide={ExecutionSide}.",
+                    replayPreparedAttempt.Id,
+                    replayPreparedAttempt.StrategySignalId,
+                    replayPreparedAttempt.ExecutionEnvironment,
+                    replayPreparedAttempt.ExecutionSide);
+                return replayPreparedAttempt;
+            }
+
+            var hasExistingExecutionIntent = duplicateSignalResolution.HasExistingExecutionRequest ||
+                await HasExistingExecutionOrderIntentAsync(
+                    ownerBotMatch.OwnerUserId,
+                    strategySignal,
+                    executionContext,
+                    cancellationToken);
+
+            if (hasExistingExecutionIntent)
             {
                 latestAttempt = await PersistBlockedAttemptAsync(
                     scanCycleId,
@@ -314,6 +391,92 @@ public sealed class MarketScannerHandoffService(
                 continue;
             }
 
+            if (IsActionableDirection(entryDirection))
+            {
+                var hysteresisSummary = await ResolveEntryHysteresisSummaryAsync(
+                    ownerBotMatch,
+                    symbol,
+                    entryDirection,
+                    marketState.ReferencePrice,
+                    cancellationToken);
+
+                if (!string.IsNullOrWhiteSpace(hysteresisSummary))
+                {
+                    latestAttempt = await PersistBlockedAttemptAsync(
+                        scanCycleId,
+                        candidate,
+                        ownerBotMatch.OwnerUserId,
+                        ownerBotMatch,
+                        symbolMetadata,
+                        executionContext,
+                        strategySignal,
+                        strategyVeto: null,
+                        strategyDecisionOutcome: "Persisted",
+                        executionStatus: "Blocked",
+                        blockerCode: ResolveEntryHysteresisActiveBlockerCode(entryDirection),
+                        blockerDetail: hysteresisSummary,
+                        guardSummary: Truncate(
+                            $"EntryHysteresis=Active; EntryDirection={entryDirection}; Symbol={symbol}; Timeframe={klineInterval}",
+                            512) ?? $"EntryHysteresis=Active; Symbol={symbol}; Timeframe={klineInterval}",
+                        cancellationToken);
+                    continue;
+                }
+
+                var currentNetQuantity = await ResolveCurrentNetQuantityAsync(
+                    ownerBotMatch,
+                    symbol,
+                    executionContext.Environment,
+                    cancellationToken);
+
+                if (currentNetQuantity != 0m)
+                {
+                    var currentPositionDirection = currentNetQuantity > 0m
+                        ? StrategyTradeDirection.Long
+                        : StrategyTradeDirection.Short;
+
+                    if (currentPositionDirection == entryDirection)
+                    {
+                        latestAttempt = await PersistBlockedAttemptAsync(
+                            scanCycleId,
+                            candidate,
+                            ownerBotMatch.OwnerUserId,
+                            ownerBotMatch,
+                            symbolMetadata,
+                            executionContext,
+                            strategySignal,
+                            strategyVeto: null,
+                            strategyDecisionOutcome: "Persisted",
+                            executionStatus: "Blocked",
+                            blockerCode: ResolveSameDirectionEntrySuppressedBlockerCode(entryDirection),
+                            blockerDetail: $"Entry signal was suppressed because an open {entryDirection.ToString().ToLowerInvariant()} position already exists for {symbol} on the selected exchange account.",
+                            guardSummary: Truncate(
+                                $"OpenPositionSuppression=SameDirection; EntryDirection={entryDirection}; CurrentNetQuantity={currentNetQuantity:0.########}; Symbol={symbol}; Timeframe={klineInterval}",
+                                512) ?? $"OpenPositionSuppression=SameDirection; Symbol={symbol}; Timeframe={klineInterval}",
+                            cancellationToken);
+                        continue;
+                    }
+
+                    latestAttempt = await PersistBlockedAttemptAsync(
+                        scanCycleId,
+                        candidate,
+                        ownerBotMatch.OwnerUserId,
+                        ownerBotMatch,
+                        symbolMetadata,
+                        executionContext,
+                        strategySignal,
+                        strategyVeto: null,
+                        strategyDecisionOutcome: "Persisted",
+                        executionStatus: "Blocked",
+                        blockerCode: "ReverseBlockedOpenPositionExists",
+                        blockerDetail: $"Entry signal was suppressed because reverse entries are disabled. CurrentPositionDirection={currentPositionDirection}; RequestedEntryDirection={entryDirection}; Symbol={symbol}.",
+                        guardSummary: Truncate(
+                            $"OpenPositionSuppression=ReverseBlocked; EntryDirection={entryDirection}; CurrentPositionDirection={currentPositionDirection}; CurrentNetQuantity={currentNetQuantity:0.########}; Symbol={symbol}; Timeframe={klineInterval}",
+                            512) ?? $"OpenPositionSuppression=ReverseBlocked; Symbol={symbol}; Timeframe={klineInterval}",
+                        cancellationToken);
+                    continue;
+                }
+            }
+
             try
             {
                 var gateContext = BuildGateContext(
@@ -321,7 +484,9 @@ public sealed class MarketScannerHandoffService(
                     candidate,
                     ownerBotMatch,
                     executionContext.Environment,
-                    botExecutionOptionsValue);
+                    botExecutionOptionsValue,
+                    marginType,
+                    leverage);
                 var correlationId = CreateCorrelationId();
                 var executionExchangeAccountId = ownerBotMatch.ExchangeAccountId;
 
@@ -548,7 +713,9 @@ public sealed class MarketScannerHandoffService(
                 entity.StrategyKey,
                 entity.Symbol,
                 entity.ExchangeAccountId,
-                entity.DirectionMode
+                entity.DirectionMode,
+                entity.Leverage,
+                entity.MarginType
             })
             .ToListAsync(cancellationToken);
 
@@ -591,6 +758,8 @@ public sealed class MarketScannerHandoffService(
                 bot.StrategyKey,
                 bot.DirectionMode,
                 bot.ExchangeAccountId,
+                bot.Leverage,
+                bot.MarginType,
                 strategy.Id,
                 strategyVersionId.Value);
         }
@@ -600,7 +769,19 @@ public sealed class MarketScannerHandoffService(
     private async Task<SymbolMetadataSnapshot?> ResolveSymbolMetadataAsync(string symbol, CancellationToken cancellationToken)
     {
         return await sharedSymbolRegistry.GetSymbolAsync(symbol, cancellationToken)
-            ?? await marketDataService.GetSymbolMetadataAsync(symbol, cancellationToken);
+            ?? await marketDataService.GetSymbolMetadataAsync(symbol, cancellationToken)
+            ?? await ResolveExchangeInfoSymbolMetadataAsync(symbol, cancellationToken);
+    }
+
+    private async Task<SymbolMetadataSnapshot?> ResolveExchangeInfoSymbolMetadataAsync(string symbol, CancellationToken cancellationToken)
+    {
+        if (exchangeInfoClient is null)
+        {
+            return null;
+        }
+
+        var snapshots = await exchangeInfoClient.GetSymbolMetadataAsync([symbol], cancellationToken);
+        return snapshots.SingleOrDefault();
     }
 
     private async Task<(StrategyIndicatorSnapshot? IndicatorSnapshot, decimal? ReferencePrice)> ResolveMarketStateAsync(
@@ -770,6 +951,49 @@ public sealed class MarketScannerHandoffService(
         return new DuplicateSignalResolution(ToStrategySignalSnapshot(signal), hasExistingExecutionRequest);
     }
 
+    private async Task<MarketScannerHandoffAttempt?> ResolveReplaySuppressedPreparedAttemptAsync(
+        string ownerUserId,
+        StrategySignalSnapshot strategySignal,
+        PreparedExecutionContext executionContext,
+        CancellationToken cancellationToken)
+    {
+        return await dbContext.MarketScannerHandoffAttempts
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.OwnerUserId == ownerUserId &&
+                entity.StrategySignalId == strategySignal.StrategySignalId &&
+                entity.ExecutionRequestStatus == "Prepared" &&
+                entity.ExecutionEnvironment == executionContext.Environment &&
+                entity.ExecutionSide == executionContext.Side &&
+                entity.ExecutionOrderType == executionContext.OrderType &&
+                !entity.IsDeleted)
+            .OrderByDescending(entity => entity.CreatedDate)
+            .ThenByDescending(entity => entity.SelectedAtUtc)
+            .ThenByDescending(entity => entity.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    private async Task<bool> HasExistingExecutionOrderIntentAsync(
+        string ownerUserId,
+        StrategySignalSnapshot strategySignal,
+        PreparedExecutionContext executionContext,
+        CancellationToken cancellationToken)
+    {
+        return await dbContext.ExecutionOrders
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .AnyAsync(
+                entity =>
+                    entity.OwnerUserId == ownerUserId &&
+                    entity.StrategySignalId == strategySignal.StrategySignalId &&
+                    entity.ExecutionEnvironment == executionContext.Environment &&
+                    entity.Side == executionContext.Side &&
+                    entity.OrderType == executionContext.OrderType &&
+                    !entity.IsDeleted,
+                cancellationToken);
+    }
+
     private static StrategySignalVetoSnapshot? SelectVeto(
         StrategySignalGenerationResult strategyResult,
         string symbol,
@@ -909,6 +1133,21 @@ public sealed class MarketScannerHandoffService(
         CancellationToken cancellationToken,
         RiskVetoResult? riskEvaluation = null)
     {
+        var replaySuppressedAttempt = await ResolveReplaySuppressedBlockedAttemptAsync(
+            strategySignal,
+            executionContext,
+            blockerCode,
+            cancellationToken);
+        if (replaySuppressedAttempt is not null)
+        {
+            logger.LogInformation(
+                "Market scanner handoff skipped duplicate blocked persistence replay. ExistingHandoffAttemptId={HandoffAttemptId} StrategySignalId={StrategySignalId} BlockerCode={BlockerCode}.",
+                replaySuppressedAttempt.Id,
+                replaySuppressedAttempt.StrategySignalId,
+                blockerCode);
+            return replaySuppressedAttempt;
+        }
+
         var attempt = CreateAttempt(
             scanCycleId,
             selectedCandidate,
@@ -973,6 +1212,35 @@ public sealed class MarketScannerHandoffService(
         }
 
         return attempt;
+    }
+
+    private async Task<MarketScannerHandoffAttempt?> ResolveReplaySuppressedBlockedAttemptAsync(
+        StrategySignalSnapshot? strategySignal,
+        PreparedExecutionContext? executionContext,
+        string blockerCode,
+        CancellationToken cancellationToken)
+    {
+        if (strategySignal is null ||
+            string.IsNullOrWhiteSpace(blockerCode) ||
+            !ReplaySuppressedBlockedAttemptCodes.Contains(blockerCode))
+        {
+            return null;
+        }
+
+        var effectiveEnvironment = executionContext?.Environment ?? strategySignal.Mode;
+        return await dbContext.MarketScannerHandoffAttempts
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.StrategySignalId == strategySignal.StrategySignalId &&
+                entity.ExecutionRequestStatus == "Blocked" &&
+                entity.ExecutionEnvironment == effectiveEnvironment &&
+                entity.BlockerCode == blockerCode &&
+                !entity.IsDeleted)
+            .OrderByDescending(entity => entity.CreatedDate)
+            .ThenByDescending(entity => entity.SelectedAtUtc)
+            .ThenByDescending(entity => entity.Id)
+            .FirstOrDefaultAsync(cancellationToken);
     }
 
     private MarketScannerHandoffAttempt CreateAttempt(
@@ -1268,20 +1536,25 @@ public sealed class MarketScannerHandoffService(
             ?? "Top-ranked eligible candidate selected.";
     }
 
-    private decimal ResolveHandoffQuantity(SymbolMetadataSnapshot? symbolMetadata, decimal referencePrice)
+    private decimal ResolveHandoffQuantity(SymbolMetadataSnapshot symbolMetadata, decimal referencePrice)
     {
-        if (symbolMetadata is null)
+        if (referencePrice <= 0m)
         {
-            return 1m;
+            throw new ExecutionValidationException(
+                "EntryQuantitySizingFailedClosed",
+                $"Execution blocked because entry quantity sizing requires a positive reference price for '{symbolMetadata.Symbol}'.");
         }
 
         var candidateQuantity = symbolMetadata.MinQuantity ?? symbolMetadata.StepSize;
         if (candidateQuantity <= 0m)
         {
-            return 1m;
+            throw new ExecutionValidationException(
+                "EntryQuantitySizingFailedClosed",
+                $"Execution blocked because entry quantity sizing could not be resolved for '{symbolMetadata.Symbol}'.");
         }
 
-        if (symbolMetadata.MinNotional is decimal minNotional)
+        var protectedMinNotional = ResolveProtectedMinNotional(symbolMetadata.MinNotional);
+        if (protectedMinNotional is decimal minNotional)
         {
             candidateQuantity = Math.Max(candidateQuantity, minNotional / referencePrice);
         }
@@ -1298,7 +1571,41 @@ public sealed class MarketScannerHandoffService(
             candidateQuantity = decimal.Round(candidateQuantity, quantityPrecision, MidpointRounding.AwayFromZero);
         }
 
-        return candidateQuantity > 0m ? candidateQuantity : 1m;
+        if (protectedMinNotional is decimal adjustedMinNotional &&
+            (candidateQuantity * referencePrice) < adjustedMinNotional)
+        {
+            candidateQuantity = AlignUp(adjustedMinNotional / referencePrice, symbolMetadata.StepSize);
+        }
+
+        if (candidateQuantity <= 0m)
+        {
+            throw new ExecutionValidationException(
+                "EntryQuantitySizingFailedClosed",
+                $"Execution blocked because entry quantity sizing resolved to a non-positive value for '{symbolMetadata.Symbol}'.");
+        }
+
+        if (protectedMinNotional is decimal finalMinNotional &&
+            (candidateQuantity * referencePrice) < finalMinNotional)
+        {
+            throw new ExecutionValidationException(
+                "EntryNotionalSafetyBlocked",
+                $"Execution blocked because protected entry notional {(candidateQuantity * referencePrice):0.########} is below the protected minimum notional {finalMinNotional:0.########} for '{symbolMetadata.Symbol}'.");
+        }
+
+        return candidateQuantity;
+    }
+
+    private decimal? ResolveProtectedMinNotional(decimal? minNotional)
+    {
+        if (minNotional is null || minNotional <= 0m)
+        {
+            return null;
+        }
+
+        var multiplier = botExecutionOptionsValue.MinNotionalSafetyMultiplier < 1m
+            ? 1m
+            : botExecutionOptionsValue.MinNotionalSafetyMultiplier;
+        return decimal.Round(minNotional.Value * multiplier, 8, MidpointRounding.AwayFromZero);
     }
 
     private static decimal AlignUp(decimal value, decimal increment)
@@ -1386,7 +1693,9 @@ public sealed class MarketScannerHandoffService(
         MarketScannerCandidate candidate,
         BotStrategyMatch botMatch,
         ExecutionEnvironment executionEnvironment,
-        BotExecutionPilotOptions pilotOptions)
+        BotExecutionPilotOptions pilotOptions,
+        string marginType,
+        decimal leverage)
     {
         var context = $"ScannerHandoff=True | ScanCycleId={scanCycleId:N} | CandidateId={candidate.Id:N} | CandidateRank={candidate.Rank?.ToString(CultureInfo.InvariantCulture) ?? "n/a"} | BotId={botMatch.BotId:N}";
         if (executionEnvironment != ExecutionEnvironment.Live || !pilotOptions.PilotActivationEnabled)
@@ -1395,7 +1704,7 @@ public sealed class MarketScannerHandoffService(
         }
 
         return FormattableString.Invariant(
-            $"{context} | DevelopmentFuturesTestnetPilot=True | PilotActivationEnabled={pilotOptions.PilotActivationEnabled} | PilotMarginType={pilotOptions.DefaultMarginType} | PilotLeverage={pilotOptions.DefaultLeverage:0.########}");
+            $"{context} | DevelopmentFuturesTestnetPilot=True | PilotActivationEnabled={pilotOptions.PilotActivationEnabled} | PilotMarginType={marginType} | PilotLeverage={leverage:0.########}");
     }
 
     private static async Task<ExecutionEnvironment> ResolveHandoffExecutionEnvironmentAsync(
@@ -1499,8 +1808,220 @@ public sealed class MarketScannerHandoffService(
         string StrategyKey,
         TradingBotDirectionMode DirectionMode,
         Guid? ExchangeAccountId,
+        decimal? Leverage,
+        string? MarginType,
         Guid TradingStrategyId,
         Guid TradingStrategyVersionId);
+
+    private async Task<decimal> ResolveCurrentNetQuantityAsync(
+        BotStrategyMatch botMatch,
+        string symbol,
+        ExecutionEnvironment executionEnvironment,
+        CancellationToken cancellationToken)
+    {
+        var normalizedSymbol = NormalizePositionSymbol(symbol);
+
+        if (UsesInternalDemoExecution(executionEnvironment))
+        {
+            return await dbContext.DemoPositions
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.OwnerUserId == botMatch.OwnerUserId &&
+                    entity.BotId == botMatch.BotId &&
+                    entity.Symbol == normalizedSymbol &&
+                    !entity.IsDeleted)
+                .SumAsync(entity => entity.Quantity, cancellationToken);
+        }
+
+        return await LivePositionTruthResolver.ResolveNetQuantityAsync(
+            dbContext,
+            botMatch.OwnerUserId,
+            ExchangeDataPlane.Futures,
+            botMatch.ExchangeAccountId,
+            normalizedSymbol,
+            cancellationToken);
+    }
+
+    private async Task<string?> ResolveEntryHysteresisSummaryAsync(
+        BotStrategyMatch botMatch,
+        string symbol,
+        StrategyTradeDirection entryDirection,
+        decimal? referencePrice,
+        CancellationToken cancellationToken)
+    {
+        if (!botExecutionOptionsValue.EnableEntryHysteresis ||
+            !IsActionableDirection(entryDirection) ||
+            !botMatch.ExchangeAccountId.HasValue)
+        {
+            return null;
+        }
+
+        var exitSide = entryDirection == StrategyTradeDirection.Long
+            ? ExecutionOrderSide.Sell
+            : ExecutionOrderSide.Buy;
+
+        var latestExitOrder = await dbContext.ExecutionOrders
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.OwnerUserId == botMatch.OwnerUserId &&
+                entity.ExchangeAccountId == botMatch.ExchangeAccountId &&
+                entity.BotId == botMatch.BotId &&
+                entity.Symbol == NormalizePositionSymbol(symbol) &&
+                entity.Plane == ExchangeDataPlane.Futures &&
+                entity.SubmittedToBroker &&
+                entity.ReduceOnly &&
+                entity.Side == exitSide &&
+                entity.State == ExecutionOrderState.Filled &&
+                !entity.IsDeleted)
+            .OrderByDescending(entity => entity.CreatedDate)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (latestExitOrder is null)
+        {
+            return null;
+        }
+
+        var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
+        var resolvedExitPrice = latestExitOrder.AverageFillPrice.GetValueOrDefault() > 0m
+            ? latestExitOrder.AverageFillPrice.GetValueOrDefault()
+            : latestExitOrder.Price;
+        var cooldownMinutes = botExecutionOptionsValue.ResolveEntryHysteresisCooldownMinutes(entryDirection);
+        var reentryBufferPercentage = botExecutionOptionsValue.ResolveEntryHysteresisReentryBufferPercentage(entryDirection);
+
+        if (cooldownMinutes > 0 &&
+            latestExitOrder.CreatedDate.AddMinutes(cooldownMinutes) > nowUtc)
+        {
+            return $"Entry signal was skipped because entry hysteresis cooldown is still active after the last filled {entryDirection.ToString().ToLowerInvariant()} exit. LastExitAtUtc={latestExitOrder.CreatedDate:O}; CooldownMinutes={cooldownMinutes}.";
+        }
+
+        if (!referencePrice.HasValue || resolvedExitPrice <= 0m)
+        {
+            return null;
+        }
+
+        if (entryDirection == StrategyTradeDirection.Long &&
+            TryResolveUpperPriceBoundary(resolvedExitPrice, reentryBufferPercentage, out var longReentryThresholdPrice) &&
+            referencePrice.Value <= longReentryThresholdPrice)
+        {
+            return $"Entry signal was skipped because hysteresis re-entry buffer is not yet satisfied for a long rearm. LastExitPrice={resolvedExitPrice:0.########}; ReferencePrice={referencePrice.Value:0.########}; RearmThresholdPrice={longReentryThresholdPrice:0.########}.";
+        }
+
+        if (entryDirection == StrategyTradeDirection.Short &&
+            TryResolveLowerPriceBoundary(resolvedExitPrice, reentryBufferPercentage, out var shortReentryThresholdPrice) &&
+            referencePrice.Value >= shortReentryThresholdPrice)
+        {
+            return $"Entry signal was skipped because hysteresis re-entry buffer is not yet satisfied for a short rearm. LastExitPrice={resolvedExitPrice:0.########}; ReferencePrice={referencePrice.Value:0.########}; RearmThresholdPrice={shortReentryThresholdPrice:0.########}.";
+        }
+
+        return null;
+    }
+
+    private bool UsesInternalDemoExecution(ExecutionEnvironment executionEnvironment)
+    {
+        return executionEnvironment == ExecutionEnvironment.Demo &&
+               executionRuntimeOptionsValue.AllowInternalDemoExecution;
+    }
+
+    private static bool TryResolveUpperPriceBoundary(decimal basePrice, decimal percentage, out decimal thresholdPrice)
+    {
+        thresholdPrice = 0m;
+        if (basePrice <= 0m || percentage <= 0m)
+        {
+            return false;
+        }
+
+        thresholdPrice = NormalizeDecimal(basePrice * (1m + (percentage / 100m)));
+        return thresholdPrice > 0m;
+    }
+
+    private static bool TryResolveLowerPriceBoundary(decimal basePrice, decimal percentage, out decimal thresholdPrice)
+    {
+        thresholdPrice = 0m;
+        if (basePrice <= 0m || percentage <= 0m)
+        {
+            return false;
+        }
+
+        thresholdPrice = NormalizeDecimal(basePrice * (1m - (percentage / 100m)));
+        return thresholdPrice > 0m;
+    }
+
+    private static decimal NormalizeDecimal(decimal value)
+    {
+        return decimal.Round(value, 8, MidpointRounding.AwayFromZero);
+    }
+
+    private static string NormalizePositionSymbol(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : value.Trim().ToUpperInvariant();
+    }
+
+    private static bool IsActionableDirection(StrategyTradeDirection direction)
+    {
+        return direction is StrategyTradeDirection.Long or StrategyTradeDirection.Short;
+    }
+
+    private static string ResolveSameDirectionEntrySuppressedBlockerCode(StrategyTradeDirection entryDirection)
+    {
+        return entryDirection switch
+        {
+            StrategyTradeDirection.Long => "SameDirectionLongEntrySuppressed",
+            StrategyTradeDirection.Short => "SameDirectionShortEntrySuppressed",
+            _ => "SameDirectionEntrySuppressed"
+        };
+    }
+
+    private static string ResolveEntryHysteresisActiveBlockerCode(StrategyTradeDirection entryDirection)
+    {
+        return entryDirection switch
+        {
+            StrategyTradeDirection.Long => "LongEntryHysteresisActive",
+            StrategyTradeDirection.Short => "ShortEntryHysteresisActive",
+            _ => "EntryHysteresisActive"
+        };
+    }
+
+    private bool TryResolvePilotExecutionParameters(
+        BotStrategyMatch botMatch,
+        out decimal leverage,
+        out string marginType,
+        out string? failureCode)
+    {
+        leverage = botMatch.Leverage ?? 1m;
+        marginType = string.IsNullOrWhiteSpace(botMatch.MarginType)
+            ? "ISOLATED"
+            : botMatch.MarginType.Trim().ToUpperInvariant();
+        failureCode = null;
+
+        if (leverage != 1m &&
+            !(hostEnvironment?.IsDevelopment() == true && botExecutionOptionsValue.AllowNonOneLeverageForClockDriftSmoke))
+        {
+            failureCode = "PilotLeverageMustBeOne";
+            return false;
+        }
+
+        if (!string.Equals(marginType, "ISOLATED", StringComparison.Ordinal))
+        {
+            failureCode = "PilotMarginTypeMustBeIsolated";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static string BuildPilotParameterFailureDetail(string? failureCode)
+    {
+        return failureCode switch
+        {
+            "PilotLeverageMustBeOne" => "Scanner handoff blocked because pilot bot leverage must resolve to 1x.",
+            "PilotMarginTypeMustBeIsolated" => "Scanner handoff blocked because pilot bot margin type must resolve to ISOLATED.",
+            _ => "Scanner handoff blocked because pilot execution parameters are invalid."
+        };
+    }
 
     private sealed record DuplicateSignalResolution(
         StrategySignalSnapshot? Signal,
