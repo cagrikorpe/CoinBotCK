@@ -55,6 +55,8 @@ public sealed class ExecutionReconciliationService(
             .Select(entity => new ExecutionOrderDescriptor(
                 entity.Id,
                 entity.ExchangeAccountId!.Value,
+                entity.OwnerUserId,
+                entity.RootCorrelationId,
                 entity.Plane,
                 entity.Symbol,
                 entity.State,
@@ -110,7 +112,12 @@ public sealed class ExecutionReconciliationService(
                             order.ExternalOrderId,
                             ExecutionClientOrderId.Create(order.ExecutionOrderId),
                             credentialAccess.ApiKey,
-                            credentialAccess.ApiSecret),
+                            credentialAccess.ApiSecret,
+                            CommandId: ExecutionClientOrderId.Create(order.ExecutionOrderId),
+                            CorrelationId: order.RootCorrelationId,
+                            ExecutionAttemptId: order.ExecutionOrderId.ToString("N"),
+                            ExecutionOrderId: order.ExecutionOrderId,
+                            UserId: order.OwnerUserId),
                         cancellationToken);
                     var driftDetected = DetectDrift(order, snapshot);
                     var reconciliationStatus = driftDetected
@@ -192,6 +199,8 @@ public sealed class ExecutionReconciliationService(
     private sealed record ExecutionOrderDescriptor(
         Guid ExecutionOrderId,
         Guid ExchangeAccountId,
+        string OwnerUserId,
+        string? RootCorrelationId,
         ExchangeDataPlane Plane,
         string Symbol,
         ExecutionOrderState State,

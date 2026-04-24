@@ -284,6 +284,65 @@ public sealed class AdminIncidentAuditDecisionCenterComposerTests
     }
 
     [Fact]
+    public void Compose_IncludesHandoffAndExecutionTransition_InDecisionExecutionTimeline()
+    {
+        var now = new DateTime(2026, 4, 8, 12, 25, 0, DateTimeKind.Utc);
+        var executionOrderId = Guid.NewGuid();
+        var strategySignalId = Guid.NewGuid();
+        var snapshot = CreateSnapshot(
+            now,
+            new LogCenterEntrySnapshot(
+                "DecisionTrace",
+                "dec-chain",
+                "Persisted",
+                "healthy",
+                "Info",
+                "corr-chain",
+                "dec-chain",
+                "exe-chain",
+                null,
+                null,
+                "user-chain",
+                "SOLUSDT",
+                "Signal persisted",
+                "Signal persisted",
+                "StrategyVersion:test",
+                now,
+                ["CandidatePersisted"],
+                "{}",
+                DecisionReasonType: "StrategyCandidate",
+                DecisionReasonCode: "CandidatePersisted"));
+        var traceDetail = new AdminTraceDetailSnapshot(
+            "corr-chain",
+            [
+                new DecisionTraceSnapshot(Guid.NewGuid(), strategySignalId, "corr-chain", "dec-chain", "user-chain", "SOLUSDT", "1m", "StrategyVersion:test", "Entry", 55, "Persisted", null, 11, "{}", now)
+            ],
+            [
+                new ExecutionTraceSnapshot(Guid.NewGuid(), executionOrderId, "corr-chain", "exe-chain", "cmd-chain", "user-chain", "Binance.PrivateRest", "/fapi/v1/order", "{}", "{}", 200, "OK", 22, now.AddSeconds(2))
+            ],
+            [
+                new AdminTraceHandoffAttemptSnapshot(Guid.NewGuid(), Guid.NewGuid(), strategySignalId, "user-chain", Guid.NewGuid(), "SOLUSDT", "1m", "Persisted", "Prepared", null, "Allowed: execution request prepared.", "ExecutionGate=Allowed", "Live", "Buy", now.AddSeconds(1))
+            ],
+            [
+                new AdminTraceExecutionTransitionSnapshot(Guid.NewGuid(), executionOrderId, 1, "Submitted", "Submitted", "Execution accepted", "corr-chain", "corr-chain", now.AddSeconds(3))
+            ]);
+
+        var model = AdminIncidentAuditDecisionCenterComposer.Compose(
+            snapshot,
+            outcome: null,
+            reasonCode: null,
+            focusReference: "dec-chain",
+            traceDetail,
+            approvalDetail: null,
+            incidentDetail: null,
+            evaluatedAtUtc: now.AddMinutes(1));
+
+        Assert.Equal(4, model.Detail.DecisionExecutionTrace.Count);
+        Assert.Contains(model.Detail.DecisionExecutionTrace, item => item.Kind == "Handoff");
+        Assert.Contains(model.Detail.DecisionExecutionTrace, item => item.Kind == "Execution transition");
+    }
+
+    [Fact]
     public void Compose_UsesUnavailableFallback_WhenReasonAndDiffMissing()
     {
         var now = new DateTime(2026, 4, 8, 12, 30, 0, DateTimeKind.Utc);

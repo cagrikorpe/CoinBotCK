@@ -421,6 +421,123 @@ public sealed class UltraDebugLogServiceTests
         Assert.Equal("total=42ms | handoff=42ms", snapshot.LatestStructuredEvent.LatencyBreakdownLabel);
     }
 
+    [Fact]
+    public async Task GetSnapshotAsync_ReturnsMaskedBoundedTailPreview_ForNormalAndUltraBuckets()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 22, 9, 0, 0, TimeSpan.Zero));
+
+        await harness.Service.EnableAsync(
+            new UltraDebugLogEnableRequest("1h", "admin-01", "ops-admin@coinbot.test", null, null, "corr-ultra-15", 256, 1024));
+
+        for (var index = 0; index < 20; index++)
+        {
+            await harness.Service.WriteAsync(
+                new UltraDebugLogEntry(
+                    Category: "execution.dispatch",
+                    EventName: $"tail_event_{index:00}",
+                    Summary: $"Tail summary {index:00}",
+                    CorrelationId: $"corr-tail-{index:00}",
+                    Symbol: "SOLUSDT",
+                    Detail: new
+                    {
+                        token = "plain-token",
+                        password = "plain-password",
+                        payload = new string('x', 12000)
+                    }));
+        }
+
+        var snapshot = await harness.Service.GetSnapshotAsync();
+
+        Assert.NotNull(snapshot.NormalLogsTail);
+        Assert.NotNull(snapshot.UltraLogsTail);
+        Assert.Equal(8, snapshot.NormalLogsTail!.ReturnedLineCount);
+        Assert.Equal(8, snapshot.UltraLogsTail!.ReturnedLineCount);
+        Assert.Equal(8, snapshot.NormalLogsTail.Lines.Count);
+        Assert.Equal(8, snapshot.UltraLogsTail.Lines.Count);
+        Assert.True(snapshot.NormalLogsTail.IsTruncated);
+        Assert.True(snapshot.UltraLogsTail.IsTruncated);
+        Assert.True(snapshot.NormalLogsTail.FilesScanned <= 2);
+        Assert.True(snapshot.UltraLogsTail.FilesScanned <= 2);
+        Assert.Contains(snapshot.NormalLogsTail.Lines, line => string.Equals(line.Symbol, "SOLUSDT", StringComparison.Ordinal));
+        Assert.All(snapshot.NormalLogsTail.Lines, line => Assert.Equal("execution", line.Category));
+        Assert.All(snapshot.UltraLogsTail.Lines, line => Assert.Equal("execution", line.Category));
+
+        foreach (var line in snapshot.NormalLogsTail.Lines.Concat(snapshot.UltraLogsTail.Lines))
+        {
+            Assert.False(string.IsNullOrWhiteSpace(line.EventName));
+            Assert.False(string.IsNullOrWhiteSpace(line.Summary));
+            Assert.Contains(".ndjson", line.SourceFileName ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("plain-token", line.DetailPreview ?? string.Empty, StringComparison.Ordinal);
+            Assert.DoesNotContain("plain-password", line.DetailPreview ?? string.Empty, StringComparison.Ordinal);
+            Assert.Contains("***REDACTED***", line.DetailPreview ?? string.Empty, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public async Task SearchAsync_AppliesBucketCategorySourceSearchAndTimeWindow_UsingMaskedPreview()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 22, 8, 0, 0, TimeSpan.Zero));
+
+        await harness.Service.EnableAsync(
+            new UltraDebugLogEnableRequest("1h", "admin-01", "ops-admin@coinbot.test", null, null, "corr-ultra-16", 256, 1024));
+
+        await harness.Service.WriteAsync(
+            new UltraDebugLogEntry(
+                "scanner.handoff",
+                "scanner_handoff_blocked",
+                "Handoff blocked for SOLUSDT.",
+                "corr-search-old",
+                "SOLUSDT",
+                Detail: new
+                {
+                    sourceLayer = "MarketScannerHandoffService",
+                    blockerCode = "NoEligibleCandidate"
+                }));
+
+        harness.TimeProvider.SetUtcNow(new DateTimeOffset(2026, 4, 22, 8, 45, 0, TimeSpan.Zero));
+        await harness.Service.WriteAsync(
+            new UltraDebugLogEntry(
+                "execution.dispatch",
+                "execution_dispatch_submitted",
+                "Dispatch accepted for SOLUSDT.",
+                "corr-search-new",
+                "SOLUSDT",
+                Detail: new
+                {
+                    sourceLayer = "ExecutionEngine",
+                    token = "plain-token",
+                    note = "dispatch"
+                }));
+
+        var filteredResult = await harness.Service.SearchAsync(
+            new UltraDebugLogSearchRequest(
+                BucketName: "ultra_debug",
+                Category: "execution",
+                Source: "ExecutionEngine",
+                SearchTerm: "dispatch",
+                FromUtc: new DateTime(2026, 4, 22, 8, 30, 0, DateTimeKind.Utc),
+                Take: 25));
+
+        Assert.Single(filteredResult.Lines);
+        var line = filteredResult.Lines.Single();
+        Assert.Equal("execution", line.Category);
+        Assert.Equal("ExecutionEngine", line.Source);
+        Assert.Equal("ultra_debug", line.BucketLabel);
+        Assert.Equal("corr-search-new", line.CorrelationId);
+        Assert.DoesNotContain("plain-token", line.DetailPreview ?? string.Empty, StringComparison.Ordinal);
+
+        var secretSearchResult = await harness.Service.SearchAsync(
+            new UltraDebugLogSearchRequest(
+                BucketName: "ultra_debug",
+                Category: "execution",
+                Source: "ExecutionEngine",
+                SearchTerm: "plain-token",
+                FromUtc: new DateTime(2026, 4, 22, 8, 30, 0, DateTimeKind.Utc),
+                Take: 25));
+
+        Assert.Empty(secretSearchResult.Lines);
+    }
+
     private static TestHarness CreateHarness(DateTimeOffset now, Func<string, long?>? availableDiskBytesResolver = null)
     {
         var artifactsRoot = Path.Combine(

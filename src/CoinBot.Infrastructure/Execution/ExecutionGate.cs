@@ -6,6 +6,7 @@ using CoinBot.Application.Abstractions.DemoPortfolio;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.DemoPortfolio;
 using CoinBot.Infrastructure.Exchange;
 using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.MarketData;
@@ -34,7 +35,8 @@ public sealed class ExecutionGate(
     IOptions<BinancePrivateDataOptions>? privateDataOptions = null,
     IOptions<BinanceMarketDataOptions>? marketDataOptions = null,
     IOptions<BotExecutionPilotOptions>? botExecutionPilotOptions = null,
-    IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null) : IExecutionGate
+    IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null,
+    IOptions<DemoSessionOptions>? demoSessionOptions = null) : IExecutionGate
 {
     private readonly ITraceService? traceWriter = traceService;
     private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
@@ -44,6 +46,7 @@ public sealed class ExecutionGate(
     private readonly BinanceMarketDataOptions marketDataOptionsValue = marketDataOptions?.Value ?? new BinanceMarketDataOptions();
     private readonly BotExecutionPilotOptions pilotOptionsValue = botExecutionPilotOptions?.Value ?? new BotExecutionPilotOptions();
     private readonly ExecutionRuntimeOptions executionRuntimeOptionsValue = executionRuntimeOptions?.Value ?? new ExecutionRuntimeOptions();
+    private readonly DemoSessionOptions demoSessionOptionsValue = demoSessionOptions?.Value ?? new DemoSessionOptions();
     private readonly int privatePlaneFreshnessThresholdMilliseconds = checked((botExecutionPilotOptions?.Value ?? new BotExecutionPilotOptions()).PrivatePlaneFreshnessThresholdSeconds * 1000);
 
     public async Task<GlobalExecutionSwitchSnapshot> EnsureExecutionAllowedAsync(
@@ -252,11 +255,12 @@ public sealed class ExecutionGate(
                 using var executionActivity = CoinBotActivity.StartActivity("CoinBot.Execution.Gate");
                 ApplyTags(executionActivity, request);
                 executionActivity.SetTag("coinbot.execution.result", ExecutionGateBlockedReason.DemoSessionDriftDetected.ToString());
+                var demoSessionDriftMessage = CreateDemoSessionDriftMessage(request.Environment, latencySnapshot, demoSessionSnapshot);
                 var demoSessionDecision = CreateDecisionDescriptor(
                     request,
                     isBlocked: true,
                     reasonCode: ExecutionGateBlockedReason.DemoSessionDriftDetected.ToString(),
-                    summary: CreateMessage(ExecutionGateBlockedReason.DemoSessionDriftDetected, request.Environment, latencySnapshot),
+                    summary: demoSessionDriftMessage,
                     latencySnapshot,
                     clock.GetUtcNow().UtcDateTime);
 
@@ -289,7 +293,7 @@ public sealed class ExecutionGate(
                 throw new ExecutionGateRejectedException(
                     ExecutionGateBlockedReason.DemoSessionDriftDetected,
                     request.Environment,
-                    CreateMessage(ExecutionGateBlockedReason.DemoSessionDriftDetected, request.Environment, latencySnapshot));
+                    demoSessionDriftMessage);
             }
         }
 
@@ -912,6 +916,16 @@ public sealed class ExecutionGate(
             _ => "Execution blocked by an unknown gate decision."
         };
     }
+
+    private string CreateDemoSessionDriftMessage(
+        ExecutionEnvironment requestedEnvironment,
+        DegradedModeSnapshot latencySnapshot,
+        DemoSessionSnapshot demoSessionSnapshot)
+    {
+        return FormattableString.Invariant(
+            $"{CreateMessage(ExecutionGateBlockedReason.DemoSessionDriftDetected, requestedEnvironment, latencySnapshot)} DecisionSourceLayer=DemoSessionConsistency; DemoSessionEvaluatedAtUtc={demoSessionSnapshot.LastConsistencyCheckedAtUtc?.ToString("O") ?? "missing"}; DemoSessionStartedAtUtc={demoSessionSnapshot.StartedAtUtc:O}; DemoSessionLastDriftDetectedAtUtc={demoSessionSnapshot.LastDriftDetectedAtUtc?.ToString("O") ?? "missing"}; ComparedState=LedgerSnapshotsVsDemoPortfolioProjection; ConsistencyTolerance={demoSessionOptionsValue.ConsistencyTolerance:0.##################}; ComputedDriftMs=not_applicable; ThresholdMs=not_applicable; StateReason={Truncate(demoSessionSnapshot.LastDriftSummary, 384) ?? "none"}");
+    }
+
     private static string BuildGlobalSystemOutcome(GlobalSystemStateKind state)
     {
         return state switch
@@ -1186,6 +1200,14 @@ public sealed class ExecutionGate(
                         demoSessionSnapshot.State,
                         demoSessionSnapshot.ConsistencyStatus,
                         demoSessionSnapshot.SequenceNumber,
+                        demoSessionSnapshot.StartedAtUtc,
+                        demoSessionSnapshot.LastConsistencyCheckedAtUtc,
+                        demoSessionSnapshot.LastDriftDetectedAtUtc,
+                        SourceLayer = "DemoSessionConsistency",
+                        ComparedState = "LedgerSnapshotsVsDemoPortfolioProjection",
+                        ConsistencyTolerance = demoSessionOptionsValue.ConsistencyTolerance,
+                        ComputedDriftMs = (int?)null,
+                        ThresholdMs = (int?)null,
                         demoSessionSnapshot.LastDriftSummary
                     },
                 GlobalSystem = globalSystemStateSnapshot is null
@@ -1308,7 +1330,7 @@ public sealed class ExecutionGate(
         if (demoSessionSnapshot is not null)
         {
             contextParts.Add(
-                $"DemoSessionState={demoSessionSnapshot.State}; DemoConsistency={demoSessionSnapshot.ConsistencyStatus}; DemoSessionSequence={demoSessionSnapshot.SequenceNumber}; DemoDrift={Truncate(demoSessionSnapshot.LastDriftSummary, 160) ?? "none"}");
+                $"DemoSessionState={demoSessionSnapshot.State}; DemoConsistency={demoSessionSnapshot.ConsistencyStatus}; DemoSessionSequence={demoSessionSnapshot.SequenceNumber}; DemoSessionStartedAtUtc={demoSessionSnapshot.StartedAtUtc:O}; DemoSessionCheckedAtUtc={demoSessionSnapshot.LastConsistencyCheckedAtUtc?.ToString("O") ?? "missing"}; DemoSessionDriftAtUtc={demoSessionSnapshot.LastDriftDetectedAtUtc?.ToString("O") ?? "missing"}; DemoDrift={Truncate(demoSessionSnapshot.LastDriftSummary, 512) ?? "none"}");
         }
 
         if (globalSystemStateSnapshot is not null)
@@ -1456,7 +1478,6 @@ public sealed class ExecutionGate(
         return false;
     }
 }
-
 
 
 

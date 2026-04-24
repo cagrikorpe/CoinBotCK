@@ -83,7 +83,10 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Contains("DevelopmentFuturesTestnetPilot=True", harness.ExecutionGate.LastRequest?.Context, StringComparison.Ordinal);
         Assert.Equal("BTCUSDT", harness.UserExecutionOverrideGuard.LastRequest?.Symbol);
         Assert.NotEqual(string.Empty, persistedAttempt.CorrelationId);
+        Assert.Equal(persistedAttempt.CorrelationId, harness.ExecutionGate.LastRequest?.CorrelationId);
+        Assert.Equal(persistedAttempt.CorrelationId, harness.ExecutionEngine.LastCommand?.CorrelationId);
         var order = await harness.DbContext.ExecutionOrders.SingleAsync(entity => entity.StrategySignalId == persistedAttempt.StrategySignalId);
+        Assert.Equal(persistedAttempt.CorrelationId, order.RootCorrelationId);
         Assert.Equal(ExecutionEnvironment.Live, order.ExecutionEnvironment);
         Assert.Equal(ExecutionOrderExecutorKind.Binance, order.ExecutorKind);
         Assert.Equal(persistedAttempt.BotId, order.BotId);
@@ -248,6 +251,42 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal(ExecutionOrderExecutorKind.Virtual, order.ExecutorKind);
         Assert.True(harness.ExecutionEngine.LastCommand?.IsDemo);
         Assert.Equal(bot.ExchangeAccountId, harness.ExecutionEngine.LastCommand?.ExchangeAccountId);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_UsesConfiguredLiveDispatchMode_WhenPilotIsActive_EvenIfTradingModeResolverReturnsDemo()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        await using var harness = CreateHarness(
+            nowUtc,
+            new BotExecutionPilotOptions
+            {
+                SignalEvaluationMode = ExecutionEnvironment.Live,
+                ExecutionDispatchMode = ExecutionEnvironment.Live,
+                PilotActivationEnabled = true,
+                PrimeHistoricalCandleCount = 34
+            },
+            ExecutionEnvironment.Demo);
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-live-pilot", "BTCUSDT", "pilot-live-dispatch");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "BTCUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "BTCUSDT", rank: 1, score: 10_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("BTCUSDT", "BTC", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "BTCUSDT", "1m", harness.NowUtc));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
+        Assert.Equal(ExecutionEnvironment.Live, attempt.ExecutionEnvironment);
+        Assert.Equal(ExecutionEnvironment.Live, harness.StrategySignalService.LastRequest?.EffectiveExecutionEnvironment);
+        Assert.Equal(ExecutionEnvironment.Live, harness.ExecutionGate.LastRequest?.Environment);
+        Assert.Contains("DevelopmentFuturesTestnetPilot=True", harness.ExecutionGate.LastRequest?.Context, StringComparison.Ordinal);
+        Assert.Equal(ExecutionEnvironment.Live, harness.UserExecutionOverrideGuard.LastRequest?.Environment);
+        var order = await harness.DbContext.ExecutionOrders.SingleAsync(entity => entity.StrategySignalId == attempt.StrategySignalId);
+        Assert.Equal(ExecutionEnvironment.Live, order.ExecutionEnvironment);
+        Assert.False(harness.ExecutionEngine.LastCommand?.IsDemo);
     }
 
     [Fact]

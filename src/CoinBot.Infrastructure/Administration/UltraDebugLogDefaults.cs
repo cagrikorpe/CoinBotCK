@@ -16,6 +16,14 @@ internal static class UltraDebugLogDefaults
     internal const int NormalBucketRotateThresholdMb = 32;
     internal const int UltraBucketRotateThresholdMb = 32;
     internal const int DiskPressureFreeSpaceThresholdMb = 512;
+    internal const int TailPreviewLineCount = 8;
+    internal const int TailPreviewMaxFiles = 2;
+    internal const int TailPreviewWindowBytes = 128 * 1024;
+    internal const int TailPreviewDetailMaxLength = 384;
+    internal const int SearchPreviewDefaultTake = 25;
+    internal const int SearchPreviewMaxTake = 50;
+    internal const int SearchPreviewMaxFiles = 12;
+    internal const int SearchPreviewWindowBytes = 256 * 1024;
     internal static readonly string[] CategoryFolders =
     [
         "scanner",

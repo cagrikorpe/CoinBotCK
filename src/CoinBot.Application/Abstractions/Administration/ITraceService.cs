@@ -18,9 +18,18 @@ public interface ITraceService
         AdminTraceSearchRequest request,
         CancellationToken cancellationToken = default);
 
+    Task<AdminTraceExactMatchSnapshot?> FindExactMatchAsync(
+        string reference,
+        CancellationToken cancellationToken = default);
+
     Task<AdminTraceDetailSnapshot?> GetDetailAsync(
         string correlationId,
         string? decisionId = null,
         string? executionAttemptId = null,
         CancellationToken cancellationToken = default);
 }
+
+public sealed record AdminTraceExactMatchSnapshot(
+    string CorrelationId,
+    string? DecisionId = null,
+    string? ExecutionAttemptId = null);

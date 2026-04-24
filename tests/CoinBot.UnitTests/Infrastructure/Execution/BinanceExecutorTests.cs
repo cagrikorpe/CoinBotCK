@@ -97,6 +97,7 @@ public sealed class BinanceExecutorTests
         Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
         Assert.NotNull(harness.PrivateRestClient.LastPlacementRequest);
         Assert.Equal(0.660000000000000000m, harness.PrivateRestClient.LastPlacementRequest.Quantity);
+        Assert.Equal(harness.Order.Id.ToString("N"), harness.PrivateRestClient.LastPlacementRequest.ExecutionAttemptId);
     }
 
     [Fact]

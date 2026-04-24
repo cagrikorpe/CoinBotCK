@@ -70,7 +70,86 @@ public sealed class DemoSessionServiceTests
         Assert.NotNull(session);
         Assert.Equal(DemoConsistencyStatus.DriftDetected, session!.ConsistencyStatus);
         Assert.Contains("WalletMismatches=1", session.LastDriftSummary, StringComparison.Ordinal);
+        Assert.Contains("EvaluatedAtUtc=", session.LastDriftSummary, StringComparison.Ordinal);
+        Assert.Contains("ComparedState=LedgerSnapshotsVsDemoPortfolioProjection", session.LastDriftSummary, StringComparison.Ordinal);
+        Assert.Contains("ConsistencyTolerance=0.00000001", session.LastDriftSummary, StringComparison.Ordinal);
         Assert.Equal("Detected", auditLog.Outcome);
+    }
+
+    [Fact]
+    public async Task RunConsistencyCheckAsync_RehydratesMissingPositionProjection_FromLatestLedgerSnapshot()
+    {
+        await using var harness = CreateHarness();
+        var botId = Guid.NewGuid();
+        var positionScopeKey = $"bot:{botId:N}";
+        harness.DbContext.TradingBots.Add(new TradingBot
+        {
+            Id = botId,
+            OwnerUserId = "user-missing-position",
+            Name = "Demo Bot",
+            StrategyKey = "demo-missing-position",
+            Symbol = "SOLUSDT",
+            IsEnabled = false,
+            OpenOrderCount = 0,
+            OpenPositionCount = 0
+        });
+        harness.DbContext.DemoSessions.Add(new DemoSession
+        {
+            OwnerUserId = "user-missing-position",
+            SequenceNumber = 1,
+            SeedAsset = "USDT",
+            SeedAmount = 10000m,
+            State = DemoSessionState.Active,
+            ConsistencyStatus = DemoConsistencyStatus.DriftDetected,
+            StartedAtUtc = At(0)
+        });
+        harness.DbContext.DemoLedgerTransactions.Add(new DemoLedgerTransaction
+        {
+            OwnerUserId = "user-missing-position",
+            OperationId = "mark-price:missing-position",
+            TransactionType = DemoLedgerTransactionType.MarkPriceUpdated,
+            BotId = botId,
+            PositionScopeKey = positionScopeKey,
+            Symbol = "SOLUSDT",
+            BaseAsset = "SOL",
+            QuoteAsset = "USDT",
+            PositionKind = DemoPositionKind.Futures,
+            MarginMode = DemoMarginMode.Cross,
+            Leverage = 1m,
+            PositionQuantityAfter = 0.06m,
+            PositionCostBasisAfter = 5.214m,
+            PositionAverageEntryPriceAfter = 86.9m,
+            CumulativeRealizedPnlAfter = 0m,
+            UnrealizedPnlAfter = 0.012m,
+            CumulativeFeesInQuoteAfter = 0.003m,
+            NetFundingInQuoteAfter = 0m,
+            LastPriceAfter = 87.1m,
+            MarkPriceAfter = 87.2m,
+            MaintenanceMarginRateAfter = 0.004m,
+            MaintenanceMarginAfter = 0.020856m,
+            MarginBalanceAfter = 5.226m,
+            LiquidationPriceAfter = 50m,
+            OccurredAtUtc = At(1),
+            CreatedDate = At(1),
+            UpdatedDate = At(1)
+        });
+        await harness.DbContext.SaveChangesAsync();
+
+        var session = await harness.Service.RunConsistencyCheckAsync("user-missing-position");
+        var position = await harness.DbContext.DemoPositions.SingleAsync(entity => entity.BotId == botId);
+        var bot = await harness.DbContext.TradingBots.SingleAsync(entity => entity.Id == botId);
+        var auditLog = await harness.DbContext.AuditLogs.SingleAsync(entity => entity.Action == "DemoSession.MissingPositionProjectionRehydrated");
+
+        Assert.NotNull(session);
+        Assert.Equal(DemoConsistencyStatus.InSync, session!.ConsistencyStatus);
+        Assert.Null(session.LastDriftSummary);
+        Assert.Equal(positionScopeKey, position.PositionScopeKey);
+        Assert.Equal("SOLUSDT", position.Symbol);
+        Assert.Equal(0.06m, position.Quantity);
+        Assert.Equal(87.2m, position.LastMarkPrice);
+        Assert.Equal(1, bot.OpenPositionCount);
+        Assert.Contains("RehydratedPositions=1", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains(positionScopeKey, auditLog.Context, StringComparison.Ordinal);
     }
 
     [Fact]

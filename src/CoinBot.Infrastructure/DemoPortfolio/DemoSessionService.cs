@@ -56,10 +56,16 @@ public sealed class DemoSessionService(
         }
 
         await EnsureSeededPortfolioStateAsync(session, cancellationToken);
+        var missingProjectionRecovery = await RehydrateMissingPositionProjectionsAsync(session, cancellationToken);
         var leakReconciliation = await ReconcileFailedDemoOrderPositionLeaksAsync(session, cancellationToken);
         var walletLeakReconciliation = await ReconcileFailedDemoOrderWalletLeaksAsync(session, cancellationToken);
         var botStateRefreshes = leakReconciliation.OpenPositionCountsByBotId
             .ToDictionary(item => item.Key, item => (int?)item.Value);
+
+        foreach (var botId in missingProjectionRecovery.AffectedBotIds)
+        {
+            botStateRefreshes.TryAdd(botId, null);
+        }
 
         foreach (var staleBotId in await ResolveStaleDemoBotStateIdsAsync(session.OwnerUserId, cancellationToken))
         {
@@ -104,6 +110,20 @@ public sealed class DemoSessionService(
                 cancellationToken);
         }
 
+        if (missingProjectionRecovery.RehydratedPositionCount > 0)
+        {
+            await auditLogService.WriteAsync(
+                new AuditLogWriteRequest(
+                    SystemActor,
+                    "DemoSession.MissingPositionProjectionRehydrated",
+                    $"DemoSession/{session.Id}",
+                    BuildMissingPositionProjectionRecoveryContext(missingProjectionRecovery.RehydratedPositionCount, missingProjectionRecovery.SamplePositionKey),
+                    CorrelationId: null,
+                    Outcome: "Applied",
+                    Environment: nameof(ExecutionEnvironment.Demo)),
+                cancellationToken);
+        }
+
         var previousStatus = session.ConsistencyStatus;
         var result = await demoConsistencyWatchdogService.EvaluateAsync(session, cancellationToken);
         ApplyConsistency(session, result);
@@ -125,6 +145,84 @@ public sealed class DemoSessionService(
         }
 
         return MapSnapshot(session);
+    }
+
+    private async Task<MissingPositionProjectionRecoveryResult> RehydrateMissingPositionProjectionsAsync(
+        DemoSession session,
+        CancellationToken cancellationToken)
+    {
+        var sessionStartedAtUtc = NormalizeTimestamp(session.StartedAtUtc);
+        var transactions = await dbContext.DemoLedgerTransactions
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.OwnerUserId == session.OwnerUserId &&
+                !entity.IsDeleted &&
+                entity.CreatedDate >= sessionStartedAtUtc &&
+                entity.PositionQuantityAfter != null &&
+                entity.Symbol != null)
+            .ToListAsync(cancellationToken);
+
+        if (transactions.Count == 0)
+        {
+            return MissingPositionProjectionRecoveryResult.Empty;
+        }
+
+        var latestTransactions = transactions
+            .Where(IsRecoverablePositionSnapshot)
+            .GroupBy(entity => CreatePositionKey(entity.PositionScopeKey, entity.Symbol!), StringComparer.Ordinal)
+            .Select(group => group
+                .OrderByDescending(entity => NormalizeTimestamp(entity.CreatedDate))
+                .ThenByDescending(entity => NormalizeTimestamp(entity.OccurredAtUtc))
+                .ThenByDescending(entity => entity.Id)
+                .First())
+            .Where(entity => Math.Abs(entity.PositionQuantityAfter!.Value) > optionsValue.ConsistencyTolerance)
+            .ToList();
+
+        if (latestTransactions.Count == 0)
+        {
+            return MissingPositionProjectionRecoveryResult.Empty;
+        }
+
+        var existingPositionKeys = (await dbContext.DemoPositions
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.OwnerUserId == session.OwnerUserId &&
+                    !entity.IsDeleted)
+                .Select(entity => new { entity.PositionScopeKey, entity.Symbol })
+                .ToListAsync(cancellationToken))
+            .Select(entity => CreatePositionKey(entity.PositionScopeKey, entity.Symbol))
+            .ToHashSet(StringComparer.Ordinal);
+
+        var affectedBotIds = new HashSet<Guid>();
+        var rehydratedPositionCount = 0;
+        string? samplePositionKey = null;
+
+        foreach (var transaction in latestTransactions)
+        {
+            var positionKey = CreatePositionKey(transaction.PositionScopeKey, transaction.Symbol!);
+            if (existingPositionKeys.Contains(positionKey))
+            {
+                continue;
+            }
+
+            dbContext.DemoPositions.Add(CreatePositionFromLedgerSnapshot(session.OwnerUserId, transaction));
+            existingPositionKeys.Add(positionKey);
+            rehydratedPositionCount++;
+            samplePositionKey ??= positionKey;
+
+            if (transaction.BotId.HasValue)
+            {
+                affectedBotIds.Add(transaction.BotId.Value);
+            }
+        }
+
+        if (rehydratedPositionCount == 0)
+        {
+            return MissingPositionProjectionRecoveryResult.Empty;
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return new MissingPositionProjectionRecoveryResult(rehydratedPositionCount, affectedBotIds, samplePositionKey);
     }
 
     private async Task<FailedOrderLeakReconciliationResult> ReconcileFailedDemoOrderPositionLeaksAsync(
@@ -1042,6 +1140,74 @@ public sealed class DemoSessionService(
         return Truncate(string.Join(" | ", parts), 2048) ?? "Failed demo virtual order wallet leak reconciled.";
     }
 
+    private static string BuildMissingPositionProjectionRecoveryContext(int rehydratedPositionCount, string? samplePositionKey)
+    {
+        var parts = new List<string>
+        {
+            $"RehydratedPositions={rehydratedPositionCount}",
+            "Reason=MissingDemoPositionProjection",
+            $"SamplePositionKey={samplePositionKey ?? "none"}"
+        };
+
+        return Truncate(string.Join(" | ", parts), 2048) ?? "Missing demo position projection rehydrated.";
+    }
+
+    private static bool IsRecoverablePositionSnapshot(DemoLedgerTransaction transaction)
+    {
+        return !string.IsNullOrWhiteSpace(transaction.PositionScopeKey) &&
+               !string.IsNullOrWhiteSpace(transaction.Symbol) &&
+               !string.IsNullOrWhiteSpace(transaction.BaseAsset) &&
+               !string.IsNullOrWhiteSpace(transaction.QuoteAsset) &&
+               transaction.PositionQuantityAfter.HasValue &&
+               transaction.PositionCostBasisAfter.HasValue &&
+               transaction.PositionAverageEntryPriceAfter.HasValue &&
+               transaction.CumulativeRealizedPnlAfter.HasValue &&
+               transaction.UnrealizedPnlAfter.HasValue &&
+               transaction.CumulativeFeesInQuoteAfter.HasValue;
+    }
+
+    private static DemoPosition CreatePositionFromLedgerSnapshot(string ownerUserId, DemoLedgerTransaction transaction)
+    {
+        return new DemoPosition
+        {
+            OwnerUserId = ownerUserId,
+            BotId = transaction.BotId,
+            PositionScopeKey = transaction.PositionScopeKey,
+            Symbol = transaction.Symbol!,
+            BaseAsset = transaction.BaseAsset!,
+            QuoteAsset = transaction.QuoteAsset!,
+            PositionKind = transaction.PositionKind ?? DemoPositionKind.Spot,
+            MarginMode = transaction.MarginMode,
+            Leverage = transaction.Leverage,
+            Quantity = transaction.PositionQuantityAfter!.Value,
+            CostBasis = transaction.PositionCostBasisAfter!.Value,
+            AverageEntryPrice = transaction.PositionAverageEntryPriceAfter!.Value,
+            RealizedPnl = transaction.CumulativeRealizedPnlAfter!.Value,
+            UnrealizedPnl = transaction.UnrealizedPnlAfter!.Value,
+            TotalFeesInQuote = transaction.CumulativeFeesInQuoteAfter!.Value,
+            NetFundingInQuote = transaction.NetFundingInQuoteAfter ?? 0m,
+            MaintenanceMarginRate = transaction.MaintenanceMarginRateAfter,
+            MaintenanceMargin = transaction.MaintenanceMarginAfter,
+            MarginBalance = transaction.MarginBalanceAfter,
+            LiquidationPrice = transaction.LiquidationPriceAfter,
+            LastMarkPrice = transaction.MarkPriceAfter,
+            LastPrice = transaction.LastPriceAfter,
+            LastFillPrice = transaction.TransactionType == DemoLedgerTransactionType.FillApplied ? transaction.Price : null,
+            LastFundingRate = transaction.FundingRate,
+            LastFilledAtUtc = transaction.TransactionType == DemoLedgerTransactionType.FillApplied
+                ? NormalizeTimestamp(transaction.OccurredAtUtc)
+                : null,
+            LastValuationAtUtc = transaction.MarkPriceAfter.HasValue
+                ? NormalizeTimestamp(transaction.OccurredAtUtc)
+                : null,
+            LastFundingAppliedAtUtc = transaction.FundingRate.HasValue
+                ? NormalizeTimestamp(transaction.OccurredAtUtc)
+                : null
+        };
+    }
+
+    private static string CreatePositionKey(string positionScopeKey, string symbol) => $"{positionScopeKey}|{symbol}";
+
     private static string CreateCorrelationId() => Guid.NewGuid().ToString("N");
 
     private static string NormalizeRequired(string? value, string parameterName, int maxLength = 450)
@@ -1098,6 +1264,14 @@ public sealed class DemoSessionService(
         Guid? SampleExecutionOrderId)
     {
         public static FailedOrderWalletLeakReconciliationResult Empty => new(0, null);
+    }
+
+    private sealed record MissingPositionProjectionRecoveryResult(
+        int RehydratedPositionCount,
+        HashSet<Guid> AffectedBotIds,
+        string? SamplePositionKey)
+    {
+        public static MissingPositionProjectionRecoveryResult Empty => new(0, [], null);
     }
 
     private sealed record FailedOrderWalletLedgerDelta(

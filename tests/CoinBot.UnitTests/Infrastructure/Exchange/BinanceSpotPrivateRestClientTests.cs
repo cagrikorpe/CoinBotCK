@@ -1,10 +1,18 @@
 using System.Net;
 using System.Text;
+using CoinBot.Application.Abstractions.Administration;
+using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Identity;
+using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Exchange;
+using CoinBot.Infrastructure.Administration;
+using CoinBot.Infrastructure.Persistence;
 using CoinBot.Infrastructure.Execution;
 using CoinBot.UnitTests.Infrastructure.Mfa;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -132,6 +140,91 @@ public sealed class BinanceSpotPrivateRestClientTests
         Assert.Equal("BNB", firstFill.FeeAsset);
         Assert.Equal(0.0001m, firstFill.FeeAmount);
         Assert.Equal(ExchangeDataPlane.Spot, firstFill.Plane);
+    }
+
+    [Fact]
+    public async Task GetOrderAsync_WritesMaskedExecutionTrace_WithStableCorrelationMetadata()
+    {
+        using var provider = BuildTraceProvider();
+        using var handler = new RecordingMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                """{"symbol":"BTCUSDT","orderId":1001,"clientOrderId":"cbs_order","status":"PARTIALLY_FILLED","origQty":"0.05","executedQty":"0.02","cummulativeQuoteQty":"1280.00","updateTime":1710000000123}""",
+                Encoding.UTF8,
+                "application/json")
+        });
+        using var client = new HttpClient(handler) { BaseAddress = new Uri("https://api.binance.com") };
+        var sut = CreateClient(client, new FakeSpotTimeSyncService(), provider.GetRequiredService<IServiceScopeFactory>());
+        var executionOrderId = Guid.NewGuid();
+
+        await sut.GetOrderAsync(
+            new BinanceOrderQueryRequest(
+                Guid.NewGuid(),
+                "BTCUSDT",
+                ExchangeOrderId: "1001",
+                ClientOrderId: null,
+                ApiKey: "api-key",
+                ApiSecret: "api-secret",
+                CommandId: "cmd-spot-order-query",
+                CorrelationId: "corr-spot-order-query",
+                ExecutionAttemptId: "attempt-spot-order-query",
+                ExecutionOrderId: executionOrderId,
+                UserId: "user-spot-order-query"));
+
+        await using var scope = provider.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var trace = await dbContext.ExecutionTraces.SingleAsync();
+
+        Assert.Equal("/api/v3/order", trace.Endpoint);
+        Assert.Equal("corr-spot-order-query", trace.CorrelationId);
+        Assert.Equal("attempt-spot-order-query", trace.ExecutionAttemptId);
+        Assert.Equal(executionOrderId, trace.ExecutionOrderId);
+        Assert.Equal("user-spot-order-query", trace.UserId);
+        Assert.DoesNotContain("api-secret", trace.RequestMasked ?? string.Empty, StringComparison.Ordinal);
+        Assert.DoesNotContain("api-key", trace.RequestMasked ?? string.Empty, StringComparison.Ordinal);
+        Assert.Contains("***REDACTED***", trace.RequestMasked ?? string.Empty, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetTradeFillsAsync_WritesMaskedExecutionTrace_ForMyTradesEndpoint()
+    {
+        using var provider = BuildTraceProvider();
+        using var handler = new RecordingMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                """[{"id":77,"orderId":1001,"price":"64000","qty":"0.02","quoteQty":"1280","commission":"0.0001","commissionAsset":"BNB","time":1710000000123}]""",
+                Encoding.UTF8,
+                "application/json")
+        });
+        using var client = new HttpClient(handler) { BaseAddress = new Uri("https://api.binance.com") };
+        var sut = CreateClient(client, new FakeSpotTimeSyncService(), provider.GetRequiredService<IServiceScopeFactory>());
+        var executionOrderId = Guid.NewGuid();
+
+        await sut.GetTradeFillsAsync(
+            new BinanceOrderQueryRequest(
+                Guid.NewGuid(),
+                "BTCUSDT",
+                ExchangeOrderId: "1001",
+                ClientOrderId: "cbs_order",
+                ApiKey: "api-key",
+                ApiSecret: "api-secret",
+                CommandId: "cmd-spot-fills-query",
+                CorrelationId: "corr-spot-fills-query",
+                ExecutionAttemptId: "attempt-spot-fills-query",
+                ExecutionOrderId: executionOrderId,
+                UserId: "user-spot-fills-query"));
+
+        await using var scope = provider.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var trace = await dbContext.ExecutionTraces.SingleAsync();
+
+        Assert.Equal("/api/v3/myTrades", trace.Endpoint);
+        Assert.Equal("corr-spot-fills-query", trace.CorrelationId);
+        Assert.Equal("attempt-spot-fills-query", trace.ExecutionAttemptId);
+        Assert.Equal(executionOrderId, trace.ExecutionOrderId);
+        Assert.Equal("user-spot-fills-query", trace.UserId);
+        Assert.Contains("***REDACTED***", trace.RequestMasked ?? string.Empty, StringComparison.Ordinal);
+        Assert.DoesNotContain("api-secret", trace.ResponseMasked ?? string.Empty, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -320,7 +413,10 @@ public sealed class BinanceSpotPrivateRestClientTests
         Assert.DoesNotContain("plain-secret", exception.Message, StringComparison.Ordinal);
     }
 
-    private static BinanceSpotPrivateRestClient CreateClient(HttpClient httpClient, IBinanceSpotTimeSyncService timeSyncService)
+    private static BinanceSpotPrivateRestClient CreateClient(
+        HttpClient httpClient,
+        IBinanceSpotTimeSyncService timeSyncService,
+        IServiceScopeFactory? serviceScopeFactory = null)
     {
         return new BinanceSpotPrivateRestClient(
             httpClient,
@@ -332,7 +428,21 @@ public sealed class BinanceSpotPrivateRestClientTests
             }),
             new AdjustableTimeProvider(DateTimeOffset.Parse("2026-04-05T10:00:00Z")),
             timeSyncService,
-            NullLogger<BinanceSpotPrivateRestClient>.Instance);
+            NullLogger<BinanceSpotPrivateRestClient>.Instance,
+            serviceScopeFactory);
+    }
+
+    private static ServiceProvider BuildTraceProvider()
+    {
+        var databaseName = Guid.NewGuid().ToString("N");
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<ICorrelationContextAccessor, CorrelationContextAccessor>();
+        services.AddSingleton<IDataScopeContext>(new TestDataScopeContext());
+        services.AddSingleton<TimeProvider>(new AdjustableTimeProvider(DateTimeOffset.Parse("2026-04-05T10:00:00Z")));
+        services.AddDbContext<ApplicationDbContext>(options => options.UseInMemoryDatabase(databaseName));
+        services.AddScoped<ITraceService, TraceService>();
+        return services.BuildServiceProvider();
     }
 
     private sealed class FakeSpotTimeSyncService(long currentTimestampMilliseconds = 1_710_000_000_123L) : IBinanceSpotTimeSyncService
@@ -379,5 +489,12 @@ public sealed class BinanceSpotPrivateRestClientTests
 
             return clone;
         }
+    }
+
+    private sealed class TestDataScopeContext : IDataScopeContext
+    {
+        public string? UserId => null;
+
+        public bool HasIsolationBypass => true;
     }
 }

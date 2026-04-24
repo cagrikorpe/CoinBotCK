@@ -150,6 +150,40 @@ public sealed class BotExecutionPilotOptions
 
     [Range(50, 1000)]
     public int PrimeHistoricalCandleCount { get; set; } = 200;
+
+    public void NormalizeScopeCollections()
+    {
+        AllowedSymbols = ResolveNormalizedAllowedSymbols();
+        AllowedUserIds = ResolveNormalizedAllowedUserIds();
+        AllowedBotIds = ResolveNormalizedAllowedBotIds();
+    }
+
+    internal string[] ResolveNormalizedAllowedSymbols()
+    {
+        return AllowedSymbols
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Select(item => item.Trim().ToUpperInvariant())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    internal string[] ResolveNormalizedAllowedUserIds()
+    {
+        return AllowedUserIds
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Select(item => item.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    internal string[] ResolveNormalizedAllowedBotIds()
+    {
+        return AllowedBotIds
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Select(NormalizeAllowedBotId)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
     public int ResolveEntryHysteresisCooldownMinutes(StrategyTradeDirection direction)
     {
         return direction switch
@@ -295,5 +329,13 @@ public sealed class BotExecutionPilotOptions
                    NumberStyles.Number,
                    CultureInfo.InvariantCulture,
                    out value);
+    }
+
+    private static string NormalizeAllowedBotId(string value)
+    {
+        var normalized = value.Trim();
+        return Guid.TryParse(normalized, out var botId)
+            ? botId.ToString("N")
+            : normalized;
     }
 }

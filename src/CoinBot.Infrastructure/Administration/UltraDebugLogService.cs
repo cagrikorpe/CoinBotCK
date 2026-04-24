@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Infrastructure.Persistence;
@@ -174,6 +175,88 @@ public sealed class UltraDebugLogService(
             "Ultra log mode was disabled manually by an administrator.",
             cancellationToken);
         return await EnrichSnapshotWithUsageAsync(snapshot, cancellationToken);
+    }
+
+    public Task<UltraDebugLogTailSnapshot> SearchAsync(
+        UltraDebugLogSearchRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var normalizedBucketName = NormalizeSearchBucketName(request.BucketName);
+        var normalizedTake = Math.Clamp(
+            request.Take <= 0 ? UltraDebugLogDefaults.SearchPreviewDefaultTake : request.Take,
+            1,
+            UltraDebugLogDefaults.SearchPreviewMaxTake);
+
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var normalizedCategory = NormalizeSearchCategory(request.Category);
+            var normalizedSource = NormalizeOptional(request.Source, 128);
+            var normalizedSearchTerm = NormalizeOptional(request.SearchTerm, 128);
+            var candidateFiles = ResolveSearchCandidateFiles(normalizedBucketName, normalizedCategory, request.FromUtc);
+            var collectedLines = new List<UltraDebugLogTailLineSnapshot>(normalizedTake);
+            var truncated = candidateFiles.TotalFileCount > candidateFiles.Files.Count;
+
+            foreach (var candidateFile in candidateFiles.Files)
+            {
+                if (collectedLines.Count >= normalizedTake)
+                {
+                    truncated = true;
+                    break;
+                }
+
+                var tailLines = ReadTailWindowLines(
+                    candidateFile.File.FullName,
+                    UltraDebugLogDefaults.SearchPreviewMaxTake,
+                    UltraDebugLogDefaults.SearchPreviewWindowBytes,
+                    out var fileWasTruncated);
+                truncated |= fileWasTruncated;
+
+                foreach (var tailLine in tailLines)
+                {
+                    var parsedLine = ParseTailLineSnapshot(tailLine, candidateFile.File.Name, candidateFile.BucketName);
+                    if (parsedLine is null ||
+                        !MatchesSearchRequest(parsedLine, normalizedCategory, normalizedSource, normalizedSearchTerm, request.FromUtc))
+                    {
+                        continue;
+                    }
+
+                    collectedLines.Add(parsedLine);
+                    if (collectedLines.Count >= normalizedTake)
+                    {
+                        truncated = true;
+                        break;
+                    }
+                }
+            }
+
+            var orderedLines = collectedLines
+                .OrderByDescending(item => item.OccurredAtUtc ?? DateTime.MinValue)
+                .ThenByDescending(item => item.SourceFileName, StringComparer.Ordinal)
+                .Take(normalizedTake)
+                .ToArray();
+
+            return Task.FromResult(new UltraDebugLogTailSnapshot(
+                normalizedBucketName,
+                normalizedTake,
+                orderedLines.Length,
+                candidateFiles.Files.Count,
+                truncated,
+                orderedLines));
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(exception, "Ultra debug log search preview failed. The admin search result will stay empty.");
+            return Task.FromResult(new UltraDebugLogTailSnapshot(
+                normalizedBucketName,
+                normalizedTake,
+                0,
+                0,
+                false,
+                Array.Empty<UltraDebugLogTailLineSnapshot>()));
+        }
     }
 
     public async Task WriteAsync(UltraDebugLogEntry entry, CancellationToken cancellationToken = default)
@@ -710,6 +793,8 @@ public sealed class UltraDebugLogService(
         var diskFreeSpaceBytes = GetAvailableDiskSpaceBytes();
         var latestStructuredEvent = ReadLatestStructuredEventSnapshot("ultra_debug");
         var latestCategoryEvents = ReadLatestCategoryEventSnapshots("ultra_debug");
+        var normalLogsTail = ReadBucketTailSnapshot("normal");
+        var ultraLogsTail = ReadBucketTailSnapshot("ultra_debug");
         return Task.FromResult(snapshot with
         {
             NormalLogsUsageBytes = normalUsageBytes,
@@ -717,7 +802,9 @@ public sealed class UltraDebugLogService(
             DiskFreeSpaceBytes = diskFreeSpaceBytes,
             IsNormalFallbackMode = IsDiskPressure(diskFreeSpaceBytes) || IsCuratedNormalFallbackReason(snapshot.AutoDisabledReason),
             LatestStructuredEvent = latestStructuredEvent,
-            LatestCategoryEvents = latestCategoryEvents
+            LatestCategoryEvents = latestCategoryEvents,
+            NormalLogsTail = normalLogsTail,
+            UltraLogsTail = ultraLogsTail
         });
     }
 
@@ -798,6 +885,108 @@ public sealed class UltraDebugLogService(
             .FirstOrDefault();
     }
 
+    private UltraDebugLogTailSnapshot? ReadBucketTailSnapshot(string bucketName)
+    {
+        var bucketDirectoryPath = ResolveBucketDirectoryPath(bucketName);
+        if (!Directory.Exists(bucketDirectoryPath))
+        {
+            return null;
+        }
+
+        var candidateFiles = new DirectoryInfo(bucketDirectoryPath)
+            .GetFiles("*.ndjson", SearchOption.AllDirectories)
+            .OrderByDescending(file => file.LastWriteTimeUtc)
+            .ThenByDescending(file => file.Name, StringComparer.Ordinal)
+            .Take(UltraDebugLogDefaults.TailPreviewMaxFiles)
+            .ToArray();
+
+        if (candidateFiles.Length == 0)
+        {
+            return null;
+        }
+
+        var collectedLines = new List<UltraDebugLogTailLineSnapshot>(UltraDebugLogDefaults.TailPreviewLineCount);
+        var truncated = false;
+
+        foreach (var candidateFile in candidateFiles)
+        {
+            if (collectedLines.Count >= UltraDebugLogDefaults.TailPreviewLineCount)
+            {
+                break;
+            }
+
+            var remainingLineCount = UltraDebugLogDefaults.TailPreviewLineCount - collectedLines.Count;
+            var tailLines = ReadTailWindowLines(
+                candidateFile.FullName,
+                remainingLineCount,
+                UltraDebugLogDefaults.TailPreviewWindowBytes,
+                out var fileWasTruncated);
+            truncated |= fileWasTruncated;
+
+            foreach (var tailLine in tailLines)
+            {
+                var parsedLine = ParseTailLineSnapshot(tailLine, candidateFile.Name, bucketName);
+                if (parsedLine is not null)
+                {
+                    collectedLines.Add(parsedLine);
+                }
+            }
+        }
+
+        var orderedLines = collectedLines
+            .OrderByDescending(item => item.OccurredAtUtc ?? DateTime.MinValue)
+            .ThenByDescending(item => item.SourceFileName, StringComparer.Ordinal)
+            .Take(UltraDebugLogDefaults.TailPreviewLineCount)
+            .ToArray();
+
+        return new UltraDebugLogTailSnapshot(
+            bucketName,
+            UltraDebugLogDefaults.TailPreviewLineCount,
+            orderedLines.Length,
+            candidateFiles.Length,
+            truncated,
+            orderedLines);
+    }
+
+    private SearchCandidateFileCollection ResolveSearchCandidateFiles(string bucketName, string? category, DateTime? fromUtc)
+    {
+        var bucketNames = string.Equals(bucketName, "all", StringComparison.OrdinalIgnoreCase)
+            ? new[] { "normal", "ultra_debug" }
+            : new[] { bucketName };
+        var collectedFiles = new List<SearchCandidateFile>(UltraDebugLogDefaults.SearchPreviewMaxFiles);
+        var totalFileCount = 0;
+
+        foreach (var currentBucketName in bucketNames)
+        {
+            var directoryPath = ResolveBucketDirectoryPath(currentBucketName, category);
+            if (!Directory.Exists(directoryPath))
+            {
+                continue;
+            }
+
+            var searchOption = string.IsNullOrWhiteSpace(category)
+                ? SearchOption.AllDirectories
+                : SearchOption.TopDirectoryOnly;
+            var matchingFiles = new DirectoryInfo(directoryPath)
+                .GetFiles("*.ndjson", searchOption)
+                .OrderByDescending(file => file.LastWriteTimeUtc)
+                .ThenByDescending(file => file.Name, StringComparer.Ordinal)
+                .Select(file => new SearchCandidateFile(currentBucketName, file))
+                .ToArray();
+
+            totalFileCount += matchingFiles.Length;
+            collectedFiles.AddRange(matchingFiles);
+        }
+
+        return new SearchCandidateFileCollection(
+            totalFileCount,
+            collectedFiles
+                .OrderByDescending(item => item.File.LastWriteTimeUtc)
+                .ThenByDescending(item => item.File.Name, StringComparer.Ordinal)
+                .Take(UltraDebugLogDefaults.SearchPreviewMaxFiles)
+                .ToArray());
+    }
+
     private IReadOnlyCollection<UltraDebugLogEventSnapshot> ReadLatestCategoryEventSnapshots(string bucketName)
     {
         return UltraDebugLogDefaults.CategoryFolders
@@ -840,6 +1029,60 @@ public sealed class UltraDebugLogService(
         return null;
     }
 
+    private static IReadOnlyCollection<string> ReadTailWindowLines(
+        string filePath,
+        int maxLines,
+        int maxBytesToRead,
+        out bool truncated)
+    {
+        truncated = false;
+        if (maxLines <= 0 || maxBytesToRead <= 0 || !File.Exists(filePath))
+        {
+            return Array.Empty<string>();
+        }
+
+        var fileInfo = new FileInfo(filePath);
+        if (fileInfo.Length == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        var bytesToRead = (int)Math.Min(fileInfo.Length, maxBytesToRead);
+        var startPosition = fileInfo.Length - bytesToRead;
+        var buffer = new byte[bytesToRead];
+
+        using var stream = new FileStream(
+            filePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite);
+        stream.Seek(startPosition, SeekOrigin.Begin);
+        var bytesRead = stream.Read(buffer, 0, bytesToRead);
+
+        var payload = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+        if (startPosition > 0)
+        {
+            var firstNewLineIndex = payload.IndexOf('\n');
+            payload = firstNewLineIndex >= 0 && firstNewLineIndex + 1 < payload.Length
+                ? payload[(firstNewLineIndex + 1)..]
+                : string.Empty;
+            truncated = true;
+        }
+
+        var lines = payload
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .TakeLast(maxLines)
+            .ToArray();
+
+        if (lines.Length == maxLines && fileInfo.Length > bytesToRead)
+        {
+            truncated = true;
+        }
+
+        return lines;
+    }
+
     private static UltraDebugLogEventSnapshot? ParseStructuredEventSnapshot(string rawLine)
     {
         try
@@ -863,6 +1106,85 @@ public sealed class UltraDebugLogService(
         catch
         {
             return null;
+        }
+    }
+
+    private static bool MatchesSearchRequest(
+        UltraDebugLogTailLineSnapshot line,
+        string? category,
+        string? source,
+        string? searchTerm,
+        DateTime? fromUtc)
+    {
+        if (fromUtc.HasValue &&
+            (!line.OccurredAtUtc.HasValue || line.OccurredAtUtc.Value < fromUtc.Value))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(category) &&
+            !string.Equals(line.Category, category, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(source) &&
+            !ContainsInsensitive(line.Source, source))
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(searchTerm))
+        {
+            return true;
+        }
+
+        return ContainsInsensitive(line.EventName, searchTerm) ||
+               ContainsInsensitive(line.Summary, searchTerm) ||
+               ContainsInsensitive(line.DetailPreview, searchTerm) ||
+               ContainsInsensitive(line.CorrelationId, searchTerm) ||
+               ContainsInsensitive(line.Symbol, searchTerm) ||
+               ContainsInsensitive(line.Source, searchTerm) ||
+               ContainsInsensitive(line.SourceFileName, searchTerm);
+    }
+
+    private static UltraDebugLogTailLineSnapshot? ParseTailLineSnapshot(string rawLine, string sourceFileName, string? bucketName = null)
+    {
+        var normalizedSourceFileName = Path.GetFileName(sourceFileName);
+        try
+        {
+            using var document = JsonDocument.Parse(rawLine);
+            var root = document.RootElement;
+            var detailElement = TryParseDetailObject(root);
+            var detailMasked = TryReadString(root, "detailMasked");
+            return new UltraDebugLogTailLineSnapshot(
+                Category: ResolveCategoryFolder(TryReadString(root, "category") ?? "runtime"),
+                EventName: SensitivePayloadMasker.Mask(TryReadString(root, "eventName"), 128) ?? "unknown",
+                Summary: SensitivePayloadMasker.Mask(TryReadString(root, "summary"), 256) ?? "Unavailable",
+                DetailPreview: BuildDetailPreview(detailMasked),
+                OccurredAtUtc: TryReadDateTime(root, "occurredAtUtc"),
+                CorrelationId: SensitivePayloadMasker.Mask(TryReadString(root, "correlationId"), 128),
+                Symbol: SensitivePayloadMasker.Mask(TryReadString(root, "symbol"), 32),
+                SourceFileName: normalizedSourceFileName,
+                Source: SensitivePayloadMasker.Mask(
+                    TryReadString(detailElement, "sourceLayer") ??
+                    TryReadString(root, "application"),
+                    128),
+                BucketLabel: bucketName);
+        }
+        catch
+        {
+            return new UltraDebugLogTailLineSnapshot(
+                Category: "runtime",
+                EventName: "raw_tail_line",
+                Summary: SensitivePayloadMasker.Mask(rawLine, 256) ?? "Unavailable",
+                DetailPreview: null,
+                OccurredAtUtc: null,
+                CorrelationId: null,
+                Symbol: null,
+                SourceFileName: normalizedSourceFileName,
+                Source: null,
+                BucketLabel: bucketName);
         }
     }
 
@@ -946,6 +1268,44 @@ public sealed class UltraDebugLogService(
         {
             segments.Add($"{label}={longValue}ms");
         }
+    }
+
+    private static string? BuildDetailPreview(string? detailMasked)
+    {
+        if (string.IsNullOrWhiteSpace(detailMasked))
+        {
+            return null;
+        }
+
+        var normalizedDetail = detailMasked
+            .Replace("\\r", " ", StringComparison.Ordinal)
+            .Replace("\\n", " ", StringComparison.Ordinal);
+        return SensitivePayloadMasker.Mask(normalizedDetail, UltraDebugLogDefaults.TailPreviewDetailMaxLength);
+    }
+
+    private static string NormalizeSearchBucketName(string? bucketName)
+    {
+        return bucketName?.Trim().ToLowerInvariant() switch
+        {
+            "normal" => "normal",
+            "ultra_debug" => "ultra_debug",
+            _ => "all"
+        };
+    }
+
+    private static string? NormalizeSearchCategory(string? category)
+    {
+        var normalizedCategory = NormalizeOptional(category, 32)?.ToLowerInvariant();
+        return !string.IsNullOrWhiteSpace(normalizedCategory) &&
+               UltraDebugLogDefaults.CategoryFolders.Contains(normalizedCategory, StringComparer.OrdinalIgnoreCase)
+            ? normalizedCategory
+            : null;
+    }
+
+    private static bool ContainsInsensitive(string? haystack, string needle)
+    {
+        return !string.IsNullOrWhiteSpace(haystack) &&
+               haystack.Contains(needle, StringComparison.OrdinalIgnoreCase);
     }
 
     private Task RotateFileIfNeededAsync(string activeFilePath, int rotateThresholdMb, CancellationToken cancellationToken)
@@ -1189,6 +1549,12 @@ public sealed class UltraDebugLogService(
             ? normalizedValue
             : normalizedValue[..maxLength];
     }
+
+    private sealed record SearchCandidateFile(string BucketName, FileInfo File);
+
+    private sealed record SearchCandidateFileCollection(
+        int TotalFileCount,
+        IReadOnlyCollection<SearchCandidateFile> Files);
 
     private sealed record UltraDebugLogRecord(
         DateTime OccurredAtUtc,

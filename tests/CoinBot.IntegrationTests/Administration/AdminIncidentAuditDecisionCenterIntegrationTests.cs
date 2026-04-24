@@ -3,6 +3,7 @@ using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
+using CoinBot.Infrastructure.Identity;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.IntegrationTests.Infrastructure;
@@ -37,10 +38,66 @@ public sealed class AdminIncidentAuditDecisionCenterIntegrationTests
         var now = new DateTime(2026, 4, 8, 14, 0, 0, DateTimeKind.Utc);
         var incidentId = Guid.NewGuid();
         var approvalQueueId = Guid.NewGuid();
+        var scanCycleId = Guid.NewGuid();
+        var strategySignalId = Guid.NewGuid();
+        var executionOrderId = Guid.NewGuid();
+
+        dbContext.Users.AddRange(
+            new ApplicationUser
+            {
+                Id = "user-ops-1",
+                UserName = "user-ops-1",
+                NormalizedUserName = "USER-OPS-1",
+                Email = "user-ops-1@coinbot.test",
+                NormalizedEmail = "USER-OPS-1@COINBOT.TEST",
+                FullName = "Audit Ops User"
+            },
+            new ApplicationUser
+            {
+                Id = "requestor-ops-1",
+                UserName = "requestor-ops-1",
+                NormalizedUserName = "REQUESTOR-OPS-1",
+                Email = "requestor-ops-1@coinbot.test",
+                NormalizedEmail = "REQUESTOR-OPS-1@COINBOT.TEST",
+                FullName = "Audit Requestor"
+            },
+            new ApplicationUser
+            {
+                Id = "approver-ops-1",
+                UserName = "approver-ops-1",
+                NormalizedUserName = "APPROVER-OPS-1",
+                Email = "approver-ops-1@coinbot.test",
+                NormalizedEmail = "APPROVER-OPS-1@COINBOT.TEST",
+                FullName = "Audit Approver"
+            },
+            new ApplicationUser
+            {
+                Id = "super-admin",
+                UserName = "super-admin",
+                NormalizedUserName = "SUPER-ADMIN",
+                Email = "super-admin@coinbot.test",
+                NormalizedEmail = "SUPER-ADMIN@COINBOT.TEST",
+                FullName = "Super Admin"
+            });
+
+        dbContext.MarketScannerCycles.Add(new MarketScannerCycle
+        {
+            Id = scanCycleId,
+            StartedAtUtc = now.AddSeconds(-45),
+            CompletedAtUtc = now.AddSeconds(-15),
+            UniverseSource = "integration-test",
+            ScannedSymbolCount = 1,
+            EligibleCandidateCount = 1,
+            TopCandidateCount = 1,
+            BestCandidateSymbol = "BTCUSDT",
+            BestCandidateScore = 95m,
+            Summary = "admin-trace-correlation"
+        });
 
         dbContext.DecisionTraces.Add(new DecisionTrace
         {
             Id = Guid.NewGuid(),
+            StrategySignalId = strategySignalId,
             CorrelationId = "corr-audit-int-1",
             DecisionId = "dec-audit-int-1",
             UserId = "user-ops-1",
@@ -62,6 +119,7 @@ public sealed class AdminIncidentAuditDecisionCenterIntegrationTests
         dbContext.ExecutionTraces.Add(new ExecutionTrace
         {
             Id = Guid.NewGuid(),
+            ExecutionOrderId = executionOrderId,
             CorrelationId = "corr-audit-int-1",
             ExecutionAttemptId = "exe-audit-int-1",
             CommandId = "cmd-audit-int-1",
@@ -74,6 +132,62 @@ public sealed class AdminIncidentAuditDecisionCenterIntegrationTests
             ExchangeCode = "-1001",
             LatencyMs = 31,
             CreatedAtUtc = now.AddMinutes(1)
+        });
+
+        dbContext.MarketScannerHandoffAttempts.Add(new MarketScannerHandoffAttempt
+        {
+            Id = Guid.NewGuid(),
+            ScanCycleId = scanCycleId,
+            SelectedSymbol = "BTCUSDT",
+            SelectedTimeframe = "1m",
+            OwnerUserId = "user-ops-1",
+            BotId = Guid.NewGuid(),
+            StrategySignalId = strategySignalId,
+            StrategyDecisionOutcome = "Persisted",
+            ExecutionRequestStatus = "Prepared",
+            BlockerSummary = "Allowed: execution request prepared.",
+            GuardSummary = "ExecutionGate=Allowed",
+            CorrelationId = "corr-audit-int-1",
+            CompletedAtUtc = now.AddSeconds(30)
+        });
+
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = executionOrderId,
+            OwnerUserId = "user-ops-1",
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = strategySignalId,
+            SignalType = StrategySignalType.Entry,
+            StrategyKey = "strategy-audit-int",
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 1m,
+            Price = 100m,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            State = ExecutionOrderState.Submitted,
+            IdempotencyKey = "audit-int-idempotency",
+            RootCorrelationId = "corr-audit-int-1",
+            LastStateChangedAtUtc = now.AddMinutes(1)
+        });
+
+        dbContext.ExecutionOrderTransitions.Add(new ExecutionOrderTransition
+        {
+            Id = Guid.NewGuid(),
+            ExecutionOrderId = executionOrderId,
+            OwnerUserId = "user-ops-1",
+            SequenceNumber = 1,
+            State = ExecutionOrderState.Submitted,
+            EventCode = "Submitted",
+            Detail = "Execution submitted to exchange.",
+            CorrelationId = "step-local-audit-int-1",
+            ParentCorrelationId = "step-parent-audit-int-1",
+            OccurredAtUtc = now.AddMinutes(1)
         });
 
         dbContext.AdminAuditLogs.Add(new AdminAuditLog
@@ -281,7 +395,7 @@ public sealed class AdminIncidentAuditDecisionCenterIntegrationTests
         Assert.Equal("APR-audit-int-1", model.Detail.Reference);
         Assert.Equal("Approvals=1/2; Status=Pending", model.Detail.BeforeSummary);
         Assert.Contains("Pending", model.Detail.AfterSummary);
-        Assert.Equal(2, model.Detail.DecisionExecutionTrace.Count);
+        Assert.Equal(4, model.Detail.DecisionExecutionTrace.Count);
         Assert.Single(model.Detail.ApprovalHistory);
         Assert.Equal(2, model.Detail.IncidentTimeline.Count);
         Assert.Single(model.Detail.AdminAuditTrail);

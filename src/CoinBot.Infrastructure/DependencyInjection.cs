@@ -186,6 +186,7 @@ public static class DependencyInjection
         services.AddOptions<BotExecutionPilotOptions>()
             .Bind(configuration.GetSection("BotExecutionPilot"))
             .ValidateDataAnnotations();
+        services.PostConfigure<BotExecutionPilotOptions>(options => options.NormalizeScopeCollections());
         services.AddOptions<AiSignalOptions>()
             .Bind(configuration.GetSection("AI:Signal"))
             .ValidateDataAnnotations();

@@ -218,6 +218,66 @@ public sealed class TraceService(
             .ToArray();
     }
 
+    public async Task<AdminTraceExactMatchSnapshot?> FindExactMatchAsync(
+        string reference,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedReference = NormalizeOptional(reference, 128);
+        if (string.IsNullOrWhiteSpace(normalizedReference))
+        {
+            return null;
+        }
+
+        var hasDecisionCorrelationMatch = await dbContext.DecisionTraces
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .AnyAsync(
+                entity => !entity.IsDeleted && entity.CorrelationId == normalizedReference,
+                cancellationToken);
+        if (hasDecisionCorrelationMatch)
+        {
+            return new AdminTraceExactMatchSnapshot(normalizedReference);
+        }
+
+        var hasExecutionCorrelationMatch = await dbContext.ExecutionTraces
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .AnyAsync(
+                entity => !entity.IsDeleted && entity.CorrelationId == normalizedReference,
+                cancellationToken);
+        if (hasExecutionCorrelationMatch)
+        {
+            return new AdminTraceExactMatchSnapshot(normalizedReference);
+        }
+
+        var decisionMatch = await dbContext.DecisionTraces
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity => !entity.IsDeleted && entity.DecisionId == normalizedReference)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .Select(entity => new AdminTraceExactMatchSnapshot(entity.CorrelationId, entity.DecisionId, null))
+            .FirstOrDefaultAsync(cancellationToken);
+        if (decisionMatch is not null)
+        {
+            return decisionMatch;
+        }
+
+        var parsedExecutionOrderId = Guid.TryParse(normalizedReference, out var executionOrderId)
+            ? executionOrderId
+            : (Guid?)null;
+
+        return await dbContext.ExecutionTraces
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                !entity.IsDeleted &&
+                (entity.ExecutionAttemptId == normalizedReference ||
+                 (parsedExecutionOrderId.HasValue && entity.ExecutionOrderId == parsedExecutionOrderId.Value)))
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .Select(entity => new AdminTraceExactMatchSnapshot(entity.CorrelationId, null, entity.ExecutionAttemptId))
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
     public async Task<AdminTraceDetailSnapshot?> GetDetailAsync(
         string correlationId,
         string? decisionId = null,
@@ -254,7 +314,89 @@ public sealed class TraceService(
             .OrderByDescending(entity => entity.CreatedAtUtc)
             .ToListAsync(cancellationToken);
 
-        if (decisionTraces.Count == 0 && executionTraces.Count == 0)
+        var decisionStrategySignalIds = decisionTraces
+            .Where(entity => entity.StrategySignalId.HasValue)
+            .Select(entity => entity.StrategySignalId!.Value)
+            .Distinct()
+            .ToArray();
+
+        var executionTraceOrderIds = executionTraces
+            .Where(entity => entity.ExecutionOrderId.HasValue)
+            .Select(entity => entity.ExecutionOrderId!.Value)
+            .Distinct()
+            .ToArray();
+
+        var correlatedExecutionOrders = await dbContext.ExecutionOrders
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                !entity.IsDeleted &&
+                (executionTraceOrderIds.Contains(entity.Id) ||
+                 decisionStrategySignalIds.Contains(entity.StrategySignalId) ||
+                 entity.RootCorrelationId == normalizedCorrelationId ||
+                 entity.ParentCorrelationId == normalizedCorrelationId))
+            .Select(entity => new
+            {
+                entity.Id,
+                entity.StrategySignalId
+            })
+            .ToListAsync(cancellationToken);
+
+        var strategySignalIds = decisionTraces
+            .Where(entity => entity.StrategySignalId.HasValue)
+            .Select(entity => entity.StrategySignalId!.Value)
+            .Concat(
+                correlatedExecutionOrders
+                    .Select(entity => entity.StrategySignalId))
+            .Distinct()
+            .ToArray();
+
+        var executionOrderIds = executionTraces
+            .Where(entity => entity.ExecutionOrderId.HasValue)
+            .Select(entity => entity.ExecutionOrderId!.Value)
+            .Concat(correlatedExecutionOrders.Select(entity => entity.Id))
+            .Distinct()
+            .ToArray();
+
+        var handoffAttempts = await dbContext.MarketScannerHandoffAttempts
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                !entity.IsDeleted &&
+                (entity.CorrelationId == normalizedCorrelationId ||
+                 (strategySignalIds.Length > 0 &&
+                  entity.StrategySignalId.HasValue &&
+                  strategySignalIds.Contains(entity.StrategySignalId.Value))))
+            .OrderBy(entity => entity.CompletedAtUtc)
+            .ToListAsync(cancellationToken);
+
+        var executionTransitions = executionOrderIds.Length == 0
+            ? await dbContext.ExecutionOrderTransitions
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    !entity.IsDeleted &&
+                    (entity.CorrelationId == normalizedCorrelationId ||
+                     entity.ParentCorrelationId == normalizedCorrelationId))
+                .OrderBy(entity => entity.OccurredAtUtc)
+                .ThenBy(entity => entity.SequenceNumber)
+                .ToListAsync(cancellationToken)
+            : await dbContext.ExecutionOrderTransitions
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    !entity.IsDeleted &&
+                    (entity.CorrelationId == normalizedCorrelationId ||
+                     entity.ParentCorrelationId == normalizedCorrelationId ||
+                     executionOrderIds.Contains(entity.ExecutionOrderId)))
+                .OrderBy(entity => entity.OccurredAtUtc)
+                .ThenBy(entity => entity.SequenceNumber)
+                .ToListAsync(cancellationToken);
+
+        if (decisionTraces.Count == 0 &&
+            executionTraces.Count == 0 &&
+            handoffAttempts.Count == 0 &&
+            executionTransitions.Count == 0)
         {
             return null;
         }
@@ -262,7 +404,9 @@ public sealed class TraceService(
         return new AdminTraceDetailSnapshot(
             normalizedCorrelationId,
             decisionTraces.Select(Map).ToArray(),
-            executionTraces.Select(Map).ToArray());
+            executionTraces.Select(Map).ToArray(),
+            handoffAttempts.Select(Map).ToArray(),
+            executionTransitions.Select(Map).ToArray());
     }
 
     private string ResolveCorrelationId(string? correlationId)
@@ -354,6 +498,40 @@ public sealed class TraceService(
             entity.ExchangeCode,
             entity.LatencyMs,
             entity.CreatedAtUtc);
+    }
+
+    private static AdminTraceHandoffAttemptSnapshot Map(MarketScannerHandoffAttempt entity)
+    {
+        return new AdminTraceHandoffAttemptSnapshot(
+            entity.Id,
+            entity.ScanCycleId,
+            entity.StrategySignalId,
+            entity.OwnerUserId,
+            entity.BotId,
+            entity.SelectedSymbol,
+            entity.SelectedTimeframe,
+            entity.StrategyDecisionOutcome,
+            entity.ExecutionRequestStatus,
+            entity.BlockerCode,
+            entity.BlockerSummary,
+            entity.GuardSummary,
+            entity.ExecutionEnvironment?.ToString(),
+            entity.ExecutionSide?.ToString(),
+            entity.CompletedAtUtc);
+    }
+
+    private static AdminTraceExecutionTransitionSnapshot Map(ExecutionOrderTransition entity)
+    {
+        return new AdminTraceExecutionTransitionSnapshot(
+            entity.Id,
+            entity.ExecutionOrderId,
+            entity.SequenceNumber,
+            entity.State.ToString(),
+            entity.EventCode,
+            entity.Detail,
+            entity.CorrelationId,
+            entity.ParentCorrelationId,
+            entity.OccurredAtUtc);
     }
 
     private static string NormalizeRequired(string? value, int maxLength, string parameterName)

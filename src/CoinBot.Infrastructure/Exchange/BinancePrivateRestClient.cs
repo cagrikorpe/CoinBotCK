@@ -355,6 +355,7 @@ public sealed class BinancePrivateRestClient(
             throw new ArgumentException("ExchangeOrderId or ClientOrderId is required.", nameof(request));
         }
 
+        var stopwatch = Stopwatch.StartNew();
         var observedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
         var timestamp = await GetTimestampAsync(cancellationToken);
         var parameters = new List<KeyValuePair<string, string>>
@@ -379,33 +380,87 @@ public sealed class BinancePrivateRestClient(
                 $"{parameter.Key}={Uri.EscapeDataString(parameter.Value)}"));
         var signature = ComputeSignature(unsignedQuery, request.ApiSecret);
         var path = $"/fapi/v1/order?{unsignedQuery}&signature={signature}";
+        var maskedRequest = SensitivePayloadMasker.Mask(
+            JsonSerializer.Serialize(new
+            {
+                Endpoint = path,
+                Headers = new Dictionary<string, string?>
+                {
+                    ["X-MBX-APIKEY"] = request.ApiKey,
+                    ["Authorization"] = "BinanceApiKey"
+                }
+            }));
+        string? responseBody = null;
+        string? maskedResponse = null;
+        string? exchangeCode = null;
+        int? httpStatusCode = null;
+        var traceWritten = false;
 
-        using var httpRequest = CreateApiKeyRequest(HttpMethod.Get, path, request.ApiKey);
-        using var response = await SendAsyncWithTelemetryAsync(httpRequest, observedAtUtc, cancellationToken);
-
-        if (!response.IsSuccessStatusCode)
+        try
         {
-            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            await ThrowClockDriftAwareFailureAsync(
-                $"Binance order status request failed with status {(int)response.StatusCode}.",
-                TryReadExchangeCode(responseBody),
-                responseBody,
+            using var httpRequest = CreateApiKeyRequest(HttpMethod.Get, path, request.ApiKey);
+            using var response = await SendAsyncWithTelemetryAsync(httpRequest, observedAtUtc, cancellationToken);
+            httpStatusCode = (int)response.StatusCode;
+            responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            maskedResponse = SensitivePayloadMasker.Mask(responseBody);
+            exchangeCode = TryReadExchangeCode(responseBody);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                await WriteExecutionTraceAsync(
+                    request,
+                    maskedRequest,
+                    maskedResponse,
+                    httpStatusCode,
+                    exchangeCode,
+                    stopwatch.ElapsedMilliseconds,
+                    cancellationToken);
+                traceWritten = true;
+
+                await ThrowClockDriftAwareFailureAsync(
+                    $"Binance order status request failed with status {(int)response.StatusCode}.",
+                    exchangeCode,
+                    responseBody,
+                    cancellationToken);
+            }
+
+            using var document = JsonDocument.Parse(responseBody);
+            var root = document.RootElement;
+
+            await WriteExecutionTraceAsync(
+                request,
+                maskedRequest,
+                maskedResponse,
+                httpStatusCode,
+                exchangeCode,
+                stopwatch.ElapsedMilliseconds,
                 cancellationToken);
+            traceWritten = true;
+
+            logger.LogDebug(
+                "Binance order status refreshed for account {ExchangeAccountId} on {Symbol}.",
+                request.ExchangeAccountId,
+                request.Symbol);
+
+            return BuildOrderStatusSnapshot(
+                root,
+                request.Symbol,
+                observedAtUtc,
+                "Binance.PrivateRest.Order");
         }
+        catch (Exception exception) when (exception is not OperationCanceledException && !traceWritten)
+        {
+            await WriteExecutionTraceAsync(
+                request,
+                maskedRequest,
+                maskedResponse ?? SensitivePayloadMasker.Mask(exception.Message),
+                httpStatusCode,
+                exchangeCode,
+                stopwatch.ElapsedMilliseconds,
+                cancellationToken);
 
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-        var root = document.RootElement;
-        logger.LogDebug(
-            "Binance order status refreshed for account {ExchangeAccountId} on {Symbol}.",
-            request.ExchangeAccountId,
-            request.Symbol);
-
-        return BuildOrderStatusSnapshot(
-            root,
-            request.Symbol,
-            observedAtUtc,
-            "Binance.PrivateRest.Order");
+            throw;
+        }
     }
 
     public async Task<string> StartListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
@@ -1017,7 +1072,33 @@ public sealed class BinancePrivateRestClient(
                 maskedRequest,
                 maskedResponse,
                 request.CorrelationId,
-                ExecutionAttemptId: null,
+                request.ExecutionAttemptId,
+                request.ExecutionOrderId,
+                httpStatusCode,
+                exchangeCode,
+                latencyMs > int.MaxValue ? int.MaxValue : (int)latencyMs),
+            cancellationToken);
+    }
+
+    private Task WriteExecutionTraceAsync(
+        BinanceOrderQueryRequest request,
+        string? maskedRequest,
+        string? maskedResponse,
+        int? httpStatusCode,
+        string? exchangeCode,
+        long latencyMs,
+        CancellationToken cancellationToken)
+    {
+        return WriteExecutionTraceAsync(
+            new ExecutionTraceWriteRequest(
+                request.CommandId ?? request.ClientOrderId ?? request.ExchangeOrderId ?? "query:unknown",
+                request.UserId ?? "system:unknown",
+                "Binance.PrivateRest",
+                "/fapi/v1/order",
+                maskedRequest,
+                maskedResponse,
+                request.CorrelationId,
+                request.ExecutionAttemptId,
                 request.ExecutionOrderId,
                 httpStatusCode,
                 exchangeCode,
@@ -1111,6 +1192,11 @@ public sealed class BinancePrivateRestClient(
         {
             using var document = JsonDocument.Parse(responseBody);
 
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
             if (document.RootElement.TryGetProperty("code", out var codeElement))
             {
                 return codeElement.ToString();
@@ -1134,6 +1220,11 @@ public sealed class BinancePrivateRestClient(
         try
         {
             using var document = JsonDocument.Parse(responseBody);
+
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
 
             if (document.RootElement.TryGetProperty("msg", out var messageElement))
             {

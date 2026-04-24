@@ -501,6 +501,7 @@ public sealed class CrisisEscalationService(
                 credentials.ApiSecret,
                 commandId,
                 correlationId,
+                order.Id.ToString("N"),
                 order.Id,
                 order.OwnerUserId),
             cancellationToken);

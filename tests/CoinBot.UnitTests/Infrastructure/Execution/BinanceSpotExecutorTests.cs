@@ -34,6 +34,7 @@ public sealed class BinanceSpotExecutorTests
         Assert.Equal(ExecutionOrderSide.Buy, harness.PrivateRestClient.LastPlacementRequest!.Side);
         Assert.Equal(ExecutionOrderType.Market, harness.PrivateRestClient.LastPlacementRequest.OrderType);
         Assert.Null(harness.PrivateRestClient.LastPlacementRequest.TimeInForce);
+        Assert.Equal(harness.Order.Id.ToString("N"), harness.PrivateRestClient.LastPlacementRequest.ExecutionAttemptId);
         Assert.Equal(ExchangeDataPlane.Spot, result.InitialSnapshot!.Plane);
         Assert.Equal("spot-order-1", result.ExternalOrderId);
     }

@@ -23,6 +23,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
+
 namespace CoinBot.UnitTests.Infrastructure.Execution;
 
 public sealed class ExecutionGateTests
@@ -298,8 +299,105 @@ public sealed class ExecutionGateTests
         var auditLog = await harness.DbContext.AuditLogs.SingleAsync(entity => entity.Outcome == "Blocked:DemoSessionDriftDetected");
 
         Assert.Equal(ExecutionGateBlockedReason.DemoSessionDriftDetected, exception.Reason);
+        Assert.Contains("DecisionSourceLayer=DemoSessionConsistency", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("ComparedState=LedgerSnapshotsVsDemoPortfolioProjection", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("ConsistencyTolerance=0.00000001", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("ComputedDriftMs=not_applicable", exception.Message, StringComparison.Ordinal);
         Assert.Equal(DemoConsistencyStatus.DriftDetected, session.ConsistencyStatus);
+        Assert.Contains("EvaluatedAtUtc=", session.LastDriftSummary, StringComparison.Ordinal);
         Assert.Equal(nameof(ExecutionEnvironment.Demo), auditLog.Environment);
+        Assert.Contains("DemoSessionCheckedAtUtc=", auditLog.Context, StringComparison.Ordinal);
+        Assert.Contains("DemoDrift=WalletMismatches=1", auditLog.Context, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EnsureExecutionAllowedAsync_AllowsWhenMissingDemoPositionProjectionIsRecovered()
+    {
+        await using var harness = CreateHarness();
+        var botId = Guid.NewGuid();
+        var positionScopeKey = $"bot:{botId:N}";
+        var now = harness.TimeProvider.GetUtcNow().UtcDateTime;
+        await PrimeFreshMarketDataAsync(harness, "corr-demo-recovery-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-demo-recovery",
+            context: "Demo execution window open",
+            correlationId: "corr-demo-recovery-2");
+
+        harness.DbContext.TradingBots.Add(new TradingBot
+        {
+            Id = botId,
+            OwnerUserId = "user-demo-recovery",
+            Name = "Demo Bot",
+            StrategyKey = "demo-recovery",
+            Symbol = "SOLUSDT",
+            OpenOrderCount = 0,
+            OpenPositionCount = 0
+        });
+        harness.DbContext.DemoSessions.Add(new DemoSession
+        {
+            OwnerUserId = "user-demo-recovery",
+            SequenceNumber = 1,
+            SeedAsset = "USDT",
+            SeedAmount = 10000m,
+            State = DemoSessionState.Active,
+            ConsistencyStatus = DemoConsistencyStatus.DriftDetected,
+            StartedAtUtc = now.AddMinutes(-10)
+        });
+        harness.DbContext.DemoLedgerTransactions.Add(new DemoLedgerTransaction
+        {
+            OwnerUserId = "user-demo-recovery",
+            OperationId = "mark-price:demo-recovery",
+            TransactionType = DemoLedgerTransactionType.MarkPriceUpdated,
+            BotId = botId,
+            PositionScopeKey = positionScopeKey,
+            Symbol = "SOLUSDT",
+            BaseAsset = "SOL",
+            QuoteAsset = "USDT",
+            PositionKind = DemoPositionKind.Futures,
+            MarginMode = DemoMarginMode.Cross,
+            Leverage = 1m,
+            PositionQuantityAfter = 0.06m,
+            PositionCostBasisAfter = 5.214m,
+            PositionAverageEntryPriceAfter = 86.9m,
+            CumulativeRealizedPnlAfter = 0m,
+            UnrealizedPnlAfter = 0.012m,
+            CumulativeFeesInQuoteAfter = 0.003m,
+            NetFundingInQuoteAfter = 0m,
+            LastPriceAfter = 87.1m,
+            MarkPriceAfter = 87.2m,
+            MaintenanceMarginRateAfter = 0.004m,
+            MaintenanceMarginAfter = 0.020856m,
+            MarginBalanceAfter = 5.226m,
+            LiquidationPriceAfter = 50m,
+            OccurredAtUtc = now.AddMinutes(-5),
+            CreatedDate = now.AddMinutes(-5),
+            UpdatedDate = now.AddMinutes(-5)
+        });
+        await harness.DbContext.SaveChangesAsync();
+
+        var snapshot = await harness.ExecutionGate.EnsureExecutionAllowedAsync(
+            new ExecutionGateRequest(
+                Actor: "worker-demo-recovery",
+                Action: "TradeExecution.Dispatch",
+                Target: "bot-demo-recovery",
+                Environment: ExecutionEnvironment.Demo,
+                Context: "Demo dispatch attempt after projection recovery",
+                CorrelationId: "corr-demo-recovery-3",
+                UserId: "user-demo-recovery",
+                BotId: botId));
+
+        var session = await harness.DbContext.DemoSessions.SingleAsync(entity => entity.OwnerUserId == "user-demo-recovery");
+        var position = await harness.DbContext.DemoPositions.SingleAsync(entity => entity.BotId == botId);
+        var recoveryAudit = await harness.DbContext.AuditLogs.SingleAsync(entity => entity.Action == "DemoSession.MissingPositionProjectionRehydrated");
+        var blockedCount = await harness.DbContext.AuditLogs.CountAsync(entity => entity.Outcome == "Blocked:DemoSessionDriftDetected");
+
+        Assert.True(snapshot.IsPersisted);
+        Assert.Equal(DemoConsistencyStatus.InSync, session.ConsistencyStatus);
+        Assert.Null(session.LastDriftSummary);
+        Assert.Equal(0.06m, position.Quantity);
+        Assert.Contains("RehydratedPositions=1", recoveryAudit.Context, StringComparison.Ordinal);
+        Assert.Equal(0, blockedCount);
     }
 
     [Fact]
@@ -1210,5 +1308,4 @@ public sealed class ExecutionGateTests
         }
     }
 }
-
 

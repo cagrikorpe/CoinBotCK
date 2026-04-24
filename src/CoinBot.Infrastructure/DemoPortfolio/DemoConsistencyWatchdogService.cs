@@ -89,7 +89,7 @@ public sealed class DemoConsistencyWatchdogService(
                      orderMismatches.Count == 0
             ? DemoConsistencyStatus.InSync
             : DemoConsistencyStatus.DriftDetected;
-        var summary = BuildSummary(walletMismatches, positionMismatches, orderMismatches);
+        var summary = BuildSummary(walletMismatches, positionMismatches, orderMismatches, evaluatedAtUtc);
 
         if (status == DemoConsistencyStatus.DriftDetected)
         {
@@ -257,10 +257,11 @@ public sealed class DemoConsistencyWatchdogService(
     private string BuildSummary(
         IReadOnlyCollection<string> walletMismatches,
         IReadOnlyCollection<string> positionMismatches,
-        IReadOnlyCollection<string> orderMismatches)
+        IReadOnlyCollection<string> orderMismatches,
+        DateTime evaluatedAtUtc)
     {
         var summary = FormattableString.Invariant(
-            $"WalletMismatches={walletMismatches.Count}; PositionMismatches={positionMismatches.Count}; OrderMismatches={orderMismatches.Count}");
+            $"WalletMismatches={walletMismatches.Count}; PositionMismatches={positionMismatches.Count}; OrderMismatches={orderMismatches.Count}; EvaluatedAtUtc={evaluatedAtUtc:O}; SourceLayer=DemoConsistencyWatchdog; ComparedState=LedgerSnapshotsVsDemoPortfolioProjection; ConsistencyTolerance={FormatDecimal(optionsValue.ConsistencyTolerance)}; ComputedDriftMs=not_applicable; ThresholdMs=not_applicable");
         var details = walletMismatches.Concat(positionMismatches).Concat(orderMismatches).Take(3).ToArray();
 
         if (details.Length == 0)

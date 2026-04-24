@@ -141,7 +141,7 @@ public sealed class UserExecutionOverrideGuardTests
     }
 
     [Fact]
-    public async Task EvaluateAsync_AllowsPilotWhenAllowListsAreEmpty()
+    public async Task EvaluateAsync_BlocksPilotWhenUserAndBotAllowListsAreEmpty()
     {
         await using var dbContext = CreateDbContext();
         var botId = Guid.NewGuid();
@@ -210,8 +210,11 @@ public sealed class UserExecutionOverrideGuardTests
                 Timeframe: "1m"),
             CancellationToken.None);
 
-        Assert.False(result.IsBlocked);
-        Assert.Null(result.BlockCode);
+        Assert.True(result.IsBlocked);
+        Assert.Equal("UserExecutionPilotUserScopeMissing", result.BlockCode);
+        Assert.NotNull(result.BlockReasons);
+        Assert.Contains("UserExecutionPilotUserScopeMissing", result.BlockReasons!, StringComparer.Ordinal);
+        Assert.Contains("UserExecutionPilotBotScopeMissing", result.BlockReasons!, StringComparer.Ordinal);
     }
 
     [Fact]
@@ -869,6 +872,146 @@ public sealed class UserExecutionOverrideGuardTests
         Assert.Contains("UserExecutionPilotNotionalHardCapExceeded", result.BlockReasons!, StringComparer.Ordinal);
     }
 
+    [Theory]
+    [InlineData("N")]
+    [InlineData("D")]
+    [InlineData("DUpper")]
+    public async Task EvaluateAsync_AllowsPilotWhenAllowedBotIdUsesSupportedGuidFormat(string botIdFormat)
+    {
+        await using var dbContext = CreateDbContext();
+        var botId = Guid.NewGuid();
+        var allowedBotId = botIdFormat switch
+        {
+            "D" => botId.ToString("D"),
+            "DUpper" => botId.ToString("D").ToUpperInvariant(),
+            _ => botId.ToString("N")
+        };
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            hostEnvironment: new TestHostEnvironment(Environments.Development),
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                AllowedUserIds = ["user-pilot-bot-format"],
+                AllowedBotIds = [allowedBotId],
+                AllowedSymbols = ["SOLUSDT"],
+                MaxPilotOrderNotional = "250",
+                MaxOpenPositionsPerUser = 1,
+                PerBotCooldownSeconds = 0,
+                PerSymbolCooldownSeconds = 0,
+                MaxDailyLossPercentage = 5m
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-pilot-bot-format",
+                "SOLUSDT",
+                ExecutionEnvironment.Live,
+                ExecutionOrderSide.Sell,
+                0.06m,
+                85m,
+                BotId: botId,
+                StrategyKey: "pilot-core",
+                Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                Plane: ExchangeDataPlane.Futures,
+                ReduceOnly: true),
+            CancellationToken.None);
+
+        Assert.False(result.IsBlocked, result.BlockCode);
+        Assert.Null(result.BlockReasons);
+        Assert.Contains("AllowedBotCount=1", result.GuardSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_UsesEffectiveNormalizedPilotScope_ForCountsAndBotComparison()
+    {
+        await using var dbContext = CreateDbContext();
+        var botId = Guid.NewGuid();
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            hostEnvironment: new TestHostEnvironment(Environments.Development),
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                AllowedUserIds = ["user-effective-scope", " user-effective-scope "],
+                AllowedBotIds = [botId.ToString("N"), botId.ToString("D").ToUpperInvariant()],
+                AllowedSymbols = ["solusdt", " SOLUSDT "],
+                MaxPilotOrderNotional = "250",
+                MaxOpenPositionsPerUser = 1,
+                PerBotCooldownSeconds = 0,
+                PerSymbolCooldownSeconds = 0,
+                MaxDailyLossPercentage = 5m
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-effective-scope",
+                "SOLUSDT",
+                ExecutionEnvironment.Live,
+                ExecutionOrderSide.Sell,
+                0.06m,
+                85m,
+                BotId: botId,
+                StrategyKey: "pilot-core",
+                Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                Plane: ExchangeDataPlane.Futures,
+                ReduceOnly: true),
+            CancellationToken.None);
+
+        Assert.False(result.IsBlocked, result.BlockCode);
+        Assert.Contains("AllowedUserCount=1", result.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("AllowedBotCount=1", result.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("AllowedSymbolCount=1", result.GuardSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_BlocksPilotWhenAllowedBotIdDoesNotMatch()
+    {
+        await using var dbContext = CreateDbContext();
+        var requestedBotId = Guid.NewGuid();
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            hostEnvironment: new TestHostEnvironment(Environments.Development),
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                AllowedUserIds = ["user-pilot-bot-mismatch"],
+                AllowedBotIds = [Guid.NewGuid().ToString("D")],
+                AllowedSymbols = ["SOLUSDT"],
+                MaxPilotOrderNotional = "250",
+                MaxOpenPositionsPerUser = 1,
+                PerBotCooldownSeconds = 0,
+                PerSymbolCooldownSeconds = 0,
+                MaxDailyLossPercentage = 5m
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-pilot-bot-mismatch",
+                "SOLUSDT",
+                ExecutionEnvironment.Live,
+                ExecutionOrderSide.Sell,
+                0.06m,
+                85m,
+                BotId: requestedBotId,
+                StrategyKey: "pilot-core",
+                Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                Plane: ExchangeDataPlane.Futures,
+                ReduceOnly: true),
+            CancellationToken.None);
+
+        Assert.True(result.IsBlocked);
+        Assert.Equal("UserExecutionPilotBotNotAllowed", result.BlockCode);
+        Assert.Contains("UserExecutionPilotBotNotAllowed", result.BlockReasons!, StringComparer.Ordinal);
+        Assert.DoesNotContain("UserExecutionPilotCooldownConfigurationInvalid", result.BlockReasons!, StringComparer.Ordinal);
+    }
+
     [Fact]
     public async Task EvaluateAsync_AllowsPilotWhenRequestedNotionalIsWithinConfiguredHardCap()
     {
@@ -1315,16 +1458,45 @@ public sealed class UserExecutionOverrideGuardTests
     }
 
     [Fact]
-    public async Task EvaluateAsync_BlocksPilotEntry_WhenCooldownConfigurationIsZero()
+    public async Task EvaluateAsync_AllowsPilotEntry_WhenCooldownConfigurationIsZero()
     {
         await using var dbContext = CreateDbContext();
         var botId = Guid.NewGuid();
         var exchangeAccountId = Guid.NewGuid();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 20, 12, 0, 0, TimeSpan.Zero));
+        var evaluatedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+        dbContext.RiskProfiles.Add(new RiskProfile
+        {
+            OwnerUserId = "user-pilot-entry-zero-cooldown",
+            ProfileName = "Pilot",
+            MaxDailyLossPercentage = 5m,
+            MaxPositionSizePercentage = 100m,
+            MaxLeverage = 2m,
+            MaxConcurrentPositions = 1
+        });
+        dbContext.ExchangeBalances.Add(new ExchangeBalance
+        {
+            ExchangeAccountId = exchangeAccountId,
+            OwnerUserId = "user-pilot-entry-zero-cooldown",
+            Plane = ExchangeDataPlane.Futures,
+            Asset = "USDT",
+            WalletBalance = 1000m,
+            CrossWalletBalance = 1000m,
+            AvailableBalance = 1000m,
+            MaxWithdrawAmount = 1000m,
+            ExchangeUpdatedAtUtc = evaluatedAtUtc
+        });
+        await dbContext.SaveChangesAsync();
+
         var guard = new UserExecutionOverrideGuard(
             dbContext,
             new FakeTradingModeResolver(),
             logger: NullLogger<UserExecutionOverrideGuard>.Instance,
             hostEnvironment: new TestHostEnvironment(Environments.Development),
+            riskPolicyEvaluator: new RiskPolicyEvaluator(
+                dbContext,
+                timeProvider,
+                NullLogger<RiskPolicyEvaluator>.Instance),
             botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
             {
                 Enabled = true,
@@ -1350,7 +1522,52 @@ public sealed class UserExecutionOverrideGuardTests
                 StrategyKey: "pilot-core",
                 Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
                 Plane: ExchangeDataPlane.Futures,
-                ExchangeAccountId: exchangeAccountId),
+                ExchangeAccountId: exchangeAccountId,
+                TradingStrategyId: Guid.NewGuid(),
+                TradingStrategyVersionId: Guid.NewGuid(),
+                Timeframe: "1m"),
+            CancellationToken.None);
+
+        Assert.False(result.IsBlocked, result.BlockCode);
+        Assert.DoesNotContain("UserExecutionPilotCooldownConfigurationInvalid", result.BlockReasons ?? Array.Empty<string>(), StringComparer.Ordinal);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_BlocksPilotWhenCooldownConfigurationIsNegative()
+    {
+        await using var dbContext = CreateDbContext();
+        var botId = Guid.NewGuid();
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            hostEnvironment: new TestHostEnvironment(Environments.Development),
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                AllowedUserIds = ["user-pilot-negative-cooldown"],
+                AllowedBotIds = [botId.ToString("N")],
+                AllowedSymbols = ["SOLUSDT"],
+                MaxPilotOrderNotional = "250",
+                MaxOpenPositionsPerUser = 1,
+                PerBotCooldownSeconds = -1,
+                PerSymbolCooldownSeconds = 0,
+                MaxDailyLossPercentage = 5m
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-pilot-negative-cooldown",
+                "SOLUSDT",
+                ExecutionEnvironment.Live,
+                ExecutionOrderSide.Sell,
+                0.06m,
+                85m,
+                BotId: botId,
+                StrategyKey: "pilot-core",
+                Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                Plane: ExchangeDataPlane.Futures,
+                ReduceOnly: true),
             CancellationToken.None);
 
         Assert.True(result.IsBlocked);

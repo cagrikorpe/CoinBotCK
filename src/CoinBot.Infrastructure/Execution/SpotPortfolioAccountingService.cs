@@ -49,7 +49,12 @@ public sealed class SpotPortfolioAccountingService(
                 string.IsNullOrWhiteSpace(order.ExternalOrderId) ? snapshot.ExchangeOrderId : order.ExternalOrderId,
                 snapshot.ClientOrderId,
                 credentialAccess.ApiKey,
-                credentialAccess.ApiSecret),
+                credentialAccess.ApiSecret,
+                CommandId: ExecutionClientOrderId.Create(order.Id),
+                CorrelationId: order.RootCorrelationId,
+                ExecutionAttemptId: order.Id.ToString("N"),
+                ExecutionOrderId: order.Id,
+                UserId: order.OwnerUserId),
             cancellationToken);
 
         if (fills.Count == 0)

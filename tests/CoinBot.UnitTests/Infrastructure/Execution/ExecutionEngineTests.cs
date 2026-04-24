@@ -402,6 +402,133 @@ public sealed class ExecutionEngineTests
     }
 
     [Fact]
+    public async Task DispatchAsync_FailsClosed_WhenPilotUserAndBotScopeAreMissing()
+    {
+        await using var harness = CreateHarness(environmentName: Environments.Development, enableRiskPolicyEvaluator: true);
+        var exchangeAccountId = Guid.NewGuid();
+        var botId = Guid.NewGuid();
+        await SeedExchangeAccountAsync(harness.DbContext, "user-pilot-open-scope", exchangeAccountId);
+        await SeedBotAsync(harness.DbContext, "user-pilot-open-scope", botId, "pilot-core");
+        await SeedPilotSafetyPrerequisitesAsync(
+            harness.DbContext,
+            "user-pilot-open-scope",
+            exchangeAccountId,
+            harness.TimeProvider.GetUtcNow().UtcDateTime);
+        harness.PilotOptions.AllowedUserIds = [];
+        harness.PilotOptions.AllowedBotIds = [];
+        harness.PilotOptions.AllowedSymbols = ["BTCUSDT"];
+        harness.MarketDataService.SetLatestPrice("BTCUSDT", 65000m, harness.TimeProvider.GetUtcNow().UtcDateTime, "unit-test");
+        harness.MarketDataService.SetSymbolMetadata(
+            "BTCUSDT",
+            "BTC",
+            "USDT",
+            0.1m,
+            0.001m,
+            minQuantity: 0.001m,
+            minNotional: 100m,
+            pricePrecision: 1,
+            quantityPrecision: 3);
+        await PrimeFreshMarketDataAsync(harness, "corr-pilot-open-scope-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-pilot-open-scope",
+            context: "Execution open",
+            correlationId: "corr-pilot-open-scope-2");
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-pilot-open-scope",
+                strategyKey: "pilot-core",
+                isDemo: false,
+                botId: botId,
+                exchangeAccountId: exchangeAccountId) with
+            {
+                Actor = "system:bot-worker",
+                Context = "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                Quantity = 0.002m,
+                Price = 65000m
+            },
+            CancellationToken.None);
+
+        Assert.Equal(ExecutionOrderState.Rejected, result.Order.State);
+        Assert.Equal("UserExecutionPilotUserScopeMissing", result.Order.FailureCode);
+        Assert.Contains("pilot scope constraints", result.Order.FailureDetail, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(ExecutionRejectionStage.PreSubmit, result.Order.RejectionStage);
+        Assert.False(result.Order.SubmittedToBroker);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal(0, harness.SpotPrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_AllowsPilotShortEntry_WhenBotAllowListUsesDFormatAndCooldownIsZero()
+    {
+        await using var harness = CreateHarness(environmentName: Environments.Development, enableRiskPolicyEvaluator: true);
+        var exchangeAccountId = Guid.NewGuid();
+        var botId = Guid.NewGuid();
+        var strategyId = Guid.NewGuid();
+        await SeedExchangeAccountAsync(harness.DbContext, "user-pilot-short-scope", exchangeAccountId);
+        await SeedBotAsync(harness.DbContext, "user-pilot-short-scope", botId, "pilot-short-scope");
+        var bot = await harness.DbContext.TradingBots.SingleAsync(entity => entity.Id == botId);
+        bot.Symbol = "SOLUSDT";
+        bot.DirectionMode = TradingBotDirectionMode.ShortOnly;
+        await SeedLiveStrategyAsync(harness.DbContext, "user-pilot-short-scope", strategyId, "pilot-short-scope");
+        await SeedPilotSafetyPrerequisitesAsync(
+            harness.DbContext,
+            "user-pilot-short-scope",
+            exchangeAccountId,
+            harness.TimeProvider.GetUtcNow().UtcDateTime);
+        harness.PilotOptions.AllowedUserIds = ["user-pilot-short-scope"];
+        harness.PilotOptions.AllowedBotIds = [botId.ToString("D").ToUpperInvariant()];
+        harness.PilotOptions.AllowedSymbols = ["SOLUSDT"];
+        harness.PilotOptions.PerBotCooldownSeconds = 0;
+        harness.PilotOptions.PerSymbolCooldownSeconds = 0;
+        harness.MarketDataService.SetLatestPrice("SOLUSDT", 85m, harness.TimeProvider.GetUtcNow().UtcDateTime, "unit-test");
+        harness.MarketDataService.SetSymbolMetadata(
+            "SOLUSDT",
+            "SOL",
+            "USDT",
+            0.01m,
+            0.01m,
+            minQuantity: 0.01m,
+            minNotional: 5m,
+            pricePrecision: 2,
+            quantityPrecision: 2);
+        await PrimeFreshMarketDataAsync(harness, "corr-pilot-short-scope-1", "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-pilot-short-scope",
+            context: "Execution open",
+            correlationId: "corr-pilot-short-scope-2");
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-pilot-short-scope",
+                strategyKey: "pilot-short-scope",
+                isDemo: false,
+                strategyId: strategyId,
+                botId: botId,
+                exchangeAccountId: exchangeAccountId) with
+            {
+                Actor = "system:bot-worker",
+                Context = "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                Symbol = "SOLUSDT",
+                BaseAsset = "SOL",
+                QuoteAsset = "USDT",
+                Side = ExecutionOrderSide.Sell,
+                Quantity = 0.06m,
+                Price = 85m
+            },
+            CancellationToken.None);
+
+        Assert.Equal(ExecutionOrderState.Submitted, result.Order.State);
+        Assert.Equal(ExecutionOrderSide.Sell, result.Order.Side);
+        Assert.Null(result.Order.FailureCode);
+        Assert.True(result.Order.SubmittedToBroker);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal(ExecutionOrderSide.Sell, harness.PrivateRestClient.LastPlacementRequest?.Side);
+    }
+
+    [Fact]
     public async Task DispatchAsync_FailsClosed_WhenDevelopmentPilotViolatesFuturesMinNotional()
     {
         await using var harness = CreateHarness(environmentName: Environments.Development, enableRiskPolicyEvaluator: true);
@@ -617,6 +744,117 @@ public sealed class ExecutionEngineTests
         Assert.True(second.Order.DuplicateSuppressed);
         Assert.Equal(first.Order.ExecutionOrderId, second.Order.ExecutionOrderId);
         Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal(1, await harness.DbContext.ExecutionOrders.CountAsync());
+    }
+
+    [Fact]
+    public async Task DispatchAsync_SuppressesDuplicateCommand_ByStrategySignalIntent_WhenPreSubmitRejectedOrderAlreadyExists()
+    {
+        await using var harness = CreateHarness();
+        var strategyId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        var strategySignalId = Guid.NewGuid();
+        await SeedUserAsync(harness.DbContext, "user-dup-intent-rejected");
+        await SeedLiveStrategyAsync(harness.DbContext, "user-dup-intent-rejected", strategyId, "dup-intent-rejected");
+        await SeedExchangeAccountAsync(harness.DbContext, "user-dup-intent-rejected", exchangeAccountId);
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-dup-intent-rejected",
+            context: "Open live execution",
+            correlationId: "corr-dup-intent-rejected-1");
+        await harness.SwitchService.SetDemoModeAsync(
+            isEnabled: false,
+            actor: "admin-dup-intent-rejected",
+            liveApproval: new TradingModeLiveApproval("live-approval-dup-intent-rejected"),
+            context: "Switch to live",
+            correlationId: "corr-dup-intent-rejected-2");
+        await SeedExistingExecutionIntentOrderAsync(
+            harness.DbContext,
+            ownerUserId: "user-dup-intent-rejected",
+            strategyId: strategyId,
+            strategySignalId: strategySignalId,
+            exchangeAccountId: exchangeAccountId,
+            side: ExecutionOrderSide.Sell,
+            state: ExecutionOrderState.Rejected,
+            submittedToBroker: false,
+            failureCode: "UserExecutionPilotBotNotAllowed",
+            rejectionStage: ExecutionRejectionStage.PreSubmit);
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-dup-intent-rejected",
+                strategyId: strategyId,
+                strategyKey: "dup-intent-rejected",
+                exchangeAccountId: exchangeAccountId,
+                isDemo: null) with
+            {
+                StrategySignalId = strategySignalId,
+                Side = ExecutionOrderSide.Sell,
+                IdempotencyKey = "fresh-dup-intent-rejected"
+            },
+            CancellationToken.None);
+
+        Assert.True(result.IsDuplicate);
+        Assert.True(result.Order.DuplicateSuppressed);
+        Assert.Equal(ExecutionOrderState.Rejected, result.Order.State);
+        Assert.Equal("UserExecutionPilotBotNotAllowed", result.Order.FailureCode);
+        Assert.Equal(ExecutionRejectionStage.PreSubmit, result.Order.RejectionStage);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal(1, await harness.DbContext.ExecutionOrders.CountAsync());
+    }
+
+    [Fact]
+    public async Task DispatchAsync_SuppressesDuplicateCommand_ByStrategySignalIntent_WhenSubmittedOrderAlreadyExists()
+    {
+        await using var harness = CreateHarness();
+        var strategyId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        var strategySignalId = Guid.NewGuid();
+        await SeedUserAsync(harness.DbContext, "user-dup-intent-submitted");
+        await SeedLiveStrategyAsync(harness.DbContext, "user-dup-intent-submitted", strategyId, "dup-intent-submitted");
+        await SeedExchangeAccountAsync(harness.DbContext, "user-dup-intent-submitted", exchangeAccountId);
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-dup-intent-submitted",
+            context: "Open live execution",
+            correlationId: "corr-dup-intent-submitted-1");
+        await harness.SwitchService.SetDemoModeAsync(
+            isEnabled: false,
+            actor: "admin-dup-intent-submitted",
+            liveApproval: new TradingModeLiveApproval("live-approval-dup-intent-submitted"),
+            context: "Switch to live",
+            correlationId: "corr-dup-intent-submitted-2");
+        await SeedExistingExecutionIntentOrderAsync(
+            harness.DbContext,
+            ownerUserId: "user-dup-intent-submitted",
+            strategyId: strategyId,
+            strategySignalId: strategySignalId,
+            exchangeAccountId: exchangeAccountId,
+            side: ExecutionOrderSide.Sell,
+            state: ExecutionOrderState.Submitted,
+            submittedToBroker: true,
+            failureCode: null,
+            rejectionStage: ExecutionRejectionStage.None);
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-dup-intent-submitted",
+                strategyId: strategyId,
+                strategyKey: "dup-intent-submitted",
+                exchangeAccountId: exchangeAccountId,
+                isDemo: null) with
+            {
+                StrategySignalId = strategySignalId,
+                Side = ExecutionOrderSide.Sell,
+                IdempotencyKey = "fresh-dup-intent-submitted"
+            },
+            CancellationToken.None);
+
+        Assert.True(result.IsDuplicate);
+        Assert.True(result.Order.DuplicateSuppressed);
+        Assert.Equal(ExecutionOrderState.Submitted, result.Order.State);
+        Assert.True(result.Order.SubmittedToBroker);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
         Assert.Equal(1, await harness.DbContext.ExecutionOrders.CountAsync());
     }
 
@@ -899,6 +1137,8 @@ public sealed class ExecutionEngineTests
         var exchangeAccountId = Guid.NewGuid();
         harness.PilotOptions.PerBotCooldownSeconds = 0;
         harness.PilotOptions.PerSymbolCooldownSeconds = 0;
+        harness.PilotOptions.AllowedUserIds = ["user-reduce-live-pilot-zero-cooldown"];
+        harness.PilotOptions.AllowedBotIds = [botId.ToString("N")];
         await SeedUserAsync(harness.DbContext, "user-reduce-live-pilot-zero-cooldown");
         await SeedBotAsync(harness.DbContext, "user-reduce-live-pilot-zero-cooldown", botId, "reduce-live-pilot-zero-cooldown");
         await SeedLiveStrategyAsync(harness.DbContext, "user-reduce-live-pilot-zero-cooldown", strategyId, "reduce-live-pilot-zero-cooldown");
@@ -1714,6 +1954,53 @@ public sealed class ExecutionEngineTests
             RootCorrelationId = "seed-correlation-1",
             ExternalOrderId = $"virtual:{executionOrderId:N}",
             SubmittedAtUtc = new DateTime(2026, 3, 22, 11, 55, 0, DateTimeKind.Utc),
+            LastStateChangedAtUtc = new DateTime(2026, 3, 22, 11, 55, 0, DateTimeKind.Utc)
+        });
+
+        await dbContext.SaveChangesAsync();
+    }
+
+    private static async Task SeedExistingExecutionIntentOrderAsync(
+        ApplicationDbContext dbContext,
+        string ownerUserId,
+        Guid strategyId,
+        Guid strategySignalId,
+        Guid exchangeAccountId,
+        ExecutionOrderSide side,
+        ExecutionOrderState state,
+        bool submittedToBroker,
+        string? failureCode,
+        ExecutionRejectionStage rejectionStage)
+    {
+        var orderId = Guid.NewGuid();
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = orderId,
+            OwnerUserId = ownerUserId,
+            TradingStrategyId = strategyId,
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = strategySignalId,
+            SignalType = StrategySignalType.Entry,
+            StrategyKey = "duplicate-intent-core",
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = side,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.05m,
+            Price = 65000m,
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            SubmittedToBroker = submittedToBroker,
+            State = state,
+            FailureCode = failureCode,
+            RejectionStage = rejectionStage,
+            IdempotencyKey = $"seed-existing-intent-{orderId:N}",
+            RootCorrelationId = "seed-existing-intent-correlation",
+            ExternalOrderId = submittedToBroker ? $"binance:{orderId:N}" : null,
             LastStateChangedAtUtc = new DateTime(2026, 3, 22, 11, 55, 0, DateTimeKind.Utc)
         });
 

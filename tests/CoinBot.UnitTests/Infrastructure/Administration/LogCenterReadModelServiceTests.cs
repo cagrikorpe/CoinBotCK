@@ -20,7 +20,7 @@ public sealed class LogCenterReadModelServiceTests
 
         var service = CreateService(dbContext);
         var snapshot = await service.GetPageAsync(
-            new LogCenterQueryRequest(null, null, null, null, null, null, null, null, null, 100));
+            new LogCenterQueryRequest(null, "corr-hit", null, null, null, null, null, null, null, 100));
 
         Assert.False(snapshot.HasError);
         Assert.Equal(7, snapshot.Summary.TotalRows);
@@ -142,6 +142,183 @@ public sealed class LogCenterReadModelServiceTests
         Assert.Equal(
             ["AdminAuditLog", "ApprovalAction", "ApprovalQueue", "DecisionTrace", "ExecutionTrace", "Incident", "IncidentEvent"],
             snapshot.Entries.Select(entry => entry.Kind).OrderBy(kind => kind, StringComparer.Ordinal).ToArray());
+    }
+
+    [Fact]
+    public async Task GetPageAsync_PreservesExactSummaryCounts_WhenTakeIsSmallerThanAvailableRows()
+    {
+        await using var dbContext = CreateDbContext();
+        var now = new DateTime(2026, 4, 10, 8, 0, 0, DateTimeKind.Utc);
+
+        dbContext.DecisionTraces.AddRange(
+            Enumerable.Range(1, 3).Select(offset => new DecisionTrace
+            {
+                Id = Guid.NewGuid(),
+                StrategySignalId = Guid.NewGuid(),
+                CorrelationId = $"corr-many-{offset}",
+                DecisionId = $"dec-many-{offset}",
+                UserId = "user-many",
+                Symbol = "BTCUSDT",
+                Timeframe = "1m",
+                StrategyVersion = "StrategyVersion:test",
+                SignalType = "Entry",
+                DecisionOutcome = "Persisted",
+                DecisionReasonType = "Allow",
+                DecisionReasonCode = "Allowed",
+                DecisionSummary = "Strategy produced an executable candidate.",
+                DecisionAtUtc = now.AddMinutes(offset),
+                LatencyMs = 10 + offset,
+                SnapshotJson = "{\"decision\":true}",
+                CreatedAtUtc = now.AddMinutes(offset),
+                UpdatedDate = now.AddMinutes(offset)
+            }));
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext);
+        var snapshot = await service.GetPageAsync(
+            new LogCenterQueryRequest(
+                Query: null,
+                CorrelationId: null,
+                DecisionId: null,
+                ExecutionAttemptId: null,
+                UserId: null,
+                Symbol: null,
+                Status: null,
+                FromUtc: now,
+                ToUtc: now,
+                Take: 1));
+
+        Assert.False(snapshot.HasError);
+        Assert.Equal(3, snapshot.Summary.TotalRows);
+        Assert.Equal(3, snapshot.Summary.DecisionTraceRows);
+        Assert.Single(snapshot.Entries);
+        Assert.Equal("dec-many-3", snapshot.Entries.Single().DecisionId);
+    }
+
+    [Fact]
+    public async Task GetPageAsync_QuerylessInitialLoad_UsesLatestBoundedPreviewWindow()
+    {
+        await using var dbContext = CreateDbContext();
+        var now = DateTime.UtcNow;
+
+        dbContext.DecisionTraces.AddRange(
+            new DecisionTrace
+            {
+                Id = Guid.NewGuid(),
+                StrategySignalId = Guid.NewGuid(),
+                CorrelationId = "corr-preview-recent",
+                DecisionId = "dec-preview-recent",
+                UserId = "user-preview",
+                Symbol = "BTCUSDT",
+                Timeframe = "1m",
+                StrategyVersion = "StrategyVersion:test",
+                SignalType = "Entry",
+                DecisionOutcome = "Persisted",
+                DecisionReasonType = "Allow",
+                DecisionReasonCode = "Allowed",
+                DecisionSummary = "Recent candidate.",
+                DecisionAtUtc = now.AddMinutes(-10),
+                LatencyMs = 9,
+                SnapshotJson = "{\"decision\":true}",
+                CreatedAtUtc = now.AddMinutes(-10),
+                UpdatedDate = now.AddMinutes(-10)
+            },
+            new DecisionTrace
+            {
+                Id = Guid.NewGuid(),
+                StrategySignalId = Guid.NewGuid(),
+                CorrelationId = "corr-preview-old",
+                DecisionId = "dec-preview-old",
+                UserId = "user-preview",
+                Symbol = "BTCUSDT",
+                Timeframe = "1m",
+                StrategyVersion = "StrategyVersion:test",
+                SignalType = "Entry",
+                DecisionOutcome = "Persisted",
+                DecisionReasonType = "Allow",
+                DecisionReasonCode = "Allowed",
+                DecisionSummary = "Old candidate.",
+                DecisionAtUtc = now.AddHours(-8),
+                LatencyMs = 7,
+                SnapshotJson = "{\"decision\":true}",
+                CreatedAtUtc = now.AddHours(-8),
+                UpdatedDate = now.AddHours(-8)
+            });
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext);
+        var snapshot = await service.GetPageAsync(
+            new LogCenterQueryRequest(
+                Query: null,
+                CorrelationId: null,
+                DecisionId: null,
+                ExecutionAttemptId: null,
+                UserId: null,
+                Symbol: null,
+                Status: null,
+                FromUtc: null,
+                ToUtc: null,
+                Take: 100));
+
+        Assert.False(snapshot.HasError);
+        Assert.NotNull(snapshot.Filters.FromUtc);
+        Assert.NotNull(snapshot.Filters.ToUtc);
+        var previewHours = snapshot.Filters.ToUtc!.Value - snapshot.Filters.FromUtc!.Value;
+        Assert.InRange(previewHours.TotalHours, 5.9d, 6.1d);
+        Assert.Single(snapshot.Entries);
+        Assert.Equal("dec-preview-recent", snapshot.Entries.Single().DecisionId);
+        Assert.Equal(1, snapshot.Summary.TotalRows);
+        Assert.Equal(1, snapshot.Summary.DecisionTraceRows);
+    }
+
+    [Fact]
+    public async Task GetPageAsync_EchoesNormalizedPaginationMetadata_InReturnedFilters()
+    {
+        await using var dbContext = CreateDbContext();
+        var now = DateTime.UtcNow;
+
+        dbContext.DecisionTraces.Add(new DecisionTrace
+        {
+            Id = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            CorrelationId = "corr-pagination",
+            DecisionId = "dec-pagination",
+            UserId = "user-pagination",
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            StrategyVersion = "StrategyVersion:test",
+            SignalType = "Entry",
+            DecisionOutcome = "Persisted",
+            DecisionReasonType = "Allow",
+            DecisionReasonCode = "Allowed",
+            DecisionSummary = "Pagination candidate.",
+            DecisionAtUtc = now,
+            LatencyMs = 12,
+            SnapshotJson = "{\"decision\":true}",
+            CreatedAtUtc = now,
+            UpdatedDate = now
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext);
+        var snapshot = await service.GetPageAsync(
+            new LogCenterQueryRequest(
+                Query: null,
+                CorrelationId: null,
+                DecisionId: null,
+                ExecutionAttemptId: null,
+                UserId: null,
+                Symbol: null,
+                Status: null,
+                FromUtc: now,
+                ToUtc: now,
+                Take: 100,
+                Page: 0,
+                PageSize: 999));
+
+        Assert.False(snapshot.HasError);
+        Assert.Equal(1, snapshot.Filters.Page);
+        Assert.Equal(100, snapshot.Filters.PageSize);
     }
 
     [Fact]

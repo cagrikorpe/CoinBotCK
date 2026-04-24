@@ -15,6 +15,10 @@ public interface IUltraDebugLogService
         UltraDebugLogDisableRequest request,
         CancellationToken cancellationToken = default);
 
+    Task<UltraDebugLogTailSnapshot> SearchAsync(
+        UltraDebugLogSearchRequest request,
+        CancellationToken cancellationToken = default);
+
     Task WriteAsync(
         UltraDebugLogEntry entry,
         CancellationToken cancellationToken = default);
@@ -46,7 +50,9 @@ public sealed record UltraDebugLogSnapshot(
     long? DiskFreeSpaceBytes = null,
     bool IsNormalFallbackMode = false,
     UltraDebugLogEventSnapshot? LatestStructuredEvent = null,
-    IReadOnlyCollection<UltraDebugLogEventSnapshot>? LatestCategoryEvents = null);
+    IReadOnlyCollection<UltraDebugLogEventSnapshot>? LatestCategoryEvents = null,
+    UltraDebugLogTailSnapshot? NormalLogsTail = null,
+    UltraDebugLogTailSnapshot? UltraLogsTail = null);
 
 public sealed record UltraDebugLogEventSnapshot(
     string Category,
@@ -60,6 +66,34 @@ public sealed record UltraDebugLogEventSnapshot(
     string? DecisionReasonCode = null,
     string? BlockerCode = null,
     string? LatencyBreakdownLabel = null);
+
+public sealed record UltraDebugLogTailSnapshot(
+    string BucketName,
+    int RequestedLineCount,
+    int ReturnedLineCount,
+    int FilesScanned,
+    bool IsTruncated,
+    IReadOnlyCollection<UltraDebugLogTailLineSnapshot> Lines);
+
+public sealed record UltraDebugLogTailLineSnapshot(
+    string Category,
+    string EventName,
+    string Summary,
+    string? DetailPreview = null,
+    DateTime? OccurredAtUtc = null,
+    string? CorrelationId = null,
+    string? Symbol = null,
+    string? SourceFileName = null,
+    string? Source = null,
+    string? BucketLabel = null);
+
+public sealed record UltraDebugLogSearchRequest(
+    string BucketName,
+    string? Category,
+    string? Source,
+    string? SearchTerm,
+    DateTime? FromUtc,
+    int Take);
 
 public sealed record UltraDebugLogEnableRequest(
     string DurationKey,

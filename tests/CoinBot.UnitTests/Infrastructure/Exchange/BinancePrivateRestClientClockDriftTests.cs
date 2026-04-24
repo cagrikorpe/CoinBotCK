@@ -1,9 +1,17 @@
 using System.Net;
 using System.Text;
+using CoinBot.Application.Abstractions.Administration;
+using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Administration;
 using CoinBot.Infrastructure.Exchange;
+using CoinBot.Infrastructure.Identity;
+using CoinBot.Infrastructure.Observability;
+using CoinBot.Infrastructure.Persistence;
 using CoinBot.UnitTests.Infrastructure.Mfa;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -146,7 +154,54 @@ public sealed class BinancePrivateRestClientClockDriftTests
         Assert.Contains(handler.RequestUris, uri => uri.Contains("/fapi/v2/positionRisk?", StringComparison.Ordinal));
     }
 
-    private static BinancePrivateRestClient CreateClient(HttpClient httpClient, IBinanceTimeSyncService timeSyncService)
+    [Fact]
+    public async Task GetOrderAsync_WritesMaskedExecutionTrace_WithStableCorrelationMetadata()
+    {
+        using var provider = BuildTraceProvider();
+        using var handler = new RecordingMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                """{"symbol":"BTCUSDT","orderId":"1001","clientOrderId":"cbp0_test","status":"PARTIALLY_FILLED","origQty":"0.05","executedQty":"0.02","cumQuote":"1280.00","updateTime":1710000000123}""",
+                Encoding.UTF8,
+                "application/json")
+        });
+        using var client = new HttpClient(handler) { BaseAddress = new Uri("https://testnet.binancefuture.com") };
+        var timeSyncService = new FakeTimeSyncService(currentTimestampMilliseconds: 1_710_000_000_123L);
+        var sut = CreateClient(client, timeSyncService, provider.GetRequiredService<IServiceScopeFactory>());
+        var executionOrderId = Guid.NewGuid();
+
+        var snapshot = await sut.GetOrderAsync(
+            new BinanceOrderQueryRequest(
+                Guid.NewGuid(),
+                "BTCUSDT",
+                ExchangeOrderId: "1001",
+                ClientOrderId: "cbp0_test",
+                ApiKey: "api-key",
+                ApiSecret: "api-secret",
+                CommandId: "cmd-futures-order-query",
+                CorrelationId: "corr-futures-order-query",
+                ExecutionAttemptId: "attempt-futures-order-query",
+                ExecutionOrderId: executionOrderId,
+                UserId: "user-futures-order-query"));
+
+        await using var scope = provider.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var trace = await dbContext.ExecutionTraces.SingleAsync();
+
+        Assert.Equal("PARTIALLY_FILLED", snapshot.Status);
+        Assert.Equal("/fapi/v1/order", trace.Endpoint);
+        Assert.Equal("corr-futures-order-query", trace.CorrelationId);
+        Assert.Equal("attempt-futures-order-query", trace.ExecutionAttemptId);
+        Assert.Equal(executionOrderId, trace.ExecutionOrderId);
+        Assert.Equal("user-futures-order-query", trace.UserId);
+        Assert.Contains("***REDACTED***", trace.RequestMasked ?? string.Empty, StringComparison.Ordinal);
+        Assert.DoesNotContain("api-secret", trace.RequestMasked ?? string.Empty, StringComparison.Ordinal);
+    }
+
+    private static BinancePrivateRestClient CreateClient(
+        HttpClient httpClient,
+        IBinanceTimeSyncService timeSyncService,
+        IServiceScopeFactory? serviceScopeFactory = null)
     {
         return new BinancePrivateRestClient(
             httpClient,
@@ -158,7 +213,21 @@ public sealed class BinancePrivateRestClientClockDriftTests
             }),
             new AdjustableTimeProvider(DateTimeOffset.Parse("2026-04-02T10:00:00Z")),
             timeSyncService,
-            NullLogger<BinancePrivateRestClient>.Instance);
+            NullLogger<BinancePrivateRestClient>.Instance,
+            serviceScopeFactory: serviceScopeFactory);
+    }
+
+    private static ServiceProvider BuildTraceProvider()
+    {
+        var databaseName = Guid.NewGuid().ToString("N");
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<ICorrelationContextAccessor, CorrelationContextAccessor>();
+        services.AddSingleton<IDataScopeContext>(new TestDataScopeContext());
+        services.AddSingleton<TimeProvider>(new AdjustableTimeProvider(DateTimeOffset.Parse("2026-04-02T10:00:00Z")));
+        services.AddDbContext<ApplicationDbContext>(options => options.UseInMemoryDatabase(databaseName));
+        services.AddScoped<ITraceService, TraceService>();
+        return services.BuildServiceProvider();
     }
 
     private static BinanceOrderPlacementRequest CreateRequest()
@@ -237,6 +306,13 @@ public sealed class BinancePrivateRestClientClockDriftTests
 
             return Task.FromResult(responder(request));
         }
+    }
+
+    private sealed class TestDataScopeContext : IDataScopeContext
+    {
+        public string? UserId => null;
+
+        public bool HasIsolationBypass => true;
     }
 }
 

@@ -64,6 +64,8 @@ public sealed class ExecutionEngine(
             : null;
         var rootCorrelationId = ResolveRootCorrelationId(normalizedCommand.CorrelationId, decisionTrace?.CorrelationId);
         var idempotencyKey = ResolveIdempotencyKey(normalizedCommand);
+        var requestedEnvironment = await ResolveRequestedEnvironmentAsync(normalizedCommand, cancellationToken);
+        var executionPlane = ResolveExecutionPlane(requestedEnvironment, normalizedCommand.Plane);
         object BuildExecutionLatencyBreakdown()
         {
             var elapsedMilliseconds = (int)dispatchStopwatch.ElapsedMilliseconds;
@@ -87,6 +89,15 @@ public sealed class ExecutionEngine(
                 !entity.IsDeleted)
             .Select(entity => entity.Id)
             .SingleOrDefaultAsync(cancellationToken);
+
+        if (existingOrderId == Guid.Empty)
+        {
+            existingOrderId = await ResolveExistingExecutionOrderIntentIdAsync(
+                normalizedCommand,
+                requestedEnvironment,
+                executionPlane,
+                cancellationToken);
+        }
 
         if (existingOrderId != Guid.Empty)
         {
@@ -122,14 +133,10 @@ public sealed class ExecutionEngine(
                             decisionReasonCode = "SuppressedDuplicate",
                             existingOrderId,
                             strategySignalId = normalizedCommand.StrategySignalId,
-                            requestedEnvironment = normalizedCommand.IsDemo.HasValue
-                                ? (normalizedCommand.IsDemo.Value
-                                    ? ExecutionEnvironment.Demo.ToString()
-                                    : ExecutionEnvironment.Live.ToString())
-                                : null,
+                            requestedEnvironment = requestedEnvironment.ToString(),
                             side = normalizedCommand.Side.ToString(),
                             reduceOnly = normalizedCommand.ReduceOnly,
-                            plane = normalizedCommand.Plane.ToString(),
+                            plane = executionPlane.ToString(),
                             latencyBreakdown = BuildExecutionLatencyBreakdown()
                         }),
                     cancellationToken);
@@ -140,8 +147,6 @@ public sealed class ExecutionEngine(
                 IsDuplicate: true);
         }
 
-        var requestedEnvironment = await ResolveRequestedEnvironmentAsync(normalizedCommand, cancellationToken);
-        var executionPlane = ResolveExecutionPlane(requestedEnvironment, normalizedCommand.Plane);
         var executor = ResolveExecutor(requestedEnvironment, executionPlane);
         var utcNow = timeProvider.GetUtcNow().UtcDateTime;
         var order = new ExecutionOrder
@@ -1257,6 +1262,34 @@ public sealed class ExecutionEngine(
 
         existingOrder.DuplicateSuppressed = true;
         await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task<Guid> ResolveExistingExecutionOrderIntentIdAsync(
+        ExecutionCommand normalizedCommand,
+        ExecutionEnvironment requestedEnvironment,
+        ExchangeDataPlane executionPlane,
+        CancellationToken cancellationToken)
+    {
+        return await dbContext.ExecutionOrders
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(entity =>
+                !entity.IsDeleted &&
+                entity.OwnerUserId == normalizedCommand.OwnerUserId &&
+                entity.StrategySignalId == normalizedCommand.StrategySignalId &&
+                entity.ExecutionEnvironment == requestedEnvironment &&
+                entity.Plane == executionPlane &&
+                entity.ExchangeAccountId == normalizedCommand.ExchangeAccountId &&
+                entity.Symbol == normalizedCommand.Symbol &&
+                entity.Timeframe == normalizedCommand.Timeframe &&
+                entity.SignalType == normalizedCommand.SignalType &&
+                entity.Side == normalizedCommand.Side &&
+                entity.OrderType == normalizedCommand.OrderType &&
+                entity.ReduceOnly == normalizedCommand.ReduceOnly)
+            .OrderByDescending(entity => entity.LastStateChangedAtUtc)
+            .ThenByDescending(entity => entity.Id)
+            .Select(entity => entity.Id)
+            .FirstOrDefaultAsync(cancellationToken);
     }
 
     private static void ApplyPreSubmitRejectionMetadata(ExecutionOrder order)

@@ -253,6 +253,7 @@ public sealed class BinanceSpotPrivateRestClient(
             throw new ArgumentException("ExchangeOrderId or ClientOrderId is required.", nameof(request));
         }
 
+        var stopwatch = Stopwatch.StartNew();
         var observedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
         var timestamp = await GetTimestampAsync(cancellationToken);
         var parameters = new List<KeyValuePair<string, string>>
@@ -277,28 +278,84 @@ public sealed class BinanceSpotPrivateRestClient(
                 $"{parameter.Key}={Uri.EscapeDataString(parameter.Value)}"));
         var signature = ComputeSignature(unsignedQuery, request.ApiSecret);
         var path = $"/api/v3/order?{unsignedQuery}&signature={signature}";
+        var maskedRequest = SensitivePayloadMasker.Mask(
+            JsonSerializer.Serialize(new
+            {
+                Endpoint = path,
+                Headers = new Dictionary<string, string?>
+                {
+                    ["X-MBX-APIKEY"] = request.ApiKey,
+                    ["Authorization"] = "BinanceApiKey"
+                }
+            })) ?? "request=missing";
+        string? responseBody = null;
+        string? maskedResponse = null;
+        string? exchangeCode = null;
+        int? httpStatusCode = null;
+        var traceWritten = false;
 
-        using var httpRequest = CreateApiKeyRequest(HttpMethod.Get, path, request.ApiKey);
-        using var response = await SendAsync(httpRequest, cancellationToken);
-
-        if (!response.IsSuccessStatusCode)
+        try
         {
-            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            await ThrowClockDriftAwareFailureAsync(
-                $"Binance spot order status request failed with status {(int)response.StatusCode}.",
-                TryReadExchangeCode(responseBody),
-                responseBody,
+            using var httpRequest = CreateApiKeyRequest(HttpMethod.Get, path, request.ApiKey);
+            using var response = await SendAsync(httpRequest, cancellationToken);
+            httpStatusCode = (int)response.StatusCode;
+            responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            maskedResponse = SensitivePayloadMasker.Mask(responseBody);
+            exchangeCode = TryReadExchangeCode(responseBody);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                await WriteExecutionTraceAsync(
+                    request,
+                    "/api/v3/order",
+                    maskedRequest,
+                    maskedResponse,
+                    httpStatusCode,
+                    exchangeCode,
+                    stopwatch.ElapsedMilliseconds,
+                    cancellationToken);
+                traceWritten = true;
+
+                await ThrowClockDriftAwareFailureAsync(
+                    $"Binance spot order status request failed with status {(int)response.StatusCode}.",
+                    exchangeCode,
+                    responseBody,
+                    cancellationToken);
+            }
+
+            using var document = JsonDocument.Parse(responseBody);
+
+            await WriteExecutionTraceAsync(
+                request,
+                "/api/v3/order",
+                maskedRequest,
+                maskedResponse,
+                httpStatusCode,
+                exchangeCode,
+                stopwatch.ElapsedMilliseconds,
                 cancellationToken);
+            traceWritten = true;
+
+            return BuildOrderStatusSnapshot(
+                document.RootElement,
+                request.Symbol,
+                observedAtUtc,
+                "Binance.SpotPrivateRest.Order");
         }
+        catch (Exception exception) when (exception is not OperationCanceledException && !traceWritten)
+        {
+            await WriteExecutionTraceAsync(
+                request,
+                "/api/v3/order",
+                maskedRequest,
+                maskedResponse ?? SensitivePayloadMasker.Mask(exception.Message),
+                httpStatusCode,
+                exchangeCode,
+                stopwatch.ElapsedMilliseconds,
+                cancellationToken);
 
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-
-        return BuildOrderStatusSnapshot(
-            document.RootElement,
-            request.Symbol,
-            observedAtUtc,
-            "Binance.SpotPrivateRest.Order");
+            throw;
+        }
     }
 
     public async Task<IReadOnlyCollection<BinanceSpotTradeFillSnapshot>> GetTradeFillsAsync(
@@ -313,6 +370,7 @@ public sealed class BinanceSpotPrivateRestClient(
             throw new ArgumentException("ExchangeOrderId or ClientOrderId is required.", nameof(request));
         }
 
+        var stopwatch = Stopwatch.StartNew();
         var resolvedOrder = string.IsNullOrWhiteSpace(request.ExchangeOrderId)
             ? await GetOrderAsync(request, cancellationToken)
             : null;
@@ -324,41 +382,109 @@ public sealed class BinanceSpotPrivateRestClient(
             $"symbol={Uri.EscapeDataString(NormalizeCode(request.Symbol) ?? string.Empty)}&orderId={Uri.EscapeDataString(exchangeOrderId)}&timestamp={timestamp}&recvWindow={optionsValue.RecvWindowMilliseconds.ToString(CultureInfo.InvariantCulture)}";
         var signature = ComputeSignature(unsignedQuery, request.ApiSecret);
         var path = $"/api/v3/myTrades?{unsignedQuery}&signature={signature}";
+        var maskedRequest = SensitivePayloadMasker.Mask(
+            JsonSerializer.Serialize(new
+            {
+                Endpoint = path,
+                Headers = new Dictionary<string, string?>
+                {
+                    ["X-MBX-APIKEY"] = request.ApiKey,
+                    ["Authorization"] = "BinanceApiKey"
+                }
+            })) ?? "request=missing";
+        string? responseBody = null;
+        string? maskedResponse = null;
+        string? exchangeCode = null;
+        int? httpStatusCode = null;
+        var traceWritten = false;
 
-        using var httpRequest = CreateApiKeyRequest(HttpMethod.Get, path, request.ApiKey);
-        using var response = await SendAsync(httpRequest, cancellationToken);
-
-        if (!response.IsSuccessStatusCode)
+        try
         {
-            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            await ThrowClockDriftAwareFailureAsync(
-                $"Binance spot trade fills request failed with status {(int)response.StatusCode}.",
-                TryReadExchangeCode(responseBody),
-                responseBody,
+            using var httpRequest = CreateApiKeyRequest(HttpMethod.Get, path, request.ApiKey);
+            using var response = await SendAsync(httpRequest, cancellationToken);
+            httpStatusCode = (int)response.StatusCode;
+            responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            maskedResponse = SensitivePayloadMasker.Mask(responseBody);
+            exchangeCode = TryReadExchangeCode(responseBody);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                await WriteExecutionTraceAsync(
+                    request with
+                    {
+                        ExchangeOrderId = exchangeOrderId,
+                        ClientOrderId = clientOrderId
+                    },
+                    "/api/v3/myTrades",
+                    maskedRequest,
+                    maskedResponse,
+                    httpStatusCode,
+                    exchangeCode,
+                    stopwatch.ElapsedMilliseconds,
+                    cancellationToken);
+                traceWritten = true;
+
+                await ThrowClockDriftAwareFailureAsync(
+                    $"Binance spot trade fills request failed with status {(int)response.StatusCode}.",
+                    exchangeCode,
+                    responseBody,
+                    cancellationToken);
+            }
+
+            using var document = JsonDocument.Parse(responseBody);
+
+            await WriteExecutionTraceAsync(
+                request with
+                {
+                    ExchangeOrderId = exchangeOrderId,
+                    ClientOrderId = clientOrderId
+                },
+                "/api/v3/myTrades",
+                maskedRequest,
+                maskedResponse,
+                httpStatusCode,
+                exchangeCode,
+                stopwatch.ElapsedMilliseconds,
                 cancellationToken);
+            traceWritten = true;
+
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                return [];
+            }
+
+            return document.RootElement
+                .EnumerateArray()
+                .Select(element => BuildTradeFillSnapshot(
+                    element,
+                    request.Symbol,
+                    exchangeOrderId,
+                    clientOrderId,
+                    observedAtUtc,
+                    "Binance.SpotPrivateRest.MyTrades"))
+                .Where(snapshot => snapshot is not null)
+                .Cast<BinanceSpotTradeFillSnapshot>()
+                .OrderBy(snapshot => snapshot.TradeId)
+                .ToArray();
         }
-
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-
-        if (document.RootElement.ValueKind != JsonValueKind.Array)
+        catch (Exception exception) when (exception is not OperationCanceledException && !traceWritten)
         {
-            return [];
-        }
+            await WriteExecutionTraceAsync(
+                request with
+                {
+                    ExchangeOrderId = exchangeOrderId,
+                    ClientOrderId = clientOrderId
+                },
+                "/api/v3/myTrades",
+                maskedRequest,
+                maskedResponse ?? SensitivePayloadMasker.Mask(exception.Message),
+                httpStatusCode,
+                exchangeCode,
+                stopwatch.ElapsedMilliseconds,
+                cancellationToken);
 
-        return document.RootElement
-            .EnumerateArray()
-            .Select(element => BuildTradeFillSnapshot(
-                element,
-                request.Symbol,
-                exchangeOrderId,
-                clientOrderId,
-                observedAtUtc,
-                "Binance.SpotPrivateRest.MyTrades"))
-            .Where(snapshot => snapshot is not null)
-            .Cast<BinanceSpotTradeFillSnapshot>()
-            .OrderBy(snapshot => snapshot.TradeId)
-            .ToArray();
+            throw;
+        }
     }
 
     public async Task<string> StartListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
@@ -513,7 +639,12 @@ public sealed class BinanceSpotPrivateRestClient(
                     ExchangeOrderId: null,
                     ClientOrderId: request.ClientOrderId,
                     ApiKey: request.ApiKey,
-                    ApiSecret: request.ApiSecret),
+                    ApiSecret: request.ApiSecret,
+                    CommandId: request.CommandId,
+                    CorrelationId: request.CorrelationId,
+                    ExecutionAttemptId: request.ExecutionAttemptId,
+                    ExecutionOrderId: request.ExecutionOrderId,
+                    UserId: request.UserId),
                 cancellationToken);
 
             return new BinanceOrderPlacementResult(
@@ -810,6 +941,11 @@ public sealed class BinanceSpotPrivateRestClient(
         {
             using var document = JsonDocument.Parse(responseBody);
 
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
             if (document.RootElement.TryGetProperty("code", out var codeElement))
             {
                 return codeElement.ToString();
@@ -833,6 +969,11 @@ public sealed class BinanceSpotPrivateRestClient(
         try
         {
             using var document = JsonDocument.Parse(responseBody);
+
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
 
             if (document.RootElement.TryGetProperty("msg", out var messageElement))
             {
@@ -930,6 +1071,33 @@ public sealed class BinanceSpotPrivateRestClient(
                 request.UserId ?? "system:unknown",
                 "Binance.SpotPrivateRest",
                 "/api/v3/order",
+                maskedRequest,
+                maskedResponse,
+                request.CorrelationId,
+                request.ExecutionAttemptId,
+                request.ExecutionOrderId,
+                httpStatusCode,
+                exchangeCode,
+                latencyMs > int.MaxValue ? int.MaxValue : (int)latencyMs),
+            cancellationToken);
+    }
+
+    private Task WriteExecutionTraceAsync(
+        BinanceOrderQueryRequest request,
+        string endpoint,
+        string? maskedRequest,
+        string? maskedResponse,
+        int? httpStatusCode,
+        string? exchangeCode,
+        long latencyMs,
+        CancellationToken cancellationToken)
+    {
+        return WriteExecutionTraceAsync(
+            new ExecutionTraceWriteRequest(
+                request.CommandId ?? request.ClientOrderId ?? request.ExchangeOrderId ?? "query:unknown",
+                request.UserId ?? "system:unknown",
+                "Binance.SpotPrivateRest",
+                endpoint,
                 maskedRequest,
                 maskedResponse,
                 request.CorrelationId,

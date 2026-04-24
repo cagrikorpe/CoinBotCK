@@ -4,6 +4,7 @@ using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using System.Linq.Expressions;
 
 namespace CoinBot.Infrastructure.Administration;
 
@@ -12,6 +13,8 @@ public sealed partial class LogCenterReadModelService(
     IOptions<LogCenterRetentionOptions> retentionOptions,
     ILogger<LogCenterReadModelService> logger) : ILogCenterReadModelService
 {
+    private const int LatestPreviewWindowHours = 6;
+    private const int LatestPreviewSourceTakeCap = 120;
     private const string RetentionStartedAction = "LogCenter.Retention.Started";
     private const string RetentionCompletedAction = "LogCenter.Retention.Completed";
     private const string RetentionFailedAction = "LogCenter.Retention.Failed";
@@ -35,31 +38,93 @@ public sealed partial class LogCenterReadModelService(
 
         try
         {
-            var sourceTake = Math.Clamp(normalized.Take * 3, normalized.Take, 1000);
+            var useLatestPreviewMode = ShouldUseLatestPreviewMode(normalized);
+            var effectiveFilters = useLatestPreviewMode
+                ? ApplyLatestPreviewWindow(normalized)
+                : normalized;
+            var sourceTake = useLatestPreviewMode
+                ? Math.Clamp(effectiveFilters.Take, effectiveFilters.Take, LatestPreviewSourceTakeCap)
+                : Math.Clamp(effectiveFilters.Take * 3, effectiveFilters.Take, 1000);
 
-            var decisionQuery = ApplyDecisionFilters(dbContext.DecisionTraces.AsNoTracking().IgnoreQueryFilters().Where(entity => !entity.IsDeleted), normalized);
-            var executionQuery = ApplyExecutionFilters(dbContext.ExecutionTraces.AsNoTracking().IgnoreQueryFilters().Where(entity => !entity.IsDeleted), normalized);
-            var adminAuditQuery = ApplyAdminAuditFilters(dbContext.AdminAuditLogs.AsNoTracking(), normalized);
-            var incidentQuery = ApplyIncidentFilters(dbContext.Incidents.AsNoTracking().IgnoreQueryFilters().Where(entity => !entity.IsDeleted), normalized);
-            var incidentEventQuery = ApplyIncidentEventFilters(dbContext.IncidentEvents.AsNoTracking().IgnoreQueryFilters().Where(entity => !entity.IsDeleted), normalized);
-            var approvalQueueQuery = ApplyApprovalQueueFilters(dbContext.ApprovalQueues.AsNoTracking().IgnoreQueryFilters().Where(entity => !entity.IsDeleted), normalized);
-            var approvalActionQuery = ApplyApprovalActionFilters(dbContext.ApprovalActions.AsNoTracking().IgnoreQueryFilters().Where(entity => !entity.IsDeleted), normalized);
+            var decisionQuery = ApplyDecisionFilters(dbContext.DecisionTraces.AsNoTracking().IgnoreQueryFilters().Where(entity => !entity.IsDeleted), effectiveFilters);
+            var executionQuery = ApplyExecutionFilters(dbContext.ExecutionTraces.AsNoTracking().IgnoreQueryFilters().Where(entity => !entity.IsDeleted), effectiveFilters);
+            var adminAuditQuery = ApplyAdminAuditFilters(dbContext.AdminAuditLogs.AsNoTracking(), effectiveFilters);
+            var incidentQuery = ApplyIncidentFilters(dbContext.Incidents.AsNoTracking().IgnoreQueryFilters().Where(entity => !entity.IsDeleted), effectiveFilters);
+            var incidentEventQuery = ApplyIncidentEventFilters(dbContext.IncidentEvents.AsNoTracking().IgnoreQueryFilters().Where(entity => !entity.IsDeleted), effectiveFilters);
+            var approvalQueueQuery = ApplyApprovalQueueFilters(dbContext.ApprovalQueues.AsNoTracking().IgnoreQueryFilters().Where(entity => !entity.IsDeleted), effectiveFilters);
+            var approvalActionQuery = ApplyApprovalActionFilters(dbContext.ApprovalActions.AsNoTracking().IgnoreQueryFilters().Where(entity => !entity.IsDeleted), effectiveFilters);
 
-            var decisionCount = await decisionQuery.CountAsync(cancellationToken);
-            var executionCount = await executionQuery.CountAsync(cancellationToken);
-            var adminAuditCount = await adminAuditQuery.CountAsync(cancellationToken);
-            var incidentCount = await incidentQuery.CountAsync(cancellationToken);
-            var incidentEventCount = await incidentEventQuery.CountAsync(cancellationToken);
-            var approvalQueueCount = await approvalQueueQuery.CountAsync(cancellationToken);
-            var approvalActionCount = await approvalActionQuery.CountAsync(cancellationToken);
+            List<DecisionTrace> decisionRows;
+            int decisionCount;
+            List<ExecutionTrace> executionRows;
+            int executionCount;
+            List<AdminAuditLog> adminAuditRows;
+            int adminAuditCount;
+            List<Incident> incidentRows;
+            int incidentCount;
+            List<IncidentEvent> incidentEventRows;
+            int incidentEventCount;
+            List<ApprovalQueue> approvalQueueRows;
+            int approvalQueueCount;
+            List<ApprovalAction> approvalActionRows;
+            int approvalActionCount;
 
-            var decisionRows = await decisionQuery.OrderByDescending(entity => entity.CreatedAtUtc).Take(sourceTake).ToListAsync(cancellationToken);
-            var executionRows = await executionQuery.OrderByDescending(entity => entity.CreatedAtUtc).Take(sourceTake).ToListAsync(cancellationToken);
-            var adminAuditRows = await adminAuditQuery.OrderByDescending(entity => entity.CreatedAtUtc).Take(sourceTake).ToListAsync(cancellationToken);
-            var incidentRows = await incidentQuery.OrderByDescending(entity => entity.CreatedDate).Take(sourceTake).ToListAsync(cancellationToken);
-            var incidentEventRows = await incidentEventQuery.OrderByDescending(entity => entity.CreatedDate).Take(sourceTake).ToListAsync(cancellationToken);
-            var approvalQueueRows = await approvalQueueQuery.OrderByDescending(entity => entity.CreatedDate).Take(sourceTake).ToListAsync(cancellationToken);
-            var approvalActionRows = await approvalActionQuery.OrderByDescending(entity => entity.CreatedDate).Take(sourceTake).ToListAsync(cancellationToken);
+            if (useLatestPreviewMode)
+            {
+                decisionRows = await LoadRowsAsync(decisionQuery, entity => entity.CreatedAtUtc, sourceTake, cancellationToken);
+                executionRows = await LoadRowsAsync(executionQuery, entity => entity.CreatedAtUtc, sourceTake, cancellationToken);
+                adminAuditRows = await LoadRowsAsync(adminAuditQuery, entity => entity.CreatedAtUtc, sourceTake, cancellationToken);
+                incidentRows = await LoadRowsAsync(incidentQuery, entity => entity.CreatedDate, sourceTake, cancellationToken);
+                incidentEventRows = await LoadRowsAsync(incidentEventQuery, entity => entity.CreatedDate, sourceTake, cancellationToken);
+                approvalQueueRows = await LoadRowsAsync(approvalQueueQuery, entity => entity.CreatedDate, sourceTake, cancellationToken);
+                approvalActionRows = await LoadRowsAsync(approvalActionQuery, entity => entity.CreatedDate, sourceTake, cancellationToken);
+
+                decisionCount = decisionRows.Count;
+                executionCount = executionRows.Count;
+                adminAuditCount = adminAuditRows.Count;
+                incidentCount = incidentRows.Count;
+                incidentEventCount = incidentEventRows.Count;
+                approvalQueueCount = approvalQueueRows.Count;
+                approvalActionCount = approvalActionRows.Count;
+            }
+            else
+            {
+                (decisionRows, decisionCount) = await LoadRowsWithCountAsync(
+                    decisionQuery,
+                    entity => entity.CreatedAtUtc,
+                    sourceTake,
+                    cancellationToken);
+                (executionRows, executionCount) = await LoadRowsWithCountAsync(
+                    executionQuery,
+                    entity => entity.CreatedAtUtc,
+                    sourceTake,
+                    cancellationToken);
+                (adminAuditRows, adminAuditCount) = await LoadRowsWithCountAsync(
+                    adminAuditQuery,
+                    entity => entity.CreatedAtUtc,
+                    sourceTake,
+                    cancellationToken);
+                (incidentRows, incidentCount) = await LoadRowsWithCountAsync(
+                    incidentQuery,
+                    entity => entity.CreatedDate,
+                    sourceTake,
+                    cancellationToken);
+                (incidentEventRows, incidentEventCount) = await LoadRowsWithCountAsync(
+                    incidentEventQuery,
+                    entity => entity.CreatedDate,
+                    sourceTake,
+                    cancellationToken);
+                (approvalQueueRows, approvalQueueCount) = await LoadRowsWithCountAsync(
+                    approvalQueueQuery,
+                    entity => entity.CreatedDate,
+                    sourceTake,
+                    cancellationToken);
+                (approvalActionRows, approvalActionCount) = await LoadRowsWithCountAsync(
+                    approvalActionQuery,
+                    entity => entity.CreatedDate,
+                    sourceTake,
+                    cancellationToken);
+            }
 
             var entries = new List<LogCenterEntrySnapshot>(
                 decisionRows.Count +
@@ -98,7 +163,7 @@ public sealed partial class LogCenterReadModelService(
                 orderedEntries.FirstOrDefault()?.CreatedAtUtc);
 
             return new LogCenterPageSnapshot(
-                normalized.ToRequest(),
+                effectiveFilters.ToRequest(),
                 summary,
                 await BuildRetentionSnapshotAsync(cancellationToken),
                 orderedEntries,
@@ -135,6 +200,12 @@ public sealed partial class LogCenterReadModelService(
                 .AsNoTracking()
                 .Where(entity => retentionActions.Contains(entity.ActionType))
                 .OrderByDescending(entity => entity.CreatedAtUtc)
+                .Select(entity => new RetentionAuditLogSnapshot(
+                    entity.CreatedAtUtc,
+                    entity.ActionType,
+                    entity.NewValueSummary,
+                    entity.OldValueSummary,
+                    entity.Reason))
                 .FirstOrDefaultAsync(cancellationToken);
 
             return new LogCenterRetentionSnapshot(
@@ -167,4 +238,59 @@ public sealed partial class LogCenterReadModelService(
                 null);
         }
     }
+
+    private static async Task<(List<TEntity> Rows, int TotalCount)> LoadRowsWithCountAsync<TEntity>(
+        IQueryable<TEntity> query,
+        Expression<Func<TEntity, DateTime>> createdAtSelector,
+        int take,
+        CancellationToken cancellationToken)
+        where TEntity : class
+    {
+        var rowsWithCount = await query
+            .OrderByDescending(createdAtSelector)
+            .Select(entity => new CountedQueryRow<TEntity>(entity, query.Count()))
+            .Take(take)
+            .ToListAsync(cancellationToken);
+
+        if (rowsWithCount.Count == 0)
+        {
+            return ([], 0);
+        }
+
+        return (rowsWithCount.Select(item => item.Entity).ToList(), rowsWithCount[0].TotalCount);
+    }
+
+    private static async Task<List<TEntity>> LoadRowsAsync<TEntity>(
+        IQueryable<TEntity> query,
+        Expression<Func<TEntity, DateTime>> createdAtSelector,
+        int take,
+        CancellationToken cancellationToken)
+        where TEntity : class
+    {
+        return await query
+            .OrderByDescending(createdAtSelector)
+            .Take(take)
+            .ToListAsync(cancellationToken);
+    }
+
+    private static bool ShouldUseLatestPreviewMode(NormalizedLogCenterQuery normalized)
+    {
+        return !normalized.HasSearchFilters && !normalized.HasDateRange;
+    }
+
+    private static NormalizedLogCenterQuery ApplyLatestPreviewWindow(NormalizedLogCenterQuery normalized)
+    {
+        var utcNow = DateTime.UtcNow;
+        return normalized.WithDateRange(utcNow.AddHours(-LatestPreviewWindowHours), utcNow);
+    }
+
+    private sealed record CountedQueryRow<TEntity>(TEntity Entity, int TotalCount)
+        where TEntity : class;
+
+    private sealed record RetentionAuditLogSnapshot(
+        DateTime CreatedAtUtc,
+        string ActionType,
+        string? NewValueSummary,
+        string? OldValueSummary,
+        string Reason);
 }

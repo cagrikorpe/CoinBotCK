@@ -1,7 +1,13 @@
 @model CoinBot.Web.ViewModels.Admin.AdminIncidentAuditDecisionCenterViewModel
 @using CoinBot.Web.ViewModels.Admin
 @{
-    string BuildFocusHref(string focusReference)
+    var pagination = Model.Pagination;
+    var isInitialFastMode =
+        !Model.Filters.HasActiveFilters &&
+        string.IsNullOrWhiteSpace(Model.Filters.FocusReference) &&
+        (pagination?.Page ?? Model.Filters.Page) == 1;
+
+    string BuildAuditHref(int targetPage, int? targetPageSize = null, string? focusReference = null, bool clearFocus = false, bool forceUltraLog = false)
     {
         return Url.Action("AuditLogs", "Admin", new
         {
@@ -15,11 +21,60 @@
             outcome = Model.Filters.Outcome,
             reasonCode = Model.Filters.ReasonCode,
             take = Model.Filters.Take,
-            focus = focusReference
+            page = targetPage,
+            pageSize = targetPageSize ?? pagination?.PageSize ?? Model.Filters.PageSize,
+            focus = clearFocus ? null : focusReference ?? Model.Filters.FocusReference,
+            logBucket = Model.UltraDebugLog?.SearchView?.SelectedBucketValue,
+            logCategory = Model.UltraDebugLog?.SearchView?.SelectedCategoryValue,
+            logSource = Model.UltraDebugLog?.SearchView?.SourceFilter,
+            logSearch = Model.UltraDebugLog?.SearchView?.SearchTerm,
+            logTimeWindow = Model.UltraDebugLog?.SearchView?.SelectedTimeWindowValue,
+            logTake = Model.UltraDebugLog?.SearchView?.SelectedTake,
+            ultraLog = forceUltraLog || Model.UltraDebugLog is not null ? true : (bool?)null
         }) ?? "#";
     }
 
+    string BuildFocusHref(string focusReference)
+    {
+        return BuildAuditHref(
+            targetPage: pagination?.Page ?? Model.Filters.Page,
+            targetPageSize: pagination?.PageSize ?? Model.Filters.PageSize,
+            focusReference: focusReference);
+    }
+
+    string BuildUltraLogHref()
+    {
+        return BuildAuditHref(
+            targetPage: pagination?.Page ?? Model.Filters.Page,
+            targetPageSize: pagination?.PageSize ?? Model.Filters.PageSize,
+            forceUltraLog: true);
+    }
+
+    IReadOnlyCollection<int> BuildVisiblePages()
+    {
+        if (pagination is null)
+        {
+            return Array.Empty<int>();
+        }
+
+        var pages = new SortedSet<int> { pagination.Page };
+
+        if (pagination.Page > 1)
+        {
+            pages.Add(1);
+            pages.Add(pagination.Page - 1);
+        }
+
+        if (pagination.HasNextPage)
+        {
+            pages.Add(pagination.Page + 1);
+        }
+
+        return pages.ToArray();
+    }
+
     var ultraLog = Model.UltraDebugLog;
+    var ultraLogSearch = ultraLog?.SearchView;
 
     string? traceDetailHref = Model.Detail.HasSelection && !string.Equals(Model.Detail.CorrelationId, "Unavailable", StringComparison.OrdinalIgnoreCase)
         ? Url.Action("TraceDetail", "Admin", new
@@ -90,6 +145,17 @@
                         </div>
                     }
                 </div>
+
+                @if (!Model.Filters.HasActiveFilters)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Latest bounded preview</div>
+                            <div class="cb-admin-info-strip-text">İlk yükte son 6 saatten bounded kayıt önizlemesi gösterilir. Daha eski veya daha geniş arama için filtre uygulayın.</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">6h preview</span>
+                    </div>
+                }
 
                 @if (TempData["AdminUltraDebugLogSuccess"] is string ultraLogSuccessMessage)
                 {
@@ -235,6 +301,227 @@
                         </div>
                     }
 
+                    @if (ultraLogSearch is not null || ultraLog.NormalLogsTail is not null || ultraLog.UltraLogsTail is not null)
+                    {
+                        <div class="cb-admin-table-header mt-6 mb-4">
+                            <div>
+                                <div class="cb-admin-section-kicker">Masked Tail</div>
+                                <div class="cb-admin-section-title">Search / filter / time-window preview</div>
+                                <p class="cb-admin-section-description mb-0">Arama masked text üzerinde çalışır. Sunucu tarafında satır, dosya ve byte penceresi sabit sınırlarla tutulur.</p>
+                            </div>
+                        </div>
+
+                        @if (ultraLogSearch is not null)
+                        {
+                            <form asp-area="Admin" asp-controller="Admin" asp-action="AuditLogs" method="get" class="row">
+                                <input type="hidden" name="ultraLog" value="true" />
+                                <input type="hidden" name="query" value="@Model.Filters.Query" />
+                                <input type="hidden" name="correlationId" value="@Model.Filters.CorrelationId" />
+                                <input type="hidden" name="decisionId" value="@Model.Filters.DecisionId" />
+                                <input type="hidden" name="executionAttemptId" value="@Model.Filters.ExecutionAttemptId" />
+                                <input type="hidden" name="userId" value="@Model.Filters.UserId" />
+                                <input type="hidden" name="symbol" value="@Model.Filters.Symbol" />
+                                <input type="hidden" name="outcome" value="@Model.Filters.Outcome" />
+                                <input type="hidden" name="reasonCode" value="@Model.Filters.ReasonCode" />
+                                <input type="hidden" name="focus" value="@Model.Filters.FocusReference" />
+                                <input type="hidden" name="take" value="@Model.Filters.Take" />
+
+                                <div class="col-md-2 mb-4">
+                                    <label class="form-label">Bucket</label>
+                                    <select name="logBucket" class="form-control">
+                                        @foreach (var option in ultraLogSearch.BucketOptions)
+                                        {
+                                            <option value="@option.Value" selected="@option.IsSelected">@option.Label</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="col-md-2 mb-4">
+                                    <label class="form-label">Category</label>
+                                    <select name="logCategory" class="form-control">
+                                        @foreach (var option in ultraLogSearch.CategoryOptions)
+                                        {
+                                            <option value="@option.Value" selected="@option.IsSelected">@option.Label</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="col-md-2 mb-4">
+                                    <label class="form-label">Time window</label>
+                                    <select name="logTimeWindow" class="form-control">
+                                        @foreach (var option in ultraLogSearch.TimeWindowOptions)
+                                        {
+                                            <option value="@option.Value" selected="@option.IsSelected">@option.Label</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="col-md-2 mb-4">
+                                    <label class="form-label">Source</label>
+                                    <input name="logSource" class="form-control" value="@ultraLogSearch.SourceFilter" maxlength="128" placeholder="ExecutionEngine" />
+                                </div>
+                                <div class="col-md-2 mb-4">
+                                    <label class="form-label">Search</label>
+                                    <input name="logSearch" class="form-control" value="@ultraLogSearch.SearchTerm" maxlength="128" placeholder="dispatch / blocker / corr-..." />
+                                </div>
+                                <div class="col-md-1 mb-4">
+                                    <label class="form-label">Limit</label>
+                                    <select name="logTake" class="form-control">
+                                        @foreach (var option in ultraLogSearch.TakeOptions)
+                                        {
+                                            <option value="@option.Value" selected="@option.IsSelected">@option.Label</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="col-md-1 mb-4 d-flex align-items-end">
+                                    <button type="submit" class="btn btn-primary font-weight-bolder w-100">Ara</button>
+                                </div>
+                            </form>
+
+                            <div class="cb-admin-info-strip cb-admin-info-strip-info mb-4">
+                                <div>
+                                    <div class="cb-admin-info-strip-title">Search guard</div>
+                                    <div class="cb-admin-info-strip-text">@ultraLogSearch.PerformanceGuardLabel</div>
+                                </div>
+                                <span class="cb-admin-info-strip-meta">Server-side</span>
+                            </div>
+
+                            <div class="card card-custom gutter-b cb-card cb-admin-card">
+                                <div class="card-body">
+                                    <div class="cb-admin-table-header mb-4">
+                                        <div>
+                                            <div class="cb-admin-section-kicker">@ultraLogSearch.SearchResult.BucketLabel</div>
+                                            <div class="cb-admin-section-title">@ultraLogSearch.SearchResult.SummaryLabel</div>
+                                            <p class="cb-admin-section-description mb-0">Time window, category, source ve masked search terimi birlikte uygulanır.</p>
+                                        </div>
+                                        @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+                                        {
+                                            Label = ultraLogSearch.SearchResult.IsTruncated ? "Bounded" : "Complete",
+                                            Tone = ultraLogSearch.SearchResult.IsTruncated ? "warning" : "healthy",
+                                            IconText = "SR"
+                                        })
+                                    </div>
+
+                                    @if (ultraLogSearch.SearchResult.Lines.Count == 0)
+                                    {
+                                        <div class="text-muted">Seçili filtrelerle eşleşen preview satırı bulunamadı.</div>
+                                    }
+                                    else
+                                    {
+                                        <div class="table-responsive cb-admin-table-wrap">
+                                            <table class="table table-borderless cb-admin-table mb-0">
+                                                <thead>
+                                                    <tr>
+                                                        <th>When</th>
+                                                        <th>Bucket</th>
+                                                        <th>Category</th>
+                                                        <th>Source</th>
+                                                        <th>Event</th>
+                                                        <th>Summary</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    @foreach (var line in ultraLogSearch.SearchResult.Lines)
+                                                    {
+                                                        <tr>
+                                                            <td>@line.OccurredAtUtcLabel</td>
+                                                            <td>@line.BucketLabel</td>
+                                                            <td>@line.CategoryLabel</td>
+                                                            <td>@line.SourceLabel</td>
+                                                            <td>
+                                                                <div><strong>@line.EventName</strong></div>
+                                                                <small class="text-muted">@line.SymbolLabel</small>
+                                                            </td>
+                                                            <td>
+                                                                <div>@line.Summary</div>
+                                                                <small class="text-muted">@line.SourceFileLabel · Corr=@line.CorrelationIdLabel</small>
+                                                                @if (!string.Equals(line.DetailPreview, "n/a", StringComparison.OrdinalIgnoreCase))
+                                                                {
+                                                                    <details class="mt-2">
+                                                                        <summary class="text-muted">Masked detail</summary>
+                                                                        <pre class="mt-2 mb-0"><code>@line.DetailPreview</code></pre>
+                                                                    </details>
+                                                                }
+                                                            </td>
+                                                        </tr>
+                                                    }
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        }
+
+                        <div class="row">
+                            @foreach (var tail in new[] { ultraLog.NormalLogsTail, ultraLog.UltraLogsTail }.Where(item => item is not null))
+                            {
+                                <div class="col-xl-6">
+                                    <div class="card card-custom gutter-b cb-card cb-admin-card">
+                                        <div class="card-body">
+                                            <div class="cb-admin-table-header mb-4">
+                                                <div>
+                                                    <div class="cb-admin-section-kicker">@tail!.BucketLabel</div>
+                                                    <div class="cb-admin-section-title">@tail.SummaryLabel</div>
+                                                    <p class="cb-admin-section-description mb-0">Tail window max 8 satır, max 2 dosya, max 128 KB / dosya.</p>
+                                                </div>
+                                                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
+                                                {
+                                                    Label = tail.IsTruncated ? "Truncated" : "Complete",
+                                                    Tone = tail.IsTruncated ? "warning" : "healthy",
+                                                    IconText = "TL"
+                                                })
+                                            </div>
+
+                                            @if (tail.Lines.Count == 0)
+                                            {
+                                                <div class="text-muted">Preview bulunamadı.</div>
+                                            }
+                                            else
+                                            {
+                                                <div class="table-responsive cb-admin-table-wrap">
+                                                    <table class="table table-borderless cb-admin-table mb-0">
+                                                        <thead>
+                                                            <tr>
+                                                                <th>When</th>
+                                                                <th>Category</th>
+                                                                <th>Source</th>
+                                                                <th>Event</th>
+                                                                <th>Summary</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            @foreach (var line in tail.Lines)
+                                                            {
+                                                                <tr>
+                                                                    <td>@line.OccurredAtUtcLabel</td>
+                                                                    <td>@line.CategoryLabel</td>
+                                                                    <td>@line.SourceLabel</td>
+                                                                    <td>
+                                                                        <div><strong>@line.EventName</strong></div>
+                                                                        <small class="text-muted">@line.SymbolLabel</small>
+                                                                    </td>
+                                                                    <td>
+                                                                        <div>@line.Summary</div>
+                                                                        <small class="text-muted">@line.SourceFileLabel · Corr=@line.CorrelationIdLabel</small>
+                                                                        @if (!string.Equals(line.DetailPreview, "n/a", StringComparison.OrdinalIgnoreCase))
+                                                                        {
+                                                                            <details class="mt-2">
+                                                                                <summary class="text-muted">Masked detail</summary>
+                                                                                <pre class="mt-2 mb-0"><code>@line.DetailPreview</code></pre>
+                                                                            </details>
+                                                                        }
+                                                                    </td>
+                                                                </tr>
+                                                            }
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            }
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+
                     <div class="row mt-4">
                         <div class="col-lg-8">
                             <form asp-area="Admin" asp-controller="Admin" asp-action="EnableUltraDebugLog" method="post" class="row">
@@ -289,13 +576,42 @@
                         </div>
                     </div>
                 }
+                else
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Ultra debug diagnostics lazy</div>
+                            <div class="cb-admin-info-strip-text">Varsayılan audit yükünde ultra log snapshot, tail ve masked search yüklenmez.</div>
+                        </div>
+                        <a class="btn btn-light-primary font-weight-bold" href="@BuildUltraLogHref()">Ultra log panelini yükle</a>
+                    </div>
+                }
             </div>
         </div>
     </div>
 
-    <div class="col-12">
-        @await Html.PartialAsync("Foundation/_AdminLogTraceDebugDeepDive", Model)
-    </div>
+    @if (!isInitialFastMode)
+    {
+        <div class="col-12">
+            @await Html.PartialAsync("Foundation/_AdminLogTraceDebugDeepDive", Model)
+        </div>
+    }
+    else
+    {
+        <div class="col-12">
+            <div class="card card-custom gutter-b cb-card cb-admin-card">
+                <div class="card-body">
+                    <div class="cb-admin-info-strip cb-admin-info-strip-info">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Initial fast mode</div>
+                            <div class="cb-admin-info-strip-text">İlk yükte gelişmiş trace/debug yüzeyi kapalı tutulur. Focus seçince veya filtre uygulayınca tam teknik panel açılır.</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Fast shell</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
 
     <div class="col-12">
         <div class="card card-custom gutter-b cb-card cb-admin-card">
@@ -315,6 +631,13 @@
                 </div>
 
                 <form asp-area="Admin" asp-controller="Admin" asp-action="AuditLogs" method="get" class="row">
+                    <input type="hidden" name="ultraLog" value="@(ultraLog is not null ? "true" : "false")" />
+                    <input type="hidden" name="logBucket" value="@ultraLogSearch?.SelectedBucketValue" />
+                    <input type="hidden" name="logCategory" value="@ultraLogSearch?.SelectedCategoryValue" />
+                    <input type="hidden" name="logSource" value="@ultraLogSearch?.SourceFilter" />
+                    <input type="hidden" name="logSearch" value="@ultraLogSearch?.SearchTerm" />
+                    <input type="hidden" name="logTimeWindow" value="@ultraLogSearch?.SelectedTimeWindowValue" />
+                    <input type="hidden" name="logTake" value="@ultraLogSearch?.SelectedTake" />
                     <div class="col-md-3 mb-4">
                         <label class="form-label">Query</label>
                         <input name="query" class="form-control" value="@Model.Filters.Query" maxlength="128" placeholder="Correlation / action / summary" />
@@ -357,9 +680,18 @@
                         <label class="form-label">Take</label>
                         <input name="take" type="number" min="25" max="200" class="form-control" value="@Model.Filters.Take" />
                     </div>
+                    <div class="col-md-1 mb-4">
+                        <label class="form-label">Page size</label>
+                        <select name="pageSize" class="form-control">
+                            <option value="10" selected="@(Model.Filters.PageSize == 10)">10</option>
+                            <option value="25" selected="@(Model.Filters.PageSize == 25)">25</option>
+                            <option value="50" selected="@(Model.Filters.PageSize == 50)">50</option>
+                            <option value="100" selected="@(Model.Filters.PageSize == 100)">100</option>
+                        </select>
+                    </div>
                     <div class="col-md-2 mb-4 d-flex align-items-end gap-2">
                         <button type="submit" class="btn btn-primary font-weight-bolder">Uygula</button>
-                        <a asp-area="Admin" asp-controller="Admin" asp-action="AuditLogs" class="btn btn-light font-weight-bold">Temizle</a>
+                        <a href="@(ultraLog is not null ? BuildAuditHref(1, Model.Filters.PageSize, clearFocus: true, forceUltraLog: true) : Url.Action("AuditLogs", "Admin", new { area = "Admin", page = 1, pageSize = Model.Filters.PageSize }))" class="btn btn-light font-weight-bold">Temizle</a>
                     </div>
                 </form>
             </div>
@@ -377,11 +709,38 @@
                     </div>
                     @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel
                     {
-                        Label = $"{Model.Rows.Count} row",
+                        Label = pagination is null ? $"{Model.Rows.Count} row" : $"Sayfa {pagination.Page} · {Model.Rows.Count}/{pagination.PageSize}",
                         Tone = Model.Rows.Count > 0 ? "healthy" : "warning",
                         IconText = "LS"
                     })
                 </div>
+
+                @if (pagination is not null)
+                {
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mt-4 mb-4">
+                        <div class="text-muted">
+                            Sayfa @pagination.Page · @Model.Rows.Count kayıt gösteriliyor
+                            @if (pagination.HasNextPage)
+                            {
+                                <span>· daha fazlası olabilir</span>
+                            }
+                        </div>
+                        <div class="d-flex flex-wrap align-items-center gap-2">
+                            <span class="text-muted">Page size</span>
+                            @foreach (var option in new[] { 10, 25, 50, 100 })
+                            {
+                                if (option == pagination.PageSize)
+                                {
+                                    <span class="btn btn-xs btn-light-primary font-weight-bold disabled">@option</span>
+                                }
+                                else
+                                {
+                                    <a href="@BuildAuditHref(1, option, clearFocus: true)" class="btn btn-xs btn-light font-weight-bold">@option</a>
+                                }
+                            }
+                        </div>
+                    </div>
+                }
 
                 <div class="table-responsive cb-admin-table-wrap">
                     <table class="table table-borderless cb-admin-table mb-0">
@@ -439,6 +798,44 @@
                         </tbody>
                     </table>
                 </div>
+
+                @if (pagination is not null)
+                {
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mt-4">
+                        <div class="d-flex flex-wrap align-items-center gap-2">
+                            @if (pagination.HasPreviousPage)
+                            {
+                                <a href="@BuildAuditHref(pagination.Page - 1, clearFocus: true)" class="btn btn-sm btn-light font-weight-bold">Önceki</a>
+                            }
+                            else
+                            {
+                                <span class="btn btn-sm btn-light disabled">Önceki</span>
+                            }
+
+                            @foreach (var pageNumber in BuildVisiblePages())
+                            {
+                                if (pageNumber == pagination.Page)
+                                {
+                                    <span class="btn btn-sm btn-primary disabled">@pageNumber</span>
+                                }
+                                else
+                                {
+                                    <a href="@BuildAuditHref(pageNumber, clearFocus: true)" class="btn btn-sm btn-light font-weight-bold">@pageNumber</a>
+                                }
+                            }
+
+                            @if (pagination.HasNextPage)
+                            {
+                                <a href="@BuildAuditHref(pagination.Page + 1, clearFocus: true)" class="btn btn-sm btn-light font-weight-bold">Sonraki</a>
+                            }
+                            else
+                            {
+                                <span class="btn btn-sm btn-light disabled">Sonraki</span>
+                            }
+                        </div>
+                        <small class="text-muted">Bounded preview pagination · exact total count yok · daha fazla kayıt için page size artır veya Sonraki kullan</small>
+                    </div>
+                }
             </div>
         </div>
     </div>

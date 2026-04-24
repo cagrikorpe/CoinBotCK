@@ -10,7 +10,9 @@ public sealed record LogCenterQueryRequest(
     string? Status,
     DateTime? FromUtc,
     DateTime? ToUtc,
-    int Take);
+    int Take,
+    int Page = 1,
+    int PageSize = 50);
 
 public sealed record LogCenterEntrySnapshot(
     string Kind,

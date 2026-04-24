@@ -306,7 +306,7 @@ public sealed class StrategySignalService(
                         VetoReasonCode: null,
                         DecisionReasonType: "DuplicateSuppression",
                         DecisionReasonCode: "SuppressedDuplicate",
-                        DecisionSummary: "Duplicate execution request was suppressed.",
+                        DecisionSummary: "Duplicate strategy signal was suppressed for the same candle window.",
                         DecisionAtUtc: now),
                     cancellationToken);
 
@@ -534,6 +534,8 @@ public sealed class StrategySignalService(
         {
             var strategyLatencyMs = (int)decisionStopwatch.ElapsedMilliseconds;
             var primaryPersistedSignal = snapshots.FirstOrDefault();
+            var primaryVeto = vetoSnapshots.FirstOrDefault();
+            var primaryVetoReasonCode = primaryVeto?.ConfidenceSnapshot.RiskReasonCode.ToString();
             await ultraDebugLogService.WriteAsync(
                 new UltraDebugLogEntry(
                     Category: "strategy.signal",
@@ -573,10 +575,11 @@ public sealed class StrategySignalService(
                                 : "DuplicateSuppression",
                         decisionReasonCode = snapshots.Length > 0
                             ? "CandidatePersisted"
-                            : vetoSnapshots.Count > 0
-                                ? "RiskVeto"
+                            : primaryVetoReasonCode is not null
+                                ? primaryVetoReasonCode
                                 : "SuppressedDuplicate",
-                        blockerCode = vetoSnapshots.Count > 0 ? "RiskVeto" : null,
+                        blockerCode = primaryVetoReasonCode,
+                        blockerSummary = primaryVeto?.ConfidenceSnapshot.Summary,
                         selectedSymbol = normalizedContext.IndicatorSnapshot.Symbol,
                         evaluationMode = persistedExecutionEnvironment.ToString(),
                         persistedSignalIds = snapshots.Select(item => item.StrategySignalId).ToArray(),
@@ -720,7 +723,8 @@ public sealed class StrategySignalService(
     {
         if (!string.IsNullOrWhiteSpace(sameDirectionEntrySuppressionSummary))
         {
-            return new NoSignalDecision("StrategyCandidate", "NoSignalCandidate", null, summary);
+            var reasonCode = ResolveSameDirectionEntrySuppressedReasonCode(evaluationReport.RuleEvaluation.EntryDirection);
+            return new NoSignalDecision("PositionAwareness", reasonCode, reasonCode, summary);
         }
 
         if (exitCandidateSuppressedByPositionAwareness)
@@ -787,6 +791,16 @@ public sealed class StrategySignalService(
         }
 
         return "StrategyNoSignalCandidate";
+    }
+
+    private static string ResolveSameDirectionEntrySuppressedReasonCode(StrategyTradeDirection entryDirection)
+    {
+        return entryDirection switch
+        {
+            StrategyTradeDirection.Long => "SameDirectionLongEntrySuppressed",
+            StrategyTradeDirection.Short => "SameDirectionShortEntrySuppressed",
+            _ => "SameDirectionEntrySuppressed"
+        };
     }
 
     private static StrategyRuleResultSnapshot? FindFirstFailedEnabledRule(StrategyRuleResultSnapshot? snapshot)

@@ -34,6 +34,7 @@ public static class ServiceCollectionExtensions
             .Bind(configuration.GetSection("BotExecutionPilot"))
             .ValidateDataAnnotations()
             .ValidateOnStart();
+        services.PostConfigure<BotExecutionPilotOptions>(options => options.NormalizeScopeCollections());
 
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IDataScopeContext, SystemDataScopeContext>();

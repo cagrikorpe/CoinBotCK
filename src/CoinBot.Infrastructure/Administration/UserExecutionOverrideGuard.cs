@@ -298,16 +298,8 @@ public sealed class UserExecutionOverrideGuard(
         bool isReduceOnlyOrder)
     {
         var blockedReasons = new List<string>();
-        var allowedUserIds = optionsValue.AllowedUserIds
-            .Where(item => !string.IsNullOrWhiteSpace(item))
-            .Select(item => item.Trim())
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
-        var allowedBotIds = optionsValue.AllowedBotIds
-            .Where(item => !string.IsNullOrWhiteSpace(item))
-            .Select(item => item.Trim())
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        var allowedUserIds = optionsValue.ResolveNormalizedAllowedUserIds();
+        var allowedBotIds = optionsValue.ResolveNormalizedAllowedBotIds();
         var allowedSymbols = ResolveConfiguredPilotSymbols();
 
         if (request.Environment != ExecutionEnvironment.Live)
@@ -320,10 +312,18 @@ public sealed class UserExecutionOverrideGuard(
             blockedReasons.Add("UserExecutionPilotPlaneInvalid");
         }
 
-        if (allowedUserIds.Length > 0 &&
-            !allowedUserIds.Contains(normalizedUserId, StringComparer.Ordinal))
+        if (allowedUserIds.Length == 0)
+        {
+            blockedReasons.Add("UserExecutionPilotUserScopeMissing");
+        }
+        else if (!allowedUserIds.Contains(normalizedUserId, StringComparer.Ordinal))
         {
             blockedReasons.Add("UserExecutionPilotUserNotAllowed");
+        }
+
+        if (allowedBotIds.Length == 0)
+        {
+            blockedReasons.Add("UserExecutionPilotBotScopeMissing");
         }
 
         if (!request.BotId.HasValue)
@@ -347,8 +347,7 @@ public sealed class UserExecutionOverrideGuard(
             blockedReasons.Add("UserExecutionPilotMaxOpenPositionsConfigurationInvalid");
         }
 
-        if (!isReduceOnlyOrder &&
-            (optionsValue.PerBotCooldownSeconds <= 0 || optionsValue.PerSymbolCooldownSeconds <= 0))
+        if (optionsValue.PerBotCooldownSeconds < 0 || optionsValue.PerSymbolCooldownSeconds < 0)
         {
             blockedReasons.Add("UserExecutionPilotCooldownConfigurationInvalid");
         }
@@ -438,9 +437,7 @@ public sealed class UserExecutionOverrideGuard(
 
     private HashSet<string> ResolveConfiguredPilotSymbols()
     {
-        var configuredSymbols = optionsValue.AllowedSymbols
-            .Where(item => !string.IsNullOrWhiteSpace(item))
-            .Select(item => item.Trim().ToUpperInvariant())
+        var configuredSymbols = optionsValue.ResolveNormalizedAllowedSymbols()
             .ToHashSet(StringComparer.Ordinal);
 
         if (configuredSymbols.Count == 0)
@@ -456,8 +453,8 @@ public sealed class UserExecutionOverrideGuard(
         string normalizedUserId,
         string normalizedSymbol)
     {
-        var allowedUserCount = optionsValue.AllowedUserIds.Count(item => !string.IsNullOrWhiteSpace(item));
-        var allowedBotCount = optionsValue.AllowedBotIds.Count(item => !string.IsNullOrWhiteSpace(item));
+        var allowedUserCount = optionsValue.ResolveNormalizedAllowedUserIds().Length;
+        var allowedBotCount = optionsValue.ResolveNormalizedAllowedBotIds().Length;
         var allowedSymbolCount = ResolveConfiguredPilotSymbols().Count;
         var requestedNotionalLabel = TryResolvePilotRequestedNotional(request, out var orderNotional, out _)
             ? orderNotional.ToString("0.##", CultureInfo.InvariantCulture)

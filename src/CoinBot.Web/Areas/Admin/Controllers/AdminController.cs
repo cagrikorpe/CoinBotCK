@@ -78,6 +78,19 @@ public sealed class AdminController : Controller
     private const string UltraDebugLogDiskPressureReason = "disk_pressure";
     private const string UltraDebugLogRuntimeWriteFailureReason = "ultra_runtime_write_failure";
     private const string UltraDebugLogSizeLimitExceededReason = "ultra_size_limit_exceeded";
+    private const int UltraDebugLogSearchDefaultTake = 25;
+    private const int UltraDebugLogSearchMaxTake = 50;
+    private const int UltraDebugLogSearchMaxFiles = 12;
+    private const int UltraDebugLogSearchWindowKilobytes = 256;
+    private static readonly string[] UltraDebugLogSearchCategories =
+    [
+        "scanner",
+        "strategy",
+        "handoff",
+        "execution",
+        "exchange",
+        "runtime"
+    ];
 
 
     private const string CriticalActionConfirmationPhrase = "ONAYLA";
@@ -344,19 +357,8 @@ public sealed class AdminController : Controller
                 }
             }
 
-            var searchResults = await traceService.SearchAsync(
-                new AdminTraceSearchRequest(
-                    Query: normalizedQuery,
-                    Take: 20),
-                cancellationToken);
-
-            var exactCorrelationMatch = searchResults.FirstOrDefault(row =>
-                string.Equals(row.CorrelationId, normalizedQuery, StringComparison.OrdinalIgnoreCase));
-            var parsedExecutionOrderId = Guid.TryParse(normalizedQuery, out var executionOrderId)
-                ? executionOrderId
-                : (Guid?)null;
-
-            if (exactCorrelationMatch is not null)
+            var exactTraceMatch = await traceService.FindExactMatchAsync(normalizedQuery, cancellationToken);
+            if (exactTraceMatch is not null)
             {
                 return RedirectToAction(
                     nameof(TraceDetail),
@@ -364,71 +366,10 @@ public sealed class AdminController : Controller
                     new
                     {
                         area = "Admin",
-                        correlationId = exactCorrelationMatch.CorrelationId
+                        correlationId = exactTraceMatch.CorrelationId,
+                        decisionId = exactTraceMatch.DecisionId,
+                        executionAttemptId = exactTraceMatch.ExecutionAttemptId
                     });
-            }
-
-            foreach (var row in searchResults)
-            {
-                var detail = await traceService.GetDetailAsync(
-                    row.CorrelationId,
-                    cancellationToken: cancellationToken);
-
-                if (detail is null)
-                {
-                    continue;
-                }
-
-                var matchingDecision = detail.DecisionTraces.FirstOrDefault(decision =>
-                    string.Equals(decision.DecisionId, normalizedQuery, StringComparison.OrdinalIgnoreCase));
-
-                if (matchingDecision is not null)
-                {
-                    return RedirectToAction(
-                        nameof(TraceDetail),
-                        "Admin",
-                        new
-                        {
-                            area = "Admin",
-                            correlationId = row.CorrelationId,
-                            decisionId = matchingDecision.DecisionId
-                        });
-                }
-
-                var matchingExecution = detail.ExecutionTraces.FirstOrDefault(execution =>
-                    string.Equals(execution.ExecutionAttemptId, normalizedQuery, StringComparison.OrdinalIgnoreCase));
-
-                if (matchingExecution is not null)
-                {
-                    return RedirectToAction(
-                        nameof(TraceDetail),
-                        "Admin",
-                        new
-                        {
-                            area = "Admin",
-                            correlationId = row.CorrelationId,
-                            executionAttemptId = matchingExecution.ExecutionAttemptId
-                        });
-                }
-
-                if (parsedExecutionOrderId.HasValue)
-                {
-                    var matchingExecutionOrder = detail.ExecutionTraces.FirstOrDefault(execution =>
-                        execution.ExecutionOrderId == parsedExecutionOrderId.Value);
-
-                    if (matchingExecutionOrder is not null)
-                    {
-                        return RedirectToAction(
-                            nameof(TraceDetail),
-                            "Admin",
-                            new
-                            {
-                                area = "Admin",
-                                correlationId = row.CorrelationId,
-                                executionAttemptId = matchingExecutionOrder.ExecutionAttemptId
-                            });
-                    }
-                }
             }
 
             return RedirectToAction(
@@ -463,7 +404,6 @@ public sealed class AdminController : Controller
 
         if (!CanEditGlobalPolicy())
         {
-            ViewData[RolloutClosureCenterViewDataKey] = AdminOperationsCenterComposer.CreateAccessDeniedRolloutClosureCenter(evaluatedAtUtc);
             return View(AdminOperationsCenterComposer.CreateAccessDenied(evaluatedAtUtc));
         }
 
@@ -474,8 +414,6 @@ public sealed class AdminController : Controller
         var credentialSummaries = await apiCredentialValidationService.ListAdminSummariesAsync(cancellationToken: cancellationToken);
         var globalPolicySnapshot = await LoadGlobalPolicySnapshotAsync(cancellationToken);
         var retentionSnapshot = await LoadLogCenterRetentionSnapshotSafeAsync(cancellationToken);
-        var rolloutLogSnapshot = await LoadRolloutLogCenterSnapshotSafeAsync(cancellationToken);
-        var rolloutEvidence = LoadRolloutEvidenceInputs();
         var canRefreshClockDrift = CanRefreshClockDrift();
 
         ViewData[MonitoringDashboardSnapshotViewDataKey] = monitoringDashboard;
@@ -493,19 +431,6 @@ public sealed class AdminController : Controller
         ViewData[LongRegimePolicyToneViewDataKey] = operationalContext.LongRegimePolicyTone;
         ViewData[LongRegimePolicyDetailViewDataKey] = operationalContext.LongRegimePolicyDetail;
         ViewData["AdminActivationControlCenter"] = operationalContext.ActivationControlCenter;
-        ViewData[RolloutClosureCenterViewDataKey] = AdminOperationsCenterComposer.BuildRolloutClosureCenter(
-            operationalContext.ActivationControlCenter,
-            operationalContext.ExecutionSnapshot,
-            operationalContext.GlobalSystemStateSnapshot,
-            operationalContext.DriftGuardSnapshot,
-            monitoringDashboard,
-            credentialSummaries,
-            globalPolicySnapshot,
-            pilotOptionsValue,
-            rolloutLogSnapshot,
-            retentionSnapshot,
-            rolloutEvidence,
-            evaluatedAtUtc);
 
         var model = AdminOperationsCenterComposer.Compose(
             operationalContext.ActivationControlCenter,
@@ -1218,6 +1143,15 @@ public sealed class AdminController : Controller
         string? reasonCode,
         string? focus,
         int take = 120,
+        int page = 1,
+        int pageSize = 25,
+        string? logBucket = null,
+        string? logCategory = null,
+        string? logSource = null,
+        string? logSearch = null,
+        string? logTimeWindow = null,
+        int logTake = 25,
+        bool ultraLog = false,
         CancellationToken cancellationToken = default)
     {
         return Audit(
@@ -1231,6 +1165,15 @@ public sealed class AdminController : Controller
             reasonCode,
             focus,
             take,
+            page,
+            pageSize,
+            logBucket,
+            logCategory,
+            logSource,
+            logSearch,
+            logTimeWindow,
+            logTake,
+            ultraLog,
             cancellationToken);
     }
 
@@ -1246,6 +1189,15 @@ public sealed class AdminController : Controller
         string? reasonCode,
         string? focus,
         int take = 120,
+        int page = 1,
+        int pageSize = 25,
+        string? logBucket = null,
+        string? logCategory = null,
+        string? logSource = null,
+        string? logSearch = null,
+        string? logTimeWindow = null,
+        int logTake = 25,
+        bool ultraLog = false,
         CancellationToken cancellationToken = default)
     {
         ApplyShellMeta(
@@ -1255,20 +1207,60 @@ public sealed class AdminController : Controller
             breadcrumbItems: new[] { "Super Admin", "Gozlem", "Incident / Audit / Decision" });
 
         var normalizedTake = NormalizeAuditTake(take);
+        var normalizedPage = NormalizeAuditPage(page);
+        var normalizedPageSize = NormalizeAuditPageSize(
+            pageSize,
+            normalizedTake,
+            Request.Query.ContainsKey("pageSize"));
+        var normalizedQuery = NormalizeOptionalInput(query, 128);
+        var normalizedCorrelationId = NormalizeOptionalInput(correlationId, 128);
+        var normalizedDecisionId = NormalizeOptionalInput(decisionId, 64);
+        var normalizedExecutionAttemptId = NormalizeOptionalInput(executionAttemptId, 64);
+        var normalizedUserId = NormalizeOptionalInput(userId, 450);
+        var normalizedSymbol = NormalizeOptionalInput(symbol, 32);
+        var normalizedFocus = NormalizeOptionalInput(focus, 128);
+        var normalizedOutcome = NormalizeOptionalInput(outcome, 32);
+        var normalizedReasonCode = NormalizeOptionalInput(reasonCode, 128);
+        var requestQuery = ShouldUseFocusBackfillQuery(
+            normalizedFocus,
+            normalizedQuery,
+            normalizedCorrelationId,
+            normalizedDecisionId,
+            normalizedExecutionAttemptId,
+            normalizedUserId,
+            normalizedSymbol)
+            ? normalizedFocus
+            : normalizedQuery;
         var request = new LogCenterQueryRequest(
-            NormalizeOptionalInput(query, 128),
-            NormalizeOptionalInput(correlationId, 128),
-            NormalizeOptionalInput(decisionId, 64),
-            NormalizeOptionalInput(executionAttemptId, 64),
-            NormalizeOptionalInput(userId, 450),
-            NormalizeOptionalInput(symbol, 32),
+            requestQuery,
+            normalizedCorrelationId,
+            normalizedDecisionId,
+            normalizedExecutionAttemptId,
+            normalizedUserId,
+            normalizedSymbol,
             Status: null,
             FromUtc: null,
             ToUtc: null,
-            Take: normalizedTake);
-        var normalizedOutcome = NormalizeOptionalInput(outcome, 32);
-        var normalizedReasonCode = NormalizeOptionalInput(reasonCode, 128);
-        var normalizedFocus = NormalizeOptionalInput(focus, 128);
+            Take: normalizedTake,
+            Page: normalizedPage,
+            PageSize: normalizedPageSize);
+        var serviceRequest = request with
+        {
+            Take = ResolveAuditServiceTake(
+                normalizedTake,
+                normalizedPage,
+                normalizedPageSize,
+                normalizedOutcome,
+                normalizedReasonCode,
+                Request.Query.ContainsKey("take"))
+        };
+        var shouldLoadUltraDebugLog = ShouldLoadUltraDebugLog(
+            ultraLog,
+            logBucket,
+            logCategory,
+            logSource,
+            logSearch,
+            logTimeWindow);
         var evaluatedAtUtc = DateTime.UtcNow;
 
         var snapshot = logCenterReadModelService is null
@@ -1279,7 +1271,7 @@ public sealed class AdminController : Controller
                 Array.Empty<LogCenterEntrySnapshot>(),
                 true,
                 "Log center read-model unavailable.")
-            : await logCenterReadModelService.GetPageAsync(request, cancellationToken);
+            : (await logCenterReadModelService.GetPageAsync(serviceRequest, cancellationToken)) with { Filters = request };
 
         var draftModel = AdminIncidentAuditDecisionCenterComposer.Compose(
             snapshot,
@@ -1291,9 +1283,16 @@ public sealed class AdminController : Controller
             incidentDetail: null,
             evaluatedAtUtc);
 
-        var traceDetail = await LoadAuditTraceDetailAsync(draftModel.Detail, cancellationToken);
-        var approvalDetail = await LoadAuditApprovalDetailAsync(draftModel.Detail, cancellationToken);
-        var incidentDetail = await LoadAuditIncidentDetailAsync(draftModel.Detail, cancellationToken);
+        AdminTraceDetailSnapshot? traceDetail = null;
+        ApprovalQueueDetailSnapshot? approvalDetail = null;
+        IncidentDetailSnapshot? incidentDetail = null;
+
+        if (ShouldLoadAuditDeepDetails(draftModel.Filters.FocusReference, draftModel.Detail))
+        {
+            traceDetail = await LoadAuditTraceDetailAsync(draftModel.Detail, cancellationToken);
+            approvalDetail = await LoadAuditApprovalDetailAsync(draftModel.Detail, cancellationToken);
+            incidentDetail = await LoadAuditIncidentDetailAsync(draftModel.Detail, cancellationToken);
+        }
 
         var model = AdminIncidentAuditDecisionCenterComposer.Compose(
             snapshot,
@@ -1305,7 +1304,16 @@ public sealed class AdminController : Controller
             incidentDetail,
             evaluatedAtUtc) with
         {
-            UltraDebugLog = await LoadUltraDebugLogViewModelAsync(cancellationToken)
+            UltraDebugLog = shouldLoadUltraDebugLog
+                ? await LoadUltraDebugLogViewModelAsync(
+                    logBucket,
+                    logCategory,
+                    logSource,
+                    logSearch,
+                    logTimeWindow,
+                    logTake,
+                    cancellationToken)
+                : null
         };
 
         return View("Audit", model);
@@ -1349,7 +1357,7 @@ public sealed class AdminController : Controller
                     "Ultra log activation failed because no duration was selected.",
                     HttpContext.TraceIdentifier),
                 cancellationToken);
-            return RedirectToAction(nameof(AuditLogs), new { area = "Admin" });
+            return RedirectToAction(nameof(AuditLogs), new { area = "Admin", ultraLog = true });
         }
 
         if (!TryResolveUltraDebugLogSizeLimit(normalLogsLimitMb, out var normalizedNormalLogsLimitMb))
@@ -1366,7 +1374,7 @@ public sealed class AdminController : Controller
                     "Ultra log activation failed because no valid normal logs limit was selected.",
                     HttpContext.TraceIdentifier),
                 cancellationToken);
-            return RedirectToAction(nameof(AuditLogs), new { area = "Admin" });
+            return RedirectToAction(nameof(AuditLogs), new { area = "Admin", ultraLog = true });
         }
 
         if (!TryResolveUltraDebugLogSizeLimit(ultraLogsLimitMb, out var normalizedUltraLogsLimitMb))
@@ -1383,13 +1391,13 @@ public sealed class AdminController : Controller
                     "Ultra log activation failed because no valid ultra debug logs limit was selected.",
                     HttpContext.TraceIdentifier),
                 cancellationToken);
-            return RedirectToAction(nameof(AuditLogs), new { area = "Admin" });
+            return RedirectToAction(nameof(AuditLogs), new { area = "Admin", ultraLog = true });
         }
 
         if (ultraDebugLogService is null)
         {
             TempData[UltraDebugLogErrorTempDataKey] = "Ultra log runtime hatası nedeniyle kapatıldı";
-            return RedirectToAction(nameof(AuditLogs), new { area = "Admin" });
+            return RedirectToAction(nameof(AuditLogs), new { area = "Admin", ultraLog = true });
         }
 
         try
@@ -1413,7 +1421,7 @@ public sealed class AdminController : Controller
             TempData[UltraDebugLogErrorTempDataKey] = "Ultra log runtime hatası nedeniyle kapatıldı";
         }
 
-        return RedirectToAction(nameof(AuditLogs), new { area = "Admin" });
+        return RedirectToAction(nameof(AuditLogs), new { area = "Admin", ultraLog = true });
     }
 
     [HttpPost("/admin/audit-logs/ultra-log/disable")]
@@ -1436,7 +1444,7 @@ public sealed class AdminController : Controller
         if (ultraDebugLogService is null)
         {
             TempData[UltraDebugLogErrorTempDataKey] = "Ultra log runtime hatası nedeniyle kapatıldı";
-            return RedirectToAction(nameof(AuditLogs), new { area = "Admin" });
+            return RedirectToAction(nameof(AuditLogs), new { area = "Admin", ultraLog = true });
         }
 
         await ultraDebugLogService.DisableAsync(
@@ -1450,7 +1458,7 @@ public sealed class AdminController : Controller
             cancellationToken);
 
         TempData[UltraDebugLogSuccessTempDataKey] = "Admin tarafından kapatıldı";
-        return RedirectToAction(nameof(AuditLogs), new { area = "Admin" });
+        return RedirectToAction(nameof(AuditLogs), new { area = "Admin", ultraLog = true });
     }
 
     private static int NormalizeAuditTake(int take)
@@ -1458,6 +1466,98 @@ public sealed class AdminController : Controller
         return take is >= 25 and <= 200
             ? take
             : 120;
+    }
+
+    private static int NormalizeAuditPage(int page)
+    {
+        return page >= 1 ? page : 1;
+    }
+
+    private static int NormalizeAuditPageSize(int pageSize, int take, bool hasExplicitPageSize)
+    {
+        if (hasExplicitPageSize)
+        {
+            return pageSize switch
+            {
+                <= 0 => 25,
+                <= 10 => 10,
+                <= 25 => 25,
+                <= 50 => 50,
+                _ => 100
+            };
+        }
+
+        return take is 10 or 25 or 50 or 100 ? take : 25;
+    }
+
+    private static int ResolveAuditServiceTake(
+        int normalizedTake,
+        int page,
+        int pageSize,
+        string? outcome,
+        string? reasonCode,
+        bool hasExplicitTake)
+    {
+        var requiredEntries = ((page - 1) * pageSize) + pageSize + 1;
+        var multiplier = !string.IsNullOrWhiteSpace(outcome) || !string.IsNullOrWhiteSpace(reasonCode)
+            ? 4
+            : 1;
+        var desiredTake = Math.Min(requiredEntries * multiplier, 1000);
+
+        return hasExplicitTake
+            ? Math.Clamp(Math.Max(normalizedTake, desiredTake), pageSize + 1, 1000)
+            : Math.Clamp(desiredTake, pageSize + 1, 1000);
+    }
+
+    private static bool ShouldLoadUltraDebugLog(
+        bool ultraLog,
+        string? logBucket,
+        string? logCategory,
+        string? logSource,
+        string? logSearch,
+        string? logTimeWindow)
+    {
+        return ultraLog ||
+               !string.IsNullOrWhiteSpace(logBucket) ||
+               !string.IsNullOrWhiteSpace(logCategory) ||
+               !string.IsNullOrWhiteSpace(logSource) ||
+               !string.IsNullOrWhiteSpace(logSearch) ||
+               !string.IsNullOrWhiteSpace(logTimeWindow);
+    }
+
+    private static bool ShouldUseFocusBackfillQuery(
+        string? focusReference,
+        string? query,
+        string? correlationId,
+        string? decisionId,
+        string? executionAttemptId,
+        string? userId,
+        string? symbol)
+    {
+        return !string.IsNullOrWhiteSpace(focusReference) &&
+               string.IsNullOrWhiteSpace(query) &&
+               string.IsNullOrWhiteSpace(correlationId) &&
+               string.IsNullOrWhiteSpace(decisionId) &&
+               string.IsNullOrWhiteSpace(executionAttemptId) &&
+               string.IsNullOrWhiteSpace(userId) &&
+               string.IsNullOrWhiteSpace(symbol);
+    }
+
+    private static bool ShouldLoadAuditDeepDetails(
+        string? focusReference,
+        AdminIncidentAuditDecisionDetailViewModel detail)
+    {
+        if (!detail.HasSelection || string.IsNullOrWhiteSpace(focusReference))
+        {
+            return false;
+        }
+
+        return string.Equals(detail.Reference, focusReference, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(NormalizeUnavailableReference(detail.CorrelationId), focusReference, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(NormalizeUnavailableReference(detail.DecisionId), focusReference, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(NormalizeUnavailableReference(detail.ExecutionAttemptId), focusReference, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(NormalizeUnavailableReference(detail.IncidentReference), focusReference, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(NormalizeUnavailableReference(detail.ApprovalReference), focusReference, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<AdminTraceDetailSnapshot?> LoadAuditTraceDetailAsync(
@@ -1505,12 +1605,43 @@ public sealed class AdminController : Controller
         return await adminGovernanceReadModelService.GetIncidentDetailAsync(detail.IncidentReference, cancellationToken);
     }
 
-    private async Task<AdminUltraDebugLogViewModel> LoadUltraDebugLogViewModelAsync(CancellationToken cancellationToken)
+    private async Task<AdminUltraDebugLogViewModel> LoadUltraDebugLogViewModelAsync(
+        string? logBucket,
+        string? logCategory,
+        string? logSource,
+        string? logSearch,
+        string? logTimeWindow,
+        int logTake,
+        CancellationToken cancellationToken)
     {
         var snapshot = ultraDebugLogService is null
             ? new UltraDebugLogSnapshot(false, null, null, null, null, null, null, null, false, null, null)
             : await ultraDebugLogService.GetSnapshotAsync(cancellationToken);
         var nowUtc = DateTime.UtcNow;
+        var normalizedLogBucket = NormalizeUltraDebugSearchBucket(logBucket);
+        var normalizedLogCategory = NormalizeUltraDebugSearchCategory(logCategory);
+        var normalizedLogSource = NormalizeOptionalInput(logSource, 128);
+        var normalizedLogSearch = NormalizeOptionalInput(logSearch, 128);
+        var normalizedLogTimeWindow = ResolveUltraDebugSearchTimeWindowKey(logTimeWindow);
+        var normalizedLogTake = NormalizeUltraDebugSearchTake(logTake);
+        var fromUtc = ResolveUltraDebugSearchFromUtc(nowUtc, normalizedLogTimeWindow);
+        var searchSnapshot = ultraDebugLogService is null
+            ? new UltraDebugLogTailSnapshot(
+                normalizedLogBucket,
+                normalizedLogTake,
+                0,
+                0,
+                false,
+                Array.Empty<UltraDebugLogTailLineSnapshot>())
+            : await ultraDebugLogService.SearchAsync(
+                new UltraDebugLogSearchRequest(
+                    normalizedLogBucket,
+                    normalizedLogCategory,
+                    normalizedLogSource,
+                    normalizedLogSearch,
+                    fromUtc,
+                    normalizedLogTake),
+                cancellationToken);
         var remaining = snapshot.IsEnabled && snapshot.ExpiresAtUtc.HasValue && snapshot.ExpiresAtUtc.Value > nowUtc
             ? snapshot.ExpiresAtUtc.Value - nowUtc
             : TimeSpan.Zero;
@@ -1584,7 +1715,17 @@ public sealed class AdminController : Controller
                 .Select(MapUltraDebugStructuredEvent)
                 .Where(item => item is not null)
                 .Cast<AdminUltraDebugStructuredEventViewModel>()
-                .ToArray());
+                .ToArray(),
+            MapUltraDebugTail(snapshot.NormalLogsTail, "Normal logs tail"),
+            MapUltraDebugTail(snapshot.UltraLogsTail, "Ultra logs tail"),
+            BuildUltraDebugLogSearchViewModel(
+                normalizedLogBucket,
+                normalizedLogCategory,
+                normalizedLogSource,
+                normalizedLogSearch,
+                normalizedLogTimeWindow,
+                normalizedLogTake,
+                searchSnapshot));
     }
 
     private static string? NormalizeUnavailableReference(string? value)
@@ -1665,6 +1806,72 @@ public sealed class AdminController : Controller
             LatencyBreakdownLabel: snapshot.LatencyBreakdownLabel ?? "n/a");
     }
 
+    private static AdminUltraDebugTailViewModel? MapUltraDebugTail(UltraDebugLogTailSnapshot? snapshot, string bucketLabel)
+    {
+        if (snapshot is null)
+        {
+            return null;
+        }
+
+        var summaryLabel = $"{snapshot.ReturnedLineCount}/{snapshot.RequestedLineCount} satır · file={snapshot.FilesScanned}";
+        return new AdminUltraDebugTailViewModel(
+            BucketLabel: bucketLabel,
+            SummaryLabel: summaryLabel,
+            IsTruncated: snapshot.IsTruncated,
+            Lines: snapshot.Lines
+                .Select(MapUltraDebugTailLine)
+                .ToArray());
+    }
+
+    private static AdminUltraDebugTailLineViewModel MapUltraDebugTailLine(UltraDebugLogTailLineSnapshot snapshot)
+    {
+        return new AdminUltraDebugTailLineViewModel(
+            OccurredAtUtcLabel: snapshot.OccurredAtUtc?.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", CultureInfo.InvariantCulture) ?? "n/a",
+            CategoryLabel: ResolveUltraDebugCategoryLabel(snapshot.Category),
+            BucketLabel: ResolveUltraDebugBucketLabel(snapshot.BucketLabel),
+            SourceLabel: snapshot.Source ?? "n/a",
+            EventName: snapshot.EventName,
+            Summary: snapshot.Summary,
+            SymbolLabel: snapshot.Symbol ?? "n/a",
+            DetailPreview: snapshot.DetailPreview ?? "n/a",
+            CorrelationIdLabel: snapshot.CorrelationId ?? "n/a",
+            SourceFileLabel: snapshot.SourceFileName ?? "n/a");
+    }
+
+    private static AdminUltraDebugLogSearchViewModel BuildUltraDebugLogSearchViewModel(
+        string selectedBucketValue,
+        string? selectedCategoryValue,
+        string? sourceFilter,
+        string? searchTerm,
+        string selectedTimeWindowValue,
+        int selectedTake,
+        UltraDebugLogTailSnapshot snapshot)
+    {
+        var normalizedCategoryValue = selectedCategoryValue ?? string.Empty;
+        return new AdminUltraDebugLogSearchViewModel(
+            SelectedBucketValue: selectedBucketValue,
+            SelectedCategoryValue: normalizedCategoryValue,
+            SelectedTimeWindowValue: selectedTimeWindowValue,
+            SelectedTake: selectedTake,
+            SourceFilter: sourceFilter ?? string.Empty,
+            SearchTerm: searchTerm ?? string.Empty,
+            HasActiveFilters:
+                !string.Equals(selectedBucketValue, "all", StringComparison.OrdinalIgnoreCase) ||
+                !string.IsNullOrWhiteSpace(normalizedCategoryValue) ||
+                !string.IsNullOrWhiteSpace(sourceFilter) ||
+                !string.IsNullOrWhiteSpace(searchTerm) ||
+                !string.Equals(selectedTimeWindowValue, "1h", StringComparison.OrdinalIgnoreCase) ||
+                selectedTake != UltraDebugLogSearchDefaultTake,
+            PerformanceGuardLabel: $"Hard cap: {UltraDebugLogSearchMaxTake} satır · {UltraDebugLogSearchMaxFiles} dosya · {UltraDebugLogSearchWindowKilobytes} KB/dosya · masked arama",
+            BucketOptions: GetUltraDebugSearchBucketOptions(selectedBucketValue),
+            CategoryOptions: GetUltraDebugSearchCategoryOptions(normalizedCategoryValue),
+            TimeWindowOptions: GetUltraDebugSearchTimeWindowOptions(selectedTimeWindowValue),
+            TakeOptions: GetUltraDebugSearchTakeOptions(selectedTake),
+            SearchResult: MapUltraDebugTail(
+                snapshot,
+                $"Filtered preview · {ResolveUltraDebugBucketLabel(selectedBucketValue)} · {ResolveUltraDebugSearchTimeWindowLabel(selectedTimeWindowValue)}")!);
+    }
+
     private static string ResolveUltraDebugCategoryLabel(string category)
     {
         return category switch
@@ -1677,6 +1884,130 @@ public sealed class AdminController : Controller
             "runtime" => "Runtime",
             _ => category
         };
+    }
+
+    private static string ResolveUltraDebugBucketLabel(string? bucketName)
+    {
+        return bucketName?.Trim().ToLowerInvariant() switch
+        {
+            "normal" => "Normal bucket",
+            "ultra_debug" => "Ultra bucket",
+            "all" => "Tüm bucket'lar",
+            _ => "Tüm bucket'lar"
+        };
+    }
+
+    private static string NormalizeUltraDebugSearchBucket(string? bucketName)
+    {
+        return bucketName?.Trim().ToLowerInvariant() switch
+        {
+            "normal" => "normal",
+            "ultra_debug" => "ultra_debug",
+            _ => "all"
+        };
+    }
+
+    private static string? NormalizeUltraDebugSearchCategory(string? category)
+    {
+        var normalizedCategory = NormalizeOptionalInput(category, 32)?.ToLowerInvariant();
+        return !string.IsNullOrWhiteSpace(normalizedCategory) &&
+               UltraDebugLogSearchCategories.Contains(normalizedCategory, StringComparer.OrdinalIgnoreCase)
+            ? normalizedCategory
+            : null;
+    }
+
+    private static int NormalizeUltraDebugSearchTake(int take)
+    {
+        return take is >= 1 and <= UltraDebugLogSearchMaxTake
+            ? take
+            : UltraDebugLogSearchDefaultTake;
+    }
+
+    private static string ResolveUltraDebugSearchTimeWindowKey(string? timeWindow)
+    {
+        return timeWindow?.Trim().ToLowerInvariant() switch
+        {
+            "15m" => "15m",
+            "1h" => "1h",
+            "3h" => "3h",
+            "6h" => "6h",
+            "24h" => "24h",
+            "7d" => "7d",
+            _ => "1h"
+        };
+    }
+
+    private static DateTime ResolveUltraDebugSearchFromUtc(DateTime nowUtc, string timeWindowKey)
+    {
+        return timeWindowKey switch
+        {
+            "15m" => nowUtc.AddMinutes(-15),
+            "3h" => nowUtc.AddHours(-3),
+            "6h" => nowUtc.AddHours(-6),
+            "24h" => nowUtc.AddHours(-24),
+            "7d" => nowUtc.AddDays(-7),
+            _ => nowUtc.AddHours(-1)
+        };
+    }
+
+    private static string ResolveUltraDebugSearchTimeWindowLabel(string timeWindowKey)
+    {
+        return timeWindowKey switch
+        {
+            "15m" => "15 dk",
+            "3h" => "3 saat",
+            "6h" => "6 saat",
+            "24h" => "24 saat",
+            "7d" => "7 gün",
+            _ => "1 saat"
+        };
+    }
+
+    private static IReadOnlyCollection<AdminUltraDebugLogFilterOptionViewModel> GetUltraDebugSearchBucketOptions(string selectedValue)
+    {
+        return
+        [
+            new AdminUltraDebugLogFilterOptionViewModel("all", "Tüm bucket'lar", string.Equals(selectedValue, "all", StringComparison.OrdinalIgnoreCase)),
+            new AdminUltraDebugLogFilterOptionViewModel("normal", "Normal bucket", string.Equals(selectedValue, "normal", StringComparison.OrdinalIgnoreCase)),
+            new AdminUltraDebugLogFilterOptionViewModel("ultra_debug", "Ultra bucket", string.Equals(selectedValue, "ultra_debug", StringComparison.OrdinalIgnoreCase))
+        ];
+    }
+
+    private static IReadOnlyCollection<AdminUltraDebugLogFilterOptionViewModel> GetUltraDebugSearchCategoryOptions(string selectedValue)
+    {
+        return
+        [
+            new AdminUltraDebugLogFilterOptionViewModel(string.Empty, "Tüm category'ler", string.IsNullOrWhiteSpace(selectedValue)),
+            new AdminUltraDebugLogFilterOptionViewModel("scanner", "Scanner", string.Equals(selectedValue, "scanner", StringComparison.OrdinalIgnoreCase)),
+            new AdminUltraDebugLogFilterOptionViewModel("strategy", "Strategy", string.Equals(selectedValue, "strategy", StringComparison.OrdinalIgnoreCase)),
+            new AdminUltraDebugLogFilterOptionViewModel("handoff", "Handoff", string.Equals(selectedValue, "handoff", StringComparison.OrdinalIgnoreCase)),
+            new AdminUltraDebugLogFilterOptionViewModel("execution", "Execution", string.Equals(selectedValue, "execution", StringComparison.OrdinalIgnoreCase)),
+            new AdminUltraDebugLogFilterOptionViewModel("exchange", "Exchange", string.Equals(selectedValue, "exchange", StringComparison.OrdinalIgnoreCase)),
+            new AdminUltraDebugLogFilterOptionViewModel("runtime", "Runtime", string.Equals(selectedValue, "runtime", StringComparison.OrdinalIgnoreCase))
+        ];
+    }
+
+    private static IReadOnlyCollection<AdminUltraDebugLogFilterOptionViewModel> GetUltraDebugSearchTimeWindowOptions(string selectedValue)
+    {
+        return
+        [
+            new AdminUltraDebugLogFilterOptionViewModel("15m", "15 dk", string.Equals(selectedValue, "15m", StringComparison.OrdinalIgnoreCase)),
+            new AdminUltraDebugLogFilterOptionViewModel("1h", "1 saat", string.Equals(selectedValue, "1h", StringComparison.OrdinalIgnoreCase)),
+            new AdminUltraDebugLogFilterOptionViewModel("3h", "3 saat", string.Equals(selectedValue, "3h", StringComparison.OrdinalIgnoreCase)),
+            new AdminUltraDebugLogFilterOptionViewModel("6h", "6 saat", string.Equals(selectedValue, "6h", StringComparison.OrdinalIgnoreCase)),
+            new AdminUltraDebugLogFilterOptionViewModel("24h", "24 saat", string.Equals(selectedValue, "24h", StringComparison.OrdinalIgnoreCase)),
+            new AdminUltraDebugLogFilterOptionViewModel("7d", "7 gün", string.Equals(selectedValue, "7d", StringComparison.OrdinalIgnoreCase))
+        ];
+    }
+
+    private static IReadOnlyCollection<AdminUltraDebugLogTakeOptionViewModel> GetUltraDebugSearchTakeOptions(int selectedValue)
+    {
+        return
+        [
+            new AdminUltraDebugLogTakeOptionViewModel(10, "10", selectedValue == 10),
+            new AdminUltraDebugLogTakeOptionViewModel(25, "25", selectedValue == 25),
+            new AdminUltraDebugLogTakeOptionViewModel(50, "50", selectedValue == 50)
+        ];
     }
 
     private static string ResolveUltraDebugReasonLabel(string? reasonCode)
@@ -1745,10 +2076,22 @@ public sealed class AdminController : Controller
     }
 
     [Authorize(Policy = ApplicationPolicies.AuditRead)]
+    [HttpGet("/admin/trace")]
+    public Task<IActionResult> Trace(
+        [FromQuery] string correlationId,
+        [FromQuery] string? decisionId,
+        [FromQuery] string? executionAttemptId,
+        CancellationToken cancellationToken)
+    {
+        return TraceDetail(correlationId, decisionId, executionAttemptId, cancellationToken);
+    }
+
+    [Authorize(Policy = ApplicationPolicies.AuditRead)]
+    [HttpGet("/admin/trace/detail")]
     public async Task<IActionResult> TraceDetail(
-        string correlationId,
-        string? decisionId,
-        string? executionAttemptId,
+        [FromQuery] string correlationId,
+        [FromQuery] string? decisionId,
+        [FromQuery] string? executionAttemptId,
         CancellationToken cancellationToken)
     {
         ApplyShellMeta(
@@ -1765,7 +2108,7 @@ public sealed class AdminController : Controller
 
         return detail is null
             ? NotFound()
-            : View(detail);
+            : View("TraceDetail", detail);
     }
 
     [Authorize(Policy = ApplicationPolicies.AuditRead)]
@@ -3907,10 +4250,11 @@ public sealed class AdminController : Controller
 
     private async Task<AdminSettingsOperationalContext> LoadSettingsOperationalContextAsync(CancellationToken cancellationToken)
     {
+        var clockDriftTask = LoadClockDriftSnapshotSafeAsync(cancellationToken);
         var executionSnapshot = await LoadExecutionSwitchSnapshotSafeAsync(cancellationToken);
         var globalSystemStateSnapshot = await LoadGlobalSystemStateSnapshotSafeAsync(cancellationToken);
-        var clockDriftSnapshot = await LoadClockDriftSnapshotSafeAsync(cancellationToken);
         var driftGuardSnapshot = await LoadDriftGuardSnapshotSafeAsync(cancellationToken);
+        var clockDriftSnapshot = await clockDriftTask;
         var pilotOrderNotionalSummary = ResolvePilotOrderNotionalSummary();
         var pilotOrderNotionalTone = ResolvePilotOrderNotionalTone();
         var longRegimePolicyStatus = ResolveLongRegimePolicyStatus();

@@ -9,11 +9,12 @@ public sealed record BinanceOrderCancelRequest(
     string ApiSecret,
     string? CommandId = null,
     string? CorrelationId = null,
+    string? ExecutionAttemptId = null,
     Guid? ExecutionOrderId = null,
     string? UserId = null)
 {
     public override string ToString()
     {
-        return $"{nameof(BinanceOrderCancelRequest)} {{ ExchangeAccountId = {ExchangeAccountId}, Symbol = {Symbol}, ExchangeOrderId = {ExchangeOrderId ?? "missing"}, ClientOrderId = {ClientOrderId ?? "missing"}, CommandId = {CommandId ?? "missing"}, CorrelationId = {CorrelationId ?? "missing"}, ExecutionOrderId = {ExecutionOrderId?.ToString() ?? "missing"}, UserId = {UserId ?? "missing"}, ApiKey = ***REDACTED***, ApiSecret = ***REDACTED*** }}";
+        return $"{nameof(BinanceOrderCancelRequest)} {{ ExchangeAccountId = {ExchangeAccountId}, Symbol = {Symbol}, ExchangeOrderId = {ExchangeOrderId ?? "missing"}, ClientOrderId = {ClientOrderId ?? "missing"}, CommandId = {CommandId ?? "missing"}, CorrelationId = {CorrelationId ?? "missing"}, ExecutionAttemptId = {ExecutionAttemptId ?? "missing"}, ExecutionOrderId = {ExecutionOrderId?.ToString() ?? "missing"}, UserId = {UserId ?? "missing"}, ApiKey = ***REDACTED***, ApiSecret = ***REDACTED*** }}";
     }
 }

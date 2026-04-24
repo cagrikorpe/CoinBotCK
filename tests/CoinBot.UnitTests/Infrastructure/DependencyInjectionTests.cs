@@ -376,6 +376,34 @@ public sealed class DependencyInjectionTests
         Assert.DoesNotContain(ApplicationPermissions.PlatformAdministration, opsAdminPermissions);
     }
 
+    [Fact]
+    public void AddInfrastructureAndJobOrchestration_NormalizePilotScope_WhenBotExecutionPilotIsBoundTwice()
+    {
+        var botId = Guid.NewGuid();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:DefaultConnection"] = "Server=(localdb)\\MSSQLLocalDB;Database=CoinBotTests;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=True",
+                ["BotExecutionPilot:AllowedUserIds:0"] = " user-scope ",
+                ["BotExecutionPilot:AllowedBotIds:0"] = botId.ToString("D").ToUpperInvariant(),
+                ["BotExecutionPilot:AllowedSymbols:0"] = " solusdt "
+            })
+            .Build();
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IConfiguration>(configuration);
+        services.AddInfrastructure(configuration);
+        services.AddJobOrchestration(configuration);
+
+        using var provider = services.BuildServiceProvider();
+        var pilotOptions = provider.GetRequiredService<IOptions<BotExecutionPilotOptions>>().Value;
+
+        Assert.Equal(["user-scope"], pilotOptions.AllowedUserIds);
+        Assert.Equal(botId.ToString("N"), Assert.Single(pilotOptions.AllowedBotIds));
+        Assert.Equal(["SOLUSDT"], pilotOptions.AllowedSymbols);
+    }
+
     private static ServiceProvider BuildServiceProvider()
     {
         var configuration = new ConfigurationBuilder()

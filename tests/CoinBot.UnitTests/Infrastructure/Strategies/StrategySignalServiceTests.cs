@@ -180,6 +180,12 @@ public sealed class StrategySignalServiceTests
         Assert.Empty(secondResult.Vetoes);
         Assert.Equal(1, secondResult.SuppressedDuplicateCount);
         Assert.Equal(1, await dbContext.TradingStrategySignals.CountAsync());
+
+        var duplicateTrace = await dbContext.DecisionTraces
+            .SingleAsync(entity => entity.DecisionOutcome == "SuppressedDuplicate");
+        Assert.Equal("DuplicateSuppression", duplicateTrace.DecisionReasonType);
+        Assert.Equal("SuppressedDuplicate", duplicateTrace.DecisionReasonCode);
+        Assert.Equal("Duplicate strategy signal was suppressed for the same candle window.", duplicateTrace.DecisionSummary);
     }
 
     [Fact]
@@ -593,6 +599,9 @@ public sealed class StrategySignalServiceTests
         Assert.True(result.EvaluationResult.EntryMatched);
         Assert.Equal(0, await dbContext.TradingStrategySignals.CountAsync());
         Assert.Equal("NoSignalCandidate", decisionTrace.DecisionOutcome);
+        Assert.Equal("PositionAwareness", decisionTrace.DecisionReasonType);
+        Assert.Equal("SameDirectionLongEntrySuppressed", decisionTrace.DecisionReasonCode);
+        Assert.Equal("SameDirectionLongEntrySuppressed", decisionTrace.VetoReasonCode);
         Assert.Equal(
             "Strategy entry candidate was suppressed because an open long position already exists. Runtime entry persistence was skipped.",
             decisionTrace.DecisionSummary);

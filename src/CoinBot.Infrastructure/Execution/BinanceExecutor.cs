@@ -161,7 +161,7 @@ public sealed class BinanceExecutor(
                     credentialAccess.ApiSecret,
                     order.IdempotencyKey,
                     order.RootCorrelationId,
-                    ExecutionAttemptId: null,
+                    ExecutionAttemptId: order.Id.ToString("N"),
                     order.Id,
                     command.OwnerUserId,
                     command.ReduceOnly),

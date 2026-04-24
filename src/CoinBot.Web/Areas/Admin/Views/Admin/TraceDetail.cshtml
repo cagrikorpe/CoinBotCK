@@ -1,5 +1,6 @@
 @model CoinBot.Application.Abstractions.Administration.AdminTraceDetailSnapshot
 @using System.Linq
+@using CoinBot.Application.Abstractions.Administration
 @using CoinBot.Web.ViewModels.Admin
 @using System.Text.Json
 @{
@@ -44,6 +45,8 @@
     }
     var primaryDecision = Model.DecisionTraces.FirstOrDefault();
     var primaryExecution = Model.ExecutionTraces.FirstOrDefault();
+    var handoffAttempts = Model.HandoffAttempts ?? Array.Empty<AdminTraceHandoffAttemptSnapshot>();
+    var executionTransitions = Model.ExecutionTransitions ?? Array.Empty<AdminTraceExecutionTransitionSnapshot>();
     var timelineEntries = Model.DecisionTraces
         .Select(decision => new
         {
@@ -57,6 +60,18 @@
             RequestMasked = (string?)null,
             ResponseMasked = (string?)decision.SnapshotJson
         })
+        .Concat(handoffAttempts.Select(handoff => new
+        {
+            OccurredAtUtc = handoff.CompletedAtUtc,
+            KindLabel = "Scanner / Handoff",
+            Reference = handoff.HandoffAttemptId.ToString("N"),
+            SecondaryReference = handoff.StrategySignalId?.ToString(),
+            Title = $"{FormatText(handoff.Symbol)} / {FormatText(handoff.Timeframe)}",
+            Summary = $"{handoff.ExecutionRequestStatus} · {handoff.StrategyDecisionOutcome} · Blocker={(handoff.BlockerCode ?? "-")}",
+            Meta = $"ScanCycle={handoff.ScanCycleId:N} · Bot={(handoff.BotId?.ToString() ?? "-")} · Env={(handoff.ExecutionEnvironment ?? "-")} · Side={(handoff.ExecutionSide ?? "-")} · Guard={FormatText(handoff.GuardSummary)}",
+            RequestMasked = (string?)null,
+            ResponseMasked = (string?)handoff.BlockerSummary
+        }))
         .Concat(Model.ExecutionTraces.Select(execution => new
         {
             OccurredAtUtc = execution.CreatedAtUtc,
@@ -68,6 +83,18 @@
             Meta = $"Endpoint={execution.Endpoint} · Latency={(execution.LatencyMs?.ToString() ?? "-")}ms · CommandId={execution.CommandId}",
             RequestMasked = execution.RequestMasked,
             ResponseMasked = execution.ResponseMasked
+        }))
+        .Concat(executionTransitions.Select(transition => new
+        {
+            OccurredAtUtc = transition.OccurredAtUtc,
+            KindLabel = "Execution transition",
+            Reference = transition.EventCode,
+            SecondaryReference = transition.ExecutionOrderId.ToString(),
+            Title = $"{transition.State} · Seq={transition.SequenceNumber}",
+            Summary = transition.Detail ?? $"Execution order transitioned to {transition.State}.",
+            Meta = $"OrderId={transition.ExecutionOrderId} · Correlation={transition.CorrelationId} · Parent={transition.ParentCorrelationId ?? "-"}",
+            RequestMasked = (string?)null,
+            ResponseMasked = (string?)null
         }))
         .OrderBy(entry => entry.OccurredAtUtc)
         .ToArray();
@@ -86,7 +113,9 @@
         MetaBadges = new[]
         {
             new AdminBadgeViewModel { Label = $"{Model.DecisionTraces.Count} decision", Tone = "healthy", IconText = "DC" },
-            new AdminBadgeViewModel { Label = $"{Model.ExecutionTraces.Count} execution", Tone = "warning", IconText = "EX" }
+            new AdminBadgeViewModel { Label = $"{handoffAttempts.Count} handoff", Tone = "info", IconText = "HF" },
+            new AdminBadgeViewModel { Label = $"{Model.ExecutionTraces.Count} execution", Tone = "warning", IconText = "EX" },
+            new AdminBadgeViewModel { Label = $"{executionTransitions.Count} transition", Tone = "neutral", IconText = "TR" }
         },
         SecondaryActionText = "Audit search",
         SecondaryActionHref = Url.Action("Audit", "Admin", new { area = "Admin", query = Model.CorrelationId })
@@ -191,7 +220,7 @@
                     <div>
                         <div class="cb-admin-section-kicker">Timeline</div>
                         <div class="cb-admin-section-title">Signal -> decision -> execution kronolojisi</div>
-                        <p class="cb-admin-section-description mb-0">Ayni correlation altindaki karar, risk ve execution kayitlari zaman sirali gorunur. Request/response payload alanlari masked kalir.</p>
+                        <p class="cb-admin-section-description mb-0">Ayni correlation altindaki scanner, handoff, decision, execution ve transition kayitlari zaman sirali gorunur. Request/response payload alanlari masked kalir.</p>
                     </div>
                 </div>
 

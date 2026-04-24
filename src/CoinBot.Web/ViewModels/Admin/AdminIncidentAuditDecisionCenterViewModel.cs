@@ -12,7 +12,8 @@ public sealed record AdminIncidentAuditDecisionCenterViewModel(
     IReadOnlyCollection<AdminIncidentAuditDecisionRowViewModel> Rows,
     AdminIncidentAuditDecisionDetailViewModel Detail,
     string EmptyStateMessage,
-    AdminUltraDebugLogViewModel? UltraDebugLog = null);
+    AdminUltraDebugLogViewModel? UltraDebugLog = null,
+    AdminIncidentAuditDecisionPaginationViewModel? Pagination = null);
 
 public sealed record AdminUltraDebugLogViewModel(
     bool IsEnabled,
@@ -35,7 +36,10 @@ public sealed record AdminUltraDebugLogViewModel(
     IReadOnlyCollection<AdminUltraDebugLogSizeLimitOptionViewModel> NormalLogsLimitOptions,
     IReadOnlyCollection<AdminUltraDebugLogSizeLimitOptionViewModel> UltraLogsLimitOptions,
     AdminUltraDebugStructuredEventViewModel? LatestStructuredEvent = null,
-    IReadOnlyCollection<AdminUltraDebugStructuredEventViewModel>? LatestCategoryEvents = null);
+    IReadOnlyCollection<AdminUltraDebugStructuredEventViewModel>? LatestCategoryEvents = null,
+    AdminUltraDebugTailViewModel? NormalLogsTail = null,
+    AdminUltraDebugTailViewModel? UltraLogsTail = null,
+    AdminUltraDebugLogSearchViewModel? SearchView = null);
 
 public sealed record AdminUltraDebugStructuredEventViewModel(
     string CategoryLabel,
@@ -48,6 +52,49 @@ public sealed record AdminUltraDebugStructuredEventViewModel(
     string DecisionReasonCodeLabel,
     string BlockerCodeLabel,
     string LatencyBreakdownLabel);
+
+public sealed record AdminUltraDebugTailViewModel(
+    string BucketLabel,
+    string SummaryLabel,
+    bool IsTruncated,
+    IReadOnlyCollection<AdminUltraDebugTailLineViewModel> Lines);
+
+public sealed record AdminUltraDebugTailLineViewModel(
+    string OccurredAtUtcLabel,
+    string CategoryLabel,
+    string BucketLabel,
+    string SourceLabel,
+    string EventName,
+    string Summary,
+    string SymbolLabel,
+    string DetailPreview,
+    string CorrelationIdLabel,
+    string SourceFileLabel);
+
+public sealed record AdminUltraDebugLogSearchViewModel(
+    string SelectedBucketValue,
+    string SelectedCategoryValue,
+    string SelectedTimeWindowValue,
+    int SelectedTake,
+    string SourceFilter,
+    string SearchTerm,
+    bool HasActiveFilters,
+    string PerformanceGuardLabel,
+    IReadOnlyCollection<AdminUltraDebugLogFilterOptionViewModel> BucketOptions,
+    IReadOnlyCollection<AdminUltraDebugLogFilterOptionViewModel> CategoryOptions,
+    IReadOnlyCollection<AdminUltraDebugLogFilterOptionViewModel> TimeWindowOptions,
+    IReadOnlyCollection<AdminUltraDebugLogTakeOptionViewModel> TakeOptions,
+    AdminUltraDebugTailViewModel SearchResult);
+
+public sealed record AdminUltraDebugLogFilterOptionViewModel(
+    string Value,
+    string Label,
+    bool IsSelected);
+
+public sealed record AdminUltraDebugLogTakeOptionViewModel(
+    int Value,
+    string Label,
+    bool IsSelected);
 
 public sealed record AdminUltraDebugLogDurationOptionViewModel(
     string Key,
@@ -70,7 +117,15 @@ public sealed record AdminIncidentAuditDecisionFilterViewModel(
     string? ReasonCode,
     string? FocusReference,
     int Take,
+    int Page,
+    int PageSize,
     bool HasActiveFilters);
+
+public sealed record AdminIncidentAuditDecisionPaginationViewModel(
+    int Page,
+    int PageSize,
+    bool HasPreviousPage,
+    bool HasNextPage);
 
 public sealed record AdminIncidentAuditDecisionRowViewModel(
     string Reference,
@@ -141,24 +196,30 @@ public static class AdminIncidentAuditDecisionCenterComposer
         DateTime evaluatedAtUtc)
     {
         var filters = BuildFilters(snapshot.Filters, outcome, reasonCode, focusReference);
-        var rows = snapshot.Entries
+        var filteredRows = snapshot.Entries
             .Select(MapRow)
             .Where(row => MatchesOutcome(row, filters.Outcome) && MatchesReasonCode(row, filters.ReasonCode))
             .OrderByDescending(row => row.OccurredAtUtc)
             .ThenBy(row => row.Kind, StringComparer.Ordinal)
             .ToArray();
+        var pagination = BuildPagination(filteredRows, filters);
+        var rows = filteredRows
+            .Skip((pagination.Page - 1) * pagination.PageSize)
+            .Take(pagination.PageSize)
+            .ToArray();
         var selectedRow = ResolveSelectedRow(rows, filters.FocusReference);
-        var detail = BuildDetail(selectedRow, rows, traceDetail, approvalDetail, incidentDetail);
+        var detail = BuildDetail(selectedRow, filteredRows, traceDetail, approvalDetail, incidentDetail);
 
         return new AdminIncidentAuditDecisionCenterViewModel(
             RefreshedAtUtcLabel: FormatUtc(evaluatedAtUtc),
             HasError: snapshot.HasError,
             ErrorMessage: snapshot.ErrorMessage,
             Filters: filters,
-            SummaryCards: BuildSummaryCards(rows, snapshot),
+            SummaryCards: BuildSummaryCards(filteredRows, snapshot),
             Rows: rows,
             Detail: detail,
-            EmptyStateMessage: ResolveEmptyStateMessage(snapshot, rows, filters));
+            EmptyStateMessage: ResolveEmptyStateMessage(snapshot, filteredRows, rows, filters),
+            Pagination: pagination);
     }
 
     private static AdminIncidentAuditDecisionFilterViewModel BuildFilters(
@@ -182,6 +243,8 @@ public static class AdminIncidentAuditDecisionCenterComposer
             ReasonCode: normalizedReasonCode,
             FocusReference: normalizedFocusReference,
             Take: request.Take,
+            Page: request.Page,
+            PageSize: request.PageSize,
             HasActiveFilters:
                 !string.IsNullOrWhiteSpace(request.Query) ||
                 !string.IsNullOrWhiteSpace(request.CorrelationId) ||
@@ -265,6 +328,21 @@ public static class AdminIncidentAuditDecisionCenterComposer
             RawJson: rawPayload);
     }
 
+    private static AdminIncidentAuditDecisionPaginationViewModel BuildPagination(
+        IReadOnlyCollection<AdminIncidentAuditDecisionRowViewModel> rows,
+        AdminIncidentAuditDecisionFilterViewModel filters)
+    {
+        var page = filters.Page >= 1 ? filters.Page : 1;
+        var pageSize = filters.PageSize is 10 or 25 or 50 or 100 ? filters.PageSize : 25;
+        var skip = (page - 1) * pageSize;
+
+        return new AdminIncidentAuditDecisionPaginationViewModel(
+            Page: page,
+            PageSize: pageSize,
+            HasPreviousPage: page > 1,
+            HasNextPage: rows.Count > skip + pageSize);
+    }
+
     private static AdminIncidentAuditDecisionDetailViewModel BuildDetail(
         AdminIncidentAuditDecisionRowViewModel? selectedRow,
         IReadOnlyCollection<AdminIncidentAuditDecisionRowViewModel> rows,
@@ -341,6 +419,9 @@ public static class AdminIncidentAuditDecisionCenterComposer
             return Array.Empty<AdminIncidentAuditDecisionTimelineItemViewModel>();
         }
 
+        var handoffAttempts = traceDetail.HandoffAttempts ?? Array.Empty<AdminTraceHandoffAttemptSnapshot>();
+        var executionTransitions = traceDetail.ExecutionTransitions ?? Array.Empty<AdminTraceExecutionTransitionSnapshot>();
+
         return traceDetail.DecisionTraces
             .Select(decision => new AdminIncidentAuditDecisionTimelineItemViewModel(
                 Kind: "Decision",
@@ -351,6 +432,15 @@ public static class AdminIncidentAuditDecisionCenterComposer
                 OccurredAtUtc: decision.DecisionAtUtc ?? decision.CreatedAtUtc,
                 OccurredAtUtcLabel: FormatUtc(decision.DecisionAtUtc ?? decision.CreatedAtUtc),
                 Meta: $"ReasonCode={NormalizeRequiredValue(decision.DecisionReasonCode, "Unavailable")} · ReasonType={NormalizeRequiredValue(decision.DecisionReasonType, "Unavailable")}"))
+            .Concat(handoffAttempts.Select(handoff => new AdminIncidentAuditDecisionTimelineItemViewModel(
+                Kind: "Handoff",
+                Tone: ResolveHandoffTone(handoff.ExecutionRequestStatus, handoff.BlockerCode),
+                Title: $"{handoff.HandoffAttemptId:N} · {NormalizeRequiredValue(handoff.Symbol, "n/a")}/{NormalizeRequiredValue(handoff.Timeframe, "n/a")}",
+                Summary: NormalizeRequiredValue(handoff.BlockerSummary, $"{handoff.ExecutionRequestStatus} · {handoff.StrategyDecisionOutcome}"),
+                ChangedBy: NormalizeRequiredValue(handoff.OwnerUserId, "system"),
+                OccurredAtUtc: handoff.CompletedAtUtc,
+                OccurredAtUtcLabel: FormatUtc(handoff.CompletedAtUtc),
+                Meta: $"ScanCycle={handoff.ScanCycleId:N} · StrategySignal={NormalizeOptional(handoff.StrategySignalId?.ToString("N"), 64) ?? "Unavailable"} · Bot={NormalizeOptional(handoff.BotId?.ToString("N"), 64) ?? "Unavailable"} · Env={NormalizeRequiredValue(handoff.ExecutionEnvironment, "Unavailable")} · Side={NormalizeRequiredValue(handoff.ExecutionSide, "Unavailable")} · Blocker={NormalizeRequiredValue(handoff.BlockerCode, "Unavailable")}")))
             .Concat(traceDetail.ExecutionTraces.Select(execution => new AdminIncidentAuditDecisionTimelineItemViewModel(
                 Kind: "Execution",
                 Tone: ResolveExecutionTone(execution.HttpStatusCode),
@@ -360,8 +450,41 @@ public static class AdminIncidentAuditDecisionCenterComposer
                 OccurredAtUtc: execution.CreatedAtUtc,
                 OccurredAtUtcLabel: FormatUtc(execution.CreatedAtUtc),
                 Meta: $"Endpoint={NormalizeRequiredValue(execution.Endpoint, "Unavailable")} · Latency={(execution.LatencyMs?.ToString() ?? "n/a")} ms")))
+            .Concat(executionTransitions.Select(transition => new AdminIncidentAuditDecisionTimelineItemViewModel(
+                Kind: "Execution transition",
+                Tone: ResolveTransitionTone(transition.State),
+                Title: $"{transition.State} · {transition.EventCode}",
+                Summary: NormalizeRequiredValue(transition.Detail, $"Transition sequence {transition.SequenceNumber}."),
+                ChangedBy: "system",
+                OccurredAtUtc: transition.OccurredAtUtc,
+                OccurredAtUtcLabel: FormatUtc(transition.OccurredAtUtc),
+                Meta: $"OrderId={transition.ExecutionOrderId:N} · Sequence={transition.SequenceNumber} · Correlation={transition.CorrelationId}")))
             .OrderBy(item => item.OccurredAtUtc)
             .ToArray();
+    }
+
+    private static string ResolveHandoffTone(string executionRequestStatus, string? blockerCode)
+    {
+        if (string.Equals(executionRequestStatus, "Prepared", StringComparison.OrdinalIgnoreCase))
+        {
+            return "healthy";
+        }
+
+        return string.IsNullOrWhiteSpace(blockerCode)
+            ? "warning"
+            : "critical";
+    }
+
+    private static string ResolveTransitionTone(string state)
+    {
+        return state switch
+        {
+            "Filled" => "healthy",
+            "Submitted" or "Dispatching" or "GatePassed" or "Received" => "info",
+            "Rejected" or "Failed" => "critical",
+            "Cancelled" or "CancelRequested" => "warning",
+            _ => "neutral"
+        };
     }
 
     private static IReadOnlyCollection<AdminIncidentAuditDecisionTimelineItemViewModel> BuildApprovalHistory(ApprovalQueueDetailSnapshot? approvalDetail)
@@ -622,7 +745,8 @@ public static class AdminIncidentAuditDecisionCenterComposer
 
     private static string ResolveEmptyStateMessage(
         LogCenterPageSnapshot snapshot,
-        IReadOnlyCollection<AdminIncidentAuditDecisionRowViewModel> rows,
+        IReadOnlyCollection<AdminIncidentAuditDecisionRowViewModel> filteredRows,
+        IReadOnlyCollection<AdminIncidentAuditDecisionRowViewModel> pagedRows,
         AdminIncidentAuditDecisionFilterViewModel filters)
     {
         if (snapshot.HasError)
@@ -630,9 +754,14 @@ public static class AdminIncidentAuditDecisionCenterComposer
             return NormalizeRequiredValue(snapshot.ErrorMessage, "Incident / audit / decision read-model verisi alinamadi.");
         }
 
-        if (rows.Count == 0 && filters.HasActiveFilters)
+        if (filteredRows.Count == 0 && filters.HasActiveFilters)
         {
             return "Filtrelerle eslesen incident, audit veya decision kaydi bulunamadi.";
+        }
+
+        if (filteredRows.Count > 0 && pagedRows.Count == 0)
+        {
+            return "Secilen sayfada kayit yok. Onceki sayfaya donup tekrar deneyin.";
         }
 
         return "Bu merkezde gosterilecek incident, audit veya decision kaydi yok.";

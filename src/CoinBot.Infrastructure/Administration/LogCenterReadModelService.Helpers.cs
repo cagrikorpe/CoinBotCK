@@ -16,6 +16,15 @@ public sealed partial class LogCenterReadModelService
         var fromUtc = NormalizeDateStart(request.FromUtc);
         var toUtc = NormalizeDateEnd(request.ToUtc);
         var take = request.Take is > 0 and <= 1000 ? request.Take : 100;
+        var page = request.Page >= 1 ? request.Page : 1;
+        var pageSize = request.PageSize switch
+        {
+            <= 0 => 25,
+            <= 10 => 10,
+            <= 25 => 25,
+            <= 50 => 50,
+            _ => 100
+        };
         var hasInvalidDateRange = fromUtc is not null && toUtc is not null && fromUtc > toUtc;
 
         return new NormalizedLogCenterQuery(
@@ -29,6 +38,8 @@ public sealed partial class LogCenterReadModelService
             fromUtc,
             toUtc,
             take,
+            page,
+            pageSize,
             hasInvalidDateRange);
     }
 
@@ -83,6 +94,8 @@ public sealed partial class LogCenterReadModelService
         DateTime? FromUtc,
         DateTime? ToUtc,
         int Take,
+        int Page,
+        int PageSize,
         bool HasInvalidDateRange)
     {
         public string? QueryLower => Query?.ToLowerInvariant();
@@ -90,6 +103,15 @@ public sealed partial class LogCenterReadModelService
         public string? ExecutionAttemptIdLower => ExecutionAttemptId?.ToLowerInvariant();
         public string? StatusLower => Status?.ToLowerInvariant();
         public string? SymbolLower => Symbol?.ToLowerInvariant();
+        public bool HasSearchFilters =>
+            !string.IsNullOrWhiteSpace(Query) ||
+            !string.IsNullOrWhiteSpace(CorrelationId) ||
+            !string.IsNullOrWhiteSpace(DecisionId) ||
+            !string.IsNullOrWhiteSpace(ExecutionAttemptId) ||
+            !string.IsNullOrWhiteSpace(UserId) ||
+            !string.IsNullOrWhiteSpace(Symbol) ||
+            !string.IsNullOrWhiteSpace(Status);
+        public bool HasDateRange => FromUtc is not null || ToUtc is not null;
 
         public LogCenterQueryRequest ToRequest()
         {
@@ -103,7 +125,19 @@ public sealed partial class LogCenterReadModelService
                 Status,
                 FromUtc,
                 ToUtc,
-                Take);
+                Take,
+                Page,
+                PageSize);
+        }
+
+        public NormalizedLogCenterQuery WithDateRange(DateTime? fromUtc, DateTime? toUtc)
+        {
+            return this with
+            {
+                FromUtc = fromUtc,
+                ToUtc = toUtc,
+                HasInvalidDateRange = fromUtc is not null && toUtc is not null && fromUtc > toUtc
+            };
         }
     }
 }

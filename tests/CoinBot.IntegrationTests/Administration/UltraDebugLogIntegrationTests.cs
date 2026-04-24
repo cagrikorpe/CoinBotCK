@@ -253,6 +253,66 @@ public sealed class UltraDebugLogIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task UltraDebugLog_SearchAsync_ReturnsMaskedFilteredPreview()
+    {
+        var databaseName = $"CoinBotUltraDebugSearch_{Guid.NewGuid():N}";
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString(databaseName);
+        var artifactsRoot = Path.Combine(AppContext.BaseDirectory, "UltraDebugIntegrationArtifacts", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(artifactsRoot);
+
+        try
+        {
+            await using var provider = BuildProvider(
+                connectionString,
+                artifactsRoot,
+                new MutableTimeProvider(new DateTimeOffset(2026, 4, 22, 9, 0, 0, TimeSpan.Zero)));
+            await using (var scope = provider.CreateAsyncScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                await dbContext.Database.EnsureDeletedAsync();
+                await dbContext.Database.EnsureCreatedAsync();
+            }
+
+            var service = provider.GetRequiredService<IUltraDebugLogService>();
+            await service.EnableAsync(
+                new UltraDebugLogEnableRequest("1h", "admin-01", "ops-admin@coinbot.test", null, null, "corr-int-ultra-6", 256, 1024));
+            await service.WriteAsync(
+                new UltraDebugLogEntry(
+                    "execution.dispatch",
+                    "execution_dispatch_submitted",
+                    "Dispatch accepted for SOLUSDT.",
+                    "corr-int-ultra-6",
+                    "SOLUSDT",
+                    Detail: new
+                    {
+                        sourceLayer = "ExecutionEngine",
+                        token = "plain-token",
+                        note = "dispatch"
+                    }));
+
+            var searchResult = await service.SearchAsync(
+                new UltraDebugLogSearchRequest(
+                    BucketName: "ultra_debug",
+                    Category: "execution",
+                    Source: "ExecutionEngine",
+                    SearchTerm: "dispatch",
+                    FromUtc: new DateTime(2026, 4, 22, 8, 0, 0, DateTimeKind.Utc),
+                    Take: 25));
+
+            Assert.Single(searchResult.Lines);
+            Assert.Equal("ExecutionEngine", searchResult.Lines.Single().Source);
+            Assert.DoesNotContain("plain-token", searchResult.Lines.Single().DetailPreview ?? string.Empty, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(artifactsRoot))
+            {
+                Directory.Delete(artifactsRoot, recursive: true);
+            }
+        }
+    }
+
     private static ServiceProvider BuildProvider(
         string connectionString,
         string artifactsRoot,
