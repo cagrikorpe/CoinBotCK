@@ -263,6 +263,7 @@ public static class DependencyInjection
         services.AddScoped<IAiSignalProviderAdapter, GeminiAiSignalProviderAdapter>();
         services.AddScoped<IAiSignalEvaluator, AiSignalEvaluator>();
         services.AddScoped<IAiShadowDecisionService, AiShadowDecisionService>();
+        services.AddScoped<ITrainingDatasetBuilderService, TrainingDatasetBuilderService>();
         services.AddScoped<IStrategySignalService, StrategySignalService>();
         services.AddScoped<ITradingFeatureSnapshotService, TradingFeatureSnapshotService>();
         services.AddScoped<IStrategyVersionService, StrategyVersionService>();
