@@ -375,11 +375,51 @@ public sealed class AdminMonitoringReadModelService(
             entity.MarketScore,
             entity.StrategyScore,
             entity.ScoringSummary,
+            ResolveCandidateAdvisoryLabels(entity.ScoringSummary),
+            ResolveCandidateAdvisoryReasonCodes(entity.ScoringSummary),
+            ResolveCandidateAdvisorySummary(entity.ScoringSummary),
             entity.IsEligible,
             entity.RejectionReason,
             entity.Score,
             entity.Rank,
             entity.IsTopCandidate);
+    }
+
+    private static IReadOnlyCollection<string> ResolveCandidateAdvisoryLabels(string? scoringSummary)
+    {
+        var labelsValue = ExecutionDecisionDiagnostics.ExtractToken("ScannerLabels", scoringSummary);
+        if (string.IsNullOrWhiteSpace(labelsValue))
+        {
+            return Array.Empty<string>();
+        }
+
+        return labelsValue
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(item => item, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static IReadOnlyCollection<string> ResolveCandidateAdvisoryReasonCodes(string? scoringSummary)
+    {
+        var reasonCodesValue = ExecutionDecisionDiagnostics.ExtractToken("ScannerReasonCodes", scoringSummary);
+        if (string.IsNullOrWhiteSpace(reasonCodesValue))
+        {
+            return Array.Empty<string>();
+        }
+
+        return reasonCodesValue
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(item => item, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static string? ResolveCandidateAdvisorySummary(string? scoringSummary)
+    {
+        return ExecutionDecisionDiagnostics.ExtractToken("ScannerReasonSummary", scoringSummary);
     }
 
     private static string? BuildMarketScannerCycleSummary(
@@ -505,6 +545,4 @@ public sealed class AdminMonitoringReadModelService(
             entity.Detail);
     }
 }
-
-
 

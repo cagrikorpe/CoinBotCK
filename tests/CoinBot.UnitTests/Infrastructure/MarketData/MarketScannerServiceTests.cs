@@ -265,6 +265,9 @@ public sealed class MarketScannerServiceTests
         Assert.Equal(96.6667m, btc.Score);
         Assert.Contains("StrategyKey=scanner-btc", btc.ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("StrategyScore=95", btc.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerLabels=HasTrendBreakoutUp", btc.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerReasonCodes=TrendBreakoutConfirmed", btc.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerReasonSummary=Bullish trend breakout confirmed above the Bollinger mid-band with positive MACD alignment.", btc.ScoringSummary, StringComparison.Ordinal);
 
         Assert.Equal(100m, eth.MarketScore);
         Assert.Equal(5, eth.StrategyScore);
@@ -277,6 +280,157 @@ public sealed class MarketScannerServiceTests
         Assert.Contains("HandoffEnabled=True", heartbeat.Detail ?? string.Empty, StringComparison.Ordinal);
         Assert.Equal("BTCUSDT", strategyEvaluatorService.RequestedSymbols[0]);
         Assert.Equal("ETHUSDT", strategyEvaluatorService.RequestedSymbols[1]);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_AppendsCompressionSetupScannerLabel_WhenBollingerBandwidthIsTight()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        var strategy = await SeedStrategyGraphAsync(dbContext, "user-compression", "BTCUSDT", "scanner-compression", "{}");
+        SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        await dbContext.SaveChangesAsync();
+
+        var indicatorDataService = new FakeIndicatorDataService();
+        indicatorDataService.SetReadySnapshot(new StrategyIndicatorSnapshot(
+            "BTCUSDT",
+            "1m",
+            nowUtc.UtcDateTime.AddMinutes(-1),
+            nowUtc.UtcDateTime,
+            nowUtc.UtcDateTime,
+            100,
+            34,
+            IndicatorDataState.Ready,
+            DegradedModeReasonCode.None,
+            new RelativeStrengthIndexSnapshot(14, true, 52m),
+            new MovingAverageConvergenceDivergenceSnapshot(12, 26, 9, true, 0.3m, 0.1m, 0.2m),
+            new BollingerBandsSnapshot(20, 2m, true, 100m, 102.5m, 97.5m, 1m),
+            "unit-test"));
+
+        var strategyEvaluatorService = new FakeStrategyEvaluatorService();
+        strategyEvaluatorService.SetReport("BTCUSDT", CreateEvaluationReport(
+            strategy.TradingStrategyId,
+            strategy.TradingStrategyVersionId,
+            "scanner-compression",
+            "BTCUSDT",
+            "1m",
+            nowUtc.UtcDateTime,
+            85,
+            "Compression setup accepted."));
+
+        var service = new MarketScannerService(
+            dbContext,
+            new FakeMarketDataService(),
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("BTCUSDT", "Binance", "BTC", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 10,
+                Min24hQuoteVolume = 1_000m,
+                MaxDataAgeSeconds = 120,
+                StrategyScoreWeight = 2m,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = true
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["BTCUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance,
+            handoffService: null,
+            indicatorDataService,
+            strategyEvaluatorService,
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }));
+
+        var cycle = await service.RunOnceAsync();
+
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+        Assert.Contains("ScannerLabels=HasCompressionBreakoutSetup", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerReasonCodes=CompressionBreakoutSetupDetected", candidate.ScoringSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_PreservesScannerReasonTokens_WhenScoringSummaryAndHistoricalRecoveryAreLong()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        var strategy = await SeedStrategyGraphAsync(dbContext, "user-long-summary", "BTCUSDT", "scanner-long-summary", "{}");
+        await dbContext.SaveChangesAsync();
+
+        var marketDataService = new FakeMarketDataService();
+        marketDataService.SetLatestPrice("BTCUSDT", 100m, nowUtc.UtcDateTime);
+        marketDataService.SetLatestKline(
+            "BTCUSDT",
+            "1m",
+            new MarketCandleSnapshot(
+                "BTCUSDT",
+                "1m",
+                nowUtc.UtcDateTime.AddMinutes(-1),
+                nowUtc.UtcDateTime,
+                100m,
+                100m,
+                100m,
+                100m,
+                1_500m,
+                true,
+                nowUtc.UtcDateTime,
+                "unit-test-shared"),
+            SharedMarketDataCacheReadStatus.HitFresh);
+
+        var historicalClient = new FakeHistoricalKlineClient();
+        historicalClient.SetCandles(
+            "BTCUSDT",
+            CreateClosedCandles("BTCUSDT", nowUtc.UtcDateTime.AddMinutes(-20), 20, 100m, 2_000m, "unit-test-rest"));
+
+        var indicatorDataService = new FakeIndicatorDataService();
+        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", nowUtc.UtcDateTime));
+
+        var strategyEvaluatorService = new FakeStrategyEvaluatorService();
+        strategyEvaluatorService.SetReport("BTCUSDT", CreateEvaluationReport(
+            strategy.TradingStrategyId,
+            strategy.TradingStrategyVersionId,
+            "scanner-long-summary",
+            "BTCUSDT",
+            "1m",
+            nowUtc.UtcDateTime,
+            95,
+            new string('X', 1300)));
+
+        var service = new MarketScannerService(
+            dbContext,
+            marketDataService,
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("BTCUSDT", "Binance", "BTC", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 10,
+                Min24hQuoteVolume = 1_000m,
+                MaxDataAgeSeconds = 120,
+                StrategyScoreWeight = 2m,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = false
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["BTCUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance,
+            handoffService: null,
+            indicatorDataService,
+            strategyEvaluatorService,
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }),
+            historicalKlineClient: historicalClient);
+
+        var cycle = await service.RunOnceAsync();
+
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+        Assert.NotNull(candidate.ScoringSummary);
+        Assert.True(candidate.ScoringSummary!.Length <= 2048);
+        Assert.Contains("ScannerReasonCodes=TrendBreakoutConfirmed", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerReasonSummary=Bullish trend breakout confirmed above the Bollinger mid-band with positive MACD alignment.", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("HistoricalRecoveryApplied=True", candidate.ScoringSummary, StringComparison.Ordinal);
     }
 
     [Fact]

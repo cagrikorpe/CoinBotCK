@@ -2419,7 +2419,7 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             .HasPrecision(38, 18);
 
         builder.Property(entity => entity.ScoringSummary)
-            .HasMaxLength(512);
+            .HasMaxLength(2048);
 
         builder.Property(entity => entity.RejectionReason)
             .HasMaxLength(64);

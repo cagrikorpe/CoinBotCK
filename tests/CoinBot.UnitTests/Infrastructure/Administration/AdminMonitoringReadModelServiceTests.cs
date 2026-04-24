@@ -10,6 +10,7 @@ using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
+using System.IO;
 
 using HealthSnapshotEntity = CoinBot.Domain.Entities.HealthSnapshot;
 
@@ -148,10 +149,140 @@ public sealed class AdminMonitoringReadModelServiceTests
         Assert.Equal(1, topCandidate.Rank);
         Assert.True(topCandidate.IsTopCandidate);
         Assert.Equal(DateTimeKind.Utc, topCandidate.ObservedAtUtc.Kind);
+        Assert.Empty(topCandidate.AdvisoryLabels);
+        Assert.Empty(topCandidate.AdvisoryReasonCodes);
+        Assert.Null(topCandidate.AdvisorySummary);
 
         var rejectedSample = Assert.Single(snapshot.MarketScanner.RejectedSamples);
         Assert.Equal("DOGEUSDT", rejectedSample.Symbol);
         Assert.Equal("MissingMarketData", rejectedSample.RejectionReason);
+    }
+
+    [Fact]
+    public async Task GetSnapshotAsync_ParsesScannerAdvisoryLabels_FromScoringSummary()
+    {
+        var now = new DateTime(2026, 4, 3, 12, 0, 0, DateTimeKind.Utc);
+        var cycleId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext();
+
+        dbContext.MarketScannerCycles.Add(new MarketScannerCycle
+        {
+            Id = cycleId,
+            StartedAtUtc = now.AddSeconds(-2),
+            CompletedAtUtc = now,
+            UniverseSource = "config+registry",
+            ScannedSymbolCount = 1,
+            EligibleCandidateCount = 1,
+            TopCandidateCount = 1,
+            BestCandidateSymbol = "BTCUSDT",
+            BestCandidateScore = 95m,
+            Summary = "scan complete"
+        });
+        dbContext.MarketScannerCandidates.Add(new MarketScannerCandidate
+        {
+            Id = Guid.NewGuid(),
+            ScanCycleId = cycleId,
+            Symbol = "BTCUSDT",
+            UniverseSource = "config+registry",
+            ObservedAtUtc = now,
+            LastCandleAtUtc = now,
+            LastPrice = 100m,
+            QuoteVolume24h = 123456m,
+            MarketScore = 100m,
+            StrategyScore = 95,
+            ScoringSummary = "StrategyScore=95; ScannerLabels=HasCompressionBreakoutSetup,HasTrendBreakoutUp; ScannerReasonCodes=CompressionBreakoutSetupDetected,TrendBreakoutConfirmed; ScannerReasonSummary=Compression breakout setup detected from tight Bollinger bandwidth. | Bullish trend breakout confirmed above the Bollinger mid-band with positive MACD alignment.",
+            IsEligible = true,
+            Score = 95m,
+            Rank = 1,
+            IsTopCandidate = true
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            TimeProvider.System,
+            Options.Create(new DataLatencyGuardOptions()));
+
+        var snapshot = await service.GetSnapshotAsync();
+
+        var topCandidate = Assert.Single(snapshot.MarketScanner.TopCandidates);
+        Assert.Equal(["HasCompressionBreakoutSetup", "HasTrendBreakoutUp"], topCandidate.AdvisoryLabels.ToArray());
+        Assert.Equal(["CompressionBreakoutSetupDetected", "TrendBreakoutConfirmed"], topCandidate.AdvisoryReasonCodes.ToArray());
+        Assert.Contains("Bullish trend breakout confirmed", topCandidate.AdvisorySummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetSnapshotAsync_ParsesRejectedSampleAdvisoryReasonCodes_AndDistinctsDuplicates()
+    {
+        var now = new DateTime(2026, 4, 3, 12, 0, 0, DateTimeKind.Utc);
+        var cycleId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext();
+
+        dbContext.MarketScannerCycles.Add(new MarketScannerCycle
+        {
+            Id = cycleId,
+            StartedAtUtc = now.AddSeconds(-2),
+            CompletedAtUtc = now,
+            UniverseSource = "config+registry",
+            ScannedSymbolCount = 1,
+            EligibleCandidateCount = 0,
+            TopCandidateCount = 0,
+            Summary = "scan complete"
+        });
+        dbContext.MarketScannerCandidates.Add(new MarketScannerCandidate
+        {
+            Id = Guid.NewGuid(),
+            ScanCycleId = cycleId,
+            Symbol = "BTCUSDT",
+            UniverseSource = "config+registry",
+            ObservedAtUtc = now,
+            LastCandleAtUtc = now,
+            LastPrice = 100m,
+            QuoteVolume24h = 123456m,
+            MarketScore = 100m,
+            StrategyScore = 95,
+            ScoringSummary = "StrategyScore=95; ScannerLabels=HasTrendBreakoutUp,HasTrendBreakoutUp; ScannerReasonCodes=TrendBreakoutConfirmed,TrendBreakoutConfirmed,CompressionBreakoutSetupDetected; ScannerReasonSummary=Bullish trend breakout confirmed above the Bollinger mid-band with positive MACD alignment.; HistoricalRecoveryApplied=True; HistoricalRecoverySource=Binance.Rest.KlineRecovery",
+            IsEligible = false,
+            RejectionReason = "NoEnabledBotForSymbol",
+            Score = 0m,
+            Rank = null,
+            IsTopCandidate = false
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            TimeProvider.System,
+            Options.Create(new DataLatencyGuardOptions()));
+
+        var snapshot = await service.GetSnapshotAsync();
+
+        var rejectedSample = Assert.Single(snapshot.MarketScanner.RejectedSamples);
+        Assert.Equal(["HasTrendBreakoutUp"], rejectedSample.AdvisoryLabels.ToArray());
+        Assert.Equal(["CompressionBreakoutSetupDetected", "TrendBreakoutConfirmed"], rejectedSample.AdvisoryReasonCodes.ToArray());
+        Assert.Contains("Bullish trend breakout confirmed", rejectedSample.AdvisorySummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MarketScannerCardView_RendersReasonCodes_AndDoesNotRenderMachineLabels()
+    {
+        var content = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Areas",
+            "Admin",
+            "Views",
+            "Shared",
+            "Foundation",
+            "_AdminMarketScannerCard.cshtml"));
+
+        Assert.Contains("candidate.AdvisoryReasonCodes", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("candidate.AdvisoryLabels", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-rejected-reason-codes", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-rejected-advisory-summary", content, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -605,7 +736,22 @@ public sealed class AdminMonitoringReadModelServiceTests
 
         public bool HasIsolationBypass => true;
     }
+
+    private static string ResolveRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (directory is not null &&
+               !File.Exists(Path.Combine(directory.FullName, "CoinBot.sln")))
+        {
+            directory = directory.Parent;
+        }
+
+        if (directory is null)
+        {
+            throw new DirectoryNotFoundException("CoinBot repository root could not be resolved.");
+        }
+
+        return directory.FullName;
+    }
 }
-
-
-

@@ -32,6 +32,7 @@ public sealed class MarketScannerService(
 {
     internal const string WorkerKey = "market-scanner";
     internal const string WorkerName = "Market Scanner";
+    private const int CandidateScoringSummaryMaxLength = 2048;
     private const decimal MaxSqlClientDecimal38Scale18Value = 79_228_162_514.264337593543950335m;
 
     private readonly MarketScannerOptions scannerOptionsValue = scannerOptions.Value;
@@ -379,6 +380,14 @@ public sealed class MarketScannerService(
             : MarketScannerStrategyScoreSummary.MarketRejected(
                 rejectionReason,
                 BuildMarketRejectionSummary(rejectionReason, marketScore, quoteVolume, freshness, marketWindow));
+        var candidateIntelligence = rejectionReason is null
+            ? await ResolveCandidateIntelligenceAsync(
+                universeCandidate.Symbol,
+                marketWindow.Candles,
+                observedAtUtc,
+                latestPrice,
+                cancellationToken)
+            : ScannerCandidateIntelligenceSummary.Empty;
         rejectionReason ??= strategyScoring.RejectionReason;
         var isEligible = rejectionReason is null;
 
@@ -394,7 +403,10 @@ public sealed class MarketScannerService(
             QuoteVolume24h = quoteVolume,
             MarketScore = marketScore,
             StrategyScore = strategyScoring.StrategyScore,
-            ScoringSummary = BuildCandidateScoringSummary(strategyScoring.ScoringSummary, marketWindow),
+            ScoringSummary = BuildCandidateScoringSummary(
+                strategyScoring.ScoringSummary,
+                marketWindow,
+                candidateIntelligence),
             IsEligible = isEligible,
             RejectionReason = rejectionReason,
             Score = isEligible ? ResolveCompositeScore(marketScore, strategyScoring.StrategyScore) : 0m,
@@ -1652,37 +1664,8 @@ public sealed class MarketScannerService(
                 $"StrategyScore=n/a; StrategyOutcome=StrategyScoringUnavailable; StrategyKey={strategyBinding.StrategyKey}; Symbol={symbol}; Timeframe={klineInterval}");
         }
 
-        await indicatorDataService.TrackSymbolAsync(symbol, cancellationToken);
-        var indicatorSnapshot = await indicatorDataService.GetLatestAsync(symbol, klineInterval, cancellationToken);
-        if (indicatorSnapshot is null || indicatorSnapshot.State != IndicatorDataState.Ready)
-        {
-            var marketCandles = historicalCandles
-                .OrderBy(entity => entity.OpenTimeUtc)
-                .Select(entity => new MarketCandleSnapshot(
-                    entity.Symbol,
-                    entity.Interval,
-                    NormalizeUtc(entity.OpenTimeUtc),
-                    NormalizeUtc(entity.CloseTimeUtc),
-                    entity.OpenPrice,
-                    entity.HighPrice,
-                    entity.LowPrice,
-                    entity.ClosePrice,
-                    entity.Volume,
-                    true,
-                    NormalizeUtc(entity.ReceivedAtUtc),
-                    entity.Source))
-                .ToArray();
-
-            if (marketCandles.Length > 0)
-            {
-                indicatorSnapshot = await indicatorDataService.PrimeAsync(symbol, klineInterval, marketCandles, cancellationToken);
-            }
-        }
-
-        if (indicatorSnapshot is null ||
-            indicatorSnapshot.State != IndicatorDataState.Ready ||
-            !string.Equals(indicatorSnapshot.Symbol, symbol, StringComparison.Ordinal) ||
-            !string.Equals(indicatorSnapshot.Timeframe, klineInterval, StringComparison.Ordinal))
+        var indicatorSnapshot = await ResolveIndicatorSnapshotAsync(symbol, historicalCandles, cancellationToken);
+        if (!IsUsableIndicatorSnapshot(indicatorSnapshot, symbol))
         {
             return MarketScannerStrategyScoreSummary.Rejected(
                 "MissingFreshSignalData",
@@ -1978,19 +1961,184 @@ public sealed class MarketScannerService(
 
     private string? BuildCandidateScoringSummary(
         string? scoringSummary,
-        ScannerMarketWindowSnapshot marketWindow)
+        ScannerMarketWindowSnapshot marketWindow,
+        ScannerCandidateIntelligenceSummary candidateIntelligence)
     {
-        if (!marketWindow.HistoricalRecoveryApplied && !marketWindow.HasHistoricalParityLag)
+        var summarySegments = new List<string>(2);
+        if (!string.IsNullOrWhiteSpace(scoringSummary))
         {
-            return scoringSummary;
+            summarySegments.Add(scoringSummary!);
         }
 
-        var suffix = $"HistoricalLastCandleAtUtc={(marketWindow.LatestHistoricalCandleAtUtc?.ToString("O") ?? "n/a")}; HistoricalParityLagSeconds={(marketWindow.HistoricalParityLagSeconds?.ToString(CultureInfo.InvariantCulture) ?? "n/a")}; HistoricalRecoveryApplied={marketWindow.HistoricalRecoveryApplied}; HistoricalRecoverySource={(marketWindow.HistoricalRecoverySource ?? "n/a")}";
-        return Truncate(
-            string.IsNullOrWhiteSpace(scoringSummary)
-                ? suffix
-                : $"{scoringSummary}; {suffix}",
-            512);
+        if (candidateIntelligence.Labels.Count > 0)
+        {
+            summarySegments.Add($"ScannerLabels={string.Join(',', candidateIntelligence.Labels)}");
+        }
+
+        if (candidateIntelligence.ReasonCodes.Count > 0)
+        {
+            summarySegments.Add($"ScannerReasonCodes={string.Join(',', candidateIntelligence.ReasonCodes)}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(candidateIntelligence.Summary))
+        {
+            summarySegments.Add($"ScannerReasonSummary={candidateIntelligence.Summary}");
+        }
+
+        if (marketWindow.HistoricalRecoveryApplied || marketWindow.HasHistoricalParityLag)
+        {
+            summarySegments.Add(
+                $"HistoricalLastCandleAtUtc={(marketWindow.LatestHistoricalCandleAtUtc?.ToString("O") ?? "n/a")}; HistoricalParityLagSeconds={(marketWindow.HistoricalParityLagSeconds?.ToString(CultureInfo.InvariantCulture) ?? "n/a")}; HistoricalRecoveryApplied={marketWindow.HistoricalRecoveryApplied}; HistoricalRecoverySource={(marketWindow.HistoricalRecoverySource ?? "n/a")}");
+        }
+
+        if (summarySegments.Count == 0)
+        {
+            return null;
+        }
+
+        return Truncate(string.Join("; ", summarySegments), CandidateScoringSummaryMaxLength);
+    }
+
+    private async Task<ScannerCandidateIntelligenceSummary> ResolveCandidateIntelligenceAsync(
+        string symbol,
+        IReadOnlyCollection<HistoricalMarketCandle> historicalCandles,
+        DateTime observedAtUtc,
+        decimal? latestPrice,
+        CancellationToken cancellationToken)
+    {
+        var indicatorSnapshot = await ResolveIndicatorSnapshotAsync(symbol, historicalCandles, cancellationToken);
+        if (!IsUsableIndicatorSnapshot(indicatorSnapshot, symbol))
+        {
+            return ScannerCandidateIntelligenceSummary.Empty;
+        }
+
+        return ResolveCandidateLabels(latestPrice, indicatorSnapshot!, observedAtUtc);
+    }
+
+    private async Task<StrategyIndicatorSnapshot?> ResolveIndicatorSnapshotAsync(
+        string symbol,
+        IReadOnlyCollection<HistoricalMarketCandle> historicalCandles,
+        CancellationToken cancellationToken)
+    {
+        if (indicatorDataService is null)
+        {
+            return null;
+        }
+
+        await indicatorDataService.TrackSymbolAsync(symbol, cancellationToken);
+        var indicatorSnapshot = await indicatorDataService.GetLatestAsync(symbol, klineInterval, cancellationToken);
+        if (indicatorSnapshot is not null && indicatorSnapshot.State == IndicatorDataState.Ready)
+        {
+            return indicatorSnapshot;
+        }
+
+        var marketCandles = historicalCandles
+            .OrderBy(entity => entity.OpenTimeUtc)
+            .Select(entity => new MarketCandleSnapshot(
+                entity.Symbol,
+                entity.Interval,
+                NormalizeUtc(entity.OpenTimeUtc),
+                NormalizeUtc(entity.CloseTimeUtc),
+                entity.OpenPrice,
+                entity.HighPrice,
+                entity.LowPrice,
+                entity.ClosePrice,
+                entity.Volume,
+                true,
+                NormalizeUtc(entity.ReceivedAtUtc),
+                entity.Source))
+            .ToArray();
+
+        if (marketCandles.Length == 0)
+        {
+            return indicatorSnapshot;
+        }
+
+        return await indicatorDataService.PrimeAsync(symbol, klineInterval, marketCandles, cancellationToken);
+    }
+
+    private bool IsUsableIndicatorSnapshot(StrategyIndicatorSnapshot? indicatorSnapshot, string symbol)
+    {
+        return indicatorSnapshot is not null &&
+               indicatorSnapshot.State == IndicatorDataState.Ready &&
+               string.Equals(indicatorSnapshot.Symbol, symbol, StringComparison.Ordinal) &&
+               string.Equals(indicatorSnapshot.Timeframe, klineInterval, StringComparison.Ordinal);
+    }
+
+    private static ScannerCandidateIntelligenceSummary ResolveCandidateLabels(
+        decimal? latestPrice,
+        StrategyIndicatorSnapshot indicatorSnapshot,
+        DateTime observedAtUtc)
+    {
+        var labels = new List<string>(3);
+        var reasonCodes = new List<string>(3);
+        var summarySegments = new List<string>(3);
+        if (TryResolveBollingerBandWidth(indicatorSnapshot, out var bandWidth) && bandWidth <= 5m)
+        {
+            labels.Add("HasCompressionBreakoutSetup");
+            reasonCodes.Add("CompressionBreakoutSetupDetected");
+            summarySegments.Add("Compression breakout setup detected from tight Bollinger bandwidth.");
+        }
+
+        if (indicatorSnapshot.Macd.IsReady &&
+            indicatorSnapshot.Macd.MacdLine is decimal macdLine &&
+            indicatorSnapshot.Macd.SignalLine is decimal signalLine &&
+            indicatorSnapshot.Macd.Histogram is decimal histogram &&
+            indicatorSnapshot.Bollinger.MiddleBand is decimal middleBand &&
+            latestPrice is decimal currentPrice)
+        {
+            if (currentPrice >= middleBand &&
+                macdLine > signalLine &&
+                histogram > 0m &&
+                indicatorSnapshot.CloseTimeUtc <= observedAtUtc)
+            {
+                labels.Add("HasTrendBreakoutUp");
+                reasonCodes.Add("TrendBreakoutConfirmed");
+                summarySegments.Add("Bullish trend breakout confirmed above the Bollinger mid-band with positive MACD alignment.");
+            }
+            else if (currentPrice <= middleBand &&
+                     macdLine < signalLine &&
+                     histogram < 0m &&
+                     indicatorSnapshot.CloseTimeUtc <= observedAtUtc)
+            {
+                labels.Add("HasTrendBreakoutDown");
+                reasonCodes.Add("TrendBreakdownConfirmed");
+                summarySegments.Add("Bearish trend breakdown confirmed below the Bollinger mid-band with negative MACD alignment.");
+            }
+        }
+
+        return new ScannerCandidateIntelligenceSummary(
+            labels
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(item => item, StringComparer.Ordinal)
+                .ToArray(),
+            reasonCodes
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(item => item, StringComparer.Ordinal)
+                .ToArray(),
+            summarySegments.Count == 0
+                ? null
+                : Truncate(string.Join(" | ", summarySegments), 240));
+    }
+
+    private static bool TryResolveBollingerBandWidth(
+        StrategyIndicatorSnapshot indicatorSnapshot,
+        out decimal bandWidth)
+    {
+        bandWidth = 0m;
+        if (indicatorSnapshot.Bollinger.UpperBand is not decimal upperBand ||
+            indicatorSnapshot.Bollinger.LowerBand is not decimal lowerBand ||
+            indicatorSnapshot.Bollinger.MiddleBand is not decimal middleBand ||
+            middleBand == 0m)
+        {
+            return false;
+        }
+
+        bandWidth = decimal.Round(
+            (upperBand - lowerBand) / middleBand * 100m,
+            6,
+            MidpointRounding.AwayFromZero);
+        return true;
     }
 
     private string BuildMarketRejectionSummary(
@@ -2246,5 +2394,14 @@ public sealed class MarketScannerService(
 
         public static MarketScannerStrategyScoreSummary MarketRejected(string rejectionReason, string? scoringSummary) =>
             new(null, rejectionReason, scoringSummary);
+    }
+
+    private sealed record ScannerCandidateIntelligenceSummary(
+        IReadOnlyCollection<string> Labels,
+        IReadOnlyCollection<string> ReasonCodes,
+        string? Summary)
+    {
+        public static ScannerCandidateIntelligenceSummary Empty { get; } =
+            new(Array.Empty<string>(), Array.Empty<string>(), null);
     }
 }

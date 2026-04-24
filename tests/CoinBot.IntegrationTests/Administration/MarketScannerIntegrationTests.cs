@@ -179,6 +179,70 @@ public sealed class MarketScannerIntegrationTests
             Assert.Equal(95, topCandidate.StrategyScore);
             Assert.Equal(96.6667m, topCandidate.Score);
             Assert.Contains("Outcome=EntryMatched", topCandidate.ScoringSummary, StringComparison.Ordinal);
+            Assert.Contains("HasTrendBreakoutUp", topCandidate.AdvisoryLabels);
+            Assert.Contains("TrendBreakoutConfirmed", topCandidate.AdvisoryReasonCodes);
+            Assert.Contains("Bullish trend breakout confirmed", topCandidate.AdvisorySummary, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await dbContext.Database.EnsureDeletedAsync();
+        }
+    }
+
+    [Fact]
+    public async Task AdminMonitoringReadModel_ExposesRejectedSampleAdvisoryReasonCodes_OnSqlServer()
+    {
+        var databaseName = $"CoinBotMarketScannerRejectedAdviceInt_{Guid.NewGuid():N}";
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString(databaseName);
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        await using var dbContext = CreateDbContext(connectionString);
+        await dbContext.Database.EnsureDeletedAsync();
+        await dbContext.Database.EnsureCreatedAsync();
+
+        try
+        {
+            var cycleId = Guid.NewGuid();
+            dbContext.MarketScannerCycles.Add(new MarketScannerCycle
+            {
+                Id = cycleId,
+                StartedAtUtc = nowUtc.UtcDateTime.AddSeconds(-2),
+                CompletedAtUtc = nowUtc.UtcDateTime,
+                UniverseSource = "config+registry",
+                ScannedSymbolCount = 1,
+                EligibleCandidateCount = 0,
+                TopCandidateCount = 0,
+                Summary = "scan complete"
+            });
+            dbContext.MarketScannerCandidates.Add(new MarketScannerCandidate
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                Symbol = "BTCUSDT",
+                UniverseSource = "config+registry",
+                ObservedAtUtc = nowUtc.UtcDateTime,
+                LastCandleAtUtc = nowUtc.UtcDateTime,
+                LastPrice = 100m,
+                QuoteVolume24h = 123456m,
+                MarketScore = 100m,
+                StrategyScore = 95,
+                ScoringSummary = "StrategyScore=95; ScannerLabels=HasTrendBreakoutUp; ScannerReasonCodes=TrendBreakoutConfirmed; ScannerReasonSummary=Bullish trend breakout confirmed above the Bollinger mid-band with positive MACD alignment.",
+                IsEligible = false,
+                RejectionReason = "NoEnabledBotForSymbol",
+                Score = 0m
+            });
+            await dbContext.SaveChangesAsync();
+
+            var readModelService = new AdminMonitoringReadModelService(
+                dbContext,
+                new MemoryCache(new MemoryCacheOptions()),
+                new FixedTimeProvider(nowUtc),
+                Options.Create(new DataLatencyGuardOptions()));
+
+            var dashboardSnapshot = await readModelService.GetSnapshotAsync();
+
+            var rejectedSample = Assert.Single(dashboardSnapshot.MarketScanner.RejectedSamples);
+            Assert.Contains("TrendBreakoutConfirmed", rejectedSample.AdvisoryReasonCodes);
+            Assert.Contains("Bullish trend breakout confirmed", rejectedSample.AdvisorySummary, StringComparison.Ordinal);
         }
         finally
         {
