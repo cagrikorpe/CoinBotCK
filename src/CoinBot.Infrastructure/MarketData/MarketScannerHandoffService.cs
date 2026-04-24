@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.DemoPortfolio;
@@ -14,6 +15,7 @@ using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Execution;
+using CoinBot.Infrastructure.Ai;
 using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
@@ -44,7 +46,9 @@ public sealed class MarketScannerHandoffService(
     IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null,
     IUltraDebugLogService? ultraDebugLogService = null,
     ITraceService? traceService = null,
-    ICorrelationContextAccessor? correlationContextAccessor = null)
+    ICorrelationContextAccessor? correlationContextAccessor = null,
+    IOptions<AiSignalOptions>? aiSignalOptions = null,
+    IAiShadowDecisionService? aiShadowDecisionService = null)
 {
     private static readonly JsonSerializerOptions StrategySignalSerializerOptions = CreateStrategySignalSerializerOptions();
     private static readonly HashSet<string> ReplaySuppressedBlockedAttemptCodes = new(StringComparer.Ordinal)
@@ -73,6 +77,7 @@ public sealed class MarketScannerHandoffService(
         .ThenBy(item => item, StringComparer.Ordinal)
         .ToArray();
     private readonly ExecutionRuntimeOptions executionRuntimeOptionsValue = executionRuntimeOptions?.Value ?? new ExecutionRuntimeOptions();
+    private readonly AiSignalOptions aiSignalOptionsValue = aiSignalOptions?.Value ?? new AiSignalOptions();
 
     public async Task<MarketScannerHandoffAttempt> RunOnceAsync(Guid scanCycleId, CancellationToken cancellationToken = default)
     {
@@ -157,7 +162,7 @@ public sealed class MarketScannerHandoffService(
 
             if (!TryResolvePilotExecutionParameters(ownerBotMatch, out var leverage, out var marginType, out var parameterFailureCode))
             {
-                latestAttempt = await PersistBlockedAttemptAsync(
+                latestAttempt = await PersistBlockedAttemptWithShadowDecisionAsync(
                     scanCycleId,
                     candidate,
                     ownerBotMatch.OwnerUserId,
@@ -278,7 +283,7 @@ public sealed class MarketScannerHandoffService(
             if (strategySignal is null)
             {
                 var strategyBlocker = ResolveStrategyBlocker(strategyResult, strategyVeto, symbol, klineInterval);
-                latestAttempt = await PersistBlockedAttemptAsync(
+                latestAttempt = await PersistBlockedAttemptWithShadowDecisionAsync(
                     scanCycleId,
                     candidate,
                     ownerBotMatch.OwnerUserId,
@@ -292,7 +297,8 @@ public sealed class MarketScannerHandoffService(
                     strategyBlocker.BlockerCode,
                     strategyBlocker.BlockerDetail,
                     strategyBlocker.GuardSummary,
-                    cancellationToken);
+                    cancellationToken,
+                    strategyResult: strategyResult);
                 continue;
             }
 
@@ -311,7 +317,7 @@ public sealed class MarketScannerHandoffService(
             }
             catch (ExecutionValidationException exception)
             {
-                latestAttempt = await PersistBlockedAttemptAsync(
+                latestAttempt = await PersistBlockedAttemptWithShadowDecisionAsync(
                     scanCycleId,
                     candidate,
                     ownerBotMatch.OwnerUserId,
@@ -328,13 +334,14 @@ public sealed class MarketScannerHandoffService(
                     guardSummary: Truncate(
                         $"StrategySignalDirection={entryDirection}; Symbol={symbol}; Timeframe={klineInterval}",
                         512) ?? $"StrategySignalDirection={entryDirection}; Symbol={symbol}; Timeframe={klineInterval}",
-                    cancellationToken: cancellationToken);
+                    cancellationToken: cancellationToken,
+                    strategyResult: strategyResult);
                 continue;
             }
 
             if (TryResolveEntryDirectionModeBlock(ownerBotMatch.DirectionMode, symbol, entryDirection, out var directionModeBlockSummary))
             {
-                latestAttempt = await PersistBlockedAttemptAsync(
+                latestAttempt = await PersistBlockedAttemptWithShadowDecisionAsync(
                     scanCycleId,
                     candidate,
                     ownerBotMatch.OwnerUserId,
@@ -351,7 +358,8 @@ public sealed class MarketScannerHandoffService(
                     guardSummary: Truncate(
                         $"EntryDirectionModeBlocked; BotDirectionMode={ownerBotMatch.DirectionMode}; EntryDirection={entryDirection}; Symbol={symbol}; Timeframe={klineInterval}",
                         512) ?? $"EntryDirectionModeBlocked; BotDirectionMode={ownerBotMatch.DirectionMode}; EntryDirection={entryDirection}; Symbol={symbol}; Timeframe={klineInterval}",
-                    cancellationToken: cancellationToken);
+                    cancellationToken: cancellationToken,
+                    strategyResult: strategyResult);
                 continue;
             }
 
@@ -380,7 +388,7 @@ public sealed class MarketScannerHandoffService(
 
             if (hasExistingExecutionIntent)
             {
-                latestAttempt = await PersistBlockedAttemptAsync(
+                latestAttempt = await PersistBlockedAttemptWithShadowDecisionAsync(
                     scanCycleId,
                     candidate,
                     ownerBotMatch.OwnerUserId,
@@ -398,7 +406,8 @@ public sealed class MarketScannerHandoffService(
                         $"DuplicateExecutionRequest=Suppressed; StrategySignalId={strategySignal.StrategySignalId:N}; IndicatorCloseTimeUtc={strategySignal.IndicatorCloseTimeUtc:O}; Symbol={symbol}; Timeframe={klineInterval}",
                         512)
                         ?? $"DuplicateExecutionRequest=Suppressed; Symbol={symbol}; Timeframe={klineInterval}",
-                    cancellationToken: cancellationToken);
+                    cancellationToken: cancellationToken,
+                    strategyResult: strategyResult);
                 continue;
             }
 
@@ -413,7 +422,7 @@ public sealed class MarketScannerHandoffService(
 
                 if (!string.IsNullOrWhiteSpace(hysteresisSummary))
                 {
-                    latestAttempt = await PersistBlockedAttemptAsync(
+                    latestAttempt = await PersistBlockedAttemptWithShadowDecisionAsync(
                         scanCycleId,
                         candidate,
                         ownerBotMatch.OwnerUserId,
@@ -430,7 +439,8 @@ public sealed class MarketScannerHandoffService(
                         guardSummary: Truncate(
                             $"EntryHysteresis=Active; EntryDirection={entryDirection}; Symbol={symbol}; Timeframe={klineInterval}",
                             512) ?? $"EntryHysteresis=Active; Symbol={symbol}; Timeframe={klineInterval}",
-                        cancellationToken: cancellationToken);
+                        cancellationToken: cancellationToken,
+                        strategyResult: strategyResult);
                     continue;
                 }
 
@@ -448,7 +458,7 @@ public sealed class MarketScannerHandoffService(
 
                     if (currentPositionDirection == entryDirection)
                     {
-                        latestAttempt = await PersistBlockedAttemptAsync(
+                        latestAttempt = await PersistBlockedAttemptWithShadowDecisionAsync(
                             scanCycleId,
                             candidate,
                             ownerBotMatch.OwnerUserId,
@@ -465,11 +475,12 @@ public sealed class MarketScannerHandoffService(
                             guardSummary: Truncate(
                                 $"OpenPositionSuppression=SameDirection; EntryDirection={entryDirection}; CurrentNetQuantity={currentNetQuantity:0.########}; Symbol={symbol}; Timeframe={klineInterval}",
                                 512) ?? $"OpenPositionSuppression=SameDirection; Symbol={symbol}; Timeframe={klineInterval}",
-                            cancellationToken: cancellationToken);
+                            cancellationToken: cancellationToken,
+                            strategyResult: strategyResult);
                         continue;
                     }
 
-                    latestAttempt = await PersistBlockedAttemptAsync(
+                    latestAttempt = await PersistBlockedAttemptWithShadowDecisionAsync(
                         scanCycleId,
                         candidate,
                         ownerBotMatch.OwnerUserId,
@@ -486,7 +497,8 @@ public sealed class MarketScannerHandoffService(
                         guardSummary: Truncate(
                             $"OpenPositionSuppression=ReverseBlocked; EntryDirection={entryDirection}; CurrentPositionDirection={currentPositionDirection}; CurrentNetQuantity={currentNetQuantity:0.########}; Symbol={symbol}; Timeframe={klineInterval}",
                             512) ?? $"OpenPositionSuppression=ReverseBlocked; Symbol={symbol}; Timeframe={klineInterval}",
-                        cancellationToken: cancellationToken);
+                        cancellationToken: cancellationToken,
+                        strategyResult: strategyResult);
                     continue;
                 }
             }
@@ -544,7 +556,7 @@ public sealed class MarketScannerHandoffService(
 
                 if (overrideEvaluation.IsBlocked)
                 {
-                    latestAttempt = await PersistBlockedAttemptAsync(
+                    latestAttempt = await PersistBlockedAttemptWithShadowDecisionAsync(
                         scanCycleId,
                         candidate,
                         ownerBotMatch.OwnerUserId,
@@ -558,13 +570,41 @@ public sealed class MarketScannerHandoffService(
                     blockerCode: overrideEvaluation.BlockCode ?? "UserExecutionOverrideBlocked",
                     blockerDetail: overrideEvaluation.Message ?? "Scanner handoff was blocked by user execution override guard.",
                     correlationId: correlationId,
-                    guardSummary: Truncate(
-                        $"UserExecutionOverrideGuard={overrideEvaluation.BlockCode ?? "Blocked"}; Symbol={symbol}; Timeframe={klineInterval}; {BuildLatencyGuardSummarySnippet(latencySnapshot)}; RiskSummary={overrideEvaluation.RiskEvaluation?.ReasonSummary ?? "n/a"}",
-                        512) ?? $"UserExecutionOverrideGuard={overrideEvaluation.BlockCode ?? "Blocked"}; Symbol={symbol}; Timeframe={klineInterval}",
-                    cancellationToken: cancellationToken,
-                    riskEvaluation: overrideEvaluation.RiskEvaluation);
-                continue;
-            }
+                        guardSummary: Truncate(
+                            $"UserExecutionOverrideGuard={overrideEvaluation.BlockCode ?? "Blocked"}; Symbol={symbol}; Timeframe={klineInterval}; {BuildLatencyGuardSummarySnippet(latencySnapshot)}; RiskSummary={overrideEvaluation.RiskEvaluation?.ReasonSummary ?? "n/a"}",
+                            512) ?? $"UserExecutionOverrideGuard={overrideEvaluation.BlockCode ?? "Blocked"}; Symbol={symbol}; Timeframe={klineInterval}",
+                        cancellationToken: cancellationToken,
+                        riskEvaluation: overrideEvaluation.RiskEvaluation,
+                        strategyResult: strategyResult);
+                    continue;
+                }
+
+                if (IsShadowModeActive())
+                {
+                    latestAttempt = await PersistBlockedAttemptWithShadowDecisionAsync(
+                        scanCycleId,
+                        candidate,
+                        ownerBotMatch.OwnerUserId,
+                        ownerBotMatch,
+                        symbolMetadata,
+                        executionContext,
+                        strategySignal,
+                        strategyVeto: null,
+                        strategyDecisionOutcome: "Persisted",
+                        executionStatus: "Blocked",
+                        blockerCode: "ShadowModeActive",
+                        blockerDetail: "Scanner handoff recorded an advisory AI shadow decision only; execution submit was skipped because shadow mode is active.",
+                        correlationId: correlationId,
+                        guardSummary: Truncate(
+                            $"ExecutionGate=Allowed; UserExecutionOverride=Allowed; AiShadowMode=ObserveOnly; Symbol={symbol}; Timeframe={klineInterval}; {BuildLatencyGuardSummarySnippet(latencySnapshot)}",
+                            512) ?? $"ExecutionGate=Allowed; UserExecutionOverride=Allowed; AiShadowMode=ObserveOnly; Symbol={symbol}; Timeframe={klineInterval}",
+                        cancellationToken: cancellationToken,
+                        riskEvaluation: overrideEvaluation.RiskEvaluation,
+                        strategyResult: strategyResult,
+                        shadowFinalAction: "ShadowOnly",
+                        shadowNoSubmitReason: "ShadowModeActive");
+                    return latestAttempt;
+                }
 
                 var executionEngine = userScope.ServiceProvider.GetRequiredService<IExecutionEngine>();
                 var dispatchResult = await executionEngine.DispatchAsync(
@@ -613,7 +653,7 @@ public sealed class MarketScannerHandoffService(
             }
             catch (ExecutionGateRejectedException exception)
             {
-                latestAttempt = await PersistBlockedAttemptAsync(
+                latestAttempt = await PersistBlockedAttemptWithShadowDecisionAsync(
                     scanCycleId,
                     candidate,
                     ownerBotMatch.OwnerUserId,
@@ -628,11 +668,12 @@ public sealed class MarketScannerHandoffService(
                     blockerDetail: exception.Message,
                     correlationId: attemptCorrelationId,
                     guardSummary: $"ExecutionGate={exception.Reason}; Symbol={symbol}; Timeframe={klineInterval}",
-                    cancellationToken: cancellationToken);
+                    cancellationToken: cancellationToken,
+                    strategyResult: strategyResult);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                latestAttempt = await PersistBlockedAttemptAsync(
+                latestAttempt = await PersistBlockedAttemptWithShadowDecisionAsync(
                     scanCycleId,
                     candidate,
                     ownerBotMatch.OwnerUserId,
@@ -647,7 +688,8 @@ public sealed class MarketScannerHandoffService(
                     blockerDetail: exception.Message,
                     correlationId: attemptCorrelationId,
                     guardSummary: $"ScannerHandoffException={exception.GetType().Name}; Symbol={symbol}; Timeframe={klineInterval}",
-                    cancellationToken: cancellationToken);
+                    cancellationToken: cancellationToken,
+                    strategyResult: strategyResult);
             }
         }
 
@@ -666,6 +708,213 @@ public sealed class MarketScannerHandoffService(
             blockerDetail: "Scanner handoff evaluated the scan cycle but no candidate produced an executable request.",
             guardSummary: "CandidateSelection=Exhausted",
             cancellationToken);
+    }
+
+    private async Task<MarketScannerHandoffAttempt> PersistBlockedAttemptWithShadowDecisionAsync(
+        Guid scanCycleId,
+        MarketScannerCandidate? selectedCandidate,
+        string? ownerUserId,
+        BotStrategyMatch? botMatch,
+        SymbolMetadataSnapshot? symbolMetadata,
+        PreparedExecutionContext? executionContext,
+        StrategySignalSnapshot? strategySignal,
+        StrategySignalVetoSnapshot? strategyVeto,
+        string strategyDecisionOutcome,
+        string executionStatus,
+        string blockerCode,
+        string blockerDetail,
+        string guardSummary,
+        CancellationToken cancellationToken,
+        string? correlationId = null,
+        RiskVetoResult? riskEvaluation = null,
+        StrategySignalGenerationResult? strategyResult = null,
+        string? shadowFinalAction = null,
+        string? shadowNoSubmitReason = null)
+    {
+        var attempt = await PersistBlockedAttemptAsync(
+            scanCycleId,
+            selectedCandidate,
+            ownerUserId,
+            botMatch,
+            symbolMetadata,
+            executionContext,
+            strategySignal,
+            strategyVeto,
+            strategyDecisionOutcome,
+            executionStatus,
+            blockerCode,
+            blockerDetail,
+            guardSummary,
+            cancellationToken,
+            correlationId,
+            riskEvaluation);
+
+        if (ShouldPersistShadowDecision(attempt, botMatch, strategyResult, strategySignal, strategyVeto))
+        {
+            await CaptureShadowDecisionForAttemptAsync(
+                attempt,
+                botMatch!,
+                strategyResult,
+                strategySignal,
+                strategyVeto,
+                shadowFinalAction,
+                shadowNoSubmitReason,
+                cancellationToken);
+        }
+
+        return attempt;
+    }
+
+    private bool IsShadowModeActive()
+    {
+        return aiShadowDecisionService is not null &&
+               aiSignalOptionsValue.Enabled &&
+               aiSignalOptionsValue.ShadowModeEnabled &&
+               !botExecutionOptionsValue.PilotActivationEnabled;
+    }
+
+    private bool ShouldPersistShadowDecision(
+        MarketScannerHandoffAttempt attempt,
+        BotStrategyMatch? botMatch,
+        StrategySignalGenerationResult? strategyResult,
+        StrategySignalSnapshot? strategySignal,
+        StrategySignalVetoSnapshot? strategyVeto)
+    {
+        return aiShadowDecisionService is not null &&
+               aiSignalOptionsValue.Enabled &&
+               botMatch is not null &&
+               (!string.IsNullOrWhiteSpace(botMatch.OwnerUserId)) &&
+               (strategyResult is not null || strategySignal is not null || strategyVeto is not null) &&
+               (IsShadowModeActive() || IsEntryDirectionModeBlocked(attempt, strategySignal));
+    }
+
+    private static bool IsEntryDirectionModeBlocked(
+        MarketScannerHandoffAttempt attempt,
+        StrategySignalSnapshot? strategySignal)
+    {
+        return string.Equals(attempt.BlockerCode, "EntryDirectionModeBlocked", StringComparison.Ordinal) &&
+               !string.IsNullOrWhiteSpace(attempt.CorrelationId) &&
+               strategySignal is not null;
+    }
+
+    private async Task CaptureShadowDecisionForAttemptAsync(
+        MarketScannerHandoffAttempt attempt,
+        BotStrategyMatch botMatch,
+        StrategySignalGenerationResult? strategyResult,
+        StrategySignalSnapshot? strategySignal,
+        StrategySignalVetoSnapshot? strategyVeto,
+        string? shadowFinalAction,
+        string? shadowNoSubmitReason,
+        CancellationToken cancellationToken)
+    {
+        if (aiShadowDecisionService is null)
+        {
+            return;
+        }
+
+        var finalAction = string.IsNullOrWhiteSpace(shadowFinalAction)
+            ? "NoSubmit"
+            : shadowFinalAction.Trim();
+        var hypotheticalSubmitAllowed = string.Equals(finalAction, "ShadowOnly", StringComparison.Ordinal);
+        var noSubmitReason = string.IsNullOrWhiteSpace(shadowNoSubmitReason)
+            ? hypotheticalSubmitAllowed
+                ? "ShadowModeActive"
+                : attempt.BlockerCode ?? "NoSubmit"
+            : shadowNoSubmitReason.Trim();
+
+        var existingDecision = await dbContext.AiShadowDecisions
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .AnyAsync(
+                entity => entity.BotId == botMatch.BotId &&
+                          entity.CorrelationId == attempt.CorrelationId &&
+                          entity.NoSubmitReason == noSubmitReason &&
+                          !entity.IsDeleted,
+                cancellationToken);
+
+        if (existingDecision)
+        {
+            return;
+        }
+
+        var aiEvaluation = ResolvePrimaryAiEvaluation(strategyResult, strategySignal, strategyVeto);
+        var resolvedSymbol = string.IsNullOrWhiteSpace(attempt.SelectedSymbol)
+            ? strategySignal?.Symbol ?? strategyVeto?.Symbol ?? "UNKNOWN"
+            : attempt.SelectedSymbol!;
+        var resolvedTimeframe = string.IsNullOrWhiteSpace(attempt.SelectedTimeframe)
+            ? strategySignal?.Timeframe ?? strategyVeto?.Timeframe ?? klineInterval
+            : attempt.SelectedTimeframe!;
+        var strategyDirection = ResolveStrategyDirection(strategyResult, strategySignal, strategyVeto);
+        var marketDataTimestampUtc = strategySignal?.IndicatorCloseTimeUtc ?? strategyVeto?.IndicatorCloseTimeUtc;
+        var strategyDecisionCode = string.Equals(finalAction, "ShadowOnly", StringComparison.Ordinal)
+            ? null
+            : attempt.BlockerCode ?? strategyVeto?.ConfidenceSnapshot.RiskReasonCode.ToString();
+        var strategySummary = string.Equals(finalAction, "ShadowOnly", StringComparison.Ordinal)
+            ? strategySignal?.ExplainabilityPayload.UiLog.Summary
+                ?? strategyResult?.EvaluationReport?.ExplainabilitySummary
+                ?? "Scanner handoff recorded advisory shadow observation only."
+            : attempt.BlockerDetail
+                ?? strategyVeto?.UiLog.Summary
+                ?? strategyResult?.EvaluationReport?.ExplainabilitySummary;
+
+        var decision = await aiShadowDecisionService.CaptureAsync(
+            new AiShadowDecisionWriteRequest(
+                Guid.NewGuid(),
+                botMatch.OwnerUserId,
+                botMatch.BotId,
+                botMatch.ExchangeAccountId,
+                attempt.TradingStrategyId,
+                attempt.TradingStrategyVersionId,
+                attempt.StrategySignalId,
+                attempt.StrategySignalVetoId,
+                FeatureSnapshotId: null,
+                StrategyDecisionTraceId: null,
+                HypotheticalDecisionTraceId: null,
+                attempt.CorrelationId,
+                attempt.StrategyKey ?? botMatch.StrategyKey,
+                resolvedSymbol,
+                resolvedTimeframe,
+                attempt.CompletedAtUtc,
+                marketDataTimestampUtc,
+                FeatureVersion: null,
+                strategyDirection,
+                ResolveStrategyConfidenceScore(strategyResult, strategySignal, strategyVeto),
+                attempt.StrategyDecisionOutcome,
+                strategyDecisionCode,
+                strategySummary,
+                aiEvaluation?.SignalDirection.ToString() ?? "Neutral",
+                aiEvaluation?.ConfidenceScore ?? 0m,
+                ResolveAiReasonSummary(aiEvaluation, strategyResult, strategySignal),
+                aiEvaluation?.ProviderName ?? ResolveConfiguredAiProviderName(),
+                aiEvaluation?.ProviderModel ?? ResolveConfiguredAiProviderModel(),
+                aiEvaluation?.LatencyMs ?? 0,
+                aiEvaluation?.IsFallback ?? false,
+                aiEvaluation?.FallbackReason?.ToString(),
+                string.Equals(attempt.RiskOutcome, "Vetoed", StringComparison.Ordinal),
+                attempt.RiskVetoReasonCode,
+                attempt.RiskSummary,
+                PilotSafetyBlocked: false,
+                PilotSafetyReason: null,
+                PilotSafetySummary: null,
+                attempt.ExecutionEnvironment ?? strategySignal?.Mode ?? botExecutionOptionsValue.ExecutionDispatchMode,
+                ExchangeDataPlane.Futures,
+                finalAction,
+                hypotheticalSubmitAllowed,
+                hypotheticalSubmitAllowed ? null : attempt.BlockerCode,
+                hypotheticalSubmitAllowed ? null : attempt.BlockerSummary,
+                noSubmitReason,
+                FeatureSummary: null,
+                ResolveAgreementState(strategyDirection, aiEvaluation),
+                aiEvaluation?.AdvisoryScore ?? 0m,
+                ResolveAiContributionSummary(aiEvaluation)),
+            cancellationToken);
+
+        logger.LogInformation(
+            "Market scanner handoff persisted AI shadow decision {ShadowDecisionId} for HandoffAttemptId {HandoffAttemptId}. FinalAction={FinalAction} NoSubmitReason={NoSubmitReason}.",
+            decision.Id,
+            attempt.Id,
+            decision.FinalAction,
+            decision.NoSubmitReason);
     }
 
     private async Task RunDemoConsistencyForScanSymbolsAsync(Guid scanCycleId, CancellationToken cancellationToken)
@@ -1805,6 +2054,153 @@ public sealed class MarketScannerHandoffService(
         return string.IsNullOrWhiteSpace(activityTraceId)
             ? Guid.NewGuid().ToString("N")
             : activityTraceId;
+    }
+
+    private static AiSignalEvaluationResult? ResolvePrimaryAiEvaluation(
+        StrategySignalGenerationResult? strategyResult,
+        StrategySignalSnapshot? strategySignal,
+        StrategySignalVetoSnapshot? strategyVeto)
+    {
+        var primaryEvaluation = strategyResult?.AiEvaluations
+            .OrderByDescending(item => item.EvaluatedAtUtc)
+            .ThenByDescending(item => item.ConfidenceScore)
+            .FirstOrDefault();
+
+        if (primaryEvaluation is not null)
+        {
+            return primaryEvaluation;
+        }
+
+        return strategySignal?.ExplainabilityPayload.ConfidenceSnapshot.AiEvaluation
+               ?? strategyVeto?.ConfidenceSnapshot.AiEvaluation;
+    }
+
+    private static string ResolveStrategyDirection(
+        StrategySignalGenerationResult? strategyResult,
+        StrategySignalSnapshot? strategySignal,
+        StrategySignalVetoSnapshot? strategyVeto)
+    {
+        var direction = strategyResult?.EvaluationResult.Direction
+            ?? strategySignal?.ExplainabilityPayload.RuleResultSnapshot.Direction
+            ?? strategyVeto?.ConfidenceSnapshot.AiEvaluation?.SignalDirection switch
+            {
+                AiSignalDirection.Long => StrategyTradeDirection.Long,
+                AiSignalDirection.Short => StrategyTradeDirection.Short,
+                _ => StrategyTradeDirection.Neutral
+            };
+
+        return direction switch
+        {
+            StrategyTradeDirection.Long => "Long",
+            StrategyTradeDirection.Short => "Short",
+            _ => "Neutral"
+        };
+    }
+
+    private static int? ResolveStrategyConfidenceScore(
+        StrategySignalGenerationResult? strategyResult,
+        StrategySignalSnapshot? strategySignal,
+        StrategySignalVetoSnapshot? strategyVeto)
+    {
+        if (strategySignal is not null)
+        {
+            return strategySignal.ExplainabilityPayload.ConfidenceSnapshot.ScorePercentage;
+        }
+
+        if (strategyVeto is not null)
+        {
+            return strategyVeto.ConfidenceSnapshot.ScorePercentage;
+        }
+
+        return strategyResult?.EvaluationReport?.AggregateScore;
+    }
+
+    private string ResolveConfiguredAiProviderName()
+    {
+        var configuredProvider = aiSignalOptionsValue.SelectedProvider?.Trim();
+        return string.IsNullOrWhiteSpace(configuredProvider)
+            ? "Unknown"
+            : configuredProvider;
+    }
+
+    private string? ResolveConfiguredAiProviderModel()
+    {
+        var providerName = ResolveConfiguredAiProviderName();
+
+        if (string.Equals(providerName, ShadowLinearAiSignalProviderAdapter.ProviderNameValue, StringComparison.OrdinalIgnoreCase))
+        {
+            return "shadow-linear-v1";
+        }
+
+        if (string.Equals(providerName, OpenAiSignalProviderAdapter.ProviderNameValue, StringComparison.OrdinalIgnoreCase))
+        {
+            return Truncate(aiSignalOptionsValue.OpenAiModel, 128);
+        }
+
+        if (string.Equals(providerName, GeminiAiSignalProviderAdapter.ProviderNameValue, StringComparison.OrdinalIgnoreCase))
+        {
+            return Truncate(aiSignalOptionsValue.GeminiModel, 128);
+        }
+
+        return null;
+    }
+
+    private static string ResolveAiReasonSummary(
+        AiSignalEvaluationResult? aiEvaluation,
+        StrategySignalGenerationResult? strategyResult,
+        StrategySignalSnapshot? strategySignal)
+    {
+        if (aiEvaluation is not null)
+        {
+            return aiEvaluation.ReasonSummary;
+        }
+
+        var evaluationResult = strategyResult?.EvaluationResult ?? strategySignal?.ExplainabilityPayload.RuleResultSnapshot;
+        if (evaluationResult is not null && evaluationResult.HasEntryRules && evaluationResult.EntryMatched)
+        {
+            return "AI evaluation was skipped because no AI overlay response was recorded.";
+        }
+
+        return "AI evaluation was skipped because strategy produced no entry candidate.";
+    }
+
+    private static string? ResolveAiContributionSummary(AiSignalEvaluationResult? aiEvaluation)
+    {
+        if (aiEvaluation?.Contributions is null || aiEvaluation.Contributions.Count == 0)
+        {
+            return null;
+        }
+
+        return Truncate(
+            string.Join(
+                " | ",
+                aiEvaluation.Contributions
+                    .OrderByDescending(item => Math.Abs(item.Contribution))
+                    .ThenBy(item => item.Code, StringComparer.Ordinal)
+                    .Take(4)
+                    .Select(item => $"{item.Code} {FormatSignedDecimal(item.Contribution)}")),
+            1024);
+    }
+
+    private static string ResolveAgreementState(
+        string strategyDirection,
+        AiSignalEvaluationResult? aiEvaluation)
+    {
+        if (aiEvaluation is null)
+        {
+            return "NotApplicable";
+        }
+
+        return string.Equals(strategyDirection, aiEvaluation.SignalDirection.ToString(), StringComparison.Ordinal)
+            ? "Agreement"
+            : "Disagreement";
+    }
+
+    private static string FormatSignedDecimal(decimal value)
+    {
+        return value > 0m
+            ? $"+{value:0.###}"
+            : $"{value:0.###}";
     }
 
     private static string BuildScannerHandoffIdempotencyKey(

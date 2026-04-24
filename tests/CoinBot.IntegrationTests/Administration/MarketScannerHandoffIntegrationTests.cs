@@ -1,4 +1,5 @@
 using CoinBot.Application.Abstractions.DataScope;
+using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
@@ -7,6 +8,7 @@ using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
+using CoinBot.Infrastructure.Ai;
 using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Identity;
 using CoinBot.Infrastructure.Jobs;
@@ -23,6 +25,153 @@ namespace CoinBot.IntegrationTests.Administration;
 
 public sealed class MarketScannerHandoffIntegrationTests
 {
+    [Fact]
+    public async Task MarketScannerHandoffService_PersistsShadowOnlyAiDecision_OnSqlServer()
+    {
+        var databaseName = $"CoinBotMarketScannerShadowInt_{Guid.NewGuid():N}";
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString(databaseName);
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlServer(connectionString).Options;
+        await using var dbContext = new ApplicationDbContext(options, new TestDataScopeContextAccessor());
+        await dbContext.Database.EnsureDeletedAsync();
+        await dbContext.Database.EnsureCreatedAsync();
+
+        try
+        {
+            var scanCycleId = Guid.NewGuid();
+            var strategyId = Guid.NewGuid();
+            var strategyVersionId = Guid.NewGuid();
+            var botId = Guid.NewGuid();
+            dbContext.Users.Add(new ApplicationUser
+            {
+                Id = "user-shadow",
+                UserName = "user-shadow",
+                NormalizedUserName = "USER-SHADOW",
+                Email = "user-shadow@coinbot.test",
+                NormalizedEmail = "USER-SHADOW@COINBOT.TEST",
+                FullName = "Scanner Handoff Shadow User"
+            });
+            dbContext.MarketScannerCycles.Add(new MarketScannerCycle
+            {
+                Id = scanCycleId,
+                StartedAtUtc = nowUtc.UtcDateTime.AddSeconds(-2),
+                CompletedAtUtc = nowUtc.UtcDateTime,
+                UniverseSource = "integration-test",
+                ScannedSymbolCount = 1,
+                EligibleCandidateCount = 1,
+                TopCandidateCount = 1,
+                BestCandidateSymbol = "BTCUSDT",
+                BestCandidateScore = 95m,
+                Summary = "integration-test"
+            });
+            dbContext.MarketScannerCandidates.Add(new MarketScannerCandidate
+            {
+                Id = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+                ScanCycleId = scanCycleId,
+                Symbol = "BTCUSDT",
+                UniverseSource = "integration-test",
+                ObservedAtUtc = nowUtc.UtcDateTime,
+                LastCandleAtUtc = nowUtc.UtcDateTime,
+                LastPrice = 100m,
+                QuoteVolume24h = 250_000m,
+                IsEligible = true,
+                Score = 250_000m,
+                Rank = 1,
+                IsTopCandidate = true
+            });
+            dbContext.TradingStrategies.Add(new TradingStrategy
+            {
+                Id = strategyId,
+                OwnerUserId = "user-shadow",
+                StrategyKey = "scanner-handoff-shadow",
+                DisplayName = "Scanner Handoff Shadow",
+                PromotionState = StrategyPromotionState.LivePublished,
+                PublishedMode = ExecutionEnvironment.Live,
+                PublishedAtUtc = nowUtc.UtcDateTime.AddMinutes(-1)
+            });
+            dbContext.TradingStrategyVersions.Add(new TradingStrategyVersion
+            {
+                Id = strategyVersionId,
+                OwnerUserId = "user-shadow",
+                TradingStrategyId = strategyId,
+                SchemaVersion = 1,
+                VersionNumber = 1,
+                Status = StrategyVersionStatus.Published,
+                DefinitionJson = "{}",
+                PublishedAtUtc = nowUtc.UtcDateTime.AddMinutes(-1)
+            });
+            dbContext.TradingBots.Add(new TradingBot
+            {
+                Id = botId,
+                OwnerUserId = "user-shadow",
+                Name = "Scanner Handoff Shadow Bot",
+                StrategyKey = "scanner-handoff-shadow",
+                Symbol = "BTCUSDT",
+                IsEnabled = true
+            });
+            await dbContext.SaveChangesAsync();
+
+            var strategySignalService = new FakeStrategySignalService(
+                CreateSignal(
+                    strategyId,
+                    strategyVersionId,
+                    "BTCUSDT",
+                    "1m",
+                    nowUtc.UtcDateTime,
+                    aiEvaluation: CreateShadowAiEvaluation()));
+            var services = new ServiceCollection();
+            services.AddScoped<IDataScopeContextAccessor, TestDataScopeContextAccessor>();
+            services.AddScoped(provider => new ApplicationDbContext(options, provider.GetRequiredService<IDataScopeContextAccessor>()));
+            services.AddSingleton<IStrategySignalService>(strategySignalService);
+            services.AddSingleton<IExecutionGate>(new FakeExecutionGate(nowUtc.UtcDateTime));
+            services.AddSingleton<IUserExecutionOverrideGuard>(new FakeUserExecutionOverrideGuard());
+            services.AddSingleton<IExecutionEngine>(new FakeExecutionEngine(options, nowUtc.UtcDateTime));
+            await using var serviceProvider = services.BuildServiceProvider();
+            var handoffService = new MarketScannerHandoffService(
+                dbContext,
+                serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+                new FakeMarketDataService(nowUtc.UtcDateTime),
+                new FakeIndicatorDataService(CreateIndicatorSnapshot("BTCUSDT", "1m", nowUtc.UtcDateTime)),
+                new FakeSharedSymbolRegistry(),
+                new FakeDataLatencyCircuitBreaker(nowUtc.UtcDateTime),
+                Options.Create(new MarketScannerOptions { HandoffEnabled = true, AllowedQuoteAssets = ["USDT"] }),
+                Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m" }),
+                Options.Create(new BotExecutionPilotOptions
+                {
+                    SignalEvaluationMode = ExecutionEnvironment.Live,
+                    ExecutionDispatchMode = ExecutionEnvironment.Demo,
+                    PrimeHistoricalCandleCount = 34
+                }),
+                new FixedTimeProvider(nowUtc),
+                NullLogger<MarketScannerHandoffService>.Instance,
+                aiSignalOptions: Options.Create(new AiSignalOptions
+                {
+                    Enabled = true,
+                    ShadowModeEnabled = true,
+                    SelectedProvider = ShadowLinearAiSignalProviderAdapter.ProviderNameValue
+                }),
+                aiShadowDecisionService: new AiShadowDecisionService(dbContext, new FixedTimeProvider(nowUtc)));
+
+            var attempt = await handoffService.RunOnceAsync(scanCycleId);
+            var shadowDecision = await dbContext.AiShadowDecisions.AsNoTracking().SingleAsync();
+
+            Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+            Assert.Equal("ShadowModeActive", attempt.BlockerCode);
+            Assert.Equal("ShadowOnly", shadowDecision.FinalAction);
+            Assert.Equal("ShadowModeActive", shadowDecision.NoSubmitReason);
+            Assert.True(shadowDecision.HypotheticalSubmitAllowed);
+            Assert.Equal("ShadowLinear", shadowDecision.AiProviderName);
+            Assert.Equal("shadow-linear-v1", shadowDecision.AiProviderModel);
+            Assert.Equal(0.25m, shadowDecision.AiAdvisoryScore);
+            Assert.Contains("CompressionBreakoutSetupDetected +0.25", shadowDecision.AiContributionSummary, StringComparison.Ordinal);
+            Assert.Empty(dbContext.ExecutionOrders);
+        }
+        finally
+        {
+            await dbContext.Database.EnsureDeletedAsync();
+        }
+    }
+
     [Fact]
     public async Task MarketScannerHandoffService_PersistsPreparedAttemptAndAdminReadModel_OnSqlServer()
     {
@@ -494,7 +643,8 @@ public sealed class MarketScannerHandoffIntegrationTests
         string symbol,
         string timeframe,
         DateTime generatedAtUtc,
-        StrategyTradeDirection direction = StrategyTradeDirection.Long)
+        StrategyTradeDirection direction = StrategyTradeDirection.Long,
+        AiSignalEvaluationResult? aiEvaluation = null)
     {
         var indicatorSnapshot = CreateIndicatorSnapshot(symbol, timeframe, generatedAtUtc);
         return new StrategySignalSnapshot(
@@ -532,9 +682,30 @@ public sealed class MarketScannerHandoffIntegrationTests
                     direction,
                     direction,
                     StrategyTradeDirection.Neutral),
-                new StrategySignalConfidenceSnapshot(95, StrategySignalConfidenceBand.High, 3, 3, true, true, false, RiskVetoReasonCode.None, false, "Integration entry."),
+                new StrategySignalConfidenceSnapshot(95, StrategySignalConfidenceBand.High, 3, 3, true, true, false, RiskVetoReasonCode.None, false, "Integration entry.", AiEvaluation: aiEvaluation),
                 new StrategySignalLogExplainabilitySnapshot("Entry", "Integration entry", ["driver"], ["scanner"]),
                 new StrategySignalDuplicateSuppressionSnapshot(true, false, "fp-BTCUSDT")));
+    }
+
+    private static AiSignalEvaluationResult CreateShadowAiEvaluation()
+    {
+        return new AiSignalEvaluationResult(
+            AiSignalDirection.Long,
+            0.81m,
+            "Compression breakout setup detected.",
+            FeatureSnapshotId: null,
+            ShadowLinearAiSignalProviderAdapter.ProviderNameValue,
+            "shadow-linear-v1",
+            9,
+            IsFallback: false,
+            FallbackReason: null,
+            RawResponseCaptured: false,
+            EvaluatedAtUtc: new DateTime(2026, 4, 3, 12, 0, 0, DateTimeKind.Utc),
+            AdvisoryScore: 0.25m,
+            Contributions:
+            [
+                new AiSignalContributionSnapshot("CompressionBreakoutSetupDetected", 0.25m, "Compression breakout setup detected.")
+            ]);
     }
 
     private sealed class FakeStrategySignalService(StrategySignalSnapshot signal) : IStrategySignalService
