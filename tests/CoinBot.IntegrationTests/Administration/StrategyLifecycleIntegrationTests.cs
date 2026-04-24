@@ -397,7 +397,7 @@ public sealed class StrategyLifecycleIntegrationTests
     private static IAiSignalEvaluator CreateAiSignalEvaluator(DateTimeOffset nowUtc)
     {
         return new AiSignalEvaluator(
-            [new DeterministicStubAiSignalProviderAdapter(), new OfflineAiSignalProviderAdapter(), new OpenAiSignalProviderAdapter(), new GeminiAiSignalProviderAdapter()],
+            [new ShadowLinearAiSignalProviderAdapter(), new DeterministicStubAiSignalProviderAdapter(), new OfflineAiSignalProviderAdapter(), new OpenAiSignalProviderAdapter(), new GeminiAiSignalProviderAdapter()],
             Options.Create(new AiSignalOptions()),
             new FixedTimeProvider(nowUtc),
             NullLogger<AiSignalEvaluator>.Instance);

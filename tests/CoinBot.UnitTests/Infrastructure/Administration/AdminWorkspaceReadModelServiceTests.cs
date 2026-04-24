@@ -1,4 +1,5 @@
 using CoinBot.Application.Abstractions.Administration;
+using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Monitoring;
@@ -6,6 +7,7 @@ using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
+using CoinBot.Infrastructure.Ai;
 using CoinBot.Infrastructure.Identity;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.Infrastructure.Strategies;
@@ -520,6 +522,86 @@ public sealed class AdminWorkspaceReadModelServiceTests
     }
 
     [Fact]
+    public async Task GetStrategyAiMonitoringAsync_ProjectsRecentShadowHealthTiles()
+    {
+        var now = new DateTime(2026, 4, 24, 12, 0, 0, DateTimeKind.Utc);
+        await using var dbContext = CreateDbContext();
+        var decisionId = Guid.NewGuid();
+
+        dbContext.AiShadowDecisions.Add(new AiShadowDecision
+        {
+            Id = decisionId,
+            OwnerUserId = "shadow-owner-001",
+            BotId = Guid.NewGuid(),
+            CorrelationId = "corr-shadow-001",
+            StrategyKey = "shadow-scan",
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            EvaluatedAtUtc = now.AddMinutes(-2),
+            StrategyDirection = "Long",
+            AiDirection = "Long",
+            AiConfidence = 0.84m,
+            AiReasonSummary = "Shadow linear favored long momentum.",
+            AiProviderName = ShadowLinearAiSignalProviderAdapter.ProviderNameValue,
+            AiProviderModel = "shadow-linear-v1",
+            AiLatencyMs = 7,
+            AiIsFallback = false,
+            AiAdvisoryScore = 0.42m,
+            AiContributionSummary = "TrendEmaStackBullish +0.30 | MacdLineAboveSignal +0.12",
+            TradingMode = ExecutionEnvironment.Live,
+            Plane = ExchangeDataPlane.Futures,
+            FinalAction = "ShadowOnly",
+            HypotheticalSubmitAllowed = true,
+            NoSubmitReason = "ShadowModeActive",
+            AgreementState = "Agreement",
+            CreatedDate = now.AddMinutes(-2),
+            UpdatedDate = now.AddMinutes(-2)
+        });
+        dbContext.AiShadowDecisionOutcomes.Add(new AiShadowDecisionOutcome
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "shadow-owner-001",
+            AiShadowDecisionId = decisionId,
+            BotId = Guid.NewGuid(),
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            DecisionEvaluatedAtUtc = now.AddMinutes(-2),
+            HorizonKind = AiShadowOutcomeDefaults.OfficialHorizonKind,
+            HorizonValue = AiShadowOutcomeDefaults.OfficialHorizonValue,
+            OutcomeState = AiShadowOutcomeState.Scored,
+            OutcomeScore = 0.31m,
+            RealizedDirectionality = "Long",
+            ConfidenceBucket = "High",
+            FutureDataAvailability = AiShadowFutureDataAvailability.Available,
+            ScoredAtUtc = now.AddMinutes(-1),
+            CreatedDate = now.AddMinutes(-1),
+            UpdatedDate = now.AddMinutes(-1)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminWorkspaceReadModelService(
+            dbContext,
+            new FakeAdminMonitoringReadModelService(now),
+            new FakeTradingModeResolver(),
+            new FixedTimeProvider(now));
+
+        var snapshot = await service.GetStrategyAiMonitoringAsync();
+
+        var aiShadowTile = Assert.Single(snapshot.SummaryTiles, tile => tile.Label == "AI shadow");
+        var avgAdvisoryTile = Assert.Single(snapshot.SummaryTiles, tile => tile.Label == "Avg advisory");
+        var shadowModelTile = Assert.Single(snapshot.HealthTiles, tile => tile.Label == "Shadow model");
+        var agreementTile = Assert.Single(snapshot.HealthTiles, tile => tile.Label == "Agreement");
+        var outcomeTile = Assert.Single(snapshot.HealthTiles, tile => tile.Label == "Outcome avg");
+
+        Assert.Equal("1", aiShadowTile.Value);
+        Assert.Equal("+0.42", avgAdvisoryTile.Value);
+        Assert.Equal("Healthy", shadowModelTile.Value);
+        Assert.Contains("ShadowLinear / shadow-linear-v1", shadowModelTile.Meta, StringComparison.Ordinal);
+        Assert.Equal("100%", agreementTile.Value);
+        Assert.Equal("+0.31", outcomeTile.Value);
+    }
+
+    [Fact]
     public async Task GetStrategyAiMonitoringAsync_ReturnsEmptyTemplateAdoptionSummary_WhenNoTemplateOrCloneDataExists()
     {
         var now = new DateTime(2026, 4, 8, 13, 0, 0, DateTimeKind.Utc);
@@ -734,9 +816,6 @@ public sealed class AdminWorkspaceReadModelServiceTests
             """;
     }
 }
-
-
-
 
 
 

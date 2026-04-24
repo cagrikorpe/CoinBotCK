@@ -2850,7 +2850,9 @@ public sealed class BotWorkerJobProcessor(
                 hypotheticalEvaluation.BlockSummary,
                 noSubmitReason,
                 featureSnapshot?.FeatureSummary,
-                ResolveAgreementState(strategyDirection, aiEvaluation)),
+                ResolveAgreementState(strategyDirection, aiEvaluation),
+                aiEvaluation?.AdvisoryScore ?? 0m,
+                ResolveAiContributionSummary(aiEvaluation)),
             cancellationToken);
     }
 
@@ -3299,6 +3301,11 @@ public sealed class BotWorkerJobProcessor(
     {
         var providerName = ResolveConfiguredAiProviderName();
 
+        if (string.Equals(providerName, ShadowLinearAiSignalProviderAdapter.ProviderNameValue, StringComparison.OrdinalIgnoreCase))
+        {
+            return "shadow-linear-v1";
+        }
+
         if (string.Equals(providerName, OpenAiSignalProviderAdapter.ProviderNameValue, StringComparison.OrdinalIgnoreCase))
         {
             return Truncate(aiSignalOptionsValue.OpenAiModel, 128);
@@ -3310,6 +3317,24 @@ public sealed class BotWorkerJobProcessor(
         }
 
         return null;
+    }
+
+    private static string? ResolveAiContributionSummary(AiSignalEvaluationResult? aiEvaluation)
+    {
+        if (aiEvaluation?.Contributions is null || aiEvaluation.Contributions.Count == 0)
+        {
+            return null;
+        }
+
+        return Truncate(
+            string.Join(
+                " | ",
+                aiEvaluation.Contributions
+                    .OrderByDescending(item => Math.Abs(item.Contribution))
+                    .ThenBy(item => item.Code, StringComparer.Ordinal)
+                    .Take(4)
+                    .Select(item => $"{item.Code} {FormatSignedDecimal(item.Contribution)}")),
+            1024);
     }
 
     private static string ResolveAiReasonSummary(
@@ -3324,6 +3349,13 @@ public sealed class BotWorkerJobProcessor(
         return evaluationResult.HasEntryRules && evaluationResult.EntryMatched
             ? "AI evaluation was skipped because no AI overlay response was recorded."
             : "AI evaluation was skipped because strategy produced no entry candidate.";
+    }
+
+    private static string FormatSignedDecimal(decimal value)
+    {
+        return value > 0m
+            ? $"+{value:0.###}"
+            : $"{value:0.###}";
     }
 
     private static string ResolveAgreementState(

@@ -46,6 +46,8 @@ public sealed class AiRobotControllerTests
         Assert.Equal("Overlay=Boost · Boost=5", model.Decisions[0].OverlaySummary);
         Assert.Contains("Final=ShadowOnly", model.Decisions[0].FinalReasonSummary, StringComparison.Ordinal);
         Assert.Equal("Trend aligned.", model.Decisions[0].TopFeatureHints);
+        Assert.Equal("+0.420", model.Decisions[0].AdvisoryScore);
+        Assert.Equal("TrendEmaStackBullish +0.30 | MacdLineAboveSignal +0.12", model.Decisions[0].ContributionSummary);
         Assert.Equal("CCCCCCCC", model.Decisions[0].FeatureSnapshotReference);
         Assert.Contains("Trending", model.Decisions[0].RegimeSummary, StringComparison.Ordinal);
         Assert.Equal("Scored · +1 bar", model.Decisions[0].OutcomeLabel);
@@ -156,7 +158,9 @@ public sealed class AiRobotControllerTests
                         false,
                         false,
                         "Boost",
-                        5)
+                        5,
+                        0.42m,
+                        "TrendEmaStackBullish +0.30 | MacdLineAboveSignal +0.12")
                 ],
                 [new UserDashboardReasonBucketSnapshot("ShadowModeActive", 1)],
                 [],

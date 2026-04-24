@@ -197,8 +197,9 @@
                                         </td>
                                         <td>
                                             <div class="font-weight-bolder">@item.AiDirection</div>
-                                            <div class="text-muted">@item.AiConfidence · @item.Provider</div>
+                                            <div class="text-muted">@item.AiConfidence · @item.Provider · Score @item.AdvisoryScore</div>
                                             <div class="text-muted mt-2" data-cb-ai-decision-overlay-summary>@item.OverlaySummary</div>
+                                            <div class="text-muted" data-cb-ai-decision-contributions>@item.ContributionSummary</div>
                                             @if (item.IsFallback)
                                             {
                                                 <div><span class="cb-badge cb-badge-warning">Fallback</span></div>

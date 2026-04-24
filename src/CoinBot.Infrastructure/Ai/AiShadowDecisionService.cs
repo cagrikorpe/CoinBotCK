@@ -50,6 +50,8 @@ public sealed partial class AiShadowDecisionService(ApplicationDbContext dbConte
             AiLatencyMs = Math.Max(0, request.AiLatencyMs),
             AiIsFallback = request.AiIsFallback,
             AiFallbackReason = NormalizeOptional(request.AiFallbackReason, 64),
+            AiAdvisoryScore = NormalizeAdvisoryScore(request.AiAdvisoryScore),
+            AiContributionSummary = NormalizeOptional(request.AiContributionSummary, 1024),
             RiskVetoPresent = request.RiskVetoPresent,
             RiskVetoReason = NormalizeOptional(request.RiskVetoReason, 64),
             RiskVetoSummary = NormalizeOptional(request.RiskVetoSummary, 1024),
@@ -241,7 +243,9 @@ public sealed partial class AiShadowDecisionService(ApplicationDbContext dbConte
             entity.NoSubmitReason,
             entity.FeatureSummary,
             entity.AgreementState,
-            entity.CreatedDate);
+            entity.CreatedDate,
+            entity.AiAdvisoryScore,
+            entity.AiContributionSummary);
     }
 
     private static string NormalizeDirection(string? value)
@@ -279,6 +283,21 @@ public sealed partial class AiShadowDecisionService(ApplicationDbContext dbConte
         if (value < 0m)
         {
             return 0m;
+        }
+
+        if (value > 1m)
+        {
+            return 1m;
+        }
+
+        return decimal.Round(value, 6, MidpointRounding.AwayFromZero);
+    }
+
+    private static decimal NormalizeAdvisoryScore(decimal value)
+    {
+        if (value < -1m)
+        {
+            return -1m;
         }
 
         if (value > 1m)

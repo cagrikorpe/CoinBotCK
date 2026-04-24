@@ -203,6 +203,7 @@ public sealed class AiSignalEvaluator(
             var rawDirection = ResolveString(root, "direction", "signalDirection", "signal");
             var rawReasonSummary = ResolveString(root, "reasonSummary", "summary", "reason");
             var confidenceScore = ResolveDecimal(root, "confidenceScore", "confidence");
+            var advisoryScore = ClampAdvisoryScore(ResolveDecimal(root, "advisoryScore", "score") ?? 0m);
 
             if (string.IsNullOrWhiteSpace(rawDirection) || !confidenceScore.HasValue)
             {
@@ -233,6 +234,7 @@ public sealed class AiSignalEvaluator(
                 string.IsNullOrWhiteSpace(rawReasonSummary)
                     ? BuildDefaultSummary(direction)
                     : rawReasonSummary!);
+            var contributions = ParseContributions(root);
 
             return new AiSignalEvaluationResult(
                 direction,
@@ -245,7 +247,9 @@ public sealed class AiSignalEvaluator(
                 IsFallback: false,
                 FallbackReason: null,
                 RawResponseCaptured: false,
-                evaluatedAtUtc);
+                evaluatedAtUtc,
+                AdvisoryScore: advisoryScore,
+                Contributions: contributions);
         }
         catch (JsonException)
         {
@@ -297,6 +301,48 @@ public sealed class AiSignalEvaluator(
         }
 
         return null;
+    }
+
+    private IReadOnlyCollection<AiSignalContributionSnapshot> ParseContributions(JsonElement element)
+    {
+        if (!element.TryGetProperty("contributions", out var contributionsElement) ||
+            contributionsElement.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<AiSignalContributionSnapshot>();
+        }
+
+        var contributions = new List<AiSignalContributionSnapshot>();
+        var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var item in contributionsElement.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var code = ResolveString(item, "code", "Code", "id", "name")?.Trim();
+            var contribution = ResolveDecimal(item, "contribution", "Contribution", "weight", "score");
+
+            if (string.IsNullOrWhiteSpace(code) || !contribution.HasValue)
+            {
+                continue;
+            }
+
+            var normalizedCode = code.Length <= 64 ? code : code[..64];
+            if (!seenCodes.Add(normalizedCode))
+            {
+                continue;
+            }
+
+            var summary = ResolveString(item, "summary", "Summary", "reason", "detail");
+            contributions.Add(new AiSignalContributionSnapshot(
+                normalizedCode,
+                ClampAdvisoryScore(contribution.Value),
+                string.IsNullOrWhiteSpace(summary) ? normalizedCode : TrimReason(summary!)));
+        }
+
+        return contributions;
     }
 
     private static decimal? ResolveDecimal(JsonElement element, params string[] propertyNames)
@@ -383,6 +429,16 @@ public sealed class AiSignalEvaluator(
             < 0m => 0m,
             > 1m => 1m,
             _ => value
+        };
+    }
+
+    private static decimal ClampAdvisoryScore(decimal value)
+    {
+        return value switch
+        {
+            < -1m => -1m,
+            > 1m => 1m,
+            _ => decimal.Round(value, 6, MidpointRounding.AwayFromZero)
         };
     }
 

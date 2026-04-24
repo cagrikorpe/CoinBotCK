@@ -33,6 +33,8 @@ public sealed class AiShadowDecision : UserOwnedEntity
     public int AiLatencyMs { get; set; }
     public bool AiIsFallback { get; set; }
     public string? AiFallbackReason { get; set; }
+    public decimal AiAdvisoryScore { get; set; }
+    public string? AiContributionSummary { get; set; }
     public bool RiskVetoPresent { get; set; }
     public string? RiskVetoReason { get; set; }
     public string? RiskVetoSummary { get; set; }

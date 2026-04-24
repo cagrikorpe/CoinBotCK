@@ -65,7 +65,9 @@ public sealed record AiRobotDecisionViewModel(
     string StrategySummary = "Strategy summary yok.",
     string OverlaySummary = "AI overlay uygulanmadı.",
     string FinalReasonSummary = "Final action özeti yok.",
-    string TopFeatureHints = "Top feature hints yok.");
+    string TopFeatureHints = "Top feature hints yok.",
+    string AdvisoryScore = "0.000",
+    string ContributionSummary = "Contribution breakdown yok.");
 
 public sealed record AiRobotBucketViewModel(string Label, int Count);
 

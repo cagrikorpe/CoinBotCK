@@ -269,6 +269,53 @@ public sealed class StrategySignalAiOverlayTests
     }
 
     [Fact]
+    public async Task GenerateAsync_PersistsSignal_WhenShadowLinearRunsInAdvisoryOnlyMode()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 6, 12, 0, 0, TimeSpan.Zero));
+        await using var dbContext = CreateDbContext();
+        var strategy = CreateStrategy("ai-overlay-user-shadow-linear", "ai-overlay-core");
+        var version = CreateVersion(strategy, 1, CreateDefinitionJson());
+
+        dbContext.TradingStrategies.Add(strategy);
+        dbContext.TradingStrategyVersions.Add(version);
+        dbContext.RiskProfiles.Add(CreateRiskProfile(strategy.OwnerUserId));
+        dbContext.DemoWallets.Add(CreateDemoWallet(strategy.OwnerUserId));
+        await dbContext.SaveChangesAsync();
+
+        var featureSnapshot = CreateFeatureSnapshot(FeatureSnapshotState.Ready);
+        var service = CreateService(
+            dbContext,
+            timeProvider,
+            new AiSignalOptions
+            {
+                Enabled = true,
+                SelectedProvider = ShadowLinearAiSignalProviderAdapter.ProviderNameValue,
+                MinimumConfidence = 0.99m
+            });
+
+        var result = await service.GenerateAsync(
+            new GenerateStrategySignalsRequest(
+                version.Id,
+                CreateContext(),
+                featureSnapshot));
+        var signal = Assert.Single(result.Signals);
+        var aiEvaluation = Assert.Single(result.AiEvaluations);
+        var loadedSignal = await service.GetAsync(signal.StrategySignalId);
+        var decisionTrace = await dbContext.DecisionTraces.SingleAsync();
+
+        Assert.False(aiEvaluation.IsFallback);
+        Assert.Equal(ShadowLinearAiSignalProviderAdapter.ProviderNameValue, aiEvaluation.ProviderName);
+        Assert.True(aiEvaluation.AdvisoryScore > 0m);
+        Assert.NotEmpty(aiEvaluation.Contributions ?? []);
+        Assert.NotNull(loadedSignal);
+        Assert.Equal("Observe", loadedSignal!.ExplainabilityPayload.ConfidenceSnapshot.AiOverlayDisposition);
+        Assert.Equal(0, loadedSignal.ExplainabilityPayload.ConfidenceSnapshot.AiOverlayBoostPoints);
+        Assert.Equal(aiEvaluation.AdvisoryScore, loadedSignal.ExplainabilityPayload.ConfidenceSnapshot.AiEvaluation!.AdvisoryScore);
+        Assert.Contains("\"advisoryScore\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
+        Assert.Contains("ShadowLinear", decisionTrace.SnapshotJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task GenerateAsync_PersistsSignal_WhenAiConfirmsShortStrategyDirection()
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 6, 12, 0, 0, TimeSpan.Zero));
@@ -447,7 +494,7 @@ public sealed class StrategySignalAiOverlayTests
                 timeProvider),
             correlationContextAccessor,
             aiSignalEvaluatorOverride ?? new AiSignalEvaluator(
-                [new DeterministicStubAiSignalProviderAdapter(), new OfflineAiSignalProviderAdapter(), new OpenAiSignalProviderAdapter(), new GeminiAiSignalProviderAdapter()],
+                [new ShadowLinearAiSignalProviderAdapter(), new DeterministicStubAiSignalProviderAdapter(), new OfflineAiSignalProviderAdapter(), new OpenAiSignalProviderAdapter(), new GeminiAiSignalProviderAdapter()],
                 Options.Create(aiSignalOptions),
                 timeProvider,
                 NullLogger<AiSignalEvaluator>.Instance),
@@ -620,7 +667,11 @@ public sealed class StrategySignalAiOverlayTests
         AiSignalDirection direction,
         decimal confidence,
         bool isFallback,
-        AiSignalFallbackReason? fallbackReason) : IAiSignalEvaluator
+        AiSignalFallbackReason? fallbackReason,
+        string providerName = "FixedAi",
+        string? providerModel = "fixed-v1",
+        decimal advisoryScore = 0m,
+        IReadOnlyCollection<AiSignalContributionSnapshot>? contributions = null) : IAiSignalEvaluator
     {
         public Task<AiSignalEvaluationResult> EvaluateAsync(AiSignalEvaluationRequest request, CancellationToken cancellationToken = default)
         {
@@ -630,8 +681,8 @@ public sealed class StrategySignalAiOverlayTests
                     fallbackReason ?? AiSignalFallbackReason.EvaluationException,
                     "Fixed fallback.",
                     request.FeatureSnapshot?.Id,
-                    "FixedAi",
-                    "fixed-v1",
+                    providerName,
+                    providerModel,
                     0,
                     new DateTime(2026, 4, 6, 12, 0, 0, DateTimeKind.Utc))
                 : new AiSignalEvaluationResult(
@@ -639,18 +690,17 @@ public sealed class StrategySignalAiOverlayTests
                     confidence,
                     "Fixed evaluator.",
                     request.FeatureSnapshot?.Id,
-                    "FixedAi",
-                    "fixed-v1",
+                    providerName,
+                    providerModel,
                     0,
                     false,
                     null,
                     false,
-                    new DateTime(2026, 4, 6, 12, 0, 0, DateTimeKind.Utc)));
+                    new DateTime(2026, 4, 6, 12, 0, 0, DateTimeKind.Utc),
+                    advisoryScore,
+                    contributions));
         }
     }
 }
-
-
-
 
 

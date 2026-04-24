@@ -7,7 +7,7 @@ public sealed class AiSignalOptions
     public bool Enabled { get; set; } = false;
 
     [Required]
-    public string SelectedProvider { get; set; } = DeterministicStubAiSignalProviderAdapter.ProviderNameValue;
+    public string SelectedProvider { get; set; } = ShadowLinearAiSignalProviderAdapter.ProviderNameValue;
 
     [Range(100, 30000)]
     public int TimeoutMs { get; set; } = 1500;

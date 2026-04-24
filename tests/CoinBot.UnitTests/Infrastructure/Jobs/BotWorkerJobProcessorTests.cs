@@ -2040,6 +2040,60 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_PersistsAdvisoryScoreAndContributionSummary_WhenShadowDecisionCaptured()
+    {
+        var aiOptions = new AiSignalOptions
+        {
+            Enabled = true,
+            ShadowModeEnabled = true,
+            SelectedProvider = ShadowLinearAiSignalProviderAdapter.ProviderNameValue,
+            MinimumConfidence = 0.70m
+        };
+        var contributions = new[]
+        {
+            new AiSignalContributionSnapshot("TrendEmaStackBullish", 0.30m, "EMA stack bullish."),
+            new AiSignalContributionSnapshot("MacdLineAboveSignal", 0.22m, "MACD line above signal.")
+        };
+
+        await using var harness = CreateHarness(
+            aiOptions,
+            aiSignalEvaluatorOverride: new FixedAiSignalEvaluator(
+                AiSignalDirection.Long,
+                0.84m,
+                false,
+                null,
+                providerName: ShadowLinearAiSignalProviderAdapter.ProviderNameValue,
+                providerModel: "shadow-linear-v1",
+                advisoryScore: 0.42m,
+                contributions: contributions));
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, bot);
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-ai-shadow-advisory-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-ai-shadow-advisory-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-ai-shadow-advisory-1",
+            CancellationToken.None);
+
+        var shadowDecision = await harness.DbContext.AiShadowDecisions.SingleAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal("ShadowOnly", shadowDecision.FinalAction);
+        Assert.Equal(ShadowLinearAiSignalProviderAdapter.ProviderNameValue, shadowDecision.AiProviderName);
+        Assert.Equal("shadow-linear-v1", shadowDecision.AiProviderModel);
+        Assert.Equal(0.42m, shadowDecision.AiAdvisoryScore);
+        Assert.Contains("TrendEmaStackBullish +0.3", shadowDecision.AiContributionSummary, StringComparison.Ordinal);
+        Assert.Contains("MacdLineAboveSignal +0.22", shadowDecision.AiContributionSummary, StringComparison.Ordinal);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
     public async Task ProcessAsync_PersistsNoSubmitShadowDecision_WhenTradeMasterIsDisarmed_InAiShadowMode()
     {
         await using var harness = CreateHarness(CreateEnabledAiOptions(), aiSignalEvaluatorOverride: new FixedAiSignalEvaluator(AiSignalDirection.Long, 0.91m, false, null));
@@ -2444,7 +2498,7 @@ public sealed class BotWorkerJobProcessorTests
     private static IAiSignalEvaluator CreateAiSignalEvaluator(TimeProvider timeProvider, AiSignalOptions aiSignalOptions)
     {
         return new AiSignalEvaluator(
-            [new DeterministicStubAiSignalProviderAdapter(), new OfflineAiSignalProviderAdapter(), new OpenAiSignalProviderAdapter(), new GeminiAiSignalProviderAdapter()],
+            [new ShadowLinearAiSignalProviderAdapter(), new DeterministicStubAiSignalProviderAdapter(), new OfflineAiSignalProviderAdapter(), new OpenAiSignalProviderAdapter(), new GeminiAiSignalProviderAdapter()],
             Options.Create(aiSignalOptions),
             timeProvider,
             NullLogger<AiSignalEvaluator>.Instance);
@@ -2464,7 +2518,11 @@ public sealed class BotWorkerJobProcessorTests
         AiSignalDirection direction,
         decimal confidenceScore,
         bool isFallback,
-        AiSignalFallbackReason? fallbackReason) : IAiSignalEvaluator
+        AiSignalFallbackReason? fallbackReason,
+        string providerName = "FixedAi",
+        string? providerModel = "fixed-v1",
+        decimal advisoryScore = 0m,
+        IReadOnlyCollection<AiSignalContributionSnapshot>? contributions = null) : IAiSignalEvaluator
     {
         public Task<AiSignalEvaluationResult> EvaluateAsync(
             AiSignalEvaluationRequest request,
@@ -2479,8 +2537,8 @@ public sealed class BotWorkerJobProcessorTests
                         fallbackReason ?? AiSignalFallbackReason.EvaluationException,
                         "Fixed AI fallback.",
                         request.FeatureSnapshot?.Id,
-                        "FixedAi",
-                        "fixed-v1",
+                        providerName,
+                        providerModel,
                         5,
                         nowUtc)
                     : new AiSignalEvaluationResult(
@@ -2488,13 +2546,15 @@ public sealed class BotWorkerJobProcessorTests
                         confidenceScore,
                         "Fixed AI evaluation.",
                         request.FeatureSnapshot?.Id,
-                        "FixedAi",
-                        "fixed-v1",
+                        providerName,
+                        providerModel,
                         5,
                         IsFallback: false,
                         FallbackReason: null,
                         RawResponseCaptured: false,
-                        nowUtc));
+                        nowUtc,
+                        advisoryScore,
+                        contributions));
         }
     }
     private static async Task<TradingBot> SeedBotGraphAsync(

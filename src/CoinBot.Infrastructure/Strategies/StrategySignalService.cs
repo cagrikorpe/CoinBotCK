@@ -1305,6 +1305,18 @@ public sealed class StrategySignalService(
         StrategyTradeDirection strategyDirection,
         AiSignalOptions aiSignalOptions)
     {
+        if (IsAdvisoryOnlyProvider(aiEvaluation.ProviderName))
+        {
+            return AiOverlayDecision.Allow(
+                disposition: "Observe",
+                boostPoints: 0,
+                reasonType: "AiAdvisory",
+                reasonCode: "AiObserve",
+                summary: aiEvaluation.IsFallback
+                    ? "AI advisory model fallback was recorded without affecting strategy execution."
+                    : "AI advisory model was recorded without execution authority.");
+        }
+
         if (aiEvaluation.IsFallback)
         {
             return AiOverlayDecision.Suppress(
@@ -1457,11 +1469,24 @@ public sealed class StrategySignalService(
             return Array.Empty<string>();
         }
 
-        return
-        [
-            $"AI {aiEvaluation.ProviderName}: {aiEvaluation.SignalDirection} {aiEvaluation.ConfidenceScore:0.##}",
-            aiEvaluation.ReasonSummary
-        ];
+        var drivers = new List<string>
+        {
+            $"AI {aiEvaluation.ProviderName}: {aiEvaluation.SignalDirection} {aiEvaluation.ConfidenceScore:0.##}"
+        };
+
+        if (aiEvaluation.AdvisoryScore != 0m)
+        {
+            drivers.Add($"AI advisory score {FormatSignedDecimal(aiEvaluation.AdvisoryScore)}");
+        }
+
+        var contributionSummary = BuildAiContributionSummary(aiEvaluation.Contributions);
+        if (!string.IsNullOrWhiteSpace(contributionSummary))
+        {
+            drivers.Add($"AI contributors: {contributionSummary}");
+        }
+
+        drivers.Add(aiEvaluation.ReasonSummary);
+        return drivers.Take(4).ToArray();
     }
 
     private static IReadOnlyCollection<string> CreateAiTags(AiSignalEvaluationResult? aiEvaluation)
@@ -1475,6 +1500,7 @@ public sealed class StrategySignalService(
         [
             $"AI {aiEvaluation.ProviderName}",
             $"AI {aiEvaluation.SignalDirection}",
+            $"AI Score {FormatSignedDecimal(aiEvaluation.AdvisoryScore)}",
             aiEvaluation.IsFallback
                 ? $"AI Fallback {aiEvaluation.FallbackReason}"
                 : $"AI Confidence {aiEvaluation.ConfidenceScore:0.##}"
@@ -1483,9 +1509,48 @@ public sealed class StrategySignalService(
 
     private static string? BuildAiSummarySuffix(AiSignalEvaluationResult? aiEvaluation)
     {
-        return aiEvaluation is null
-            ? null
-            : $"AI overlay: {aiEvaluation.SignalDirection} from {aiEvaluation.ProviderName} at {aiEvaluation.ConfidenceScore:0.##}. {aiEvaluation.ReasonSummary}";
+        if (aiEvaluation is null)
+        {
+            return null;
+        }
+
+        var contributionSummary = BuildAiContributionSummary(aiEvaluation.Contributions);
+        var contributionSuffix = string.IsNullOrWhiteSpace(contributionSummary)
+            ? string.Empty
+            : $" Top contributors: {contributionSummary}.";
+
+        return $"AI advisory: {aiEvaluation.SignalDirection} from {aiEvaluation.ProviderName} score {FormatSignedDecimal(aiEvaluation.AdvisoryScore)} at {aiEvaluation.ConfidenceScore:0.##}. {aiEvaluation.ReasonSummary}{contributionSuffix}";
+    }
+
+    private static bool IsAdvisoryOnlyProvider(string providerName)
+    {
+        return string.Equals(
+            providerName,
+            ShadowLinearAiSignalProviderAdapter.ProviderNameValue,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? BuildAiContributionSummary(IReadOnlyCollection<AiSignalContributionSnapshot>? contributions)
+    {
+        if (contributions is null || contributions.Count == 0)
+        {
+            return null;
+        }
+
+        return string.Join(
+            ", ",
+            contributions
+                .OrderByDescending(item => Math.Abs(item.Contribution))
+                .ThenBy(item => item.Code, StringComparer.Ordinal)
+                .Take(3)
+                .Select(item => $"{item.Code} {FormatSignedDecimal(item.Contribution)}"));
+    }
+
+    private static string FormatSignedDecimal(decimal value)
+    {
+        return value > 0m
+            ? $"+{value:0.###}"
+            : $"{value:0.###}";
     }
 
 
@@ -1829,7 +1894,14 @@ public sealed class StrategySignalService(
                     {
                         Direction = aiEvaluation.SignalDirection.ToString(),
                         aiEvaluation.ConfidenceScore,
+                        aiEvaluation.AdvisoryScore,
                         aiEvaluation.ReasonSummary,
+                        Contributions = aiEvaluation.Contributions?.Select(item => new
+                        {
+                            item.Code,
+                            item.Contribution,
+                            item.Summary
+                        }).ToArray(),
                         aiEvaluation.FeatureSnapshotId,
                         aiEvaluation.ProviderName,
                         aiEvaluation.ProviderModel,

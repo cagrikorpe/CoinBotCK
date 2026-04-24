@@ -142,7 +142,9 @@ public sealed record UserDashboardAiHistoryRowSnapshot(
     bool SuppressionCandidate = false,
     bool SuppressionAligned = false,
     string? AiOverlayDisposition = null,
-    int AiOverlayBoostPoints = 0);
+    int AiOverlayBoostPoints = 0,
+    decimal AiAdvisoryScore = 0m,
+    string? AiContributionSummary = null);
 
 public sealed record UserDashboardReasonBucketSnapshot(string Label, int Count);
 

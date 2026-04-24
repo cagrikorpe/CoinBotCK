@@ -257,6 +257,7 @@ public static class DependencyInjection
         services.AddScoped<IExecutionEngine, ExecutionEngine>();
         services.AddScoped<IUserExecutionOverrideGuard, UserExecutionOverrideGuard>();
         services.AddScoped<IRiskPolicyEvaluator, RiskPolicyEvaluator>();
+        services.AddScoped<IAiSignalProviderAdapter, ShadowLinearAiSignalProviderAdapter>();
         services.AddScoped<IAiSignalProviderAdapter, DeterministicStubAiSignalProviderAdapter>();
         services.AddScoped<IAiSignalProviderAdapter, OfflineAiSignalProviderAdapter>();
         services.AddScoped<IAiSignalProviderAdapter, OpenAiSignalProviderAdapter>();

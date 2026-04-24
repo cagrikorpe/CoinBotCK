@@ -19,6 +19,11 @@ public sealed record AiSignalEvaluationRequest(
     StrategySignalType? RequestedSignalType = null,
     string? StrategyKey = null);
 
+public sealed record AiSignalContributionSnapshot(
+    string Code,
+    decimal Contribution,
+    string Summary);
+
 public sealed record AiSignalEvaluationResult(
     AiSignalDirection SignalDirection,
     decimal ConfidenceScore,
@@ -30,7 +35,9 @@ public sealed record AiSignalEvaluationResult(
     bool IsFallback,
     AiSignalFallbackReason? FallbackReason,
     bool RawResponseCaptured,
-    DateTime EvaluatedAtUtc)
+    DateTime EvaluatedAtUtc,
+    decimal AdvisoryScore = 0m,
+    IReadOnlyCollection<AiSignalContributionSnapshot>? Contributions = null)
 {
     public static AiSignalEvaluationResult NeutralFallback(
         AiSignalFallbackReason fallbackReason,

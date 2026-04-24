@@ -254,6 +254,33 @@ public sealed class AiSignalEvaluatorTests
         Assert.DoesNotContain("  ", result.ReasonSummary, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task EvaluateAsync_ShadowLinear_ReturnsAdvisoryScoreAndContributions_ForBullishSnapshot()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 6, 12, 0, 0, TimeSpan.Zero));
+        var evaluator = CreateEvaluator(
+            timeProvider,
+            new AiSignalOptions
+            {
+                Enabled = true,
+                SelectedProvider = ShadowLinearAiSignalProviderAdapter.ProviderNameValue,
+                MinimumConfidence = 0.95m
+            },
+            new ShadowLinearAiSignalProviderAdapter());
+
+        var result = await evaluator.EvaluateAsync(CreateRequest(CreateReadyFeatureSnapshot()));
+
+        Assert.False(result.IsFallback);
+        Assert.Equal(ShadowLinearAiSignalProviderAdapter.ProviderNameValue, result.ProviderName);
+        Assert.Equal("shadow-linear-v1", result.ProviderModel);
+        Assert.Equal(AiSignalDirection.Long, result.SignalDirection);
+        Assert.True(result.ConfidenceScore > 0m);
+        Assert.True(result.AdvisoryScore > 0m);
+        Assert.NotEmpty(result.Contributions ?? []);
+        Assert.Contains(result.Contributions!, item => item.Code == "TrendEmaStackBullish");
+        Assert.Contains("Shadow linear score", result.ReasonSummary, StringComparison.Ordinal);
+    }
+
     private static IAiSignalEvaluator CreateEvaluator(
         TimeProvider timeProvider,
         AiSignalOptions options,

@@ -670,7 +670,7 @@ public sealed class StrategySignalServiceTests
     private static IAiSignalEvaluator CreateAiSignalEvaluator(TimeProvider timeProvider)
     {
         return new AiSignalEvaluator(
-            [new DeterministicStubAiSignalProviderAdapter(), new OfflineAiSignalProviderAdapter(), new OpenAiSignalProviderAdapter(), new GeminiAiSignalProviderAdapter()],
+            [new ShadowLinearAiSignalProviderAdapter(), new DeterministicStubAiSignalProviderAdapter(), new OfflineAiSignalProviderAdapter(), new OpenAiSignalProviderAdapter(), new GeminiAiSignalProviderAdapter()],
             Options.Create(new AiSignalOptions()),
             timeProvider,
             NullLogger<AiSignalEvaluator>.Instance);

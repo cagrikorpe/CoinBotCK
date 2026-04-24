@@ -396,7 +396,7 @@ public sealed class AiShadowDecisionIntegrationTests
             traceService,
             correlationContextAccessor,
             aiSignalEvaluatorOverride ?? new AiSignalEvaluator(
-                [new DeterministicStubAiSignalProviderAdapter(), new OfflineAiSignalProviderAdapter(), new OpenAiSignalProviderAdapter(), new GeminiAiSignalProviderAdapter()],
+                [new ShadowLinearAiSignalProviderAdapter(), new DeterministicStubAiSignalProviderAdapter(), new OfflineAiSignalProviderAdapter(), new OpenAiSignalProviderAdapter(), new GeminiAiSignalProviderAdapter()],
                 Options.Create(aiSignalOptions),
                 timeProvider,
                 NullLogger<AiSignalEvaluator>.Instance),
@@ -969,7 +969,6 @@ public sealed class AiShadowDecisionIntegrationTests
         }
     }
 }
-
 
 
 

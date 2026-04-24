@@ -126,7 +126,9 @@ public sealed class AiRobotController(
                 BuildStrategySummary(item),
                 BuildOverlaySummary(item),
                 BuildFinalReasonSummary(item),
-                item.TopSignalHints ?? "Top feature hints yok."))
+                item.TopSignalHints ?? "Top feature hints yok.",
+                FormatSignedDecimal(item.AiAdvisoryScore),
+                item.AiContributionSummary ?? "Contribution breakdown yok."))
             .ToList();
     }
 

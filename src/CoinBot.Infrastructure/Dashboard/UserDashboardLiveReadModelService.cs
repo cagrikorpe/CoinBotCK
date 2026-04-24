@@ -369,7 +369,9 @@ public sealed class UserDashboardLiveReadModelService(
             outcome?.SuppressionCandidate ?? ResolveSuppressionCandidate(entity),
             outcome?.SuppressionAligned ?? false,
             NormalizeOptional(confidenceSnapshot?.AiOverlayDisposition),
-            confidenceSnapshot?.AiOverlayBoostPoints ?? 0);
+            confidenceSnapshot?.AiOverlayBoostPoints ?? 0,
+            entity.AiAdvisoryScore,
+            NormalizeOptional(entity.AiContributionSummary));
     }
 
     private static IReadOnlyCollection<UserDashboardReasonBucketSnapshot> BuildBuckets(IEnumerable<string?> values)

@@ -2918,6 +2918,12 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         builder.Property(entity => entity.AiFallbackReason)
             .HasMaxLength(64);
 
+        builder.Property(entity => entity.AiAdvisoryScore)
+            .HasPrecision(18, 8);
+
+        builder.Property(entity => entity.AiContributionSummary)
+            .HasMaxLength(1024);
+
         builder.Property(entity => entity.RiskVetoReason)
             .HasMaxLength(64);
 

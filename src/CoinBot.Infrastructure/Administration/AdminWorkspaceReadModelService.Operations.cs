@@ -1,5 +1,6 @@
 using System.Text.Json;
 using CoinBot.Application.Abstractions.Administration;
+using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
@@ -107,6 +108,23 @@ public sealed partial class AdminWorkspaceReadModelService
             .AsNoTracking()
             .Where(version => !version.IsDeleted)
             .ToListAsync(cancellationToken);
+        var recentShadowDecisions = await dbContext.AiShadowDecisions
+            .AsNoTracking()
+            .Where(entity => !entity.IsDeleted)
+            .OrderByDescending(entity => entity.EvaluatedAtUtc)
+            .Take(200)
+            .ToListAsync(cancellationToken);
+        var recentShadowDecisionIds = recentShadowDecisions.Select(entity => entity.Id).ToArray();
+        var recentShadowOutcomes = recentShadowDecisionIds.Length == 0
+            ? new List<AiShadowDecisionOutcome>()
+            : await dbContext.AiShadowDecisionOutcomes
+                .AsNoTracking()
+                .Where(entity =>
+                    recentShadowDecisionIds.Contains(entity.AiShadowDecisionId) &&
+                    entity.HorizonKind == AiShadowOutcomeDefaults.OfficialHorizonKind &&
+                    entity.HorizonValue == AiShadowOutcomeDefaults.OfficialHorizonValue &&
+                    !entity.IsDeleted)
+                .ToListAsync(cancellationToken);
         var templateSnapshots = await strategyTemplateCatalogService.ListAllAsync(cancellationToken);
         var templates = templateSnapshots
             .Select(template => new AdminStrategyTemplateSnapshot(
@@ -187,13 +205,47 @@ public sealed partial class AdminWorkspaceReadModelService
         var totalVetoes = vetoes.Count;
         var publishedStrategies = strategies.Count(strategy => strategy.PublishedMode.HasValue);
         var lowConfidenceCount = rows.Count(row => row.VetoRate >= 0.20m);
+        var recentShadowCount = recentShadowDecisions.Count;
+        var shadowFallbackCount = recentShadowDecisions.Count(entity => entity.AiIsFallback);
+        var shadowAgreementCount = recentShadowDecisions.Count(entity => string.Equals(entity.AgreementState, "Agreement", StringComparison.Ordinal));
+        var averageShadowAdvisoryScore = recentShadowCount == 0
+            ? 0m
+            : decimal.Round(recentShadowDecisions.Average(entity => entity.AiAdvisoryScore), 3, MidpointRounding.AwayFromZero);
+        var shadowFallbackRate = recentShadowCount == 0
+            ? 0m
+            : decimal.Round((decimal)shadowFallbackCount / recentShadowCount * 100m, 1, MidpointRounding.AwayFromZero);
+        var shadowAgreementRate = recentShadowCount == 0
+            ? 0m
+            : decimal.Round((decimal)shadowAgreementCount / recentShadowCount * 100m, 1, MidpointRounding.AwayFromZero);
+        var averageShadowOutcomeScore = recentShadowOutcomes.Count == 0
+            ? (decimal?)null
+            : decimal.Round(recentShadowOutcomes.Average(entity => entity.OutcomeScore ?? 0m), 3, MidpointRounding.AwayFromZero);
+        var latestShadowDecision = recentShadowDecisions.FirstOrDefault();
+        var latestShadowProviderLabel = latestShadowDecision is null
+            ? "No shadow feed"
+            : string.IsNullOrWhiteSpace(latestShadowDecision.AiProviderModel)
+                ? latestShadowDecision.AiProviderName
+                : $"{latestShadowDecision.AiProviderName} / {latestShadowDecision.AiProviderModel}";
+        var shadowHealthLabel = recentShadowCount == 0
+            ? "NoShadowFeed"
+            : shadowFallbackRate >= 25m
+                ? "Degraded"
+                : "Healthy";
+        var shadowHealthTone = recentShadowCount == 0
+            ? "neutral"
+            : shadowFallbackRate >= 25m
+                ? "warning"
+                : "healthy";
+
         var summaryTiles = new[]
         {
             new AdminStatTileSnapshot("Strategy", strategies.Count.ToString(System.Globalization.CultureInfo.InvariantCulture), "Tracked strategies", "info"),
             new AdminStatTileSnapshot("Signal", totalSignals.ToString(System.Globalization.CultureInfo.InvariantCulture), "Recent signal volume", "healthy"),
             new AdminStatTileSnapshot("Veto", totalVetoes.ToString(System.Globalization.CultureInfo.InvariantCulture), "Risk guard rejects", totalVetoes > 0 ? "warning" : "neutral"),
             new AdminStatTileSnapshot("Published", publishedStrategies.ToString(System.Globalization.CultureInfo.InvariantCulture), "Live / demo rollout", "info"),
-            new AdminStatTileSnapshot("Low confidence", lowConfidenceCount.ToString(System.Globalization.CultureInfo.InvariantCulture), "Veto rate >= 20%", lowConfidenceCount > 0 ? "critical" : "healthy")
+            new AdminStatTileSnapshot("Low confidence", lowConfidenceCount.ToString(System.Globalization.CultureInfo.InvariantCulture), "Veto rate >= 20%", lowConfidenceCount > 0 ? "critical" : "healthy"),
+            new AdminStatTileSnapshot("AI shadow", recentShadowCount.ToString(System.Globalization.CultureInfo.InvariantCulture), "Recent advisory decisions", recentShadowCount > 0 ? "info" : "neutral"),
+            new AdminStatTileSnapshot("Avg advisory", recentShadowCount == 0 ? "n/a" : FormatSignedDecimal(averageShadowAdvisoryScore), "Recent shadow model score", recentShadowCount == 0 ? "neutral" : averageShadowAdvisoryScore >= 0m ? "healthy" : "warning")
         };
 
         var healthTiles = new[]
@@ -201,7 +253,11 @@ public sealed partial class AdminWorkspaceReadModelService
             new AdminStatTileSnapshot("Model sağlığı", publishedStrategies > 0 ? "Guarded" : "Draft", publishedStrategies > 0 ? "Live / shadow mix" : "No published template", publishedStrategies > 0 ? "warning" : "neutral"),
             new AdminStatTileSnapshot("Veto yoğunluğu", totalSignals == 0 ? "0%" : $"{Math.Round((decimal)totalVetoes / Math.Max(totalSignals, 1) * 100, 1, MidpointRounding.AwayFromZero)}%", "Veto / signal ratio", totalVetoes > 0 ? "critical" : "healthy"),
             new AdminStatTileSnapshot("Explainability", rows.Any(row => row.LatestSignalType != "-") ? "Available" : "No signal", "Recent signal feed", rows.Any(row => row.LatestSignalType != "-") ? "info" : "neutral"),
-            new AdminStatTileSnapshot("Freshness", rows.Any() ? BuildRelativeTimeLabel(now, signals.OrderByDescending(signal => signal.GeneratedAtUtc).FirstOrDefault()?.GeneratedAtUtc) : "n/a", "Latest generated signal", rows.Any() ? "healthy" : "neutral")
+            new AdminStatTileSnapshot("Freshness", rows.Any() ? BuildRelativeTimeLabel(now, signals.OrderByDescending(signal => signal.GeneratedAtUtc).FirstOrDefault()?.GeneratedAtUtc) : "n/a", "Latest generated signal", rows.Any() ? "healthy" : "neutral"),
+            new AdminStatTileSnapshot("Shadow model", shadowHealthLabel, latestShadowProviderLabel, shadowHealthTone),
+            new AdminStatTileSnapshot("Fallback rate", recentShadowCount == 0 ? "n/a" : $"{shadowFallbackRate:0.#}%", "Shadow provider fallback ratio", recentShadowCount == 0 ? "neutral" : shadowFallbackRate >= 25m ? "warning" : "healthy"),
+            new AdminStatTileSnapshot("Agreement", recentShadowCount == 0 ? "n/a" : $"{shadowAgreementRate:0.#}%", "Strategy vs advisory alignment", recentShadowCount == 0 ? "neutral" : shadowAgreementRate >= 60m ? "healthy" : "warning"),
+            new AdminStatTileSnapshot("Outcome avg", averageShadowOutcomeScore.HasValue ? FormatSignedDecimal(averageShadowOutcomeScore.Value) : "n/a", "Official +1 bar shadow outcome", averageShadowOutcomeScore is null ? "neutral" : averageShadowOutcomeScore >= 0m ? "healthy" : "warning")
         };
 
         var latestExplainability = BuildLatestStrategyExplainabilitySnapshot(strategies, versions, signals, vetoes);
@@ -898,6 +954,13 @@ public sealed partial class AdminWorkspaceReadModelService
         }
 
         return signalCount == 0 ? "Draft" : "Monitoring";
+    }
+
+    private static string FormatSignedDecimal(decimal value)
+    {
+        return value > 0m
+            ? $"+{value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}"
+            : value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private static string BuildStrategyHealthTone(TradingStrategy strategy, int signalCount, int vetoCount)

@@ -1318,7 +1318,7 @@ public sealed class MarketScannerHandoffServiceTests
                 new TraceService(scopedContext, correlationContextAccessor, timeProvider),
                 correlationContextAccessor,
                 new AiSignalEvaluator(
-                    [new DeterministicStubAiSignalProviderAdapter(), new OfflineAiSignalProviderAdapter(), new OpenAiSignalProviderAdapter(), new GeminiAiSignalProviderAdapter()],
+                    [new ShadowLinearAiSignalProviderAdapter(), new DeterministicStubAiSignalProviderAdapter(), new OfflineAiSignalProviderAdapter(), new OpenAiSignalProviderAdapter(), new GeminiAiSignalProviderAdapter()],
                     Options.Create(aiOptions),
                     timeProvider,
                     NullLogger<AiSignalEvaluator>.Instance),

@@ -105,7 +105,9 @@ public sealed record AiShadowDecisionWriteRequest(
     string? HypotheticalBlockSummary,
     string NoSubmitReason,
     string? FeatureSummary,
-    string AgreementState);
+    string AgreementState,
+    decimal AiAdvisoryScore = 0m,
+    string? AiContributionSummary = null);
 
 public sealed record AiShadowDecisionSnapshot(
     Guid Id,
@@ -154,7 +156,9 @@ public sealed record AiShadowDecisionSnapshot(
     string NoSubmitReason,
     string? FeatureSummary,
     string AgreementState,
-    DateTime CreatedAtUtc);
+    DateTime CreatedAtUtc,
+    decimal AiAdvisoryScore = 0m,
+    string? AiContributionSummary = null);
 
 public sealed record AiShadowDecisionSummarySnapshot(
     string UserId,

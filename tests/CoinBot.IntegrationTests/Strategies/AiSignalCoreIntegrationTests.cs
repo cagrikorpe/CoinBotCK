@@ -193,6 +193,48 @@ public sealed class AiSignalCoreIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task ShadowLinearFeatureSnapshot_ToAiOverlay_PersistsSignalInAdvisoryOnlyMode_OnSqlServer()
+    {
+        var databaseName = $"CoinBotAiSignalCoreShadowLinear_{Guid.NewGuid():N}";
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString(databaseName);
+        var nowUtc = new DateTimeOffset(2026, 4, 6, 12, 0, 0, TimeSpan.Zero);
+        await using var dbContext = CreateDbContext(connectionString);
+        await dbContext.Database.EnsureDeletedAsync();
+        await dbContext.Database.EnsureCreatedAsync();
+
+        try
+        {
+            SeedStrategyGraph(dbContext, nowUtc.UtcDateTime);
+            await dbContext.SaveChangesAsync();
+
+            var featureSnapshot = PromoteForLongOverlay(await CaptureFeatureSnapshotAsync(dbContext, nowUtc, stale: false));
+            var service = CreateSignalService(dbContext, nowUtc, CreateEnabledShadowAiOptions());
+            var versionId = await dbContext.TradingStrategyVersions.Select(entity => entity.Id).SingleAsync();
+
+            var result = await service.GenerateAsync(
+                new GenerateStrategySignalsRequest(
+                    versionId,
+                    CreateContext(nowUtc.UtcDateTime),
+                    featureSnapshot));
+            var decisionTrace = await dbContext.DecisionTraces.SingleAsync();
+
+            var signal = Assert.Single(result.Signals);
+            var aiEvaluation = Assert.Single(result.AiEvaluations);
+            Assert.False(aiEvaluation.IsFallback);
+            Assert.Equal(ShadowLinearAiSignalProviderAdapter.ProviderNameValue, aiEvaluation.ProviderName);
+            Assert.True(aiEvaluation.AdvisoryScore > 0m);
+            Assert.Equal("Observe", signal.ExplainabilityPayload.ConfidenceSnapshot.AiOverlayDisposition);
+            Assert.Equal(0, signal.ExplainabilityPayload.ConfidenceSnapshot.AiOverlayBoostPoints);
+            Assert.Contains("\"advisoryScore\"", decisionTrace.SnapshotJson, StringComparison.Ordinal);
+            Assert.Contains("ShadowLinear", decisionTrace.SnapshotJson, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await SqlServerIntegrationDatabase.CleanupDatabaseAsync(connectionString);
+        }
+    }
+
     private static AiSignalOptions CreateEnabledAiOptions()
     {
         return new AiSignalOptions
@@ -211,6 +253,16 @@ public sealed class AiSignalCoreIntegrationTests
             AllowShort = true,
             SelectedProvider = DeterministicStubAiSignalProviderAdapter.ProviderNameValue,
             MinimumConfidence = 0.70m
+        };
+    }
+
+    private static AiSignalOptions CreateEnabledShadowAiOptions()
+    {
+        return new AiSignalOptions
+        {
+            Enabled = true,
+            SelectedProvider = ShadowLinearAiSignalProviderAdapter.ProviderNameValue,
+            MinimumConfidence = 0.99m
         };
     }
 
@@ -315,7 +367,7 @@ public sealed class AiSignalCoreIntegrationTests
                 timeProvider),
             correlationContextAccessor,
             new AiSignalEvaluator(
-                [new DeterministicStubAiSignalProviderAdapter(), new OfflineAiSignalProviderAdapter(), new OpenAiSignalProviderAdapter(), new GeminiAiSignalProviderAdapter()],
+                [new ShadowLinearAiSignalProviderAdapter(), new DeterministicStubAiSignalProviderAdapter(), new OfflineAiSignalProviderAdapter(), new OpenAiSignalProviderAdapter(), new GeminiAiSignalProviderAdapter()],
                 Options.Create(aiOptions),
                 timeProvider,
                 NullLogger<AiSignalEvaluator>.Instance),
@@ -501,5 +553,3 @@ public sealed class AiSignalCoreIntegrationTests
         public bool HasIsolationBypass => true;
     }
 }
-
-
