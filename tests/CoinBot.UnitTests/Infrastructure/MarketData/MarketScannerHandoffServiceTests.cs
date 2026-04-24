@@ -18,6 +18,7 @@ using CoinBot.Infrastructure.Risk;
 using CoinBot.Infrastructure.Strategies;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
@@ -364,7 +365,8 @@ public sealed class MarketScannerHandoffServiceTests
                 Enabled = true,
                 ShadowModeEnabled = false,
                 SelectedProvider = ShadowLinearAiSignalProviderAdapter.ProviderNameValue
-            });
+            },
+            aiShadowDecisionService: new ThrowingAiShadowDecisionService());
         var scanCycleId = Guid.NewGuid();
         var bot = await SeedBotGraphAsync(harness.DbContext, "user-direction-block-shadow", "SOLUSDT", "pilot-direction-block-shadow");
         var botEntity = await harness.DbContext.TradingBots.SingleAsync(entity => entity.Id == bot.BotId);
@@ -413,6 +415,52 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Null(harness.ExecutionGate.LastRequest);
         Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
         Assert.Null(harness.ExecutionEngine.LastCommand);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_LogsCaptureSkippedReason_WhenAiShadowDecisionServiceMissing()
+    {
+        var logger = new RecordingLogger<MarketScannerHandoffService>();
+        await using var harness = CreateHarness(
+            new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero),
+            aiSignalOptions: new AiSignalOptions
+            {
+                Enabled = true,
+                ShadowModeEnabled = false,
+                SelectedProvider = ShadowLinearAiSignalProviderAdapter.ProviderNameValue
+            },
+            logger: logger,
+            registerAiShadowDecisionService: false,
+            aiShadowDecisionService: null);
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-direction-block-no-shadow-service", "SOLUSDT", "pilot-direction-block-no-shadow-service");
+        var botEntity = await harness.DbContext.TradingBots.SingleAsync(entity => entity.Id == bot.BotId);
+        botEntity.DirectionMode = TradingBotDirectionMode.ShortOnly;
+        await harness.DbContext.SaveChangesAsync();
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 10_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(
+            bot.TradingStrategyId,
+            bot.TradingStrategyVersionId,
+            "SOLUSDT",
+            "1m",
+            harness.NowUtc,
+            direction: StrategyTradeDirection.Long,
+            aiEvaluation: CreateShadowAiEvaluation()));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("EntryDirectionModeBlocked", attempt.BlockerCode);
+        Assert.Empty(harness.DbContext.AiShadowDecisions);
+        Assert.Contains(
+            logger.Records,
+            record => record.Level == LogLevel.Information &&
+                      record.Message.Contains("AiShadowDecisionCaptureSkipped", StringComparison.Ordinal) &&
+                      record.Message.Contains("ServiceMissing", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1574,7 +1622,10 @@ public sealed class MarketScannerHandoffServiceTests
         ExecutionEnvironment resolvedTradingMode = ExecutionEnvironment.Live,
         bool allowInternalDemoExecution = true,
         FakeExchangeInfoClient? exchangeInfoClient = null,
-        AiSignalOptions? aiSignalOptions = null)
+        AiSignalOptions? aiSignalOptions = null,
+        ILogger<MarketScannerHandoffService>? logger = null,
+        bool registerAiShadowDecisionService = true,
+        IAiShadowDecisionService? aiShadowDecisionService = null)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
@@ -1600,6 +1651,12 @@ public sealed class MarketScannerHandoffServiceTests
         services.AddSingleton<IExecutionEngine>(executionEngine);
         services.AddSingleton<IDemoSessionService>(demoSessionService);
         services.AddSingleton<ITradingModeResolver>(new FakeTradingModeResolver(resolvedTradingMode));
+        if (registerAiShadowDecisionService)
+        {
+            services.AddScoped<IAiShadowDecisionService>(provider => new AiShadowDecisionService(
+                provider.GetRequiredService<ApplicationDbContext>(),
+                new FixedTimeProvider(nowUtc)));
+        }
         var serviceProvider = services.BuildServiceProvider();
         var service = new MarketScannerHandoffService(
             dbContext,
@@ -1612,14 +1669,16 @@ public sealed class MarketScannerHandoffServiceTests
             Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m" }),
             Options.Create(pilotOptions ?? new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live, PrimeHistoricalCandleCount = 34 }),
             new FixedTimeProvider(nowUtc),
-            NullLogger<MarketScannerHandoffService>.Instance,
+            logger ?? NullLogger<MarketScannerHandoffService>.Instance,
             exchangeInfoClient,
             executionRuntimeOptions: Options.Create(new ExecutionRuntimeOptions
             {
                 AllowInternalDemoExecution = allowInternalDemoExecution
             }),
             aiSignalOptions: Options.Create(aiSignalOptions ?? new AiSignalOptions()),
-            aiShadowDecisionService: new AiShadowDecisionService(dbContext, new FixedTimeProvider(nowUtc)));
+            aiShadowDecisionService: aiShadowDecisionService ?? (registerAiShadowDecisionService
+                ? new AiShadowDecisionService(dbContext, new FixedTimeProvider(nowUtc))
+                : null));
 
         return new TestHarness(dbContext, service, serviceProvider, marketDataService, indicatorDataService, strategySignalService, executionGate, userExecutionOverrideGuard, executionEngine, demoSessionService, nowUtc.UtcDateTime);
     }
@@ -2362,6 +2421,74 @@ public sealed class MarketScannerHandoffServiceTests
             {
                 accessor.UserId = previousUserId;
                 accessor.HasIsolationBypass = previousIsolationBypass;
+            }
+        }
+    }
+
+    private sealed class ThrowingAiShadowDecisionService : IAiShadowDecisionService
+    {
+        public Task<AiShadowDecisionSnapshot> CaptureAsync(AiShadowDecisionWriteRequest request, CancellationToken cancellationToken = default)
+        {
+            throw new InvalidOperationException("Root injected AI shadow decision service should not be used.");
+        }
+
+        public Task<AiShadowDecisionSnapshot?> GetLatestAsync(string userId, Guid botId, string symbol, string timeframe, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<IReadOnlyCollection<AiShadowDecisionSnapshot>> ListRecentAsync(string userId, Guid botId, string symbol, string timeframe, int take = 20, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<AiShadowDecisionSummarySnapshot> GetSummaryAsync(string userId, Guid botId, string symbol, string timeframe, int take = 200, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<AiShadowDecisionOutcomeSnapshot> ScoreOutcomeAsync(string userId, Guid decisionId, AiShadowOutcomeHorizonKind horizonKind = AiShadowOutcomeDefaults.OfficialHorizonKind, int horizonValue = AiShadowOutcomeDefaults.OfficialHorizonValue, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<int> EnsureOutcomeCoverageAsync(string userId, AiShadowOutcomeHorizonKind horizonKind = AiShadowOutcomeDefaults.OfficialHorizonKind, int horizonValue = AiShadowOutcomeDefaults.OfficialHorizonValue, int take = 200, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<AiShadowDecisionOutcomeSummarySnapshot> GetOutcomeSummaryAsync(string userId, AiShadowOutcomeHorizonKind horizonKind = AiShadowOutcomeDefaults.OfficialHorizonKind, int horizonValue = AiShadowOutcomeDefaults.OfficialHorizonValue, int take = 200, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+    }
+
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        private readonly List<LogRecord> records = [];
+
+        public IReadOnlyCollection<LogRecord> Records => records;
+
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull
+        {
+            return NullScope.Instance;
+        }
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            records.Add(new LogRecord(logLevel, formatter(state, exception), exception));
+        }
+
+        public sealed record LogRecord(LogLevel Level, string Message, Exception? Exception);
+
+        private sealed class NullScope : IDisposable
+        {
+            public static readonly NullScope Instance = new();
+
+            public void Dispose()
+            {
             }
         }
     }

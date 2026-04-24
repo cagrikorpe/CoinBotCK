@@ -122,6 +122,9 @@ public sealed class MarketScannerHandoffIntegrationTests
             var services = new ServiceCollection();
             services.AddScoped<IDataScopeContextAccessor, TestDataScopeContextAccessor>();
             services.AddScoped(provider => new ApplicationDbContext(options, provider.GetRequiredService<IDataScopeContextAccessor>()));
+            services.AddScoped<IAiShadowDecisionService>(provider => new AiShadowDecisionService(
+                provider.GetRequiredService<ApplicationDbContext>(),
+                new FixedTimeProvider(nowUtc)));
             services.AddSingleton<IStrategySignalService>(strategySignalService);
             services.AddSingleton<IExecutionGate>(new FakeExecutionGate(nowUtc.UtcDateTime));
             services.AddSingleton<IUserExecutionOverrideGuard>(new FakeUserExecutionOverrideGuard());
@@ -150,7 +153,7 @@ public sealed class MarketScannerHandoffIntegrationTests
                     ShadowModeEnabled = true,
                     SelectedProvider = ShadowLinearAiSignalProviderAdapter.ProviderNameValue
                 }),
-                aiShadowDecisionService: new AiShadowDecisionService(dbContext, new FixedTimeProvider(nowUtc)));
+                aiShadowDecisionService: serviceProvider.GetService<IAiShadowDecisionService>());
 
             var attempt = await handoffService.RunOnceAsync(scanCycleId);
             var shadowDecision = await dbContext.AiShadowDecisions.AsNoTracking().SingleAsync();
