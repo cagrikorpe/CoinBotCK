@@ -425,6 +425,65 @@ public sealed class TradingFeatureSnapshotServiceTests
     }
 
     [Fact]
+    public async Task CaptureAsync_ReusesExistingSnapshot_ForSameFeatureAnchor()
+    {
+        await using var harness = await CreateHarnessAsync("feature-anchor-01");
+        var firstEvaluatedAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime;
+        var candles = CreateCandles("BTCUSDT", "1m", firstEvaluatedAtUtc.AddMinutes(-220), 220, 65000m, 5m, 120m);
+        var featureAnchorTimeUtc = candles[^1].CloseTimeUtc;
+
+        await harness.CircuitBreaker.RecordHeartbeatAsync(
+            new DataLatencyHeartbeat(
+                "feature-test",
+                featureAnchorTimeUtc,
+                Symbol: "BTCUSDT",
+                Timeframe: "1m",
+                ExpectedOpenTimeUtc: featureAnchorTimeUtc.AddMilliseconds(1),
+                ContinuityGapCount: 0),
+            cancellationToken: CancellationToken.None);
+
+        var first = await harness.Service.CaptureAsync(
+            new TradingFeatureCaptureRequest(
+                harness.UserId,
+                harness.BotId,
+                "feature-strategy",
+                "BTCUSDT",
+                "1m",
+                firstEvaluatedAtUtc,
+                harness.ExchangeAccountId,
+                ExchangeDataPlane.Futures,
+                HistoricalCandles: candles,
+                CorrelationId: "feature-anchor-correlation-1"),
+            CancellationToken.None);
+
+        harness.TimeProvider.Advance(TimeSpan.FromSeconds(30));
+        var second = await harness.Service.CaptureAsync(
+            new TradingFeatureCaptureRequest(
+                harness.UserId,
+                harness.BotId,
+                "feature-strategy",
+                "BTCUSDT",
+                "1m",
+                harness.TimeProvider.GetUtcNow().UtcDateTime,
+                harness.ExchangeAccountId,
+                ExchangeDataPlane.Futures,
+                HistoricalCandles: candles,
+                CorrelationId: "feature-anchor-correlation-2"),
+            CancellationToken.None);
+
+        var persistedRows = await harness.DbContext.TradingFeatureSnapshots.AsNoTracking().ToListAsync();
+
+        Assert.Equal(first.Id, second.Id);
+        Assert.Single(persistedRows);
+        Assert.Equal(featureAnchorTimeUtc, first.FeatureAnchorTimeUtc);
+        Assert.Equal(featureAnchorTimeUtc, second.FeatureAnchorTimeUtc);
+        Assert.Equal("feature-anchor-correlation-1", first.CorrelationId);
+        Assert.Equal("feature-anchor-correlation-1", second.CorrelationId);
+        Assert.False(string.IsNullOrWhiteSpace(first.SnapshotKey));
+        Assert.Equal(first.SnapshotKey, second.SnapshotKey);
+    }
+
+    [Fact]
     public async Task CaptureAsync_MarksInsufficientCandles_WithDeterministicQualityReason()
     {
         await using var harness = await CreateHarnessAsync("feature-warmup-01");

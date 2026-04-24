@@ -199,6 +199,14 @@
                                 {
                                     <small class="cb-admin-job-meta d-block mt-2" data-cb-scanner-top-advisory-summary>@candidate.AdvisorySummary</small>
                                 }
+                                @if (candidate.AdvisoryShadowScore.HasValue)
+                                {
+                                    <small class="cb-admin-job-meta d-block mt-2" data-cb-scanner-top-shadow-score>Shadow advisory @candidate.AdvisoryShadowScore.Value</small>
+                                }
+                                @if (candidate.AdvisoryShadowContributions.Count > 0)
+                                {
+                                    <small class="cb-admin-job-meta d-block mt-1" data-cb-scanner-top-shadow-contributions>@string.Join(" · ", candidate.AdvisoryShadowContributions)</small>
+                                }
                             </td>
                             <td>
                                 <div class="cb-mono" data-cb-scanner-top-market-score>@candidate.MarketScore.ToString("0.####")</div>
@@ -243,6 +251,14 @@
                                 @if (!string.IsNullOrWhiteSpace(candidate.AdvisorySummary))
                                 {
                                     <small class="cb-admin-job-meta d-block mt-2" data-cb-scanner-rejected-advisory-summary>@candidate.AdvisorySummary</small>
+                                }
+                                @if (candidate.AdvisoryShadowScore.HasValue)
+                                {
+                                    <small class="cb-admin-job-meta d-block mt-2" data-cb-scanner-rejected-shadow-score>Shadow advisory @candidate.AdvisoryShadowScore.Value</small>
+                                }
+                                @if (candidate.AdvisoryShadowContributions.Count > 0)
+                                {
+                                    <small class="cb-admin-job-meta d-block mt-1" data-cb-scanner-rejected-shadow-contributions>@string.Join(" · ", candidate.AdvisoryShadowContributions)</small>
                                 }
                             </div>
                         }

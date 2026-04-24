@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Features;
 using CoinBot.Application.Abstractions.Indicators;
@@ -76,6 +78,32 @@ public sealed class TradingFeatureSnapshotService(
                 BotId: request.BotId,
                 StrategyKey: normalizedStrategyKey),
             cancellationToken);
+        var featureAnchorTimeUtc = ResolveFeatureAnchorTimeUtc(
+            request,
+            candles,
+            normalizedTimeframe,
+            evaluatedAtUtc);
+        var snapshotKey = BuildSnapshotKey(
+            normalizedUserId,
+            request.BotId,
+            normalizedStrategyKey,
+            normalizedSymbol,
+            normalizedTimeframe,
+            request.Plane,
+            tradingModeResolution.EffectiveMode,
+            featureAnchorTimeUtc);
+        var existingSnapshot = await dbContext.TradingFeatureSnapshots
+            .AsNoTracking()
+            .Where(item =>
+                item.OwnerUserId == normalizedUserId &&
+                item.SnapshotKey == snapshotKey &&
+                !item.IsDeleted)
+            .OrderBy(item => item.CreatedDate)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (existingSnapshot is not null)
+        {
+            return MapSnapshot(existingSnapshot);
+        }
         var latestOrder = await ResolveLatestOrderAsync(normalizedUserId, request.BotId, normalizedSymbol, normalizedTimeframe, evaluatedAtUtc, cancellationToken);
         var latestVeto = await ResolveLatestVetoAsync(normalizedUserId, normalizedSymbol, normalizedTimeframe, evaluatedAtUtc, cancellationToken);
         var hasOpenPosition = await ResolveHasOpenPositionAsync(
@@ -109,10 +137,13 @@ public sealed class TradingFeatureSnapshotService(
             OwnerUserId = normalizedUserId,
             BotId = request.BotId,
             ExchangeAccountId = request.ExchangeAccountId,
+            CorrelationId = NormalizeOptional(request.CorrelationId),
+            SnapshotKey = snapshotKey,
             StrategyKey = normalizedStrategyKey,
             Symbol = normalizedSymbol,
             Timeframe = normalizedTimeframe,
             EvaluatedAtUtc = evaluatedAtUtc,
+            FeatureAnchorTimeUtc = featureAnchorTimeUtc,
             MarketDataTimestampUtc = derived.MarketDataTimestampUtc,
             FeatureVersion = FeatureVersionValue,
             SnapshotState = derived.SnapshotState,
@@ -188,7 +219,7 @@ public sealed class TradingFeatureSnapshotService(
                            item.Symbol == normalizedSymbol &&
                            item.Timeframe == normalizedTimeframe &&
                            !item.IsDeleted)
-            .OrderByDescending(item => item.EvaluatedAtUtc)
+            .OrderByDescending(item => item.FeatureAnchorTimeUtc ?? item.EvaluatedAtUtc)
             .ThenByDescending(item => item.CreatedDate)
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -215,7 +246,7 @@ public sealed class TradingFeatureSnapshotService(
                            item.Symbol == normalizedSymbol &&
                            item.Timeframe == normalizedTimeframe &&
                            !item.IsDeleted)
-            .OrderByDescending(item => item.EvaluatedAtUtc)
+            .OrderByDescending(item => item.FeatureAnchorTimeUtc ?? item.EvaluatedAtUtc)
             .ThenByDescending(item => item.CreatedDate)
             .Take(normalizedTake)
             .ToListAsync(cancellationToken);
@@ -1854,7 +1885,10 @@ public sealed class TradingFeatureSnapshotService(
             entity.VolatilityState,
             entity.NormalizationMeta,
             entity.QualityReasonCode,
-            entity.MissingFeatureSummary);
+            entity.MissingFeatureSummary,
+            entity.FeatureAnchorTimeUtc,
+            entity.CorrelationId,
+            entity.SnapshotKey);
     }
 
     private static string NormalizeSymbol(string symbol) => MarketDataSymbolNormalizer.Normalize(symbol);
@@ -1870,6 +1904,46 @@ public sealed class TradingFeatureSnapshotService(
     {
         var normalizedValue = value?.Trim();
         return string.IsNullOrWhiteSpace(normalizedValue) ? null : normalizedValue;
+    }
+
+    private static DateTime ResolveFeatureAnchorTimeUtc(
+        TradingFeatureCaptureRequest request,
+        IReadOnlyList<FeatureCandle> candles,
+        string timeframe,
+        DateTime evaluatedAtUtc)
+    {
+        if (request.FeatureAnchorTimeUtc.HasValue)
+        {
+            return NormalizeTimestamp(request.FeatureAnchorTimeUtc.Value);
+        }
+
+        if (request.IndicatorSnapshot is not null)
+        {
+            return NormalizeTimestamp(request.IndicatorSnapshot.CloseTimeUtc);
+        }
+
+        if (candles.Count > 0)
+        {
+            return NormalizeTimestamp(candles[^1].CloseTimeUtc);
+        }
+
+        return AlignToIntervalBoundary(evaluatedAtUtc, timeframe);
+    }
+
+    private static string BuildSnapshotKey(
+        string userId,
+        Guid botId,
+        string strategyKey,
+        string symbol,
+        string timeframe,
+        ExchangeDataPlane plane,
+        ExecutionEnvironment tradingMode,
+        DateTime featureAnchorTimeUtc)
+    {
+        var rawKey = FormattableString.Invariant(
+            $"{FeatureVersionValue}|{userId}|{botId:N}|{strategyKey}|{symbol}|{timeframe}|{plane}|{tradingMode}|{featureAnchorTimeUtc:O}");
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(rawKey));
+        return Convert.ToHexString(hash);
     }
 
     private static DateTime NormalizeTimestamp(DateTime value)

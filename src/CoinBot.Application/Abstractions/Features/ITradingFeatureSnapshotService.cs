@@ -37,7 +37,9 @@ public sealed record TradingFeatureCaptureRequest(
     ExchangeDataPlane Plane = ExchangeDataPlane.Futures,
     StrategyIndicatorSnapshot? IndicatorSnapshot = null,
     decimal? ReferencePrice = null,
-    IReadOnlyCollection<MarketCandleSnapshot>? HistoricalCandles = null);
+    IReadOnlyCollection<MarketCandleSnapshot>? HistoricalCandles = null,
+    string? CorrelationId = null,
+    DateTime? FeatureAnchorTimeUtc = null);
 
 public sealed record TradingFeatureSnapshotModel(
     Guid Id,
@@ -67,7 +69,10 @@ public sealed record TradingFeatureSnapshotModel(
     string VolatilityState,
     string? NormalizationMeta,
     FeatureSnapshotQualityReason QualityReasonCode = FeatureSnapshotQualityReason.None,
-    string? MissingFeatureSummary = null);
+    string? MissingFeatureSummary = null,
+    DateTime? FeatureAnchorTimeUtc = null,
+    string? CorrelationId = null,
+    string? SnapshotKey = null);
 
 public sealed record TradingTrendFeatureSnapshot(
     decimal? Ema20,

@@ -268,6 +268,8 @@ public sealed class MarketScannerServiceTests
         Assert.Contains("ScannerLabels=HasTrendBreakoutUp", btc.ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("ScannerReasonCodes=TrendBreakoutConfirmed", btc.ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("ScannerReasonSummary=Bullish trend breakout confirmed above the Bollinger mid-band with positive MACD alignment.", btc.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerShadowScore=55", btc.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerShadowContributions=TrendBreakoutConfirmed:+55", btc.ScoringSummary, StringComparison.Ordinal);
 
         Assert.Equal(100m, eth.MarketScore);
         Assert.Equal(5, eth.StrategyScore);
@@ -348,6 +350,8 @@ public sealed class MarketScannerServiceTests
         var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
         Assert.Contains("ScannerLabels=HasCompressionBreakoutSetup", candidate.ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("ScannerReasonCodes=CompressionBreakoutSetupDetected", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerShadowScore=80", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerShadowContributions=CompressionBreakoutSetupDetected:+25,TrendBreakoutConfirmed:+55", candidate.ScoringSummary, StringComparison.Ordinal);
     }
 
     [Fact]

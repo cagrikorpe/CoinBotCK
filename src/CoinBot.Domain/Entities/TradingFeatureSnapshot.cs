@@ -6,10 +6,13 @@ public sealed class TradingFeatureSnapshot : UserOwnedEntity
 {
     public Guid BotId { get; set; }
     public Guid? ExchangeAccountId { get; set; }
+    public string? CorrelationId { get; set; }
+    public string? SnapshotKey { get; set; }
     public string StrategyKey { get; set; } = string.Empty;
     public string Symbol { get; set; } = string.Empty;
     public string Timeframe { get; set; } = string.Empty;
     public DateTime EvaluatedAtUtc { get; set; }
+    public DateTime? FeatureAnchorTimeUtc { get; set; }
     public DateTime? MarketDataTimestampUtc { get; set; }
     public string FeatureVersion { get; set; } = string.Empty;
     public FeatureSnapshotState SnapshotState { get; set; } = FeatureSnapshotState.MissingData;

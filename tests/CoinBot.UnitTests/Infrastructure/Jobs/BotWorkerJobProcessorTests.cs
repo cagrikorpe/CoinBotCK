@@ -236,6 +236,32 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_ForwardsCorrelationId_ToFeatureSnapshotCapture()
+    {
+        var capturingFeatureSnapshotService = new CapturingFeatureSnapshotService();
+        await using var harness = CreateHarness(featureSnapshotServiceOverride: capturingFeatureSnapshotService);
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, bot);
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-feature-1");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-feature-1",
+            CancellationToken.None);
+
+        var latestDecisionTraceCorrelationId = await harness.DbContext.DecisionTraces
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .Select(entity => entity.CorrelationId)
+            .FirstOrDefaultAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.NotNull(capturingFeatureSnapshotService.LastRequest);
+        Assert.False(string.IsNullOrWhiteSpace(capturingFeatureSnapshotService.LastRequest!.CorrelationId));
+        Assert.Equal(32, capturingFeatureSnapshotService.LastRequest.CorrelationId!.Length);
+        Assert.Equal(latestDecisionTraceCorrelationId, capturingFeatureSnapshotService.LastRequest.CorrelationId);
+    }
+
+    [Fact]
     public async Task ProcessAsync_SkipsEntryBeforeExecution_WhenSafeSizingWouldExceedPilotNotionalHardCap()
     {
         await using var harness = CreateHarness();
@@ -3032,7 +3058,81 @@ public sealed class BotWorkerJobProcessorTests
                 "Range",
                 "Neutral",
                 "Elevated",
-                null);
+                null,
+                CorrelationId: request.CorrelationId);
+        }
+    }
+
+    private sealed class CapturingFeatureSnapshotService : ITradingFeatureSnapshotService
+    {
+        public TradingFeatureCaptureRequest? LastRequest { get; private set; }
+
+        public Task<TradingFeatureSnapshotModel> CaptureAsync(TradingFeatureCaptureRequest request, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            LastRequest = request;
+
+            return Task.FromResult(
+                new TradingFeatureSnapshotModel(
+                    Guid.Parse("2f4abdab-5534-4a6d-a57c-715299eeb6fd"),
+                    request.UserId,
+                    request.BotId,
+                    request.ExchangeAccountId,
+                    request.StrategyKey,
+                    request.Symbol,
+                    request.Timeframe,
+                    request.EvaluatedAtUtc,
+                    request.EvaluatedAtUtc,
+                    "AI-1.v1",
+                    FeatureSnapshotState.Ready,
+                    DegradedModeReasonCode.None,
+                    200,
+                    200,
+                    65000m,
+                    new TradingTrendFeatureSnapshot(64990m, 64950m, 64800m, 64970m, 64910m),
+                    new TradingMomentumFeatureSnapshot(58m, 12m, 8m, 4m, 60m, 57m, 66m, 0.22m),
+                    new TradingVolatilityFeatureSnapshot(320m, 0.64m, 0.18m, 0.31m, 64750m, 64500m),
+                    new TradingVolumeFeatureSnapshot(1.2m, 1.1m, 2100m),
+                    new TradingContextFeatureSnapshot(
+                        ExchangeDataPlane.Futures,
+                        ExecutionEnvironment.Live,
+                        HasOpenPosition: false,
+                        IsInCooldown: false,
+                        LastVetoReasonCode: null,
+                        LastDecisionOutcome: "None",
+                        LastDecisionCode: null,
+                        LastExecutionState: null,
+                        LastFailureCode: null),
+                    "Ready feature snapshot.",
+                    "Trend aligned.",
+                    "BullTrend",
+                    "Bullish",
+                    "Normal",
+                    null,
+                    CorrelationId: request.CorrelationId));
+        }
+
+        public Task<TradingFeatureSnapshotModel?> GetLatestAsync(
+            string userId,
+            Guid botId,
+            string symbol,
+            string timeframe,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<TradingFeatureSnapshotModel?>(null);
+        }
+
+        public Task<IReadOnlyCollection<TradingFeatureSnapshotModel>> ListRecentAsync(
+            string userId,
+            Guid botId,
+            string symbol,
+            string timeframe,
+            int take = 20,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<IReadOnlyCollection<TradingFeatureSnapshotModel>>(Array.Empty<TradingFeatureSnapshotModel>());
         }
     }
     private sealed class ThrowingFeatureSnapshotService : ITradingFeatureSnapshotService

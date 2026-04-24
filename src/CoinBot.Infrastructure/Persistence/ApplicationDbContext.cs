@@ -2721,6 +2721,12 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
     {
         ConfigureUserOwnedEntity(builder, "TradingFeatureSnapshots");
 
+        builder.Property(entity => entity.CorrelationId)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.SnapshotKey)
+            .HasMaxLength(64);
+
         builder.Property(entity => entity.StrategyKey)
             .HasMaxLength(128)
             .IsRequired();
@@ -2837,8 +2843,11 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         builder.Property(entity => entity.NormalizationMeta)
             .HasMaxLength(1024);
 
+        builder.HasIndex(entity => new { entity.OwnerUserId, entity.SnapshotKey });
         builder.HasIndex(entity => new { entity.OwnerUserId, entity.BotId, entity.Symbol, entity.Timeframe, entity.EvaluatedAtUtc });
+        builder.HasIndex(entity => new { entity.OwnerUserId, entity.BotId, entity.Symbol, entity.Timeframe, entity.FeatureAnchorTimeUtc });
         builder.HasIndex(entity => new { entity.OwnerUserId, entity.Symbol, entity.Timeframe, entity.EvaluatedAtUtc });
+        builder.HasIndex(entity => entity.CorrelationId);
         builder.HasIndex(entity => entity.ExchangeAccountId);
 
         builder.HasOne<TradingBot>()

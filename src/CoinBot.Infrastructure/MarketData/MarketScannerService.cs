@@ -33,6 +33,8 @@ public sealed class MarketScannerService(
     internal const string WorkerKey = "market-scanner";
     internal const string WorkerName = "Market Scanner";
     private const int CandidateScoringSummaryMaxLength = 2048;
+    private const int TrendBreakoutShadowScore = 55;
+    private const int CompressionBreakoutSetupShadowScore = 25;
     private const decimal MaxSqlClientDecimal38Scale18Value = 79_228_162_514.264337593543950335m;
 
     private readonly MarketScannerOptions scannerOptionsValue = scannerOptions.Value;
@@ -1985,6 +1987,16 @@ public sealed class MarketScannerService(
             summarySegments.Add($"ScannerReasonSummary={candidateIntelligence.Summary}");
         }
 
+        if (candidateIntelligence.ShadowScore.HasValue)
+        {
+            summarySegments.Add($"ScannerShadowScore={candidateIntelligence.ShadowScore.Value}");
+        }
+
+        if (candidateIntelligence.ShadowContributions.Count > 0)
+        {
+            summarySegments.Add($"ScannerShadowContributions={string.Join(',', candidateIntelligence.ShadowContributions)}");
+        }
+
         if (marketWindow.HistoricalRecoveryApplied || marketWindow.HasHistoricalParityLag)
         {
             summarySegments.Add(
@@ -2073,11 +2085,13 @@ public sealed class MarketScannerService(
         var labels = new List<string>(3);
         var reasonCodes = new List<string>(3);
         var summarySegments = new List<string>(3);
+        var shadowContributions = new List<string>(3);
         if (TryResolveBollingerBandWidth(indicatorSnapshot, out var bandWidth) && bandWidth <= 5m)
         {
             labels.Add("HasCompressionBreakoutSetup");
             reasonCodes.Add("CompressionBreakoutSetupDetected");
             summarySegments.Add("Compression breakout setup detected from tight Bollinger bandwidth.");
+            shadowContributions.Add($"CompressionBreakoutSetupDetected:+{CompressionBreakoutSetupShadowScore}");
         }
 
         if (indicatorSnapshot.Macd.IsReady &&
@@ -2095,6 +2109,7 @@ public sealed class MarketScannerService(
                 labels.Add("HasTrendBreakoutUp");
                 reasonCodes.Add("TrendBreakoutConfirmed");
                 summarySegments.Add("Bullish trend breakout confirmed above the Bollinger mid-band with positive MACD alignment.");
+                shadowContributions.Add($"TrendBreakoutConfirmed:+{TrendBreakoutShadowScore}");
             }
             else if (currentPrice <= middleBand &&
                      macdLine < signalLine &&
@@ -2104,8 +2119,18 @@ public sealed class MarketScannerService(
                 labels.Add("HasTrendBreakoutDown");
                 reasonCodes.Add("TrendBreakdownConfirmed");
                 summarySegments.Add("Bearish trend breakdown confirmed below the Bollinger mid-band with negative MACD alignment.");
+                shadowContributions.Add($"TrendBreakdownConfirmed:+{TrendBreakoutShadowScore}");
             }
         }
+
+        var distinctShadowContributions = shadowContributions
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var shadowScore = distinctShadowContributions.Length == 0
+            ? (int?)null
+            : Math.Min(
+                100,
+                distinctShadowContributions.Sum(item => ResolveShadowContributionScore(item)));
 
         return new ScannerCandidateIntelligenceSummary(
             labels
@@ -2118,7 +2143,9 @@ public sealed class MarketScannerService(
                 .ToArray(),
             summarySegments.Count == 0
                 ? null
-                : Truncate(string.Join(" | ", summarySegments), 240));
+                : Truncate(string.Join(" | ", summarySegments), 240),
+            shadowScore,
+            distinctShadowContributions);
     }
 
     private static bool TryResolveBollingerBandWidth(
@@ -2139,6 +2166,23 @@ public sealed class MarketScannerService(
             6,
             MidpointRounding.AwayFromZero);
         return true;
+    }
+
+    private static int ResolveShadowContributionScore(string contribution)
+    {
+        var separatorIndex = contribution.LastIndexOf(':');
+        if (separatorIndex <= 0 || separatorIndex >= contribution.Length - 1)
+        {
+            return 0;
+        }
+
+        var pointsText = contribution[(separatorIndex + 1)..].Trim();
+        if (!int.TryParse(pointsText.TrimStart('+'), out var score))
+        {
+            return 0;
+        }
+
+        return score;
     }
 
     private string BuildMarketRejectionSummary(
@@ -2399,9 +2443,11 @@ public sealed class MarketScannerService(
     private sealed record ScannerCandidateIntelligenceSummary(
         IReadOnlyCollection<string> Labels,
         IReadOnlyCollection<string> ReasonCodes,
-        string? Summary)
+        string? Summary,
+        int? ShadowScore,
+        IReadOnlyCollection<string> ShadowContributions)
     {
         public static ScannerCandidateIntelligenceSummary Empty { get; } =
-            new(Array.Empty<string>(), Array.Empty<string>(), null);
+            new(Array.Empty<string>(), Array.Empty<string>(), null, null, Array.Empty<string>());
     }
 }

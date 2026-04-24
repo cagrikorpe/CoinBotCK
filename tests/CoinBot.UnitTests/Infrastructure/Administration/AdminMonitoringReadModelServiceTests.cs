@@ -152,6 +152,8 @@ public sealed class AdminMonitoringReadModelServiceTests
         Assert.Empty(topCandidate.AdvisoryLabels);
         Assert.Empty(topCandidate.AdvisoryReasonCodes);
         Assert.Null(topCandidate.AdvisorySummary);
+        Assert.Null(topCandidate.AdvisoryShadowScore);
+        Assert.Empty(topCandidate.AdvisoryShadowContributions);
 
         var rejectedSample = Assert.Single(snapshot.MarketScanner.RejectedSamples);
         Assert.Equal("DOGEUSDT", rejectedSample.Symbol);
@@ -190,7 +192,7 @@ public sealed class AdminMonitoringReadModelServiceTests
             QuoteVolume24h = 123456m,
             MarketScore = 100m,
             StrategyScore = 95,
-            ScoringSummary = "StrategyScore=95; ScannerLabels=HasCompressionBreakoutSetup,HasTrendBreakoutUp; ScannerReasonCodes=CompressionBreakoutSetupDetected,TrendBreakoutConfirmed; ScannerReasonSummary=Compression breakout setup detected from tight Bollinger bandwidth. | Bullish trend breakout confirmed above the Bollinger mid-band with positive MACD alignment.",
+            ScoringSummary = "StrategyScore=95; ScannerLabels=HasCompressionBreakoutSetup,HasTrendBreakoutUp; ScannerReasonCodes=CompressionBreakoutSetupDetected,TrendBreakoutConfirmed; ScannerReasonSummary=Compression breakout setup detected from tight Bollinger bandwidth. | Bullish trend breakout confirmed above the Bollinger mid-band with positive MACD alignment.; ScannerShadowScore=80; ScannerShadowContributions=CompressionBreakoutSetupDetected:+25,TrendBreakoutConfirmed:+55",
             IsEligible = true,
             Score = 95m,
             Rank = 1,
@@ -210,6 +212,8 @@ public sealed class AdminMonitoringReadModelServiceTests
         Assert.Equal(["HasCompressionBreakoutSetup", "HasTrendBreakoutUp"], topCandidate.AdvisoryLabels.ToArray());
         Assert.Equal(["CompressionBreakoutSetupDetected", "TrendBreakoutConfirmed"], topCandidate.AdvisoryReasonCodes.ToArray());
         Assert.Contains("Bullish trend breakout confirmed", topCandidate.AdvisorySummary, StringComparison.Ordinal);
+        Assert.Equal(80, topCandidate.AdvisoryShadowScore);
+        Assert.Equal(["CompressionBreakoutSetupDetected +25", "TrendBreakoutConfirmed +55"], topCandidate.AdvisoryShadowContributions.ToArray());
     }
 
     [Fact]
@@ -242,7 +246,7 @@ public sealed class AdminMonitoringReadModelServiceTests
             QuoteVolume24h = 123456m,
             MarketScore = 100m,
             StrategyScore = 95,
-            ScoringSummary = "StrategyScore=95; ScannerLabels=HasTrendBreakoutUp,HasTrendBreakoutUp; ScannerReasonCodes=TrendBreakoutConfirmed,TrendBreakoutConfirmed,CompressionBreakoutSetupDetected; ScannerReasonSummary=Bullish trend breakout confirmed above the Bollinger mid-band with positive MACD alignment.; HistoricalRecoveryApplied=True; HistoricalRecoverySource=Binance.Rest.KlineRecovery",
+            ScoringSummary = "StrategyScore=95; ScannerLabels=HasTrendBreakoutUp,HasTrendBreakoutUp; ScannerReasonCodes=TrendBreakoutConfirmed,TrendBreakoutConfirmed,CompressionBreakoutSetupDetected; ScannerReasonSummary=Bullish trend breakout confirmed above the Bollinger mid-band with positive MACD alignment.; ScannerShadowScore=80; ScannerShadowContributions=TrendBreakoutConfirmed:+55,TrendBreakoutConfirmed:+55,CompressionBreakoutSetupDetected:+25; HistoricalRecoveryApplied=True; HistoricalRecoverySource=Binance.Rest.KlineRecovery",
             IsEligible = false,
             RejectionReason = "NoEnabledBotForSymbol",
             Score = 0m,
@@ -263,6 +267,8 @@ public sealed class AdminMonitoringReadModelServiceTests
         Assert.Equal(["HasTrendBreakoutUp"], rejectedSample.AdvisoryLabels.ToArray());
         Assert.Equal(["CompressionBreakoutSetupDetected", "TrendBreakoutConfirmed"], rejectedSample.AdvisoryReasonCodes.ToArray());
         Assert.Contains("Bullish trend breakout confirmed", rejectedSample.AdvisorySummary, StringComparison.Ordinal);
+        Assert.Equal(80, rejectedSample.AdvisoryShadowScore);
+        Assert.Equal(["TrendBreakoutConfirmed +55", "CompressionBreakoutSetupDetected +25"], rejectedSample.AdvisoryShadowContributions.ToArray());
     }
 
     [Fact]
@@ -281,6 +287,8 @@ public sealed class AdminMonitoringReadModelServiceTests
 
         Assert.Contains("candidate.AdvisoryReasonCodes", content, StringComparison.Ordinal);
         Assert.DoesNotContain("candidate.AdvisoryLabels", content, StringComparison.Ordinal);
+        Assert.Contains("candidate.AdvisoryShadowScore", content, StringComparison.Ordinal);
+        Assert.Contains("candidate.AdvisoryShadowContributions", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-scanner-rejected-reason-codes", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-scanner-rejected-advisory-summary", content, StringComparison.Ordinal);
     }

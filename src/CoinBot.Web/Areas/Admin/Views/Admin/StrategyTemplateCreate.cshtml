@@ -6,6 +6,14 @@
     var errorMessage = TempData["AdminStrategyTemplateError"] as string;
     var hasTemplates = Model.Templates.Count > 0;
     var hasCatalogLoadIssue = !string.IsNullOrWhiteSpace(errorMessage) && !hasTemplates;
+    var builderDraft = Model.BuilderDraft;
+    var builderTemplateKey = builderDraft?.TemplateKey ?? string.Empty;
+    var builderTemplateName = builderDraft?.TemplateName ?? string.Empty;
+    var builderDescription = builderDraft?.Description ?? string.Empty;
+    var builderCategory = builderDraft?.Category ?? string.Empty;
+    var builderDefinitionJson = builderDraft?.DefinitionJson ?? string.Empty;
+    var builderSourceTemplateKey = builderDraft?.SourceTemplateKey ?? Model.SelectedTemplate?.TemplateKey;
+    var selectedSourceTemplate = Model.SelectedTemplate;
 
     var headerModel = new AdminPageHeaderViewModel
     {
@@ -43,6 +51,17 @@
                     Message = "Bu sayfada sadece create formu vardir. Revize ve archive islemleri burada gosterilmez; onlar sadece secili template detay ekranindadir.",
                     Meta = Model.CanManageTemplates ? "Create-only" : "Read-only"
                 })
+
+                @if (selectedSourceTemplate is not null)
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6">
+                        <div>
+                            <div class="cb-admin-info-strip-title">Source template seed</div>
+                            <div class="cb-admin-info-strip-text">@selectedSourceTemplate.TemplateName (@selectedSourceTemplate.TemplateKey) builder inputlarina seed olarak yuklendi. Yeni template key verip create akisina devam edebilirsiniz.</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Seed</span>
+                    </div>
+                }
 
                 @if (!string.IsNullOrWhiteSpace(successMessage))
                 {
@@ -93,21 +112,22 @@
                 {
                     <form asp-area="Admin" asp-controller="Admin" asp-action="CreateStrategyTemplate" method="post" class="mt-5">
                         @Html.AntiForgeryToken()
+                        <input type="hidden" name="sourceTemplateKey" value="@builderSourceTemplateKey" />
                         <div class="form-group">
                             <label>Template key</label>
-                            <input name="templateKey" class="form-control" maxlength="128" />
+                            <input name="templateKey" class="form-control" maxlength="128" value="@builderTemplateKey" />
                         </div>
                         <div class="form-group">
                             <label>Template name</label>
-                            <input name="templateName" class="form-control" maxlength="128" />
+                            <input name="templateName" class="form-control" maxlength="128" value="@builderTemplateName" />
                         </div>
                         <div class="form-group">
                             <label>Description</label>
-                            <textarea name="description" class="form-control" rows="3" maxlength="512"></textarea>
+                            <textarea name="description" class="form-control" rows="3" maxlength="512">@builderDescription</textarea>
                         </div>
                         <div class="form-group">
                             <label>Category</label>
-                            <input name="category" class="form-control" maxlength="64" />
+                            <input name="category" class="form-control" maxlength="64" value="@builderCategory" />
                         </div>
                         <div class="cb-admin-info-strip cb-admin-info-strip-info mt-5">
                             <div>
@@ -151,8 +171,8 @@
                         <div class="form-group mt-5">
                             <label>Generated Definition JSON</label>
                             <input type="hidden" name="definitionJson" data-cb-builder-definition-input />
-                            <input type="hidden" value="" data-cb-builder-definition-source />
-                            <textarea class="form-control font-size-sm" rows="14" data-cb-builder-definition-preview readonly></textarea>
+                            <input type="hidden" value="@builderDefinitionJson" data-cb-builder-definition-source />
+                            <textarea class="form-control font-size-sm" rows="14" data-cb-builder-definition-preview readonly>@builderDefinitionJson</textarea>
                             <small class="form-text text-muted">Bu alan preview'dur. Submit edilen gercek definitionJson builder tarafindan otomatik uretilir.</small>
                         </div>
                         <div class="form-group">
@@ -211,4 +231,3 @@
 </div>
 
 @await Html.PartialAsync("_StrategyTemplateBuilderScript")
-

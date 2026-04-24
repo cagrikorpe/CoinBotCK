@@ -29,7 +29,7 @@
         SecondaryActionText = "Listeye don",
         SecondaryActionHref = Url.Action("StrategyTemplates", "Admin", new { area = "Admin" }),
         PrimaryActionText = "Yeni template",
-        PrimaryActionHref = Url.Action("StrategyBuilder", "Admin", new { area = "Admin" })
+        PrimaryActionHref = Url.Action("StrategyBuilder", "Admin", new { area = "Admin", templateKey = selectedTemplate?.TemplateKey })
     };
 }
 
@@ -111,7 +111,7 @@ else
                         <div class="cb-admin-summary-card">
                             <span class="cb-admin-summary-label">State</span>
                             <strong>@(selectedTemplate.IsActive ? "Active" : "Archived")</strong>
-                            <small>@(selectedTemplate.IsBuiltIn ? "Built-in / read-only" : "Custom / editable")</small>
+                            <small>@(selectedTemplate.IsBuiltIn ? "Built-in / managed" : "Custom / editable")</small>
                         </div>
                         <div class="cb-admin-summary-card">
                             <span class="cb-admin-summary-label">Published / Current / Latest</span>
@@ -138,7 +138,7 @@ else
                             <div class="cb-admin-info-strip-title">Source davranışı</div>
                             <div class="cb-admin-info-strip-text">
                                 @(selectedTemplate.IsBuiltIn
-                                    ? "Bu template built-in kaynaktan gelir ve dogrudan duzenlenemez. Degisiklik ihtiyacinda yeni bir custom template olusturup builder ile ilerleyin."
+                                    ? "Bu template built-in seed olarak gelir. Bu ekrandaki save akisi mevcut current kaydi veya managed override'u gunceller; create akisinda ayni definition yeni template icin seed olarak kullanilabilir."
                                     : "Bu template custom kaynaktan gelir. Revize, publish ve archive akislarinda duzenlenebilir template olarak davranir.")
                             </div>
                         </div>
@@ -437,8 +437,8 @@ else
 
                             <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-5">
                                 <div>
-                                    <div class="cb-admin-info-strip-title">Mevcut kayıt doğrudan güncellenir</div>
-                                    <div class="cb-admin-info-strip-text">Asagidaki form mevcut RSI / timeframe / long / short degerlerini inputlara yukler. Guncelle butonu inputtaki degerleri ayni template key uzerinden kaydeder.</div>
+                                    <div class="cb-admin-info-strip-title">Built-in seed managed update</div>
+                                    <div class="cb-admin-info-strip-text">Asagidaki form mevcut RSI / timeframe / long / short degerlerini inputlara yukler. Guncelle butonu inputtaki degerleri ayni template key uzerindeki managed current kayda uygular.</div>
                                 </div>
                                 <span class="cb-admin-info-strip-meta">Direct update</span>
                             </div>
@@ -551,4 +551,3 @@ else
     </div>
 }
 @await Html.PartialAsync("_StrategyTemplateBuilderScript")
-

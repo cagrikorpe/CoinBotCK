@@ -8,4 +8,16 @@ public sealed record AdminStrategyTemplateCatalogPageViewModel(
     StrategyTemplateSnapshot? SelectedTemplate,
     IReadOnlyCollection<StrategyTemplateRevisionSnapshot> SelectedTemplateRevisions,
     bool CanManageTemplates,
-    DateTime LastRefreshedAtUtc);
+    DateTime LastRefreshedAtUtc,
+    AdminStrategyTemplateBuilderDraftViewModel? BuilderDraft = null);
+
+public sealed record AdminStrategyTemplateBuilderDraftViewModel(
+    string? SourceTemplateKey,
+    string? TemplateKey,
+    string? TemplateName,
+    string? Description,
+    string? Category,
+    string? DefinitionJson)
+{
+    public bool HasSourceTemplate => !string.IsNullOrWhiteSpace(SourceTemplateKey);
+}

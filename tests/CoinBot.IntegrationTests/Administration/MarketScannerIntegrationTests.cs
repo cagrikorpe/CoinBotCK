@@ -182,6 +182,8 @@ public sealed class MarketScannerIntegrationTests
             Assert.Contains("HasTrendBreakoutUp", topCandidate.AdvisoryLabels);
             Assert.Contains("TrendBreakoutConfirmed", topCandidate.AdvisoryReasonCodes);
             Assert.Contains("Bullish trend breakout confirmed", topCandidate.AdvisorySummary, StringComparison.Ordinal);
+            Assert.Equal(55, topCandidate.AdvisoryShadowScore);
+            Assert.Equal(["TrendBreakoutConfirmed +55"], topCandidate.AdvisoryShadowContributions.ToArray());
         }
         finally
         {
@@ -225,7 +227,7 @@ public sealed class MarketScannerIntegrationTests
                 QuoteVolume24h = 123456m,
                 MarketScore = 100m,
                 StrategyScore = 95,
-                ScoringSummary = "StrategyScore=95; ScannerLabels=HasTrendBreakoutUp; ScannerReasonCodes=TrendBreakoutConfirmed; ScannerReasonSummary=Bullish trend breakout confirmed above the Bollinger mid-band with positive MACD alignment.",
+                ScoringSummary = "StrategyScore=95; ScannerLabels=HasTrendBreakoutUp; ScannerReasonCodes=TrendBreakoutConfirmed; ScannerReasonSummary=Bullish trend breakout confirmed above the Bollinger mid-band with positive MACD alignment.; ScannerShadowScore=55; ScannerShadowContributions=TrendBreakoutConfirmed:+55",
                 IsEligible = false,
                 RejectionReason = "NoEnabledBotForSymbol",
                 Score = 0m
@@ -243,6 +245,8 @@ public sealed class MarketScannerIntegrationTests
             var rejectedSample = Assert.Single(dashboardSnapshot.MarketScanner.RejectedSamples);
             Assert.Contains("TrendBreakoutConfirmed", rejectedSample.AdvisoryReasonCodes);
             Assert.Contains("Bullish trend breakout confirmed", rejectedSample.AdvisorySummary, StringComparison.Ordinal);
+            Assert.Equal(55, rejectedSample.AdvisoryShadowScore);
+            Assert.Equal(["TrendBreakoutConfirmed +55"], rejectedSample.AdvisoryShadowContributions.ToArray());
         }
         finally
         {

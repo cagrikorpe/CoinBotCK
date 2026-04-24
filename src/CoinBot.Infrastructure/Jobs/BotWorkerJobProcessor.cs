@@ -195,8 +195,9 @@ public sealed class BotWorkerJobProcessor(
             return BackgroundJobProcessResult.RetryableFailure("SymbolMetadataUnavailable");
         }
 
+        var correlationId = Guid.NewGuid().ToString("N");
         var marketState = await ResolveMarketStateAsync(normalizedSymbol, timeframe, cancellationToken);
-        var featureSnapshot = await TryCaptureFeatureSnapshotAsync(bot, exchangeAccount, normalizedSymbol, timeframe, marketState, cancellationToken);
+        var featureSnapshot = await TryCaptureFeatureSnapshotAsync(bot, exchangeAccount, normalizedSymbol, timeframe, marketState, correlationId, cancellationToken);
 
         if (marketState.IndicatorSnapshot is null)
         {
@@ -220,7 +221,6 @@ public sealed class BotWorkerJobProcessor(
                 : BackgroundJobProcessResult.RetryableFailure("ReferencePriceUnavailable");
         }
 
-        var correlationId = Guid.NewGuid().ToString("N");
         using var correlationScope = correlationContextAccessor.BeginScope(
             new CorrelationContext(
                 correlationId,
@@ -1196,6 +1196,7 @@ public sealed class BotWorkerJobProcessor(
         string symbol,
         string timeframe,
         MarketStateResolution marketState,
+        string correlationId,
         CancellationToken cancellationToken)
     {
         try
@@ -1212,7 +1213,8 @@ public sealed class BotWorkerJobProcessor(
                     ExchangeDataPlane.Futures,
                     marketState.IndicatorSnapshot,
                     marketState.ReferencePrice,
-                    marketState.HistoricalCandles),
+                    marketState.HistoricalCandles,
+                    correlationId),
                 cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)

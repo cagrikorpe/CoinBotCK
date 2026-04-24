@@ -17,6 +17,7 @@ using CoinBot.Web.ViewModels.Admin;
 using CoinBot.Web.ViewModels.Settings;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ViewFeatures;
 using Microsoft.Extensions.Options;
@@ -427,6 +428,11 @@ public sealed class AdminControllerTests
         Assert.Equal("StrategyTemplateCreate", view.ViewName);
         var model = Assert.IsType<AdminStrategyTemplateCatalogPageViewModel>(view.Model);
         Assert.Equal("built-in-template", model.SelectedTemplateKey);
+        Assert.NotNull(model.BuilderDraft);
+        Assert.Equal("built-in-template", model.BuilderDraft!.SourceTemplateKey);
+        Assert.Null(model.BuilderDraft.TemplateKey);
+        Assert.Equal(model.SelectedTemplate!.TemplateName, model.BuilderDraft.TemplateName);
+        Assert.Equal(model.SelectedTemplate.DefinitionJson, model.BuilderDraft.DefinitionJson);
         Assert.Equal("StrategyTemplates", controller.ViewData["AdminActiveNav"]);
     }
 
@@ -579,8 +585,9 @@ public sealed class AdminControllerTests
             "Create reason",
             CancellationToken.None);
 
-        Assert.IsType<RedirectToActionResult>(result);
+        var redirect = Assert.IsType<RedirectToActionResult>(result);
         var audit = Assert.Single(auditLogService.Requests);
+        Assert.Equal(nameof(AdminController.StrategyBuilder), redirect.ActionName);
         Assert.Equal("Admin.StrategyTemplates.CreateBlocked", audit.ActionType);
         Assert.Equal("custom-template", audit.TargetId);
         Assert.Contains("FailureCode=TemplateKeyAlreadyExists", audit.NewValueSummary, StringComparison.Ordinal);
@@ -620,7 +627,7 @@ public sealed class AdminControllerTests
 
         var redirect = Assert.IsType<RedirectToActionResult>(result);
 
-        Assert.Equal(nameof(AdminController.StrategyTemplateDetail), redirect.ActionName);
+        Assert.Equal(nameof(AdminController.StrategyBuilder), redirect.ActionName);
         Assert.Empty(templateService.CreateCalls);
         Assert.Empty(auditLogService.Requests);
         Assert.Equal("Bu islem icin MFA zorunludur.", controller.TempData["AdminStrategyTemplateError"]);
@@ -648,10 +655,58 @@ public sealed class AdminControllerTests
             "Create reason",
             CancellationToken.None);
 
-        Assert.IsType<RedirectToActionResult>(result);
+        var redirect = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.StrategyBuilder), redirect.ActionName);
         Assert.Equal(
             "Create islemi tamamlanamadi. Template=custom-template. Teknik hata nedeniyle islem sonuclanamadi.",
             controller.TempData["AdminStrategyTemplateError"]);
+    }
+
+    [Fact]
+    public async Task CreateStrategyTemplate_WhenRedirectingBackToBuilder_PreservesDraftState()
+    {
+        var templateService = new FakeStrategyTemplateCatalogService
+        {
+            CreateException = new StrategyTemplateCatalogException("TemplateKeyAlreadyExists", "Strategy template 'custom-template' already exists.")
+        };
+        templateService.Templates.Add(CreateStrategyTemplateSnapshot("rsi-basic", "RSI Basic", isBuiltIn: true));
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            strategyTemplateCatalogService: templateService,
+            roles: [ApplicationRoles.SuperAdmin]);
+        controller.ControllerContext.HttpContext.Request.ContentType = "application/x-www-form-urlencoded";
+        controller.ControllerContext.HttpContext.Features.Set<IFormFeature>(
+            new FormFeature(
+                new FormCollection(
+                    new Dictionary<string, Microsoft.Extensions.Primitives.StringValues>
+                    {
+                        ["sourceTemplateKey"] = "rsi-basic"
+                    })));
+
+        var result = await controller.CreateStrategyTemplate(
+            "custom-template",
+            "Custom Template",
+            "Catalog create test.",
+            "Momentum",
+            "{\"schemaVersion\":2}",
+            "Create reason",
+            CancellationToken.None);
+
+        var redirect = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.StrategyBuilder), redirect.ActionName);
+
+        var builderResult = await controller.StrategyBuilder(null, CancellationToken.None);
+
+        var view = Assert.IsType<ViewResult>(builderResult);
+        var model = Assert.IsType<AdminStrategyTemplateCatalogPageViewModel>(view.Model);
+        Assert.NotNull(model.BuilderDraft);
+        Assert.Equal("rsi-basic", model.BuilderDraft!.SourceTemplateKey);
+        Assert.Equal("custom-template", model.BuilderDraft.TemplateKey);
+        Assert.Equal("Custom Template", model.BuilderDraft.TemplateName);
+        Assert.Equal("Catalog create test.", model.BuilderDraft.Description);
+        Assert.Equal("Momentum", model.BuilderDraft.Category);
+        Assert.Equal("{\"schemaVersion\":2}", model.BuilderDraft.DefinitionJson);
+        Assert.Equal("rsi-basic", model.SelectedTemplateKey);
     }
 
     [Fact]

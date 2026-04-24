@@ -200,6 +200,71 @@ public sealed class TradingFeatureSnapshotIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task CaptureAsync_ReusesPersistedSnapshot_ForSameFeatureAnchor_OnSqlServer()
+    {
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString($"CoinBotFeatureStoreAnchorInt_{Guid.NewGuid():N}");
+        const string userId = "feature-sql-user-04";
+        var botId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+
+        await using var harness = CreateHarness(connectionString, userId);
+
+        try
+        {
+            await harness.DbContext.Database.EnsureDeletedAsync();
+            await harness.DbContext.Database.MigrateAsync();
+            await SeedFeatureGraphAsync(harness.DbContext, userId, botId, exchangeAccountId);
+
+            var firstEvaluatedAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime;
+            var candles = CreateCandles("BTCUSDT", "1m", firstEvaluatedAtUtc.AddMinutes(-240), 240, 65000m, 5m, 110m);
+            await RecordFreshHeartbeatAsync(harness.CircuitBreaker, candles[^1], "BTCUSDT", "1m");
+
+            var first = await harness.Service.CaptureAsync(
+                new TradingFeatureCaptureRequest(
+                    userId,
+                    botId,
+                    "feature-store",
+                    "BTCUSDT",
+                    "1m",
+                    firstEvaluatedAtUtc,
+                    exchangeAccountId,
+                    ExchangeDataPlane.Futures,
+                    HistoricalCandles: candles,
+                    CorrelationId: "feature-anchor-sql-1"),
+                CancellationToken.None);
+
+            harness.TimeProvider.Advance(TimeSpan.FromSeconds(45));
+            var second = await harness.Service.CaptureAsync(
+                new TradingFeatureCaptureRequest(
+                    userId,
+                    botId,
+                    "feature-store",
+                    "BTCUSDT",
+                    "1m",
+                    harness.TimeProvider.GetUtcNow().UtcDateTime,
+                    exchangeAccountId,
+                    ExchangeDataPlane.Futures,
+                    HistoricalCandles: candles,
+                    CorrelationId: "feature-anchor-sql-2"),
+                CancellationToken.None);
+
+            var persistedRows = await harness.DbContext.TradingFeatureSnapshots
+                .AsNoTracking()
+                .ToListAsync();
+
+            Assert.Equal(first.Id, second.Id);
+            Assert.Single(persistedRows);
+            Assert.Equal(candles[^1].CloseTimeUtc, persistedRows[0].FeatureAnchorTimeUtc);
+            Assert.Equal("feature-anchor-sql-1", persistedRows[0].CorrelationId);
+            Assert.Equal(first.SnapshotKey, persistedRows[0].SnapshotKey);
+        }
+        finally
+        {
+            await SqlServerIntegrationDatabase.CleanupDatabaseAsync(connectionString);
+        }
+    }
+
     private static TradingFeatureHarness CreateHarness(string connectionString, string userId)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()

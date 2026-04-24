@@ -13,6 +13,8 @@ public sealed record MarketScannerCandidateSnapshot(
     IReadOnlyCollection<string> AdvisoryLabels,
     IReadOnlyCollection<string> AdvisoryReasonCodes,
     string? AdvisorySummary,
+    int? AdvisoryShadowScore,
+    IReadOnlyCollection<string> AdvisoryShadowContributions,
     bool IsEligible,
     string? RejectionReason,
     decimal Score,

@@ -127,7 +127,7 @@
                                     var stateTone = template.IsActive ? "healthy" : "critical";
                                     var stateLabel = template.IsActive ? "Active" : "Archived";
                                     var sourceTone = template.IsBuiltIn ? "info" : "warning";
-                                    var sourceLabel = template.IsBuiltIn ? "Built-in / Read-only" : "Custom / Editable";
+                                    var sourceLabel = template.IsBuiltIn ? "Built-in / Managed" : "Custom / Editable";
 
                                     <tr>
                                         <td>
@@ -141,7 +141,7 @@
                                                 Tone = sourceTone,
                                                 IconText = template.IsBuiltIn ? "BI" : "CU"
                                             })
-                                            <div class="text-muted small mt-1">@(template.IsBuiltIn ? "Dogrudan revize edilemez" : "Revize akisi acik")</div>
+                                            <div class="text-muted small mt-1">@(template.IsBuiltIn ? "Detay ekraninda managed update akisi kullanilir" : "Revize akisi acik")</div>
                                         </td>
                                         <td>@template.Category</td>
                                         <td>

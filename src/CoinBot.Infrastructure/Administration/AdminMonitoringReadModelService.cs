@@ -378,6 +378,8 @@ public sealed class AdminMonitoringReadModelService(
             ResolveCandidateAdvisoryLabels(entity.ScoringSummary),
             ResolveCandidateAdvisoryReasonCodes(entity.ScoringSummary),
             ResolveCandidateAdvisorySummary(entity.ScoringSummary),
+            ResolveCandidateAdvisoryShadowScore(entity.ScoringSummary),
+            ResolveCandidateAdvisoryShadowContributions(entity.ScoringSummary),
             entity.IsEligible,
             entity.RejectionReason,
             entity.Score,
@@ -420,6 +422,57 @@ public sealed class AdminMonitoringReadModelService(
     private static string? ResolveCandidateAdvisorySummary(string? scoringSummary)
     {
         return ExecutionDecisionDiagnostics.ExtractToken("ScannerReasonSummary", scoringSummary);
+    }
+
+    private static int? ResolveCandidateAdvisoryShadowScore(string? scoringSummary)
+    {
+        var shadowScoreValue = ExecutionDecisionDiagnostics.ExtractToken("ScannerShadowScore", scoringSummary);
+        return int.TryParse(shadowScoreValue, out var shadowScore)
+            ? shadowScore
+            : null;
+    }
+
+    private static IReadOnlyCollection<string> ResolveCandidateAdvisoryShadowContributions(string? scoringSummary)
+    {
+        var contributionsValue = ExecutionDecisionDiagnostics.ExtractToken("ScannerShadowContributions", scoringSummary);
+        if (string.IsNullOrWhiteSpace(contributionsValue))
+        {
+            return Array.Empty<string>();
+        }
+
+        var contributions = new List<string>();
+        foreach (var item in contributionsValue.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (string.IsNullOrWhiteSpace(item))
+            {
+                continue;
+            }
+
+            var formatted = FormatShadowContribution(item);
+            if (contributions.Contains(formatted, StringComparer.Ordinal))
+            {
+                continue;
+            }
+
+            contributions.Add(formatted);
+        }
+
+        return contributions.ToArray();
+    }
+
+    private static string FormatShadowContribution(string contribution)
+    {
+        var separatorIndex = contribution.LastIndexOf(':');
+        if (separatorIndex <= 0 || separatorIndex >= contribution.Length - 1)
+        {
+            return contribution.Trim();
+        }
+
+        var reasonCode = contribution[..separatorIndex].Trim();
+        var points = contribution[(separatorIndex + 1)..].Trim();
+        return string.IsNullOrWhiteSpace(reasonCode) || string.IsNullOrWhiteSpace(points)
+            ? contribution.Trim()
+            : $"{reasonCode} {points}";
     }
 
     private static string? BuildMarketScannerCycleSummary(
@@ -545,4 +598,3 @@ public sealed class AdminMonitoringReadModelService(
             entity.Detail);
     }
 }
-
