@@ -1,4 +1,6 @@
 using System.Linq;
+using System.IO.Compression;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using CoinBot.Application.Abstractions.Administration;
@@ -256,6 +258,120 @@ public sealed class UltraDebugLogService(
                 0,
                 false,
                 Array.Empty<UltraDebugLogTailLineSnapshot>()));
+        }
+    }
+
+    public Task<UltraDebugLogExportSnapshot> ExportAsync(
+        UltraDebugLogExportRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var normalizedBucketName = NormalizeExportBucketName(request.BucketName);
+            var normalizedCategory = NormalizeExportCategory(request.Category);
+            var normalizedSource = NormalizeExportFilter(request.Source, 128, nameof(request.Source));
+            var normalizedSearchTerm = NormalizeOptional(request.SearchTerm, 128);
+            var normalizedRange = NormalizeExportRange(request.FromUtc, request.ToUtc);
+            var normalizedMaxRows = NormalizeExportTake(request.MaxRows);
+            var candidateFiles = ResolveExportCandidateFiles(
+                normalizedBucketName,
+                normalizedCategory,
+                normalizedRange.FromUtc,
+                normalizedRange.ToUtc);
+            var collectedLines = new List<ExportCandidateLine>(normalizedMaxRows);
+            var filesScanned = 0;
+            var truncated = candidateFiles.TotalFileCount > candidateFiles.Files.Count;
+
+            foreach (var candidateFile in candidateFiles.Files)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                filesScanned++;
+
+                foreach (var rawLine in File.ReadLines(candidateFile.File.FullName))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var parsedLine = ParseTailLineSnapshot(rawLine, candidateFile.File.Name, candidateFile.BucketName);
+                    if (parsedLine is null ||
+                        !MatchesExportRequest(
+                            parsedLine,
+                            normalizedCategory,
+                            normalizedSource,
+                            normalizedSearchTerm,
+                            normalizedRange.FromUtc,
+                            normalizedRange.ToUtc))
+                    {
+                        continue;
+                    }
+
+                    collectedLines.Add(new ExportCandidateLine(
+                        parsedLine.OccurredAtUtc ?? DateTime.MinValue,
+                        MaskExportLine(rawLine)));
+
+                    if (collectedLines.Count >= normalizedMaxRows)
+                    {
+                        truncated = true;
+                        break;
+                    }
+                }
+
+                if (collectedLines.Count >= normalizedMaxRows)
+                {
+                    break;
+                }
+            }
+
+            var orderedLines = collectedLines
+                .OrderByDescending(item => item.OccurredAtUtc)
+                .Select(item => item.MaskedLine)
+                .ToArray();
+            var boundedPayload = BuildBoundedExportPayload(orderedLines, ref truncated);
+            var isEmpty = boundedPayload.Lines.Count == 0;
+            var payloadLines = isEmpty
+                ? new[] { BuildEmptyExportPayload(normalizedBucketName, normalizedCategory, normalizedRange.FromUtc, normalizedRange.ToUtc) }
+                : boundedPayload.Lines.ToArray();
+            var ndjsonPayload = string.Join('\n', payloadLines);
+            if (!ndjsonPayload.EndsWith('\n'))
+            {
+                ndjsonPayload += "\n";
+            }
+
+            var baseFileName = BuildExportFileName(
+                normalizedBucketName,
+                normalizedCategory,
+                normalizedRange.FromUtc,
+                normalizedRange.ToUtc);
+            var ndjsonFileName = $"{baseFileName}.ndjson";
+            var content = request.ZipPackage
+                ? BuildZipPayload(ndjsonFileName, ndjsonPayload)
+                : Encoding.UTF8.GetBytes(ndjsonPayload);
+
+            return Task.FromResult(new UltraDebugLogExportSnapshot(
+                ContentType: request.ZipPackage ? "application/zip" : "application/x-ndjson",
+                FileDownloadName: request.ZipPackage ? $"{baseFileName}.zip" : ndjsonFileName,
+                Content: content,
+                FromUtc: normalizedRange.FromUtc,
+                ToUtc: normalizedRange.ToUtc,
+                RequestedLineCount: normalizedMaxRows,
+                ExportedLineCount: boundedPayload.Lines.Count,
+                FilesScanned: filesScanned,
+                IsTruncated: truncated,
+                IsEmpty: isEmpty,
+                EmptyReason: isEmpty ? "No masked log lines matched the requested export window." : null));
+        }
+        catch (UltraDebugLogOperationException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(exception, "Ultra debug log export failed. The request will stay fail-closed.");
+            throw new UltraDebugLogOperationException(
+                "UltraLogExportRuntimeFailed",
+                "Masked log export failed at runtime.");
         }
     }
 
@@ -987,6 +1103,103 @@ public sealed class UltraDebugLogService(
                 .ToArray());
     }
 
+    private SearchCandidateFileCollection ResolveExportCandidateFiles(
+        string bucketName,
+        string? category,
+        DateTime fromUtc,
+        DateTime toUtc)
+    {
+        var bucketNames = string.Equals(bucketName, "all", StringComparison.OrdinalIgnoreCase)
+            ? new[] { "normal", "ultra_debug" }
+            : new[] { bucketName };
+        var collectedFiles = new List<SearchCandidateFile>(UltraDebugLogDefaults.ExportMaxFiles);
+        var totalFileCount = 0;
+
+        foreach (var currentBucketName in bucketNames)
+        {
+            var directoryPath = ResolveBucketDirectoryPath(currentBucketName, category);
+            if (!Directory.Exists(directoryPath))
+            {
+                continue;
+            }
+
+            var searchOption = string.IsNullOrWhiteSpace(category)
+                ? SearchOption.AllDirectories
+                : SearchOption.TopDirectoryOnly;
+            var matchingFiles = new DirectoryInfo(directoryPath)
+                .GetFiles("*.ndjson", searchOption)
+                .OrderByDescending(file => file.LastWriteTimeUtc)
+                .ThenByDescending(file => file.Name, StringComparer.Ordinal)
+                .Where(file => IsCandidateFileWithinExportRange(file, fromUtc, toUtc))
+                .Select(file => new SearchCandidateFile(currentBucketName, file))
+                .ToArray();
+
+            totalFileCount += matchingFiles.Length;
+            collectedFiles.AddRange(matchingFiles);
+        }
+
+        return new SearchCandidateFileCollection(
+            totalFileCount,
+            collectedFiles
+                .OrderByDescending(item => item.File.LastWriteTimeUtc)
+                .ThenByDescending(item => item.File.Name, StringComparer.Ordinal)
+                .Take(UltraDebugLogDefaults.ExportMaxFiles)
+                .ToArray());
+    }
+
+    private static bool IsCandidateFileWithinExportRange(FileInfo fileInfo, DateTime fromUtc, DateTime toUtc)
+    {
+        var lowerBound = fromUtc.AddDays(-1);
+        var upperBound = toUtc.AddDays(1);
+        var lastWriteUtc = fileInfo.LastWriteTimeUtc;
+
+        if (lastWriteUtc >= lowerBound && lastWriteUtc <= upperBound)
+        {
+            return true;
+        }
+
+        if (!TryResolveCandidateFileDateUtc(fileInfo.Name, out var fileDateUtc))
+        {
+            return false;
+        }
+
+        return fileDateUtc >= lowerBound.Date && fileDateUtc <= upperBound.Date;
+    }
+
+    private static bool TryResolveCandidateFileDateUtc(string fileName, out DateTime fileDateUtc)
+    {
+        fileDateUtc = default;
+
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return false;
+        }
+
+        var segments = Path.GetFileNameWithoutExtension(fileName)
+            .Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        foreach (var segment in segments)
+        {
+            if (segment.Length != 8 || !segment.All(char.IsDigit))
+            {
+                continue;
+            }
+
+            if (DateTime.TryParseExact(
+                    segment,
+                    "yyyyMMdd",
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                    out var parsedDateUtc))
+            {
+                fileDateUtc = DateTime.SpecifyKind(parsedDateUtc.Date, DateTimeKind.Utc);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private IReadOnlyCollection<UltraDebugLogEventSnapshot> ReadLatestCategoryEventSnapshots(string bucketName)
     {
         return UltraDebugLogDefaults.CategoryFolders
@@ -1302,6 +1515,222 @@ public sealed class UltraDebugLogService(
             : null;
     }
 
+    private static string NormalizeExportBucketName(string? bucketName)
+    {
+        RejectPathTraversal(bucketName, nameof(bucketName));
+
+        return bucketName?.Trim().ToLowerInvariant() switch
+        {
+            "normal" => "normal",
+            "ultra_debug" => "ultra_debug",
+            "all" => "all",
+            _ => throw new UltraDebugLogOperationException(
+                "UltraLogExportBucketInvalid",
+                "Masked log export failed because the selected bucket is invalid.")
+        };
+    }
+
+    private static string? NormalizeExportCategory(string? category)
+    {
+        RejectPathTraversal(category, nameof(category));
+        var normalizedCategory = NormalizeOptional(category, 32)?.ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(normalizedCategory))
+        {
+            return null;
+        }
+
+        return UltraDebugLogDefaults.CategoryFolders.Contains(normalizedCategory, StringComparer.OrdinalIgnoreCase)
+            ? normalizedCategory
+            : throw new UltraDebugLogOperationException(
+                "UltraLogExportCategoryInvalid",
+                "Masked log export failed because the selected category is invalid.");
+    }
+
+    private static string? NormalizeExportFilter(string? value, int maxLength, string parameterName)
+    {
+        RejectPathTraversal(value, parameterName);
+        return NormalizeOptional(value, maxLength);
+    }
+
+    private ExportRange NormalizeExportRange(DateTime? fromUtc, DateTime? toUtc)
+    {
+        var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
+        var normalizedToUtc = toUtc.HasValue && toUtc.Value <= nowUtc
+            ? toUtc.Value
+            : nowUtc;
+        var normalizedFromUtc = fromUtc ?? normalizedToUtc.AddHours(-1);
+
+        if (normalizedFromUtc > normalizedToUtc)
+        {
+            normalizedFromUtc = normalizedToUtc.AddHours(-1);
+        }
+
+        if (normalizedToUtc - normalizedFromUtc > UltraDebugLogDefaults.ExportMaxDateRange)
+        {
+            normalizedFromUtc = normalizedToUtc - UltraDebugLogDefaults.ExportMaxDateRange;
+        }
+
+        return new ExportRange(
+            DateTime.SpecifyKind(normalizedFromUtc, DateTimeKind.Utc),
+            DateTime.SpecifyKind(normalizedToUtc, DateTimeKind.Utc));
+    }
+
+    private static int NormalizeExportTake(int maxRows)
+    {
+        return Math.Clamp(
+            maxRows <= 0 ? UltraDebugLogDefaults.ExportDefaultTake : maxRows,
+            1,
+            UltraDebugLogDefaults.ExportMaxTake);
+    }
+
+    private static bool MatchesExportRequest(
+        UltraDebugLogTailLineSnapshot line,
+        string? category,
+        string? source,
+        string? searchTerm,
+        DateTime fromUtc,
+        DateTime toUtc)
+    {
+        if (!line.OccurredAtUtc.HasValue ||
+            line.OccurredAtUtc.Value < fromUtc ||
+            line.OccurredAtUtc.Value > toUtc)
+        {
+            return false;
+        }
+
+        return MatchesSearchRequest(line, category, source, searchTerm, fromUtc);
+    }
+
+    private static string MaskExportLine(string rawLine)
+    {
+        return SensitivePayloadMasker.Mask(rawLine, UltraDebugLogDefaults.ExportLineMaxLength)
+            ?? """{"eventName":"masked_export_invalid_line","summary":"Masked export could not preserve the source line.","detailMasked":"{}"}""";
+    }
+
+    private static BoundedExportPayload BuildBoundedExportPayload(
+        IReadOnlyCollection<string> orderedLines,
+        ref bool truncated)
+    {
+        var lines = new List<string>(orderedLines.Count);
+        var totalBytes = 0;
+
+        foreach (var line in orderedLines)
+        {
+            var encodedLength = Encoding.UTF8.GetByteCount(line + "\n");
+            if (totalBytes + encodedLength > UltraDebugLogDefaults.ExportMaxBytes)
+            {
+                truncated = true;
+                break;
+            }
+
+            lines.Add(line);
+            totalBytes += encodedLength;
+        }
+
+        if (lines.Count < orderedLines.Count)
+        {
+            truncated = true;
+        }
+
+        return new BoundedExportPayload(lines, totalBytes);
+    }
+
+    private static string BuildEmptyExportPayload(
+        string bucketName,
+        string? category,
+        DateTime fromUtc,
+        DateTime toUtc)
+    {
+        return SensitivePayloadMasker.Mask(
+            JsonSerializer.Serialize(
+                new
+                {
+                    occurredAtUtc = toUtc,
+                    application = "coinbot-admin",
+                    machineName = "masked",
+                    category = "runtime",
+                    eventName = "masked_export_empty",
+                    summary = "No masked log lines matched the requested export window.",
+                    correlationId = (string?)null,
+                    symbol = (string?)null,
+                    executionAttemptId = (string?)null,
+                    strategySignalId = (string?)null,
+                    detailMasked = JsonSerializer.Serialize(
+                        new
+                        {
+                            bucket = bucketName,
+                            category = category ?? "all",
+                            fromUtc,
+                            toUtc,
+                            exportedLineCount = 0
+                        },
+                        SerializerOptions)
+                },
+                SerializerOptions),
+            UltraDebugLogDefaults.ExportEmptyPayloadMaxLength)
+            ?? """{"eventName":"masked_export_empty","summary":"No masked log lines matched the requested export window."}""";
+    }
+
+    private static string BuildExportFileName(
+        string bucketName,
+        string? category,
+        DateTime fromUtc,
+        DateTime toUtc)
+    {
+        static string SanitizeSegment(string value)
+        {
+            var sanitized = new string(
+                value
+                    .Trim()
+                    .ToLowerInvariant()
+                    .Select(character => char.IsLetterOrDigit(character) ? character : '-')
+                    .ToArray())
+                .Trim('-');
+            return string.IsNullOrWhiteSpace(sanitized) ? "all" : sanitized;
+        }
+
+        return string.Join(
+            '-',
+            "coinbot",
+            "logs",
+            SanitizeSegment(bucketName),
+            SanitizeSegment(category ?? "all"),
+            fromUtc.ToString("yyyyMMddTHHmmssZ"),
+            toUtc.ToString("yyyyMMddTHHmmssZ"));
+    }
+
+    private static byte[] BuildZipPayload(string entryFileName, string ndjsonPayload)
+    {
+        using var stream = new MemoryStream();
+        using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            var entry = archive.CreateEntry(entryFileName, CompressionLevel.Fastest);
+            using var entryStream = entry.Open();
+            using var writer = new StreamWriter(entryStream, Encoding.UTF8);
+            writer.Write(ndjsonPayload);
+        }
+
+        return stream.ToArray();
+    }
+
+    private static void RejectPathTraversal(string? value, string parameterName)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        if (value.Contains("..", StringComparison.Ordinal) ||
+            value.Contains('/', StringComparison.Ordinal) ||
+            value.Contains('\\', StringComparison.Ordinal) ||
+            value.Contains(':', StringComparison.Ordinal))
+        {
+            throw new UltraDebugLogOperationException(
+                "UltraLogExportPathInvalid",
+                $"Masked log export failed because {parameterName} contains an invalid path fragment.");
+        }
+    }
+
     private static bool ContainsInsensitive(string? haystack, string needle)
     {
         return !string.IsNullOrWhiteSpace(haystack) &&
@@ -1555,6 +1984,14 @@ public sealed class UltraDebugLogService(
     private sealed record SearchCandidateFileCollection(
         int TotalFileCount,
         IReadOnlyCollection<SearchCandidateFile> Files);
+
+    private sealed record ExportRange(DateTime FromUtc, DateTime ToUtc);
+
+    private sealed record ExportCandidateLine(DateTime OccurredAtUtc, string MaskedLine);
+
+    private sealed record BoundedExportPayload(
+        IReadOnlyCollection<string> Lines,
+        int TotalBytes);
 
     private sealed record UltraDebugLogRecord(
         DateTime OccurredAtUtc,

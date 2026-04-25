@@ -24,6 +24,13 @@ internal static class UltraDebugLogDefaults
     internal const int SearchPreviewMaxTake = 50;
     internal const int SearchPreviewMaxFiles = 12;
     internal const int SearchPreviewWindowBytes = 256 * 1024;
+    internal const int ExportDefaultTake = 200;
+    internal const int ExportMaxTake = 500;
+    internal const int ExportMaxFiles = 24;
+    internal const int ExportMaxBytes = 2 * 1024 * 1024;
+    internal const int ExportLineMaxLength = 16 * 1024;
+    internal const int ExportEmptyPayloadMaxLength = 1024;
+    internal static readonly TimeSpan ExportMaxDateRange = TimeSpan.FromDays(7);
     internal static readonly string[] CategoryFolders =
     [
         "scanner",

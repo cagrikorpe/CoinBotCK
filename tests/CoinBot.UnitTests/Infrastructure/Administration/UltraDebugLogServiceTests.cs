@@ -9,6 +9,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.IO.Compression;
+using System.Text;
 using System.Text.Json;
 
 namespace CoinBot.UnitTests.Infrastructure.Administration;
@@ -536,6 +538,228 @@ public sealed class UltraDebugLogServiceTests
                 Take: 25));
 
         Assert.Empty(secretSearchResult.Lines);
+    }
+
+    [Fact]
+    public async Task Export_ReturnsMaskedNdjson_ForAllowedBucket()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 22, 8, 0, 0, TimeSpan.Zero));
+
+        await harness.Service.WriteAsync(
+            new UltraDebugLogEntry(
+                "execution.dispatch",
+                "execution_dispatch_submitted",
+                "Dispatch accepted.",
+                "corr-export-1",
+                "SOLUSDT",
+                Detail: new
+                {
+                    token = "plain-token"
+                }));
+
+        var export = await harness.Service.ExportAsync(
+            new UltraDebugLogExportRequest(
+                BucketName: "normal",
+                Category: "execution",
+                Source: null,
+                SearchTerm: null,
+                FromUtc: new DateTime(2026, 4, 22, 7, 0, 0, DateTimeKind.Utc),
+                ToUtc: new DateTime(2026, 4, 22, 9, 0, 0, DateTimeKind.Utc),
+                MaxRows: 200,
+                ZipPackage: false));
+
+        var content = Encoding.UTF8.GetString(export.Content);
+
+        Assert.Equal("application/x-ndjson", export.ContentType);
+        Assert.EndsWith(".ndjson", export.FileDownloadName, StringComparison.Ordinal);
+        Assert.False(export.IsEmpty);
+        Assert.Equal(1, export.ExportedLineCount);
+        Assert.Contains("execution_dispatch_submitted", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("plain-token", content, StringComparison.Ordinal);
+        Assert.Contains("***REDACTED***", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Export_ZipContainsOnlyMaskedNdjson()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 22, 8, 0, 0, TimeSpan.Zero));
+
+        await harness.Service.WriteAsync(
+            new UltraDebugLogEntry(
+                "execution.dispatch",
+                "execution_dispatch_submitted",
+                "Dispatch accepted.",
+                "corr-export-zip",
+                "SOLUSDT",
+                Detail: new
+                {
+                    apiKey = "plain-key",
+                    password = "plain-password"
+                }));
+
+        var export = await harness.Service.ExportAsync(
+            new UltraDebugLogExportRequest(
+                BucketName: "normal",
+                Category: "execution",
+                Source: null,
+                SearchTerm: null,
+                FromUtc: new DateTime(2026, 4, 22, 7, 0, 0, DateTimeKind.Utc),
+                ToUtc: new DateTime(2026, 4, 22, 9, 0, 0, DateTimeKind.Utc),
+                MaxRows: 200,
+                ZipPackage: true));
+
+        using var stream = new MemoryStream(export.Content);
+        using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
+        var entry = Assert.Single(archive.Entries);
+        using var reader = new StreamReader(entry.Open(), Encoding.UTF8);
+        var ndjson = await reader.ReadToEndAsync();
+
+        Assert.Equal("application/zip", export.ContentType);
+        Assert.EndsWith(".zip", export.FileDownloadName, StringComparison.Ordinal);
+        Assert.EndsWith(".ndjson", entry.Name, StringComparison.Ordinal);
+        Assert.DoesNotContain("plain-key", ndjson, StringComparison.Ordinal);
+        Assert.DoesNotContain("plain-password", ndjson, StringComparison.Ordinal);
+        Assert.Contains("***REDACTED***", ndjson, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Export_RejectsUnknownBucket()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 22, 8, 0, 0, TimeSpan.Zero));
+
+        var exception = await Assert.ThrowsAsync<UltraDebugLogOperationException>(() =>
+            harness.Service.ExportAsync(
+                new UltraDebugLogExportRequest(
+                    BucketName: "unknown",
+                    Category: "execution",
+                    Source: null,
+                    SearchTerm: null,
+                    FromUtc: new DateTime(2026, 4, 22, 7, 0, 0, DateTimeKind.Utc),
+                    ToUtc: new DateTime(2026, 4, 22, 9, 0, 0, DateTimeKind.Utc),
+                    MaxRows: 200,
+                    ZipPackage: false)));
+
+        Assert.Equal("UltraLogExportBucketInvalid", exception.FailureCode);
+    }
+
+    [Fact]
+    public async Task Export_RejectsPathTraversal()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 22, 8, 0, 0, TimeSpan.Zero));
+
+        var exception = await Assert.ThrowsAsync<UltraDebugLogOperationException>(() =>
+            harness.Service.ExportAsync(
+                new UltraDebugLogExportRequest(
+                    BucketName: "normal",
+                    Category: "..\\..\\execution",
+                    Source: null,
+                    SearchTerm: null,
+                    FromUtc: new DateTime(2026, 4, 22, 7, 0, 0, DateTimeKind.Utc),
+                    ToUtc: new DateTime(2026, 4, 22, 9, 0, 0, DateTimeKind.Utc),
+                    MaxRows: 200,
+                    ZipPackage: false)));
+
+        Assert.Equal("UltraLogExportPathInvalid", exception.FailureCode);
+    }
+
+    [Fact]
+    public async Task Export_ClampsDateRangeAndMaxRows()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 22, 8, 0, 0, TimeSpan.Zero));
+
+        harness.TimeProvider.SetUtcNow(new DateTimeOffset(2026, 4, 10, 8, 0, 0, TimeSpan.Zero));
+        await harness.Service.WriteAsync(
+            new UltraDebugLogEntry(
+                "execution.dispatch",
+                "old_dispatch",
+                "Old dispatch.",
+                "corr-export-old",
+                "SOLUSDT"));
+
+        harness.TimeProvider.SetUtcNow(new DateTimeOffset(2026, 4, 22, 8, 0, 0, TimeSpan.Zero));
+        await harness.Service.WriteAsync(
+            new UltraDebugLogEntry(
+                "execution.dispatch",
+                "recent_dispatch",
+                "Recent dispatch.",
+                "corr-export-recent",
+                "SOLUSDT"));
+
+        var export = await harness.Service.ExportAsync(
+            new UltraDebugLogExportRequest(
+                BucketName: "normal",
+                Category: "execution",
+                Source: null,
+                SearchTerm: null,
+                FromUtc: new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+                ToUtc: new DateTime(2026, 5, 1, 0, 0, 0, DateTimeKind.Utc),
+                MaxRows: 9999,
+                ZipPackage: false));
+
+        var content = Encoding.UTF8.GetString(export.Content);
+
+        Assert.Equal(500, export.RequestedLineCount);
+        Assert.Equal(new DateTime(2026, 4, 15, 8, 0, 0, DateTimeKind.Utc), export.FromUtc);
+        Assert.Equal(new DateTime(2026, 4, 22, 8, 0, 0, DateTimeKind.Utc), export.ToUtc);
+        Assert.Contains("recent_dispatch", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("old_dispatch", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Export_DoesNotLeakSecrets()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 22, 8, 0, 0, TimeSpan.Zero));
+
+        var rawLine = """
+{"occurredAtUtc":"2026-04-22T08:00:00Z","application":"coinbot-testhost","machineName":"host","category":"execution","eventName":"execution_dispatch_submitted","summary":"Authorization: Bearer plain-token","correlationId":"corr-export-secret","symbol":"SOLUSDT","executionAttemptId":null,"strategySignalId":null,"detailMasked":"{\"apiKey\":\"plain-key\",\"password\":\"plain-password\",\"endpoint\":\"/fapi/v1/order?signature=abc123&x-mbx-apikey=plain-key\",\"connectionString\":\"Server=localhost;User Id=local-user;Password=plain-db-password;TrustServerCertificate=true;\"}"}
+""";
+        var filePath = harness.ResolveBucketFilePath("normal", harness.TimeProvider.GetUtcNow().UtcDateTime, "execution");
+        await File.WriteAllTextAsync(filePath, rawLine + Environment.NewLine);
+
+        var export = await harness.Service.ExportAsync(
+            new UltraDebugLogExportRequest(
+                BucketName: "normal",
+                Category: "execution",
+                Source: null,
+                SearchTerm: null,
+                FromUtc: new DateTime(2026, 4, 22, 7, 0, 0, DateTimeKind.Utc),
+                ToUtc: new DateTime(2026, 4, 22, 9, 0, 0, DateTimeKind.Utc),
+                MaxRows: 200,
+                ZipPackage: false));
+
+        var content = Encoding.UTF8.GetString(export.Content);
+
+        Assert.DoesNotContain("plain-token", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("plain-key", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("plain-password", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("abc123", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("plain-db-password", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("local-user", content, StringComparison.Ordinal);
+        Assert.Contains("***REDACTED***", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Export_EmptyRange_ReturnsSafeEmptyPayload()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 22, 8, 0, 0, TimeSpan.Zero));
+
+        var export = await harness.Service.ExportAsync(
+            new UltraDebugLogExportRequest(
+                BucketName: "normal",
+                Category: "execution",
+                Source: null,
+                SearchTerm: null,
+                FromUtc: new DateTime(2026, 4, 22, 7, 0, 0, DateTimeKind.Utc),
+                ToUtc: new DateTime(2026, 4, 22, 9, 0, 0, DateTimeKind.Utc),
+                MaxRows: 200,
+                ZipPackage: false));
+
+        var content = Encoding.UTF8.GetString(export.Content);
+
+        Assert.True(export.IsEmpty);
+        Assert.Equal(0, export.ExportedLineCount);
+        Assert.Contains("masked_export_empty", content, StringComparison.Ordinal);
+        Assert.Contains("No masked log lines matched the requested export window.", content, StringComparison.Ordinal);
     }
 
     private static TestHarness CreateHarness(DateTimeOffset now, Func<string, long?>? availableDiskBytesResolver = null)

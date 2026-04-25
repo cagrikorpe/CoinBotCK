@@ -84,4 +84,22 @@ public sealed class SensitivePayloadMaskerTests
         Assert.DoesNotContain("local-user", masked, StringComparison.Ordinal);
         Assert.Contains("***REDACTED***", masked, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Mask_RedactsNestedEscapedJsonPayloads()
+    {
+        var masked = SensitivePayloadMasker.Mask(
+            """
+            {
+              "detailMasked": "{\"authorization\":\"Bearer plain-token\",\"x-mbx-apikey\":\"plain-key\",\"payload\":{\"secret\":\"plain-secret\",\"signature\":\"abc123\"}}"
+            }
+            """);
+
+        Assert.NotNull(masked);
+        Assert.DoesNotContain("plain-token", masked, StringComparison.Ordinal);
+        Assert.DoesNotContain("plain-key", masked, StringComparison.Ordinal);
+        Assert.DoesNotContain("plain-secret", masked, StringComparison.Ordinal);
+        Assert.DoesNotContain("abc123", masked, StringComparison.Ordinal);
+        Assert.Contains("***REDACTED***", masked, StringComparison.Ordinal);
+    }
 }

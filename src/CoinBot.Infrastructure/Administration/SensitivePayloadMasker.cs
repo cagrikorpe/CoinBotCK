@@ -141,7 +141,9 @@ public static class SensitivePayloadMasker
             return false;
         }
 
-        maskedValue = MaskDelimitedSegments(stringValue);
+        maskedValue = TryMaskJson(stringValue, out var nestedMaskedJson)
+            ? nestedMaskedJson
+            : MaskDelimitedSegments(stringValue);
         return true;
     }
 

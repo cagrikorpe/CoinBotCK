@@ -1608,6 +1608,53 @@ public sealed class AdminController : Controller
         return RedirectToAction(nameof(AuditLogs), new { area = "Admin", ultraLog = true });
     }
 
+    [HttpGet("/admin/audit-logs/ultra-log/export")]
+    [Authorize(Policy = ApplicationPolicies.PlatformAdministration)]
+    public async Task<IActionResult> ExportUltraDebugLog(
+        string? logBucket = null,
+        string? logCategory = null,
+        string? logSource = null,
+        string? logSearch = null,
+        string? logTimeWindow = null,
+        int maxRows = 200,
+        bool zipPackage = false,
+        CancellationToken cancellationToken = default)
+    {
+        if (ultraDebugLogService is null)
+        {
+            return StatusCode(503, "Masked log export unavailable.");
+        }
+
+        var nowUtc = DateTime.UtcNow;
+        var normalizedTimeWindow = ResolveUltraDebugSearchTimeWindowKey(logTimeWindow);
+        var fromUtc = ResolveUltraDebugSearchFromUtc(nowUtc, normalizedTimeWindow);
+
+        try
+        {
+            var export = await ultraDebugLogService.ExportAsync(
+                new UltraDebugLogExportRequest(
+                    BucketName: logBucket ?? "all",
+                    Category: logCategory,
+                    Source: NormalizeOptionalInput(logSource, 128),
+                    SearchTerm: NormalizeOptionalInput(logSearch, 128),
+                    FromUtc: fromUtc,
+                    ToUtc: nowUtc,
+                    MaxRows: maxRows,
+                    ZipPackage: zipPackage),
+                cancellationToken);
+
+            Response.Headers.CacheControl = "no-store, no-cache";
+            Response.Headers["Pragma"] = "no-cache";
+            Response.Headers["X-Content-Type-Options"] = "nosniff";
+
+            return File(export.Content, export.ContentType, export.FileDownloadName);
+        }
+        catch (UltraDebugLogOperationException)
+        {
+            return BadRequest("Masked log export request was rejected.");
+        }
+    }
+
     private static int NormalizeAuditTake(int take)
     {
         return take is >= 25 and <= 200
@@ -2225,18 +2272,34 @@ public sealed class AdminController : Controller
     [Authorize(Policy = ApplicationPolicies.AuditRead)]
     [HttpGet("/admin/trace")]
     public Task<IActionResult> Trace(
-        [FromQuery] string correlationId,
+        [FromQuery] string? correlationId,
         [FromQuery] string? decisionId,
         [FromQuery] string? executionAttemptId,
         CancellationToken cancellationToken)
     {
-        return TraceDetail(correlationId, decisionId, executionAttemptId, cancellationToken);
+        var normalizedCorrelationId = NormalizeOptionalInput(correlationId, 128);
+        var normalizedDecisionId = NormalizeOptionalInput(decisionId, 64);
+        var normalizedExecutionAttemptId = NormalizeOptionalInput(executionAttemptId, 64);
+
+        if (string.IsNullOrWhiteSpace(normalizedCorrelationId))
+        {
+            return Task.FromResult<IActionResult>(RedirectToAction(
+                nameof(AuditLogs),
+                new
+                {
+                    area = "Admin",
+                    decisionId = normalizedDecisionId,
+                    executionAttemptId = normalizedExecutionAttemptId
+                })!);
+        }
+
+        return TraceDetail(normalizedCorrelationId, normalizedDecisionId, normalizedExecutionAttemptId, cancellationToken);
     }
 
     [Authorize(Policy = ApplicationPolicies.AuditRead)]
     [HttpGet("/admin/trace/detail")]
     public async Task<IActionResult> TraceDetail(
-        [FromQuery] string correlationId,
+        [FromQuery] string? correlationId,
         [FromQuery] string? decisionId,
         [FromQuery] string? executionAttemptId,
         CancellationToken cancellationToken)
@@ -2247,8 +2310,14 @@ public sealed class AdminController : Controller
             activeNav: "Audit",
             breadcrumbItems: new[] { "Super Admin", "Gözlem", "Trace Detail" });
 
+        var normalizedCorrelationId = NormalizeOptionalInput(correlationId, 128);
+        if (string.IsNullOrWhiteSpace(normalizedCorrelationId))
+        {
+            return BadRequest("Trace detail requires correlationId.");
+        }
+
         var detail = await traceService.GetDetailAsync(
-            correlationId,
+            normalizedCorrelationId,
             NormalizeOptionalInput(decisionId, 64),
             NormalizeOptionalInput(executionAttemptId, 64),
             cancellationToken);

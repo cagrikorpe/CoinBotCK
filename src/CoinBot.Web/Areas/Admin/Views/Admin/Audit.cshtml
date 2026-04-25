@@ -1,4 +1,5 @@
 @model CoinBot.Web.ViewModels.Admin.AdminIncidentAuditDecisionCenterViewModel
+@using CoinBot.Contracts.Common
 @using CoinBot.Web.ViewModels.Admin
 @{
     var pagination = Model.Pagination;
@@ -75,6 +76,7 @@
 
     var ultraLog = Model.UltraDebugLog;
     var ultraLogSearch = ultraLog?.SearchView;
+    var canExportMaskedLogs = User.HasClaim(ApplicationClaimTypes.Permission, ApplicationPermissions.PlatformAdministration);
 
     string? traceDetailHref = Model.Detail.HasSelection && !string.Equals(Model.Detail.CorrelationId, "Unavailable", StringComparison.OrdinalIgnoreCase)
         ? Url.Action("TraceDetail", "Admin", new
@@ -382,6 +384,37 @@
                                 </div>
                                 <span class="cb-admin-info-strip-meta">Server-side</span>
                             </div>
+
+                            @if (canExportMaskedLogs)
+                            {
+                                <div class="cb-admin-info-strip cb-admin-info-strip-info mb-4">
+                                    <div>
+                                        <div class="cb-admin-info-strip-title">Masked export</div>
+                                        <div class="cb-admin-info-strip-text">NDJSON veya ZIP yalnız izinli bucket/category/source filtreleriyle dışarı verilir. Hard cap: 500 satır · 24 dosya · 2 MB · masked payload.</div>
+                                    </div>
+                                    <div class="d-flex flex-wrap gap-2">
+                                        <form asp-area="Admin" asp-controller="Admin" asp-action="ExportUltraDebugLog" method="get" class="mb-0">
+                                            <input type="hidden" name="logBucket" value="@ultraLogSearch.SelectedBucketValue" />
+                                            <input type="hidden" name="logCategory" value="@ultraLogSearch.SelectedCategoryValue" />
+                                            <input type="hidden" name="logSource" value="@ultraLogSearch.SourceFilter" />
+                                            <input type="hidden" name="logSearch" value="@ultraLogSearch.SearchTerm" />
+                                            <input type="hidden" name="logTimeWindow" value="@ultraLogSearch.SelectedTimeWindowValue" />
+                                            <input type="hidden" name="maxRows" value="200" />
+                                            <button type="submit" class="btn btn-light-primary font-weight-bold">NDJSON export</button>
+                                        </form>
+                                        <form asp-area="Admin" asp-controller="Admin" asp-action="ExportUltraDebugLog" method="get" class="mb-0">
+                                            <input type="hidden" name="logBucket" value="@ultraLogSearch.SelectedBucketValue" />
+                                            <input type="hidden" name="logCategory" value="@ultraLogSearch.SelectedCategoryValue" />
+                                            <input type="hidden" name="logSource" value="@ultraLogSearch.SourceFilter" />
+                                            <input type="hidden" name="logSearch" value="@ultraLogSearch.SearchTerm" />
+                                            <input type="hidden" name="logTimeWindow" value="@ultraLogSearch.SelectedTimeWindowValue" />
+                                            <input type="hidden" name="maxRows" value="200" />
+                                            <input type="hidden" name="zipPackage" value="true" />
+                                            <button type="submit" class="btn btn-light font-weight-bold">ZIP export</button>
+                                        </form>
+                                    </div>
+                                </div>
+                            }
 
                             <div class="card card-custom gutter-b cb-card cb-admin-card">
                                 <div class="card-body">

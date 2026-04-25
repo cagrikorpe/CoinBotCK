@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text;
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.Exchange;
@@ -11,6 +12,7 @@ using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Exchange;
 using CoinBot.Infrastructure.Jobs;
+using CoinBot.Infrastructure.Administration;
 using CoinBot.Infrastructure.Mfa;
 using CoinBot.Web.Areas.Admin.Controllers;
 using CoinBot.Web.ViewModels.Admin;
@@ -2353,6 +2355,69 @@ public sealed class AdminControllerTests
     }
 
     [Fact]
+    public async Task ExportUltraDebugLog_ReturnsMaskedNdjsonFile_ForAllowedBucket()
+    {
+        var ultraDebugLogService = new FakeUltraDebugLogService
+        {
+            ExportSnapshot = new UltraDebugLogExportSnapshot(
+                ContentType: "application/x-ndjson",
+                FileDownloadName: "coinbot-logs-normal-execution-20260425T100000Z-20260425T110000Z.ndjson",
+                Content: Encoding.UTF8.GetBytes("{\"summary\":\"token=***REDACTED***\"}\n"),
+                FromUtc: new DateTime(2026, 4, 25, 10, 0, 0, DateTimeKind.Utc),
+                ToUtc: new DateTime(2026, 4, 25, 11, 0, 0, DateTimeKind.Utc),
+                RequestedLineCount: 200,
+                ExportedLineCount: 1,
+                FilesScanned: 1,
+                IsTruncated: false,
+                IsEmpty: false)
+        };
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            ultraDebugLogService: ultraDebugLogService);
+
+        var result = await controller.ExportUltraDebugLog(
+            logBucket: "normal",
+            logCategory: "execution",
+            logSource: "ExecutionEngine",
+            logSearch: "dispatch",
+            logTimeWindow: "1h",
+            maxRows: 200,
+            zipPackage: false,
+            cancellationToken: CancellationToken.None);
+
+        var fileResult = Assert.IsType<FileContentResult>(result);
+        Assert.Equal("application/x-ndjson", fileResult.ContentType);
+        Assert.Equal("coinbot-logs-normal-execution-20260425T100000Z-20260425T110000Z.ndjson", fileResult.FileDownloadName);
+        Assert.Contains("***REDACTED***", Encoding.UTF8.GetString(fileResult.FileContents), StringComparison.Ordinal);
+        Assert.NotNull(ultraDebugLogService.ExportRequest);
+        Assert.Equal("normal", ultraDebugLogService.ExportRequest!.BucketName);
+        Assert.Equal("execution", ultraDebugLogService.ExportRequest.Category);
+        Assert.Equal("ExecutionEngine", ultraDebugLogService.ExportRequest.Source);
+        Assert.Equal("dispatch", ultraDebugLogService.ExportRequest.SearchTerm);
+        Assert.Equal(200, ultraDebugLogService.ExportRequest.MaxRows);
+        Assert.False(ultraDebugLogService.ExportRequest.ZipPackage);
+    }
+
+    [Fact]
+    public async Task ExportUltraDebugLog_ReturnsBadRequest_WhenExportRequestIsRejected()
+    {
+        var ultraDebugLogService = new FakeUltraDebugLogService
+        {
+            ExportException = new UltraDebugLogOperationException("UltraLogExportBucketInvalid", "invalid")
+        };
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            ultraDebugLogService: ultraDebugLogService);
+
+        var result = await controller.ExportUltraDebugLog(
+            logBucket: "..\\..\\secret",
+            cancellationToken: CancellationToken.None);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal("Masked log export request was rejected.", badRequest.Value);
+    }
+
+    [Fact]
     public async Task Audit_LoadsUltraDebugLogDiskPressureStatus_FromService()
     {
         var ultraDebugLogService = new FakeUltraDebugLogService
@@ -2715,6 +2780,62 @@ public sealed class AdminControllerTests
     }
 
     [Fact]
+    public async Task Trace_WithoutCorrelationId_DoesNotThrow()
+    {
+        var traceService = new FakeTraceService();
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            traceService: traceService);
+
+        var exception = await Record.ExceptionAsync(() =>
+            controller.Trace(null, "dec-missing", "exe-missing", CancellationToken.None));
+
+        Assert.Null(exception);
+        Assert.Equal(0, traceService.GetDetailCalls);
+    }
+
+    [Fact]
+    public async Task Trace_WithoutCorrelationId_RedirectsOrReturnsSafeResult()
+    {
+        var traceService = new FakeTraceService();
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            traceService: traceService);
+
+        var result = await controller.Trace(null, "dec-missing", "exe-missing", CancellationToken.None);
+
+        var redirect = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.AuditLogs), redirect.ActionName);
+        Assert.Equal("Admin", redirect.RouteValues!["area"]);
+        Assert.Equal("dec-missing", redirect.RouteValues!["decisionId"]);
+        Assert.Equal("exe-missing", redirect.RouteValues!["executionAttemptId"]);
+        Assert.Equal(0, traceService.GetDetailCalls);
+    }
+
+    [Fact]
+    public async Task Trace_WithCorrelationId_DelegatesToDetail_OrPreservesExistingBehavior()
+    {
+        var traceService = new FakeTraceService
+        {
+            DetailSnapshot = new AdminTraceDetailSnapshot("corr-shortcut", [], [])
+        };
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            traceService: traceService);
+
+        var result = await controller.Trace("corr-shortcut", "dec-shortcut", "exe-shortcut", CancellationToken.None);
+
+        var viewResult = Assert.IsType<ViewResult>(result);
+        Assert.Equal("TraceDetail", viewResult.ViewName);
+        var model = Assert.IsType<AdminTraceDetailSnapshot>(viewResult.Model);
+        Assert.Equal("corr-shortcut", model.CorrelationId);
+        Assert.Equal(1, traceService.GetDetailCalls);
+        Assert.Equal("corr-shortcut", traceService.LastCorrelationId);
+        Assert.Equal("dec-shortcut", traceService.LastDecisionId);
+        Assert.Equal("exe-shortcut", traceService.LastExecutionAttemptId);
+    }
+
+    [Fact]
     public async Task TraceDetail_LoadsDetail_FromQueryParameters()
     {
         var traceService = new FakeTraceService
@@ -2735,6 +2856,21 @@ public sealed class AdminControllerTests
         Assert.Equal("corr-detail", traceService.LastCorrelationId);
         Assert.Equal("dec-detail", traceService.LastDecisionId);
         Assert.Null(traceService.LastExecutionAttemptId);
+    }
+
+    [Fact]
+    public async Task TraceDetail_WithoutCorrelationId_ReturnsSafeResult()
+    {
+        var traceService = new FakeTraceService();
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            traceService: traceService);
+
+        var result = await controller.TraceDetail(null, "dec-missing", "exe-missing", CancellationToken.None);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal("Trace detail requires correlationId.", badRequest.Value);
+        Assert.Equal(0, traceService.GetDetailCalls);
     }
 
     [Fact]
@@ -3998,9 +4134,13 @@ public sealed class AdminControllerTests
 
         public UltraDebugLogSearchRequest? SearchRequest { get; private set; }
 
+        public UltraDebugLogExportRequest? ExportRequest { get; private set; }
+
         public int GetSnapshotCalls { get; private set; }
 
         public int SearchCalls { get; private set; }
+
+        public int ExportCalls { get; private set; }
 
         public UltraDebugLogTailSnapshot SearchSnapshot { get; set; } = new(
             BucketName: "all",
@@ -4009,6 +4149,21 @@ public sealed class AdminControllerTests
             FilesScanned: 0,
             IsTruncated: false,
             Lines: Array.Empty<UltraDebugLogTailLineSnapshot>());
+
+        public UltraDebugLogExportSnapshot ExportSnapshot { get; set; } = new(
+            ContentType: "application/x-ndjson",
+            FileDownloadName: "coinbot-logs-all-all-20260422T080000Z-20260422T090000Z.ndjson",
+            Content: Encoding.UTF8.GetBytes("{\"eventName\":\"masked_export_empty\"}\n"),
+            FromUtc: new DateTime(2026, 4, 22, 8, 0, 0, DateTimeKind.Utc),
+            ToUtc: new DateTime(2026, 4, 22, 9, 0, 0, DateTimeKind.Utc),
+            RequestedLineCount: 200,
+            ExportedLineCount: 0,
+            FilesScanned: 0,
+            IsTruncated: false,
+            IsEmpty: true,
+            EmptyReason: "No masked log lines matched the requested export window.");
+
+        public Exception? ExportException { get; set; }
 
         public List<UltraDebugLogEntry> Entries { get; } = [];
 
@@ -4060,6 +4215,18 @@ public sealed class AdminControllerTests
             SearchCalls++;
             SearchRequest = request;
             return Task.FromResult(SearchSnapshot);
+        }
+
+        public Task<UltraDebugLogExportSnapshot> ExportAsync(UltraDebugLogExportRequest request, CancellationToken cancellationToken = default)
+        {
+            ExportCalls++;
+            ExportRequest = request;
+            if (ExportException is not null)
+            {
+                throw ExportException;
+            }
+
+            return Task.FromResult(ExportSnapshot);
         }
 
         public Task WriteAsync(UltraDebugLogEntry entry, CancellationToken cancellationToken = default)

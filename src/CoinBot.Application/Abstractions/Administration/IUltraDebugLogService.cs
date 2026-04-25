@@ -19,6 +19,10 @@ public interface IUltraDebugLogService
         UltraDebugLogSearchRequest request,
         CancellationToken cancellationToken = default);
 
+    Task<UltraDebugLogExportSnapshot> ExportAsync(
+        UltraDebugLogExportRequest request,
+        CancellationToken cancellationToken = default);
+
     Task WriteAsync(
         UltraDebugLogEntry entry,
         CancellationToken cancellationToken = default);
@@ -94,6 +98,29 @@ public sealed record UltraDebugLogSearchRequest(
     string? SearchTerm,
     DateTime? FromUtc,
     int Take);
+
+public sealed record UltraDebugLogExportRequest(
+    string BucketName,
+    string? Category,
+    string? Source,
+    string? SearchTerm,
+    DateTime? FromUtc,
+    DateTime? ToUtc,
+    int MaxRows,
+    bool ZipPackage);
+
+public sealed record UltraDebugLogExportSnapshot(
+    string ContentType,
+    string FileDownloadName,
+    byte[] Content,
+    DateTime FromUtc,
+    DateTime ToUtc,
+    int RequestedLineCount,
+    int ExportedLineCount,
+    int FilesScanned,
+    bool IsTruncated,
+    bool IsEmpty,
+    string? EmptyReason = null);
 
 public sealed record UltraDebugLogEnableRequest(
     string DurationKey,
