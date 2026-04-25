@@ -39,6 +39,7 @@ public sealed class MarketScannerService(
     private const int CompressionBreakoutSetupShadowScore = 25;
     private const decimal MaxSqlClientDecimal38Scale18Value = 79_228_162_514.264337593543950335m;
 
+    private readonly BotExecutionPilotOptions botExecutionOptionsValue = botExecutionPilotOptions?.Value ?? new();
     private readonly MarketScannerOptions scannerOptionsValue = scannerOptions.Value;
     private readonly string klineInterval = string.IsNullOrWhiteSpace(marketDataOptions.Value.KlineInterval)
         ? "1m"
@@ -52,7 +53,7 @@ public sealed class MarketScannerService(
         .ThenBy(item => item, StringComparer.Ordinal)
         .ToArray();
     private readonly ExecutionEnvironment signalEvaluationMode =
-        botExecutionPilotOptions?.Value.SignalEvaluationMode ?? ExecutionEnvironment.Live;
+        (botExecutionPilotOptions?.Value ?? new BotExecutionPilotOptions()).SignalEvaluationMode;
     private readonly Dictionary<string, AiRankingOutcomeCoverageSummary> aiRankingOutcomeCoverageCache = new(StringComparer.Ordinal);
 
     public async Task<MarketScannerCycle> RunOnceAsync(CancellationToken cancellationToken = default)
@@ -329,6 +330,18 @@ public sealed class MarketScannerService(
             .Distinct(StringComparer.Ordinal)
             .ToList();
         AddSymbols(universe, recentCandleSymbols, "historical-candles");
+
+        var allowedPilotSymbols = botExecutionOptionsValue.PilotActivationEnabled
+            ? botExecutionOptionsValue.ResolveNormalizedAllowedSymbols()
+            : Array.Empty<string>();
+
+        if (allowedPilotSymbols.Length > 0)
+        {
+            var allowedSymbolSet = new HashSet<string>(allowedPilotSymbols, StringComparer.Ordinal);
+            universe = universe
+                .Where(item => allowedSymbolSet.Contains(item.Key))
+                .ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
+        }
 
         return universe
             .OrderBy(item => item.Key, StringComparer.Ordinal)
@@ -1709,14 +1722,17 @@ public sealed class MarketScannerService(
                     new StrategyEvaluationContext(signalEvaluationMode, indicatorSnapshot),
                     nowUtc));
 
-            var strategyBlockerReason = string.Equals(report.Outcome, "EntryMatched", StringComparison.Ordinal)
+            var directionModeBlockerReason = ResolveDirectionModeRejectionReason(
+                strategyBinding.DirectionMode,
+                report.RuleEvaluation.EntryDirection);
+            var strategyBlockerReason = directionModeBlockerReason ?? (string.Equals(report.Outcome, "EntryMatched", StringComparison.Ordinal)
                 ? null
-                : ResolveStrategyOutcomeRejectionReason(report);
+                : ResolveStrategyOutcomeRejectionReason(report, strategyBinding.DirectionMode));
             var summary = Truncate(
-                $"StrategyKey={strategyBinding.StrategyKey}; Template={report.TemplateKey ?? "custom"}; Outcome={report.Outcome}; StrategyBlocker={strategyBlockerReason ?? "none"}; StrategyScore={report.AggregateScore}; Passed={report.PassedRuleCount}; Failed={report.FailedRuleCount}; {report.ExplainabilitySummary}",
+                $"StrategyKey={strategyBinding.StrategyKey}; Template={report.TemplateKey ?? "custom"}; Outcome={report.Outcome}; EntryDirection={report.RuleEvaluation.EntryDirection}; BotDirectionMode={strategyBinding.DirectionMode}; StrategyBlocker={strategyBlockerReason ?? "none"}; StrategyScore={report.AggregateScore}; Passed={report.PassedRuleCount}; Failed={report.FailedRuleCount}; {report.ExplainabilitySummary}",
                 512);
 
-            if (!string.Equals(report.Outcome, "EntryMatched", StringComparison.Ordinal))
+            if (!string.Equals(report.Outcome, "EntryMatched", StringComparison.Ordinal) || directionModeBlockerReason is not null)
             {
                 return MarketScannerStrategyScoreSummary.Rejected(
                     strategyBlockerReason ?? $"Strategy{report.Outcome}",
@@ -1766,7 +1782,8 @@ public sealed class MarketScannerService(
                 entity.Id,
                 entity.OwnerUserId,
                 entity.StrategyKey,
-                entity.Symbol
+                entity.Symbol,
+                entity.DirectionMode
             })
             .ToListAsync(cancellationToken);
         MarketScannerStrategyBindingResolution? bindingMiss = null;
@@ -1827,7 +1844,8 @@ public sealed class MarketScannerService(
                     strategy.StrategyKey,
                     symbol,
                     string.IsNullOrWhiteSpace(strategy.DisplayName) ? strategy.StrategyKey : strategy.DisplayName,
-                    strategyVersion.DefinitionJson),
+                    strategyVersion.DefinitionJson,
+                    bot.DirectionMode),
                 null,
                 null);
         }
@@ -1838,14 +1856,28 @@ public sealed class MarketScannerService(
             $"StrategyScore=n/a; StrategyOutcome=NoEnabledBotForSymbol; Symbol={symbol}; Timeframe={klineInterval}");
     }
 
-    private static string ResolveStrategyOutcomeRejectionReason(StrategyEvaluationReportSnapshot report)
+    private static string ResolveStrategyOutcomeRejectionReason(
+        StrategyEvaluationReportSnapshot report,
+        TradingBotDirectionMode directionMode)
     {
         return report.Outcome switch
         {
             "RiskVetoed" => ResolveStrategyRiskVetoRejectionReason(report.RuleEvaluation),
             "ExitMatched" => ResolveStrategyExitRejectionReason(report.RuleEvaluation),
-            "NoSignalCandidate" => ResolveStrategyNoSignalRejectionReason(report.RuleEvaluation),
+            "NoSignalCandidate" => ResolveStrategyNoSignalRejectionReason(report.RuleEvaluation, directionMode),
             _ => $"Strategy{ToReasonSegment(report.Outcome, "OutcomeBlocked")}"
+        };
+    }
+
+    private static string? ResolveDirectionModeRejectionReason(
+        TradingBotDirectionMode directionMode,
+        StrategyTradeDirection entryDirection)
+    {
+        return directionMode switch
+        {
+            TradingBotDirectionMode.ShortOnly when entryDirection == StrategyTradeDirection.Long => "EntryDirectionModeBlocked",
+            TradingBotDirectionMode.LongOnly when entryDirection == StrategyTradeDirection.Short => "EntryDirectionModeBlocked",
+            _ => null
         };
     }
 
@@ -1869,12 +1901,16 @@ public sealed class MarketScannerService(
         };
     }
 
-    private static string ResolveStrategyNoSignalRejectionReason(StrategyEvaluationResult result)
+    private static string ResolveStrategyNoSignalRejectionReason(
+        StrategyEvaluationResult result,
+        TradingBotDirectionMode directionMode)
     {
         if (result.HasEntryRules && !result.EntryMatched)
         {
-            var failedRule = FindFirstFailedEnabledRule(result.EntryRuleResult);
+            var scopedEntryRuleResult = ResolveDirectionScopedEntryRuleResult(result, directionMode);
+            var failedRule = FindFirstFailedEnabledRule(scopedEntryRuleResult ?? result.EntryRuleResult);
             var reasonSegment = ResolveRuleReasonSegment(failedRule)
+                ?? ResolveRuleReasonSegment(scopedEntryRuleResult)
                 ?? ResolveRuleReasonSegment(result.EntryRuleResult)
                 ?? "EntryRulesNotMatched";
 
@@ -1882,6 +1918,18 @@ public sealed class MarketScannerService(
         }
 
         return "StrategyNoSignalCandidate";
+    }
+
+    private static StrategyRuleResultSnapshot? ResolveDirectionScopedEntryRuleResult(
+        StrategyEvaluationResult result,
+        TradingBotDirectionMode directionMode)
+    {
+        return directionMode switch
+        {
+            TradingBotDirectionMode.LongOnly => result.LongEntryRuleResult ?? result.EntryRuleResult,
+            TradingBotDirectionMode.ShortOnly => result.ShortEntryRuleResult ?? result.EntryRuleResult,
+            _ => result.EntryRuleResult
+        };
     }
 
     private static StrategyRuleResultSnapshot? FindFirstFailedEnabledRule(StrategyRuleResultSnapshot? snapshot)
@@ -2799,7 +2847,8 @@ public sealed class MarketScannerService(
         string StrategyKey,
         string Symbol,
         string DisplayName,
-        string DefinitionJson);
+        string DefinitionJson,
+        TradingBotDirectionMode DirectionMode);
 
     private sealed record MarketScannerStrategyBindingResolution(
         MarketScannerStrategyBinding? Binding,

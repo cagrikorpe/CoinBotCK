@@ -291,6 +291,43 @@ public sealed class MarketScannerHandoffServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_UsesConfiguredDemoDispatchMode_WhenPilotIsActive_EvenIfTradingModeResolverReturnsLive()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        await using var harness = CreateHarness(
+            nowUtc,
+            new BotExecutionPilotOptions
+            {
+                SignalEvaluationMode = ExecutionEnvironment.Live,
+                ExecutionDispatchMode = ExecutionEnvironment.Demo,
+                PilotActivationEnabled = true,
+                PrimeHistoricalCandleCount = 34
+            },
+            ExecutionEnvironment.Live);
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-demo-pilot", "SOLUSDT", "pilot-demo-dispatch");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 10_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "SOLUSDT", "1m", harness.NowUtc));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
+        Assert.Equal(ExecutionEnvironment.Demo, attempt.ExecutionEnvironment);
+        Assert.Equal(ExecutionEnvironment.Live, harness.StrategySignalService.LastRequest?.EvaluationContext.Mode);
+        Assert.Equal(ExecutionEnvironment.Demo, harness.StrategySignalService.LastRequest?.EffectiveExecutionEnvironment);
+        Assert.Equal(ExecutionEnvironment.Demo, harness.ExecutionGate.LastRequest?.Environment);
+        Assert.Equal(ExecutionEnvironment.Demo, harness.UserExecutionOverrideGuard.LastRequest?.Environment);
+        var order = await harness.DbContext.ExecutionOrders.SingleAsync(entity => entity.StrategySignalId == attempt.StrategySignalId);
+        Assert.Equal(ExecutionEnvironment.Demo, order.ExecutionEnvironment);
+        Assert.Equal(ExecutionOrderExecutorKind.Virtual, order.ExecutorKind);
+        Assert.True(harness.ExecutionEngine.LastCommand?.IsDemo);
+    }
+
+    [Fact]
     public async Task RunOnceAsync_PreparesShortEntryOrder_WhenStrategyDirectionIsShort()
     {
         await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
@@ -298,6 +335,39 @@ public sealed class MarketScannerHandoffServiceTests
         var bot = await SeedBotGraphAsync(harness.DbContext, "user-short", "SOLUSDT", "pilot-short");
         var botEntity = await harness.DbContext.TradingBots.SingleAsync(entity => entity.Id == bot.BotId);
         botEntity.DirectionMode = TradingBotDirectionMode.LongShort;
+        await harness.DbContext.SaveChangesAsync();
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 10_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(
+            bot.TradingStrategyId,
+            bot.TradingStrategyVersionId,
+            "SOLUSDT",
+            "1m",
+            harness.NowUtc,
+            direction: StrategyTradeDirection.Short));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        var order = await harness.DbContext.ExecutionOrders.SingleAsync(entity => entity.StrategySignalId == attempt.StrategySignalId);
+        Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
+        Assert.Equal(ExecutionOrderSide.Sell, attempt.ExecutionSide);
+        Assert.Equal(ExecutionOrderSide.Sell, order.Side);
+        Assert.False(order.ReduceOnly);
+        Assert.Equal(ExecutionOrderSide.Sell, harness.ExecutionEngine.LastCommand?.Side);
+        Assert.False(harness.ExecutionEngine.LastCommand?.ReduceOnly);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_PreparesShortEntryOrder_WhenBotDirectionModeIsShortOnly()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-short-only", "SOLUSDT", "pilot-short-only");
+        var botEntity = await harness.DbContext.TradingBots.SingleAsync(entity => entity.Id == bot.BotId);
+        botEntity.DirectionMode = TradingBotDirectionMode.ShortOnly;
         await harness.DbContext.SaveChangesAsync();
         SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
         SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 10_000m);

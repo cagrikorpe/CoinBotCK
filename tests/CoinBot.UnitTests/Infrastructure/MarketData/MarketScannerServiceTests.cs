@@ -770,6 +770,436 @@ public sealed class MarketScannerServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_FiltersUniverseToPilotAllowedSymbols_WhenPilotActivationEnabled()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        SeedCandles(dbContext, "ETHUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        SeedCandles(dbContext, "SOLUSDT", nowUtc.UtcDateTime, closePrice: 25m, volume: 1_000m);
+        await dbContext.SaveChangesAsync();
+
+        var marketDataService = new FakeMarketDataService();
+        marketDataService.SetLatestPrice("BTCUSDT", 100m, nowUtc.UtcDateTime);
+        marketDataService.SetLatestPrice("ETHUSDT", 100m, nowUtc.UtcDateTime);
+        marketDataService.SetLatestPrice("SOLUSDT", 25m, nowUtc.UtcDateTime);
+
+        var service = new MarketScannerService(
+            dbContext,
+            marketDataService,
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("BTCUSDT", "Binance", "BTC", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime),
+                new SymbolMetadataSnapshot("ETHUSDT", "Binance", "ETH", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime),
+                new SymbolMetadataSnapshot("SOLUSDT", "Binance", "SOL", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 10,
+                Min24hQuoteVolume = 100m,
+                MaxDataAgeSeconds = 120,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = false
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance,
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                PilotActivationEnabled = true,
+                AllowedSymbols = ["SOLUSDT"],
+                SignalEvaluationMode = ExecutionEnvironment.Live
+            }));
+
+        var cycle = await service.RunOnceAsync();
+        var candidates = await dbContext.MarketScannerCandidates
+            .Where(entity => entity.ScanCycleId == cycle.Id)
+            .OrderBy(entity => entity.Symbol)
+            .ToListAsync();
+        var heartbeat = await dbContext.WorkerHeartbeats.SingleAsync(entity => entity.WorkerKey == MarketScannerService.WorkerKey);
+
+        var candidate = Assert.Single(candidates);
+        Assert.Equal(1, cycle.ScannedSymbolCount);
+        Assert.Equal("SOLUSDT", candidate.Symbol);
+        Assert.Equal("SOLUSDT", cycle.BestCandidateSymbol);
+        Assert.DoesNotContain("BTCUSDT", cycle.Summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("ETHUSDT", cycle.Summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("NoEnabledBotForSymbol", cycle.Summary, StringComparison.Ordinal);
+        Assert.Equal(MonitoringHealthState.Healthy, heartbeat.HealthState);
+        Assert.Equal(CircuitBreakerStateCode.Closed, heartbeat.CircuitBreakerState);
+        Assert.Null(heartbeat.LastErrorCode);
+        Assert.DoesNotContain("BTCUSDT", heartbeat.Detail ?? string.Empty, StringComparison.Ordinal);
+        Assert.DoesNotContain("ETHUSDT", heartbeat.Detail ?? string.Empty, StringComparison.Ordinal);
+        Assert.DoesNotContain("NoEnabledBotForSymbol", heartbeat.Detail ?? string.Empty, StringComparison.Ordinal);
+        Assert.Contains("Scanned=1", heartbeat.Detail ?? string.Empty, StringComparison.Ordinal);
+        Assert.Equal(1, marketDataService.SharedPriceReadCount);
+        Assert.Equal(1, marketDataService.SharedKlineReadCount);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_RejectsLongEntry_WhenBotDirectionModeIsShortOnly()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        var strategy = await SeedStrategyGraphAsync(
+            dbContext,
+            "user-short-only-block",
+            "SOLUSDT",
+            "scanner-short-only-block",
+            "{}",
+            TradingBotDirectionMode.ShortOnly);
+        SeedCandles(dbContext, "SOLUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        await dbContext.SaveChangesAsync();
+
+        var marketDataService = new FakeMarketDataService();
+        marketDataService.SetLatestPrice("SOLUSDT", 100m, nowUtc.UtcDateTime);
+        var indicatorDataService = new FakeIndicatorDataService();
+        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", nowUtc.UtcDateTime));
+
+        var strategyEvaluatorService = new FakeStrategyEvaluatorService();
+        strategyEvaluatorService.SetReport(
+            "SOLUSDT",
+            CreateEvaluationReport(
+                strategy.TradingStrategyId,
+                strategy.TradingStrategyVersionId,
+                "scanner-short-only-block",
+                "SOLUSDT",
+                "1m",
+                nowUtc.UtcDateTime,
+                83,
+                "Long entry matched but bot is short only.",
+                ruleEvaluation: new StrategyEvaluationResult(
+                    HasEntryRules: true,
+                    EntryMatched: true,
+                    HasExitRules: false,
+                    ExitMatched: false,
+                    HasRiskRules: true,
+                    RiskPassed: true,
+                    EntryRuleResult: null,
+                    ExitRuleResult: null,
+                    RiskRuleResult: null,
+                    Direction: StrategyTradeDirection.Long,
+                    EntryDirection: StrategyTradeDirection.Long)));
+
+        var service = new MarketScannerService(
+            dbContext,
+            marketDataService,
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("SOLUSDT", "Binance", "SOL", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 10,
+                Min24hQuoteVolume = 1_000m,
+                MaxDataAgeSeconds = 120,
+                StrategyScoreWeight = 2m,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = true
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["SOLUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance,
+            handoffService: null,
+            indicatorDataService,
+            strategyEvaluatorService,
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }));
+
+        var cycle = await service.RunOnceAsync();
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+
+        Assert.False(candidate.IsEligible);
+        Assert.Equal("EntryDirectionModeBlocked", candidate.RejectionReason);
+        Assert.Equal(0m, candidate.Score);
+        Assert.Contains("EntryDirection=Long", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("BotDirectionMode=ShortOnly", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("EntryDirectionModeBlocked:1 [SOLUSDT]", cycle.Summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_AllowsShortEntry_WhenBotDirectionModeIsShortOnly()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        var strategy = await SeedStrategyGraphAsync(
+            dbContext,
+            "user-short-only-allowed",
+            "SOLUSDT",
+            "scanner-short-only-allowed",
+            "{}",
+            TradingBotDirectionMode.ShortOnly);
+        SeedCandles(dbContext, "SOLUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        await dbContext.SaveChangesAsync();
+
+        var marketDataService = new FakeMarketDataService();
+        marketDataService.SetLatestPrice("SOLUSDT", 100m, nowUtc.UtcDateTime);
+        var indicatorDataService = new FakeIndicatorDataService();
+        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", nowUtc.UtcDateTime));
+
+        var strategyEvaluatorService = new FakeStrategyEvaluatorService();
+        strategyEvaluatorService.SetReport(
+            "SOLUSDT",
+            CreateEvaluationReport(
+                strategy.TradingStrategyId,
+                strategy.TradingStrategyVersionId,
+                "scanner-short-only-allowed",
+                "SOLUSDT",
+                "1m",
+                nowUtc.UtcDateTime,
+                83,
+                "Short entry matched.",
+                ruleEvaluation: new StrategyEvaluationResult(
+                    HasEntryRules: true,
+                    EntryMatched: true,
+                    HasExitRules: false,
+                    ExitMatched: false,
+                    HasRiskRules: true,
+                    RiskPassed: true,
+                    EntryRuleResult: null,
+                    ExitRuleResult: null,
+                    RiskRuleResult: null,
+                    Direction: StrategyTradeDirection.Short,
+                    EntryDirection: StrategyTradeDirection.Short)));
+
+        var service = new MarketScannerService(
+            dbContext,
+            marketDataService,
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("SOLUSDT", "Binance", "SOL", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 10,
+                Min24hQuoteVolume = 1_000m,
+                MaxDataAgeSeconds = 120,
+                StrategyScoreWeight = 2m,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = true
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["SOLUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance,
+            handoffService: null,
+            indicatorDataService,
+            strategyEvaluatorService,
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }));
+
+        var cycle = await service.RunOnceAsync();
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+
+        Assert.True(candidate.IsEligible);
+        Assert.Null(candidate.RejectionReason);
+        Assert.True(candidate.Score > 0m);
+        Assert.Equal("SOLUSDT", cycle.BestCandidateSymbol);
+        Assert.Contains("EntryDirection=Short", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("BotDirectionMode=ShortOnly", candidate.ScoringSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_UsesShortEntryReason_WhenBotDirectionModeIsShortOnly_AndNoShortSignalCandidate()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        var strategy = await SeedStrategyGraphAsync(
+            dbContext,
+            "user-short-only-no-signal",
+            "SOLUSDT",
+            "scanner-short-only-no-signal",
+            "{}",
+            TradingBotDirectionMode.ShortOnly);
+        SeedCandles(dbContext, "SOLUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        await dbContext.SaveChangesAsync();
+
+        var marketDataService = new FakeMarketDataService();
+        marketDataService.SetLatestPrice("SOLUSDT", 100m, nowUtc.UtcDateTime);
+        var indicatorDataService = new FakeIndicatorDataService();
+        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", nowUtc.UtcDateTime));
+
+        var longEntryRule = new StrategyRuleResultSnapshot(
+            false,
+            null,
+            "indicator.rsi.value",
+            StrategyRuleComparisonOperator.LessThanOrEqual,
+            "40",
+            StrategyRuleOperandKind.Number,
+            "54",
+            "40",
+            Array.Empty<StrategyRuleResultSnapshot>(),
+            RuleId: "long-entry-rsi-threshold",
+            RuleType: "entry",
+            Timeframe: "1m",
+            Group: "long-entry",
+            Reason: "Long entry RSI threshold not met.");
+        var shortEntryRule = new StrategyRuleResultSnapshot(
+            false,
+            null,
+            "indicator.rsi.value",
+            StrategyRuleComparisonOperator.GreaterThanOrEqual,
+            "60",
+            StrategyRuleOperandKind.Number,
+            "54",
+            "60",
+            Array.Empty<StrategyRuleResultSnapshot>(),
+            RuleId: "short-entry-rsi-threshold",
+            RuleType: "entry",
+            Timeframe: "1m",
+            Group: "short-entry",
+            Reason: "Short entry RSI threshold not met.");
+        var evaluationResult = new StrategyEvaluationResult(
+            HasEntryRules: true,
+            EntryMatched: false,
+            HasExitRules: false,
+            ExitMatched: false,
+            HasRiskRules: true,
+            RiskPassed: true,
+            EntryRuleResult: longEntryRule,
+            ExitRuleResult: null,
+            RiskRuleResult: null,
+            LongEntryRuleResult: longEntryRule,
+            ShortEntryRuleResult: shortEntryRule);
+
+        var strategyEvaluatorService = new FakeStrategyEvaluatorService();
+        strategyEvaluatorService.SetReport(
+            "SOLUSDT",
+            CreateEvaluationReport(
+                strategy.TradingStrategyId,
+                strategy.TradingStrategyVersionId,
+                "scanner-short-only-no-signal",
+                "SOLUSDT",
+                "1m",
+                nowUtc.UtcDateTime,
+                83,
+                "Short entry rules did not match.",
+                outcome: "NoSignalCandidate",
+                ruleEvaluation: evaluationResult,
+                passedRules: ["market-regime [context/1m] PASS w=10 :: trend ok"],
+                failedRules:
+                [
+                    "long-entry-rsi-threshold [entry/1m] FAIL w=20 :: Long entry RSI threshold not met.",
+                    "short-entry-rsi-threshold [entry/1m] FAIL w=20 :: Short entry RSI threshold not met."
+                ]));
+
+        var service = new MarketScannerService(
+            dbContext,
+            marketDataService,
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("SOLUSDT", "Binance", "SOL", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 10,
+                Min24hQuoteVolume = 1_000m,
+                MaxDataAgeSeconds = 120,
+                StrategyScoreWeight = 2m,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = true
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["SOLUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance,
+            handoffService: null,
+            indicatorDataService,
+            strategyEvaluatorService,
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }));
+
+        var cycle = await service.RunOnceAsync();
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+
+        Assert.False(candidate.IsEligible);
+        Assert.Equal("StrategyNoSignalShortEntryRsiThreshold", candidate.RejectionReason);
+        Assert.Contains("StrategyBlocker=StrategyNoSignalShortEntryRsiThreshold", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("BotDirectionMode=ShortOnly", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("StrategyNoSignalShortEntryRsiThreshold:1 [SOLUSDT]", cycle.Summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_RejectsShortEntry_WhenBotDirectionModeIsLongOnly()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        var strategy = await SeedStrategyGraphAsync(
+            dbContext,
+            "user-long-only-block",
+            "SOLUSDT",
+            "scanner-long-only-block",
+            "{}",
+            TradingBotDirectionMode.LongOnly);
+        SeedCandles(dbContext, "SOLUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        await dbContext.SaveChangesAsync();
+
+        var marketDataService = new FakeMarketDataService();
+        marketDataService.SetLatestPrice("SOLUSDT", 100m, nowUtc.UtcDateTime);
+        var indicatorDataService = new FakeIndicatorDataService();
+        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", nowUtc.UtcDateTime));
+
+        var strategyEvaluatorService = new FakeStrategyEvaluatorService();
+        strategyEvaluatorService.SetReport(
+            "SOLUSDT",
+            CreateEvaluationReport(
+                strategy.TradingStrategyId,
+                strategy.TradingStrategyVersionId,
+                "scanner-long-only-block",
+                "SOLUSDT",
+                "1m",
+                nowUtc.UtcDateTime,
+                83,
+                "Short entry matched but bot is long only.",
+                ruleEvaluation: new StrategyEvaluationResult(
+                    HasEntryRules: true,
+                    EntryMatched: true,
+                    HasExitRules: false,
+                    ExitMatched: false,
+                    HasRiskRules: true,
+                    RiskPassed: true,
+                    EntryRuleResult: null,
+                    ExitRuleResult: null,
+                    RiskRuleResult: null,
+                    Direction: StrategyTradeDirection.Short,
+                    EntryDirection: StrategyTradeDirection.Short)));
+
+        var service = new MarketScannerService(
+            dbContext,
+            marketDataService,
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("SOLUSDT", "Binance", "SOL", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 10,
+                Min24hQuoteVolume = 1_000m,
+                MaxDataAgeSeconds = 120,
+                StrategyScoreWeight = 2m,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = true
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["SOLUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance,
+            handoffService: null,
+            indicatorDataService,
+            strategyEvaluatorService,
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }));
+
+        var cycle = await service.RunOnceAsync();
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+
+        Assert.False(candidate.IsEligible);
+        Assert.Equal("EntryDirectionModeBlocked", candidate.RejectionReason);
+        Assert.Equal(0m, candidate.Score);
+        Assert.Contains("EntryDirection=Short", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("BotDirectionMode=LongOnly", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("EntryDirectionModeBlocked:1 [SOLUSDT]", cycle.Summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task RunOnceAsync_UsesActiveHistoricalQuerySet_ForUniverseAndQuoteVolume()
     {
         var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
@@ -2466,7 +2896,8 @@ public sealed class MarketScannerServiceTests
         string ownerUserId,
         string symbol,
         string strategyKey,
-        string definitionJson)
+        string definitionJson,
+        TradingBotDirectionMode directionMode = TradingBotDirectionMode.LongOnly)
     {
         var tradingStrategyId = Guid.NewGuid();
         var tradingStrategyVersionId = Guid.NewGuid();
@@ -2499,6 +2930,7 @@ public sealed class MarketScannerServiceTests
             Name = $"{strategyKey} bot",
             StrategyKey = strategyKey,
             Symbol = symbol,
+            DirectionMode = directionMode,
             IsEnabled = true
         });
 
