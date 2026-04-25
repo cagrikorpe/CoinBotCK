@@ -1,0 +1,105 @@
+@using CoinBot.Application.Abstractions.Administration
+@using CoinBot.Application.Abstractions.Monitoring
+@{
+    var dashboard = ViewData["AdminMonitoringDashboardSnapshot"] as MonitoringDashboardSnapshot
+        ?? MonitoringDashboardSnapshot.Empty(DateTime.UtcNow);
+    var logHealth = dashboard.UltraDebugLogHealth ?? UltraDebugLogHealthSnapshot.Empty();
+    var tone = logHealth.DiskPressureState switch
+    {
+        "Healthy" => "healthy",
+        "Warning" => "warning",
+        "Critical" => "critical",
+        "Disabled" => "degraded",
+        _ => "degraded"
+    };
+    var affectedBuckets = logHealth.AffectedLogBuckets.Count == 0
+        ? "none"
+        : string.Join(", ", logHealth.AffectedLogBuckets);
+
+    static string FormatBytes(long? value)
+    {
+        if (!value.HasValue || value.Value < 0)
+        {
+            return "n/a";
+        }
+
+        var units = new[] { "B", "KB", "MB", "GB", "TB" };
+        decimal size = value.Value;
+        var unitIndex = 0;
+        while (size >= 1024m && unitIndex < units.Length - 1)
+        {
+            size /= 1024m;
+            unitIndex++;
+        }
+
+        return $"{size:0.##} {units[unitIndex]}";
+    }
+}
+
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-panel-card" data-cb-ultra-log-health-card>
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Log Storage Health</div>
+                <div class="cb-admin-section-title">Disk pressure / janitor heartbeat</div>
+                <p class="cb-admin-section-description mb-0">Disk pressure state, fallback impact ve retention worker heartbeat bounded health snapshot olarak gosterilir.</p>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+            {
+                Label = logHealth.DiskPressureState,
+                Tone = tone,
+                IconText = "LG"
+            })
+        </div>
+
+        <div class="cb-admin-worker-meta-grid mt-6">
+            <div class="cb-admin-summary-card" data-cb-ultra-log-disk-state>
+                <span class="cb-admin-summary-label">Disk pressure state</span>
+                <strong>@logHealth.DiskPressureState</strong>
+                <small data-cb-ultra-log-last-checked>@(logHealth.LastCheckedAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "n/a") UTC</small>
+            </div>
+            <div class="cb-admin-summary-card" data-cb-ultra-log-free-space>
+                <span class="cb-admin-summary-label">Free space</span>
+                <strong>@FormatBytes(logHealth.FreeBytes)</strong>
+                <small>@(logHealth.FreePercent?.ToString("0.##") ?? "n/a")% free · threshold @FormatBytes(logHealth.ThresholdBytes)</small>
+            </div>
+            <div class="cb-admin-summary-card" data-cb-ultra-log-writable>
+                <span class="cb-admin-summary-label">Write / tools</span>
+                <strong>@(logHealth.IsWritable ? "Writable" : "Degraded")</strong>
+                <small>Tail=@(logHealth.IsTailAvailable ? "available" : "impacted") · Export=@(logHealth.IsExportAvailable ? "available" : "impacted")</small>
+            </div>
+            <div class="cb-admin-summary-card" data-cb-ultra-log-retention-heartbeat>
+                <span class="cb-admin-summary-label">Retention worker</span>
+                <strong>@(logHealth.LastRetentionCompletedAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "n/a") UTC</strong>
+                <small>Result=@(logHealth.LastRetentionSucceeded is null ? "n/a" : logHealth.LastRetentionSucceeded.Value ? "success" : "failed") · Reason=@(logHealth.LastRetentionReasonCode ?? "n/a")</small>
+            </div>
+        </div>
+
+        <div class="table-responsive mt-6">
+            <table class="table table-borderless cb-admin-table mb-0">
+                <tbody>
+                <tr>
+                    <th>Affected buckets</th>
+                    <td data-cb-ultra-log-affected-buckets>@affectedBuckets</td>
+                </tr>
+                <tr>
+                    <th>Last escalation reason</th>
+                    <td data-cb-ultra-log-escalation-reason>@(logHealth.LastEscalationReason ?? "none")</td>
+                </tr>
+                <tr>
+                    <th>Fallback mode</th>
+                    <td data-cb-ultra-log-fallback-mode>@(logHealth.IsNormalFallbackMode ? "Normal fallback active" : "Not active")</td>
+                </tr>
+                <tr>
+                    <th>Ultra log mode</th>
+                    <td data-cb-ultra-log-enabled>@(logHealth.IsEnabled ? "Enabled" : "Disabled")</td>
+                </tr>
+                <tr>
+                    <th>Auto-disabled reason</th>
+                    <td data-cb-ultra-log-auto-disabled-reason>@(logHealth.AutoDisabledReason ?? "none")</td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>

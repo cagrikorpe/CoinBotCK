@@ -130,6 +130,8 @@
     </div>
 
     <div class="col-xl-5">
+        @await Html.PartialAsync("Foundation/_AdminUltraDebugLogHealthCard")
+
         @await Html.PartialAsync("Foundation/_AdminMarketDataCacheHealthCard")
 
         @await Html.PartialAsync("Foundation/_AdminMarketScannerCard")

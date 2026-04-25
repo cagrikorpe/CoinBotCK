@@ -31,6 +31,11 @@ internal static class UltraDebugLogDefaults
     internal const int ExportLineMaxLength = 16 * 1024;
     internal const int ExportEmptyPayloadMaxLength = 1024;
     internal static readonly TimeSpan ExportMaxDateRange = TimeSpan.FromDays(7);
+    internal static readonly string[] BucketNames =
+    [
+        "normal",
+        "ultra_debug"
+    ];
     internal static readonly string[] CategoryFolders =
     [
         "scanner",

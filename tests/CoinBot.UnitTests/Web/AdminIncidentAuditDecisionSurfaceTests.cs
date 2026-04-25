@@ -30,6 +30,29 @@ public sealed class AdminIncidentAuditDecisionSurfaceTests
         Assert.Contains("data-cb-admin-audit-trail", content, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ExportUltraDebugLog_QueryParamsRemainStable()
+    {
+        var content = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Areas",
+            "Admin",
+            "Views",
+            "Admin",
+            "Audit.cshtml"));
+
+        Assert.Contains("asp-action=\"ExportUltraDebugLog\"", content, StringComparison.Ordinal);
+        Assert.Contains("name=\"logBucket\"", content, StringComparison.Ordinal);
+        Assert.Contains("name=\"logCategory\"", content, StringComparison.Ordinal);
+        Assert.Contains("name=\"logSource\"", content, StringComparison.Ordinal);
+        Assert.Contains("name=\"logSearch\"", content, StringComparison.Ordinal);
+        Assert.Contains("name=\"logTimeWindow\"", content, StringComparison.Ordinal);
+        Assert.Contains("name=\"maxRows\"", content, StringComparison.Ordinal);
+        Assert.Contains("name=\"zipPackage\"", content, StringComparison.Ordinal);
+    }
+
     private static string ResolveRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

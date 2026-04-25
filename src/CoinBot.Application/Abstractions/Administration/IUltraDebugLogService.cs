@@ -7,6 +7,39 @@ public interface IUltraDebugLogService
 
     Task<UltraDebugLogSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default);
 
+    async Task<UltraDebugLogHealthSnapshot> GetHealthSnapshotAsync(CancellationToken cancellationToken = default)
+    {
+        var snapshot = await GetSnapshotAsync(cancellationToken);
+        var affectedBuckets = !string.IsNullOrWhiteSpace(snapshot.AutoDisabledReason)
+            ? new[] { "ultra_debug" }
+            : Array.Empty<string>();
+        var normalizedState = snapshot.IsEnabled
+            ? "Healthy"
+            : string.Equals(snapshot.AutoDisabledReason, "manual_disable", StringComparison.Ordinal)
+                ? "Disabled"
+                : string.IsNullOrWhiteSpace(snapshot.AutoDisabledReason)
+                    ? "Healthy"
+                    : "Degraded";
+
+        return new UltraDebugLogHealthSnapshot(
+            DiskPressureState: normalizedState,
+            FreeBytes: snapshot.DiskFreeSpaceBytes,
+            FreePercent: null,
+            ThresholdBytes: null,
+            AffectedLogBuckets: affectedBuckets,
+            LastCheckedAtUtc: snapshot.UpdatedAtUtc,
+            LastEscalationReason: snapshot.AutoDisabledReason,
+            IsWritable: true,
+            IsTailAvailable: true,
+            IsExportAvailable: true,
+            LastRetentionCompletedAtUtc: null,
+            LastRetentionReasonCode: null,
+            LastRetentionSucceeded: null,
+            IsNormalFallbackMode: snapshot.IsNormalFallbackMode,
+            AutoDisabledReason: snapshot.AutoDisabledReason,
+            IsEnabled: snapshot.IsEnabled);
+    }
+
     Task<UltraDebugLogSnapshot> EnableAsync(
         UltraDebugLogEnableRequest request,
         CancellationToken cancellationToken = default);
@@ -21,6 +54,10 @@ public interface IUltraDebugLogService
 
     Task<UltraDebugLogExportSnapshot> ExportAsync(
         UltraDebugLogExportRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<UltraDebugLogRetentionRunSnapshot> ApplyRetentionAsync(
+        UltraDebugLogRetentionRunRequest request,
         CancellationToken cancellationToken = default);
 
     Task WriteAsync(
@@ -57,6 +94,46 @@ public sealed record UltraDebugLogSnapshot(
     IReadOnlyCollection<UltraDebugLogEventSnapshot>? LatestCategoryEvents = null,
     UltraDebugLogTailSnapshot? NormalLogsTail = null,
     UltraDebugLogTailSnapshot? UltraLogsTail = null);
+
+public sealed record UltraDebugLogHealthSnapshot(
+    string DiskPressureState,
+    long? FreeBytes,
+    decimal? FreePercent,
+    long? ThresholdBytes,
+    IReadOnlyCollection<string> AffectedLogBuckets,
+    DateTime? LastCheckedAtUtc,
+    string? LastEscalationReason,
+    bool IsWritable,
+    bool IsTailAvailable,
+    bool IsExportAvailable,
+    DateTime? LastRetentionCompletedAtUtc,
+    string? LastRetentionReasonCode,
+    bool? LastRetentionSucceeded,
+    bool IsNormalFallbackMode,
+    string? AutoDisabledReason,
+    bool IsEnabled)
+{
+    public static UltraDebugLogHealthSnapshot Empty()
+    {
+        return new UltraDebugLogHealthSnapshot(
+            DiskPressureState: "Degraded",
+            FreeBytes: null,
+            FreePercent: null,
+            ThresholdBytes: null,
+            AffectedLogBuckets: Array.Empty<string>(),
+            LastCheckedAtUtc: null,
+            LastEscalationReason: "Unavailable",
+            IsWritable: false,
+            IsTailAvailable: false,
+            IsExportAvailable: false,
+            LastRetentionCompletedAtUtc: null,
+            LastRetentionReasonCode: null,
+            LastRetentionSucceeded: null,
+            IsNormalFallbackMode: false,
+            AutoDisabledReason: null,
+            IsEnabled: false);
+    }
+}
 
 public sealed record UltraDebugLogEventSnapshot(
     string Category,
@@ -121,6 +198,36 @@ public sealed record UltraDebugLogExportSnapshot(
     bool IsTruncated,
     bool IsEmpty,
     string? EmptyReason = null);
+
+public sealed record UltraDebugLogRetentionRunRequest(
+    string? BucketName = null,
+    bool DryRun = false,
+    int? MaxFiles = null);
+
+public sealed record UltraDebugLogRetentionRunSnapshot(
+    DateTime StartedAtUtc,
+    DateTime CompletedAtUtc,
+    bool DryRun,
+    int ScannedFiles,
+    int DeletedFiles,
+    int SkippedFiles,
+    long ReclaimedBytes,
+    int CandidateDeleteFiles,
+    long CandidateReclaimedBytes,
+    string ReasonCode,
+    IReadOnlyCollection<UltraDebugLogRetentionBucketSnapshot> Buckets);
+
+public sealed record UltraDebugLogRetentionBucketSnapshot(
+    string BucketName,
+    int RetentionDays,
+    int ScannedFiles,
+    int DeletedFiles,
+    int SkippedFiles,
+    long ReclaimedBytes,
+    int CandidateDeleteFiles,
+    long CandidateReclaimedBytes,
+    bool IsTruncated,
+    string ReasonCode);
 
 public sealed record UltraDebugLogEnableRequest(
     string DurationKey,

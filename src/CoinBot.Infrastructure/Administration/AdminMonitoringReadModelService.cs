@@ -21,7 +21,8 @@ public sealed class AdminMonitoringReadModelService(
     IMemoryCache memoryCache,
     TimeProvider timeProvider,
     IOptions<DataLatencyGuardOptions> dataLatencyGuardOptions,
-    ISharedMarketDataCacheObservabilityCollector? sharedMarketDataCacheObservabilityCollector = null) : IAdminMonitoringReadModelService
+    ISharedMarketDataCacheObservabilityCollector? sharedMarketDataCacheObservabilityCollector = null,
+    IUltraDebugLogService? ultraDebugLogService = null) : IAdminMonitoringReadModelService
 {
     private static readonly object CacheKey = new();
     private static readonly MemoryCacheEntryOptions SnapshotCacheOptions = new MemoryCacheEntryOptions()
@@ -47,6 +48,7 @@ public sealed class AdminMonitoringReadModelService(
                         .OrderBy(entity => entity.WorkerName)
                         .ToListAsync(cancellationToken);
                     var scannerSnapshot = await LoadMarketScannerSnapshotAsync(cancellationToken);
+                    var ultraDebugLogHealth = await LoadUltraDebugLogHealthAsync(cancellationToken);
 
                     return new MonitoringDashboardSnapshot(
                         healthSnapshots.Select(MapHealthSnapshot).ToArray(),
@@ -54,11 +56,32 @@ public sealed class AdminMonitoringReadModelService(
                         utcNow)
                     {
                         MarketScanner = scannerSnapshot,
+                        UltraDebugLogHealth = ultraDebugLogHealth,
                         MarketDataCache = sharedMarketDataCacheObservabilityCollector?.GetSnapshot(utcNow)
                             ?? SharedMarketDataCacheHealthSnapshot.Empty(utcNow)
                     };
                 },
                 SnapshotCacheOptions)!;
+    }
+
+    private async Task<UltraDebugLogHealthSnapshot> LoadUltraDebugLogHealthAsync(CancellationToken cancellationToken)
+    {
+        if (ultraDebugLogService is null)
+        {
+            return UltraDebugLogHealthSnapshot.Empty();
+        }
+
+        try
+        {
+            return await ultraDebugLogService.GetHealthSnapshotAsync(cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return UltraDebugLogHealthSnapshot.Empty() with
+            {
+                LastEscalationReason = "Unavailable"
+            };
+        }
     }
 
     private async Task<MarketScannerDashboardSnapshot> LoadMarketScannerSnapshotAsync(CancellationToken cancellationToken)

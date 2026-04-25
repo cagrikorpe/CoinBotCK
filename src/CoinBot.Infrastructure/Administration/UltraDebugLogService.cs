@@ -9,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace CoinBot.Infrastructure.Administration;
 
@@ -17,12 +18,16 @@ public sealed class UltraDebugLogService(
     TimeProvider timeProvider,
     ILogger<UltraDebugLogService> logger,
     IHostEnvironment? hostEnvironment = null,
-    Func<string, long?>? availableDiskBytesResolver = null) : IUltraDebugLogService
+    Func<string, long?>? availableDiskBytesResolver = null,
+    IOptions<UltraDebugLogRetentionOptions>? retentionOptions = null) : IUltraDebugLogService
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly SemaphoreSlim fileWriteLock = new(1, 1);
     private readonly string applicationName = ResolveApplicationName(hostEnvironment?.ApplicationName);
     private readonly Func<string, long?> diskFreeSpaceResolver = availableDiskBytesResolver ?? ResolveAvailableDiskBytes;
+    private readonly UltraDebugLogRetentionOptions retentionOptionsValue = retentionOptions?.Value ?? new();
+    private readonly object retentionHeartbeatLock = new();
+    private RetentionHeartbeatState retentionHeartbeatState = RetentionHeartbeatState.Empty;
 
     public IReadOnlyCollection<UltraDebugLogDurationOption> GetDurationOptions() => UltraDebugLogDefaults.GetDurationOptions();
     public IReadOnlyCollection<UltraDebugLogSizeLimitOption> GetLogSizeLimitOptions() => UltraDebugLogDefaults.GetLogSizeLimitOptions();
@@ -70,6 +75,88 @@ public sealed class UltraDebugLogService(
             {
                 AutoDisabledReason = UltraDebugLogDefaults.RuntimeErrorReason
             }, cancellationToken);
+        }
+    }
+
+    public async Task<UltraDebugLogHealthSnapshot> GetHealthSnapshotAsync(CancellationToken cancellationToken = default)
+    {
+        var checkedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+        var thresholdBytes = checked((long)UltraDebugLogDefaults.DiskPressureFreeSpaceThresholdMb * 1024L * 1024L);
+        var warningThresholdBytes = checked(thresholdBytes * 2L);
+
+        try
+        {
+            await using var scope = serviceScopeFactory.CreateAsyncScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var entity = await dbContext.Set<Domain.Entities.UltraDebugLogState>()
+                .SingleOrDefaultAsync(item => item.Id == UltraDebugLogDefaults.SingletonId, cancellationToken);
+
+            var snapshot = entity is null
+                ? UltraDebugLogDefaults.CreateSnapshot()
+                : MapSnapshot(entity, isPersisted: true);
+            var autoDisabledReason = snapshot.AutoDisabledReason;
+            var isEnabled = snapshot.IsEnabled;
+
+            if (isEnabled &&
+                snapshot.ExpiresAtUtc.HasValue &&
+                snapshot.ExpiresAtUtc.Value <= checkedAtUtc)
+            {
+                isEnabled = false;
+                autoDisabledReason = UltraDebugLogDefaults.DurationExpiredReason;
+            }
+
+            var diskSnapshot = ProbeDiskSpace(ResolveLogRootPath());
+            var diskPressureState = ResolveDiskPressureState(
+                isEnabled,
+                autoDisabledReason,
+                diskSnapshot,
+                thresholdBytes,
+                warningThresholdBytes);
+            var affectedBuckets = ResolveAffectedLogBuckets(autoDisabledReason, diskSnapshot.IsWritable, diskPressureState);
+            var fallbackMode = string.Equals(autoDisabledReason, UltraDebugLogDefaults.DiskPressureReason, StringComparison.Ordinal) ||
+                               string.Equals(autoDisabledReason, UltraDebugLogDefaults.RuntimeWriteFailureReason, StringComparison.Ordinal) ||
+                               (diskSnapshot.FreeBytes.HasValue && IsDiskPressure(diskSnapshot.FreeBytes));
+            var retentionHeartbeat = GetRetentionHeartbeatState();
+
+            return new UltraDebugLogHealthSnapshot(
+                DiskPressureState: diskPressureState,
+                FreeBytes: diskSnapshot.FreeBytes,
+                FreePercent: diskSnapshot.FreePercent,
+                ThresholdBytes: thresholdBytes,
+                AffectedLogBuckets: affectedBuckets,
+                LastCheckedAtUtc: checkedAtUtc,
+                LastEscalationReason: ResolveHealthEscalationReason(autoDisabledReason, diskSnapshot.FailureReason),
+                IsWritable: diskSnapshot.IsWritable,
+                IsTailAvailable: diskSnapshot.IsWritable,
+                IsExportAvailable: diskSnapshot.IsWritable,
+                LastRetentionCompletedAtUtc: retentionHeartbeat.CompletedAtUtc,
+                LastRetentionReasonCode: retentionHeartbeat.ReasonCode,
+                LastRetentionSucceeded: retentionHeartbeat.Succeeded,
+                IsNormalFallbackMode: fallbackMode,
+                AutoDisabledReason: autoDisabledReason,
+                IsEnabled: isEnabled);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(exception, "Ultra debug log health snapshot failed. The monitoring summary will stay degraded.");
+            var retentionHeartbeat = GetRetentionHeartbeatState();
+            return new UltraDebugLogHealthSnapshot(
+                DiskPressureState: "Degraded",
+                FreeBytes: null,
+                FreePercent: null,
+                ThresholdBytes: thresholdBytes,
+                AffectedLogBuckets: ["normal", "ultra_debug"],
+                LastCheckedAtUtc: checkedAtUtc,
+                LastEscalationReason: "HealthSnapshotRuntimeFailed",
+                IsWritable: false,
+                IsTailAvailable: false,
+                IsExportAvailable: false,
+                LastRetentionCompletedAtUtc: retentionHeartbeat.CompletedAtUtc,
+                LastRetentionReasonCode: retentionHeartbeat.ReasonCode,
+                LastRetentionSucceeded: retentionHeartbeat.Succeeded,
+                IsNormalFallbackMode: false,
+                AutoDisabledReason: UltraDebugLogDefaults.RuntimeErrorReason,
+                IsEnabled: false);
         }
     }
 
@@ -372,6 +459,127 @@ public sealed class UltraDebugLogService(
             throw new UltraDebugLogOperationException(
                 "UltraLogExportRuntimeFailed",
                 "Masked log export failed at runtime.");
+        }
+    }
+
+    public async Task<UltraDebugLogRetentionRunSnapshot> ApplyRetentionAsync(
+        UltraDebugLogRetentionRunRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var startedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+        var normalizedBucketNames = ResolveRetentionBucketNames(request.BucketName);
+        var normalizedMaxFiles = NormalizeRetentionMaxFiles(request.MaxFiles);
+        var dryRun = request.DryRun;
+
+        if (!retentionOptionsValue.Enabled)
+        {
+            var disabledSnapshot = new UltraDebugLogRetentionRunSnapshot(
+                StartedAtUtc: startedAtUtc,
+                CompletedAtUtc: startedAtUtc,
+                DryRun: dryRun,
+                ScannedFiles: 0,
+                DeletedFiles: 0,
+                SkippedFiles: 0,
+                ReclaimedBytes: 0,
+                CandidateDeleteFiles: 0,
+                CandidateReclaimedBytes: 0,
+                ReasonCode: "Disabled",
+                Buckets: normalizedBucketNames
+                    .Select(bucketName => new UltraDebugLogRetentionBucketSnapshot(
+                        BucketName: bucketName,
+                        RetentionDays: ResolveRetentionDays(bucketName),
+                        ScannedFiles: 0,
+                        DeletedFiles: 0,
+                        SkippedFiles: 0,
+                        ReclaimedBytes: 0,
+                        CandidateDeleteFiles: 0,
+                        CandidateReclaimedBytes: 0,
+                        IsTruncated: false,
+                        ReasonCode: "Disabled"))
+                    .ToArray());
+            RecordRetentionHeartbeat(disabledSnapshot);
+            return disabledSnapshot;
+        }
+
+        await fileWriteLock.WaitAsync(cancellationToken);
+        try
+        {
+            var logRootPath = EnsureAllowedLogRootPath();
+            var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
+            var bucketSnapshots = new List<UltraDebugLogRetentionBucketSnapshot>(normalizedBucketNames.Length);
+            var remainingFilesBudget = normalizedMaxFiles;
+
+            foreach (var bucketName in normalizedBucketNames)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var bucketSnapshot = ApplyBucketRetention(
+                    logRootPath,
+                    bucketName,
+                    nowUtc,
+                    dryRun,
+                    remainingFilesBudget,
+                    cancellationToken);
+                bucketSnapshots.Add(bucketSnapshot);
+                remainingFilesBudget = Math.Max(0, remainingFilesBudget - bucketSnapshot.ScannedFiles);
+            }
+
+            var completedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+            var totalScanned = bucketSnapshots.Sum(item => item.ScannedFiles);
+            var totalDeleted = bucketSnapshots.Sum(item => item.DeletedFiles);
+            var totalSkipped = bucketSnapshots.Sum(item => item.SkippedFiles);
+            var totalReclaimedBytes = bucketSnapshots.Sum(item => item.ReclaimedBytes);
+            var totalCandidateDeleteFiles = bucketSnapshots.Sum(item => item.CandidateDeleteFiles);
+            var totalCandidateReclaimedBytes = bucketSnapshots.Sum(item => item.CandidateReclaimedBytes);
+            var reasonCode = bucketSnapshots.Any(item => string.Equals(item.ReasonCode, "ScanLimitReached", StringComparison.Ordinal))
+                ? "ScanLimitReached"
+                : dryRun
+                    ? "DryRun"
+                    : "Completed";
+
+            var completedSnapshot = new UltraDebugLogRetentionRunSnapshot(
+                StartedAtUtc: startedAtUtc,
+                CompletedAtUtc: completedAtUtc,
+                DryRun: dryRun,
+                ScannedFiles: totalScanned,
+                DeletedFiles: totalDeleted,
+                SkippedFiles: totalSkipped,
+                ReclaimedBytes: totalReclaimedBytes,
+                CandidateDeleteFiles: totalCandidateDeleteFiles,
+                CandidateReclaimedBytes: totalCandidateReclaimedBytes,
+                ReasonCode: reasonCode,
+                Buckets: bucketSnapshots.ToArray());
+            RecordRetentionHeartbeat(completedSnapshot);
+            return completedSnapshot;
+        }
+        catch (UltraDebugLogOperationException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(exception, "Ultra debug log retention failed. The janitor will stay fail-closed.");
+            var completedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+            var failedSnapshot = new UltraDebugLogRetentionRunSnapshot(
+                StartedAtUtc: startedAtUtc,
+                CompletedAtUtc: completedAtUtc,
+                DryRun: dryRun,
+                ScannedFiles: 0,
+                DeletedFiles: 0,
+                SkippedFiles: 0,
+                ReclaimedBytes: 0,
+                CandidateDeleteFiles: 0,
+                CandidateReclaimedBytes: 0,
+                ReasonCode: "RuntimeFailure",
+                Buckets: Array.Empty<UltraDebugLogRetentionBucketSnapshot>());
+            RecordRetentionHeartbeat(failedSnapshot);
+            return failedSnapshot;
+        }
+        finally
+        {
+            fileWriteLock.Release();
         }
     }
 
@@ -845,14 +1053,15 @@ public sealed class UltraDebugLogService(
         await fileWriteLock.WaitAsync(cancellationToken);
         try
         {
+            var logRootPath = EnsureAllowedLogRootPath();
             var bucketRootPath = ResolveBucketRootDirectoryPath(activeFilePath);
             if (string.IsNullOrWhiteSpace(bucketRootPath) || !Directory.Exists(bucketRootPath))
             {
                 return true;
             }
 
-            var directory = new DirectoryInfo(bucketRootPath);
-            var files = directory.GetFiles("*.ndjson", SearchOption.AllDirectories)
+            var normalizedBucketRootPath = EnsureAllowedBucketRootPath(logRootPath, Path.GetFileName(bucketRootPath));
+            var files = EnumerateSafeBucketFiles(normalizedBucketRootPath, int.MaxValue, out _, out _, cancellationToken)
                 .OrderBy(file => file.LastWriteTimeUtc)
                 .ThenBy(file => file.Name, StringComparer.Ordinal)
                 .ToArray();
@@ -873,7 +1082,7 @@ public sealed class UltraDebugLogService(
                 }
 
                 totalBytes -= file.Length;
-                file.Delete();
+                DeleteFileWithinAllowedRoot(file, normalizedBucketRootPath);
             }
 
             return totalBytes <= limitBytes;
@@ -886,17 +1095,449 @@ public sealed class UltraDebugLogService(
 
     private Task<long> GetBucketSizeBytesAsync(string activeFilePath, CancellationToken cancellationToken)
     {
-        _ = cancellationToken;
+        var logRootPath = EnsureAllowedLogRootPath();
         var bucketRootPath = ResolveBucketRootDirectoryPath(activeFilePath);
         if (string.IsNullOrWhiteSpace(bucketRootPath) || !Directory.Exists(bucketRootPath))
         {
             return Task.FromResult(0L);
         }
 
-        var totalBytes = new DirectoryInfo(bucketRootPath)
-            .GetFiles("*.ndjson", SearchOption.AllDirectories)
+        var normalizedBucketRootPath = EnsureAllowedBucketRootPath(logRootPath, Path.GetFileName(bucketRootPath));
+        var totalBytes = EnumerateSafeBucketFiles(normalizedBucketRootPath, int.MaxValue, out _, out _, cancellationToken)
             .Sum(file => file.Length);
         return Task.FromResult(totalBytes);
+    }
+
+    private UltraDebugLogRetentionBucketSnapshot ApplyBucketRetention(
+        string logRootPath,
+        string bucketName,
+        DateTime nowUtc,
+        bool dryRun,
+        int maxFilesToScan,
+        CancellationToken cancellationToken)
+    {
+        var retentionDays = ResolveRetentionDays(bucketName);
+        if (maxFilesToScan <= 0)
+        {
+            return new UltraDebugLogRetentionBucketSnapshot(
+                BucketName: bucketName,
+                RetentionDays: retentionDays,
+                ScannedFiles: 0,
+                DeletedFiles: 0,
+                SkippedFiles: 0,
+                ReclaimedBytes: 0,
+                CandidateDeleteFiles: 0,
+                CandidateReclaimedBytes: 0,
+                IsTruncated: true,
+                ReasonCode: "ScanLimitReached");
+        }
+
+        var bucketRootPath = EnsureAllowedBucketRootPath(logRootPath, bucketName);
+        if (!Directory.Exists(bucketRootPath))
+        {
+            return new UltraDebugLogRetentionBucketSnapshot(
+                BucketName: bucketName,
+                RetentionDays: retentionDays,
+                ScannedFiles: 0,
+                DeletedFiles: 0,
+                SkippedFiles: 0,
+                ReclaimedBytes: 0,
+                CandidateDeleteFiles: 0,
+                CandidateReclaimedBytes: 0,
+                IsTruncated: false,
+                ReasonCode: "BucketMissing");
+        }
+
+        var files = EnumerateSafeBucketFiles(bucketRootPath, maxFilesToScan, out var skippedByEnumeration, out var truncated, cancellationToken)
+            .OrderByDescending(file => file.LastWriteTimeUtc)
+            .ThenByDescending(file => file.Name, StringComparer.Ordinal)
+            .ToArray();
+        var keepProtectedPaths = files
+            .Take(retentionOptionsValue.MinimumKeepFileCount)
+            .Select(file => Path.GetFullPath(file.FullName))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var cutoffUtc = nowUtc.AddDays(-retentionDays);
+
+        var scannedFiles = 0;
+        var deletedFiles = 0;
+        var skippedFiles = skippedByEnumeration;
+        var reclaimedBytes = 0L;
+        var candidateDeleteFiles = 0;
+        var candidateReclaimedBytes = 0L;
+
+        foreach (var file in files
+                     .OrderBy(item => item.LastWriteTimeUtc)
+                     .ThenBy(item => item.Name, StringComparer.Ordinal))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            scannedFiles++;
+
+            if (IsProtectedActiveFile(file, nowUtc) ||
+                keepProtectedPaths.Contains(Path.GetFullPath(file.FullName)))
+            {
+                skippedFiles++;
+                continue;
+            }
+
+            if (file.LastWriteTimeUtc >= cutoffUtc)
+            {
+                skippedFiles++;
+                continue;
+            }
+
+            candidateDeleteFiles++;
+            candidateReclaimedBytes += file.Length;
+
+            if (dryRun)
+            {
+                skippedFiles++;
+                continue;
+            }
+
+            try
+            {
+                DeleteFileWithinAllowedRoot(file, bucketRootPath);
+                deletedFiles++;
+                reclaimedBytes += file.Length;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                logger.LogWarning(
+                    exception,
+                    "Ultra debug log retention skipped a file after delete failure. Bucket={BucketName} File={FileName}.",
+                    bucketName,
+                    file.Name);
+                skippedFiles++;
+            }
+        }
+
+        var reasonCode = truncated
+            ? "ScanLimitReached"
+            : dryRun
+                ? "DryRun"
+                : "Completed";
+
+        return new UltraDebugLogRetentionBucketSnapshot(
+            BucketName: bucketName,
+            RetentionDays: retentionDays,
+            ScannedFiles: scannedFiles,
+            DeletedFiles: deletedFiles,
+            SkippedFiles: skippedFiles,
+            ReclaimedBytes: reclaimedBytes,
+            CandidateDeleteFiles: candidateDeleteFiles,
+            CandidateReclaimedBytes: candidateReclaimedBytes,
+            IsTruncated: truncated,
+            ReasonCode: reasonCode);
+    }
+
+    private int ResolveRetentionDays(string bucketName)
+    {
+        return string.Equals(bucketName, "ultra_debug", StringComparison.OrdinalIgnoreCase)
+            ? retentionOptionsValue.UltraRetentionDays
+            : retentionOptionsValue.NormalRetentionDays;
+    }
+
+    private int NormalizeRetentionMaxFiles(int? maxFiles)
+    {
+        var configuredMaxFiles = Math.Max(1, retentionOptionsValue.MaxFilesPerRun);
+        return Math.Clamp(maxFiles ?? configuredMaxFiles, 1, configuredMaxFiles);
+    }
+
+    private static string[] ResolveRetentionBucketNames(string? bucketName)
+    {
+        if (!string.IsNullOrWhiteSpace(bucketName) &&
+            (bucketName.Contains("..", StringComparison.Ordinal) ||
+             bucketName.Contains('/', StringComparison.Ordinal) ||
+             bucketName.Contains('\\', StringComparison.Ordinal) ||
+             bucketName.Contains(':', StringComparison.Ordinal)))
+        {
+            throw new UltraDebugLogOperationException(
+                "UltraLogRetentionPathInvalid",
+                "Ultra debug log retention failed because the selected bucket contains an invalid path fragment.");
+        }
+
+        return bucketName?.Trim().ToLowerInvariant() switch
+        {
+            null or "" or "all" => UltraDebugLogDefaults.BucketNames,
+            "normal" => ["normal"],
+            "ultra_debug" => ["ultra_debug"],
+            _ => throw new UltraDebugLogOperationException(
+                "UltraLogRetentionBucketInvalid",
+                "Ultra debug log retention failed because the selected bucket is invalid.")
+        };
+    }
+
+    private string EnsureAllowedLogRootPath()
+    {
+        var logRootPath = Path.GetFullPath(ResolveLogRootPath());
+        Directory.CreateDirectory(logRootPath);
+        return logRootPath;
+    }
+
+    private string EnsureAllowedBucketRootPath(string logRootPath, string bucketName)
+    {
+        if (!UltraDebugLogDefaults.BucketNames.Contains(bucketName, StringComparer.OrdinalIgnoreCase))
+        {
+            throw new UltraDebugLogOperationException(
+                "UltraLogRetentionBucketInvalid",
+                "Ultra debug log retention failed because the selected bucket is invalid.");
+        }
+
+        var bucketRootPath = Path.GetFullPath(ResolveBucketDirectoryPath(bucketName));
+        if (!IsPathWithinRoot(bucketRootPath, logRootPath))
+        {
+            throw new UltraDebugLogOperationException(
+                "UltraLogRetentionPathInvalid",
+                "Ultra debug log retention failed because the resolved bucket path is outside the allowed log root.");
+        }
+
+        return bucketRootPath;
+    }
+
+    private static IReadOnlyCollection<FileInfo> EnumerateSafeBucketFiles(
+        string bucketRootPath,
+        int maxFiles,
+        out int skippedFiles,
+        out bool truncated,
+        CancellationToken cancellationToken)
+    {
+        skippedFiles = 0;
+        truncated = false;
+
+        var normalizedBucketRootPath = Path.GetFullPath(bucketRootPath);
+        var pendingDirectories = new Stack<DirectoryInfo>();
+        pendingDirectories.Push(new DirectoryInfo(normalizedBucketRootPath));
+        var files = new List<FileInfo>(Math.Min(maxFiles, 128));
+
+        while (pendingDirectories.Count > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var directory = pendingDirectories.Pop();
+            if (!directory.Exists)
+            {
+                continue;
+            }
+
+            if (!IsPathWithinRoot(directory.FullName, normalizedBucketRootPath) ||
+                (!string.Equals(Path.GetFullPath(directory.FullName), normalizedBucketRootPath, StringComparison.OrdinalIgnoreCase) &&
+                 IsReparsePoint(directory.Attributes)))
+            {
+                skippedFiles++;
+                continue;
+            }
+
+            foreach (var file in directory.GetFiles("*.ndjson", SearchOption.TopDirectoryOnly))
+            {
+                if (files.Count >= maxFiles)
+                {
+                    truncated = true;
+                    return files;
+                }
+
+                if (!IsPathWithinRoot(file.FullName, normalizedBucketRootPath) || IsReparsePoint(file.Attributes))
+                {
+                    skippedFiles++;
+                    continue;
+                }
+
+                files.Add(file);
+            }
+
+            foreach (var childDirectory in directory.GetDirectories())
+            {
+                if (!IsPathWithinRoot(childDirectory.FullName, normalizedBucketRootPath) || IsReparsePoint(childDirectory.Attributes))
+                {
+                    skippedFiles++;
+                    continue;
+                }
+
+                pendingDirectories.Push(childDirectory);
+            }
+        }
+
+        return files;
+    }
+
+    private bool IsProtectedActiveFile(FileInfo file, DateTime nowUtc)
+    {
+        return string.Equals(
+            file.Name,
+            $"{applicationName}-{nowUtc:yyyyMMdd}.ndjson",
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void DeleteFileWithinAllowedRoot(FileInfo file, string allowedRootPath)
+    {
+        if (!IsPathWithinRoot(file.FullName, allowedRootPath))
+        {
+            throw new UltraDebugLogOperationException(
+                "UltraLogRetentionPathInvalid",
+                "Ultra debug log retention failed because a candidate file resolved outside the allowed root.");
+        }
+
+        if (IsReparsePoint(file.Attributes))
+        {
+            throw new UltraDebugLogOperationException(
+                "UltraLogRetentionReparsePointInvalid",
+                "Ultra debug log retention failed because a candidate file uses a reparse point.");
+        }
+
+        file.Delete();
+    }
+
+    private static bool IsPathWithinRoot(string candidatePath, string allowedRootPath)
+    {
+        var normalizedCandidatePath = Path.GetFullPath(candidatePath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var normalizedAllowedRootPath = Path.GetFullPath(allowedRootPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        return string.Equals(normalizedCandidatePath, normalizedAllowedRootPath, StringComparison.OrdinalIgnoreCase) ||
+               normalizedCandidatePath.StartsWith(
+                   normalizedAllowedRootPath + Path.DirectorySeparatorChar,
+                   StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsReparsePoint(FileAttributes attributes)
+    {
+        return (attributes & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint;
+    }
+
+    private DiskSpaceSnapshot ProbeDiskSpace(string logRootPath)
+    {
+        try
+        {
+            var normalizedLogRootPath = Path.GetFullPath(logRootPath);
+            if (File.Exists(normalizedLogRootPath))
+            {
+                return new DiskSpaceSnapshot(
+                    FreeBytes: null,
+                    FreePercent: null,
+                    IsWritable: false,
+                    FailureReason: "LogRootInvalid");
+            }
+
+            var rootPath = Path.GetPathRoot(normalizedLogRootPath);
+            if (string.IsNullOrWhiteSpace(rootPath))
+            {
+                return new DiskSpaceSnapshot(
+                    FreeBytes: null,
+                    FreePercent: null,
+                    IsWritable: false,
+                    FailureReason: "DiskRootUnavailable");
+            }
+
+            var freeBytes = diskFreeSpaceResolver(normalizedLogRootPath);
+            var driveInfo = new DriveInfo(rootPath);
+            decimal? freePercent = freeBytes.HasValue && driveInfo.TotalSize > 0
+                ? Math.Round(100m * freeBytes.Value / driveInfo.TotalSize, 2, MidpointRounding.AwayFromZero)
+                : null;
+
+            return new DiskSpaceSnapshot(
+                FreeBytes: freeBytes,
+                FreePercent: freePercent,
+                IsWritable: true,
+                FailureReason: null);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogDebug(exception, "Ultra debug log disk health probe failed.");
+            return new DiskSpaceSnapshot(
+                FreeBytes: null,
+                FreePercent: null,
+                IsWritable: false,
+                FailureReason: "DiskCheckUnavailable");
+        }
+    }
+
+    private static IReadOnlyCollection<string> ResolveAffectedLogBuckets(
+        string? autoDisabledReason,
+        bool isWritable,
+        string diskPressureState)
+    {
+        if (!isWritable)
+        {
+            return ["normal", "ultra_debug"];
+        }
+
+        if (string.Equals(diskPressureState, "Critical", StringComparison.Ordinal))
+        {
+            return ["ultra_debug"];
+        }
+
+        return autoDisabledReason switch
+        {
+            UltraDebugLogDefaults.DiskPressureReason => ["ultra_debug"],
+            UltraDebugLogDefaults.RuntimeWriteFailureReason => ["ultra_debug"],
+            UltraDebugLogDefaults.SizeLimitExceededReason => ["ultra_debug"],
+            UltraDebugLogDefaults.RuntimeErrorReason => ["ultra_debug"],
+            _ => Array.Empty<string>()
+        };
+    }
+
+    private static string ResolveDiskPressureState(
+        bool isEnabled,
+        string? autoDisabledReason,
+        DiskSpaceSnapshot diskSnapshot,
+        long thresholdBytes,
+        long warningThresholdBytes)
+    {
+        if (!string.IsNullOrWhiteSpace(diskSnapshot.FailureReason))
+        {
+            return "Degraded";
+        }
+
+        if (string.Equals(autoDisabledReason, UltraDebugLogDefaults.DiskPressureReason, StringComparison.Ordinal) ||
+            (diskSnapshot.FreeBytes.HasValue && diskSnapshot.FreeBytes.Value <= thresholdBytes))
+        {
+            return "Critical";
+        }
+
+        if (diskSnapshot.FreeBytes.HasValue && diskSnapshot.FreeBytes.Value <= warningThresholdBytes)
+        {
+            return "Warning";
+        }
+
+        if (!isEnabled && !string.IsNullOrWhiteSpace(autoDisabledReason))
+        {
+            return autoDisabledReason switch
+            {
+                UltraDebugLogDefaults.ManualDisableReason => "Disabled",
+                UltraDebugLogDefaults.DurationExpiredReason => "Disabled",
+                _ => "Degraded"
+            };
+        }
+
+        return "Healthy";
+    }
+
+    private static string? ResolveHealthEscalationReason(string? autoDisabledReason, string? diskFailureReason)
+    {
+        return !string.IsNullOrWhiteSpace(autoDisabledReason)
+            ? autoDisabledReason
+            : string.IsNullOrWhiteSpace(diskFailureReason)
+                ? null
+                : diskFailureReason;
+    }
+
+    private void RecordRetentionHeartbeat(UltraDebugLogRetentionRunSnapshot snapshot)
+    {
+        lock (retentionHeartbeatLock)
+        {
+            retentionHeartbeatState = new RetentionHeartbeatState(
+                snapshot.CompletedAtUtc,
+                snapshot.ReasonCode,
+                !string.Equals(snapshot.ReasonCode, "RuntimeFailure", StringComparison.Ordinal));
+        }
+    }
+
+    private RetentionHeartbeatState GetRetentionHeartbeatState()
+    {
+        lock (retentionHeartbeatLock)
+        {
+            return retentionHeartbeatState;
+        }
     }
 
     private Task<UltraDebugLogSnapshot> EnrichSnapshotWithUsageAsync(
@@ -926,14 +1567,14 @@ public sealed class UltraDebugLogService(
 
     private long GetBucketUsageBytes(string bucketName)
     {
-        var directoryPath = ResolveBucketDirectoryPath(bucketName);
+        var logRootPath = EnsureAllowedLogRootPath();
+        var directoryPath = EnsureAllowedBucketRootPath(logRootPath, bucketName);
         if (!Directory.Exists(directoryPath))
         {
             return 0L;
         }
 
-        return new DirectoryInfo(directoryPath)
-            .GetFiles("*.ndjson", SearchOption.AllDirectories)
+        return EnumerateSafeBucketFiles(directoryPath, int.MaxValue, out _, out _, CancellationToken.None)
             .Sum(file => file.Length);
     }
 
@@ -1977,6 +2618,20 @@ public sealed class UltraDebugLogService(
         return normalizedValue.Length <= maxLength
             ? normalizedValue
             : normalizedValue[..maxLength];
+    }
+
+    private sealed record DiskSpaceSnapshot(
+        long? FreeBytes,
+        decimal? FreePercent,
+        bool IsWritable,
+        string? FailureReason);
+
+    private sealed record RetentionHeartbeatState(
+        DateTime? CompletedAtUtc,
+        string? ReasonCode,
+        bool? Succeeded)
+    {
+        public static RetentionHeartbeatState Empty { get; } = new(null, null, null);
     }
 
     private sealed record SearchCandidateFile(string BucketName, FileInfo File);

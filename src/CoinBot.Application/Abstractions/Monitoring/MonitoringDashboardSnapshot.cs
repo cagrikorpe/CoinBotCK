@@ -1,3 +1,5 @@
+using CoinBot.Application.Abstractions.Administration;
+
 namespace CoinBot.Application.Abstractions.Monitoring;
 
 public sealed record MonitoringDashboardSnapshot(
@@ -9,12 +11,15 @@ public sealed record MonitoringDashboardSnapshot(
 
     public SharedMarketDataCacheHealthSnapshot MarketDataCache { get; init; } = SharedMarketDataCacheHealthSnapshot.Empty();
 
+    public UltraDebugLogHealthSnapshot UltraDebugLogHealth { get; init; } = UltraDebugLogHealthSnapshot.Empty();
+
     public static MonitoringDashboardSnapshot Empty(DateTime lastRefreshedAtUtc)
     {
         return new MonitoringDashboardSnapshot(Array.Empty<HealthSnapshot>(), Array.Empty<WorkerHeartbeat>(), lastRefreshedAtUtc)
         {
             MarketScanner = MarketScannerDashboardSnapshot.Empty(),
-            MarketDataCache = SharedMarketDataCacheHealthSnapshot.Empty(lastRefreshedAtUtc)
+            MarketDataCache = SharedMarketDataCacheHealthSnapshot.Empty(lastRefreshedAtUtc),
+            UltraDebugLogHealth = UltraDebugLogHealthSnapshot.Empty()
         };
     }
 }

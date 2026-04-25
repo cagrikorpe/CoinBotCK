@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Linq;
@@ -27,6 +28,7 @@ using CoinBot.Web.ViewModels.Settings;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace CoinBot.Web.Areas.Admin.Controllers;
@@ -123,6 +125,7 @@ public sealed class AdminController : Controller
     private readonly IBinanceCredentialProbeClient? binanceCredentialProbeClient;
     private readonly IUserExchangeCommandCenterService? userExchangeCommandCenterService;
     private readonly UserManager<ApplicationUser>? userManager;
+    private readonly ILogger<AdminController>? logger;
 
     private readonly BotExecutionPilotOptions pilotOptionsValue;
 
@@ -152,7 +155,8 @@ public sealed class AdminController : Controller
         IBinanceCredentialProbeClient? binanceCredentialProbeClient = null,
         IUserExchangeCommandCenterService? userExchangeCommandCenterService = null,
         UserManager<ApplicationUser>? userManager = null,
-        IUltraDebugLogService? ultraDebugLogService = null)
+        IUltraDebugLogService? ultraDebugLogService = null,
+        ILogger<AdminController>? logger = null)
     {
         this.globalExecutionSwitchService = globalExecutionSwitchService;
         this.globalSystemStateService = globalSystemStateService;
@@ -180,6 +184,7 @@ public sealed class AdminController : Controller
         this.userExchangeCommandCenterService = userExchangeCommandCenterService;
         this.userManager = userManager;
         this.ultraDebugLogService = ultraDebugLogService;
+        this.logger = logger;
     }
 
     [AllowAnonymous]
@@ -1347,6 +1352,7 @@ public sealed class AdminController : Controller
         bool ultraLog = false,
         CancellationToken cancellationToken = default)
     {
+        var routeStopwatch = Stopwatch.StartNew();
         ApplyShellMeta(
             title: "Incident / Audit / Decision Center",
             description: "Decision, execution, admin audit, approval ve incident zincirini reason code ve outcome filtreleriyle tek merkezde geriye donuk okutan operasyon ekranı.",
@@ -1378,6 +1384,32 @@ public sealed class AdminController : Controller
             normalizedSymbol)
             ? normalizedFocus
             : normalizedQuery;
+        var shouldLoadUltraDebugLog = ShouldLoadUltraDebugLog(
+            ultraLog,
+            logBucket,
+            logCategory,
+            logSource,
+            logSearch,
+            logTimeWindow);
+        var useBoundedInitialAuditLoad = ShouldUseBoundedInitialAuditLoad(
+            requestQuery,
+            normalizedCorrelationId,
+            normalizedDecisionId,
+            normalizedExecutionAttemptId,
+            normalizedUserId,
+            normalizedSymbol,
+            normalizedOutcome,
+            normalizedReasonCode,
+            normalizedFocus,
+            normalizedPage,
+            shouldLoadUltraDebugLog);
+
+        if (useBoundedInitialAuditLoad)
+        {
+            normalizedTake = Math.Min(normalizedTake, 25);
+            normalizedPageSize = Math.Min(normalizedPageSize, 25);
+        }
+
         var request = new LogCenterQueryRequest(
             requestQuery,
             normalizedCorrelationId,
@@ -1399,26 +1431,59 @@ public sealed class AdminController : Controller
                 normalizedPageSize,
                 normalizedOutcome,
                 normalizedReasonCode,
-                Request.Query.ContainsKey("take"))
+                Request.Query.ContainsKey("take"),
+                useBoundedInitialAuditLoad)
         };
-        var shouldLoadUltraDebugLog = ShouldLoadUltraDebugLog(
-            ultraLog,
-            logBucket,
-            logCategory,
-            logSource,
-            logSearch,
-            logTimeWindow);
         var evaluatedAtUtc = DateTime.UtcNow;
 
-        var snapshot = logCenterReadModelService is null
-            ? new LogCenterPageSnapshot(
+        LogAuditRoutePhase(
+            "AuditRouteStarted",
+            routeStopwatch.ElapsedMilliseconds,
+            useBoundedInitialAuditLoad,
+            shouldLoadUltraDebugLog,
+            false,
+            null);
+
+        LogCenterPageSnapshot snapshot;
+        if (useBoundedInitialAuditLoad)
+        {
+            snapshot = CreateLightweightAuditShellSnapshot(request);
+            LogAuditRoutePhase(
+                "AuditLightweightShellSnapshot",
+                routeStopwatch.ElapsedMilliseconds,
+                useBoundedInitialAuditLoad,
+                shouldLoadUltraDebugLog,
+                false,
+                snapshot.Entries.Count);
+        }
+        else if (logCenterReadModelService is null)
+        {
+            snapshot = new LogCenterPageSnapshot(
                 request,
                 new LogCenterSummarySnapshot(0, 0, 0, 0, 0, 0, 0, 0, 0, null),
                 await LoadLogCenterRetentionSnapshotSafeAsync(cancellationToken) ?? new LogCenterRetentionSnapshot(false, 0, 0, 0, 0, 0, 0, null, null),
                 Array.Empty<LogCenterEntrySnapshot>(),
                 true,
-                "Log center read-model unavailable.")
-            : (await logCenterReadModelService.GetPageAsync(serviceRequest, cancellationToken)) with { Filters = request };
+                "Log center read-model unavailable.");
+            LogAuditRoutePhase(
+                "AuditReadModelUnavailable",
+                routeStopwatch.ElapsedMilliseconds,
+                useBoundedInitialAuditLoad,
+                shouldLoadUltraDebugLog,
+                false,
+                snapshot.Entries.Count);
+        }
+        else
+        {
+            snapshot = (await logCenterReadModelService.GetPageAsync(serviceRequest, cancellationToken)) with { Filters = request };
+            LogAuditRoutePhase(
+                "AuditLogCenterSnapshotLoaded",
+                routeStopwatch.ElapsedMilliseconds,
+                useBoundedInitialAuditLoad,
+                shouldLoadUltraDebugLog,
+                false,
+                snapshot.Entries.Count);
+        }
 
         var draftModel = AdminIncidentAuditDecisionCenterComposer.Compose(
             snapshot,
@@ -1428,17 +1493,34 @@ public sealed class AdminController : Controller
             traceDetail: null,
             approvalDetail: null,
             incidentDetail: null,
-            evaluatedAtUtc);
+            evaluatedAtUtc,
+            allowImplicitSelection: !useBoundedInitialAuditLoad);
+        LogAuditRoutePhase(
+            "AuditDraftModelComposed",
+            routeStopwatch.ElapsedMilliseconds,
+            useBoundedInitialAuditLoad,
+            shouldLoadUltraDebugLog,
+            false,
+            draftModel.Rows.Count);
 
         AdminTraceDetailSnapshot? traceDetail = null;
         ApprovalQueueDetailSnapshot? approvalDetail = null;
         IncidentDetailSnapshot? incidentDetail = null;
+        var deepDetailsLoaded = false;
 
         if (ShouldLoadAuditDeepDetails(draftModel.Filters.FocusReference, draftModel.Detail))
         {
             traceDetail = await LoadAuditTraceDetailAsync(draftModel.Detail, cancellationToken);
             approvalDetail = await LoadAuditApprovalDetailAsync(draftModel.Detail, cancellationToken);
             incidentDetail = await LoadAuditIncidentDetailAsync(draftModel.Detail, cancellationToken);
+            deepDetailsLoaded = true;
+            LogAuditRoutePhase(
+                "AuditDeepDetailsLoaded",
+                routeStopwatch.ElapsedMilliseconds,
+                useBoundedInitialAuditLoad,
+                shouldLoadUltraDebugLog,
+                deepDetailsLoaded,
+                draftModel.Rows.Count);
         }
 
         var model = AdminIncidentAuditDecisionCenterComposer.Compose(
@@ -1449,7 +1531,8 @@ public sealed class AdminController : Controller
             traceDetail,
             approvalDetail,
             incidentDetail,
-            evaluatedAtUtc) with
+            evaluatedAtUtc,
+            allowImplicitSelection: !useBoundedInitialAuditLoad) with
         {
             UltraDebugLog = shouldLoadUltraDebugLog
                 ? await LoadUltraDebugLogViewModelAsync(
@@ -1462,6 +1545,13 @@ public sealed class AdminController : Controller
                     cancellationToken)
                 : null
         };
+        LogAuditRoutePhase(
+            "AuditModelReady",
+            routeStopwatch.ElapsedMilliseconds,
+            useBoundedInitialAuditLoad,
+            shouldLoadUltraDebugLog,
+            deepDetailsLoaded,
+            model.Rows.Count);
 
         return View("Audit", model);
     }
@@ -1690,8 +1780,14 @@ public sealed class AdminController : Controller
         int pageSize,
         string? outcome,
         string? reasonCode,
-        bool hasExplicitTake)
+        bool hasExplicitTake,
+        bool useBoundedInitialAuditLoad = false)
     {
+        if (useBoundedInitialAuditLoad)
+        {
+            return Math.Clamp(Math.Min(normalizedTake, pageSize), 1, 25);
+        }
+
         var requiredEntries = ((page - 1) * pageSize) + pageSize + 1;
         var multiplier = !string.IsNullOrWhiteSpace(outcome) || !string.IsNullOrWhiteSpace(reasonCode)
             ? 4
@@ -1717,6 +1813,61 @@ public sealed class AdminController : Controller
                !string.IsNullOrWhiteSpace(logSource) ||
                !string.IsNullOrWhiteSpace(logSearch) ||
                !string.IsNullOrWhiteSpace(logTimeWindow);
+    }
+
+    private static bool ShouldUseBoundedInitialAuditLoad(
+        string? query,
+        string? correlationId,
+        string? decisionId,
+        string? executionAttemptId,
+        string? userId,
+        string? symbol,
+        string? outcome,
+        string? reasonCode,
+        string? focusReference,
+        int page,
+        bool shouldLoadUltraDebugLog)
+    {
+        return page == 1 &&
+               !shouldLoadUltraDebugLog &&
+               string.IsNullOrWhiteSpace(query) &&
+               string.IsNullOrWhiteSpace(correlationId) &&
+               string.IsNullOrWhiteSpace(decisionId) &&
+               string.IsNullOrWhiteSpace(executionAttemptId) &&
+               string.IsNullOrWhiteSpace(userId) &&
+               string.IsNullOrWhiteSpace(symbol) &&
+               string.IsNullOrWhiteSpace(outcome) &&
+               string.IsNullOrWhiteSpace(reasonCode) &&
+               string.IsNullOrWhiteSpace(focusReference);
+    }
+
+    private static LogCenterPageSnapshot CreateLightweightAuditShellSnapshot(LogCenterQueryRequest request)
+    {
+        return new LogCenterPageSnapshot(
+            request,
+            new LogCenterSummarySnapshot(0, 0, 0, 0, 0, 0, 0, 0, 0, null),
+            new LogCenterRetentionSnapshot(false, 0, 0, 0, 0, 0, 0, null, null),
+            Array.Empty<LogCenterEntrySnapshot>(),
+            false,
+            null);
+    }
+
+    private void LogAuditRoutePhase(
+        string phase,
+        long elapsedMs,
+        bool initialShell,
+        bool ultraLogRequested,
+        bool deepDetailsLoaded,
+        int? rowCount)
+    {
+        logger?.LogInformation(
+            "AuditRoutePhase phase={Phase} elapsedMs={ElapsedMs} initialShell={InitialShell} ultraLogRequested={UltraLogRequested} deepDetailsLoaded={DeepDetailsLoaded} rowCount={RowCount}",
+            phase,
+            elapsedMs,
+            initialShell,
+            ultraLogRequested,
+            deepDetailsLoaded,
+            rowCount);
     }
 
     private static bool ShouldUseFocusBackfillQuery(
@@ -2284,12 +2435,14 @@ public sealed class AdminController : Controller
         if (string.IsNullOrWhiteSpace(normalizedCorrelationId))
         {
             return Task.FromResult<IActionResult>(RedirectToAction(
-                nameof(AuditLogs),
+                nameof(Audit),
                 new
                 {
                     area = "Admin",
-                    decisionId = normalizedDecisionId,
-                    executionAttemptId = normalizedExecutionAttemptId
+                    page = 1,
+                    pageSize = 25,
+                    take = 25,
+                    ultraLog = false
                 })!);
         }
 

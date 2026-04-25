@@ -193,6 +193,9 @@ public static class DependencyInjection
         services.AddOptions<LogCenterRetentionOptions>()
             .Bind(configuration.GetSection("LogCenter:Retention"))
             .ValidateDataAnnotations();
+        services.AddOptions<UltraDebugLogRetentionOptions>()
+            .Bind(configuration.GetSection("UltraDebugLog:Retention"))
+            .ValidateDataAnnotations();
         services.AddOptions<IndicatorEngineOptions>()
             .Bind(configuration.GetSection("MarketData:Indicators"))
             .ValidateDataAnnotations()
@@ -382,6 +385,7 @@ public static class DependencyInjection
         services.AddHostedService<MonitoringSnapshotWorker>();
         services.AddHostedService<LogCenterRetentionWorker>();
         services.AddHostedService<UltraDebugLogRecoveryWorker>();
+        services.AddHostedService<UltraDebugLogRetentionWorker>();
         if (configuration.GetValue("ExecutionSafety:Runtime:AllowInternalDemoExecution", true))
         {
             services.AddHostedService<VirtualExecutionWatchdogWorker>();

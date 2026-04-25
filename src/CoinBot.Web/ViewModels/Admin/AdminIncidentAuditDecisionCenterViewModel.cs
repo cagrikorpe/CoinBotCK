@@ -193,7 +193,8 @@ public static class AdminIncidentAuditDecisionCenterComposer
         AdminTraceDetailSnapshot? traceDetail,
         ApprovalQueueDetailSnapshot? approvalDetail,
         IncidentDetailSnapshot? incidentDetail,
-        DateTime evaluatedAtUtc)
+        DateTime evaluatedAtUtc,
+        bool allowImplicitSelection = true)
     {
         var filters = BuildFilters(snapshot.Filters, outcome, reasonCode, focusReference);
         var filteredRows = snapshot.Entries
@@ -207,7 +208,7 @@ public static class AdminIncidentAuditDecisionCenterComposer
             .Skip((pagination.Page - 1) * pagination.PageSize)
             .Take(pagination.PageSize)
             .ToArray();
-        var selectedRow = ResolveSelectedRow(rows, filters.FocusReference);
+        var selectedRow = ResolveSelectedRow(rows, filters.FocusReference, allowImplicitSelection);
         var detail = BuildDetail(selectedRow, filteredRows, traceDetail, approvalDetail, incidentDetail);
 
         return new AdminIncidentAuditDecisionCenterViewModel(
@@ -595,7 +596,8 @@ public static class AdminIncidentAuditDecisionCenterComposer
 
     private static AdminIncidentAuditDecisionRowViewModel? ResolveSelectedRow(
         IReadOnlyCollection<AdminIncidentAuditDecisionRowViewModel> rows,
-        string? focusReference)
+        string? focusReference,
+        bool allowImplicitSelection)
     {
         if (!string.IsNullOrWhiteSpace(focusReference))
         {
@@ -620,7 +622,9 @@ public static class AdminIncidentAuditDecisionCenterComposer
             }
         }
 
-        return rows.FirstOrDefault();
+        return allowImplicitSelection
+            ? rows.FirstOrDefault()
+            : null;
     }
 
     private static bool MatchesOutcome(AdminIncidentAuditDecisionRowViewModel row, string? outcome)

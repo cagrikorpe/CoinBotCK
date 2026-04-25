@@ -78,6 +78,29 @@ public sealed class AdminOverviewSurfaceTests
         Assert.Contains("data-cb-system-health-core-tone", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-system-health-market-scanner-tone", content, StringComparison.Ordinal);
         Assert.Contains("Runtime parity", content, StringComparison.Ordinal);
+        Assert.Contains("_AdminUltraDebugLogHealthCard", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AdminSystemHealthLogCard_RendersBoundedDiskPressureSummary()
+    {
+        var content = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Areas",
+            "Admin",
+            "Views",
+            "Shared",
+            "Foundation",
+            "_AdminUltraDebugLogHealthCard.cshtml"));
+
+        Assert.Contains("data-cb-ultra-log-health-card", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-ultra-log-disk-state", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-ultra-log-free-space", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-ultra-log-retention-heartbeat", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-ultra-log-escalation-reason", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("ContentRootPath", content, StringComparison.Ordinal);
     }
 
     [Fact]

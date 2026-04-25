@@ -1,3 +1,4 @@
+using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Application.Abstractions.Monitoring;
@@ -903,6 +904,47 @@ public sealed class AdminMonitoringReadModelServiceTests
         Assert.Equal("Binance.WebSocket.Ticker", tickerStream.SourceLayer);
     }
 
+    [Fact]
+    public async Task Heartbeat_IncludesLastDiskPressureCheck()
+    {
+        var now = new DateTime(2026, 4, 25, 9, 30, 0, DateTimeKind.Utc);
+        await using var dbContext = CreateDbContext();
+        var ultraDebugLogService = new FakeUltraDebugLogService
+        {
+            HealthSnapshot = new UltraDebugLogHealthSnapshot(
+                DiskPressureState: "Warning",
+                FreeBytes: 768L * 1024L * 1024L,
+                FreePercent: 12.5m,
+                ThresholdBytes: 512L * 1024L * 1024L,
+                AffectedLogBuckets: ["ultra_debug"],
+                LastCheckedAtUtc: now,
+                LastEscalationReason: "disk_pressure",
+                IsWritable: true,
+                IsTailAvailable: true,
+                IsExportAvailable: true,
+                LastRetentionCompletedAtUtc: now.AddMinutes(-5),
+                LastRetentionReasonCode: "Completed",
+                LastRetentionSucceeded: true,
+                IsNormalFallbackMode: true,
+                AutoDisabledReason: "disk_pressure",
+                IsEnabled: false)
+        };
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            new FixedTimeProvider(now),
+            Options.Create(new DataLatencyGuardOptions()),
+            ultraDebugLogService: ultraDebugLogService);
+
+        var snapshot = await service.GetSnapshotAsync();
+
+        Assert.Equal("Warning", snapshot.UltraDebugLogHealth.DiskPressureState);
+        Assert.Equal(now, snapshot.UltraDebugLogHealth.LastCheckedAtUtc);
+        Assert.Equal("disk_pressure", snapshot.UltraDebugLogHealth.LastEscalationReason);
+        Assert.Equal("Completed", snapshot.UltraDebugLogHealth.LastRetentionReasonCode);
+        Assert.True(snapshot.UltraDebugLogHealth.LastRetentionSucceeded);
+    }
 
     [Fact]
     public async Task GetSnapshotAsync_UsesSizedCacheEntry_WhenMemoryCacheHasSizeLimit()
@@ -926,6 +968,40 @@ public sealed class AdminMonitoringReadModelServiceTests
     {
         public override DateTimeOffset GetUtcNow() => utcNow;
     }
+
+    private sealed class FakeUltraDebugLogService : IUltraDebugLogService
+    {
+        public UltraDebugLogHealthSnapshot HealthSnapshot { get; set; } = UltraDebugLogHealthSnapshot.Empty();
+
+        public IReadOnlyCollection<UltraDebugLogDurationOption> GetDurationOptions() => Array.Empty<UltraDebugLogDurationOption>();
+
+        public IReadOnlyCollection<UltraDebugLogSizeLimitOption> GetLogSizeLimitOptions() => Array.Empty<UltraDebugLogSizeLimitOption>();
+
+        public Task<UltraDebugLogSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult(new UltraDebugLogSnapshot(false, null, null, null, null, null, null, null, false));
+
+        public Task<UltraDebugLogHealthSnapshot> GetHealthSnapshotAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult(HealthSnapshot);
+
+        public Task<UltraDebugLogSnapshot> EnableAsync(UltraDebugLogEnableRequest request, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<UltraDebugLogSnapshot> DisableAsync(UltraDebugLogDisableRequest request, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<UltraDebugLogTailSnapshot> SearchAsync(UltraDebugLogSearchRequest request, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<UltraDebugLogExportSnapshot> ExportAsync(UltraDebugLogExportRequest request, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<UltraDebugLogRetentionRunSnapshot> ApplyRetentionAsync(UltraDebugLogRetentionRunRequest request, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task WriteAsync(UltraDebugLogEntry entry, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+    }
+
     private static ApplicationDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()

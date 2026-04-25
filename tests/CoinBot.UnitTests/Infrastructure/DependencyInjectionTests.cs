@@ -17,6 +17,7 @@ using CoinBot.Application.Abstractions.Strategies;
 using CoinBot.Application.Abstractions.Settings;
 using CoinBot.Contracts.Common;
 using CoinBot.Infrastructure;
+using CoinBot.Infrastructure.Administration;
 using CoinBot.Infrastructure.Alerts;
 using CoinBot.Infrastructure.Autonomy;
 using CoinBot.Infrastructure.Credentials;
@@ -298,6 +299,7 @@ public sealed class DependencyInjectionTests
         Assert.Contains(hostedServices, service => service is MonitoringSnapshotWorker);
         Assert.Contains(hostedServices, service => service is AutonomySelfHealingWorker);
         Assert.Contains(hostedServices, service => service is MarketAnomalyWorker);
+        Assert.Contains(hostedServices, service => service is UltraDebugLogRetentionWorker);
         Assert.Contains(hostedServices, service => service is BinanceSpotPrivateStreamManager);
         Assert.Contains(hostedServices, service => service is SpotExchangeAppStateSyncWorker);
     }

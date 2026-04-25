@@ -1704,7 +1704,7 @@ public sealed class AdminControllerTests
     }
 
     [Fact]
-    public async Task Audit_LoadsTraceApprovalAndIncidentDetails_ForFocusedEntry()
+    public async Task Audit_WithExplicitFocus_CanLoadDeepDetails()
     {
         var now = new DateTime(2026, 4, 8, 12, 5, 0, DateTimeKind.Utc);
         var traceService = new FakeTraceService
@@ -1850,7 +1850,7 @@ public sealed class AdminControllerTests
     }
 
     [Fact]
-    public async Task Audit_DefaultLoad_DoesNotLoadDeepDetails_WithoutExplicitFocus()
+    public async Task Audit_DefaultInitialShell_DoesNotLoadDeepDetails()
     {
         var now = new DateTime(2026, 4, 8, 12, 5, 0, DateTimeKind.Utc);
         var traceService = new FakeTraceService
@@ -1872,38 +1872,41 @@ public sealed class AdminControllerTests
         {
             IncidentDetail = CreateIncidentDetailSnapshot(now)
         };
+        var retentionService = new FakeLogCenterRetentionService();
+        var logCenterReadModelService = new FakeLogCenterReadModelService
+        {
+            Snapshot = new LogCenterPageSnapshot(
+                new LogCenterQueryRequest(null, null, null, null, null, null, null, null, null, 120),
+                new LogCenterSummarySnapshot(1, 1, 0, 0, 0, 0, 1, 0, 1, now),
+                new LogCenterRetentionSnapshot(true, 45, 45, 90, 180, 180, 250, now, "Retention completed"),
+                [
+                    new LogCenterEntrySnapshot(
+                        "ApprovalQueue",
+                        "APR-audit-1",
+                        "Pending",
+                        "warning",
+                        "Warning",
+                        "corr-audit-1",
+                        "dec-audit-1",
+                        "exe-audit-1",
+                        "INC-audit-1",
+                        "APR-audit-1",
+                        "requestor-1",
+                        null,
+                        "Maintenance approval",
+                        "Awaiting final approval",
+                        "requestor-1",
+                        now,
+                        ["GlobalSystemState"],
+                        """{"ApprovalReference":"APR-audit-1","Status":"Pending","RequestedByUserId":"requestor-1"}""")
+                ],
+                false,
+                null)
+        };
         var controller = CreateController(
             new FakeGlobalExecutionSwitchService(),
-            logCenterReadModelService: new FakeLogCenterReadModelService
-            {
-                Snapshot = new LogCenterPageSnapshot(
-                    new LogCenterQueryRequest(null, null, null, null, null, null, null, null, null, 120),
-                    new LogCenterSummarySnapshot(1, 1, 0, 0, 0, 0, 1, 0, 1, now),
-                    new LogCenterRetentionSnapshot(true, 45, 45, 90, 180, 180, 250, now, "Retention completed"),
-                    [
-                        new LogCenterEntrySnapshot(
-                            "ApprovalQueue",
-                            "APR-audit-1",
-                            "Pending",
-                            "warning",
-                            "Warning",
-                            "corr-audit-1",
-                            "dec-audit-1",
-                            "exe-audit-1",
-                            "INC-audit-1",
-                            "APR-audit-1",
-                            "requestor-1",
-                            null,
-                            "Maintenance approval",
-                            "Awaiting final approval",
-                            "requestor-1",
-                            now,
-                            ["GlobalSystemState"],
-                            """{"ApprovalReference":"APR-audit-1","Status":"Pending","RequestedByUserId":"requestor-1"}""")
-                    ],
-                    false,
-                    null)
-            },
+            logCenterReadModelService: logCenterReadModelService,
+            logCenterRetentionService: retentionService,
             traceService: traceService,
             approvalWorkflowService: approvalWorkflowService,
             governanceReadModelService: governanceReadModelService);
@@ -1912,17 +1915,20 @@ public sealed class AdminControllerTests
 
         var viewResult = Assert.IsType<ViewResult>(result);
         var model = Assert.IsType<AdminIncidentAuditDecisionCenterViewModel>(viewResult.Model);
-        Assert.Equal("APR-audit-1", model.Detail.Reference);
+        Assert.Empty(model.Rows);
+        Assert.False(model.Detail.HasSelection);
         Assert.Empty(model.Detail.DecisionExecutionTrace);
         Assert.Empty(model.Detail.ApprovalHistory);
         Assert.Empty(model.Detail.IncidentTimeline);
+        Assert.Null(logCenterReadModelService.CapturedRequest);
+        Assert.Equal(0, retentionService.GetSnapshotCalls);
         Assert.Equal(0, traceService.GetDetailCalls);
         Assert.Equal(0, approvalWorkflowService.GetDetailCalls);
         Assert.Equal(0, governanceReadModelService.GetIncidentDetailCalls);
     }
 
     [Fact]
-    public async Task Audit_DefaultLoad_RendersOnlyFirstPaginationPage()
+    public async Task Audit_FilteredLoad_RendersOnlyFirstPaginationPage()
     {
         var now = new DateTime(2026, 4, 8, 14, 0, 0, DateTimeKind.Utc);
         var logCenterReadModelService = new FakeLogCenterReadModelService
@@ -1959,7 +1965,7 @@ public sealed class AdminControllerTests
             new FakeGlobalExecutionSwitchService(),
             logCenterReadModelService: logCenterReadModelService);
 
-        var result = await controller.Audit(null, null, null, null, null, null, null, null, null, 120, cancellationToken: CancellationToken.None);
+        var result = await controller.Audit("GlobalSystemState", null, null, null, null, null, null, null, null, 120, cancellationToken: CancellationToken.None);
 
         var viewResult = Assert.IsType<ViewResult>(result);
         var model = Assert.IsType<AdminIncidentAuditDecisionCenterViewModel>(viewResult.Model);
@@ -1968,6 +1974,7 @@ public sealed class AdminControllerTests
         Assert.Equal(1, model.Pagination!.Page);
         Assert.Equal(25, model.Pagination.PageSize);
         Assert.True(model.Pagination.HasNextPage);
+        Assert.True(model.Detail.HasSelection);
         Assert.Equal(26, logCenterReadModelService.CapturedRequest?.Take);
         Assert.Equal(1, logCenterReadModelService.CapturedRequest?.Page);
         Assert.Equal(25, logCenterReadModelService.CapturedRequest?.PageSize);
@@ -2067,7 +2074,7 @@ public sealed class AdminControllerTests
             logCenterReadModelService: logCenterReadModelService);
         controller.ControllerContext.HttpContext.Request.QueryString = new QueryString("?page=0&pageSize=9999");
 
-        var result = await controller.Audit(null, null, null, null, null, null, null, null, null, 120, page: 0, pageSize: 9999, cancellationToken: CancellationToken.None);
+        var result = await controller.Audit("GlobalSystemState", null, null, null, null, null, null, null, null, 120, page: 0, pageSize: 9999, cancellationToken: CancellationToken.None);
 
         var viewResult = Assert.IsType<ViewResult>(result);
         var model = Assert.IsType<AdminIncidentAuditDecisionCenterViewModel>(viewResult.Model);
@@ -2077,10 +2084,11 @@ public sealed class AdminControllerTests
         Assert.Equal(1, logCenterReadModelService.CapturedRequest?.Page);
         Assert.Equal(100, logCenterReadModelService.CapturedRequest?.PageSize);
         Assert.Equal(101, logCenterReadModelService.CapturedRequest?.Take);
+        Assert.True(model.Detail.HasSelection);
     }
 
     [Fact]
-    public async Task Audit_RendersRequestedPageSize10_AndUsesTake11()
+    public async Task Audit_FilteredLoad_RendersRequestedPageSize10_AndUsesTake11()
     {
         var now = new DateTime(2026, 4, 8, 15, 45, 0, DateTimeKind.Utc);
         var logCenterReadModelService = new FakeLogCenterReadModelService
@@ -2118,12 +2126,13 @@ public sealed class AdminControllerTests
             logCenterReadModelService: logCenterReadModelService);
         controller.ControllerContext.HttpContext.Request.QueryString = new QueryString("?pageSize=10");
 
-        var result = await controller.Audit(null, null, null, null, null, null, null, null, null, 120, pageSize: 10, cancellationToken: CancellationToken.None);
+        var result = await controller.Audit("GlobalSystemState", null, null, null, null, null, null, null, null, 120, pageSize: 10, cancellationToken: CancellationToken.None);
 
         var viewResult = Assert.IsType<ViewResult>(result);
         var model = Assert.IsType<AdminIncidentAuditDecisionCenterViewModel>(viewResult.Model);
         Assert.Equal(10, model.Rows.Count);
         Assert.Equal(10, model.Pagination?.PageSize);
+        Assert.True(model.Detail.HasSelection);
         Assert.Equal(10, logCenterReadModelService.CapturedRequest?.PageSize);
         Assert.Equal(11, logCenterReadModelService.CapturedRequest?.Take);
     }
@@ -2298,7 +2307,7 @@ public sealed class AdminControllerTests
     }
 
     [Fact]
-    public async Task Audit_DefaultLoad_DoesNotLoadUltraDebugLogDiagnostics()
+    public async Task Audit_DefaultLoad_DoesNotLoadUltraDebugLog()
     {
         var ultraDebugLogService = new FakeUltraDebugLogService();
         var controller = CreateController(
@@ -2312,6 +2321,136 @@ public sealed class AdminControllerTests
         Assert.Null(model.UltraDebugLog);
         Assert.Equal(0, ultraDebugLogService.GetSnapshotCalls);
         Assert.Equal(0, ultraDebugLogService.SearchCalls);
+    }
+
+    [Fact]
+    public async Task Audit_DefaultInitialShell_DoesNotLoadRetentionSnapshotIfNotNeeded()
+    {
+        var now = new DateTime(2026, 4, 8, 14, 5, 0, DateTimeKind.Utc);
+        var retentionService = new FakeLogCenterRetentionService();
+        var logCenterReadModelService = new FakeLogCenterReadModelService
+        {
+            Snapshot = new LogCenterPageSnapshot(
+                new LogCenterQueryRequest(null, null, null, null, null, null, null, null, null, 120),
+                new LogCenterSummarySnapshot(60, 0, 0, 60, 0, 0, 0, 0, 0, now),
+                new LogCenterRetentionSnapshot(true, 45, 45, 90, 180, 180, 250, now, "Retention completed"),
+                Enumerable.Range(1, 60)
+                    .Select(index => new LogCenterEntrySnapshot(
+                        "AdminAuditLog",
+                        $"Admin.Settings:GlobalSystemState:Singleton:audit-bounded-{index:000}",
+                        "Admin.Settings.GlobalSystemState.Update",
+                        "warning",
+                        "Warning",
+                        $"corr-audit-bounded-{index:000}",
+                        null,
+                        null,
+                        null,
+                        null,
+                        "super-admin",
+                        null,
+                        $"Global system state update {index}",
+                        $"Maintenance override {index}.",
+                        "Singleton",
+                        now.AddMinutes(-index),
+                        ["GlobalSystemState"],
+                        """{"ActorUserId":"super-admin"}"""))
+                    .ToArray(),
+                false,
+                null)
+        };
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            logCenterReadModelService: logCenterReadModelService,
+            logCenterRetentionService: retentionService);
+
+        var result = await controller.Audit(null, null, null, null, null, null, null, null, null, 120, cancellationToken: CancellationToken.None);
+
+        var viewResult = Assert.IsType<ViewResult>(result);
+        var model = Assert.IsType<AdminIncidentAuditDecisionCenterViewModel>(viewResult.Model);
+        Assert.Empty(model.Rows);
+        Assert.False(model.Detail.HasSelection);
+        Assert.Null(logCenterReadModelService.CapturedRequest);
+        Assert.Equal(0, retentionService.GetSnapshotCalls);
+    }
+
+    [Fact]
+    public async Task Audit_DefaultInitialShell_RequestsAtMost25Rows()
+    {
+        var retentionService = new FakeLogCenterRetentionService();
+        var logCenterReadModelService = new FakeLogCenterReadModelService();
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            logCenterReadModelService: logCenterReadModelService,
+            logCenterRetentionService: retentionService);
+
+        var result = await controller.Audit(null, null, null, null, null, null, null, null, null, 120, cancellationToken: CancellationToken.None);
+
+        var viewResult = Assert.IsType<ViewResult>(result);
+        var model = Assert.IsType<AdminIncidentAuditDecisionCenterViewModel>(viewResult.Model);
+        Assert.Empty(model.Rows);
+        Assert.Null(logCenterReadModelService.CapturedRequest);
+        Assert.Equal(0, retentionService.GetSnapshotCalls);
+    }
+
+    [Fact]
+    public async Task AuditLogs_DefaultInitialShell_RequestsAtMost25Rows()
+    {
+        var now = new DateTime(2026, 4, 8, 14, 10, 0, DateTimeKind.Utc);
+        var retentionService = new FakeLogCenterRetentionService();
+        var logCenterReadModelService = new FakeLogCenterReadModelService
+        {
+            Snapshot = new LogCenterPageSnapshot(
+                new LogCenterQueryRequest(null, null, null, null, null, null, null, null, null, 120),
+                new LogCenterSummarySnapshot(40, 0, 0, 40, 0, 0, 0, 0, 0, now),
+                new LogCenterRetentionSnapshot(true, 45, 45, 90, 180, 180, 250, now, "Retention completed"),
+                Enumerable.Range(1, 40)
+                    .Select(index => new LogCenterEntrySnapshot(
+                        "AdminAuditLog",
+                        $"Admin.Settings:GlobalSystemState:Singleton:audit-alias-{index:000}",
+                        "Admin.Settings.GlobalSystemState.Update",
+                        "warning",
+                        "Warning",
+                        $"corr-audit-alias-{index:000}",
+                        null,
+                        null,
+                        null,
+                        null,
+                        "super-admin",
+                        null,
+                        $"Global system state update {index}",
+                        $"Maintenance override {index}.",
+                        "Singleton",
+                        now.AddMinutes(-index),
+                        ["GlobalSystemState"],
+                        """{"ActorUserId":"super-admin"}"""))
+                    .ToArray(),
+                false,
+                null)
+        };
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            logCenterReadModelService: logCenterReadModelService,
+            logCenterRetentionService: retentionService);
+
+        var result = await controller.AuditLogs(
+            query: null,
+            correlationId: null,
+            decisionId: null,
+            executionAttemptId: null,
+            userId: null,
+            symbol: null,
+            outcome: null,
+            reasonCode: null,
+            focus: null,
+            take: 120,
+            cancellationToken: CancellationToken.None);
+
+        var viewResult = Assert.IsType<ViewResult>(result);
+        var model = Assert.IsType<AdminIncidentAuditDecisionCenterViewModel>(viewResult.Model);
+        Assert.Empty(model.Rows);
+        Assert.False(model.Detail.HasSelection);
+        Assert.Null(logCenterReadModelService.CapturedRequest);
+        Assert.Equal(0, retentionService.GetSnapshotCalls);
     }
 
     [Fact]
@@ -2780,7 +2919,7 @@ public sealed class AdminControllerTests
     }
 
     [Fact]
-    public async Task Trace_WithoutCorrelationId_DoesNotThrow()
+    public async Task Trace_WithoutCorrelationId_DoesNotCallTraceDetail()
     {
         var traceService = new FakeTraceService();
         var controller = CreateController(
@@ -2795,7 +2934,7 @@ public sealed class AdminControllerTests
     }
 
     [Fact]
-    public async Task Trace_WithoutCorrelationId_RedirectsOrReturnsSafeResult()
+    public async Task Trace_WithoutCorrelationId_RedirectsToLightweightAuditShell()
     {
         var traceService = new FakeTraceService();
         var controller = CreateController(
@@ -2805,10 +2944,12 @@ public sealed class AdminControllerTests
         var result = await controller.Trace(null, "dec-missing", "exe-missing", CancellationToken.None);
 
         var redirect = Assert.IsType<RedirectToActionResult>(result);
-        Assert.Equal(nameof(AdminController.AuditLogs), redirect.ActionName);
+        Assert.Equal(nameof(AdminController.Audit), redirect.ActionName);
         Assert.Equal("Admin", redirect.RouteValues!["area"]);
-        Assert.Equal("dec-missing", redirect.RouteValues!["decisionId"]);
-        Assert.Equal("exe-missing", redirect.RouteValues!["executionAttemptId"]);
+        Assert.Equal(1, redirect.RouteValues!["page"]);
+        Assert.Equal(25, redirect.RouteValues!["pageSize"]);
+        Assert.Equal(25, redirect.RouteValues!["take"]);
+        Assert.Equal(false, redirect.RouteValues!["ultraLog"]);
         Assert.Equal(0, traceService.GetDetailCalls);
     }
 
@@ -4163,6 +4304,19 @@ public sealed class AdminControllerTests
             IsEmpty: true,
             EmptyReason: "No masked log lines matched the requested export window.");
 
+        public UltraDebugLogRetentionRunSnapshot RetentionSnapshot { get; set; } = new(
+            StartedAtUtc: new DateTime(2026, 4, 22, 8, 0, 0, DateTimeKind.Utc),
+            CompletedAtUtc: new DateTime(2026, 4, 22, 8, 1, 0, DateTimeKind.Utc),
+            DryRun: false,
+            ScannedFiles: 0,
+            DeletedFiles: 0,
+            SkippedFiles: 0,
+            ReclaimedBytes: 0,
+            CandidateDeleteFiles: 0,
+            CandidateReclaimedBytes: 0,
+            ReasonCode: "Completed",
+            Buckets: Array.Empty<UltraDebugLogRetentionBucketSnapshot>());
+
         public Exception? ExportException { get; set; }
 
         public List<UltraDebugLogEntry> Entries { get; } = [];
@@ -4227,6 +4381,13 @@ public sealed class AdminControllerTests
             }
 
             return Task.FromResult(ExportSnapshot);
+        }
+
+        public Task<UltraDebugLogRetentionRunSnapshot> ApplyRetentionAsync(
+            UltraDebugLogRetentionRunRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(RetentionSnapshot);
         }
 
         public Task WriteAsync(UltraDebugLogEntry entry, CancellationToken cancellationToken = default)

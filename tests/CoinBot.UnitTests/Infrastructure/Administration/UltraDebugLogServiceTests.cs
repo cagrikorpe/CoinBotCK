@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
@@ -322,6 +323,78 @@ public sealed class UltraDebugLogServiceTests
         Assert.Contains("\"fallbackReasonCode\":\"disk_pressure\"", normalDetailJson, StringComparison.Ordinal);
         Assert.DoesNotContain("secret-token", normalDetailJson, StringComparison.Ordinal);
         Assert.False(File.Exists(ultraFilePath));
+    }
+
+    [Fact]
+    public async Task DiskPressureHealth_ReturnsHealthy_WhenBelowThreshold()
+    {
+        const long diskFreeSpaceBytes = 2L * 1024L * 1024L * 1024L;
+        await using var harness = CreateHarness(
+            new DateTimeOffset(2026, 4, 22, 9, 0, 0, TimeSpan.Zero),
+            _ => diskFreeSpaceBytes);
+
+        var snapshot = await harness.Service.GetHealthSnapshotAsync();
+
+        Assert.Equal("Healthy", snapshot.DiskPressureState);
+        Assert.Equal(diskFreeSpaceBytes, snapshot.FreeBytes);
+        Assert.True(snapshot.IsWritable);
+        Assert.NotNull(snapshot.LastCheckedAtUtc);
+    }
+
+    [Fact]
+    public async Task DiskPressureHealth_ReturnsWarningOrCritical_WhenThresholdBreached()
+    {
+        const long warningFreeBytes = 800L * 1024L * 1024L;
+        const long criticalFreeBytes = 400L * 1024L * 1024L;
+
+        await using var warningHarness = CreateHarness(
+            new DateTimeOffset(2026, 4, 22, 9, 0, 0, TimeSpan.Zero),
+            _ => warningFreeBytes);
+        await using var criticalHarness = CreateHarness(
+            new DateTimeOffset(2026, 4, 22, 9, 0, 0, TimeSpan.Zero),
+            _ => criticalFreeBytes);
+
+        var warningSnapshot = await warningHarness.Service.GetHealthSnapshotAsync();
+        var criticalSnapshot = await criticalHarness.Service.GetHealthSnapshotAsync();
+
+        Assert.Equal("Warning", warningSnapshot.DiskPressureState);
+        Assert.Equal("Critical", criticalSnapshot.DiskPressureState);
+        Assert.Equal("ultra_debug", Assert.Single(criticalSnapshot.AffectedLogBuckets));
+    }
+
+    [Fact]
+    public async Task DiskPressureHealth_DoesNotExposeSensitivePathsIfPolicyRequiresMasking()
+    {
+        const long diskFreeSpaceBytes = 2L * 1024L * 1024L * 1024L;
+        await using var harness = CreateHarness(
+            new DateTimeOffset(2026, 4, 22, 9, 0, 0, TimeSpan.Zero),
+            _ => diskFreeSpaceBytes);
+
+        var snapshot = await harness.Service.GetHealthSnapshotAsync();
+        var serialized = JsonSerializer.Serialize(snapshot);
+
+        Assert.DoesNotContain(harness.ArtifactsRoot, serialized, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("\\Logs\\", serialized, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DiskPressureHealth_IsBoundedAndDoesNotScanHugeTrees()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 22, 9, 0, 0, TimeSpan.Zero));
+        var logRootPath = Path.Combine(harness.ArtifactsRoot, "Logs");
+        await File.WriteAllTextAsync(logRootPath, "not-a-directory");
+
+        var snapshot = await harness.Service.GetHealthSnapshotAsync();
+
+        Assert.Equal("Degraded", snapshot.DiskPressureState);
+        Assert.Equal("LogRootInvalid", snapshot.LastEscalationReason);
+        Assert.False(snapshot.IsWritable);
+    }
+
+    [Fact]
+    public async Task LogSystem_DegradesSafely_WhenDiskPressureCritical()
+    {
+        await WriteAsync_AutoDisablesUltraBucket_WhenDiskPressureIsDetected_AndContinuesNormalCuratedLogging();
     }
 
     [Fact]
@@ -762,7 +835,231 @@ public sealed class UltraDebugLogServiceTests
         Assert.Contains("No masked log lines matched the requested export window.", content, StringComparison.Ordinal);
     }
 
-    private static TestHarness CreateHarness(DateTimeOffset now, Func<string, long?>? availableDiskBytesResolver = null)
+    [Fact]
+    public async Task Retention_RejectsPathTraversal()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 22, 8, 0, 0, TimeSpan.Zero));
+
+        var exception = await Assert.ThrowsAsync<UltraDebugLogOperationException>(() =>
+            harness.Service.ApplyRetentionAsync(
+                new UltraDebugLogRetentionRunRequest(
+                    BucketName: "..\\..\\normal",
+                    DryRun: false,
+                    MaxFiles: 25)));
+
+        Assert.Equal("UltraLogRetentionPathInvalid", exception.FailureCode);
+    }
+
+    [Fact]
+    public async Task Retention_DoesNotDeleteFilesOutsideAllowedRoot()
+    {
+        await using var harness = CreateHarness(
+            new DateTimeOffset(2026, 4, 22, 8, 0, 0, TimeSpan.Zero),
+            retentionOptions: new UltraDebugLogRetentionOptions
+            {
+                Enabled = true,
+                NormalRetentionDays = 7,
+                UltraRetentionDays = 7,
+                MinimumKeepFileCount = 1,
+                MaxFilesPerRun = 100
+            });
+
+        var outsideFilePath = Path.Combine(harness.ArtifactsRoot, "Outside", "outside.ndjson");
+        await CreateLogFileAsync(outsideFilePath, new DateTime(2026, 4, 1, 8, 0, 0, DateTimeKind.Utc));
+        var deletedFilePath = harness.ResolveBucketFilePath("normal", new DateTime(2026, 4, 10, 0, 0, 0, DateTimeKind.Utc), "runtime");
+        var keptFilePath = harness.ResolveBucketFilePath("normal", new DateTime(2026, 4, 11, 0, 0, 0, DateTimeKind.Utc), "runtime");
+        await CreateLogFileAsync(deletedFilePath, new DateTime(2026, 4, 10, 8, 0, 0, DateTimeKind.Utc));
+        await CreateLogFileAsync(keptFilePath, new DateTime(2026, 4, 11, 8, 0, 0, DateTimeKind.Utc));
+
+        var snapshot = await harness.Service.ApplyRetentionAsync(new UltraDebugLogRetentionRunRequest());
+
+        Assert.Equal(2, snapshot.ScannedFiles);
+        Assert.Equal(1, snapshot.DeletedFiles);
+        Assert.True(File.Exists(outsideFilePath));
+        Assert.False(File.Exists(deletedFilePath));
+        Assert.True(File.Exists(keptFilePath));
+    }
+
+    [Fact]
+    public async Task Retention_DoesNotDeleteActiveCurrentLog()
+    {
+        await using var harness = CreateHarness(
+            new DateTimeOffset(2026, 4, 22, 8, 0, 0, TimeSpan.Zero),
+            retentionOptions: new UltraDebugLogRetentionOptions
+            {
+                Enabled = true,
+                NormalRetentionDays = 1,
+                UltraRetentionDays = 1,
+                MinimumKeepFileCount = 1,
+                MaxFilesPerRun = 100
+            });
+
+        var activeFilePath = harness.ResolveBucketFilePath("normal", harness.TimeProvider.GetUtcNow().UtcDateTime, "runtime");
+        var deletedFilePath = harness.ResolveBucketFilePath("normal", new DateTime(2026, 4, 10, 0, 0, 0, DateTimeKind.Utc), "runtime");
+        var keptFilePath = harness.ResolveBucketFilePath("normal", new DateTime(2026, 4, 11, 0, 0, 0, DateTimeKind.Utc), "runtime");
+        await CreateLogFileAsync(activeFilePath, new DateTime(2026, 4, 2, 8, 0, 0, DateTimeKind.Utc));
+        await CreateLogFileAsync(deletedFilePath, new DateTime(2026, 4, 1, 8, 0, 0, DateTimeKind.Utc));
+        await CreateLogFileAsync(keptFilePath, new DateTime(2026, 4, 3, 8, 0, 0, DateTimeKind.Utc));
+
+        var snapshot = await harness.Service.ApplyRetentionAsync(new UltraDebugLogRetentionRunRequest(BucketName: "normal"));
+
+        Assert.Equal(3, snapshot.ScannedFiles);
+        Assert.Equal(1, snapshot.DeletedFiles);
+        Assert.True(File.Exists(activeFilePath));
+        Assert.False(File.Exists(deletedFilePath));
+        Assert.True(File.Exists(keptFilePath));
+    }
+
+    [Fact]
+    public async Task Retention_DeletesOnlyExpiredFiles()
+    {
+        await using var harness = CreateHarness(
+            new DateTimeOffset(2026, 4, 22, 8, 0, 0, TimeSpan.Zero),
+            retentionOptions: new UltraDebugLogRetentionOptions
+            {
+                Enabled = true,
+                NormalRetentionDays = 7,
+                UltraRetentionDays = 7,
+                MinimumKeepFileCount = 1,
+                MaxFilesPerRun = 100
+            });
+
+        var expiredA = harness.ResolveBucketFilePath("normal", new DateTime(2026, 4, 10, 0, 0, 0, DateTimeKind.Utc), "runtime");
+        var expiredB = harness.ResolveBucketFilePath("normal", new DateTime(2026, 4, 11, 0, 0, 0, DateTimeKind.Utc), "runtime");
+        var fresh = harness.ResolveBucketFilePath("normal", new DateTime(2026, 4, 21, 0, 0, 0, DateTimeKind.Utc), "runtime");
+        await CreateLogFileAsync(expiredA, new DateTime(2026, 4, 10, 8, 0, 0, DateTimeKind.Utc));
+        await CreateLogFileAsync(expiredB, new DateTime(2026, 4, 11, 8, 0, 0, DateTimeKind.Utc));
+        await CreateLogFileAsync(fresh, new DateTime(2026, 4, 21, 8, 0, 0, DateTimeKind.Utc));
+
+        var snapshot = await harness.Service.ApplyRetentionAsync(new UltraDebugLogRetentionRunRequest(BucketName: "normal"));
+
+        Assert.Equal(3, snapshot.ScannedFiles);
+        Assert.Equal(2, snapshot.DeletedFiles);
+        Assert.False(File.Exists(expiredA));
+        Assert.False(File.Exists(expiredB));
+        Assert.True(File.Exists(fresh));
+    }
+
+    [Fact]
+    public async Task Retention_RespectsMinimumKeepCount()
+    {
+        await using var harness = CreateHarness(
+            new DateTimeOffset(2026, 4, 22, 8, 0, 0, TimeSpan.Zero),
+            retentionOptions: new UltraDebugLogRetentionOptions
+            {
+                Enabled = true,
+                NormalRetentionDays = 1,
+                UltraRetentionDays = 1,
+                MinimumKeepFileCount = 2,
+                MaxFilesPerRun = 100
+            });
+
+        var deleteA = harness.ResolveBucketFilePath("normal", new DateTime(2026, 4, 10, 0, 0, 0, DateTimeKind.Utc), "runtime");
+        var deleteB = harness.ResolveBucketFilePath("normal", new DateTime(2026, 4, 11, 0, 0, 0, DateTimeKind.Utc), "runtime");
+        var keepA = harness.ResolveBucketFilePath("normal", new DateTime(2026, 4, 12, 0, 0, 0, DateTimeKind.Utc), "runtime");
+        var keepB = harness.ResolveBucketFilePath("normal", new DateTime(2026, 4, 13, 0, 0, 0, DateTimeKind.Utc), "runtime");
+        await CreateLogFileAsync(deleteA, new DateTime(2026, 4, 10, 8, 0, 0, DateTimeKind.Utc));
+        await CreateLogFileAsync(deleteB, new DateTime(2026, 4, 11, 8, 0, 0, DateTimeKind.Utc));
+        await CreateLogFileAsync(keepA, new DateTime(2026, 4, 12, 8, 0, 0, DateTimeKind.Utc));
+        await CreateLogFileAsync(keepB, new DateTime(2026, 4, 13, 8, 0, 0, DateTimeKind.Utc));
+
+        var snapshot = await harness.Service.ApplyRetentionAsync(new UltraDebugLogRetentionRunRequest(BucketName: "normal"));
+
+        Assert.Equal(4, snapshot.ScannedFiles);
+        Assert.Equal(2, snapshot.DeletedFiles);
+        Assert.False(File.Exists(deleteA));
+        Assert.False(File.Exists(deleteB));
+        Assert.True(File.Exists(keepA));
+        Assert.True(File.Exists(keepB));
+    }
+
+    [Fact]
+    public async Task Retention_SeparatesNormalAndUltraPolicies()
+    {
+        await using var harness = CreateHarness(
+            new DateTimeOffset(2026, 4, 22, 8, 0, 0, TimeSpan.Zero),
+            retentionOptions: new UltraDebugLogRetentionOptions
+            {
+                Enabled = true,
+                NormalRetentionDays = 30,
+                UltraRetentionDays = 7,
+                MinimumKeepFileCount = 1,
+                MaxFilesPerRun = 100
+            });
+
+        var normalOld = harness.ResolveBucketFilePath("normal", new DateTime(2026, 4, 12, 0, 0, 0, DateTimeKind.Utc), "runtime");
+        var normalKeep = harness.ResolveBucketFilePath("normal", new DateTime(2026, 4, 13, 0, 0, 0, DateTimeKind.Utc), "runtime");
+        var ultraOld = harness.ResolveBucketFilePath("ultra_debug", new DateTime(2026, 4, 12, 0, 0, 0, DateTimeKind.Utc), "runtime");
+        var ultraKeep = harness.ResolveBucketFilePath("ultra_debug", new DateTime(2026, 4, 13, 0, 0, 0, DateTimeKind.Utc), "runtime");
+        await CreateLogFileAsync(normalOld, new DateTime(2026, 4, 12, 8, 0, 0, DateTimeKind.Utc));
+        await CreateLogFileAsync(normalKeep, new DateTime(2026, 4, 13, 8, 0, 0, DateTimeKind.Utc));
+        await CreateLogFileAsync(ultraOld, new DateTime(2026, 4, 12, 8, 0, 0, DateTimeKind.Utc));
+        await CreateLogFileAsync(ultraKeep, new DateTime(2026, 4, 13, 8, 0, 0, DateTimeKind.Utc));
+
+        var snapshot = await harness.Service.ApplyRetentionAsync(new UltraDebugLogRetentionRunRequest());
+
+        Assert.Equal(4, snapshot.ScannedFiles);
+        Assert.Equal(1, snapshot.DeletedFiles);
+        Assert.True(File.Exists(normalOld));
+        Assert.True(File.Exists(normalKeep));
+        Assert.False(File.Exists(ultraOld));
+        Assert.True(File.Exists(ultraKeep));
+    }
+
+    [Fact]
+    public async Task Retention_DryRunDoesNotDeleteFiles()
+    {
+        await using var harness = CreateHarness(
+            new DateTimeOffset(2026, 4, 22, 8, 0, 0, TimeSpan.Zero),
+            retentionOptions: new UltraDebugLogRetentionOptions
+            {
+                Enabled = true,
+                NormalRetentionDays = 1,
+                UltraRetentionDays = 1,
+                MinimumKeepFileCount = 1,
+                MaxFilesPerRun = 100
+            });
+
+        var oldFile = harness.ResolveBucketFilePath("normal", new DateTime(2026, 4, 10, 0, 0, 0, DateTimeKind.Utc), "runtime");
+        var keepFile = harness.ResolveBucketFilePath("normal", new DateTime(2026, 4, 11, 0, 0, 0, DateTimeKind.Utc), "runtime");
+        await CreateLogFileAsync(oldFile, new DateTime(2026, 4, 10, 8, 0, 0, DateTimeKind.Utc), sizeBytes: 128);
+        await CreateLogFileAsync(keepFile, new DateTime(2026, 4, 11, 8, 0, 0, DateTimeKind.Utc), sizeBytes: 256);
+
+        var snapshot = await harness.Service.ApplyRetentionAsync(new UltraDebugLogRetentionRunRequest(BucketName: "normal", DryRun: true));
+
+        Assert.True(snapshot.DryRun);
+        Assert.Equal(2, snapshot.ScannedFiles);
+        Assert.Equal(0, snapshot.DeletedFiles);
+        Assert.Equal(1, snapshot.CandidateDeleteFiles);
+        Assert.Equal(128L, snapshot.CandidateReclaimedBytes);
+        Assert.True(File.Exists(oldFile));
+        Assert.True(File.Exists(keepFile));
+    }
+
+    private static async Task CreateLogFileAsync(string filePath, DateTime lastWriteTimeUtc, long sizeBytes = 32)
+    {
+        var directoryPath = Path.GetDirectoryName(filePath);
+        if (!string.IsNullOrWhiteSpace(directoryPath))
+        {
+            Directory.CreateDirectory(directoryPath);
+        }
+
+        await using var stream = new FileStream(
+            filePath,
+            FileMode.Create,
+            FileAccess.Write,
+            FileShare.ReadWrite,
+            bufferSize: 4096,
+            useAsync: true);
+        stream.SetLength(sizeBytes);
+        await stream.FlushAsync();
+        File.SetLastWriteTimeUtc(filePath, lastWriteTimeUtc);
+    }
+
+    private static TestHarness CreateHarness(
+        DateTimeOffset now,
+        Func<string, long?>? availableDiskBytesResolver = null,
+        UltraDebugLogRetentionOptions? retentionOptions = null)
     {
         var artifactsRoot = Path.Combine(
             AppContext.BaseDirectory,
@@ -786,7 +1083,8 @@ public sealed class UltraDebugLogServiceTests
                 serviceProvider.GetRequiredService<TimeProvider>(),
                 serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<UltraDebugLogService>>(),
                 serviceProvider.GetRequiredService<IHostEnvironment>(),
-                availableDiskBytesResolver));
+                availableDiskBytesResolver,
+                Options.Create(retentionOptions ?? new UltraDebugLogRetentionOptions())));
 
         var provider = services.BuildServiceProvider();
         var service = provider.GetRequiredService<IUltraDebugLogService>();
