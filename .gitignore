@@ -12,6 +12,14 @@ build/
 *.diag.*
 *.binlog
 *.etl
+*.bak
+*.ndjson
+*.zip
+
+# Local app overrides and runtime log roots
+**/appsettings.Development.json
+src/CoinBot.Web/Logs/
+src/CoinBot.Worker/Logs/
 
 # IDE and user-specific files
 .vs/
