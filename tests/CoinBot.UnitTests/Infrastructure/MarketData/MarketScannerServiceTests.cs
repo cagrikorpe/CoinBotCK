@@ -1,4 +1,5 @@
 using CoinBot.Application.Abstractions.DataScope;
+using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Application.Abstractions.Strategies;
@@ -244,7 +245,8 @@ public sealed class MarketScannerServiceTests
             handoffService: null,
             indicatorDataService,
             strategyEvaluatorService,
-            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }));
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }),
+            aiShadowDecisionService: CreateReadyAiShadowDecisionService());
 
         var cycle = await service.RunOnceAsync();
 
@@ -1557,19 +1559,19 @@ public sealed class MarketScannerServiceTests
     }
 
     [Fact]
-    public async Task RunOnceAsync_UsesClassicalRankingWhenAiRankingIsDisabled()
+    public async Task AiRanking_Disabled_ReturnsClassicalRankingExactly()
     {
         var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
         var timeProvider = new AdjustableTimeProvider(nowUtc);
         await using var dbContext = CreateDbContext();
         var btcStrategy = await SeedStrategyGraphAsync(dbContext, "user-ai-btc", "BTCUSDT", "scanner-ai-btc", "{}");
         var ethStrategy = await SeedStrategyGraphAsync(dbContext, "user-ai-eth", "ETHUSDT", "scanner-ai-eth", "{}");
-        SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 99m, volume: 1_000m);
+        SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
         SeedCandles(dbContext, "ETHUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
         await dbContext.SaveChangesAsync();
 
         var indicatorDataService = new FakeIndicatorDataService();
-        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", nowUtc.UtcDateTime, macdLine: 1m, macdSignalLine: 0.8m, macdHistogram: 0.2m, middleBand: 100m, upperBand: 102m, lowerBand: 98m));
+        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", nowUtc.UtcDateTime, macdLine: 0.5m, macdSignalLine: 0.5m, macdHistogram: 0m, middleBand: 100m, upperBand: 110m, lowerBand: 90m));
         indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("ETHUSDT", "1m", nowUtc.UtcDateTime, middleBand: 99m, upperBand: 101m, lowerBand: 97m));
 
         var strategyEvaluatorService = new FakeStrategyEvaluatorService();
@@ -1616,6 +1618,12 @@ public sealed class MarketScannerServiceTests
     }
 
     [Fact]
+    public Task Rollback_DisablingAiRankingRestoresClassicalOrder()
+    {
+        return AiRanking_Disabled_ReturnsClassicalRankingExactly();
+    }
+
+    [Fact]
     public async Task RunOnceAsync_FallsBackToClassicalWhenAiScoreIsMissing()
     {
         var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
@@ -1646,6 +1654,7 @@ public sealed class MarketScannerServiceTests
                 StrategyScoreWeight = 2m,
                 AiAssistedRankingEnabled = true,
                 AiAssistedRankingWeight = 0.5m,
+                AiAssistedRankingMinConfidenceScore = 20,
                 AllowedQuoteAssets = ["USDT"],
                 HandoffEnabled = true
             }),
@@ -1669,23 +1678,23 @@ public sealed class MarketScannerServiceTests
     }
 
     [Fact]
-    public async Task RunOnceAsync_CombinesClassicalAndAiScore_WhenAiRankingEnabled()
+    public async Task AiRanking_Enabled_ReportsRankingModeAndContributions()
     {
         var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
         var timeProvider = new AdjustableTimeProvider(nowUtc);
         await using var dbContext = CreateDbContext();
         var btcStrategy = await SeedStrategyGraphAsync(dbContext, "user-ai-rank-btc", "BTCUSDT", "scanner-ai-rank-btc", "{}");
         var ethStrategy = await SeedStrategyGraphAsync(dbContext, "user-ai-rank-eth", "ETHUSDT", "scanner-ai-rank-eth", "{}");
-        SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 99m, volume: 1_000m);
+        SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
         SeedCandles(dbContext, "ETHUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
         await dbContext.SaveChangesAsync();
 
         var indicatorDataService = new FakeIndicatorDataService();
-        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", nowUtc.UtcDateTime, macdLine: 1m, macdSignalLine: 0.8m, macdHistogram: 0.2m, middleBand: 100m, upperBand: 102m, lowerBand: 98m));
+        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", nowUtc.UtcDateTime, macdLine: 0.5m, macdSignalLine: 0.5m, macdHistogram: 0m, middleBand: 100m, upperBand: 110m, lowerBand: 90m));
         indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("ETHUSDT", "1m", nowUtc.UtcDateTime, middleBand: 99m, upperBand: 101m, lowerBand: 97m));
 
         var strategyEvaluatorService = new FakeStrategyEvaluatorService();
-        strategyEvaluatorService.SetReport("BTCUSDT", CreateEvaluationReport(btcStrategy.TradingStrategyId, btcStrategy.TradingStrategyVersionId, "scanner-ai-rank-btc", "BTCUSDT", "1m", nowUtc.UtcDateTime, 95, "BTC classical winner."));
+        strategyEvaluatorService.SetReport("BTCUSDT", CreateEvaluationReport(btcStrategy.TradingStrategyId, btcStrategy.TradingStrategyVersionId, "scanner-ai-rank-btc", "BTCUSDT", "1m", nowUtc.UtcDateTime, 60, "BTC classical fallback."));
         strategyEvaluatorService.SetReport("ETHUSDT", CreateEvaluationReport(ethStrategy.TradingStrategyId, ethStrategy.TradingStrategyVersionId, "scanner-ai-rank-eth", "ETHUSDT", "1m", nowUtc.UtcDateTime, 20, "ETH advisory winner."));
 
         var service = new MarketScannerService(
@@ -1703,7 +1712,8 @@ public sealed class MarketScannerServiceTests
                 MaxDataAgeSeconds = 120,
                 StrategyScoreWeight = 2m,
                 AiAssistedRankingEnabled = true,
-                AiAssistedRankingWeight = 0.5m,
+                AiAssistedRankingWeight = 1m,
+                AiAssistedRankingMinConfidenceScore = 20,
                 AllowedQuoteAssets = ["USDT"],
                 HandoffEnabled = true
             }),
@@ -1713,7 +1723,8 @@ public sealed class MarketScannerServiceTests
             handoffService: null,
             indicatorDataService,
             strategyEvaluatorService,
-            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }));
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }),
+            aiShadowDecisionService: CreateReadyAiShadowDecisionService());
 
         var cycle = await service.RunOnceAsync();
         var rankedCandidates = await dbContext.MarketScannerCandidates
@@ -1722,13 +1733,17 @@ public sealed class MarketScannerServiceTests
             .ToListAsync();
 
         Assert.Equal(["ETHUSDT", "BTCUSDT"], rankedCandidates.Select(candidate => candidate.Symbol).ToArray());
-        Assert.Equal(63.3334m, rankedCandidates[0].Score);
-        Assert.Equal(60.8334m, rankedCandidates[1].Score);
+        Assert.Equal(80m, rankedCandidates[0].Score);
+        Assert.Equal(73.3333m, rankedCandidates[1].Score);
         Assert.Contains("ScannerRankingMode=AdvisoryCombined", rankedCandidates[0].ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("ScannerClassicalScore=46.6667", rankedCandidates[0].ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("ScannerShadowScore=80", rankedCandidates[0].ScoringSummary, StringComparison.Ordinal);
-        Assert.Contains("ScannerCombinedScore=63.3334", rankedCandidates[0].ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerCombinedScore=80", rankedCandidates[0].ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerAiInfluenceWeight=1", rankedCandidates[0].ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerOutcomeCoveragePercent=100", rankedCandidates[0].ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("ScannerShadowContributions=CompressionBreakoutSetupDetected:+25,TrendBreakoutConfirmed:+55", rankedCandidates[0].ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerRankingMode=ClassicalFallback", rankedCandidates[1].ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerRankingFallbackReason=AiAdvisoryUnavailable", rankedCandidates[1].ScoringSummary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1795,7 +1810,8 @@ public sealed class MarketScannerServiceTests
             handoffService: null,
             indicatorDataService,
             strategyEvaluatorService,
-            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }));
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }),
+            aiShadowDecisionService: CreateReadyAiShadowDecisionService());
 
         var cycle = await service.RunOnceAsync();
         var candidates = await dbContext.MarketScannerCandidates
@@ -1823,16 +1839,16 @@ public sealed class MarketScannerServiceTests
         await using var dbContext = CreateDbContext();
         var btcStrategy = await SeedStrategyGraphAsync(dbContext, "user-ai-noexec-btc", "BTCUSDT", "scanner-ai-noexec-btc", "{}");
         var ethStrategy = await SeedStrategyGraphAsync(dbContext, "user-ai-noexec-eth", "ETHUSDT", "scanner-ai-noexec-eth", "{}");
-        SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 99m, volume: 1_000m);
+        SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
         SeedCandles(dbContext, "ETHUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
         await dbContext.SaveChangesAsync();
 
         var indicatorDataService = new FakeIndicatorDataService();
-        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", nowUtc.UtcDateTime, macdLine: 1m, macdSignalLine: 0.8m, macdHistogram: 0.2m, middleBand: 100m, upperBand: 102m, lowerBand: 98m));
+        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", nowUtc.UtcDateTime, macdLine: 1m, macdSignalLine: 0.8m, macdHistogram: 0.2m, middleBand: 99m, upperBand: 101m, lowerBand: 97m));
         indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("ETHUSDT", "1m", nowUtc.UtcDateTime, middleBand: 99m, upperBand: 101m, lowerBand: 97m));
 
         var strategyEvaluatorService = new FakeStrategyEvaluatorService();
-        strategyEvaluatorService.SetReport("BTCUSDT", CreateEvaluationReport(btcStrategy.TradingStrategyId, btcStrategy.TradingStrategyVersionId, "scanner-ai-noexec-btc", "BTCUSDT", "1m", nowUtc.UtcDateTime, 95, "BTC classical winner."));
+        strategyEvaluatorService.SetReport("BTCUSDT", CreateEvaluationReport(btcStrategy.TradingStrategyId, btcStrategy.TradingStrategyVersionId, "scanner-ai-noexec-btc", "BTCUSDT", "1m", nowUtc.UtcDateTime, 60, "BTC classical fallback."));
         strategyEvaluatorService.SetReport("ETHUSDT", CreateEvaluationReport(ethStrategy.TradingStrategyId, ethStrategy.TradingStrategyVersionId, "scanner-ai-noexec-eth", "ETHUSDT", "1m", nowUtc.UtcDateTime, 20, "ETH advisory winner."));
 
         var service = new MarketScannerService(
@@ -1850,7 +1866,7 @@ public sealed class MarketScannerServiceTests
                 MaxDataAgeSeconds = 120,
                 StrategyScoreWeight = 2m,
                 AiAssistedRankingEnabled = true,
-                AiAssistedRankingWeight = 0.5m,
+                AiAssistedRankingWeight = 1m,
                 AllowedQuoteAssets = ["USDT"],
                 HandoffEnabled = true
             }),
@@ -1897,6 +1913,8 @@ public sealed class MarketScannerServiceTests
                 Min24hQuoteVolume = 1_000m,
                 MaxDataAgeSeconds = 120,
                 StrategyScoreWeight = 2m,
+                AiAssistedRankingEnabled = true,
+                AiAssistedRankingMinConfidenceScore = 20,
                 AdaptiveFilteringEnabled = true,
                 AdaptiveFilteringMaxAdvisoryScore = 30,
                 AdaptiveFilteringMaxClassicalScore = 60m,
@@ -1909,7 +1927,8 @@ public sealed class MarketScannerServiceTests
             handoffService: null,
             indicatorDataService,
             strategyEvaluatorService,
-            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }));
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }),
+            aiShadowDecisionService: CreateReadyAiShadowDecisionService());
 
         var cycle = await service.RunOnceAsync();
         var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
@@ -1950,6 +1969,7 @@ public sealed class MarketScannerServiceTests
                 Min24hQuoteVolume = 1_000m,
                 MaxDataAgeSeconds = 120,
                 StrategyScoreWeight = 2m,
+                AiAssistedRankingEnabled = true,
                 AdaptiveFilteringEnabled = true,
                 AdaptiveFilteringMaxAdvisoryScore = 30,
                 AdaptiveFilteringMaxClassicalScore = 60m,
@@ -1971,6 +1991,247 @@ public sealed class MarketScannerServiceTests
         Assert.Null(candidate.RejectionReason);
         Assert.Contains("ScannerAdaptiveFilterState=Passed", candidate.ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("ScannerAdaptiveFilterReason=ConfidenceInsufficient", candidate.ScoringSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AiRanking_FallsBack_WhenOutcomeCoverageBelowThreshold()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        var strategy = await SeedStrategyGraphAsync(dbContext, "user-ai-coverage", "BTCUSDT", "scanner-ai-coverage", "{}");
+        SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        await dbContext.SaveChangesAsync();
+
+        var indicatorDataService = new FakeIndicatorDataService();
+        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", nowUtc.UtcDateTime, macdLine: 1m, macdSignalLine: 0.8m, macdHistogram: 0.2m, middleBand: 99m, upperBand: 101m, lowerBand: 97m));
+
+        var strategyEvaluatorService = new FakeStrategyEvaluatorService();
+        strategyEvaluatorService.SetReport("BTCUSDT", CreateEvaluationReport(strategy.TradingStrategyId, strategy.TradingStrategyVersionId, "scanner-ai-coverage", "BTCUSDT", "1m", nowUtc.UtcDateTime, 95, "Coverage guardrail fallback."));
+
+        var service = new MarketScannerService(
+            dbContext,
+            new FakeMarketDataService(),
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("BTCUSDT", "Binance", "BTC", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 20,
+                Min24hQuoteVolume = 1_000m,
+                MaxDataAgeSeconds = 120,
+                StrategyScoreWeight = 2m,
+                AiAssistedRankingEnabled = true,
+                AiAssistedRankingWeight = 0.5m,
+                AiAssistedRankingMinOutcomeCoveragePercent = 25m,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = true
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["BTCUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance,
+            handoffService: null,
+            indicatorDataService,
+            strategyEvaluatorService,
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }),
+            aiShadowDecisionService: CreateAiShadowDecisionService(totalDecisionCount: 20, scoredCount: 0));
+
+        var cycle = await service.RunOnceAsync();
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+
+        Assert.True(candidate.IsEligible);
+        Assert.Equal(96.6667m, candidate.Score);
+        Assert.Contains("ScannerRankingMode=ClassicalFallback", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerRankingFallbackReason=OutcomeCoverageBelowThreshold", candidate.ScoringSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AiRanking_ClampsInfluenceWeight()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        var strategy = await SeedStrategyGraphAsync(dbContext, "user-ai-weight", "ETHUSDT", "scanner-ai-weight", "{}");
+        SeedCandles(dbContext, "ETHUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        await dbContext.SaveChangesAsync();
+
+        var indicatorDataService = new FakeIndicatorDataService();
+        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("ETHUSDT", "1m", nowUtc.UtcDateTime, middleBand: 99m, upperBand: 101m, lowerBand: 97m));
+
+        var strategyEvaluatorService = new FakeStrategyEvaluatorService();
+        strategyEvaluatorService.SetReport("ETHUSDT", CreateEvaluationReport(strategy.TradingStrategyId, strategy.TradingStrategyVersionId, "scanner-ai-weight", "ETHUSDT", "1m", nowUtc.UtcDateTime, 20, "Clamped influence."));
+
+        var service = new MarketScannerService(
+            dbContext,
+            new FakeMarketDataService(),
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("ETHUSDT", "Binance", "ETH", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 20,
+                Min24hQuoteVolume = 1_000m,
+                MaxDataAgeSeconds = 120,
+                StrategyScoreWeight = 2m,
+                AiAssistedRankingEnabled = true,
+                AiAssistedRankingWeight = 2m,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = true
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["ETHUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance,
+            handoffService: null,
+            indicatorDataService,
+            strategyEvaluatorService,
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }),
+            aiShadowDecisionService: CreateReadyAiShadowDecisionService());
+
+        var cycle = await service.RunOnceAsync();
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+
+        Assert.True(candidate.IsEligible);
+        Assert.Equal(80m, candidate.Score);
+        Assert.Contains("ScannerRankingMode=AdvisoryCombined", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerAiInfluenceWeight=1", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerCombinedScore=80", candidate.ScoringSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AiRanking_SuppressionRatioBounded()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        var symbols = new[] { "BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT" };
+
+        foreach (var symbol in symbols)
+        {
+            await SeedStrategyGraphAsync(dbContext, $"user-{symbol}", symbol, $"scanner-{symbol}", "{}");
+            SeedCandles(dbContext, symbol, nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        }
+
+        var indicatorDataService = new FakeIndicatorDataService();
+        var strategyEvaluatorService = new FakeStrategyEvaluatorService();
+        foreach (var symbol in symbols)
+        {
+            indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot(symbol, "1m", nowUtc.UtcDateTime, macdLine: 0.5m, macdSignalLine: 0.5m, macdHistogram: 0m, middleBand: 100m, upperBand: 102m, lowerBand: 98m));
+        }
+
+        var strategies = await dbContext.TradingStrategies
+            .OrderBy(entity => entity.OwnerUserId)
+            .ToListAsync();
+        var versions = await dbContext.TradingStrategyVersions.ToDictionaryAsync(entity => entity.TradingStrategyId);
+        foreach (var strategy in strategies)
+        {
+            var symbol = dbContext.TradingBots.Single(entity => entity.OwnerUserId == strategy.OwnerUserId).Symbol;
+            strategyEvaluatorService.SetReport(symbol!, CreateEvaluationReport(
+                strategy.Id,
+                versions[strategy.Id].Id,
+                strategy.StrategyKey,
+                symbol!,
+                "1m",
+                nowUtc.UtcDateTime,
+                20,
+                "Suppression ratio guardrail candidate."));
+        }
+
+        await dbContext.SaveChangesAsync();
+
+        var service = new MarketScannerService(
+            dbContext,
+            new FakeMarketDataService(),
+            new FakeSharedSymbolRegistry(symbols
+                .Select(symbol => new SymbolMetadataSnapshot(symbol, "Binance", symbol[..3], "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime))
+                .ToArray()),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 4,
+                MaxUniverseSymbols = 20,
+                Min24hQuoteVolume = 1_000m,
+                MaxDataAgeSeconds = 120,
+                StrategyScoreWeight = 2m,
+                AiAssistedRankingEnabled = true,
+                AdaptiveFilteringEnabled = true,
+                AdaptiveFilteringMaxAdvisoryScore = 30,
+                AdaptiveFilteringMaxClassicalScore = 60m,
+                AiAssistedRankingMinConfidenceScore = 20,
+                AdaptiveFilteringMaxSuppressionRatio = 0.25m,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = true
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = symbols }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance,
+            handoffService: null,
+            indicatorDataService,
+            strategyEvaluatorService,
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }),
+            aiShadowDecisionService: CreateReadyAiShadowDecisionService());
+
+        var cycle = await service.RunOnceAsync();
+        var candidates = await dbContext.MarketScannerCandidates
+            .Where(entity => entity.ScanCycleId == cycle.Id)
+            .OrderBy(entity => entity.Symbol)
+            .ToListAsync();
+
+        Assert.Equal(3, candidates.Count(candidate => candidate.IsEligible));
+        Assert.Equal(1, candidates.Count(candidate => string.Equals(candidate.RejectionReason, "AdaptiveFilterLowQualitySetup", StringComparison.Ordinal)));
+        Assert.Contains(candidates, candidate => candidate.IsEligible && candidate.ScoringSummary!.Contains("ScannerAdaptiveFilterState=ReleasedByGuardrail", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AiRanking_FallsBack_WhenAiProviderFails()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        var strategy = await SeedStrategyGraphAsync(dbContext, "user-ai-failure", "BTCUSDT", "scanner-ai-failure", "{}");
+        SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        await dbContext.SaveChangesAsync();
+
+        var indicatorDataService = new FakeIndicatorDataService();
+        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", nowUtc.UtcDateTime, macdLine: 1m, macdSignalLine: 0.8m, macdHistogram: 0.2m, middleBand: 99m, upperBand: 101m, lowerBand: 97m));
+
+        var strategyEvaluatorService = new FakeStrategyEvaluatorService();
+        strategyEvaluatorService.SetReport("BTCUSDT", CreateEvaluationReport(strategy.TradingStrategyId, strategy.TradingStrategyVersionId, "scanner-ai-failure", "BTCUSDT", "1m", nowUtc.UtcDateTime, 95, "Outcome coverage failure fallback."));
+
+        var service = new MarketScannerService(
+            dbContext,
+            new FakeMarketDataService(),
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("BTCUSDT", "Binance", "BTC", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 20,
+                Min24hQuoteVolume = 1_000m,
+                MaxDataAgeSeconds = 120,
+                StrategyScoreWeight = 2m,
+                AiAssistedRankingEnabled = true,
+                AiAssistedRankingWeight = 0.5m,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = true
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["BTCUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance,
+            handoffService: null,
+            indicatorDataService,
+            strategyEvaluatorService,
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }),
+            aiShadowDecisionService: new FakeAiShadowDecisionService(_ => throw new InvalidOperationException("coverage unavailable")));
+
+        var cycle = await service.RunOnceAsync();
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+
+        Assert.True(candidate.IsEligible);
+        Assert.Equal(96.6667m, candidate.Score);
+        Assert.Contains("ScannerRankingMode=ClassicalFallback", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerRankingFallbackReason=OutcomeCoverageUnavailable", candidate.ScoringSummary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -2343,6 +2604,36 @@ public sealed class MarketScannerServiceTests
         return candles;
     }
 
+    private static IAiShadowDecisionService CreateReadyAiShadowDecisionService()
+    {
+        return CreateAiShadowDecisionService(totalDecisionCount: 20, scoredCount: 20);
+    }
+
+    private static IAiShadowDecisionService CreateAiShadowDecisionService(int totalDecisionCount, int scoredCount)
+    {
+        return new FakeAiShadowDecisionService(userId =>
+            new AiShadowDecisionOutcomeSummarySnapshot(
+                userId,
+                AiShadowOutcomeDefaults.OfficialHorizonKind,
+                AiShadowOutcomeDefaults.OfficialHorizonValue,
+                totalDecisionCount,
+                scoredCount,
+                0,
+                0,
+                0.25m,
+                Math.Max(0, scoredCount / 2),
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                Array.Empty<AiShadowOutcomeConfidenceBucketSnapshot>(),
+                Array.Empty<AiShadowMetricBucketSnapshot>(),
+                Array.Empty<AiShadowMetricBucketSnapshot>()));
+    }
+
     private sealed class TestDataScopeContext : IDataScopeContext
     {
         public string? UserId => null;
@@ -2564,6 +2855,45 @@ public sealed class MarketScannerServiceTests
             RequestedSymbols.Add(request.EvaluationContext.IndicatorSnapshot.Symbol);
             RequestedVersionIds.Add(request.TradingStrategyVersionId);
             return reports[request.EvaluationContext.IndicatorSnapshot.Symbol];
+        }
+    }
+
+    private sealed class FakeAiShadowDecisionService(
+        Func<string, AiShadowDecisionOutcomeSummarySnapshot> outcomeSummaryFactory) : IAiShadowDecisionService
+    {
+        public Task<AiShadowDecisionSnapshot> CaptureAsync(AiShadowDecisionWriteRequest request, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<AiShadowDecisionSnapshot?> GetLatestAsync(string userId, Guid botId, string symbol, string timeframe, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<IReadOnlyCollection<AiShadowDecisionSnapshot>> ListRecentAsync(string userId, Guid botId, string symbol, string timeframe, int take = 20, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<AiShadowDecisionSummarySnapshot> GetSummaryAsync(string userId, Guid botId, string symbol, string timeframe, int take = 200, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<AiShadowDecisionOutcomeSnapshot> ScoreOutcomeAsync(string userId, Guid decisionId, AiShadowOutcomeHorizonKind horizonKind = AiShadowOutcomeDefaults.OfficialHorizonKind, int horizonValue = AiShadowOutcomeDefaults.OfficialHorizonValue, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<int> EnsureOutcomeCoverageAsync(string userId, AiShadowOutcomeHorizonKind horizonKind = AiShadowOutcomeDefaults.OfficialHorizonKind, int horizonValue = AiShadowOutcomeDefaults.OfficialHorizonValue, int take = 200, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(0);
+        }
+
+        public Task<AiShadowDecisionOutcomeSummarySnapshot> GetOutcomeSummaryAsync(string userId, AiShadowOutcomeHorizonKind horizonKind = AiShadowOutcomeDefaults.OfficialHorizonKind, int horizonValue = AiShadowOutcomeDefaults.OfficialHorizonValue, int take = 200, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(outcomeSummaryFactory(userId));
         }
     }
 }

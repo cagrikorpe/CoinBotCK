@@ -1,3 +1,4 @@
+using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
@@ -205,16 +206,16 @@ public sealed class MarketScannerIntegrationTests
         {
             await SeedStrategyGraphAsync(dbContext, "user-ai-btc", "BTCUSDT", "scanner-ai-btc");
             await SeedStrategyGraphAsync(dbContext, "user-ai-eth", "ETHUSDT", "scanner-ai-eth");
-            SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 99m, volume: 1_000m);
+            SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
             SeedCandles(dbContext, "ETHUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
             await dbContext.SaveChangesAsync();
 
             var indicatorDataService = new FakeIndicatorDataService();
-            indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", nowUtc.UtcDateTime, macdLine: 1m, macdSignalLine: 0.8m, macdHistogram: 0.2m, middleBand: 100m, upperBand: 102m, lowerBand: 98m));
+            indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", nowUtc.UtcDateTime, macdLine: 0.5m, macdSignalLine: 0.5m, macdHistogram: 0m, middleBand: 100m, upperBand: 110m, lowerBand: 90m));
             indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("ETHUSDT", "1m", nowUtc.UtcDateTime, middleBand: 99m, upperBand: 101m, lowerBand: 97m));
 
             var strategyEvaluatorService = new FakeStrategyEvaluatorService();
-            strategyEvaluatorService.SetReport("BTCUSDT", CreateEvaluationReport("scanner-ai-btc", "BTCUSDT", "1m", nowUtc.UtcDateTime, 95));
+            strategyEvaluatorService.SetReport("BTCUSDT", CreateEvaluationReport("scanner-ai-btc", "BTCUSDT", "1m", nowUtc.UtcDateTime, 60));
             strategyEvaluatorService.SetReport("ETHUSDT", CreateEvaluationReport("scanner-ai-eth", "ETHUSDT", "1m", nowUtc.UtcDateTime, 20));
 
             var service = new MarketScannerService(
@@ -232,7 +233,8 @@ public sealed class MarketScannerIntegrationTests
                     MaxDataAgeSeconds = 120,
                     StrategyScoreWeight = 2m,
                     AiAssistedRankingEnabled = true,
-                    AiAssistedRankingWeight = 0.5m,
+                    AiAssistedRankingWeight = 1m,
+                    AiAssistedRankingMinConfidenceScore = 20,
                     AllowedQuoteAssets = ["USDT"],
                     HandoffEnabled = true
                 }),
@@ -246,7 +248,8 @@ public sealed class MarketScannerIntegrationTests
                 handoffService: null,
                 indicatorDataService,
                 strategyEvaluatorService,
-                Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }));
+                Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }),
+                aiShadowDecisionService: CreateReadyAiShadowDecisionService());
 
             var cycle = await service.RunOnceAsync();
 
@@ -257,11 +260,12 @@ public sealed class MarketScannerIntegrationTests
                 .ToListAsync();
 
             Assert.Equal("ETHUSDT", cycle.BestCandidateSymbol);
-            Assert.Equal(63.3334m, cycle.BestCandidateScore);
+            Assert.Equal(80m, cycle.BestCandidateScore);
             Assert.Equal(["ETHUSDT", "BTCUSDT"], persistedCandidates.Select(candidate => candidate.Symbol).ToArray());
             Assert.Contains("ScannerRankingMode=AdvisoryCombined", persistedCandidates[0].ScoringSummary, StringComparison.Ordinal);
-            Assert.Contains("ScannerCombinedScore=63.3334", persistedCandidates[0].ScoringSummary, StringComparison.Ordinal);
+            Assert.Contains("ScannerCombinedScore=80", persistedCandidates[0].ScoringSummary, StringComparison.Ordinal);
             Assert.Contains("ScannerAdaptiveFilterState=Disabled", persistedCandidates[0].ScoringSummary, StringComparison.Ordinal);
+            Assert.Contains("ScannerRankingMode=ClassicalFallback", persistedCandidates[1].ScoringSummary, StringComparison.Ordinal);
         }
         finally
         {
@@ -464,6 +468,31 @@ public sealed class MarketScannerIntegrationTests
             $"Strategy={strategyKey}; Symbol={symbol}; Timeframe={timeframe}; Outcome=EntryMatched; Score={aggregateScore}");
     }
 
+    private static IAiShadowDecisionService CreateReadyAiShadowDecisionService()
+    {
+        return new FakeAiShadowDecisionService(userId =>
+            new AiShadowDecisionOutcomeSummarySnapshot(
+                userId,
+                AiShadowOutcomeDefaults.OfficialHorizonKind,
+                AiShadowOutcomeDefaults.OfficialHorizonValue,
+                20,
+                20,
+                0,
+                0,
+                0.25m,
+                10,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                Array.Empty<AiShadowOutcomeConfidenceBucketSnapshot>(),
+                Array.Empty<AiShadowMetricBucketSnapshot>(),
+                Array.Empty<AiShadowMetricBucketSnapshot>()));
+    }
+
     private sealed class TestDataScopeContext : IDataScopeContext
     {
         public string? UserId => null;
@@ -572,6 +601,45 @@ public sealed class MarketScannerIntegrationTests
         public StrategyEvaluationReportSnapshot EvaluateReport(StrategyEvaluationReportRequest request)
         {
             return reports[request.EvaluationContext.IndicatorSnapshot.Symbol];
+        }
+    }
+
+    private sealed class FakeAiShadowDecisionService(
+        Func<string, AiShadowDecisionOutcomeSummarySnapshot> outcomeSummaryFactory) : IAiShadowDecisionService
+    {
+        public Task<AiShadowDecisionSnapshot> CaptureAsync(AiShadowDecisionWriteRequest request, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<AiShadowDecisionSnapshot?> GetLatestAsync(string userId, Guid botId, string symbol, string timeframe, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<IReadOnlyCollection<AiShadowDecisionSnapshot>> ListRecentAsync(string userId, Guid botId, string symbol, string timeframe, int take = 20, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<AiShadowDecisionSummarySnapshot> GetSummaryAsync(string userId, Guid botId, string symbol, string timeframe, int take = 200, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<AiShadowDecisionOutcomeSnapshot> ScoreOutcomeAsync(string userId, Guid decisionId, AiShadowOutcomeHorizonKind horizonKind = AiShadowOutcomeDefaults.OfficialHorizonKind, int horizonValue = AiShadowOutcomeDefaults.OfficialHorizonValue, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<int> EnsureOutcomeCoverageAsync(string userId, AiShadowOutcomeHorizonKind horizonKind = AiShadowOutcomeDefaults.OfficialHorizonKind, int horizonValue = AiShadowOutcomeDefaults.OfficialHorizonValue, int take = 200, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(0);
+        }
+
+        public Task<AiShadowDecisionOutcomeSummarySnapshot> GetOutcomeSummaryAsync(string userId, AiShadowOutcomeHorizonKind horizonKind = AiShadowOutcomeDefaults.OfficialHorizonKind, int horizonValue = AiShadowOutcomeDefaults.OfficialHorizonValue, int take = 200, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(outcomeSummaryFactory(userId));
         }
     }
 }

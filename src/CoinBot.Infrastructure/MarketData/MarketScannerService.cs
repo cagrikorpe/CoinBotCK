@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using CoinBot.Application.Abstractions.Administration;
+using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Application.Abstractions.Strategies;
@@ -28,7 +29,8 @@ public sealed class MarketScannerService(
     IStrategyEvaluatorService? strategyEvaluatorService = null,
     IOptions<BotExecutionPilotOptions>? botExecutionPilotOptions = null,
     IBinanceHistoricalKlineClient? historicalKlineClient = null,
-    IUltraDebugLogService? ultraDebugLogService = null)
+    IUltraDebugLogService? ultraDebugLogService = null,
+    IAiShadowDecisionService? aiShadowDecisionService = null)
 {
     internal const string WorkerKey = "market-scanner";
     internal const string WorkerName = "Market Scanner";
@@ -51,9 +53,11 @@ public sealed class MarketScannerService(
         .ToArray();
     private readonly ExecutionEnvironment signalEvaluationMode =
         botExecutionPilotOptions?.Value.SignalEvaluationMode ?? ExecutionEnvironment.Live;
+    private readonly Dictionary<string, AiRankingOutcomeCoverageSummary> aiRankingOutcomeCoverageCache = new(StringComparer.Ordinal);
 
     public async Task<MarketScannerCycle> RunOnceAsync(CancellationToken cancellationToken = default)
     {
+        aiRankingOutcomeCoverageCache.Clear();
         await ArchiveLegacyDirtyCandidatesAsync(cancellationToken);
 
         var startedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
@@ -75,6 +79,7 @@ public sealed class MarketScannerService(
             candidates.Add(await EvaluateCandidateAsync(cycle.Id, candidate, cancellationToken));
         }
 
+        ApplyAdaptiveFilteringSuppressionGuardrail(candidates);
         ApplyRanking(candidates);
 
         cycle.CompletedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
@@ -378,6 +383,9 @@ public sealed class MarketScannerService(
                 universeCandidate.Symbol,
                 marketWindow.Candles,
                 observedAtUtc,
+                scannerOptionsValue.HandoffEnabled
+                    ? await ResolveStrategyBindingAsync(universeCandidate.Symbol, cancellationToken)
+                    : null,
                 cancellationToken)
             : MarketScannerStrategyScoreSummary.MarketRejected(
                 rejectionReason,
@@ -390,12 +398,16 @@ public sealed class MarketScannerService(
                 latestPrice,
                 cancellationToken)
             : ScannerCandidateIntelligenceSummary.Empty;
+        var aiRankingOutcomeCoverage = rejectionReason is null
+            ? await ResolveAiRankingOutcomeCoverageAsync(strategyScoring.StrategyBinding, cancellationToken)
+            : AiRankingOutcomeCoverageSummary.Unavailable();
         rejectionReason ??= strategyScoring.RejectionReason;
         var rankingSummary = ResolveRankingSummary(
             rejectionReason,
             marketScore,
             strategyScoring.StrategyScore,
-            candidateIntelligence);
+            candidateIntelligence,
+            aiRankingOutcomeCoverage);
         rejectionReason = rankingSummary.RejectionReason;
         var isEligible = rejectionReason is null;
 
@@ -1646,6 +1658,7 @@ public sealed class MarketScannerService(
         string symbol,
         IReadOnlyCollection<HistoricalMarketCandle> historicalCandles,
         DateTime nowUtc,
+        MarketScannerStrategyBindingResolution? strategyBindingResolution,
         CancellationToken cancellationToken)
     {
         if (!scannerOptionsValue.HandoffEnabled)
@@ -1655,22 +1668,23 @@ public sealed class MarketScannerService(
                 "StrategyScoring=Skipped; Reason=ScannerHandoffDisabled; HandoffEnabled=False");
         }
 
-        var strategyBindingResolution = await ResolveStrategyBindingAsync(symbol, cancellationToken);
-        if (strategyBindingResolution.Binding is null)
+        var resolvedBinding = strategyBindingResolution ?? await ResolveStrategyBindingAsync(symbol, cancellationToken);
+        if (resolvedBinding.Binding is null)
         {
             return MarketScannerStrategyScoreSummary.Rejected(
-                strategyBindingResolution.RejectionReason ?? "NoPublishedStrategy",
-                strategyBindingResolution.ScoringSummary
+                resolvedBinding.RejectionReason ?? "NoPublishedStrategy",
+                resolvedBinding.ScoringSummary
                     ?? $"StrategyScore=n/a; StrategyOutcome=NoPublishedStrategy; Symbol={symbol}; Timeframe={klineInterval}");
         }
 
-        var strategyBinding = strategyBindingResolution.Binding;
+        var strategyBinding = resolvedBinding.Binding;
 
         if (indicatorDataService is null || strategyEvaluatorService is null)
         {
             return MarketScannerStrategyScoreSummary.Rejected(
                 "StrategyScoringUnavailable",
-                $"StrategyScore=n/a; StrategyOutcome=StrategyScoringUnavailable; StrategyKey={strategyBinding.StrategyKey}; Symbol={symbol}; Timeframe={klineInterval}");
+                $"StrategyScore=n/a; StrategyOutcome=StrategyScoringUnavailable; StrategyKey={strategyBinding.StrategyKey}; Symbol={symbol}; Timeframe={klineInterval}",
+                strategyBinding);
         }
 
         var indicatorSnapshot = await ResolveIndicatorSnapshotAsync(symbol, historicalCandles, cancellationToken);
@@ -1678,7 +1692,8 @@ public sealed class MarketScannerService(
         {
             return MarketScannerStrategyScoreSummary.Rejected(
                 "MissingFreshSignalData",
-                $"StrategyScore=n/a; StrategyOutcome=MissingFreshSignalData; StrategyKey={strategyBinding.StrategyKey}; Symbol={symbol}; Timeframe={klineInterval}");
+                $"StrategyScore=n/a; StrategyOutcome=MissingFreshSignalData; StrategyKey={strategyBinding.StrategyKey}; Symbol={symbol}; Timeframe={klineInterval}",
+                strategyBinding);
         }
 
         try
@@ -1705,10 +1720,11 @@ public sealed class MarketScannerService(
             {
                 return MarketScannerStrategyScoreSummary.Rejected(
                     strategyBlockerReason ?? $"Strategy{report.Outcome}",
-                    summary ?? $"StrategyKey={strategyBinding.StrategyKey}; Outcome={report.Outcome}; StrategyScore={report.AggregateScore}");
+                    summary ?? $"StrategyKey={strategyBinding.StrategyKey}; Outcome={report.Outcome}; StrategyScore={report.AggregateScore}",
+                    strategyBinding);
             }
 
-            return MarketScannerStrategyScoreSummary.Accepted(report.AggregateScore, summary);
+            return MarketScannerStrategyScoreSummary.Accepted(report.AggregateScore, summary, strategyBinding);
         }
         catch (StrategyDefinitionValidationException exception)
         {
@@ -1716,19 +1732,22 @@ public sealed class MarketScannerService(
                 "StrategyDefinitionInvalid",
                 Truncate(
                     $"StrategyValidation={exception.StatusCode}; StrategyKey={strategyBinding.StrategyKey}; Symbol={symbol}; Timeframe={klineInterval}",
-                    512));
+                    512),
+                strategyBinding);
         }
         catch (StrategyRuleParseException)
         {
             return MarketScannerStrategyScoreSummary.Rejected(
                 "StrategyParseFailed",
-                $"StrategyParseFailed; StrategyKey={strategyBinding.StrategyKey}; Symbol={symbol}; Timeframe={klineInterval}");
+                $"StrategyParseFailed; StrategyKey={strategyBinding.StrategyKey}; Symbol={symbol}; Timeframe={klineInterval}",
+                strategyBinding);
         }
         catch (StrategyRuleEvaluationException)
         {
             return MarketScannerStrategyScoreSummary.Rejected(
                 "StrategyEvaluationFailed",
-                $"StrategyEvaluationFailed; StrategyKey={strategyBinding.StrategyKey}; Symbol={symbol}; Timeframe={klineInterval}");
+                $"StrategyEvaluationFailed; StrategyKey={strategyBinding.StrategyKey}; Symbol={symbol}; Timeframe={klineInterval}",
+                strategyBinding);
         }
     }
 
@@ -1801,10 +1820,12 @@ public sealed class MarketScannerService(
 
             return new MarketScannerStrategyBindingResolution(
                 new MarketScannerStrategyBinding(
+                    bot.OwnerUserId,
                     strategy.Id,
                     strategyVersion.Id,
                     strategyVersion.VersionNumber,
                     strategy.StrategyKey,
+                    symbol,
                     string.IsNullOrWhiteSpace(strategy.DisplayName) ? strategy.StrategyKey : strategy.DisplayName,
                     strategyVersion.DefinitionJson),
                 null,
@@ -1972,7 +1993,8 @@ public sealed class MarketScannerService(
         string? initialRejectionReason,
         decimal marketScore,
         int? strategyScore,
-        ScannerCandidateIntelligenceSummary candidateIntelligence)
+        ScannerCandidateIntelligenceSummary candidateIntelligence,
+        AiRankingOutcomeCoverageSummary outcomeCoverage)
     {
         var advisoryScore = candidateIntelligence.ShadowScore;
         if (!string.IsNullOrWhiteSpace(initialRejectionReason))
@@ -1983,6 +2005,9 @@ public sealed class MarketScannerService(
                 null,
                 0m,
                 "NotRanked",
+                0m,
+                outcomeCoverage.CoveragePercent,
+                null,
                 "NotApplicable",
                 "CandidateIneligible",
                 initialRejectionReason);
@@ -1990,38 +2015,78 @@ public sealed class MarketScannerService(
 
         var classicalScore = ResolveCompositeScore(marketScore, strategyScore);
         var combinedScore = classicalScore;
+        var boundedAiWeight = decimal.Clamp(scannerOptionsValue.AiAssistedRankingWeight, 0m, 1m);
         var rankingMode = scannerOptionsValue.AiAssistedRankingEnabled
             ? "ClassicalFallback"
             : "Disabled";
-
-        if (scannerOptionsValue.AiAssistedRankingEnabled && advisoryScore.HasValue)
+        string? fallbackReason = scannerOptionsValue.AiAssistedRankingEnabled
+            ? null
+            : "AiRankingDisabled";
+        var canUseAdvisoryRanking = scannerOptionsValue.AiAssistedRankingEnabled;
+        if (canUseAdvisoryRanking)
         {
-            var boundedAiWeight = decimal.Clamp(scannerOptionsValue.AiAssistedRankingWeight, 0m, 1m);
-            if (boundedAiWeight > 0m)
+            if (!advisoryScore.HasValue)
             {
-                combinedScore = decimal.Round(
-                    ClampScoreBand(
-                        (classicalScore * (1m - boundedAiWeight)) +
-                        (ClampScoreBand(advisoryScore.Value) * boundedAiWeight)),
-                    4,
-                    MidpointRounding.AwayFromZero);
-                rankingMode = "AdvisoryCombined";
+                fallbackReason = "AiAdvisoryUnavailable";
+                canUseAdvisoryRanking = false;
+            }
+            else if (ClampScoreBand(advisoryScore.Value) <
+                     ClampScoreBand(scannerOptionsValue.AiAssistedRankingMinConfidenceScore))
+            {
+                fallbackReason = "ConfidenceBelowThreshold";
+                canUseAdvisoryRanking = false;
+            }
+            else if (!outcomeCoverage.IsAvailable)
+            {
+                fallbackReason = outcomeCoverage.FallbackReason ?? "OutcomeCoverageUnavailable";
+                canUseAdvisoryRanking = false;
+            }
+            else if (outcomeCoverage.CoveragePercent <
+                     decimal.Round(
+                         ClampScoreBand(scannerOptionsValue.AiAssistedRankingMinOutcomeCoveragePercent),
+                         2,
+                         MidpointRounding.AwayFromZero))
+            {
+                fallbackReason = "OutcomeCoverageBelowThreshold";
+                canUseAdvisoryRanking = false;
+            }
+            else if (boundedAiWeight <= 0m)
+            {
+                fallbackReason = "AiInfluenceWeightZero";
+                canUseAdvisoryRanking = false;
             }
         }
 
-        var adaptiveFilterState = scannerOptionsValue.AdaptiveFilteringEnabled
+        if (canUseAdvisoryRanking && advisoryScore.HasValue)
+        {
+            combinedScore = decimal.Round(
+                ClampScoreBand(
+                    (classicalScore * (1m - boundedAiWeight)) +
+                    (ClampScoreBand(advisoryScore.Value) * boundedAiWeight)),
+                4,
+                MidpointRounding.AwayFromZero);
+            rankingMode = "AdvisoryCombined";
+        }
+
+        var adaptiveFilteringEnabled = scannerOptionsValue.AiAssistedRankingEnabled &&
+                                       scannerOptionsValue.AdaptiveFilteringEnabled;
+        var adaptiveFilterState = adaptiveFilteringEnabled
             ? "Passed"
             : "Disabled";
-        string? adaptiveFilterReason = scannerOptionsValue.AdaptiveFilteringEnabled
+        string? adaptiveFilterReason = adaptiveFilteringEnabled
             ? "ThresholdNotMet"
             : null;
         string? rejectionReason = null;
 
-        if (scannerOptionsValue.AdaptiveFilteringEnabled)
+        if (adaptiveFilteringEnabled)
         {
             if (!advisoryScore.HasValue)
             {
                 adaptiveFilterReason = "ConfidenceInsufficient";
+            }
+            else if (!canUseAdvisoryRanking)
+            {
+                adaptiveFilterReason = fallbackReason;
             }
             else if (ClampScoreBand(advisoryScore.Value) <= ClampScoreBand(scannerOptionsValue.AdaptiveFilteringMaxAdvisoryScore) &&
                      classicalScore <= ClampScoreBand(scannerOptionsValue.AdaptiveFilteringMaxClassicalScore))
@@ -2038,6 +2103,9 @@ public sealed class MarketScannerService(
             combinedScore,
             rejectionReason is null ? combinedScore : 0m,
             rankingMode,
+            boundedAiWeight,
+            outcomeCoverage.CoveragePercent,
+            fallbackReason,
             adaptiveFilterState,
             adaptiveFilterReason,
             rejectionReason);
@@ -2058,6 +2126,15 @@ public sealed class MarketScannerService(
         summarySegments.Add($"ScannerRankingMode={rankingSummary.RankingMode}");
         summarySegments.Add($"ScannerClassicalScore={(rankingSummary.ClassicalScore?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a")}");
         summarySegments.Add($"ScannerCombinedScore={(rankingSummary.CombinedScore?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a")}");
+        summarySegments.Add($"ScannerAiInfluenceWeight={rankingSummary.InfluenceWeight.ToString("0.####", CultureInfo.InvariantCulture)}");
+        if (rankingSummary.OutcomeCoveragePercent.HasValue)
+        {
+            summarySegments.Add($"ScannerOutcomeCoveragePercent={rankingSummary.OutcomeCoveragePercent.Value.ToString("0.##", CultureInfo.InvariantCulture)}");
+        }
+        if (!string.IsNullOrWhiteSpace(rankingSummary.FallbackReason))
+        {
+            summarySegments.Add($"ScannerRankingFallbackReason={rankingSummary.FallbackReason}");
+        }
 
         if (candidateIntelligence.Labels.Count > 0)
         {
@@ -2102,6 +2179,125 @@ public sealed class MarketScannerService(
         }
 
         return Truncate(string.Join("; ", summarySegments), CandidateScoringSummaryMaxLength);
+    }
+
+    private async Task<AiRankingOutcomeCoverageSummary> ResolveAiRankingOutcomeCoverageAsync(
+        MarketScannerStrategyBinding? strategyBinding,
+        CancellationToken cancellationToken)
+    {
+        if (!scannerOptionsValue.AiAssistedRankingEnabled)
+        {
+            return AiRankingOutcomeCoverageSummary.Disabled();
+        }
+
+        if (strategyBinding is null || string.IsNullOrWhiteSpace(strategyBinding.OwnerUserId))
+        {
+            return AiRankingOutcomeCoverageSummary.Unavailable("OutcomeCoverageUnavailable");
+        }
+
+        if (aiShadowDecisionService is null)
+        {
+            return AiRankingOutcomeCoverageSummary.Unavailable("OutcomeCoverageUnavailable");
+        }
+
+        if (aiRankingOutcomeCoverageCache.TryGetValue(strategyBinding.OwnerUserId, out var cachedSummary))
+        {
+            return cachedSummary;
+        }
+
+        try
+        {
+            var summary = await aiShadowDecisionService.GetOutcomeSummaryAsync(
+                strategyBinding.OwnerUserId,
+                take: 200,
+                cancellationToken: cancellationToken);
+            var coveragePercent = summary.TotalDecisionCount <= 0
+                ? 0m
+                : decimal.Round(
+                    (summary.ScoredCount * 100m) / summary.TotalDecisionCount,
+                    2,
+                    MidpointRounding.AwayFromZero);
+            var resolvedSummary = new AiRankingOutcomeCoverageSummary(
+                true,
+                coveragePercent,
+                null);
+            aiRankingOutcomeCoverageCache[strategyBinding.OwnerUserId] = resolvedSummary;
+            return resolvedSummary;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(
+                exception,
+                "Market scanner AI ranking outcome coverage lookup failed. StrategyKey={StrategyKey} Symbol={Symbol} Timeframe={Timeframe}.",
+                strategyBinding.StrategyKey,
+                strategyBinding.Symbol,
+                klineInterval);
+            var unavailableSummary = AiRankingOutcomeCoverageSummary.Unavailable("OutcomeCoverageUnavailable");
+            aiRankingOutcomeCoverageCache[strategyBinding.OwnerUserId] = unavailableSummary;
+            return unavailableSummary;
+        }
+    }
+
+    private void ApplyAdaptiveFilteringSuppressionGuardrail(List<MarketScannerCandidate> candidates)
+    {
+        if (!scannerOptionsValue.AiAssistedRankingEnabled || !scannerOptionsValue.AdaptiveFilteringEnabled)
+        {
+            return;
+        }
+
+        var rankedCandidates = candidates
+            .Where(candidate =>
+                !string.Equals(ExtractToken(candidate.ScoringSummary, "ScannerRankingMode"), "NotRanked", StringComparison.Ordinal))
+            .ToArray();
+        if (rankedCandidates.Length == 0)
+        {
+            return;
+        }
+
+        var suppressedCandidates = rankedCandidates
+            .Where(candidate => string.Equals(candidate.RejectionReason, "AdaptiveFilterLowQualitySetup", StringComparison.Ordinal))
+            .OrderByDescending(ResolveSuppressionGuardrailReleaseScore)
+            .ThenBy(candidate => candidate.Symbol, StringComparer.Ordinal)
+            .ToArray();
+        if (suppressedCandidates.Length == 0)
+        {
+            return;
+        }
+
+        var boundedRatio = decimal.Clamp(scannerOptionsValue.AdaptiveFilteringMaxSuppressionRatio, 0m, 1m);
+        var maximumSuppressedCount = boundedRatio <= 0m
+            ? 0
+            : (int)Math.Ceiling(rankedCandidates.Length * (double)boundedRatio);
+        if (suppressedCandidates.Length <= maximumSuppressedCount)
+        {
+            return;
+        }
+
+        var releaseCount = suppressedCandidates.Length - maximumSuppressedCount;
+        foreach (var candidate in suppressedCandidates.Take(releaseCount))
+        {
+            var restoredScore = ResolveSuppressionGuardrailReleaseScore(candidate);
+            candidate.IsEligible = true;
+            candidate.RejectionReason = null;
+            candidate.Score = restoredScore;
+            candidate.ScoringSummary = UpsertSummaryToken(candidate.ScoringSummary, "ScannerAdaptiveFilterState", "ReleasedByGuardrail");
+            candidate.ScoringSummary = UpsertSummaryToken(candidate.ScoringSummary, "ScannerAdaptiveFilterReason", "SuppressionRatioExceeded");
+        }
+    }
+
+    private static decimal ResolveSuppressionGuardrailReleaseScore(MarketScannerCandidate candidate)
+    {
+        if (TryResolveDecimalToken(candidate.ScoringSummary, "ScannerCombinedScore", out var combinedScore))
+        {
+            return combinedScore;
+        }
+
+        if (TryResolveDecimalToken(candidate.ScoringSummary, "ScannerClassicalScore", out var classicalScore))
+        {
+            return classicalScore;
+        }
+
+        return candidate.Score;
     }
 
     private async Task<ScannerCandidateIntelligenceSummary> ResolveCandidateIntelligenceAsync(
@@ -2357,6 +2553,91 @@ public sealed class MarketScannerService(
             : value.Trim();
     }
 
+    private static bool TryResolveDecimalToken(string? summary, string key, out decimal value)
+    {
+        value = 0m;
+        var rawValue = ExtractToken(summary, key);
+        return !string.IsNullOrWhiteSpace(rawValue) &&
+               !string.Equals(rawValue, "n/a", StringComparison.OrdinalIgnoreCase) &&
+               decimal.TryParse(rawValue, NumberStyles.Number, CultureInfo.InvariantCulture, out value);
+    }
+
+    private static string? UpsertSummaryToken(string? summary, string key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return Truncate(summary, CandidateScoringSummaryMaxLength);
+        }
+
+        var segments = string.IsNullOrWhiteSpace(summary)
+            ? new List<string>()
+            : summary
+                .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .ToList();
+        var tokenPrefix = key + "=";
+        var replaced = false;
+
+        for (var index = segments.Count - 1; index >= 0; index--)
+        {
+            if (!segments[index].StartsWith(tokenPrefix, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                segments.RemoveAt(index);
+                continue;
+            }
+
+            segments[index] = tokenPrefix + value;
+            replaced = true;
+        }
+
+        if (!replaced && !string.IsNullOrWhiteSpace(value))
+        {
+            segments.Add(tokenPrefix + value);
+        }
+
+        return Truncate(string.Join("; ", segments), CandidateScoringSummaryMaxLength);
+    }
+
+    private static int ResolveTopCandidateChangedByAiCount(IReadOnlyCollection<MarketScannerCandidate> candidates)
+    {
+        var eligibleCandidates = candidates
+            .Where(candidate => candidate.IsEligible)
+            .ToArray();
+        if (eligibleCandidates.Length == 0)
+        {
+            return 0;
+        }
+
+        if (!eligibleCandidates.Any(candidate =>
+                string.Equals(ExtractToken(candidate.ScoringSummary, "ScannerRankingMode"), "AdvisoryCombined", StringComparison.Ordinal)))
+        {
+            return 0;
+        }
+
+        var aiTopCandidate = eligibleCandidates
+            .OrderBy(candidate => candidate.Rank ?? int.MaxValue)
+            .ThenBy(candidate => candidate.Symbol, StringComparer.Ordinal)
+            .FirstOrDefault();
+        var classicalTopCandidate = eligibleCandidates
+            .OrderByDescending(candidate =>
+                TryResolveDecimalToken(candidate.ScoringSummary, "ScannerClassicalScore", out var classicalScore)
+                    ? classicalScore
+                    : candidate.Score)
+            .ThenBy(candidate => candidate.Symbol, StringComparer.Ordinal)
+            .FirstOrDefault();
+
+        return aiTopCandidate is not null &&
+               classicalTopCandidate is not null &&
+               !string.Equals(aiTopCandidate.Symbol, classicalTopCandidate.Symbol, StringComparison.Ordinal)
+            ? 1
+            : 0;
+    }
+
     private static string ResolveUniverseSummary(IReadOnlyCollection<UniverseSymbolCandidate> universe)
     {
         if (universe.Count == 0)
@@ -2402,8 +2683,13 @@ public sealed class MarketScannerService(
         var normalizedExecutionHost = string.IsNullOrWhiteSpace(executionHost)
             ? "n/a"
             : executionHost.Trim();
+        var aiRankingFallbackCount = candidates.Count(candidate =>
+            string.Equals(ExtractToken(candidate.ScoringSummary, "ScannerRankingMode"), "ClassicalFallback", StringComparison.Ordinal));
+        var adaptiveSuppressionCount = candidates.Count(candidate =>
+            string.Equals(ExtractToken(candidate.ScoringSummary, "ScannerAdaptiveFilterState"), "Suppressed", StringComparison.Ordinal));
+        var topCandidateChangedByAiCount = ResolveTopCandidateChangedByAiCount(candidates);
 
-        return $"ScanCycleId={cycle.Id}; Timeframe={timeframe}; HandoffEnabled={handoffEnabled}; ExecutionHost={normalizedExecutionHost}; UniverseSource={cycle.UniverseSource}; Scanned={cycle.ScannedSymbolCount}; Eligible={cycle.EligibleCandidateCount}; Top={cycle.TopCandidateCount}; BestCandidate={cycle.BestCandidateSymbol ?? "n/a"}; BestScore={cycle.BestCandidateScore?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a"}; TopRejectReason={rejectedReason}; CompletedAtUtc={cycle.CompletedAtUtc:O}";
+        return $"ScanCycleId={cycle.Id}; Timeframe={timeframe}; HandoffEnabled={handoffEnabled}; ExecutionHost={normalizedExecutionHost}; UniverseSource={cycle.UniverseSource}; Scanned={cycle.ScannedSymbolCount}; Eligible={cycle.EligibleCandidateCount}; Top={cycle.TopCandidateCount}; BestCandidate={cycle.BestCandidateSymbol ?? "n/a"}; BestScore={cycle.BestCandidateScore?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a"}; AiRankingFallbackCount={aiRankingFallbackCount}; AiRankingSuppressionCount={adaptiveSuppressionCount}; AiRankingTopCandidateChangedCount={topCandidateChangedByAiCount}; TopRejectReason={rejectedReason}; CompletedAtUtc={cycle.CompletedAtUtc:O}";
     }
 
     private static string? ResolveDominantRejectionReason(IReadOnlyCollection<MarketScannerCandidate> candidates)
@@ -2506,10 +2792,12 @@ public sealed class MarketScannerService(
     private readonly record struct UniverseSymbolCandidate(string Symbol, string UniverseSource);
 
     private sealed record MarketScannerStrategyBinding(
+        string OwnerUserId,
         Guid TradingStrategyId,
         Guid TradingStrategyVersionId,
         int VersionNumber,
         string StrategyKey,
+        string Symbol,
         string DisplayName,
         string DefinitionJson);
 
@@ -2521,16 +2809,23 @@ public sealed class MarketScannerService(
     private sealed record MarketScannerStrategyScoreSummary(
         int? StrategyScore,
         string? RejectionReason,
-        string? ScoringSummary)
+        string? ScoringSummary,
+        MarketScannerStrategyBinding? StrategyBinding)
     {
-        public static MarketScannerStrategyScoreSummary Accepted(int strategyScore, string? scoringSummary) =>
-            new(strategyScore, null, scoringSummary);
+        public static MarketScannerStrategyScoreSummary Accepted(
+            int strategyScore,
+            string? scoringSummary,
+            MarketScannerStrategyBinding? strategyBinding = null) =>
+            new(strategyScore, null, scoringSummary, strategyBinding);
 
-        public static MarketScannerStrategyScoreSummary Rejected(string rejectionReason, string? scoringSummary) =>
-            new(null, rejectionReason, scoringSummary);
+        public static MarketScannerStrategyScoreSummary Rejected(
+            string rejectionReason,
+            string? scoringSummary,
+            MarketScannerStrategyBinding? strategyBinding = null) =>
+            new(null, rejectionReason, scoringSummary, strategyBinding);
 
         public static MarketScannerStrategyScoreSummary MarketRejected(string rejectionReason, string? scoringSummary) =>
-            new(null, rejectionReason, scoringSummary);
+            new(null, rejectionReason, scoringSummary, null);
     }
 
     private sealed record ScannerCandidateIntelligenceSummary(
@@ -2550,7 +2845,21 @@ public sealed class MarketScannerService(
         decimal? CombinedScore,
         decimal EffectiveScore,
         string RankingMode,
+        decimal InfluenceWeight,
+        decimal? OutcomeCoveragePercent,
+        string? FallbackReason,
         string AdaptiveFilterState,
         string? AdaptiveFilterReason,
         string? RejectionReason);
+
+    private sealed record AiRankingOutcomeCoverageSummary(
+        bool IsAvailable,
+        decimal? CoveragePercent,
+        string? FallbackReason)
+    {
+        public static AiRankingOutcomeCoverageSummary Disabled() => new(false, null, "AiRankingDisabled");
+
+        public static AiRankingOutcomeCoverageSummary Unavailable(string? fallbackReason = null) =>
+            new(false, null, fallbackReason ?? "OutcomeCoverageUnavailable");
+    }
 }

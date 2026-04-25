@@ -14,7 +14,13 @@ public sealed record MarketScannerDashboardSnapshot(
     MarketScannerHandoffSnapshot LastSuccessfulHandoff,
     MarketScannerHandoffSnapshot LastBlockedHandoff,
     string? CycleSummary = null,
-    string? RejectionSummary = null)
+    string? RejectionSummary = null,
+    int AiRankingFallbackCount = 0,
+    int AiRankingSuppressionCount = 0,
+    int AiRankingTopCandidateChangedCount = 0,
+    string? AiRankingStatusTitle = null,
+    string? AiRankingStatusSummary = null,
+    string? AiRankingStatusReason = null)
 {
     public static MarketScannerDashboardSnapshot Empty()
     {
@@ -32,6 +38,12 @@ public sealed record MarketScannerDashboardSnapshot(
             LastSuccessfulHandoff: MarketScannerHandoffSnapshot.Empty(),
             LastBlockedHandoff: MarketScannerHandoffSnapshot.Empty(),
             CycleSummary: null,
-            RejectionSummary: null);
+            RejectionSummary: null,
+            AiRankingFallbackCount: 0,
+            AiRankingSuppressionCount: 0,
+            AiRankingTopCandidateChangedCount: 0,
+            AiRankingStatusTitle: null,
+            AiRankingStatusSummary: null,
+            AiRankingStatusReason: null);
     }
 }

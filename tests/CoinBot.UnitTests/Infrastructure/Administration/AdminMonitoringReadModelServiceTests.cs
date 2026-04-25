@@ -161,7 +161,7 @@ public sealed class AdminMonitoringReadModelServiceTests
     }
 
     [Fact]
-    public async Task GetSnapshotAsync_ParsesScannerAdvisoryLabels_FromScoringSummary()
+    public async Task AdminScannerReadModel_ShowsAiRankingSummary_WhenPresent()
     {
         var now = new DateTime(2026, 4, 3, 12, 0, 0, DateTimeKind.Utc);
         var cycleId = Guid.NewGuid();
@@ -192,7 +192,7 @@ public sealed class AdminMonitoringReadModelServiceTests
             QuoteVolume24h = 123456m,
             MarketScore = 100m,
             StrategyScore = 95,
-            ScoringSummary = "StrategyScore=95; ScannerLabels=HasCompressionBreakoutSetup,HasTrendBreakoutUp; ScannerReasonCodes=CompressionBreakoutSetupDetected,TrendBreakoutConfirmed; ScannerReasonSummary=Compression breakout setup detected from tight Bollinger bandwidth. | Bullish trend breakout confirmed above the Bollinger mid-band with positive MACD alignment.; ScannerShadowScore=80; ScannerShadowContributions=CompressionBreakoutSetupDetected:+25,TrendBreakoutConfirmed:+55",
+            ScoringSummary = "StrategyScore=95; ScannerRankingMode=AdvisoryCombined; ScannerClassicalScore=96.6667; ScannerCombinedScore=90.8334; ScannerAiInfluenceWeight=0.35; ScannerOutcomeCoveragePercent=75; ScannerLabels=HasCompressionBreakoutSetup,HasTrendBreakoutUp; ScannerReasonCodes=CompressionBreakoutSetupDetected,TrendBreakoutConfirmed; ScannerReasonSummary=Compression breakout setup detected from tight Bollinger bandwidth. | Bullish trend breakout confirmed above the Bollinger mid-band with positive MACD alignment.; ScannerShadowScore=80; ScannerShadowContributions=CompressionBreakoutSetupDetected:+25,TrendBreakoutConfirmed:+55; ScannerAdaptiveFilterState=Passed",
             IsEligible = true,
             Score = 95m,
             Rank = 1,
@@ -214,6 +214,13 @@ public sealed class AdminMonitoringReadModelServiceTests
         Assert.Contains("Bullish trend breakout confirmed", topCandidate.AdvisorySummary, StringComparison.Ordinal);
         Assert.Equal(80, topCandidate.AdvisoryShadowScore);
         Assert.Equal(["CompressionBreakoutSetupDetected +25", "TrendBreakoutConfirmed +55"], topCandidate.AdvisoryShadowContributions.ToArray());
+        Assert.Equal("AdvisoryCombined", topCandidate.AiRankingMode);
+        Assert.Equal(96.6667m, topCandidate.AiRankingClassicalScore);
+        Assert.Equal(90.8334m, topCandidate.AiRankingCombinedScore);
+        Assert.Equal(0.35m, topCandidate.AiRankingInfluenceWeight);
+        Assert.Equal(75m, topCandidate.AiRankingOutcomeCoveragePercent);
+        Assert.Null(topCandidate.AiRankingFallbackReason);
+        Assert.Equal("Passed", topCandidate.AiRankingAdaptiveFilterState);
     }
 
     [Fact]
@@ -272,7 +279,7 @@ public sealed class AdminMonitoringReadModelServiceTests
     }
 
     [Fact]
-    public void MarketScannerCardView_RendersReasonCodes_AndDoesNotRenderMachineLabels()
+    public void AdminScannerReadModel_DoesNotShowRawUnsafeFields()
     {
         var content = File.ReadAllText(Path.Combine(
             ResolveRepositoryRoot(),
@@ -289,8 +296,198 @@ public sealed class AdminMonitoringReadModelServiceTests
         Assert.DoesNotContain("candidate.AdvisoryLabels", content, StringComparison.Ordinal);
         Assert.Contains("candidate.AdvisoryShadowScore", content, StringComparison.Ordinal);
         Assert.Contains("candidate.AdvisoryShadowContributions", content, StringComparison.Ordinal);
+        Assert.Contains("candidate.AiRankingMode", content, StringComparison.Ordinal);
+        Assert.Contains("candidate.AiRankingClassicalScore", content, StringComparison.Ordinal);
+        Assert.Contains("candidate.AiRankingCombinedScore", content, StringComparison.Ordinal);
+        Assert.Contains("candidate.AiRankingFallbackReason", content, StringComparison.Ordinal);
+        Assert.Contains("candidate.AiRankingAdaptiveFilterState", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-ai-status-summary", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-ai-empty-state", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("candidate.ScoringSummary", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-scanner-rejected-reason-codes", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-scanner-rejected-advisory-summary", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetSnapshotAsync_ComputesAiRankingObservabilityCounts_FromLatestCycle()
+    {
+        var now = new DateTime(2026, 4, 3, 12, 0, 0, DateTimeKind.Utc);
+        var cycleId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext();
+
+        dbContext.MarketScannerCycles.Add(new MarketScannerCycle
+        {
+            Id = cycleId,
+            StartedAtUtc = now.AddSeconds(-2),
+            CompletedAtUtc = now,
+            UniverseSource = "config+registry",
+            ScannedSymbolCount = 3,
+            EligibleCandidateCount = 2,
+            TopCandidateCount = 2,
+            BestCandidateSymbol = "ETHUSDT",
+            BestCandidateScore = 88m,
+            Summary = "scan complete"
+        });
+        dbContext.MarketScannerCandidates.AddRange(
+            new MarketScannerCandidate
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                Symbol = "ETHUSDT",
+                UniverseSource = "config",
+                ObservedAtUtc = now,
+                IsEligible = true,
+                Score = 88m,
+                Rank = 1,
+                IsTopCandidate = true,
+                ScoringSummary = "ScannerRankingMode=AdvisoryCombined; ScannerClassicalScore=70; ScannerCombinedScore=88; ScannerAdaptiveFilterState=Passed"
+            },
+            new MarketScannerCandidate
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                Symbol = "BTCUSDT",
+                UniverseSource = "config",
+                ObservedAtUtc = now,
+                IsEligible = true,
+                Score = 70m,
+                Rank = 2,
+                IsTopCandidate = true,
+                ScoringSummary = "ScannerRankingMode=ClassicalFallback; ScannerClassicalScore=95; ScannerCombinedScore=95; ScannerRankingFallbackReason=OutcomeCoverageBelowThreshold; ScannerAdaptiveFilterState=Passed"
+            },
+            new MarketScannerCandidate
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                Symbol = "SOLUSDT",
+                UniverseSource = "config",
+                ObservedAtUtc = now,
+                IsEligible = false,
+                RejectionReason = "AdaptiveFilterLowQualitySetup",
+                Score = 0m,
+                ScoringSummary = "ScannerRankingMode=AdvisoryCombined; ScannerClassicalScore=40; ScannerCombinedScore=25; ScannerAdaptiveFilterState=Suppressed; ScannerAdaptiveFilterReason=LowAdvisoryScoreAndWeakClassicalScore"
+            });
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            TimeProvider.System,
+            Options.Create(new DataLatencyGuardOptions()));
+
+        var snapshot = await service.GetSnapshotAsync();
+
+        Assert.Equal(1, snapshot.MarketScanner.AiRankingFallbackCount);
+        Assert.Equal(1, snapshot.MarketScanner.AiRankingSuppressionCount);
+        Assert.Equal(1, snapshot.MarketScanner.AiRankingTopCandidateChangedCount);
+    }
+
+    [Fact]
+    public async Task GetSnapshotAsync_ProvidesAiRankingNotActiveStatus_WhenLatestCycleHasNoEligibleRankedCandidates()
+    {
+        var now = new DateTime(2026, 4, 25, 10, 0, 0, DateTimeKind.Utc);
+        var cycleId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext();
+
+        dbContext.MarketScannerCycles.Add(new MarketScannerCycle
+        {
+            Id = cycleId,
+            StartedAtUtc = now.AddSeconds(-2),
+            CompletedAtUtc = now,
+            UniverseSource = "config+registry",
+            ScannedSymbolCount = 2,
+            EligibleCandidateCount = 0,
+            TopCandidateCount = 0,
+            Summary = "scan complete"
+        });
+        dbContext.MarketScannerCandidates.AddRange(
+            new MarketScannerCandidate
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                Symbol = "BTCUSDT",
+                UniverseSource = "config",
+                ObservedAtUtc = now,
+                IsEligible = false,
+                RejectionReason = "NoEnabledBotForSymbol",
+                Score = 0m,
+                ScoringSummary = "ScannerRankingMode=NotRanked; ScannerAdaptiveFilterState=NotApplicable; ScannerAdaptiveFilterReason=CandidateIneligible"
+            },
+            new MarketScannerCandidate
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                Symbol = "SOLUSDT",
+                UniverseSource = "config",
+                ObservedAtUtc = now,
+                IsEligible = false,
+                RejectionReason = "StrategyNoSignalCandidate",
+                Score = 0m,
+                ScoringSummary = "ScannerRankingMode=NotRanked; ScannerAdaptiveFilterState=NotApplicable; ScannerAdaptiveFilterReason=CandidateIneligible"
+            });
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            TimeProvider.System,
+            Options.Create(new DataLatencyGuardOptions()));
+
+        var snapshot = await service.GetSnapshotAsync();
+
+        Assert.Equal("AI ranking not active", snapshot.MarketScanner.AiRankingStatusTitle);
+        Assert.Equal("AI ranking not active: no eligible ranked candidates in latest scanner cycle.", snapshot.MarketScanner.AiRankingStatusSummary);
+        Assert.Contains("NotRanked", snapshot.MarketScanner.AiRankingStatusReason, StringComparison.Ordinal);
+        Assert.Contains("CandidateIneligible", snapshot.MarketScanner.AiRankingStatusReason, StringComparison.Ordinal);
+        Assert.Contains("NoEnabledBotForSymbol", snapshot.MarketScanner.AiRankingStatusReason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetSnapshotAsync_ProvidesAiRankingDisabledRollbackState_WhenLatestEligibleCandidatesAreClassical()
+    {
+        var now = new DateTime(2026, 4, 25, 10, 0, 0, DateTimeKind.Utc);
+        var cycleId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext();
+
+        dbContext.MarketScannerCycles.Add(new MarketScannerCycle
+        {
+            Id = cycleId,
+            StartedAtUtc = now.AddSeconds(-2),
+            CompletedAtUtc = now,
+            UniverseSource = "config+registry",
+            ScannedSymbolCount = 1,
+            EligibleCandidateCount = 1,
+            TopCandidateCount = 1,
+            BestCandidateSymbol = "BTCUSDT",
+            BestCandidateScore = 95m,
+            Summary = "scan complete"
+        });
+        dbContext.MarketScannerCandidates.Add(new MarketScannerCandidate
+        {
+            Id = Guid.NewGuid(),
+            ScanCycleId = cycleId,
+            Symbol = "BTCUSDT",
+            UniverseSource = "config",
+            ObservedAtUtc = now,
+            IsEligible = true,
+            Score = 95m,
+            Rank = 1,
+            IsTopCandidate = true,
+            ScoringSummary = "ScannerRankingMode=Disabled; ScannerClassicalScore=95; ScannerCombinedScore=95; ScannerAdaptiveFilterState=Disabled"
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            TimeProvider.System,
+            Options.Create(new DataLatencyGuardOptions()));
+
+        var snapshot = await service.GetSnapshotAsync();
+
+        Assert.Equal("AI ranking disabled", snapshot.MarketScanner.AiRankingStatusTitle);
+        Assert.Equal("AI ranking disabled — classical ranking active.", snapshot.MarketScanner.AiRankingStatusSummary);
+        Assert.Equal("Disabled", snapshot.MarketScanner.AiRankingStatusReason);
     }
 
     [Fact]

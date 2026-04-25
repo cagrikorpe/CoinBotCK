@@ -41,6 +41,12 @@ public sealed class MarketScannerOptions
     [Range(typeof(decimal), "0", "1")]
     public decimal AiAssistedRankingWeight { get; set; } = 0.35m;
 
+    [Range(0, 100)]
+    public int AiAssistedRankingMinConfidenceScore { get; set; } = 50;
+
+    [Range(typeof(decimal), "0", "100")]
+    public decimal AiAssistedRankingMinOutcomeCoveragePercent { get; set; } = 5m;
+
     public bool AdaptiveFilteringEnabled { get; set; }
 
     [Range(0, 100)]
@@ -48,6 +54,9 @@ public sealed class MarketScannerOptions
 
     [Range(typeof(decimal), "0", "100")]
     public decimal AdaptiveFilteringMaxClassicalScore { get; set; } = 60m;
+
+    [Range(typeof(decimal), "0", "1")]
+    public decimal AdaptiveFilteringMaxSuppressionRatio { get; set; } = 0.25m;
 
     public string[] AllowedQuoteAssets { get; set; } = ["USDT"];
 

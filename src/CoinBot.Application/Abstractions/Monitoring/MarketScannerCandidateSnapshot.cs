@@ -19,4 +19,12 @@ public sealed record MarketScannerCandidateSnapshot(
     string? RejectionReason,
     decimal Score,
     int? Rank,
-    bool IsTopCandidate);
+    bool IsTopCandidate,
+    string? AiRankingMode = null,
+    decimal? AiRankingClassicalScore = null,
+    decimal? AiRankingCombinedScore = null,
+    decimal? AiRankingInfluenceWeight = null,
+    decimal? AiRankingOutcomeCoveragePercent = null,
+    string? AiRankingFallbackReason = null,
+    string? AiRankingAdaptiveFilterState = null,
+    string? AiRankingAdaptiveFilterReason = null);

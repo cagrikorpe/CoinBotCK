@@ -67,6 +67,30 @@
             </div>
         }
 
+        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4" data-cb-scanner-ai-ranking-strip>
+            <div>
+                <div class="cb-admin-info-strip-title">AI ranking rollout</div>
+                <div class="cb-admin-info-strip-text">
+                    <span>Fallbacks </span>
+                    <span data-cb-scanner-ai-fallback-count>@scanner.AiRankingFallbackCount</span>
+                    <span> · Suppressed </span>
+                    <span data-cb-scanner-ai-suppression-count>@scanner.AiRankingSuppressionCount</span>
+                    <span> · Top changed by AI </span>
+                    <span data-cb-scanner-ai-top-changed-count>@scanner.AiRankingTopCandidateChangedCount</span>
+                </div>
+                @if (!string.IsNullOrWhiteSpace(scanner.AiRankingStatusSummary))
+                {
+                    <div class="cb-admin-info-strip-text mt-2" data-cb-scanner-ai-status-title>@(scanner.AiRankingStatusTitle ?? "AI ranking status")</div>
+                    <div class="cb-admin-info-strip-text" data-cb-scanner-ai-status-summary>@scanner.AiRankingStatusSummary</div>
+                    @if (!string.IsNullOrWhiteSpace(scanner.AiRankingStatusReason))
+                    {
+                        <div class="cb-admin-info-strip-text mt-1" data-cb-scanner-ai-status-reason>@scanner.AiRankingStatusReason</div>
+                    }
+                }
+            </div>
+            <span class="cb-admin-info-strip-meta">Rollback via config</span>
+        </div>
+
         <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6" data-cb-scanner-handoff-strip>
             <div>
                 <div class="cb-admin-info-strip-title" data-cb-scanner-handoff-status>@latestHandoff.ExecutionRequestStatus</div>
@@ -157,12 +181,18 @@
 
         @if (topCandidates.Length == 0)
         {
-            <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-6">
+            <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-6" data-cb-scanner-ai-empty-state>
                 <div>
-                    <div class="cb-admin-info-strip-title">No top candidate yet</div>
-                    <div class="cb-admin-info-strip-text">Scanner cycle tamamlandığında eligible Top-N candidate snapshot listesi burada görünür.</div>
+                    <div class="cb-admin-info-strip-title" data-cb-scanner-ai-empty-title>@(scanner.AiRankingStatusTitle ?? "No top candidate yet")</div>
+                    <div class="cb-admin-info-strip-text" data-cb-scanner-ai-empty-summary>
+                        @(scanner.AiRankingStatusSummary ?? "Scanner cycle tamamlandığında eligible Top-N candidate snapshot listesi burada görünür.")
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(scanner.AiRankingStatusReason))
+                    {
+                        <div class="cb-admin-info-strip-text mt-1" data-cb-scanner-ai-empty-reason>@scanner.AiRankingStatusReason</div>
+                    }
                 </div>
-                <span class="cb-admin-info-strip-meta">Pending</span>
+                <span class="cb-admin-info-strip-meta">Explainable</span>
             </div>
         }
         else
@@ -214,7 +244,29 @@
                             </td>
                             <td>
                                 <div class="cb-mono" data-cb-scanner-top-composite-score>@candidate.Score.ToString("0.####")</div>
-                                <small class="cb-admin-job-meta" data-cb-scanner-top-scoring-summary>@(candidate.ScoringSummary ?? "n/a")</small>
+                                <small class="cb-admin-job-meta d-block" data-cb-scanner-top-ranking-mode>@(candidate.AiRankingMode ?? "n/a")</small>
+                                <small class="cb-admin-job-meta d-block" data-cb-scanner-top-ranking-summary>
+                                    Classical @(candidate.AiRankingClassicalScore?.ToString("0.####") ?? "n/a")
+                                    · AI @(candidate.AdvisoryShadowScore?.ToString() ?? "n/a")
+                                    · Combined @(candidate.AiRankingCombinedScore?.ToString("0.####") ?? "n/a")
+                                </small>
+                                @if (candidate.AiRankingInfluenceWeight.HasValue || candidate.AiRankingOutcomeCoveragePercent.HasValue)
+                                {
+                                    <small class="cb-admin-job-meta d-block mt-1" data-cb-scanner-top-ranking-guardrails>
+                                        Influence @(candidate.AiRankingInfluenceWeight?.ToString("0.####") ?? "n/a")
+                                        · Coverage @(candidate.AiRankingOutcomeCoveragePercent?.ToString("0.##") ?? "n/a")%
+                                    </small>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(candidate.AiRankingFallbackReason))
+                                {
+                                    <small class="cb-admin-job-meta d-block mt-1" data-cb-scanner-top-ranking-fallback>Fallback @candidate.AiRankingFallbackReason</small>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(candidate.AiRankingAdaptiveFilterState))
+                                {
+                                    <small class="cb-admin-job-meta d-block mt-1" data-cb-scanner-top-ranking-filter>
+                                        Filter @candidate.AiRankingAdaptiveFilterState@(string.IsNullOrWhiteSpace(candidate.AiRankingAdaptiveFilterReason) ? string.Empty : $" · {candidate.AiRankingAdaptiveFilterReason}")
+                                    </small>
+                                }
                             </td>
                             <td data-cb-scanner-top-source>@candidate.UniverseSource</td>
                         </tr>
@@ -259,6 +311,20 @@
                                 @if (candidate.AdvisoryShadowContributions.Count > 0)
                                 {
                                     <small class="cb-admin-job-meta d-block mt-1" data-cb-scanner-rejected-shadow-contributions>@string.Join(" · ", candidate.AdvisoryShadowContributions)</small>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(candidate.AiRankingMode))
+                                {
+                                    <small class="cb-admin-job-meta d-block mt-2" data-cb-scanner-rejected-ranking-mode>@candidate.AiRankingMode</small>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(candidate.AiRankingFallbackReason))
+                                {
+                                    <small class="cb-admin-job-meta d-block mt-1" data-cb-scanner-rejected-ranking-fallback>Fallback @candidate.AiRankingFallbackReason</small>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(candidate.AiRankingAdaptiveFilterState))
+                                {
+                                    <small class="cb-admin-job-meta d-block mt-1" data-cb-scanner-rejected-ranking-filter>
+                                        Filter @candidate.AiRankingAdaptiveFilterState@(string.IsNullOrWhiteSpace(candidate.AiRankingAdaptiveFilterReason) ? string.Empty : $" · {candidate.AiRankingAdaptiveFilterReason}")
+                                    </small>
                                 }
                             </div>
                         }

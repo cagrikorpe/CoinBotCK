@@ -127,6 +127,12 @@ public sealed class AdminMonitoringReadModelService(
             .OrderBy(entity => entity.Rank ?? int.MaxValue)
             .ThenBy(entity => entity.Symbol, StringComparer.Ordinal)
             .FirstOrDefault();
+        var aiRankingFallbackCount = validCandidateEntities.Count(entity =>
+            string.Equals(ResolveCandidateAiRankingMode(entity.ScoringSummary), "ClassicalFallback", StringComparison.Ordinal));
+        var aiRankingSuppressionCount = validCandidateEntities.Count(entity =>
+            string.Equals(ResolveCandidateAiRankingAdaptiveFilterState(entity.ScoringSummary), "Suppressed", StringComparison.Ordinal));
+        var aiRankingTopCandidateChangedCount = ResolveAiRankingTopCandidateChangedCount(validCandidateEntities);
+        var aiRankingStatus = ResolveAiRankingStatus(validCandidateEntities, topCandidateEntities);
         var cycleSummary = BuildMarketScannerCycleSummary(
             Math.Max(0, latestCycle.ScannedSymbolCount - excludedCandidateCount),
             bestCandidate,
@@ -148,7 +154,13 @@ public sealed class AdminMonitoringReadModelService(
             MapMarketScannerHandoffAttempt(lastSuccessfulHandoffEntity, ResolveDegradedModeState(lastSuccessfulHandoffEntity, degradedModeStates)),
             MapMarketScannerHandoffAttempt(lastBlockedHandoffEntity, ResolveDegradedModeState(lastBlockedHandoffEntity, degradedModeStates)),
             cycleSummary,
-            rejectionSummary);
+            rejectionSummary,
+            aiRankingFallbackCount,
+            aiRankingSuppressionCount,
+            aiRankingTopCandidateChangedCount,
+            aiRankingStatus.Title,
+            aiRankingStatus.Summary,
+            aiRankingStatus.Reason);
     }
 
     private async Task<Dictionary<Guid, DegradedModeState>> LoadDegradedModeStatesAsync(
@@ -384,7 +396,15 @@ public sealed class AdminMonitoringReadModelService(
             entity.RejectionReason,
             entity.Score,
             entity.Rank,
-            entity.IsTopCandidate);
+            entity.IsTopCandidate,
+            ResolveCandidateAiRankingMode(entity.ScoringSummary),
+            ResolveCandidateAiRankingClassicalScore(entity.ScoringSummary),
+            ResolveCandidateAiRankingCombinedScore(entity.ScoringSummary),
+            ResolveCandidateAiRankingInfluenceWeight(entity.ScoringSummary),
+            ResolveCandidateAiRankingOutcomeCoveragePercent(entity.ScoringSummary),
+            ResolveCandidateAiRankingFallbackReason(entity.ScoringSummary),
+            ResolveCandidateAiRankingAdaptiveFilterState(entity.ScoringSummary),
+            ResolveCandidateAiRankingAdaptiveFilterReason(entity.ScoringSummary));
     }
 
     private static IReadOnlyCollection<string> ResolveCandidateAdvisoryLabels(string? scoringSummary)
@@ -458,6 +478,151 @@ public sealed class AdminMonitoringReadModelService(
         }
 
         return contributions.ToArray();
+    }
+
+    private static string? ResolveCandidateAiRankingMode(string? scoringSummary)
+    {
+        return ExecutionDecisionDiagnostics.ExtractToken("ScannerRankingMode", scoringSummary);
+    }
+
+    private static decimal? ResolveCandidateAiRankingClassicalScore(string? scoringSummary)
+    {
+        return TryResolveDecimalToken(scoringSummary, "ScannerClassicalScore");
+    }
+
+    private static decimal? ResolveCandidateAiRankingCombinedScore(string? scoringSummary)
+    {
+        return TryResolveDecimalToken(scoringSummary, "ScannerCombinedScore");
+    }
+
+    private static decimal? ResolveCandidateAiRankingInfluenceWeight(string? scoringSummary)
+    {
+        return TryResolveDecimalToken(scoringSummary, "ScannerAiInfluenceWeight");
+    }
+
+    private static decimal? ResolveCandidateAiRankingOutcomeCoveragePercent(string? scoringSummary)
+    {
+        return TryResolveDecimalToken(scoringSummary, "ScannerOutcomeCoveragePercent");
+    }
+
+    private static string? ResolveCandidateAiRankingFallbackReason(string? scoringSummary)
+    {
+        return ExecutionDecisionDiagnostics.ExtractToken("ScannerRankingFallbackReason", scoringSummary);
+    }
+
+    private static string? ResolveCandidateAiRankingAdaptiveFilterState(string? scoringSummary)
+    {
+        return ExecutionDecisionDiagnostics.ExtractToken("ScannerAdaptiveFilterState", scoringSummary);
+    }
+
+    private static string? ResolveCandidateAiRankingAdaptiveFilterReason(string? scoringSummary)
+    {
+        return ExecutionDecisionDiagnostics.ExtractToken("ScannerAdaptiveFilterReason", scoringSummary);
+    }
+
+    private static decimal? TryResolveDecimalToken(string? scoringSummary, string token)
+    {
+        var value = ExecutionDecisionDiagnostics.ExtractToken(token, scoringSummary);
+        return decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsedValue)
+            ? parsedValue
+            : null;
+    }
+
+    private static int ResolveAiRankingTopCandidateChangedCount(IReadOnlyCollection<MarketScannerCandidateEntity> entities)
+    {
+        var eligibleEntities = entities
+            .Where(entity => entity.IsEligible)
+            .ToArray();
+        if (eligibleEntities.Length == 0)
+        {
+            return 0;
+        }
+
+        if (!eligibleEntities.Any(entity =>
+                string.Equals(ResolveCandidateAiRankingMode(entity.ScoringSummary), "AdvisoryCombined", StringComparison.Ordinal)))
+        {
+            return 0;
+        }
+
+        var aiTopCandidate = eligibleEntities
+            .OrderBy(entity => entity.Rank ?? int.MaxValue)
+            .ThenBy(entity => entity.Symbol, StringComparer.Ordinal)
+            .FirstOrDefault();
+        var classicalTopCandidate = eligibleEntities
+            .OrderByDescending(entity => ResolveCandidateAiRankingClassicalScore(entity.ScoringSummary) ?? entity.Score)
+            .ThenBy(entity => entity.Symbol, StringComparer.Ordinal)
+            .FirstOrDefault();
+
+        return aiTopCandidate is not null &&
+               classicalTopCandidate is not null &&
+               !string.Equals(aiTopCandidate.Symbol, classicalTopCandidate.Symbol, StringComparison.Ordinal)
+            ? 1
+            : 0;
+    }
+
+    private static AiRankingStatusSnapshot ResolveAiRankingStatus(
+        IReadOnlyCollection<MarketScannerCandidateEntity> validCandidateEntities,
+        IReadOnlyCollection<MarketScannerCandidateEntity> topCandidateEntities)
+    {
+        var eligibleTopCandidates = topCandidateEntities
+            .Where(entity => entity.IsEligible)
+            .OrderBy(entity => entity.Rank ?? int.MaxValue)
+            .ThenBy(entity => entity.Symbol, StringComparer.Ordinal)
+            .ToArray();
+        if (eligibleTopCandidates.Length > 0)
+        {
+            var rankingModes = eligibleTopCandidates
+                .Select(entity => ResolveCandidateAiRankingMode(entity.ScoringSummary))
+                .Where(mode => !string.IsNullOrWhiteSpace(mode))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            if (rankingModes.Length == 1 && string.Equals(rankingModes[0], "Disabled", StringComparison.Ordinal))
+            {
+                return new AiRankingStatusSnapshot(
+                    "AI ranking disabled",
+                    "AI ranking disabled — classical ranking active.",
+                    "Disabled");
+            }
+
+            return new AiRankingStatusSnapshot(
+                "AI ranking active",
+                "AI ranking explainability is attached to eligible ranked candidates in the latest scanner cycle.",
+                rankingModes.Length == 0
+                    ? null
+                    : string.Join(" · ", rankingModes));
+        }
+
+        var safeReasons = validCandidateEntities
+            .SelectMany(ResolveAiRankingStatusReasons)
+            .Distinct(StringComparer.Ordinal)
+            .Take(4)
+            .ToArray();
+        return new AiRankingStatusSnapshot(
+            "AI ranking not active",
+            "AI ranking not active: no eligible ranked candidates in latest scanner cycle.",
+            safeReasons.Length == 0
+                ? null
+                : string.Join(" · ", safeReasons));
+    }
+
+    private static IEnumerable<string> ResolveAiRankingStatusReasons(MarketScannerCandidateEntity entity)
+    {
+        var rankingMode = ResolveCandidateAiRankingMode(entity.ScoringSummary);
+        if (!string.IsNullOrWhiteSpace(rankingMode))
+        {
+            yield return rankingMode;
+        }
+
+        var adaptiveFilterReason = ResolveCandidateAiRankingAdaptiveFilterReason(entity.ScoringSummary);
+        if (!string.IsNullOrWhiteSpace(adaptiveFilterReason))
+        {
+            yield return adaptiveFilterReason;
+        }
+
+        if (!string.IsNullOrWhiteSpace(entity.RejectionReason))
+        {
+            yield return entity.RejectionReason.Trim();
+        }
     }
 
     private static string FormatShadowContribution(string contribution)
@@ -597,4 +762,9 @@ public sealed class AdminMonitoringReadModelService(
             entity.SnapshotAgeSeconds,
             entity.Detail);
     }
+
+    private sealed record AiRankingStatusSnapshot(
+        string Title,
+        string Summary,
+        string? Reason);
 }
