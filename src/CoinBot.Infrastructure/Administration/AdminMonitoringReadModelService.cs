@@ -1,7 +1,9 @@
 using System.Globalization;
+using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Domain.Entities;
+using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Persistence;
@@ -49,6 +51,13 @@ public sealed class AdminMonitoringReadModelService(
                         .ToListAsync(cancellationToken);
                     var scannerSnapshot = await LoadMarketScannerSnapshotAsync(cancellationToken);
                     var ultraDebugLogHealth = await LoadUltraDebugLogHealthAsync(cancellationToken);
+                    var operationalObservability = await LoadOperationalObservabilityAsync(
+                        utcNow,
+                        healthSnapshots,
+                        workerHeartbeats,
+                        scannerSnapshot,
+                        ultraDebugLogHealth,
+                        cancellationToken);
 
                     return new MonitoringDashboardSnapshot(
                         healthSnapshots.Select(MapHealthSnapshot).ToArray(),
@@ -57,6 +66,7 @@ public sealed class AdminMonitoringReadModelService(
                     {
                         MarketScanner = scannerSnapshot,
                         UltraDebugLogHealth = ultraDebugLogHealth,
+                        OperationalObservability = operationalObservability,
                         MarketDataCache = sharedMarketDataCacheObservabilityCollector?.GetSnapshot(utcNow)
                             ?? SharedMarketDataCacheHealthSnapshot.Empty(utcNow)
                     };
@@ -82,6 +92,132 @@ public sealed class AdminMonitoringReadModelService(
                 LastEscalationReason = "Unavailable"
             };
         }
+    }
+
+    private async Task<OperationalObservabilitySnapshot> LoadOperationalObservabilityAsync(
+        DateTime utcNow,
+        IReadOnlyCollection<HealthSnapshotEntity> healthSnapshotEntities,
+        IReadOnlyCollection<WorkerHeartbeatEntity> workerHeartbeatEntities,
+        MarketScannerDashboardSnapshot scannerSnapshot,
+        UltraDebugLogHealthSnapshot ultraDebugLogHealth,
+        CancellationToken cancellationToken)
+    {
+        var windowStartUtc = utcNow.AddHours(-24);
+        var blockedHandoffRows = await dbContext.MarketScannerHandoffAttempts
+            .AsNoTracking()
+            .Where(entity =>
+                !entity.IsDeleted &&
+                entity.CompletedAtUtc >= windowStartUtc &&
+                entity.ExecutionRequestStatus != "Prepared")
+            .OrderByDescending(entity => entity.CompletedAtUtc)
+            .Take(50)
+            .Select(entity => new
+            {
+                entity.BlockerCode
+            })
+            .ToListAsync(cancellationToken);
+        var decisionRows = await dbContext.AiShadowDecisions
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                !entity.IsDeleted &&
+                entity.CreatedDate >= windowStartUtc)
+            .OrderByDescending(entity => entity.CreatedDate)
+            .Take(200)
+            .Select(entity => new
+            {
+                entity.Id,
+                entity.FinalAction,
+                entity.NoSubmitReason,
+                entity.CreatedDate
+            })
+            .ToListAsync(cancellationToken);
+        var decisionIds = decisionRows
+            .Select(entity => entity.Id)
+            .ToArray();
+        var outcomeRows = decisionIds.Length == 0
+            ? Array.Empty<Guid>()
+            : await dbContext.AiShadowDecisionOutcomes
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    !entity.IsDeleted &&
+                    decisionIds.Contains(entity.AiShadowDecisionId) &&
+                    entity.HorizonKind == AiShadowOutcomeDefaults.OfficialHorizonKind &&
+                    entity.HorizonValue == AiShadowOutcomeDefaults.OfficialHorizonValue)
+                .Select(entity => entity.AiShadowDecisionId)
+                .Distinct()
+                .ToArrayAsync(cancellationToken);
+        var executionSwitchEntity = await dbContext.GlobalExecutionSwitches
+            .AsNoTracking()
+            .OrderByDescending(entity => entity.UpdatedDate)
+            .FirstOrDefaultAsync(cancellationToken);
+        var globalSystemStateEntity = await dbContext.GlobalSystemStates
+            .AsNoTracking()
+            .OrderByDescending(entity => entity.UpdatedAtUtc)
+            .FirstOrDefaultAsync(cancellationToken);
+        var blockedReasons = BuildReasonBuckets(
+            blockedHandoffRows.Select(entity => entity.BlockerCode),
+            4,
+            "Blocked");
+        var noSubmitReasons = BuildReasonBuckets(
+            decisionRows
+                .Where(entity => !string.Equals(entity.FinalAction, "Submit", StringComparison.OrdinalIgnoreCase))
+                .Select(entity => entity.NoSubmitReason),
+            4,
+            "NoSubmit");
+        var executionReadiness = BuildExecutionReadinessSnapshot(
+            executionSwitchEntity,
+            globalSystemStateEntity,
+            scannerSnapshot.LastSuccessfulHandoff,
+            scannerSnapshot.LastBlockedHandoff);
+        var recentDecisionCount = decisionRows.Count;
+        var recentOutcomeCount = outcomeRows.Length;
+        var coveragePercent = recentDecisionCount == 0
+            ? 0m
+            : Math.Round((decimal)recentOutcomeCount * 100m / recentDecisionCount, 2, MidpointRounding.AwayFromZero);
+        var coverageSummary = recentDecisionCount == 0
+            ? "No recent shadow decisions."
+            : $"{recentOutcomeCount}/{recentDecisionCount} recent shadow decisions scored at official horizon.";
+        var systemHealthState = ResolveSystemHealthState(healthSnapshotEntities, workerHeartbeatEntities);
+        var systemHealthSummary = BuildSystemHealthSummary(healthSnapshotEntities, workerHeartbeatEntities);
+        var workerHeartbeatSummary = BuildWorkerHeartbeatSummary(workerHeartbeatEntities);
+        var diskPressureState = ResolveObservableDiskPressureState(ultraDebugLogHealth);
+        var logSystemState = ResolveLogSystemState(ultraDebugLogHealth);
+        var janitorSummary = BuildJanitorSummary(ultraDebugLogHealth);
+        var exportSummary = BuildExportSummary(ultraDebugLogHealth);
+        var criticalWarnings = BuildCriticalWarnings(
+            healthSnapshotEntities,
+            workerHeartbeatEntities,
+            scannerSnapshot,
+            ultraDebugLogHealth,
+            diskPressureState,
+            executionReadiness,
+            recentDecisionCount,
+            coveragePercent);
+
+        return new OperationalObservabilitySnapshot(
+            OverallState: ResolveOverallState(systemHealthState, executionReadiness.State, logSystemState, recentDecisionCount, coveragePercent),
+            SystemHealthState: systemHealthState,
+            SystemHealthSummary: systemHealthSummary,
+            WorkerHeartbeatSummary: workerHeartbeatSummary,
+            LastScannerCycleCompletedAtUtc: scannerSnapshot.LastScanCompletedAtUtc,
+            LastScannerCycleSummary: scannerSnapshot.CycleSummary ?? "No scanner cycle yet.",
+            TopCandidateSymbol: scannerSnapshot.BestCandidateSymbol,
+            EligibleCandidateCount: scannerSnapshot.EligibleCandidateCount,
+            LatestHandoffSummary: BuildLatestHandoffSummary(scannerSnapshot.LatestHandoff),
+            ExecutionReadiness: executionReadiness,
+            RecentAiShadowDecisionCount: recentDecisionCount,
+            RecentAiShadowDecisionOutcomeCount: recentOutcomeCount,
+            AiShadowOutcomeCoveragePercent: coveragePercent,
+            AiShadowOutcomeCoverageSummary: coverageSummary,
+            BlockedReasons: blockedReasons,
+            NoSubmitReasons: noSubmitReasons,
+            LogSystemState: logSystemState,
+            DiskPressureState: diskPressureState,
+            JanitorSummary: janitorSummary,
+            ExportSummary: exportSummary,
+            CriticalWarnings: criticalWarnings);
     }
 
     private async Task<MarketScannerDashboardSnapshot> LoadMarketScannerSnapshotAsync(CancellationToken cancellationToken)
@@ -716,6 +852,409 @@ public sealed class AdminMonitoringReadModelService(
         return rejectionGroups.Length == 0
             ? null
             : string.Join(" | ", rejectionGroups);
+    }
+
+    private static string ResolveSystemHealthState(
+        IReadOnlyCollection<HealthSnapshotEntity> healthSnapshotEntities,
+        IReadOnlyCollection<WorkerHeartbeatEntity> workerHeartbeatEntities)
+    {
+        var severity = 0;
+        foreach (var entity in healthSnapshotEntities)
+        {
+            severity = Math.Max(severity, ResolveMonitoringHealthSeverity(entity.HealthState));
+        }
+
+        foreach (var entity in workerHeartbeatEntities)
+        {
+            severity = Math.Max(severity, ResolveMonitoringHealthSeverity(entity.HealthState));
+            severity = Math.Max(severity, ResolveWorkerFreshnessSeverity(entity.FreshnessTier));
+        }
+
+        return severity switch
+        {
+            >= 4 => "Critical",
+            3 => "Degraded",
+            2 => "Warning",
+            1 => "Healthy",
+            _ => "Unknown"
+        };
+    }
+
+    private static string BuildSystemHealthSummary(
+        IReadOnlyCollection<HealthSnapshotEntity> healthSnapshotEntities,
+        IReadOnlyCollection<WorkerHeartbeatEntity> workerHeartbeatEntities)
+    {
+        if (healthSnapshotEntities.Count == 0 && workerHeartbeatEntities.Count == 0)
+        {
+            return "No health or worker heartbeat snapshot yet.";
+        }
+
+        var criticalSentinels = healthSnapshotEntities.Count(entity => entity.HealthState == MonitoringHealthState.Critical);
+        var warningOrWorseSentinels = healthSnapshotEntities.Count(entity => entity.HealthState is MonitoringHealthState.Warning or MonitoringHealthState.Degraded or MonitoringHealthState.Critical);
+        var staleWorkers = workerHeartbeatEntities.Count(entity => entity.FreshnessTier == MonitoringFreshnessTier.Stale);
+        return $"{criticalSentinels} critical sentinels · {warningOrWorseSentinels} warning+ health signals · {staleWorkers} stale workers.";
+    }
+
+    private static string BuildWorkerHeartbeatSummary(IReadOnlyCollection<WorkerHeartbeatEntity> workerHeartbeatEntities)
+    {
+        if (workerHeartbeatEntities.Count == 0)
+        {
+            return "No worker heartbeat yet.";
+        }
+
+        var healthyWorkers = workerHeartbeatEntities.Count(entity => entity.HealthState == MonitoringHealthState.Healthy);
+        var staleWorkers = workerHeartbeatEntities.Count(entity => entity.FreshnessTier == MonitoringFreshnessTier.Stale);
+        var criticalWorkers = workerHeartbeatEntities.Count(entity => entity.HealthState == MonitoringHealthState.Critical);
+        return $"{healthyWorkers}/{workerHeartbeatEntities.Count} workers healthy · {staleWorkers} stale · {criticalWorkers} critical.";
+    }
+
+    private static OperationalExecutionReadinessSnapshot BuildExecutionReadinessSnapshot(
+        GlobalExecutionSwitch? executionSwitchEntity,
+        GlobalSystemState? globalSystemStateEntity,
+        MarketScannerHandoffSnapshot lastSuccessfulHandoff,
+        MarketScannerHandoffSnapshot lastBlockedHandoff)
+    {
+        var tradeMasterState = executionSwitchEntity?.TradeMasterState.ToString();
+        var defaultMode = executionSwitchEntity is null
+            ? null
+            : executionSwitchEntity.DemoModeEnabled
+                ? ExecutionEnvironment.Demo.ToString()
+                : ExecutionEnvironment.Live.ToString();
+        var globalSystemState = globalSystemStateEntity?.State.ToString();
+        var latestBlockedReasonCode = lastBlockedHandoff.DecisionReasonCode ?? lastBlockedHandoff.BlockerCode;
+
+        if (globalSystemStateEntity is not null &&
+            globalSystemStateEntity.State != GlobalSystemStateKind.Active)
+        {
+            return new OperationalExecutionReadinessSnapshot(
+                State: "Blocked",
+                Summary: $"Global system state {globalSystemStateEntity.State} blocks execution ({globalSystemStateEntity.ReasonCode}).",
+                ReasonCode: globalSystemStateEntity.ReasonCode,
+                TradeMasterState: tradeMasterState,
+                DefaultMode: defaultMode,
+                GlobalSystemState: globalSystemState,
+                LatestPreparedAtUtc: lastSuccessfulHandoff.CompletedAtUtc,
+                LatestBlockedAtUtc: lastBlockedHandoff.CompletedAtUtc,
+                LatestBlockedReasonCode: latestBlockedReasonCode);
+        }
+
+        if (executionSwitchEntity is not null &&
+            executionSwitchEntity.TradeMasterState != TradeMasterSwitchState.Armed)
+        {
+            return new OperationalExecutionReadinessSnapshot(
+                State: "Blocked",
+                Summary: $"Trade master {executionSwitchEntity.TradeMasterState}; classical execution gate stays fail-closed.",
+                ReasonCode: nameof(TradeMasterSwitchState.Disarmed),
+                TradeMasterState: tradeMasterState,
+                DefaultMode: defaultMode,
+                GlobalSystemState: globalSystemState,
+                LatestPreparedAtUtc: lastSuccessfulHandoff.CompletedAtUtc,
+                LatestBlockedAtUtc: lastBlockedHandoff.CompletedAtUtc,
+                LatestBlockedReasonCode: latestBlockedReasonCode);
+        }
+
+        if (lastBlockedHandoff.CompletedAtUtc.HasValue &&
+            (!lastSuccessfulHandoff.CompletedAtUtc.HasValue || lastBlockedHandoff.CompletedAtUtc >= lastSuccessfulHandoff.CompletedAtUtc))
+        {
+            return new OperationalExecutionReadinessSnapshot(
+                State: "Watching",
+                Summary: $"Latest handoff blocked by {latestBlockedReasonCode ?? "Unknown"} while execution controls remain armed.",
+                ReasonCode: latestBlockedReasonCode,
+                TradeMasterState: tradeMasterState,
+                DefaultMode: defaultMode,
+                GlobalSystemState: globalSystemState,
+                LatestPreparedAtUtc: lastSuccessfulHandoff.CompletedAtUtc,
+                LatestBlockedAtUtc: lastBlockedHandoff.CompletedAtUtc,
+                LatestBlockedReasonCode: latestBlockedReasonCode);
+        }
+
+        if (executionSwitchEntity is null && globalSystemStateEntity is null)
+        {
+            return OperationalExecutionReadinessSnapshot.Empty();
+        }
+
+        return new OperationalExecutionReadinessSnapshot(
+            State: "Ready",
+            Summary: $"Trade master armed; global system {globalSystemState ?? "Unknown"}; default mode {defaultMode ?? "Unknown"}.",
+            ReasonCode: null,
+            TradeMasterState: tradeMasterState,
+            DefaultMode: defaultMode,
+            GlobalSystemState: globalSystemState,
+            LatestPreparedAtUtc: lastSuccessfulHandoff.CompletedAtUtc,
+            LatestBlockedAtUtc: lastBlockedHandoff.CompletedAtUtc,
+            LatestBlockedReasonCode: latestBlockedReasonCode);
+    }
+
+    private static IReadOnlyCollection<OperationalReasonBucketSnapshot> BuildReasonBuckets(
+        IEnumerable<string?> reasons,
+        int take,
+        string fallbackReasonCode)
+    {
+        return reasons
+            .Select(reason => string.IsNullOrWhiteSpace(reason) ? fallbackReasonCode : reason.Trim())
+            .GroupBy(reason => reason, StringComparer.Ordinal)
+            .OrderByDescending(group => group.Count())
+            .ThenBy(group => group.Key, StringComparer.Ordinal)
+            .Take(take)
+            .Select(group => new OperationalReasonBucketSnapshot(group.Key, group.Count()))
+            .ToArray();
+    }
+
+    private static string ResolveLogSystemState(UltraDebugLogHealthSnapshot ultraDebugLogHealth)
+    {
+        if (IsUnavailableLogHealth(ultraDebugLogHealth))
+        {
+            return "Unknown";
+        }
+
+        if (!ultraDebugLogHealth.IsWritable)
+        {
+            return "Degraded";
+        }
+
+        return ultraDebugLogHealth.DiskPressureState;
+    }
+
+    private static string ResolveObservableDiskPressureState(UltraDebugLogHealthSnapshot ultraDebugLogHealth)
+    {
+        return IsUnavailableLogHealth(ultraDebugLogHealth)
+            ? "Unknown"
+            : ultraDebugLogHealth.DiskPressureState;
+    }
+
+    private static string BuildJanitorSummary(UltraDebugLogHealthSnapshot ultraDebugLogHealth)
+    {
+        if (!ultraDebugLogHealth.LastRetentionCompletedAtUtc.HasValue)
+        {
+            return "No janitor heartbeat yet.";
+        }
+
+        var result = ultraDebugLogHealth.LastRetentionSucceeded switch
+        {
+            true => "success",
+            false => "failed",
+            _ => "n/a"
+        };
+        return $"Last janitor {ultraDebugLogHealth.LastRetentionCompletedAtUtc.Value.ToUniversalTime():yyyy-MM-dd HH:mm:ss} UTC · {result} · {ultraDebugLogHealth.LastRetentionReasonCode ?? "n/a"}.";
+    }
+
+    private static string BuildExportSummary(UltraDebugLogHealthSnapshot ultraDebugLogHealth)
+    {
+        return ultraDebugLogHealth.IsExportAvailable
+            ? "Masked log export available."
+            : "Masked log export degraded.";
+    }
+
+    private static IReadOnlyCollection<OperationalWarningSnapshot> BuildCriticalWarnings(
+        IReadOnlyCollection<HealthSnapshotEntity> healthSnapshotEntities,
+        IReadOnlyCollection<WorkerHeartbeatEntity> workerHeartbeatEntities,
+        MarketScannerDashboardSnapshot scannerSnapshot,
+        UltraDebugLogHealthSnapshot ultraDebugLogHealth,
+        string diskPressureState,
+        OperationalExecutionReadinessSnapshot executionReadiness,
+        int recentDecisionCount,
+        decimal coveragePercent)
+    {
+        var warnings = new List<OperationalWarningSnapshot>();
+        var criticalSentinelNames = healthSnapshotEntities
+            .Where(entity => entity.HealthState == MonitoringHealthState.Critical)
+            .Select(entity => entity.DisplayName)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .Take(2)
+            .ToArray();
+        if (criticalSentinelNames.Length > 0)
+        {
+            warnings.Add(new OperationalWarningSnapshot(
+                Code: "CriticalHealth",
+                Summary: $"{criticalSentinelNames.Length} critical health snapshot: {string.Join(", ", criticalSentinelNames)}.",
+                Tone: "critical"));
+        }
+
+        var staleWorkerNames = workerHeartbeatEntities
+            .Where(entity =>
+                entity.FreshnessTier == MonitoringFreshnessTier.Stale ||
+                entity.HealthState == MonitoringHealthState.Critical)
+            .Select(entity => entity.WorkerName)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .Take(2)
+            .ToArray();
+        if (staleWorkerNames.Length > 0)
+        {
+            warnings.Add(new OperationalWarningSnapshot(
+                Code: "WorkerHeartbeat",
+                Summary: $"Worker heartbeat requires review: {string.Join(", ", staleWorkerNames)}.",
+                Tone: "warning"));
+        }
+
+        if (string.Equals(executionReadiness.State, "Blocked", StringComparison.Ordinal))
+        {
+            warnings.Add(new OperationalWarningSnapshot(
+                Code: "ExecutionBlocked",
+                Summary: executionReadiness.Summary,
+                Tone: "critical"));
+        }
+        else if (string.Equals(executionReadiness.State, "Watching", StringComparison.Ordinal))
+        {
+            warnings.Add(new OperationalWarningSnapshot(
+                Code: "ExecutionWatching",
+                Summary: executionReadiness.Summary,
+                Tone: "warning"));
+        }
+
+        if (recentDecisionCount > 0 && coveragePercent < 100m)
+        {
+            warnings.Add(new OperationalWarningSnapshot(
+                Code: "AiOutcomeCoverage",
+                Summary: $"AI outcome coverage is {coveragePercent.ToString("0.##", CultureInfo.InvariantCulture)}% across {recentDecisionCount} recent shadow decisions.",
+                Tone: coveragePercent == 0m ? "critical" : "warning"));
+        }
+
+        if (!string.Equals(diskPressureState, "Healthy", StringComparison.Ordinal) &&
+            !string.Equals(diskPressureState, "Unknown", StringComparison.Ordinal))
+        {
+            warnings.Add(new OperationalWarningSnapshot(
+                Code: "DiskPressure",
+                Summary: $"Log system state {diskPressureState} · reason {ultraDebugLogHealth.LastEscalationReason ?? "n/a"}.",
+                Tone: string.Equals(diskPressureState, "Critical", StringComparison.Ordinal) ? "critical" : "warning"));
+        }
+
+        if (ultraDebugLogHealth.LastRetentionSucceeded == false)
+        {
+            warnings.Add(new OperationalWarningSnapshot(
+                Code: "JanitorFailed",
+                Summary: $"Latest janitor run failed ({ultraDebugLogHealth.LastRetentionReasonCode ?? "n/a"}).",
+                Tone: "warning"));
+        }
+
+        if (scannerSnapshot.LastBlockedHandoff.CompletedAtUtc.HasValue &&
+            !string.Equals(scannerSnapshot.LastBlockedHandoff.ExecutionRequestStatus, "Prepared", StringComparison.Ordinal) &&
+            !warnings.Any(item => string.Equals(item.Code, "ExecutionBlocked", StringComparison.Ordinal) || string.Equals(item.Code, "ExecutionWatching", StringComparison.Ordinal)))
+        {
+            warnings.Add(new OperationalWarningSnapshot(
+                Code: "LatestBlockedHandoff",
+                Summary: $"Latest scanner handoff blocked by {scannerSnapshot.LastBlockedHandoff.DecisionReasonCode ?? scannerSnapshot.LastBlockedHandoff.BlockerCode ?? "Unknown"}.",
+                Tone: "warning"));
+        }
+
+        return warnings.Take(5).ToArray();
+    }
+
+    private static string ResolveOverallState(
+        string systemHealthState,
+        string executionReadinessState,
+        string logSystemState,
+        int recentDecisionCount,
+        decimal coveragePercent)
+    {
+        var severity = Math.Max(
+            Math.Max(ResolveNamedStateSeverity(systemHealthState), ResolveNamedStateSeverity(logSystemState)),
+            ResolveExecutionReadinessSeverity(executionReadinessState));
+        if (recentDecisionCount > 0 && coveragePercent == 0m)
+        {
+            severity = Math.Max(severity, 4);
+        }
+        else if (recentDecisionCount > 0 && coveragePercent < 100m)
+        {
+            severity = Math.Max(severity, 2);
+        }
+
+        return severity switch
+        {
+            >= 4 => "Critical",
+            3 => "Degraded",
+            2 => "Warning",
+            1 => "Healthy",
+            _ => "Unknown"
+        };
+    }
+
+    private static string BuildLatestHandoffSummary(MarketScannerHandoffSnapshot handoff)
+    {
+        if (!handoff.CompletedAtUtc.HasValue)
+        {
+            return "No handoff attempt yet.";
+        }
+
+        var handoffSummary = handoff.BlockerSummary
+            ?? handoff.DecisionSummary
+            ?? handoff.SelectionReason;
+        var prefix = $"{handoff.ExecutionRequestStatus} · {(handoff.SelectedSymbol ?? "n/a")}";
+        return $"{prefix} · {TrimSummary(handoffSummary, 144)}";
+    }
+
+    private static string TrimSummary(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "n/a";
+        }
+
+        var normalized = value.Trim();
+        return normalized.Length <= maxLength
+            ? normalized
+            : normalized[..(maxLength - 1)].TrimEnd() + "…";
+    }
+
+    private static int ResolveMonitoringHealthSeverity(MonitoringHealthState state)
+    {
+        return state switch
+        {
+            MonitoringHealthState.Critical => 4,
+            MonitoringHealthState.Degraded => 3,
+            MonitoringHealthState.Warning => 2,
+            MonitoringHealthState.Healthy => 1,
+            _ => 0
+        };
+    }
+
+    private static int ResolveWorkerFreshnessSeverity(MonitoringFreshnessTier freshnessTier)
+    {
+        return freshnessTier switch
+        {
+            MonitoringFreshnessTier.Stale => 4,
+            MonitoringFreshnessTier.Cold => 2,
+            MonitoringFreshnessTier.Warm => 1,
+            MonitoringFreshnessTier.Hot => 1,
+            _ => 0
+        };
+    }
+
+    private static int ResolveNamedStateSeverity(string? state)
+    {
+        return state switch
+        {
+            "Critical" => 4,
+            "Blocked" => 4,
+            "Degraded" => 3,
+            "Disabled" => 3,
+            "Warning" => 2,
+            "Watching" => 2,
+            "Healthy" => 1,
+            "Ready" => 1,
+            _ => 0
+        };
+    }
+
+    private static int ResolveExecutionReadinessSeverity(string? state)
+    {
+        return state switch
+        {
+            "Blocked" => 4,
+            "Watching" => 2,
+            "Ready" => 1,
+            _ => 0
+        };
+    }
+
+    private static bool IsUnavailableLogHealth(UltraDebugLogHealthSnapshot ultraDebugLogHealth)
+    {
+        return !ultraDebugLogHealth.IsWritable &&
+               !ultraDebugLogHealth.IsTailAvailable &&
+               !ultraDebugLogHealth.IsExportAvailable &&
+               !ultraDebugLogHealth.LastCheckedAtUtc.HasValue &&
+               string.Equals(ultraDebugLogHealth.LastEscalationReason, "Unavailable", StringComparison.Ordinal);
     }
 
 

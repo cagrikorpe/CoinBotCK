@@ -1,0 +1,175 @@
+@using CoinBot.Application.Abstractions.Monitoring
+@{
+    var dashboard = ViewData["AdminMonitoringDashboardSnapshot"] as MonitoringDashboardSnapshot
+        ?? MonitoringDashboardSnapshot.Empty(DateTime.UtcNow);
+    var operational = dashboard.OperationalObservability ?? OperationalObservabilitySnapshot.Empty();
+    var blockedReasons = operational.BlockedReasons
+        .OrderByDescending(item => item.Count)
+        .ThenBy(item => item.ReasonCode, StringComparer.Ordinal)
+        .ToArray();
+    var noSubmitReasons = operational.NoSubmitReasons
+        .OrderByDescending(item => item.Count)
+        .ThenBy(item => item.ReasonCode, StringComparer.Ordinal)
+        .ToArray();
+    var criticalWarnings = operational.CriticalWarnings
+        .ToArray();
+
+    string ResolveTone(string? state)
+    {
+        return state switch
+        {
+            "Healthy" or "Ready" => "healthy",
+            "Warning" or "Watching" => "warning",
+            "Degraded" or "Disabled" => "degraded",
+            "Critical" or "Blocked" => "critical",
+            _ => "info"
+        };
+    }
+}
+
+<div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-panel-card" data-cb-operational-observability-card>
+    <div class="card-body">
+        <div class="cb-admin-panel-head">
+            <div>
+                <div class="cb-admin-section-kicker">Operational Observability</div>
+                <div class="cb-admin-section-title">Single-screen operator summary</div>
+                <p class="cb-admin-section-description mb-0">Health, scanner, handoff, AI outcome coverage ve log/disk health sinyalleri bounded bir snapshot olarak aynı yüzeyde toplanır.</p>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+            {
+                Label = operational.OverallState,
+                Tone = ResolveTone(operational.OverallState),
+                IconText = "OP"
+            })
+        </div>
+
+        <div class="cb-admin-worker-meta-grid mt-6">
+            <div class="cb-admin-summary-card" data-cb-ops-system-health-state>
+                <span class="cb-admin-summary-label">System health</span>
+                <strong>@operational.SystemHealthState</strong>
+                <small>@operational.SystemHealthSummary</small>
+            </div>
+            <div class="cb-admin-summary-card" data-cb-ops-execution-readiness>
+                <span class="cb-admin-summary-label">Execution readiness</span>
+                <strong>@operational.ExecutionReadiness.State</strong>
+                <small>@operational.ExecutionReadiness.Summary</small>
+            </div>
+            <div class="cb-admin-summary-card" data-cb-ops-ai-coverage>
+                <span class="cb-admin-summary-label">AI outcome coverage</span>
+                <strong>@operational.AiShadowOutcomeCoveragePercent.ToString("0.##")%</strong>
+                <small>@operational.AiShadowOutcomeCoverageSummary</small>
+            </div>
+            <div class="cb-admin-summary-card" data-cb-ops-log-system-state>
+                <span class="cb-admin-summary-label">Log / disk health</span>
+                <strong>@operational.LogSystemState</strong>
+                <small data-cb-ops-disk-pressure-state>Disk pressure @operational.DiskPressureState</small>
+            </div>
+        </div>
+
+        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6" data-cb-ops-worker-summary>
+            <div>
+                <div class="cb-admin-info-strip-title">Worker heartbeat</div>
+                <div class="cb-admin-info-strip-text" data-cb-ops-worker-heartbeat-summary>@operational.WorkerHeartbeatSummary</div>
+            </div>
+            <span class="cb-admin-info-strip-meta">Bounded</span>
+        </div>
+
+        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4" data-cb-ops-scanner-summary>
+            <div>
+                <div class="cb-admin-info-strip-title">Scanner + handoff</div>
+                <div class="cb-admin-info-strip-text">
+                    <span data-cb-ops-last-scanner-cycle>@(operational.LastScannerCycleCompletedAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "n/a")</span>
+                    <span> · eligible </span>
+                    <span data-cb-ops-eligible-count>@operational.EligibleCandidateCount</span>
+                    <span> · top </span>
+                    <span data-cb-ops-top-candidate>@(operational.TopCandidateSymbol ?? "n/a")</span>
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-ops-last-scanner-summary>@operational.LastScannerCycleSummary</div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-ops-latest-handoff-summary>@operational.LatestHandoffSummary</div>
+            </div>
+            <span class="cb-admin-info-strip-meta">Latest cycle</span>
+        </div>
+
+        <div class="row mt-6">
+            <div class="col-xl-6">
+                <div class="cb-admin-info-strip cb-admin-info-strip-info" data-cb-ops-blocked-reasons>
+                    <div>
+                        <div class="cb-admin-info-strip-title">Latest blocked handoff reasons</div>
+                        @if (blockedReasons.Length == 0)
+                        {
+                            <div class="cb-admin-info-strip-text" data-cb-ops-blocked-empty>No recent blocked handoff in bounded window.</div>
+                        }
+                        else
+                        {
+                            foreach (var reason in blockedReasons)
+                            {
+                                <div class="cb-admin-info-strip-text mt-1" data-cb-ops-blocked-reason>@reason.ReasonCode · @reason.Count</div>
+                            }
+                        }
+                    </div>
+                    <span class="cb-admin-info-strip-meta">Last 50</span>
+                </div>
+            </div>
+            <div class="col-xl-6">
+                <div class="cb-admin-info-strip cb-admin-info-strip-info" data-cb-ops-no-submit-reasons>
+                    <div>
+                        <div class="cb-admin-info-strip-title">Recent no-submit reasons</div>
+                        @if (noSubmitReasons.Length == 0)
+                        {
+                            <div class="cb-admin-info-strip-text" data-cb-ops-no-submit-empty>No recent no-submit reason in bounded window.</div>
+                        }
+                        else
+                        {
+                            foreach (var reason in noSubmitReasons)
+                            {
+                                <div class="cb-admin-info-strip-text mt-1" data-cb-ops-no-submit-reason>@reason.ReasonCode · @reason.Count</div>
+                            }
+                        }
+                    </div>
+                    <span class="cb-admin-info-strip-meta">Last 200</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mt-4">
+            <div class="col-xl-6">
+                <div class="cb-admin-summary-card" data-cb-ops-janitor-summary>
+                    <span class="cb-admin-summary-label">Janitor heartbeat</span>
+                    <strong>@operational.JanitorSummary</strong>
+                    <small>Latest retention/export availability</small>
+                </div>
+            </div>
+            <div class="col-xl-6">
+                <div class="cb-admin-summary-card" data-cb-ops-export-summary>
+                    <span class="cb-admin-summary-label">Export path</span>
+                    <strong>@operational.ExportSummary</strong>
+                    <small>Masked, bounded, admin controlled</small>
+                </div>
+            </div>
+        </div>
+
+        @if (criticalWarnings.Length == 0)
+        {
+            <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6" data-cb-ops-warning-empty>
+                <div>
+                    <div class="cb-admin-info-strip-title">Critical warnings</div>
+                    <div class="cb-admin-info-strip-text">No critical warnings in the current bounded snapshot.</div>
+                </div>
+                <span class="cb-admin-info-strip-meta">Clear</span>
+            </div>
+        }
+        else
+        {
+            <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-6" data-cb-ops-warning-list>
+                <div>
+                    <div class="cb-admin-info-strip-title">Critical warnings</div>
+                    @foreach (var warning in criticalWarnings)
+                    {
+                        <div class="cb-admin-info-strip-text mt-1" data-cb-ops-warning-item>@warning.Code · @warning.Summary</div>
+                    }
+                </div>
+                <span class="cb-admin-info-strip-meta">Actionable</span>
+            </div>
+        }
+    </div>
+</div>

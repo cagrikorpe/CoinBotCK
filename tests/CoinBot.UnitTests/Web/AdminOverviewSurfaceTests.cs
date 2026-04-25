@@ -104,6 +104,43 @@ public sealed class AdminOverviewSurfaceTests
     }
 
     [Fact]
+    public void AdminDashboardView_RendersCriticalSections()
+    {
+        var systemHealthContent = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Areas",
+            "Admin",
+            "Views",
+            "Admin",
+            "SystemHealth.cshtml"));
+        var operationalCardContent = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Areas",
+            "Admin",
+            "Views",
+            "Shared",
+            "Foundation",
+            "_AdminOperationalObservabilityCard.cshtml"));
+
+        Assert.Contains("_AdminOperationalObservabilityCard", systemHealthContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-operational-observability-card", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-ops-system-health-state", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-ops-execution-readiness", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-ops-ai-coverage", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-ops-log-system-state", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-ops-blocked-reasons", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-ops-no-submit-reasons", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-ops-warning-list", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("CorrelationId", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("OwnerUserId", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("ScoringSummary", operationalCardContent, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AdminSuperAdminPrimaryFlowModel_ExposesAdvancedTechnicalLinks()
     {
         var content = File.ReadAllText(Path.Combine(

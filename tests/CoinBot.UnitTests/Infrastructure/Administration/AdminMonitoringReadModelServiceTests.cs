@@ -1,4 +1,5 @@
 using CoinBot.Application.Abstractions.Administration;
+using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Application.Abstractions.Monitoring;
@@ -947,6 +948,301 @@ public sealed class AdminMonitoringReadModelServiceTests
     }
 
     [Fact]
+    public async Task AdminDashboardReadModel_ReturnsBoundedOperationalSummary()
+    {
+        var now = DateTime.UtcNow;
+        await using var dbContext = CreateDbContext();
+
+        var decisions = Enumerable.Range(0, 220)
+            .Select(index => CreateShadowDecision(
+                ownerUserId: $"user-{index % 3}",
+                botId: Guid.NewGuid(),
+                correlationId: $"corr-{index}",
+                symbol: index % 2 == 0 ? "BTCUSDT" : "ETHUSDT",
+                timeframe: "1m",
+                evaluatedAtUtc: now.AddMinutes(-index),
+                noSubmitReason: "EntryDirectionModeBlocked"))
+            .ToArray();
+        dbContext.AiShadowDecisions.AddRange(decisions);
+        dbContext.MarketScannerHandoffAttempts.AddRange(
+            Enumerable.Range(0, 60).Select(index => new MarketScannerHandoffAttempt
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = Guid.NewGuid(),
+                SelectedSymbol = "SOLUSDT",
+                SelectedTimeframe = "1m",
+                SelectedAtUtc = now.AddMinutes(-index),
+                SelectionReason = "Top-ranked eligible candidate selected.",
+                StrategyDecisionOutcome = "Persisted",
+                ExecutionRequestStatus = "Blocked",
+                BlockerCode = "EntryDirectionModeBlocked",
+                CorrelationId = $"handoff-{index}",
+                CompletedAtUtc = now.AddMinutes(-index)
+            }));
+        await dbContext.SaveChangesAsync();
+
+        for (var index = 0; index < decisions.Length; index++)
+        {
+            decisions[index].CreatedDate = now.AddMinutes(-index);
+            decisions[index].UpdatedDate = decisions[index].CreatedDate;
+        }
+
+        dbContext.AiShadowDecisionOutcomes.AddRange(
+            decisions.Take(200).Select(decision => CreateShadowOutcome(decision, now.AddMinutes(1))));
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            new FixedTimeProvider(now),
+            Options.Create(new DataLatencyGuardOptions()));
+
+        var snapshot = await service.GetSnapshotAsync();
+        var operational = snapshot.OperationalObservability;
+
+        Assert.Equal(200, operational.RecentAiShadowDecisionCount);
+        Assert.Equal(200, operational.RecentAiShadowDecisionOutcomeCount);
+        Assert.Equal(100m, operational.AiShadowOutcomeCoveragePercent);
+        var blockedReason = Assert.Single(operational.BlockedReasons);
+        Assert.Equal("EntryDirectionModeBlocked", blockedReason.ReasonCode);
+        Assert.Equal(50, blockedReason.Count);
+    }
+
+    [Fact]
+    public async Task AdminDashboardReadModel_IncludesScannerAndHandoffSummary()
+    {
+        var now = DateTime.UtcNow;
+        var cycleId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext();
+
+        dbContext.MarketScannerCycles.Add(new MarketScannerCycle
+        {
+            Id = cycleId,
+            StartedAtUtc = now.AddSeconds(-10),
+            CompletedAtUtc = now,
+            UniverseSource = "config",
+            ScannedSymbolCount = 3,
+            EligibleCandidateCount = 1,
+            TopCandidateCount = 1,
+            BestCandidateSymbol = "BTCUSDT",
+            BestCandidateScore = 87m,
+            Summary = "Bounded scanner summary"
+        });
+        dbContext.MarketScannerCandidates.Add(new MarketScannerCandidate
+        {
+            Id = Guid.NewGuid(),
+            ScanCycleId = cycleId,
+            Symbol = "BTCUSDT",
+            UniverseSource = "config",
+            ObservedAtUtc = now,
+            IsEligible = true,
+            Score = 87m,
+            Rank = 1,
+            IsTopCandidate = true
+        });
+        dbContext.MarketScannerHandoffAttempts.Add(new MarketScannerHandoffAttempt
+        {
+            Id = Guid.NewGuid(),
+            ScanCycleId = cycleId,
+            SelectedCandidateId = Guid.NewGuid(),
+            SelectedSymbol = "BTCUSDT",
+            SelectedTimeframe = "1m",
+            SelectedAtUtc = now,
+            SelectionReason = "Top-ranked eligible candidate selected.",
+            StrategyDecisionOutcome = "Persisted",
+            ExecutionRequestStatus = "Blocked",
+            BlockerCode = "StrategyVetoed",
+            BlockerSummary = "StrategyVetoed: Exposure limit breached.",
+            CorrelationId = "corr-handoff",
+            CompletedAtUtc = now
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            new FixedTimeProvider(now),
+            Options.Create(new DataLatencyGuardOptions()));
+
+        var snapshot = await service.GetSnapshotAsync();
+        var operational = snapshot.OperationalObservability;
+
+        Assert.Equal(now, operational.LastScannerCycleCompletedAtUtc);
+        Assert.Equal("BTCUSDT", operational.TopCandidateSymbol);
+        Assert.Equal(1, operational.EligibleCandidateCount);
+        Assert.Contains("Bounded scanner summary", operational.LastScannerCycleSummary, StringComparison.Ordinal);
+        Assert.Contains("BTCUSDT", operational.LatestHandoffSummary ?? string.Empty, StringComparison.Ordinal);
+        Assert.Contains("StrategyVetoed", operational.LatestHandoffSummary ?? string.Empty, StringComparison.Ordinal);
+        Assert.Equal("Watching", operational.ExecutionReadiness.State);
+        Assert.Contains(operational.BlockedReasons, item => item.ReasonCode == "StrategyVetoed");
+    }
+
+    [Fact]
+    public async Task AdminDashboardReadModel_IncludesAiShadowOutcomeCoverage()
+    {
+        var now = DateTime.UtcNow;
+        await using var dbContext = CreateDbContext();
+        var decisions = Enumerable.Range(0, 4)
+            .Select(index => CreateShadowDecision(
+                ownerUserId: "user-coverage",
+                botId: Guid.NewGuid(),
+                correlationId: $"coverage-{index}",
+                symbol: "SOLUSDT",
+                timeframe: "1m",
+                evaluatedAtUtc: now.AddMinutes(-index),
+                noSubmitReason: "EntryDirectionModeBlocked"))
+            .ToArray();
+        dbContext.AiShadowDecisions.AddRange(decisions);
+        await dbContext.SaveChangesAsync();
+
+        for (var index = 0; index < decisions.Length; index++)
+        {
+            decisions[index].CreatedDate = now.AddMinutes(-index);
+            decisions[index].UpdatedDate = decisions[index].CreatedDate;
+        }
+
+        dbContext.AiShadowDecisionOutcomes.AddRange(
+            decisions.Take(2).Select(decision => CreateShadowOutcome(decision, now.AddMinutes(2))));
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            new FixedTimeProvider(now),
+            Options.Create(new DataLatencyGuardOptions()));
+
+        var snapshot = await service.GetSnapshotAsync();
+
+        Assert.Equal(4, snapshot.OperationalObservability.RecentAiShadowDecisionCount);
+        Assert.Equal(2, snapshot.OperationalObservability.RecentAiShadowDecisionOutcomeCount);
+        Assert.Equal(50m, snapshot.OperationalObservability.AiShadowOutcomeCoveragePercent);
+        Assert.Contains("2/4 recent shadow decisions scored", snapshot.OperationalObservability.AiShadowOutcomeCoverageSummary, StringComparison.Ordinal);
+        Assert.Contains(snapshot.OperationalObservability.NoSubmitReasons, item => item.ReasonCode == "EntryDirectionModeBlocked");
+    }
+
+    [Fact]
+    public async Task AdminDashboardReadModel_IncludesLogAndDiskHealth()
+    {
+        var now = DateTime.UtcNow;
+        await using var dbContext = CreateDbContext();
+        var ultraDebugLogService = new FakeUltraDebugLogService
+        {
+            HealthSnapshot = new UltraDebugLogHealthSnapshot(
+                DiskPressureState: "Warning",
+                FreeBytes: 768L * 1024L * 1024L,
+                FreePercent: 12.5m,
+                ThresholdBytes: 512L * 1024L * 1024L,
+                AffectedLogBuckets: ["normal", "ultra_debug"],
+                LastCheckedAtUtc: now,
+                LastEscalationReason: "disk_pressure",
+                IsWritable: true,
+                IsTailAvailable: true,
+                IsExportAvailable: true,
+                LastRetentionCompletedAtUtc: now.AddMinutes(-5),
+                LastRetentionReasonCode: "Completed",
+                LastRetentionSucceeded: true,
+                IsNormalFallbackMode: true,
+                AutoDisabledReason: "disk_pressure",
+                IsEnabled: false)
+        };
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            new FixedTimeProvider(now),
+            Options.Create(new DataLatencyGuardOptions()),
+            ultraDebugLogService: ultraDebugLogService);
+
+        var snapshot = await service.GetSnapshotAsync();
+
+        Assert.Equal("Warning", snapshot.OperationalObservability.LogSystemState);
+        Assert.Equal("Warning", snapshot.OperationalObservability.DiskPressureState);
+        Assert.Contains("Last janitor", snapshot.OperationalObservability.JanitorSummary, StringComparison.Ordinal);
+        Assert.Contains("Masked log export available.", snapshot.OperationalObservability.ExportSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AdminDashboardReadModel_DoesNotExposeSensitiveData()
+    {
+        var now = DateTime.UtcNow;
+        await using var dbContext = CreateDbContext();
+        var decision = CreateShadowDecision(
+            ownerUserId: "owner-secret-user",
+            botId: Guid.NewGuid(),
+            correlationId: "corr-secret-123",
+            symbol: "BTCUSDT",
+            timeframe: "1m",
+            evaluatedAtUtc: now,
+            noSubmitReason: "EntryDirectionModeBlocked");
+        dbContext.AiShadowDecisions.Add(decision);
+        dbContext.MarketScannerHandoffAttempts.Add(new MarketScannerHandoffAttempt
+        {
+            Id = Guid.NewGuid(),
+            ScanCycleId = Guid.NewGuid(),
+            SelectedSymbol = "BTCUSDT",
+            SelectedTimeframe = "1m",
+            SelectedAtUtc = now,
+            SelectionReason = "Top-ranked eligible candidate selected.",
+            StrategyDecisionOutcome = "Persisted",
+            ExecutionRequestStatus = "Blocked",
+            BlockerCode = "EntryDirectionModeBlocked",
+            CorrelationId = "corr-secret-123",
+            CompletedAtUtc = now
+        });
+        await dbContext.SaveChangesAsync();
+
+        decision.CreatedDate = now;
+        decision.UpdatedDate = now;
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            new FixedTimeProvider(now),
+            Options.Create(new DataLatencyGuardOptions()));
+
+        var snapshot = await service.GetSnapshotAsync();
+        var rendered = string.Join(
+            " | ",
+            snapshot.OperationalObservability.SystemHealthSummary,
+            snapshot.OperationalObservability.WorkerHeartbeatSummary,
+            snapshot.OperationalObservability.LastScannerCycleSummary,
+            snapshot.OperationalObservability.LatestHandoffSummary,
+            snapshot.OperationalObservability.ExecutionReadiness.Summary,
+            snapshot.OperationalObservability.AiShadowOutcomeCoverageSummary,
+            snapshot.OperationalObservability.JanitorSummary,
+            snapshot.OperationalObservability.ExportSummary,
+            string.Join(" | ", snapshot.OperationalObservability.NoSubmitReasons.Select(item => item.ReasonCode)),
+            string.Join(" | ", snapshot.OperationalObservability.BlockedReasons.Select(item => item.ReasonCode)),
+            string.Join(" | ", snapshot.OperationalObservability.CriticalWarnings.Select(item => item.Summary)));
+
+        Assert.DoesNotContain("owner-secret-user", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("corr-secret-123", rendered, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AdminDashboardReadModel_HandlesEmptyDatabase()
+    {
+        await using var dbContext = CreateDbContext();
+        var now = DateTime.UtcNow;
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            new FixedTimeProvider(now),
+            Options.Create(new DataLatencyGuardOptions()));
+
+        var snapshot = await service.GetSnapshotAsync();
+
+        Assert.Equal("Unknown", snapshot.OperationalObservability.OverallState);
+        Assert.Contains("No health", snapshot.OperationalObservability.SystemHealthSummary, StringComparison.Ordinal);
+        Assert.Contains("No worker heartbeat", snapshot.OperationalObservability.WorkerHeartbeatSummary, StringComparison.Ordinal);
+        Assert.Equal("No recent shadow decisions.", snapshot.OperationalObservability.AiShadowOutcomeCoverageSummary);
+        Assert.Equal("No janitor heartbeat yet.", snapshot.OperationalObservability.JanitorSummary);
+        Assert.Empty(snapshot.OperationalObservability.BlockedReasons);
+        Assert.Empty(snapshot.OperationalObservability.NoSubmitReasons);
+    }
+
+    [Fact]
     public async Task GetSnapshotAsync_UsesSizedCacheEntry_WhenMemoryCacheHasSizeLimit()
     {
         await using var dbContext = CreateDbContext();
@@ -967,6 +1263,55 @@ public sealed class AdminMonitoringReadModelServiceTests
     private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => utcNow;
+    }
+
+    private static AiShadowDecision CreateShadowDecision(
+        string ownerUserId,
+        Guid botId,
+        string correlationId,
+        string symbol,
+        string timeframe,
+        DateTime evaluatedAtUtc,
+        string noSubmitReason)
+    {
+        return new AiShadowDecision
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = ownerUserId,
+            BotId = botId,
+            CorrelationId = correlationId,
+            StrategyKey = "strategy-test",
+            Symbol = symbol,
+            Timeframe = timeframe,
+            EvaluatedAtUtc = evaluatedAtUtc,
+            AiReasonSummary = "shadow-reason",
+            AiProviderName = "ShadowLinear",
+            FinalAction = "NoSubmit",
+            HypotheticalSubmitAllowed = false,
+            NoSubmitReason = noSubmitReason
+        };
+    }
+
+    private static AiShadowDecisionOutcome CreateShadowOutcome(AiShadowDecision decision, DateTime scoredAtUtc)
+    {
+        return new AiShadowDecisionOutcome
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = decision.OwnerUserId,
+            AiShadowDecisionId = decision.Id,
+            BotId = decision.BotId,
+            Symbol = decision.Symbol,
+            Timeframe = decision.Timeframe,
+            DecisionEvaluatedAtUtc = decision.EvaluatedAtUtc,
+            HorizonKind = AiShadowOutcomeDefaults.OfficialHorizonKind,
+            HorizonValue = AiShadowOutcomeDefaults.OfficialHorizonValue,
+            OutcomeState = AiShadowOutcomeState.Scored,
+            OutcomeScore = 0.75m,
+            RealizedDirectionality = "Long",
+            ConfidenceBucket = "High",
+            FutureDataAvailability = AiShadowFutureDataAvailability.Available,
+            ScoredAtUtc = scoredAtUtc
+        };
     }
 
     private sealed class FakeUltraDebugLogService : IUltraDebugLogService
