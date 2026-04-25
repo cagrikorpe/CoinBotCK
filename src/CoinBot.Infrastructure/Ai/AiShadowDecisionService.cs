@@ -3,11 +3,18 @@ using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace CoinBot.Infrastructure.Ai;
 
-public sealed partial class AiShadowDecisionService(ApplicationDbContext dbContext, TimeProvider timeProvider) : IAiShadowDecisionService
+public sealed partial class AiShadowDecisionService(
+    ApplicationDbContext dbContext,
+    TimeProvider timeProvider,
+    ILogger<AiShadowDecisionService>? serviceLogger = null) : IAiShadowDecisionService
 {
+    private readonly ILogger<AiShadowDecisionService> logger = serviceLogger ?? NullLogger<AiShadowDecisionService>.Instance;
+
     public async Task<AiShadowDecisionSnapshot> CaptureAsync(
         AiShadowDecisionWriteRequest request,
         CancellationToken cancellationToken = default)

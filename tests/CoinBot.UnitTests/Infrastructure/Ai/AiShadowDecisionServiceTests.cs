@@ -432,6 +432,124 @@ public sealed class AiShadowDecisionServiceTests
     }
 
     [Fact]
+    public async Task EnsureOutcomeCoverageAsync_ScoresOnlyEligibleRecentDecisions_Bounded()
+    {
+        await using var dbContext = CreateDbContext();
+        var nowUtc = new DateTime(2026, 4, 6, 18, 10, 0, DateTimeKind.Utc);
+        var service = new AiShadowDecisionService(dbContext, new FixedTimeProvider(nowUtc));
+        var oldestDecision = await service.CaptureAsync(CreateRequest(
+            id: Guid.NewGuid(),
+            botId: Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+            featureSnapshotId: Guid.NewGuid(),
+            evaluatedAtUtc: nowUtc.AddMinutes(-10),
+            finalAction: "ShadowOnly",
+            hypotheticalSubmitAllowed: true,
+            hypotheticalBlockReason: null,
+            noSubmitReason: "ShadowModeActive",
+            aiDirection: "Long",
+            aiConfidence: 0.72m,
+            aiIsFallback: false,
+            aiFallbackReason: null,
+            riskVetoPresent: false,
+            pilotSafetyBlocked: false,
+            agreementState: "Agreement"));
+        var eligibleDecision = await service.CaptureAsync(CreateRequest(
+            id: Guid.NewGuid(),
+            botId: Guid.Parse("bbbbbbbb-cccc-dddd-eeee-ffffffffffff"),
+            featureSnapshotId: Guid.NewGuid(),
+            evaluatedAtUtc: nowUtc.AddMinutes(-5),
+            finalAction: "ShadowOnly",
+            hypotheticalSubmitAllowed: true,
+            hypotheticalBlockReason: null,
+            noSubmitReason: "ShadowModeActive",
+            aiDirection: "Long",
+            aiConfidence: 0.78m,
+            aiIsFallback: false,
+            aiFallbackReason: null,
+            riskVetoPresent: false,
+            pilotSafetyBlocked: false,
+            agreementState: "Agreement"));
+        var immatureDecision = await service.CaptureAsync(CreateRequest(
+            id: Guid.NewGuid(),
+            botId: Guid.Parse("cccccccc-dddd-eeee-ffff-111111111111"),
+            featureSnapshotId: Guid.NewGuid(),
+            evaluatedAtUtc: nowUtc,
+            finalAction: "ShadowOnly",
+            hypotheticalSubmitAllowed: true,
+            hypotheticalBlockReason: null,
+            noSubmitReason: "ShadowModeActive",
+            aiDirection: "Long",
+            aiConfidence: 0.81m,
+            aiIsFallback: false,
+            aiFallbackReason: null,
+            riskVetoPresent: false,
+            pilotSafetyBlocked: false,
+            agreementState: "Agreement"));
+        SeedHistoricalCandles(dbContext, eligibleDecision.MarketDataTimestampUtc ?? eligibleDecision.EvaluatedAtUtc, [100m, 101m]);
+        SeedHistoricalCandles(dbContext, oldestDecision.MarketDataTimestampUtc ?? oldestDecision.EvaluatedAtUtc, [99m, 100m]);
+        await dbContext.SaveChangesAsync();
+
+        var changedCount = await service.EnsureOutcomeCoverageAsync("shadow-user", take: 2);
+        var outcomes = await dbContext.AiShadowDecisionOutcomes
+            .OrderBy(entity => entity.DecisionEvaluatedAtUtc)
+            .ToListAsync();
+
+        Assert.Equal(1, changedCount);
+        var outcome = Assert.Single(outcomes);
+        Assert.Equal(eligibleDecision.Id, outcome.AiShadowDecisionId);
+        Assert.DoesNotContain(outcomes, entity => entity.AiShadowDecisionId == oldestDecision.Id);
+        Assert.DoesNotContain(outcomes, entity => entity.AiShadowDecisionId == immatureDecision.Id);
+    }
+
+    [Fact]
+    public async Task EnsureOutcomeCoverageAsync_DoesNotBreak_WhenFutureDataUnavailable()
+    {
+        await using var dbContext = CreateDbContext();
+        var nowUtc = new DateTime(2026, 4, 6, 18, 20, 0, DateTimeKind.Utc);
+        var service = new AiShadowDecisionService(dbContext, new FixedTimeProvider(nowUtc));
+        var decision = await service.CaptureAsync(CreateRequest(
+            id: Guid.NewGuid(),
+            botId: Guid.Parse("dddddddd-eeee-ffff-1111-222222222222"),
+            featureSnapshotId: Guid.NewGuid(),
+            evaluatedAtUtc: nowUtc.AddMinutes(-5),
+            finalAction: "ShadowOnly",
+            hypotheticalSubmitAllowed: true,
+            hypotheticalBlockReason: null,
+            noSubmitReason: "ShadowModeActive",
+            aiDirection: "Short",
+            aiConfidence: 0.66m,
+            aiIsFallback: false,
+            aiFallbackReason: null,
+            riskVetoPresent: false,
+            pilotSafetyBlocked: false,
+            agreementState: "Agreement"));
+        SeedHistoricalCandlesFromStart(dbContext, decision.MarketDataTimestampUtc ?? decision.EvaluatedAtUtc, [101m]);
+        await dbContext.SaveChangesAsync();
+
+        var changedCount = await service.EnsureOutcomeCoverageAsync("shadow-user");
+        var outcome = await dbContext.AiShadowDecisionOutcomes.SingleAsync();
+
+        Assert.Equal(1, changedCount);
+        Assert.Equal(decision.Id, outcome.AiShadowDecisionId);
+        Assert.Equal(AiShadowOutcomeState.FutureDataUnavailable, outcome.OutcomeState);
+        Assert.Equal(AiShadowFutureDataAvailability.MissingFutureCandle, outcome.FutureDataAvailability);
+        Assert.Null(outcome.OutcomeScore);
+    }
+
+    [Fact]
+    public async Task EnsureOutcomeCoverageAsync_DoesNotCreateOutcome_WhenNoShadowDecisionExists()
+    {
+        await using var dbContext = CreateDbContext();
+        var service = new AiShadowDecisionService(dbContext, new FixedTimeProvider(new DateTime(2026, 4, 6, 18, 30, 0, DateTimeKind.Utc)));
+
+        var changedCount = await service.EnsureOutcomeCoverageAsync("shadow-user");
+
+        Assert.Equal(0, changedCount);
+        Assert.Empty(dbContext.AiShadowDecisions);
+        Assert.Empty(dbContext.AiShadowDecisionOutcomes);
+    }
+
+    [Fact]
     public async Task GetOutcomeSummaryAsync_AggregatesConfidenceBucketsAndSuppressionMetrics()
     {
         await using var dbContext = CreateDbContext();

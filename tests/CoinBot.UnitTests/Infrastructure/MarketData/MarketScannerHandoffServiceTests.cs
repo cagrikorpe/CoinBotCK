@@ -418,6 +418,82 @@ public sealed class MarketScannerHandoffServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_PersistsAiShadowDecisionOutcome_WhenContextRichEntryDirectionModeBlocked_IsMature()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var signalTimeUtc = nowUtc.UtcDateTime.AddMinutes(-2);
+        await using var harness = CreateHarness(
+            nowUtc,
+            aiSignalOptions: new AiSignalOptions
+            {
+                Enabled = true,
+                ShadowModeEnabled = false,
+                SelectedProvider = ShadowLinearAiSignalProviderAdapter.ProviderNameValue
+            },
+            aiShadowDecisionService: new ThrowingAiShadowDecisionService());
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-direction-block-shadow-outcome", "SOLUSDT", "pilot-direction-block-shadow-outcome");
+        var botEntity = await harness.DbContext.TradingBots.SingleAsync(entity => entity.Id == bot.BotId);
+        botEntity.DirectionMode = TradingBotDirectionMode.ShortOnly;
+        await harness.DbContext.SaveChangesAsync();
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 10_000m);
+        harness.DbContext.HistoricalMarketCandles.AddRange(
+            new HistoricalMarketCandle
+            {
+                Id = Guid.NewGuid(),
+                Symbol = "SOLUSDT",
+                Interval = "1m",
+                OpenTimeUtc = signalTimeUtc.AddMinutes(-1),
+                CloseTimeUtc = signalTimeUtc,
+                OpenPrice = 100m,
+                HighPrice = 100.5m,
+                LowPrice = 99.5m,
+                ClosePrice = 100m,
+                Volume = 1000m,
+                ReceivedAtUtc = signalTimeUtc,
+                Source = "unit-test"
+            },
+            new HistoricalMarketCandle
+            {
+                Id = Guid.NewGuid(),
+                Symbol = "SOLUSDT",
+                Interval = "1m",
+                OpenTimeUtc = signalTimeUtc,
+                CloseTimeUtc = signalTimeUtc.AddMinutes(1),
+                OpenPrice = 101m,
+                HighPrice = 101.5m,
+                LowPrice = 100.5m,
+                ClosePrice = 101m,
+                Volume = 1010m,
+                ReceivedAtUtc = signalTimeUtc.AddMinutes(1),
+                Source = "unit-test"
+            });
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", nowUtc.UtcDateTime));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(
+            bot.TradingStrategyId,
+            bot.TradingStrategyVersionId,
+            "SOLUSDT",
+            "1m",
+            signalTimeUtc,
+            direction: StrategyTradeDirection.Long,
+            aiEvaluation: CreateShadowAiEvaluation()));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+        var shadowDecision = await harness.DbContext.AiShadowDecisions.SingleAsync();
+        var outcome = await harness.DbContext.AiShadowDecisionOutcomes.SingleAsync();
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("EntryDirectionModeBlocked", attempt.BlockerCode);
+        Assert.Equal(shadowDecision.Id, outcome.AiShadowDecisionId);
+        Assert.Equal(AiShadowOutcomeState.Scored, outcome.OutcomeState);
+        Assert.Equal(AiShadowFutureDataAvailability.Available, outcome.FutureDataAvailability);
+        Assert.False(await harness.DbContext.ExecutionOrders.AnyAsync(entity => entity.StrategySignalId == attempt.StrategySignalId));
+    }
+
+    [Fact]
     public async Task RunOnceAsync_LogsCaptureSkippedReason_WhenAiShadowDecisionServiceMissing()
     {
         var logger = new RecordingLogger<MarketScannerHandoffService>();
@@ -1453,6 +1529,93 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
         Assert.Equal("NoEligibleCandidate", attempt.BlockerCode);
         Assert.Empty(await harness.DbContext.AiShadowDecisions.ToListAsync());
+        Assert.Empty(await harness.DbContext.AiShadowDecisionOutcomes.ToListAsync());
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_ClosesMatureAiShadowOutcomeCoverageBacklog_WithoutNewShadowCapture()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        await using var harness = CreateHarness(nowUtc, aiSignalOptions: CreateShadowAiOptions());
+        var ownerUserId = "user-coverage-backlog";
+        var botGraph = await SeedBotGraphAsync(harness.DbContext, ownerUserId, "SOLUSDT", "coverage-backlog");
+        var decisionId = Guid.NewGuid();
+        var evaluatedAtUtc = nowUtc.UtcDateTime.AddMinutes(-12);
+
+        harness.DbContext.HistoricalMarketCandles.AddRange(
+            new HistoricalMarketCandle
+            {
+                Id = Guid.NewGuid(),
+                Symbol = "SOLUSDT",
+                Interval = "1m",
+                OpenTimeUtc = evaluatedAtUtc.AddMinutes(-1),
+                CloseTimeUtc = evaluatedAtUtc,
+                OpenPrice = 100m,
+                HighPrice = 100.5m,
+                LowPrice = 99.5m,
+                ClosePrice = 100m,
+                Volume = 1000m,
+                ReceivedAtUtc = evaluatedAtUtc,
+                Source = "unit-test"
+            },
+            new HistoricalMarketCandle
+            {
+                Id = Guid.NewGuid(),
+                Symbol = "SOLUSDT",
+                Interval = "1m",
+                OpenTimeUtc = evaluatedAtUtc,
+                CloseTimeUtc = evaluatedAtUtc.AddMinutes(1),
+                OpenPrice = 101m,
+                HighPrice = 101.5m,
+                LowPrice = 100.5m,
+                ClosePrice = 101m,
+                Volume = 1010m,
+                ReceivedAtUtc = evaluatedAtUtc.AddMinutes(1),
+                Source = "unit-test"
+            });
+        harness.DbContext.AiShadowDecisions.Add(new AiShadowDecision
+        {
+            Id = decisionId,
+            OwnerUserId = ownerUserId,
+            BotId = botGraph.BotId,
+            ExchangeAccountId = botGraph.ExchangeAccountId,
+            TradingStrategyId = botGraph.TradingStrategyId,
+            TradingStrategyVersionId = botGraph.TradingStrategyVersionId,
+            CorrelationId = Guid.NewGuid().ToString("N"),
+            StrategyKey = "coverage-backlog",
+            Symbol = "SOLUSDT",
+            Timeframe = "1m",
+            EvaluatedAtUtc = evaluatedAtUtc,
+            MarketDataTimestampUtc = evaluatedAtUtc,
+            StrategyDirection = "Short",
+            StrategyDecisionOutcome = "Persisted",
+            AiDirection = "Short",
+            AiConfidence = 0.81m,
+            AiReasonSummary = "Backlog coverage test",
+            AiProviderName = ShadowLinearAiSignalProviderAdapter.ProviderNameValue,
+            AiProviderModel = "shadow-linear-v1",
+            TradingMode = ExecutionEnvironment.Live,
+            Plane = ExchangeDataPlane.Futures,
+            FinalAction = "NoSubmit",
+            HypotheticalSubmitAllowed = false,
+            HypotheticalBlockReason = "EntryDirectionModeBlocked",
+            NoSubmitReason = "EntryDirectionModeBlocked",
+            AgreementState = "Agreement"
+        });
+        await harness.DbContext.SaveChangesAsync();
+
+        var scanCycleId = Guid.NewGuid();
+        SeedScanCycle(harness.DbContext, scanCycleId, eligibleCandidateCount: 0, bestCandidateSymbol: null, bestCandidateScore: null);
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+        var outcome = await harness.DbContext.AiShadowDecisionOutcomes.SingleAsync();
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("NoEligibleCandidate", attempt.BlockerCode);
+        Assert.Equal(decisionId, outcome.AiShadowDecisionId);
+        Assert.Equal(AiShadowOutcomeState.Scored, outcome.OutcomeState);
+        Assert.Equal(AiShadowFutureDataAvailability.Available, outcome.FutureDataAvailability);
+        Assert.Single(await harness.DbContext.AiShadowDecisions.ToListAsync());
     }
 
     [Fact]

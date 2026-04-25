@@ -163,6 +163,49 @@ public sealed class TrainingDatasetBuilderServiceTests
         Assert.Contains("training-dataset-all-symbols-all-timeframes-BarsForward-1-20260424.csv", export.FileName, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task BuildAsync_UsesPrecomputedOutcome_WhenCoverageAlreadyExists()
+    {
+        await using var dbContext = CreateDbContext();
+        var timeProvider = new FixedTimeProvider(new DateTime(2026, 4, 24, 14, 30, 0, DateTimeKind.Utc));
+        var builder = new TrainingDatasetBuilderService(
+            dbContext,
+            new ThrowingCoverageAiShadowDecisionService(),
+            timeProvider);
+        var featureSnapshotId = Guid.Parse("f1111111-1111-1111-1111-111111111111");
+        var decisionId = Guid.Parse("f2222222-2222-2222-2222-222222222222");
+        var anchorTimeUtc = new DateTime(2026, 4, 24, 12, 20, 0, DateTimeKind.Utc);
+
+        SeedFeatureSnapshot(dbContext, featureSnapshotId, anchorTimeUtc);
+        SeedShadowDecision(
+            dbContext,
+            decisionId,
+            featureSnapshotId,
+            strategySignalId: null,
+            anchorTimeUtc,
+            finalAction: "ShadowOnly",
+            hypotheticalSubmitAllowed: true,
+            hypotheticalBlockReason: null,
+            noSubmitReason: "ShadowModeActive",
+            aiDirection: "Long");
+        SeedShadowOutcome(
+            dbContext,
+            decisionId,
+            anchorTimeUtc,
+            futureCloseTimeUtc: anchorTimeUtc.AddMinutes(1),
+            referenceClosePrice: 100m,
+            realizedReturn: 0.01m,
+            outcomeScore: 0.40m);
+        await dbContext.SaveChangesAsync();
+
+        var dataset = await builder.BuildAsync(new TrainingDatasetBuildRequest("ml-user"));
+        var row = Assert.Single(dataset.Rows);
+
+        Assert.Equal(1, dataset.RowCount);
+        Assert.Equal("0.4", row.Values["label_outcome_score"]);
+        Assert.Single(dbContext.AiShadowDecisionOutcomes);
+    }
+
     private static TrainingDatasetBuilderService CreateService(ApplicationDbContext dbContext, DateTime utcNow)
     {
         var timeProvider = new FixedTimeProvider(utcNow);
@@ -390,6 +433,30 @@ public sealed class TrainingDatasetBuilderServiceTests
             .Options;
 
         return new ApplicationDbContext(options, new TestDataScopeContext());
+    }
+
+    private sealed class ThrowingCoverageAiShadowDecisionService : IAiShadowDecisionService
+    {
+        public Task<AiShadowDecisionSnapshot> CaptureAsync(AiShadowDecisionWriteRequest request, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<AiShadowDecisionSnapshot?> GetLatestAsync(string userId, Guid botId, string symbol, string timeframe, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<IReadOnlyCollection<AiShadowDecisionSnapshot>> ListRecentAsync(string userId, Guid botId, string symbol, string timeframe, int take = 20, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<AiShadowDecisionSummarySnapshot> GetSummaryAsync(string userId, Guid botId, string symbol, string timeframe, int take = 200, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<AiShadowDecisionOutcomeSnapshot> ScoreOutcomeAsync(string userId, Guid decisionId, AiShadowOutcomeHorizonKind horizonKind = AiShadowOutcomeDefaults.OfficialHorizonKind, int horizonValue = AiShadowOutcomeDefaults.OfficialHorizonValue, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("Precomputed outcome should have been reused.");
+
+        public Task<int> EnsureOutcomeCoverageAsync(string userId, AiShadowOutcomeHorizonKind horizonKind = AiShadowOutcomeDefaults.OfficialHorizonKind, int horizonValue = AiShadowOutcomeDefaults.OfficialHorizonValue, int take = 200, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<AiShadowDecisionOutcomeSummarySnapshot> GetOutcomeSummaryAsync(string userId, AiShadowOutcomeHorizonKind horizonKind = AiShadowOutcomeDefaults.OfficialHorizonKind, int horizonValue = AiShadowOutcomeDefaults.OfficialHorizonValue, int take = 200, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
     }
 
     private sealed class TestDataScopeContext : IDataScopeContext

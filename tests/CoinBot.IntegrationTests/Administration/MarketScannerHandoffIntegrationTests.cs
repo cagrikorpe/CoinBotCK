@@ -176,6 +176,372 @@ public sealed class MarketScannerHandoffIntegrationTests
     }
 
     [Fact]
+    public async Task MarketScannerHandoffBlockedShadowDecision_EventuallyGetsOutcomeRow_OnSqlServer()
+    {
+        var databaseName = $"CoinBotMarketScannerShadowOutcomeInt_{Guid.NewGuid():N}";
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString(databaseName);
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var signalTimeUtc = nowUtc.UtcDateTime.AddMinutes(-2);
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlServer(connectionString).Options;
+        await using var dbContext = new ApplicationDbContext(options, new TestDataScopeContextAccessor());
+        await dbContext.Database.EnsureDeletedAsync();
+        await dbContext.Database.EnsureCreatedAsync();
+
+        try
+        {
+            var scanCycleId = Guid.NewGuid();
+            var strategyId = Guid.NewGuid();
+            var strategyVersionId = Guid.NewGuid();
+            var botId = Guid.NewGuid();
+            dbContext.Users.Add(new ApplicationUser
+            {
+                Id = "user-shadow-outcome",
+                UserName = "user-shadow-outcome",
+                NormalizedUserName = "USER-SHADOW-OUTCOME",
+                Email = "user-shadow-outcome@coinbot.test",
+                NormalizedEmail = "USER-SHADOW-OUTCOME@COINBOT.TEST",
+                FullName = "Scanner Handoff Shadow Outcome User"
+            });
+            dbContext.MarketScannerCycles.Add(new MarketScannerCycle
+            {
+                Id = scanCycleId,
+                StartedAtUtc = nowUtc.UtcDateTime.AddSeconds(-2),
+                CompletedAtUtc = nowUtc.UtcDateTime,
+                UniverseSource = "integration-test",
+                ScannedSymbolCount = 1,
+                EligibleCandidateCount = 1,
+                TopCandidateCount = 1,
+                BestCandidateSymbol = "BTCUSDT",
+                BestCandidateScore = 95m,
+                Summary = "integration-test"
+            });
+            dbContext.MarketScannerCandidates.Add(new MarketScannerCandidate
+            {
+                Id = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+                ScanCycleId = scanCycleId,
+                Symbol = "BTCUSDT",
+                UniverseSource = "integration-test",
+                ObservedAtUtc = nowUtc.UtcDateTime,
+                LastCandleAtUtc = nowUtc.UtcDateTime,
+                LastPrice = 100m,
+                QuoteVolume24h = 250_000m,
+                IsEligible = true,
+                Score = 250_000m,
+                Rank = 1,
+                IsTopCandidate = true
+            });
+            dbContext.TradingStrategies.Add(new TradingStrategy
+            {
+                Id = strategyId,
+                OwnerUserId = "user-shadow-outcome",
+                StrategyKey = "scanner-handoff-shadow-outcome",
+                DisplayName = "Scanner Handoff Shadow Outcome",
+                PromotionState = StrategyPromotionState.LivePublished,
+                PublishedMode = ExecutionEnvironment.Live,
+                PublishedAtUtc = nowUtc.UtcDateTime.AddMinutes(-1)
+            });
+            dbContext.TradingStrategyVersions.Add(new TradingStrategyVersion
+            {
+                Id = strategyVersionId,
+                OwnerUserId = "user-shadow-outcome",
+                TradingStrategyId = strategyId,
+                SchemaVersion = 1,
+                VersionNumber = 1,
+                Status = StrategyVersionStatus.Published,
+                DefinitionJson = "{}",
+                PublishedAtUtc = nowUtc.UtcDateTime.AddMinutes(-1)
+            });
+            dbContext.TradingBots.Add(new TradingBot
+            {
+                Id = botId,
+                OwnerUserId = "user-shadow-outcome",
+                Name = "Scanner Handoff Shadow Outcome Bot",
+                StrategyKey = "scanner-handoff-shadow-outcome",
+                Symbol = "BTCUSDT",
+                IsEnabled = true
+            });
+            dbContext.HistoricalMarketCandles.AddRange(
+                new HistoricalMarketCandle
+                {
+                    Id = Guid.NewGuid(),
+                    Symbol = "BTCUSDT",
+                    Interval = "1m",
+                    OpenTimeUtc = signalTimeUtc.AddMinutes(-1),
+                    CloseTimeUtc = signalTimeUtc,
+                    OpenPrice = 100m,
+                    HighPrice = 100.5m,
+                    LowPrice = 99.5m,
+                    ClosePrice = 100m,
+                    Volume = 1000m,
+                    ReceivedAtUtc = signalTimeUtc,
+                    Source = "integration-test"
+                },
+                new HistoricalMarketCandle
+                {
+                    Id = Guid.NewGuid(),
+                    Symbol = "BTCUSDT",
+                    Interval = "1m",
+                    OpenTimeUtc = signalTimeUtc,
+                    CloseTimeUtc = signalTimeUtc.AddMinutes(1),
+                    OpenPrice = 101m,
+                    HighPrice = 101.5m,
+                    LowPrice = 100.5m,
+                    ClosePrice = 101m,
+                    Volume = 1010m,
+                    ReceivedAtUtc = signalTimeUtc.AddMinutes(1),
+                    Source = "integration-test"
+                });
+            await dbContext.SaveChangesAsync();
+
+            var strategySignalService = new FakeStrategySignalService(
+                CreateSignal(
+                    strategyId,
+                    strategyVersionId,
+                    "BTCUSDT",
+                    "1m",
+                    signalTimeUtc,
+                    aiEvaluation: CreateShadowAiEvaluation()));
+            var services = new ServiceCollection();
+            services.AddScoped<IDataScopeContextAccessor, TestDataScopeContextAccessor>();
+            services.AddScoped(provider => new ApplicationDbContext(options, provider.GetRequiredService<IDataScopeContextAccessor>()));
+            services.AddScoped<IAiShadowDecisionService>(provider => new AiShadowDecisionService(
+                provider.GetRequiredService<ApplicationDbContext>(),
+                new FixedTimeProvider(nowUtc)));
+            services.AddSingleton<IStrategySignalService>(strategySignalService);
+            services.AddSingleton<IExecutionGate>(new FakeExecutionGate(nowUtc.UtcDateTime));
+            services.AddSingleton<IUserExecutionOverrideGuard>(new FakeUserExecutionOverrideGuard());
+            services.AddSingleton<IExecutionEngine>(new FakeExecutionEngine(options, nowUtc.UtcDateTime));
+            await using var serviceProvider = services.BuildServiceProvider();
+            var handoffService = new MarketScannerHandoffService(
+                dbContext,
+                serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+                new FakeMarketDataService(nowUtc.UtcDateTime),
+                new FakeIndicatorDataService(CreateIndicatorSnapshot("BTCUSDT", "1m", nowUtc.UtcDateTime)),
+                new FakeSharedSymbolRegistry(),
+                new FakeDataLatencyCircuitBreaker(nowUtc.UtcDateTime),
+                Options.Create(new MarketScannerOptions { HandoffEnabled = true, AllowedQuoteAssets = ["USDT"] }),
+                Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m" }),
+                Options.Create(new BotExecutionPilotOptions
+                {
+                    SignalEvaluationMode = ExecutionEnvironment.Live,
+                    ExecutionDispatchMode = ExecutionEnvironment.Demo,
+                    PrimeHistoricalCandleCount = 34
+                }),
+                new FixedTimeProvider(nowUtc),
+                NullLogger<MarketScannerHandoffService>.Instance,
+                aiSignalOptions: Options.Create(new AiSignalOptions
+                {
+                    Enabled = true,
+                    ShadowModeEnabled = true,
+                    SelectedProvider = ShadowLinearAiSignalProviderAdapter.ProviderNameValue
+                }),
+                aiShadowDecisionService: serviceProvider.GetService<IAiShadowDecisionService>());
+
+            var attempt = await handoffService.RunOnceAsync(scanCycleId);
+            var shadowDecision = await dbContext.AiShadowDecisions.AsNoTracking().SingleAsync();
+            var outcome = await dbContext.AiShadowDecisionOutcomes.AsNoTracking().SingleAsync();
+
+            Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+            Assert.Equal("ShadowModeActive", attempt.BlockerCode);
+            Assert.Equal(shadowDecision.Id, outcome.AiShadowDecisionId);
+            Assert.Equal(AiShadowOutcomeState.Scored, outcome.OutcomeState);
+            Assert.Equal(AiShadowFutureDataAvailability.Available, outcome.FutureDataAvailability);
+            Assert.Empty(dbContext.ExecutionOrders);
+        }
+        finally
+        {
+            await dbContext.Database.EnsureDeletedAsync();
+        }
+    }
+
+    [Fact]
+    public async Task MarketScannerHandoffService_ClosesMatureShadowOutcomeCoverageBacklog_OnSqlServer()
+    {
+        var databaseName = $"CoinBotMarketScannerShadowCoverageBacklogInt_{Guid.NewGuid():N}";
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString(databaseName);
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var evaluatedAtUtc = nowUtc.UtcDateTime.AddMinutes(-12);
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlServer(connectionString).Options;
+        await using var dbContext = new ApplicationDbContext(options, new TestDataScopeContextAccessor());
+        await dbContext.Database.EnsureDeletedAsync();
+        await dbContext.Database.EnsureCreatedAsync();
+
+        try
+        {
+            var scanCycleId = Guid.NewGuid();
+            var strategyId = Guid.NewGuid();
+            var strategyVersionId = Guid.NewGuid();
+            var botId = Guid.NewGuid();
+            var ownerUserId = "user-shadow-coverage";
+            dbContext.Users.Add(new ApplicationUser
+            {
+                Id = ownerUserId,
+                UserName = ownerUserId,
+                NormalizedUserName = ownerUserId.ToUpperInvariant(),
+                Email = $"{ownerUserId}@coinbot.test",
+                NormalizedEmail = $"{ownerUserId}@coinbot.test".ToUpperInvariant(),
+                FullName = "Scanner Handoff Shadow Coverage User"
+            });
+            dbContext.MarketScannerCycles.Add(new MarketScannerCycle
+            {
+                Id = scanCycleId,
+                StartedAtUtc = nowUtc.UtcDateTime.AddSeconds(-2),
+                CompletedAtUtc = nowUtc.UtcDateTime,
+                UniverseSource = "integration-test",
+                ScannedSymbolCount = 1,
+                EligibleCandidateCount = 0,
+                TopCandidateCount = 0,
+                Summary = "integration-test"
+            });
+            dbContext.TradingStrategies.Add(new TradingStrategy
+            {
+                Id = strategyId,
+                OwnerUserId = ownerUserId,
+                StrategyKey = "scanner-handoff-shadow-coverage",
+                DisplayName = "Scanner Handoff Shadow Coverage",
+                PromotionState = StrategyPromotionState.LivePublished,
+                PublishedMode = ExecutionEnvironment.Live,
+                PublishedAtUtc = nowUtc.UtcDateTime.AddMinutes(-1)
+            });
+            dbContext.TradingStrategyVersions.Add(new TradingStrategyVersion
+            {
+                Id = strategyVersionId,
+                OwnerUserId = ownerUserId,
+                TradingStrategyId = strategyId,
+                SchemaVersion = 1,
+                VersionNumber = 1,
+                Status = StrategyVersionStatus.Published,
+                DefinitionJson = "{}",
+                PublishedAtUtc = nowUtc.UtcDateTime.AddMinutes(-1)
+            });
+            dbContext.TradingBots.Add(new TradingBot
+            {
+                Id = botId,
+                OwnerUserId = ownerUserId,
+                Name = "Scanner Handoff Shadow Coverage Bot",
+                StrategyKey = "scanner-handoff-shadow-coverage",
+                Symbol = "SOLUSDT",
+                IsEnabled = true
+            });
+            dbContext.HistoricalMarketCandles.AddRange(
+                new HistoricalMarketCandle
+                {
+                    Id = Guid.NewGuid(),
+                    Symbol = "SOLUSDT",
+                    Interval = "1m",
+                    OpenTimeUtc = evaluatedAtUtc.AddMinutes(-1),
+                    CloseTimeUtc = evaluatedAtUtc,
+                    OpenPrice = 100m,
+                    HighPrice = 100.5m,
+                    LowPrice = 99.5m,
+                    ClosePrice = 100m,
+                    Volume = 1000m,
+                    ReceivedAtUtc = evaluatedAtUtc,
+                    Source = "integration-test"
+                },
+                new HistoricalMarketCandle
+                {
+                    Id = Guid.NewGuid(),
+                    Symbol = "SOLUSDT",
+                    Interval = "1m",
+                    OpenTimeUtc = evaluatedAtUtc,
+                    CloseTimeUtc = evaluatedAtUtc.AddMinutes(1),
+                    OpenPrice = 101m,
+                    HighPrice = 101.5m,
+                    LowPrice = 100.5m,
+                    ClosePrice = 101m,
+                    Volume = 1010m,
+                    ReceivedAtUtc = evaluatedAtUtc.AddMinutes(1),
+                    Source = "integration-test"
+                });
+            dbContext.AiShadowDecisions.Add(new AiShadowDecision
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = ownerUserId,
+                BotId = botId,
+                TradingStrategyId = strategyId,
+                TradingStrategyVersionId = strategyVersionId,
+                CorrelationId = Guid.NewGuid().ToString("N"),
+                StrategyKey = "scanner-handoff-shadow-coverage",
+                Symbol = "SOLUSDT",
+                Timeframe = "1m",
+                EvaluatedAtUtc = evaluatedAtUtc,
+                MarketDataTimestampUtc = evaluatedAtUtc,
+                StrategyDirection = "Short",
+                StrategyDecisionOutcome = "Persisted",
+                AiDirection = "Short",
+                AiConfidence = 0.82m,
+                AiReasonSummary = "Integration coverage backlog",
+                AiProviderName = ShadowLinearAiSignalProviderAdapter.ProviderNameValue,
+                AiProviderModel = "shadow-linear-v1",
+                TradingMode = ExecutionEnvironment.Live,
+                Plane = ExchangeDataPlane.Futures,
+                FinalAction = "NoSubmit",
+                HypotheticalSubmitAllowed = false,
+                HypotheticalBlockReason = "EntryDirectionModeBlocked",
+                NoSubmitReason = "EntryDirectionModeBlocked",
+                AgreementState = "Agreement"
+            });
+            await dbContext.SaveChangesAsync();
+
+            var strategySignalService = new FakeStrategySignalService(
+                CreateSignal(
+                    strategyId,
+                    strategyVersionId,
+                    "SOLUSDT",
+                    "1m",
+                    nowUtc.UtcDateTime));
+            var services = new ServiceCollection();
+            services.AddScoped<IDataScopeContextAccessor, TestDataScopeContextAccessor>();
+            services.AddScoped(provider => new ApplicationDbContext(options, provider.GetRequiredService<IDataScopeContextAccessor>()));
+            services.AddScoped<IAiShadowDecisionService>(provider => new AiShadowDecisionService(
+                provider.GetRequiredService<ApplicationDbContext>(),
+                new FixedTimeProvider(nowUtc)));
+            services.AddSingleton<IStrategySignalService>(strategySignalService);
+            services.AddSingleton<IExecutionGate>(new FakeExecutionGate(nowUtc.UtcDateTime));
+            services.AddSingleton<IUserExecutionOverrideGuard>(new FakeUserExecutionOverrideGuard());
+            services.AddSingleton<IExecutionEngine>(new FakeExecutionEngine(options, nowUtc.UtcDateTime));
+            await using var serviceProvider = services.BuildServiceProvider();
+            var handoffService = new MarketScannerHandoffService(
+                dbContext,
+                serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+                new FakeMarketDataService(nowUtc.UtcDateTime),
+                new FakeIndicatorDataService(CreateIndicatorSnapshot("SOLUSDT", "1m", nowUtc.UtcDateTime)),
+                new FakeSharedSymbolRegistry(),
+                new FakeDataLatencyCircuitBreaker(nowUtc.UtcDateTime),
+                Options.Create(new MarketScannerOptions { HandoffEnabled = true, AllowedQuoteAssets = ["USDT"] }),
+                Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m" }),
+                Options.Create(new BotExecutionPilotOptions
+                {
+                    SignalEvaluationMode = ExecutionEnvironment.Live,
+                    ExecutionDispatchMode = ExecutionEnvironment.Demo,
+                    PrimeHistoricalCandleCount = 34
+                }),
+                new FixedTimeProvider(nowUtc),
+                NullLogger<MarketScannerHandoffService>.Instance,
+                aiSignalOptions: Options.Create(new AiSignalOptions
+                {
+                    Enabled = true,
+                    ShadowModeEnabled = true,
+                    SelectedProvider = ShadowLinearAiSignalProviderAdapter.ProviderNameValue
+                }),
+                aiShadowDecisionService: serviceProvider.GetService<IAiShadowDecisionService>());
+
+            var attempt = await handoffService.RunOnceAsync(scanCycleId);
+            var outcome = await dbContext.AiShadowDecisionOutcomes.AsNoTracking().SingleAsync();
+
+            Assert.Equal("NoEligibleCandidate", attempt.BlockerCode);
+            Assert.Equal(AiShadowOutcomeState.Scored, outcome.OutcomeState);
+            Assert.Equal(AiShadowFutureDataAvailability.Available, outcome.FutureDataAvailability);
+            Assert.Single(await dbContext.AiShadowDecisions.AsNoTracking().ToListAsync());
+        }
+        finally
+        {
+            await dbContext.Database.EnsureDeletedAsync();
+        }
+    }
+
+    [Fact]
     public async Task MarketScannerHandoffService_PersistsPreparedAttemptAndAdminReadModel_OnSqlServer()
     {
         var databaseName = $"CoinBotMarketScannerHandoffInt_{Guid.NewGuid():N}";

@@ -50,6 +50,7 @@ public sealed class MarketScannerHandoffService(
     IOptions<AiSignalOptions>? aiSignalOptions = null,
     IAiShadowDecisionService? aiShadowDecisionService = null)
 {
+    private const int AiShadowOutcomeCoverageBatchSize = 25;
     private static readonly JsonSerializerOptions StrategySignalSerializerOptions = CreateStrategySignalSerializerOptions();
     private static readonly HashSet<string> ReplaySuppressedBlockedAttemptCodes = new(StringComparer.Ordinal)
     {
@@ -99,6 +100,8 @@ public sealed class MarketScannerHandoffService(
                 guardSummary: "HandoffEnabled=False; Source=MarketData:Scanner:HandoffEnabled.",
                 cancellationToken);
         }
+
+        await TryEnsureAiShadowOutcomeCoverageBacklogAsync(cancellationToken);
 
         var cycleCandidates = await dbContext.MarketScannerCandidates
             .AsNoTracking()
@@ -979,6 +982,22 @@ public sealed class MarketScannerHandoffService(
                 attempt.Id,
                 decision.FinalAction,
                 decision.NoSubmitReason);
+
+            try
+            {
+                await scopedShadowDecisionService.EnsureOutcomeCoverageAsync(
+                    botMatch.OwnerUserId,
+                    take: AiShadowOutcomeCoverageBatchSize,
+                    cancellationToken: cancellationToken);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                logger.LogWarning(
+                    exception,
+                    "Market scanner handoff ignored AI shadow outcome coverage failure for HandoffAttemptId {HandoffAttemptId}. BatchSize={BatchSize}.",
+                    attempt.Id,
+                    AiShadowOutcomeCoverageBatchSize);
+            }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -991,6 +1010,75 @@ public sealed class MarketScannerHandoffService(
                 attempt.BlockerCode,
                 attempt.CorrelationId);
             throw;
+        }
+    }
+
+    private async Task TryEnsureAiShadowOutcomeCoverageBacklogAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var maintenanceScope = serviceScopeFactory.CreateScope();
+            var maintenanceScopeAccessor = maintenanceScope.ServiceProvider.GetRequiredService<IDataScopeContextAccessor>();
+            using var maintenanceBypass = maintenanceScopeAccessor.BeginScope(hasIsolationBypass: true);
+            var maintenanceDbContext = maintenanceScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+            var backlogCandidates = await maintenanceDbContext.AiShadowDecisions
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    !entity.IsDeleted &&
+                    entity.OwnerUserId != null &&
+                    entity.OwnerUserId != string.Empty &&
+                    entity.Symbol != null &&
+                    entity.Symbol != string.Empty &&
+                    entity.Timeframe != null &&
+                    entity.Timeframe != string.Empty &&
+                    entity.CorrelationId != null &&
+                    entity.CorrelationId != string.Empty)
+                .Where(entity => !maintenanceDbContext.AiShadowDecisionOutcomes.Any(outcome =>
+                    !outcome.IsDeleted &&
+                    outcome.OwnerUserId == entity.OwnerUserId &&
+                    outcome.AiShadowDecisionId == entity.Id &&
+                    outcome.HorizonKind == AiShadowOutcomeDefaults.OfficialHorizonKind &&
+                    outcome.HorizonValue == AiShadowOutcomeDefaults.OfficialHorizonValue))
+                .OrderByDescending(entity => entity.EvaluatedAtUtc)
+                .ThenByDescending(entity => entity.CreatedDate)
+                .Take(AiShadowOutcomeCoverageBatchSize)
+                .Select(entity => new
+                {
+                    entity.OwnerUserId,
+                    entity.NoSubmitReason,
+                    entity.HypotheticalBlockReason
+                })
+                .ToListAsync(cancellationToken);
+
+            var ownerUserIds = backlogCandidates
+                .Where(entity =>
+                    !string.IsNullOrWhiteSpace(entity.OwnerUserId) &&
+                    !string.Equals(entity.NoSubmitReason, "NoEligibleCandidate", StringComparison.Ordinal) &&
+                    !string.Equals(entity.HypotheticalBlockReason, "NoEligibleCandidate", StringComparison.Ordinal))
+                .Select(entity => entity.OwnerUserId!)
+                .Distinct()
+                .ToList();
+
+            foreach (var ownerUserId in ownerUserIds)
+            {
+                using var ownerScope = serviceScopeFactory.CreateScope();
+                var ownerScopeAccessor = ownerScope.ServiceProvider.GetRequiredService<IDataScopeContextAccessor>();
+                using var ownerScopeLease = ownerScopeAccessor.BeginScope(ownerUserId);
+                var scopedShadowDecisionService = ownerScope.ServiceProvider.GetRequiredService<IAiShadowDecisionService>();
+                await scopedShadowDecisionService.EnsureOutcomeCoverageAsync(
+                    ownerUserId,
+                    take: AiShadowOutcomeCoverageBatchSize,
+                    cancellationToken: cancellationToken);
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(
+                exception,
+                "Market scanner handoff ignored AI shadow outcome coverage backlog failure. BatchSize={BatchSize}.",
+                AiShadowOutcomeCoverageBatchSize);
         }
     }
 

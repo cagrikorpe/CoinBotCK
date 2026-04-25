@@ -192,6 +192,84 @@ public sealed class MarketScannerIntegrationTests
     }
 
     [Fact]
+    public async Task MarketScannerService_CombinesAdvisoryRankingScore_WhenEnabled_OnSqlServer()
+    {
+        var databaseName = $"CoinBotMarketScannerAiRankInt_{Guid.NewGuid():N}";
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString(databaseName);
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        await using var dbContext = CreateDbContext(connectionString);
+        await dbContext.Database.EnsureDeletedAsync();
+        await dbContext.Database.EnsureCreatedAsync();
+
+        try
+        {
+            await SeedStrategyGraphAsync(dbContext, "user-ai-btc", "BTCUSDT", "scanner-ai-btc");
+            await SeedStrategyGraphAsync(dbContext, "user-ai-eth", "ETHUSDT", "scanner-ai-eth");
+            SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 99m, volume: 1_000m);
+            SeedCandles(dbContext, "ETHUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+            await dbContext.SaveChangesAsync();
+
+            var indicatorDataService = new FakeIndicatorDataService();
+            indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", nowUtc.UtcDateTime, macdLine: 1m, macdSignalLine: 0.8m, macdHistogram: 0.2m, middleBand: 100m, upperBand: 102m, lowerBand: 98m));
+            indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("ETHUSDT", "1m", nowUtc.UtcDateTime, middleBand: 99m, upperBand: 101m, lowerBand: 97m));
+
+            var strategyEvaluatorService = new FakeStrategyEvaluatorService();
+            strategyEvaluatorService.SetReport("BTCUSDT", CreateEvaluationReport("scanner-ai-btc", "BTCUSDT", "1m", nowUtc.UtcDateTime, 95));
+            strategyEvaluatorService.SetReport("ETHUSDT", CreateEvaluationReport("scanner-ai-eth", "ETHUSDT", "1m", nowUtc.UtcDateTime, 20));
+
+            var service = new MarketScannerService(
+                dbContext,
+                new FakeMarketDataService(),
+                new FakeSharedSymbolRegistry([
+                    new SymbolMetadataSnapshot("BTCUSDT", "Binance", "BTC", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime),
+                    new SymbolMetadataSnapshot("ETHUSDT", "Binance", "ETH", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+                ]),
+                Options.Create(new MarketScannerOptions
+                {
+                    TopCandidateCount = 2,
+                    MaxUniverseSymbols = 20,
+                    Min24hQuoteVolume = 1_000m,
+                    MaxDataAgeSeconds = 120,
+                    StrategyScoreWeight = 2m,
+                    AiAssistedRankingEnabled = true,
+                    AiAssistedRankingWeight = 0.5m,
+                    AllowedQuoteAssets = ["USDT"],
+                    HandoffEnabled = true
+                }),
+                Options.Create(new BinanceMarketDataOptions
+                {
+                    KlineInterval = "1m",
+                    SeedSymbols = ["BTCUSDT", "ETHUSDT"]
+                }),
+                new FixedTimeProvider(nowUtc),
+                NullLogger<MarketScannerService>.Instance,
+                handoffService: null,
+                indicatorDataService,
+                strategyEvaluatorService,
+                Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }));
+
+            var cycle = await service.RunOnceAsync();
+
+            var persistedCandidates = await dbContext.MarketScannerCandidates
+                .AsNoTracking()
+                .Where(entity => entity.ScanCycleId == cycle.Id)
+                .OrderBy(entity => entity.Rank)
+                .ToListAsync();
+
+            Assert.Equal("ETHUSDT", cycle.BestCandidateSymbol);
+            Assert.Equal(63.3334m, cycle.BestCandidateScore);
+            Assert.Equal(["ETHUSDT", "BTCUSDT"], persistedCandidates.Select(candidate => candidate.Symbol).ToArray());
+            Assert.Contains("ScannerRankingMode=AdvisoryCombined", persistedCandidates[0].ScoringSummary, StringComparison.Ordinal);
+            Assert.Contains("ScannerCombinedScore=63.3334", persistedCandidates[0].ScoringSummary, StringComparison.Ordinal);
+            Assert.Contains("ScannerAdaptiveFilterState=Disabled", persistedCandidates[0].ScoringSummary, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await dbContext.Database.EnsureDeletedAsync();
+        }
+    }
+
+    [Fact]
     public async Task AdminMonitoringReadModel_ExposesRejectedSampleAdvisoryReasonCodes_OnSqlServer()
     {
         var databaseName = $"CoinBotMarketScannerRejectedAdviceInt_{Guid.NewGuid():N}";
@@ -335,7 +413,17 @@ public sealed class MarketScannerIntegrationTests
         await dbContext.SaveChangesAsync();
     }
 
-    private static StrategyIndicatorSnapshot CreateIndicatorSnapshot(string symbol, string timeframe, DateTime closeTimeUtc)
+    private static StrategyIndicatorSnapshot CreateIndicatorSnapshot(
+        string symbol,
+        string timeframe,
+        DateTime closeTimeUtc,
+        decimal rsiValue = 30m,
+        decimal macdLine = 1m,
+        decimal macdSignalLine = 0.8m,
+        decimal macdHistogram = 0.2m,
+        decimal middleBand = 100m,
+        decimal upperBand = 110m,
+        decimal lowerBand = 90m)
     {
         return new StrategyIndicatorSnapshot(
             symbol,
@@ -347,9 +435,9 @@ public sealed class MarketScannerIntegrationTests
             34,
             IndicatorDataState.Ready,
             DegradedModeReasonCode.None,
-            new RelativeStrengthIndexSnapshot(14, true, 30m),
-            new MovingAverageConvergenceDivergenceSnapshot(12, 26, 9, true, 1m, 0.8m, 0.2m),
-            new BollingerBandsSnapshot(20, 2m, true, 100m, 110m, 90m, 3m),
+            new RelativeStrengthIndexSnapshot(14, true, rsiValue),
+            new MovingAverageConvergenceDivergenceSnapshot(12, 26, 9, true, macdLine, macdSignalLine, macdHistogram),
+            new BollingerBandsSnapshot(20, 2m, true, middleBand, upperBand, lowerBand, 3m),
             "integration-test");
     }
 

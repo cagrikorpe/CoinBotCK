@@ -47,6 +47,7 @@ public sealed class BotWorkerJobProcessor(
     ILogger<BotWorkerJobProcessor> logger,
     IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null) : IBotWorkerJobProcessor
 {
+    private const int AiShadowOutcomeCoverageBatchSize = 25;
     private const string ExitSkippedDecisionOutcome = "Skipped";
     private const string ExitSkippedDecisionReasonType = "ExecutionSkip";
     private const string NoOpenPositionForExitDecisionCode = "NoOpenPositionForExit";
@@ -308,6 +309,7 @@ public sealed class BotWorkerJobProcessor(
                     shadowDecision.FinalAction,
                     shadowDecision.HypotheticalSubmitAllowed,
                     shadowDecision.NoSubmitReason);
+                await TryEnsureAiShadowOutcomeCoverageAsync(bot.OwnerUserId, cancellationToken);
 
                 return BackgroundJobProcessResult.Success();
             }
@@ -2854,6 +2856,24 @@ public sealed class BotWorkerJobProcessor(
                 aiEvaluation?.AdvisoryScore ?? 0m,
                 ResolveAiContributionSummary(aiEvaluation)),
             cancellationToken);
+    }
+
+    private async Task TryEnsureAiShadowOutcomeCoverageAsync(string ownerUserId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await aiShadowDecisionService.EnsureOutcomeCoverageAsync(
+                ownerUserId,
+                take: AiShadowOutcomeCoverageBatchSize,
+                cancellationToken: cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(
+                exception,
+                "Bot execution pilot ignored AI shadow outcome coverage failure. BatchSize={BatchSize}.",
+                AiShadowOutcomeCoverageBatchSize);
+        }
     }
 
     private async Task<ShadowHypotheticalEvaluation> EvaluateHypotheticalSubmitAsync(

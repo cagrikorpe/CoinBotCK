@@ -3,6 +3,7 @@ using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace CoinBot.Infrastructure.Ai;
 
@@ -11,6 +12,8 @@ public sealed partial class AiShadowDecisionService
     private const decimal DirectionalScoreSaturationReturn = 0.005m;
     private const decimal NeutralBandReturn = 0.001m;
     private const decimal NeutralFailureSaturationReturn = 0.005m;
+    private const int DefaultCoverageTake = 200;
+    private const int MaxCoverageTake = 1000;
 
     public async Task<AiShadowDecisionOutcomeSnapshot> ScoreOutcomeAsync(
         string userId,
@@ -43,45 +46,115 @@ public sealed partial class AiShadowDecisionService
         int take = 200,
         CancellationToken cancellationToken = default)
     {
-        var normalizedUserId = dbContext.EnsureCurrentUserScope(userId);
         var normalizedHorizonValue = NormalizeHorizonValue(horizonValue);
         ValidateHorizonKind(horizonKind);
-        var normalizedTake = take <= 0 ? 200 : Math.Min(take, 1000);
+        var normalizedTake = take <= 0 ? DefaultCoverageTake : Math.Min(take, MaxCoverageTake);
 
-        var decisions = await dbContext.AiShadowDecisions
-            .Where(entity => entity.OwnerUserId == normalizedUserId && !entity.IsDeleted)
-            .OrderByDescending(entity => entity.EvaluatedAtUtc)
-            .ThenByDescending(entity => entity.CreatedDate)
-            .Take(normalizedTake)
-            .ToListAsync(cancellationToken);
-
-        var changedCount = 0;
-        foreach (var decision in decisions)
+        try
         {
-            var existingOutcome = await dbContext.AiShadowDecisionOutcomes
-                .SingleOrDefaultAsync(entity =>
-                    entity.OwnerUserId == normalizedUserId &&
-                    entity.AiShadowDecisionId == decision.Id &&
-                    entity.HorizonKind == horizonKind &&
-                    entity.HorizonValue == normalizedHorizonValue &&
-                    !entity.IsDeleted,
-                    cancellationToken);
-            var beforeSignature = existingOutcome is null ? null : CreateOutcomeSignature(existingOutcome);
-            var updatedOutcome = await UpsertOutcomeAsync(decision, horizonKind, normalizedHorizonValue, cancellationToken, existingOutcome);
-            var afterSignature = CreateOutcomeSignature(updatedOutcome);
+            var normalizedUserId = dbContext.EnsureCurrentUserScope(userId);
+            logger.LogInformation(
+                "AiShadowOutcomeCoverageStarted. BatchSize={BatchSize} HorizonKind={HorizonKind} HorizonValue={HorizonValue}.",
+                normalizedTake,
+                horizonKind,
+                normalizedHorizonValue);
 
-            if (!string.Equals(beforeSignature, afterSignature, StringComparison.Ordinal))
+            var decisions = await dbContext.AiShadowDecisions
+                .Where(entity => entity.OwnerUserId == normalizedUserId && !entity.IsDeleted)
+                .OrderByDescending(entity => entity.EvaluatedAtUtc)
+                .ThenByDescending(entity => entity.CreatedDate)
+                .Take(normalizedTake)
+                .ToListAsync(cancellationToken);
+
+            if (decisions.Count == 0)
             {
-                changedCount++;
+                logger.LogInformation(
+                    "AiShadowOutcomeCoverageSkipped. ReasonCode={ReasonCode} BatchSize={BatchSize} HorizonKind={HorizonKind} HorizonValue={HorizonValue}.",
+                    "NoShadowDecisions",
+                    normalizedTake,
+                    horizonKind,
+                    normalizedHorizonValue);
+                return 0;
             }
-        }
 
-        if (changedCount > 0)
+            var stats = new OutcomeCoverageStats(normalizedTake);
+            var nowUtc = NormalizeTimestamp(timeProvider.GetUtcNow().UtcDateTime);
+
+            foreach (var decision in decisions)
+            {
+                if (!IsDecisionEligibleForCoverage(decision, horizonKind, normalizedHorizonValue, nowUtc))
+                {
+                    stats.SkippedCount++;
+                    continue;
+                }
+
+                var existingOutcome = await dbContext.AiShadowDecisionOutcomes
+                    .SingleOrDefaultAsync(entity =>
+                        entity.OwnerUserId == normalizedUserId &&
+                        entity.AiShadowDecisionId == decision.Id &&
+                        entity.HorizonKind == horizonKind &&
+                        entity.HorizonValue == normalizedHorizonValue &&
+                        !entity.IsDeleted,
+                        cancellationToken);
+                var beforeSignature = existingOutcome is null ? null : CreateOutcomeSignature(existingOutcome);
+                var updatedOutcome = await UpsertOutcomeAsync(decision, horizonKind, normalizedHorizonValue, cancellationToken, existingOutcome);
+                var afterSignature = CreateOutcomeSignature(updatedOutcome);
+
+                stats.ScoredCount++;
+
+                if (updatedOutcome.OutcomeState == AiShadowOutcomeState.FutureDataUnavailable &&
+                    updatedOutcome.FutureDataAvailability == AiShadowFutureDataAvailability.MissingFutureCandle)
+                {
+                    stats.MissingFutureDataCount++;
+                }
+
+                if (existingOutcome is not null && string.Equals(beforeSignature, afterSignature, StringComparison.Ordinal))
+                {
+                    stats.DuplicateCount++;
+                    continue;
+                }
+
+                stats.ChangedCount++;
+            }
+
+            if (stats.ChangedCount > 0)
+            {
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
+
+            if (stats.ScoredCount == 0)
+            {
+                logger.LogInformation(
+                    "AiShadowOutcomeCoverageSkipped. ReasonCode={ReasonCode} BatchSize={BatchSize} HorizonKind={HorizonKind} HorizonValue={HorizonValue}.",
+                    "NoEligibleDecisions",
+                    stats.BatchSize,
+                    horizonKind,
+                    normalizedHorizonValue);
+                return stats.ChangedCount;
+            }
+
+            logger.LogInformation(
+                "AiShadowOutcomeCoverageCompleted. BatchSize={BatchSize} ScoredCount={ScoredCount} SkippedCount={SkippedCount} DuplicateCount={DuplicateCount} MissingFutureDataCount={MissingFutureDataCount} HorizonKind={HorizonKind} HorizonValue={HorizonValue}.",
+                stats.BatchSize,
+                stats.ScoredCount,
+                stats.SkippedCount,
+                stats.DuplicateCount,
+                stats.MissingFutureDataCount,
+                horizonKind,
+                normalizedHorizonValue);
+
+            return stats.ChangedCount;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            await dbContext.SaveChangesAsync(cancellationToken);
+            logger.LogWarning(
+                exception,
+                "AiShadowOutcomeCoverageFailed. BatchSize={BatchSize} HorizonKind={HorizonKind} HorizonValue={HorizonValue}.",
+                normalizedTake,
+                horizonKind,
+                normalizedHorizonValue);
+            throw;
         }
-
-        return changedCount;
     }
     public async Task<AiShadowDecisionOutcomeSummarySnapshot> GetOutcomeSummaryAsync(
         string userId,
@@ -470,6 +543,84 @@ public sealed partial class AiShadowDecisionService
             entity.SuppressionAligned);
     }
 
+    private static bool IsDecisionEligibleForCoverage(
+        AiShadowDecision decision,
+        AiShadowOutcomeHorizonKind horizonKind,
+        int horizonValue,
+        DateTime nowUtc)
+    {
+        if (string.IsNullOrWhiteSpace(decision.Symbol) ||
+            string.IsNullOrWhiteSpace(decision.Timeframe) ||
+            string.IsNullOrWhiteSpace(decision.CorrelationId))
+        {
+            return false;
+        }
+
+        if (string.Equals(decision.NoSubmitReason, "NoEligibleCandidate", StringComparison.Ordinal) ||
+            string.Equals(decision.HypotheticalBlockReason, "NoEligibleCandidate", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (!TryResolveCoverageMaturityUtc(decision, horizonKind, horizonValue, out var maturityUtc))
+        {
+            return true;
+        }
+
+        return maturityUtc <= nowUtc;
+    }
+
+    private static bool TryResolveCoverageMaturityUtc(
+        AiShadowDecision decision,
+        AiShadowOutcomeHorizonKind horizonKind,
+        int horizonValue,
+        out DateTime maturityUtc)
+    {
+        maturityUtc = default;
+
+        if (horizonKind != AiShadowOutcomeHorizonKind.BarsForward ||
+            !TryResolveTimeframeInterval(decision.Timeframe, out var interval))
+        {
+            return false;
+        }
+
+        var anchorUtc = NormalizeTimestamp(decision.MarketDataTimestampUtc ?? decision.EvaluatedAtUtc);
+        maturityUtc = anchorUtc.Add(TimeSpan.FromTicks(interval.Ticks * horizonValue));
+        return true;
+    }
+
+    private static bool TryResolveTimeframeInterval(string timeframe, out TimeSpan interval)
+    {
+        interval = default;
+        if (string.IsNullOrWhiteSpace(timeframe))
+        {
+            return false;
+        }
+
+        var normalized = timeframe.Trim();
+        if (normalized.Length < 2)
+        {
+            return false;
+        }
+
+        var unit = char.ToLowerInvariant(normalized[^1]);
+        if (!int.TryParse(normalized[..^1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) || value <= 0)
+        {
+            return false;
+        }
+
+        interval = unit switch
+        {
+            'm' => TimeSpan.FromMinutes(value),
+            'h' => TimeSpan.FromHours(value),
+            'd' => TimeSpan.FromDays(value),
+            'w' => TimeSpan.FromDays(value * 7d),
+            _ => default
+        };
+
+        return interval > TimeSpan.Zero;
+    }
+
     private static void ValidateHorizonKind(AiShadowOutcomeHorizonKind horizonKind)
     {
         if (horizonKind != AiShadowOutcomeHorizonKind.BarsForward)
@@ -595,4 +746,19 @@ public sealed partial class AiShadowDecisionService
         bool SuppressionCandidate,
         bool SuppressionAligned,
         DateTime ScoredAtUtc);
+
+    private sealed class OutcomeCoverageStats(int batchSize)
+    {
+        public int BatchSize { get; } = batchSize;
+
+        public int ChangedCount { get; set; }
+
+        public int ScoredCount { get; set; }
+
+        public int SkippedCount { get; set; }
+
+        public int DuplicateCount { get; set; }
+
+        public int MissingFutureDataCount { get; set; }
+    }
 }

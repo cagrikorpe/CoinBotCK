@@ -391,6 +391,12 @@ public sealed class MarketScannerService(
                 cancellationToken)
             : ScannerCandidateIntelligenceSummary.Empty;
         rejectionReason ??= strategyScoring.RejectionReason;
+        var rankingSummary = ResolveRankingSummary(
+            rejectionReason,
+            marketScore,
+            strategyScoring.StrategyScore,
+            candidateIntelligence);
+        rejectionReason = rankingSummary.RejectionReason;
         var isEligible = rejectionReason is null;
 
         return new MarketScannerCandidate
@@ -408,10 +414,11 @@ public sealed class MarketScannerService(
             ScoringSummary = BuildCandidateScoringSummary(
                 strategyScoring.ScoringSummary,
                 marketWindow,
-                candidateIntelligence),
+                candidateIntelligence,
+                rankingSummary),
             IsEligible = isEligible,
             RejectionReason = rejectionReason,
-            Score = isEligible ? ResolveCompositeScore(marketScore, strategyScoring.StrategyScore) : 0m,
+            Score = isEligible ? rankingSummary.EffectiveScore : 0m,
             Rank = null,
             IsTopCandidate = false
         };
@@ -1961,16 +1968,96 @@ public sealed class MarketScannerService(
             MidpointRounding.AwayFromZero);
     }
 
+    private ScannerCandidateRankingSummary ResolveRankingSummary(
+        string? initialRejectionReason,
+        decimal marketScore,
+        int? strategyScore,
+        ScannerCandidateIntelligenceSummary candidateIntelligence)
+    {
+        var advisoryScore = candidateIntelligence.ShadowScore;
+        if (!string.IsNullOrWhiteSpace(initialRejectionReason))
+        {
+            return new ScannerCandidateRankingSummary(
+                null,
+                advisoryScore,
+                null,
+                0m,
+                "NotRanked",
+                "NotApplicable",
+                "CandidateIneligible",
+                initialRejectionReason);
+        }
+
+        var classicalScore = ResolveCompositeScore(marketScore, strategyScore);
+        var combinedScore = classicalScore;
+        var rankingMode = scannerOptionsValue.AiAssistedRankingEnabled
+            ? "ClassicalFallback"
+            : "Disabled";
+
+        if (scannerOptionsValue.AiAssistedRankingEnabled && advisoryScore.HasValue)
+        {
+            var boundedAiWeight = decimal.Clamp(scannerOptionsValue.AiAssistedRankingWeight, 0m, 1m);
+            if (boundedAiWeight > 0m)
+            {
+                combinedScore = decimal.Round(
+                    ClampScoreBand(
+                        (classicalScore * (1m - boundedAiWeight)) +
+                        (ClampScoreBand(advisoryScore.Value) * boundedAiWeight)),
+                    4,
+                    MidpointRounding.AwayFromZero);
+                rankingMode = "AdvisoryCombined";
+            }
+        }
+
+        var adaptiveFilterState = scannerOptionsValue.AdaptiveFilteringEnabled
+            ? "Passed"
+            : "Disabled";
+        string? adaptiveFilterReason = scannerOptionsValue.AdaptiveFilteringEnabled
+            ? "ThresholdNotMet"
+            : null;
+        string? rejectionReason = null;
+
+        if (scannerOptionsValue.AdaptiveFilteringEnabled)
+        {
+            if (!advisoryScore.HasValue)
+            {
+                adaptiveFilterReason = "ConfidenceInsufficient";
+            }
+            else if (ClampScoreBand(advisoryScore.Value) <= ClampScoreBand(scannerOptionsValue.AdaptiveFilteringMaxAdvisoryScore) &&
+                     classicalScore <= ClampScoreBand(scannerOptionsValue.AdaptiveFilteringMaxClassicalScore))
+            {
+                adaptiveFilterState = "Suppressed";
+                adaptiveFilterReason = "LowAdvisoryScoreAndWeakClassicalScore";
+                rejectionReason = "AdaptiveFilterLowQualitySetup";
+            }
+        }
+
+        return new ScannerCandidateRankingSummary(
+            classicalScore,
+            advisoryScore,
+            combinedScore,
+            rejectionReason is null ? combinedScore : 0m,
+            rankingMode,
+            adaptiveFilterState,
+            adaptiveFilterReason,
+            rejectionReason);
+    }
+
     private string? BuildCandidateScoringSummary(
         string? scoringSummary,
         ScannerMarketWindowSnapshot marketWindow,
-        ScannerCandidateIntelligenceSummary candidateIntelligence)
+        ScannerCandidateIntelligenceSummary candidateIntelligence,
+        ScannerCandidateRankingSummary rankingSummary)
     {
-        var summarySegments = new List<string>(2);
+        var summarySegments = new List<string>(8);
         if (!string.IsNullOrWhiteSpace(scoringSummary))
         {
             summarySegments.Add(scoringSummary!);
         }
+
+        summarySegments.Add($"ScannerRankingMode={rankingSummary.RankingMode}");
+        summarySegments.Add($"ScannerClassicalScore={(rankingSummary.ClassicalScore?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a")}");
+        summarySegments.Add($"ScannerCombinedScore={(rankingSummary.CombinedScore?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a")}");
 
         if (candidateIntelligence.Labels.Count > 0)
         {
@@ -1995,6 +2082,12 @@ public sealed class MarketScannerService(
         if (candidateIntelligence.ShadowContributions.Count > 0)
         {
             summarySegments.Add($"ScannerShadowContributions={string.Join(',', candidateIntelligence.ShadowContributions)}");
+        }
+
+        summarySegments.Add($"ScannerAdaptiveFilterState={rankingSummary.AdaptiveFilterState}");
+        if (!string.IsNullOrWhiteSpace(rankingSummary.AdaptiveFilterReason))
+        {
+            summarySegments.Add($"ScannerAdaptiveFilterReason={rankingSummary.AdaptiveFilterReason}");
         }
 
         if (marketWindow.HistoricalRecoveryApplied || marketWindow.HasHistoricalParityLag)
@@ -2450,4 +2543,14 @@ public sealed class MarketScannerService(
         public static ScannerCandidateIntelligenceSummary Empty { get; } =
             new(Array.Empty<string>(), Array.Empty<string>(), null, null, Array.Empty<string>());
     }
+
+    private sealed record ScannerCandidateRankingSummary(
+        decimal? ClassicalScore,
+        int? AdvisoryScore,
+        decimal? CombinedScore,
+        decimal EffectiveScore,
+        string RankingMode,
+        string AdaptiveFilterState,
+        string? AdaptiveFilterReason,
+        string? RejectionReason);
 }

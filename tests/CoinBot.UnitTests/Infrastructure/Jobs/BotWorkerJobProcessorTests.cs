@@ -2040,6 +2040,71 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_TriggersAiShadowDecisionOutcomeCoverage_WithoutAffectingExecutionFlow()
+    {
+        var maturedMarketDataTimestampUtc = new DateTime(2026, 4, 1, 11, 58, 0, DateTimeKind.Utc);
+        await using var harness = CreateHarness(
+            CreateEnabledAiOptions(),
+            featureSnapshotServiceOverride: new HistoricalFeatureSnapshotService(maturedMarketDataTimestampUtc),
+            aiSignalEvaluatorOverride: new FixedAiSignalEvaluator(AiSignalDirection.Long, 0.91m, false, null));
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, bot);
+        harness.DbContext.HistoricalMarketCandles.AddRange(
+            new HistoricalMarketCandle
+            {
+                Id = Guid.NewGuid(),
+                Symbol = "BTCUSDT",
+                Interval = "1m",
+                OpenTimeUtc = maturedMarketDataTimestampUtc.AddMinutes(-1),
+                CloseTimeUtc = maturedMarketDataTimestampUtc,
+                OpenPrice = 100m,
+                HighPrice = 100.5m,
+                LowPrice = 99.5m,
+                ClosePrice = 100m,
+                Volume = 1000m,
+                ReceivedAtUtc = maturedMarketDataTimestampUtc,
+                Source = "unit-test"
+            },
+            new HistoricalMarketCandle
+            {
+                Id = Guid.NewGuid(),
+                Symbol = "BTCUSDT",
+                Interval = "1m",
+                OpenTimeUtc = maturedMarketDataTimestampUtc,
+                CloseTimeUtc = maturedMarketDataTimestampUtc.AddMinutes(1),
+                OpenPrice = 101m,
+                HighPrice = 101.5m,
+                LowPrice = 100.5m,
+                ClosePrice = 101m,
+                Volume = 1010m,
+                ReceivedAtUtc = maturedMarketDataTimestampUtc.AddMinutes(1),
+                Source = "unit-test"
+            });
+        await harness.DbContext.SaveChangesAsync();
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-ai-shadow-outcome-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-ai-shadow-outcome-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-ai-shadow-outcome-1",
+            CancellationToken.None);
+
+        var shadowDecision = await harness.DbContext.AiShadowDecisions.SingleAsync();
+        var outcome = await harness.DbContext.AiShadowDecisionOutcomes.SingleAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(shadowDecision.Id, outcome.AiShadowDecisionId);
+        Assert.Equal(AiShadowOutcomeState.Scored, outcome.OutcomeState);
+        Assert.Equal(AiShadowFutureDataAvailability.Available, outcome.FutureDataAvailability);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
     public async Task ProcessAsync_PersistsAdvisoryScoreAndContributionSummary_WhenShadowDecisionCaptured()
     {
         var aiOptions = new AiSignalOptions
@@ -2455,7 +2520,7 @@ public sealed class BotWorkerJobProcessorTests
             timeProvider,
             NullLogger<TradingFeatureSnapshotService>.Instance,
             executionRuntimeOptions);
-        var aiShadowDecisionService = new AiShadowDecisionService(dbContext, TimeProvider.System);
+        var aiShadowDecisionService = new AiShadowDecisionService(dbContext, timeProvider);
         var processor = new BotWorkerJobProcessor(
             dbContext,
             new IndicatorDataService(
@@ -3120,6 +3185,66 @@ public sealed class BotWorkerJobProcessorTests
                 "Elevated",
                 null,
                 CorrelationId: request.CorrelationId);
+        }
+    }
+
+    private sealed class HistoricalFeatureSnapshotService(DateTime marketDataTimestampUtc) : ITradingFeatureSnapshotService
+    {
+        public Task<TradingFeatureSnapshotModel> CaptureAsync(TradingFeatureCaptureRequest request, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(
+                new TradingFeatureSnapshotModel(
+                    Guid.Parse("8f7f49e1-262c-4932-b0da-87905c8ad111"),
+                    request.UserId,
+                    request.BotId,
+                    request.ExchangeAccountId,
+                    request.StrategyKey,
+                    request.Symbol,
+                    request.Timeframe,
+                    request.EvaluatedAtUtc,
+                    marketDataTimestampUtc,
+                    "AI-1.v1",
+                    FeatureSnapshotState.Ready,
+                    DegradedModeReasonCode.None,
+                    200,
+                    200,
+                    65000m,
+                    new TradingTrendFeatureSnapshot(64990m, 64950m, 64800m, 64970m, 64910m),
+                    new TradingMomentumFeatureSnapshot(58m, 12m, 8m, 4m, 60m, 57m, 66m, 0.22m),
+                    new TradingVolatilityFeatureSnapshot(320m, 0.64m, 0.18m, 0.31m, 64750m, 64500m),
+                    new TradingVolumeFeatureSnapshot(1.2m, 1.1m, 2100m),
+                    new TradingContextFeatureSnapshot(
+                        ExchangeDataPlane.Futures,
+                        ExecutionEnvironment.Live,
+                        HasOpenPosition: false,
+                        IsInCooldown: false,
+                        LastVetoReasonCode: null,
+                        LastDecisionOutcome: "None",
+                        LastDecisionCode: null,
+                        LastExecutionState: null,
+                        LastFailureCode: null),
+                    "Historical feature snapshot.",
+                    "Historical outcome coverage.",
+                    "BullTrend",
+                    "Bullish",
+                    "Normal",
+                    null,
+                    FeatureAnchorTimeUtc: marketDataTimestampUtc,
+                    CorrelationId: request.CorrelationId,
+                    SnapshotKey: $"historical-{request.BotId:N}"));
+        }
+
+        public Task<TradingFeatureSnapshotModel?> GetLatestAsync(string userId, Guid botId, string symbol, string timeframe, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<TradingFeatureSnapshotModel?>(null);
+        }
+
+        public Task<IReadOnlyCollection<TradingFeatureSnapshotModel>> ListRecentAsync(string userId, Guid botId, string symbol, string timeframe, int take = 20, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<IReadOnlyCollection<TradingFeatureSnapshotModel>>(Array.Empty<TradingFeatureSnapshotModel>());
         }
     }
 
