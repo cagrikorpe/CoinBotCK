@@ -219,6 +219,7 @@ public sealed class BinanceCredentialProbeClient(
         return requestedEnvironment switch
         {
             ExecutionEnvironment.Demo => DemoSpotProbeBaseUrl,
+            ExecutionEnvironment.BinanceTestnet => DemoSpotProbeBaseUrl,
             ExecutionEnvironment.Live => LiveSpotProbeBaseUrl,
             _ => NormalizeBaseUrl(privateDataOptionsValue.SpotRestBaseUrl, marketDataOptionsValue.RestBaseUrl, LiveSpotProbeBaseUrl)
         };
@@ -229,6 +230,7 @@ public sealed class BinanceCredentialProbeClient(
         return requestedEnvironment switch
         {
             ExecutionEnvironment.Demo => DemoFuturesProbeBaseUrl,
+            ExecutionEnvironment.BinanceTestnet => DemoFuturesProbeBaseUrl,
             ExecutionEnvironment.Live => LiveFuturesProbeBaseUrl,
             _ => NormalizeBaseUrl(privateDataOptionsValue.RestBaseUrl, LiveFuturesProbeBaseUrl)
         };

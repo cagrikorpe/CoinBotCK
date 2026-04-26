@@ -222,7 +222,8 @@ public sealed class ExchangeAppStateSyncService(
             .Where(entity =>
                 entity.ExchangeAccountId == snapshot.ExchangeAccountId &&
                 entity.Plane == snapshot.Plane &&
-                entity.ExecutionEnvironment == ExecutionEnvironment.Live &&
+                (entity.ExecutionEnvironment == ExecutionEnvironment.Live ||
+                 entity.ExecutionEnvironment == ExecutionEnvironment.BinanceTestnet) &&
                 entity.SubmittedToBroker &&
                 entity.FilledQuantity != 0m &&
                 !entity.IsDeleted)

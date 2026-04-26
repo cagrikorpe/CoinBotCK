@@ -438,9 +438,9 @@ public sealed class ExecutionOrderLifecycleService(
                           OpenStates.Contains(entity.State),
                 cancellationToken);
 
-        if (order.ExecutionEnvironment == ExecutionEnvironment.Live ||
-            (order.ExecutionEnvironment == ExecutionEnvironment.Demo &&
-             !executionRuntimeOptionsValue.AllowInternalDemoExecution))
+        if (ExecutionEnvironmentSemantics.IsBrokerBacked(
+                order.ExecutionEnvironment,
+                executionRuntimeOptionsValue.AllowInternalDemoExecution))
         {
             var botSymbol = string.IsNullOrWhiteSpace(bot.Symbol) ? order.Symbol : bot.Symbol;
             bot.OpenPositionCount = await LivePositionTruthResolver.ResolveBotScopedOpenPositionCountAsync(
@@ -874,9 +874,11 @@ public sealed class ExecutionOrderLifecycleService(
     private string ResolveExecutionEnvironmentLabel(ExecutionEnvironment executionEnvironment)
     {
         var runtimeLabel = hostEnvironment?.EnvironmentName ?? "Unknown";
-        var executionLabel = hostEnvironment?.IsDevelopment() == true && executionEnvironment == ExecutionEnvironment.Live
-            ? "Testnet"
-            : executionEnvironment.ToString();
+        var executionLabel = executionEnvironment switch
+        {
+            ExecutionEnvironment.BinanceTestnet => "Testnet",
+            _ => executionEnvironment.ToString()
+        };
 
         return $"{runtimeLabel}/{executionLabel}";
     }

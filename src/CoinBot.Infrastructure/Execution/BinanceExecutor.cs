@@ -25,10 +25,12 @@ public sealed class BinanceExecutor(
     IMarketDataService? marketDataService = null,
     IBinanceExchangeInfoClient? exchangeInfoClient = null,
     IOptions<BinancePrivateDataOptions>? privateDataOptions = null,
+    IOptions<BinanceFuturesTestnetOptions>? binanceFuturesTestnetOptions = null,
     IUltraDebugLogService? ultraDebugLogService = null) : IExecutionTargetExecutor
 {
     private const string BreakerActor = "system:order-execution";
     private readonly BinancePrivateDataOptions? privateDataOptionsValue = privateDataOptions?.Value;
+    private readonly BinanceFuturesTestnetOptions binanceFuturesTestnetOptionsValue = binanceFuturesTestnetOptions?.Value ?? new BinanceFuturesTestnetOptions();
 
     public ExecutionOrderExecutorKind Kind => ExecutionOrderExecutorKind.Binance;
 
@@ -70,12 +72,11 @@ public sealed class BinanceExecutor(
 
         try
         {
-            var credentialAccess = await exchangeCredentialService.GetAsync(
-                new ExchangeCredentialAccessRequest(
-                    exchangeAccountId,
-                    command.Actor,
-                    ExchangeCredentialAccessPurpose.Execution,
-                    order.RootCorrelationId),
+            var credentialAccess = await ResolveCredentialAccessAsync(
+                exchangeAccountId,
+                order.ExecutionEnvironment,
+                command,
+                order.RootCorrelationId,
                 cancellationToken);
             var symbolMetadata = await ResolveSymbolMetadataAsync(command.Symbol, cancellationToken);
             ValidateOrderPreflight(command, symbolMetadata);
@@ -83,20 +84,23 @@ public sealed class BinanceExecutor(
 
             if (TryResolveDevelopmentFuturesPilot(command.Context, out var marginType, out var leverage))
             {
-                await privateRestClient.EnsureMarginTypeAsync(
-                    exchangeAccountId,
-                    command.Symbol,
-                    marginType!,
-                    credentialAccess.ApiKey,
-                    credentialAccess.ApiSecret,
-                    cancellationToken);
-                await privateRestClient.EnsureLeverageAsync(
-                    exchangeAccountId,
-                    command.Symbol,
-                    leverage!.Value,
-                    credentialAccess.ApiKey,
-                    credentialAccess.ApiSecret,
-                    cancellationToken);
+                if (!command.ReduceOnly)
+                {
+                    await EnsurePilotMarginTypeAlignmentAsync(
+                        exchangeAccountId,
+                        command.Symbol,
+                        marginType!,
+                        order.ExecutionEnvironment,
+                        credentialAccess,
+                        cancellationToken);
+                    await privateRestClient.EnsureLeverageAsync(
+                        exchangeAccountId,
+                        command.Symbol,
+                        leverage!.Value,
+                        credentialAccess.ApiKey,
+                        credentialAccess.ApiSecret,
+                        cancellationToken);
+                }
             }
 
             if (ultraDebugLogService is not null)
@@ -132,6 +136,7 @@ public sealed class BinanceExecutor(
                             quantity = command.Quantity,
                             price = command.Price,
                             reduceOnly = command.ReduceOnly,
+                            credentialSource = credentialAccess.Source,
                             marginType = marginType,
                             leverage,
                             latencyBreakdown = new
@@ -211,6 +216,7 @@ public sealed class BinanceExecutor(
                             externalOrderId = placementResult.OrderId,
                             submittedAtUtc = placementResult.SubmittedAtUtc,
                             snapshotStatus = placementResult.Snapshot?.Status,
+                            credentialSource = credentialAccess.Source,
                             latencyBreakdown = new
                             {
                                 totalMs = (int)exchangeStopwatch.ElapsedMilliseconds,
@@ -297,16 +303,80 @@ public sealed class BinanceExecutor(
 
     private void ValidateRuntimeEnvironmentScope(ExecutionEnvironment requestedEnvironment)
     {
-        if (requestedEnvironment != ExecutionEnvironment.Demo || privateDataOptionsValue is null)
+        var normalizedTestnetBaseUrl = NormalizeOptional(binanceFuturesTestnetOptionsValue.BaseUrl);
+        var requiresExplicitTestnetConfiguration = requestedEnvironment == ExecutionEnvironment.BinanceTestnet;
+
+        if (requiresExplicitTestnetConfiguration)
         {
+            if (string.IsNullOrWhiteSpace(normalizedTestnetBaseUrl))
+            {
+                throw new ExecutionValidationException(
+                    "BinanceTestnetEndpointMissing",
+                    "Execution blocked because Binance Futures testnet execution requires Binance:Futures:Testnet:BaseUrl.");
+            }
+
+            if (!string.Equals(
+                    ResolveEnvironmentScope(normalizedTestnetBaseUrl),
+                    "Testnet",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ExecutionValidationException(
+                    "TestnetExecutionEndpointMisconfigured",
+                    "Execution blocked because Binance Futures testnet execution requires a Binance Futures testnet endpoint.");
+            }
+        }
+
+        if (privateDataOptionsValue is null)
+        {
+            if (requiresExplicitTestnetConfiguration)
+            {
+                throw new ExecutionValidationException(
+                    "BinanceTestnetEndpointMissing",
+                    "Execution blocked because Binance Futures testnet execution requires private REST configuration.");
+            }
+
             return;
         }
 
-        if (!string.Equals(ResolveEnvironmentScope(privateDataOptionsValue.RestBaseUrl), "Testnet", StringComparison.OrdinalIgnoreCase))
+        var privateRestBaseUrl = NormalizeOptional(privateDataOptionsValue.RestBaseUrl);
+
+        if (requiresExplicitTestnetConfiguration &&
+            string.IsNullOrWhiteSpace(privateRestBaseUrl))
         {
             throw new ExecutionValidationException(
-                "DemoExecutionEndpointMisconfigured",
-                "Execution blocked because runtime demo futures execution requires Binance demo/testnet private REST configuration.");
+                "BinanceTestnetEndpointMissing",
+                "Execution blocked because Binance Futures testnet execution requires private REST configuration.");
+        }
+
+        if (requiresExplicitTestnetConfiguration &&
+            !AreEquivalentUrls(privateRestBaseUrl, normalizedTestnetBaseUrl))
+        {
+            throw new ExecutionValidationException(
+                "TestnetExecutionEndpointMisconfigured",
+                "Execution blocked because Binance Futures testnet endpoint configuration is inconsistent.");
+        }
+
+        var environmentScope = ResolveEnvironmentScope(privateRestBaseUrl);
+        var requiresTestnetEndpoint = ExecutionEnvironmentSemantics.UsesBrokerBackedTestnet(requestedEnvironment, allowInternalDemoExecution: false);
+
+        if (requiresTestnetEndpoint &&
+            !string.Equals(environmentScope, "Testnet", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ExecutionValidationException(
+                requestedEnvironment == ExecutionEnvironment.BinanceTestnet
+                    ? "TestnetExecutionEndpointMisconfigured"
+                    : "DemoExecutionEndpointMisconfigured",
+                requestedEnvironment == ExecutionEnvironment.BinanceTestnet
+                    ? "Execution blocked because Binance Futures testnet execution requires Binance testnet private REST configuration."
+                    : "Execution blocked because runtime demo futures execution requires Binance demo/testnet private REST configuration.");
+        }
+
+        if (requestedEnvironment == ExecutionEnvironment.Live &&
+            string.Equals(environmentScope, "Testnet", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ExecutionValidationException(
+                "LiveExecutionEndpointMisconfigured",
+                "Execution blocked because live execution cannot use Binance testnet private REST configuration.");
         }
     }
 
@@ -336,6 +406,75 @@ public sealed class BinanceExecutor(
                normalizedValue.Contains("binancefuture.com", StringComparison.OrdinalIgnoreCase)
             ? "Testnet"
             : "Live";
+    }
+
+    private async Task<ResolvedCredentialAccess> ResolveCredentialAccessAsync(
+        Guid exchangeAccountId,
+        ExecutionEnvironment requestedEnvironment,
+        ExecutionCommand command,
+        string? correlationId,
+        CancellationToken cancellationToken)
+    {
+        if (requestedEnvironment == ExecutionEnvironment.BinanceTestnet)
+        {
+            try
+            {
+                var userCredentialAccess = await exchangeCredentialService.GetAsync(
+                    new ExchangeCredentialAccessRequest(
+                        exchangeAccountId,
+                        command.Actor,
+                        ExchangeCredentialAccessPurpose.Execution,
+                        correlationId),
+                    cancellationToken);
+
+                return new ResolvedCredentialAccess(
+                    userCredentialAccess.ApiKey,
+                    userCredentialAccess.ApiSecret,
+                    "UserExchangeAccount");
+            }
+            catch (InvalidOperationException)
+            {
+                if (binanceFuturesTestnetOptionsValue.AllowConfiguredCredentialFallback)
+                {
+                    return ResolveConfiguredTestnetFallback();
+                }
+
+                throw new ExecutionValidationException(
+                    "BinanceTestnetUserCredentialUnavailable",
+                    "Execution blocked because Binance Futures testnet execution requires an active user-scoped Binance credential.");
+            }
+        }
+
+        var credentialAccess = await exchangeCredentialService.GetAsync(
+            new ExchangeCredentialAccessRequest(
+                exchangeAccountId,
+                command.Actor,
+                ExchangeCredentialAccessPurpose.Execution,
+                correlationId),
+            cancellationToken);
+
+        return new ResolvedCredentialAccess(
+            credentialAccess.ApiKey,
+            credentialAccess.ApiSecret,
+            "UserExchangeAccount");
+    }
+
+    private ResolvedCredentialAccess ResolveConfiguredTestnetFallback()
+    {
+        var apiKey = NormalizeOptional(binanceFuturesTestnetOptionsValue.ApiKey);
+        var apiSecret = NormalizeOptional(binanceFuturesTestnetOptionsValue.ApiSecret);
+
+        if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(apiSecret))
+        {
+            throw new ExecutionValidationException(
+                "BinanceTestnetCredentialsMissing",
+                "Execution blocked because Binance Futures testnet execution requires explicit configured fallback API credentials.");
+        }
+
+        return new ResolvedCredentialAccess(
+            apiKey,
+            apiSecret,
+            "ConfiguredTestnetFallback");
     }
 
     private async Task<SymbolMetadataSnapshot> ResolveSymbolMetadataAsync(
@@ -407,6 +546,68 @@ public sealed class BinanceExecutor(
             "FuturesMarginInsufficient",
             $"Execution blocked because available {guardAsset} futures margin {FormatDecimal(availableMargin)} is below required initial margin {FormatDecimal(requiredMargin)} for {command.Symbol} at leverage {FormatDecimal(leverage.Value)}.");
     }
+
+    private async Task EnsurePilotMarginTypeAlignmentAsync(
+        Guid exchangeAccountId,
+        string symbol,
+        string requestedMarginType,
+        ExecutionEnvironment environment,
+        ResolvedCredentialAccess credentialAccess,
+        CancellationToken cancellationToken)
+    {
+        var normalizedRequestedMarginType = NormalizeMarginType(requestedMarginType)
+            ?? throw new ExecutionValidationException(
+                "BinanceMarginTypeConfigurationFailed",
+                "Execution blocked because the requested futures margin type is missing.");
+        var latestOpenPosition = await dbContext.ExchangePositions
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.ExchangeAccountId == exchangeAccountId &&
+                entity.Plane == ExchangeDataPlane.Futures &&
+                entity.Symbol == symbol &&
+                !entity.IsDeleted &&
+                entity.Quantity != 0m)
+            .OrderByDescending(entity => entity.ExchangeUpdatedAtUtc)
+            .ThenByDescending(entity => entity.SyncedAtUtc)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (latestOpenPosition is not null)
+        {
+            var normalizedPositionMarginType = NormalizeMarginType(latestOpenPosition.MarginType);
+
+            if (string.Equals(
+                    normalizedPositionMarginType,
+                    normalizedRequestedMarginType,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(normalizedPositionMarginType))
+            {
+                throw new ExecutionValidationException(
+                    "BinanceMarginTypeChangeBlockedOpenPosition",
+                    $"Execution blocked because {symbol} has an open futures position with margin type {normalizedPositionMarginType} while the requested margin type is {normalizedRequestedMarginType} for {environment}.");
+            }
+        }
+
+        try
+        {
+            await privateRestClient.EnsureMarginTypeAsync(
+                exchangeAccountId,
+                symbol,
+                normalizedRequestedMarginType,
+                credentialAccess.ApiKey,
+                credentialAccess.ApiSecret,
+                cancellationToken);
+        }
+        catch (BinanceExchangeRejectedException exception) when (IsMarginTypeAlreadySetResponse(exception))
+        {
+            return;
+        }
+    }
+
     private static void ValidateOrderPreflight(ExecutionCommand command, SymbolMetadataSnapshot metadata)
     {
         if (!metadata.IsTradingEnabled)
@@ -587,6 +788,12 @@ public sealed class BinanceExecutor(
         return bool.TryParse(ReadContextValue(context, key), out var value) && value;
     }
 
+    private static bool IsMarginTypeAlreadySetResponse(BinanceExchangeRejectedException exception)
+    {
+        return string.Equals(exception.ExchangeCode, "-4046", StringComparison.Ordinal) ||
+               exception.Message.Contains("no need to change margin type", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string? ReadContextValue(string? context, string key)
     {
         if (string.IsNullOrWhiteSpace(context))
@@ -606,6 +813,45 @@ public sealed class BinanceExecutor(
         }
 
         return null;
+    }
+
+    private static string? NormalizeOptional(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? null
+            : value.Trim();
+    }
+
+    private static string? NormalizeMarginType(string? value)
+    {
+        return NormalizeOptional(value)?.ToUpperInvariant();
+    }
+
+    private static bool AreEquivalentUrls(string? left, string? right)
+    {
+        var normalizedLeft = NormalizeOptional(left);
+        var normalizedRight = NormalizeOptional(right);
+
+        if (string.IsNullOrWhiteSpace(normalizedLeft) || string.IsNullOrWhiteSpace(normalizedRight))
+        {
+            return false;
+        }
+
+        if (Uri.TryCreate(normalizedLeft, UriKind.Absolute, out var leftUri) &&
+            Uri.TryCreate(normalizedRight, UriKind.Absolute, out var rightUri))
+        {
+            return Uri.Compare(
+                       leftUri,
+                       rightUri,
+                       UriComponents.SchemeAndServer | UriComponents.Path,
+                       UriFormat.Unescaped,
+                       StringComparison.OrdinalIgnoreCase) == 0;
+        }
+
+        return string.Equals(
+            normalizedLeft.TrimEnd('/'),
+            normalizedRight.TrimEnd('/'),
+            StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsAligned(decimal value, decimal increment)
@@ -653,4 +899,9 @@ public sealed class BinanceExecutor(
     {
         return value.ToString("0.##################", CultureInfo.InvariantCulture);
     }
+
+    private sealed record ResolvedCredentialAccess(
+        string ApiKey,
+        string ApiSecret,
+        string Source);
 }

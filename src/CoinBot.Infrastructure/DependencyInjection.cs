@@ -183,6 +183,8 @@ public static class DependencyInjection
             .Validate(
                 options => options.ListenKeyRenewalIntervalMinutes < 60,
                 "ListenKeyRenewalIntervalMinutes must be less than 60.");
+        services.AddOptions<BinanceFuturesTestnetOptions>()
+            .Bind(configuration.GetSection("Binance:Futures:Testnet"));
         services.AddOptions<BotExecutionPilotOptions>()
             .Bind(configuration.GetSection("BotExecutionPilot"))
             .ValidateDataAnnotations();

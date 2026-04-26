@@ -12,6 +12,7 @@ using CoinBot.Infrastructure.Persistence;
 using CoinBot.UnitTests.Infrastructure.Mfa;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace CoinBot.UnitTests.Infrastructure.Execution;
 
@@ -161,6 +162,478 @@ public sealed class BinanceExecutorTests
     }
 
     [Fact]
+    public async Task DispatchAsync_FailsClosed_WhenBinanceTestnetUsesLiveEndpoint()
+    {
+        await using var harness = await CreateHarnessAsync(
+            privateDataOptions: new BinancePrivateDataOptions
+            {
+                RestBaseUrl = "https://fapi.binance.com",
+                WebSocketBaseUrl = "wss://fstream.binance.com",
+                SpotRestBaseUrl = "https://api.binance.com",
+                SpotWebSocketBaseUrl = "wss://stream.binance.com:9443"
+            });
+        harness.Order.ExecutionEnvironment = ExecutionEnvironment.BinanceTestnet;
+        harness.Order.ExecutorKind = ExecutionOrderExecutorKind.BinanceTestnet;
+
+        var exception = await Assert.ThrowsAsync<ExecutionValidationException>(() => harness.Executor.DispatchAsync(
+            harness.Order,
+            CreateCommand(harness.ExchangeAccountId) with
+            {
+                RequestedEnvironment = ExecutionEnvironment.BinanceTestnet
+            },
+            CancellationToken.None));
+
+        Assert.Equal("TestnetExecutionEndpointMisconfigured", exception.ReasonCode);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_FailsClosed_WhenBinanceTestnetEndpointConfigIsMissing()
+    {
+        await using var harness = await CreateHarnessAsync(
+            privateDataOptions: new BinancePrivateDataOptions
+            {
+                RestBaseUrl = "https://demo-fapi.binance.com",
+                WebSocketBaseUrl = "wss://fstream.binancefuture.com",
+                SpotRestBaseUrl = "https://api.binance.com",
+                SpotWebSocketBaseUrl = "wss://stream.binance.com:9443"
+            },
+            testnetOptions: new BinanceFuturesTestnetOptions
+            {
+                ApiKey = "testnet-api-key",
+                ApiSecret = "testnet-api-secret"
+            });
+        harness.Order.ExecutionEnvironment = ExecutionEnvironment.BinanceTestnet;
+        harness.Order.ExecutorKind = ExecutionOrderExecutorKind.BinanceTestnet;
+
+        var exception = await Assert.ThrowsAsync<ExecutionValidationException>(() => harness.Executor.DispatchAsync(
+            harness.Order,
+            CreateCommand(harness.ExchangeAccountId) with
+            {
+                RequestedEnvironment = ExecutionEnvironment.BinanceTestnet
+            },
+            CancellationToken.None));
+
+        Assert.Equal("BinanceTestnetEndpointMissing", exception.ReasonCode);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal(0, harness.CredentialService.AccessCalls);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_FailsClosed_WhenBinanceTestnetApiKeyIsMissing()
+    {
+        await using var harness = await CreateHarnessAsync(
+            privateDataOptions: new BinancePrivateDataOptions
+            {
+                RestBaseUrl = "https://demo-fapi.binance.com",
+                WebSocketBaseUrl = "wss://fstream.binancefuture.com",
+                SpotRestBaseUrl = "https://api.binance.com",
+                SpotWebSocketBaseUrl = "wss://stream.binance.com:9443"
+            },
+            credentialService: new FakeExchangeCredentialService
+            {
+                AccessException = new InvalidOperationException("User-scoped credential missing.")
+            },
+            testnetOptions: new BinanceFuturesTestnetOptions
+            {
+                BaseUrl = "https://demo-fapi.binance.com",
+                ApiSecret = "plain-secret-testnet-key-missing",
+                AllowConfiguredCredentialFallback = true
+            });
+        harness.Order.ExecutionEnvironment = ExecutionEnvironment.BinanceTestnet;
+        harness.Order.ExecutorKind = ExecutionOrderExecutorKind.BinanceTestnet;
+
+        var exception = await Assert.ThrowsAsync<ExecutionValidationException>(() => harness.Executor.DispatchAsync(
+            harness.Order,
+            CreateCommand(harness.ExchangeAccountId) with
+            {
+                RequestedEnvironment = ExecutionEnvironment.BinanceTestnet
+            },
+            CancellationToken.None));
+
+        Assert.Equal("BinanceTestnetCredentialsMissing", exception.ReasonCode);
+        Assert.DoesNotContain("plain-secret-testnet-key-missing", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal(1, harness.CredentialService.AccessCalls);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_FailsClosed_WhenBinanceTestnetApiSecretIsMissing()
+    {
+        await using var harness = await CreateHarnessAsync(
+            privateDataOptions: new BinancePrivateDataOptions
+            {
+                RestBaseUrl = "https://demo-fapi.binance.com",
+                WebSocketBaseUrl = "wss://fstream.binancefuture.com",
+                SpotRestBaseUrl = "https://api.binance.com",
+                SpotWebSocketBaseUrl = "wss://stream.binance.com:9443"
+            },
+            credentialService: new FakeExchangeCredentialService
+            {
+                AccessException = new InvalidOperationException("User-scoped credential missing.")
+            },
+            testnetOptions: new BinanceFuturesTestnetOptions
+            {
+                BaseUrl = "https://demo-fapi.binance.com",
+                ApiKey = "plain-key-testnet-secret-missing",
+                AllowConfiguredCredentialFallback = true
+            });
+        harness.Order.ExecutionEnvironment = ExecutionEnvironment.BinanceTestnet;
+        harness.Order.ExecutorKind = ExecutionOrderExecutorKind.BinanceTestnet;
+
+        var exception = await Assert.ThrowsAsync<ExecutionValidationException>(() => harness.Executor.DispatchAsync(
+            harness.Order,
+            CreateCommand(harness.ExchangeAccountId) with
+            {
+                RequestedEnvironment = ExecutionEnvironment.BinanceTestnet
+            },
+            CancellationToken.None));
+
+        Assert.Equal("BinanceTestnetCredentialsMissing", exception.ReasonCode);
+        Assert.DoesNotContain("plain-key-testnet-secret-missing", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal(1, harness.CredentialService.AccessCalls);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_FailsClosed_WhenLiveExecutionUsesTestnetEndpoint()
+    {
+        await using var harness = await CreateHarnessAsync(
+            privateDataOptions: new BinancePrivateDataOptions
+            {
+                RestBaseUrl = "https://demo-fapi.binance.com",
+                WebSocketBaseUrl = "wss://testnet.binance.example/futures-private",
+                SpotRestBaseUrl = "https://testnet.binance.example/spot-rest",
+                SpotWebSocketBaseUrl = "wss://testnet.binance.example/spot-private"
+            });
+
+        var exception = await Assert.ThrowsAsync<ExecutionValidationException>(() => harness.Executor.DispatchAsync(
+            harness.Order,
+            CreateCommand(harness.ExchangeAccountId) with
+            {
+                RequestedEnvironment = ExecutionEnvironment.Live
+            },
+            CancellationToken.None));
+
+        Assert.Equal("LiveExecutionEndpointMisconfigured", exception.ReasonCode);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_UsesUserExchangeCredentials_ForBinanceTestnetWhenAvailable()
+    {
+        await using var harness = await CreateHarnessAsync(
+            privateDataOptions: new BinancePrivateDataOptions
+            {
+                RestBaseUrl = "https://demo-fapi.binance.com",
+                WebSocketBaseUrl = "wss://fstream.binancefuture.com",
+                SpotRestBaseUrl = "https://api.binance.com",
+                SpotWebSocketBaseUrl = "wss://stream.binance.com:9443"
+            },
+            testnetOptions: new BinanceFuturesTestnetOptions
+            {
+                BaseUrl = "https://demo-fapi.binance.com",
+                ApiKey = "testnet-api-key",
+                ApiSecret = "testnet-api-secret"
+            });
+        harness.Order.ExecutionEnvironment = ExecutionEnvironment.BinanceTestnet;
+        harness.Order.ExecutorKind = ExecutionOrderExecutorKind.BinanceTestnet;
+
+        var result = await harness.Executor.DispatchAsync(
+            harness.Order,
+            CreateCommand(harness.ExchangeAccountId) with
+            {
+                RequestedEnvironment = ExecutionEnvironment.BinanceTestnet
+            },
+            CancellationToken.None);
+
+        Assert.Equal("binance-order-1", result.ExternalOrderId);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal(1, harness.CredentialService.AccessCalls);
+        Assert.Equal("api-key", harness.PrivateRestClient.LastPlacementRequest?.ApiKey);
+        Assert.Equal("api-secret", harness.PrivateRestClient.LastPlacementRequest?.ApiSecret);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_UsesConfiguredFallback_ForBinanceTestnetOnlyWhenExplicitlyEnabled()
+    {
+        await using var harness = await CreateHarnessAsync(
+            privateDataOptions: new BinancePrivateDataOptions
+            {
+                RestBaseUrl = "https://demo-fapi.binance.com",
+                WebSocketBaseUrl = "wss://fstream.binancefuture.com",
+                SpotRestBaseUrl = "https://api.binance.com",
+                SpotWebSocketBaseUrl = "wss://stream.binance.com:9443"
+            },
+            credentialService: new FakeExchangeCredentialService
+            {
+                AccessException = new InvalidOperationException("User-scoped credential missing.")
+            },
+            testnetOptions: new BinanceFuturesTestnetOptions
+            {
+                BaseUrl = "https://demo-fapi.binance.com",
+                ApiKey = "testnet-api-key",
+                ApiSecret = "testnet-api-secret",
+                AllowConfiguredCredentialFallback = true
+            });
+        harness.Order.ExecutionEnvironment = ExecutionEnvironment.BinanceTestnet;
+        harness.Order.ExecutorKind = ExecutionOrderExecutorKind.BinanceTestnet;
+
+        var result = await harness.Executor.DispatchAsync(
+            harness.Order,
+            CreateCommand(harness.ExchangeAccountId) with
+            {
+                RequestedEnvironment = ExecutionEnvironment.BinanceTestnet
+            },
+            CancellationToken.None);
+
+        Assert.Equal("binance-order-1", result.ExternalOrderId);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal(1, harness.CredentialService.AccessCalls);
+        Assert.Equal("testnet-api-key", harness.PrivateRestClient.LastPlacementRequest?.ApiKey);
+        Assert.Equal("testnet-api-secret", harness.PrivateRestClient.LastPlacementRequest?.ApiSecret);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_AllowsBinanceTestnet_WhenMarginTypeAlreadyMatchesExchangeState()
+    {
+        await using var harness = await CreateHarnessAsync(
+            privateDataOptions: new BinancePrivateDataOptions
+            {
+                RestBaseUrl = "https://demo-fapi.binance.com",
+                WebSocketBaseUrl = "wss://fstream.binancefuture.com",
+                SpotRestBaseUrl = "https://api.binance.com",
+                SpotWebSocketBaseUrl = "wss://stream.binance.com:9443"
+            },
+            testnetOptions: new BinanceFuturesTestnetOptions
+            {
+                BaseUrl = "https://demo-fapi.binance.com",
+                ApiKey = "testnet-api-key",
+                ApiSecret = "testnet-api-secret"
+            });
+        harness.Order.ExecutionEnvironment = ExecutionEnvironment.BinanceTestnet;
+        harness.Order.ExecutorKind = ExecutionOrderExecutorKind.BinanceTestnet;
+        harness.DbContext.ExchangePositions.Add(new ExchangePosition
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "user-exec",
+            ExchangeAccountId = harness.ExchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "BTCUSDT",
+            PositionSide = "SHORT",
+            Quantity = -0.01m,
+            EntryPrice = 65000m,
+            BreakEvenPrice = 65000m,
+            UnrealizedProfit = 0m,
+            MarginType = "isolated",
+            IsolatedWallet = 20m,
+            ExchangeUpdatedAtUtc = new DateTime(2026, 4, 2, 12, 0, 0, DateTimeKind.Utc),
+            SyncedAtUtc = new DateTime(2026, 4, 2, 12, 0, 0, DateTimeKind.Utc)
+        });
+        await harness.DbContext.SaveChangesAsync();
+
+        var result = await harness.Executor.DispatchAsync(
+            harness.Order,
+            CreateCommand(harness.ExchangeAccountId) with
+            {
+                RequestedEnvironment = ExecutionEnvironment.BinanceTestnet
+            },
+            CancellationToken.None);
+
+        Assert.Equal("binance-order-1", result.ExternalOrderId);
+        Assert.Equal(0, harness.PrivateRestClient.EnsureMarginTypeCalls);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_DoesNotFail_WhenMarginTypeAlreadySetResponseReturns400()
+    {
+        await using var harness = await CreateHarnessAsync(
+            privateDataOptions: new BinancePrivateDataOptions
+            {
+                RestBaseUrl = "https://demo-fapi.binance.com",
+                WebSocketBaseUrl = "wss://fstream.binancefuture.com",
+                SpotRestBaseUrl = "https://api.binance.com",
+                SpotWebSocketBaseUrl = "wss://stream.binance.com:9443"
+            },
+            testnetOptions: new BinanceFuturesTestnetOptions
+            {
+                BaseUrl = "https://demo-fapi.binance.com",
+                ApiKey = "testnet-api-key",
+                ApiSecret = "testnet-api-secret"
+            });
+        harness.Order.ExecutionEnvironment = ExecutionEnvironment.BinanceTestnet;
+        harness.Order.ExecutorKind = ExecutionOrderExecutorKind.BinanceTestnet;
+        harness.PrivateRestClient.EnsureMarginTypeException = new BinanceExchangeRejectedException(
+            "BinanceMarginTypeConfigurationFailed",
+            "Binance futures margin type request failed for BTCUSDT with requested margin type ISOLATED and HTTP status 400 (exchange code -4046: No need to change margin type.).",
+            "-4046",
+            400);
+
+        var result = await harness.Executor.DispatchAsync(
+            harness.Order,
+            CreateCommand(harness.ExchangeAccountId) with
+            {
+                RequestedEnvironment = ExecutionEnvironment.BinanceTestnet
+            },
+            CancellationToken.None);
+
+        Assert.Equal("binance-order-1", result.ExternalOrderId);
+        Assert.Equal(1, harness.PrivateRestClient.EnsureMarginTypeCalls);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_FailsClosed_WhenOpenPositionMarginTypeDiffersFromRequestedMarginType()
+    {
+        await using var harness = await CreateHarnessAsync(
+            privateDataOptions: new BinancePrivateDataOptions
+            {
+                RestBaseUrl = "https://demo-fapi.binance.com",
+                WebSocketBaseUrl = "wss://fstream.binancefuture.com",
+                SpotRestBaseUrl = "https://api.binance.com",
+                SpotWebSocketBaseUrl = "wss://stream.binance.com:9443"
+            },
+            testnetOptions: new BinanceFuturesTestnetOptions
+            {
+                BaseUrl = "https://demo-fapi.binance.com",
+                ApiKey = "testnet-api-key",
+                ApiSecret = "testnet-api-secret"
+            });
+        harness.Order.ExecutionEnvironment = ExecutionEnvironment.BinanceTestnet;
+        harness.Order.ExecutorKind = ExecutionOrderExecutorKind.BinanceTestnet;
+        harness.DbContext.ExchangePositions.Add(new ExchangePosition
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "user-exec",
+            ExchangeAccountId = harness.ExchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "BTCUSDT",
+            PositionSide = "LONG",
+            Quantity = 0.01m,
+            EntryPrice = 65000m,
+            BreakEvenPrice = 65000m,
+            UnrealizedProfit = 0m,
+            MarginType = "cross",
+            IsolatedWallet = 0m,
+            ExchangeUpdatedAtUtc = new DateTime(2026, 4, 2, 12, 0, 0, DateTimeKind.Utc),
+            SyncedAtUtc = new DateTime(2026, 4, 2, 12, 0, 0, DateTimeKind.Utc)
+        });
+        await harness.DbContext.SaveChangesAsync();
+
+        var exception = await Assert.ThrowsAsync<ExecutionValidationException>(() => harness.Executor.DispatchAsync(
+            harness.Order,
+            CreateCommand(harness.ExchangeAccountId) with
+            {
+                RequestedEnvironment = ExecutionEnvironment.BinanceTestnet
+            },
+            CancellationToken.None));
+
+        Assert.Equal("BinanceMarginTypeChangeBlockedOpenPosition", exception.ReasonCode);
+        Assert.Contains("margin type CROSS", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("requested margin type is ISOLATED", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, harness.PrivateRestClient.EnsureMarginTypeCalls);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_SkipsMarginTypeAndLeverageAlignment_ForReduceOnlyClose_WhenOpenPositionMarginTypeDiffers()
+    {
+        await using var harness = await CreateHarnessAsync(
+            privateDataOptions: new BinancePrivateDataOptions
+            {
+                RestBaseUrl = "https://demo-fapi.binance.com",
+                WebSocketBaseUrl = "wss://fstream.binancefuture.com",
+                SpotRestBaseUrl = "https://api.binance.com",
+                SpotWebSocketBaseUrl = "wss://stream.binance.com:9443"
+            },
+            testnetOptions: new BinanceFuturesTestnetOptions
+            {
+                BaseUrl = "https://demo-fapi.binance.com",
+                ApiKey = "testnet-api-key",
+                ApiSecret = "testnet-api-secret"
+            });
+        harness.Order.ExecutionEnvironment = ExecutionEnvironment.BinanceTestnet;
+        harness.Order.ExecutorKind = ExecutionOrderExecutorKind.BinanceTestnet;
+        harness.Order.ReduceOnly = true;
+        harness.Order.SignalType = StrategySignalType.Exit;
+        harness.DbContext.ExchangePositions.Add(new ExchangePosition
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "user-exec",
+            ExchangeAccountId = harness.ExchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "BTCUSDT",
+            PositionSide = "SHORT",
+            Quantity = -0.01m,
+            EntryPrice = 65000m,
+            BreakEvenPrice = 65000m,
+            UnrealizedProfit = 0m,
+            MarginType = "cross",
+            IsolatedWallet = 0m,
+            ExchangeUpdatedAtUtc = new DateTime(2026, 4, 2, 12, 0, 0, DateTimeKind.Utc),
+            SyncedAtUtc = new DateTime(2026, 4, 2, 12, 0, 0, DateTimeKind.Utc)
+        });
+        await harness.DbContext.SaveChangesAsync();
+
+        var result = await harness.Executor.DispatchAsync(
+            harness.Order,
+            CreateCommand(harness.ExchangeAccountId) with
+            {
+                RequestedEnvironment = ExecutionEnvironment.BinanceTestnet,
+                SignalType = StrategySignalType.Exit,
+                Side = ExecutionOrderSide.Buy,
+                ReduceOnly = true,
+                Quantity = 0.002m,
+                Context = "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1 | ExecutionIntent=ExitCloseOnly | ReduceOnly=True | AutoReverse=False"
+            },
+            CancellationToken.None);
+
+        Assert.Equal("binance-order-1", result.ExternalOrderId);
+        Assert.Equal(0, harness.PrivateRestClient.EnsureMarginTypeCalls);
+        Assert.Equal(0, harness.PrivateRestClient.EnsureLeverageCalls);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.True(harness.PrivateRestClient.LastPlacementRequest?.ReduceOnly);
+        Assert.Equal(ExecutionOrderSide.Buy, harness.PrivateRestClient.LastPlacementRequest?.Side);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_LiveMode_UsesDbBackedCredentialStore()
+    {
+        await using var harness = await CreateHarnessAsync();
+
+        var result = await harness.Executor.DispatchAsync(
+            harness.Order,
+            CreateCommand(harness.ExchangeAccountId) with
+            {
+                RequestedEnvironment = ExecutionEnvironment.Live
+            },
+            CancellationToken.None);
+
+        Assert.Equal("binance-order-1", result.ExternalOrderId);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal(1, harness.CredentialService.AccessCalls);
+        Assert.Equal("api-key", harness.PrivateRestClient.LastPlacementRequest?.ApiKey);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_FailsClosed_WhenExchangeAccountOwnerDoesNotMatchCommandOwner()
+    {
+        await using var harness = await CreateHarnessAsync();
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => harness.Executor.DispatchAsync(
+            harness.Order,
+            CreateCommand(harness.ExchangeAccountId) with
+            {
+                OwnerUserId = "user-other"
+            },
+            CancellationToken.None));
+
+        Assert.Contains("owner does not match", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
     public async Task DispatchAsync_FailsClosed_WhenLimitPriceViolatesTickSize()
     {
         await using var harness = await CreateHarnessAsync();
@@ -288,7 +761,10 @@ public sealed class BinanceExecutorTests
         IMarketDataService? marketDataService = null,
         FakeExchangeInfoClient? exchangeInfoClient = null,
         decimal? futuresQuoteAvailableBalance = null,
-        IDependencyCircuitBreakerStateManager? dependencyCircuitBreakerStateManager = null)
+        IDependencyCircuitBreakerStateManager? dependencyCircuitBreakerStateManager = null,
+        BinancePrivateDataOptions? privateDataOptions = null,
+        BinanceFuturesTestnetOptions? testnetOptions = null,
+        FakeExchangeCredentialService? credentialService = null)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
@@ -348,15 +824,31 @@ public sealed class BinanceExecutorTests
         var resolvedMetadata = metadata ?? CreateMetadata();
         var resolvedMarketDataService = marketDataService ?? new FakeMarketDataService(resolvedMetadata);
         var resolvedExchangeInfoClient = exchangeInfoClient ?? new FakeExchangeInfoClient(resolvedMetadata);
+        var resolvedPrivateDataOptions = privateDataOptions ?? new BinancePrivateDataOptions
+        {
+            RestBaseUrl = "https://fapi.binance.com",
+            WebSocketBaseUrl = "wss://fstream.binance.com",
+            SpotRestBaseUrl = "https://api.binance.com",
+            SpotWebSocketBaseUrl = "wss://stream.binance.com:9443"
+        };
         var privateRestClient = new FakePrivateRestClient();
+        var resolvedCredentialService = credentialService ?? new FakeExchangeCredentialService();
+        var resolvedTestnetOptions = testnetOptions ?? new BinanceFuturesTestnetOptions
+        {
+            BaseUrl = resolvedPrivateDataOptions.RestBaseUrl,
+            ApiKey = "testnet-api-key",
+            ApiSecret = "testnet-api-secret"
+        };
         var executor = new BinanceExecutor(
             dbContext,
-            new FakeExchangeCredentialService(),
+            resolvedCredentialService,
             privateRestClient,
             NullLogger<BinanceExecutor>.Instance,
             dependencyCircuitBreakerStateManager,
             resolvedMarketDataService,
-            resolvedExchangeInfoClient);
+            resolvedExchangeInfoClient,
+            Options.Create(resolvedPrivateDataOptions),
+            Options.Create(resolvedTestnetOptions));
 
         return new TestHarness(
             dbContext,
@@ -364,7 +856,8 @@ public sealed class BinanceExecutorTests
             privateRestClient,
             resolvedExchangeInfoClient,
             exchangeAccountId,
-            order);
+            order,
+            resolvedCredentialService);
     }
 
     private static SymbolMetadataSnapshot CreateMetadata(
@@ -421,6 +914,14 @@ public sealed class BinanceExecutorTests
 
     private sealed class FakeExchangeCredentialService : IExchangeCredentialService
     {
+        public int AccessCalls { get; private set; }
+
+        public string ApiKey { get; set; } = "api-key";
+
+        public string ApiSecret { get; set; } = "api-secret";
+
+        public Exception? AccessException { get; set; }
+
         public Task<ExchangeCredentialStateSnapshot> StoreAsync(
             StoreExchangeCredentialsRequest request,
             CancellationToken cancellationToken = default)
@@ -432,10 +933,17 @@ public sealed class BinanceExecutorTests
             ExchangeCredentialAccessRequest request,
             CancellationToken cancellationToken = default)
         {
+            AccessCalls++;
+
+            if (AccessException is not null)
+            {
+                throw AccessException;
+            }
+
             return Task.FromResult(
                 new ExchangeCredentialAccessResult(
-                    "api-key",
-                    "api-secret",
+                    ApiKey,
+                    ApiSecret,
                     new ExchangeCredentialStateSnapshot(
                         request.ExchangeAccountId,
                         ExchangeCredentialStatus.Active,
@@ -468,7 +976,13 @@ public sealed class BinanceExecutorTests
     {
         public int PlaceOrderCalls { get; private set; }
 
+        public int EnsureMarginTypeCalls { get; private set; }
+
+        public int EnsureLeverageCalls { get; private set; }
+
         public BinanceOrderPlacementRequest? LastPlacementRequest { get; private set; }
+
+        public Exception? EnsureMarginTypeException { get; set; }
 
         public Task EnsureMarginTypeAsync(
             Guid exchangeAccountId,
@@ -478,6 +992,13 @@ public sealed class BinanceExecutorTests
             string apiSecret,
             CancellationToken cancellationToken = default)
         {
+            EnsureMarginTypeCalls++;
+
+            if (EnsureMarginTypeException is not null)
+            {
+                throw EnsureMarginTypeException;
+            }
+
             return Task.CompletedTask;
         }
 
@@ -489,6 +1010,7 @@ public sealed class BinanceExecutorTests
             string apiSecret,
             CancellationToken cancellationToken = default)
         {
+            EnsureLeverageCalls++;
             return Task.CompletedTask;
         }
 
@@ -625,7 +1147,8 @@ public sealed class BinanceExecutorTests
         FakePrivateRestClient privateRestClient,
         FakeExchangeInfoClient exchangeInfoClient,
         Guid exchangeAccountId,
-        ExecutionOrder order) : IAsyncDisposable
+        ExecutionOrder order,
+        FakeExchangeCredentialService credentialService) : IAsyncDisposable
     {
         public ApplicationDbContext DbContext { get; } = dbContext;
 
@@ -638,6 +1161,8 @@ public sealed class BinanceExecutorTests
         public Guid ExchangeAccountId { get; } = exchangeAccountId;
 
         public ExecutionOrder Order { get; } = order;
+
+        public FakeExchangeCredentialService CredentialService { get; } = credentialService;
 
         public async ValueTask DisposeAsync()
         {

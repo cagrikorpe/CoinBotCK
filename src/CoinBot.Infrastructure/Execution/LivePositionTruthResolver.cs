@@ -165,7 +165,8 @@ internal static class LivePositionTruthResolver
                 .Where(entity =>
                     entity.OwnerUserId == normalizedOwnerUserId &&
                     entity.Plane == plane &&
-                    entity.ExecutionEnvironment == ExecutionEnvironment.Live &&
+                    (entity.ExecutionEnvironment == ExecutionEnvironment.Live ||
+                     entity.ExecutionEnvironment == ExecutionEnvironment.BinanceTestnet) &&
                     !entity.IsDeleted &&
                     entity.SubmittedToBroker &&
                     (!exchangeAccountId.HasValue || entity.ExchangeAccountId == exchangeAccountId.Value) &&

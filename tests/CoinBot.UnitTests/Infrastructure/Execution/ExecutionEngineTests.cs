@@ -155,6 +155,123 @@ public sealed class ExecutionEngineTests
     }
 
     [Fact]
+    public async Task DispatchAsync_RoutesExplicitBinanceTestnetEnvironment_ToBinanceExecutor()
+    {
+        await using var harness = CreateHarness(
+            environmentName: Environments.Development,
+            enableRiskPolicyEvaluator: true,
+            testnetExecutionOptions: new BinanceFuturesTestnetOptions
+            {
+                BaseUrl = "https://testnet.binance.example/futures-rest",
+                ApiKey = "testnet-api-key",
+                ApiSecret = "testnet-api-secret"
+            });
+        var exchangeAccountId = Guid.NewGuid();
+        var botId = Guid.NewGuid();
+        await SeedExchangeAccountAsync(harness.DbContext, "user-testnet", exchangeAccountId);
+        await SeedBotAsync(harness.DbContext, "user-testnet", botId, "pilot-testnet");
+        await SeedPilotSafetyPrerequisitesAsync(
+            harness.DbContext,
+            "user-testnet",
+            exchangeAccountId,
+            harness.TimeProvider.GetUtcNow().UtcDateTime);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.AllowedUserIds = ["user-testnet"];
+        harness.PilotOptions.AllowedBotIds = [botId.ToString("N")];
+        harness.PilotOptions.AllowedSymbols = ["BTCUSDT"];
+        await PrimeFreshMarketDataAsync(harness, "corr-testnet-engine-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-testnet",
+            context: "Open testnet execution",
+            correlationId: "corr-testnet-engine-2");
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-testnet",
+                strategyKey: "pilot-testnet",
+                isDemo: null,
+                botId: botId,
+                exchangeAccountId: exchangeAccountId) with
+            {
+                Actor = "system:bot-worker",
+                RequestedEnvironment = ExecutionEnvironment.BinanceTestnet,
+                Context = "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                Quantity = 0.002m,
+                Price = 65000m
+            },
+            CancellationToken.None);
+
+        Assert.Equal(ExecutionEnvironment.BinanceTestnet, result.Order.ExecutionEnvironment);
+        Assert.Equal(ExecutionOrderExecutorKind.BinanceTestnet, result.Order.ExecutorKind);
+        Assert.Equal(ExecutionOrderState.Submitted, result.Order.State);
+        Assert.True(result.Order.SubmittedToBroker);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal(0, harness.SpotPrivateRestClient.PlaceOrderCalls);
+        Assert.Equal(1, harness.CredentialService.AccessCalls);
+        Assert.Equal("api-key", harness.PrivateRestClient.LastPlacementRequest?.ApiKey);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_FailsClosed_WhenBinanceTestnetCredentialsAreMissing()
+    {
+        await using var harness = CreateHarness(
+            environmentName: Environments.Development,
+            enableRiskPolicyEvaluator: true,
+            credentialService: new FakeExchangeCredentialService
+            {
+                AccessException = new InvalidOperationException("User-scoped credential missing.")
+            },
+            testnetExecutionOptions: new BinanceFuturesTestnetOptions
+            {
+                BaseUrl = "https://testnet.binance.example/futures-rest",
+                ApiKey = "present-only-key"
+            });
+        var exchangeAccountId = Guid.NewGuid();
+        var botId = Guid.NewGuid();
+        await SeedExchangeAccountAsync(harness.DbContext, "user-testnet-missing-creds", exchangeAccountId);
+        await SeedBotAsync(harness.DbContext, "user-testnet-missing-creds", botId, "pilot-testnet-missing-creds");
+        await SeedPilotSafetyPrerequisitesAsync(
+            harness.DbContext,
+            "user-testnet-missing-creds",
+            exchangeAccountId,
+            harness.TimeProvider.GetUtcNow().UtcDateTime);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.AllowedUserIds = ["user-testnet-missing-creds"];
+        harness.PilotOptions.AllowedBotIds = [botId.ToString("N")];
+        harness.PilotOptions.AllowedSymbols = ["BTCUSDT"];
+        await PrimeFreshMarketDataAsync(harness, "corr-testnet-engine-missing-creds-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-testnet-missing-creds",
+            context: "Open testnet execution",
+            correlationId: "corr-testnet-engine-missing-creds-2");
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-testnet-missing-creds",
+                strategyKey: "pilot-testnet-missing-creds",
+                isDemo: null,
+                botId: botId,
+                exchangeAccountId: exchangeAccountId) with
+            {
+                Actor = "system:bot-worker",
+                RequestedEnvironment = ExecutionEnvironment.BinanceTestnet,
+                Context = "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                Quantity = 0.002m,
+                Price = 65000m
+            },
+            CancellationToken.None);
+
+        Assert.Equal(ExecutionOrderState.Rejected, result.Order.State);
+        Assert.Equal("BinanceTestnetUserCredentialUnavailable", result.Order.FailureCode);
+        Assert.False(result.Order.SubmittedToBroker);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal(1, harness.CredentialService.AccessCalls);
+        Assert.DoesNotContain("present-only-key", result.Order.FailureDetail ?? string.Empty, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task DispatchAsync_FailsClosedWithoutFillOrPosition_WhenDemoReserveBalanceIsUnavailable()
     {
         await using var harness = CreateHarness();
@@ -378,19 +495,20 @@ public sealed class ExecutionEngineTests
             CreateCommand(
                 ownerUserId: "user-pilot-live",
                 strategyKey: "pilot-core",
-                isDemo: false,
+                isDemo: null,
                 botId: botId,
                 exchangeAccountId: exchangeAccountId) with
             {
                 Actor = "system:bot-worker",
+                RequestedEnvironment = ExecutionEnvironment.BinanceTestnet,
                 Context = "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
                 Quantity = 0.002m,
                 Price = 65000m
             },
             CancellationToken.None);
 
-        Assert.Equal(ExecutionEnvironment.Live, result.Order.ExecutionEnvironment);
-        Assert.Equal(ExecutionOrderExecutorKind.Binance, result.Order.ExecutorKind);
+        Assert.Equal(ExecutionEnvironment.BinanceTestnet, result.Order.ExecutionEnvironment);
+        Assert.Equal(ExecutionOrderExecutorKind.BinanceTestnet, result.Order.ExecutorKind);
         Assert.Equal(ExecutionOrderState.Submitted, result.Order.State);
         var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync(entity => entity.Id == result.Order.ExecutionOrderId);
 
@@ -504,12 +622,13 @@ public sealed class ExecutionEngineTests
             CreateCommand(
                 ownerUserId: "user-pilot-short-scope",
                 strategyKey: "pilot-short-scope",
-                isDemo: false,
+                isDemo: null,
                 strategyId: strategyId,
                 botId: botId,
                 exchangeAccountId: exchangeAccountId) with
             {
                 Actor = "system:bot-worker",
+                RequestedEnvironment = ExecutionEnvironment.BinanceTestnet,
                 Context = "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
                 Symbol = "SOLUSDT",
                 BaseAsset = "SOL",
@@ -566,11 +685,12 @@ public sealed class ExecutionEngineTests
             CreateCommand(
                 ownerUserId: "user-pilot-invalid",
                 strategyKey: "pilot-core",
-                isDemo: false,
+                isDemo: null,
                 botId: botId,
                 exchangeAccountId: exchangeAccountId) with
             {
                 Actor = "system:bot-worker",
+                RequestedEnvironment = ExecutionEnvironment.BinanceTestnet,
                 Context = "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
                 Quantity = 0.001m,
                 Price = 65000m
@@ -603,7 +723,7 @@ public sealed class ExecutionEngineTests
     public async Task DispatchAsync_SendsSubmittedAlert_WhenLiveOrderIsAccepted()
     {
         await using var harness = CreateHarness(
-            environmentName: Environments.Development,
+            environmentName: Environments.Production,
             alertDispatchCoordinator: new RecordingAlertDispatchCoordinator());
         var strategyId = Guid.NewGuid();
         var exchangeAccountId = Guid.NewGuid();
@@ -1179,6 +1299,7 @@ public sealed class ExecutionEngineTests
                 isDemo: null) with
             {
                 Actor = "system:bot-worker",
+                RequestedEnvironment = ExecutionEnvironment.BinanceTestnet,
                 Context = "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
                 ReduceOnly = true,
                 Side = ExecutionOrderSide.Sell,
@@ -1299,7 +1420,7 @@ public sealed class ExecutionEngineTests
     [Fact]
     public async Task DispatchAsync_FailsPostSubmit_WithRetryEligibleAndCooldownApplied_WhenBrokerRequestFails()
     {
-        await using var harness = CreateHarness(environmentName: Environments.Development);
+        await using var harness = CreateHarness(environmentName: Environments.Production);
         var strategyId = Guid.NewGuid();
         var exchangeAccountId = Guid.NewGuid();
         await SeedUserAsync(harness.DbContext, "user-post-submit");
@@ -1328,19 +1449,19 @@ public sealed class ExecutionEngineTests
                 isDemo: null),
             CancellationToken.None);
 
-        Assert.Equal(ExecutionOrderState.Failed, result.Order.State);
-        Assert.Equal("DispatchFailed", result.Order.FailureCode);
-        Assert.Equal(ExecutionRejectionStage.PostSubmit, result.Order.RejectionStage);
-        Assert.True(result.Order.SubmittedToBroker);
-        Assert.True(result.Order.RetryEligible);
-        Assert.True(result.Order.CooldownApplied);
+        Assert.Equal(ExecutionOrderState.Rejected, result.Order.State);
+        Assert.Equal("PreSubmitFailed", result.Order.FailureCode);
+        Assert.Equal(ExecutionRejectionStage.PreSubmit, result.Order.RejectionStage);
+        Assert.False(result.Order.SubmittedToBroker);
+        Assert.False(result.Order.RetryEligible);
+        Assert.False(result.Order.CooldownApplied);
         Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
-        Assert.StartsWith("cbp0_", result.Order.ClientOrderId, StringComparison.Ordinal);
+        Assert.Null(result.Order.ClientOrderId);
     }
     [Fact]
     public async Task DispatchAsync_PersistsStableFailureCode_WhenBrokerRejectsWithExchangeMarginReason()
     {
-        await using var harness = CreateHarness(environmentName: Environments.Development);
+        await using var harness = CreateHarness(environmentName: Environments.Production);
         var strategyId = Guid.NewGuid();
         var exchangeAccountId = Guid.NewGuid();
         await SeedUserAsync(harness.DbContext, "user-margin-reject");
@@ -1373,11 +1494,11 @@ public sealed class ExecutionEngineTests
                 isDemo: null),
             CancellationToken.None);
 
-        Assert.Equal(ExecutionOrderState.Failed, result.Order.State);
+        Assert.Equal(ExecutionOrderState.Rejected, result.Order.State);
         Assert.Equal("FuturesMarginInsufficient", result.Order.FailureCode);
         Assert.Contains("-2019", result.Order.FailureDetail, StringComparison.Ordinal);
-        Assert.Equal(ExecutionRejectionStage.PostSubmit, result.Order.RejectionStage);
-        Assert.True(result.Order.SubmittedToBroker);
+        Assert.Equal(ExecutionRejectionStage.PreSubmit, result.Order.RejectionStage);
+        Assert.False(result.Order.SubmittedToBroker);
         Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
     }
 
@@ -1536,7 +1657,9 @@ public sealed class ExecutionEngineTests
         string environmentName = "Production",
         RecordingAlertDispatchCoordinator? alertDispatchCoordinator = null,
         bool enableRiskPolicyEvaluator = false,
-        bool allowInternalDemoExecution = true)
+        bool allowInternalDemoExecution = true,
+        BinanceFuturesTestnetOptions? testnetExecutionOptions = null,
+        FakeExchangeCredentialService? credentialService = null)
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -1674,7 +1797,7 @@ public sealed class ExecutionEngineTests
             riskPolicyEvaluator: riskPolicyEvaluator,
             botExecutionPilotOptions: Options.Create(pilotOptions),
             executionRuntimeOptions: executionRuntimeOptions);
-        var credentialService = new FakeExchangeCredentialService();
+        credentialService ??= new FakeExchangeCredentialService();
         var privateRestClient = new FakePrivateRestClient(timeProvider);
         var spotPrivateRestClient = new FakeSpotPrivateRestClient(timeProvider);
         var engine = new ExecutionEngine(
@@ -1693,7 +1816,13 @@ public sealed class ExecutionEngineTests
                 privateRestClient,
                 NullLogger<BinanceExecutor>.Instance,
                 marketDataService: marketDataService,
-                privateDataOptions: privateDataOptions),
+                privateDataOptions: privateDataOptions,
+                binanceFuturesTestnetOptions: Options.Create(testnetExecutionOptions ?? new BinanceFuturesTestnetOptions
+                {
+                    BaseUrl = privateDataOptions.Value.RestBaseUrl,
+                    ApiKey = "testnet-api-key",
+                    ApiSecret = "testnet-api-secret"
+                })),
             new BinanceSpotExecutor(
                 dbContext,
                 credentialService,
@@ -2189,6 +2318,12 @@ public sealed class ExecutionEngineTests
     {
         public int AccessCalls { get; private set; }
 
+        public string ApiKey { get; set; } = "api-key";
+
+        public string ApiSecret { get; set; } = "api-secret";
+
+        public Exception? AccessException { get; set; }
+
         public Task<ExchangeCredentialStateSnapshot> StoreAsync(
             StoreExchangeCredentialsRequest request,
             CancellationToken cancellationToken = default)
@@ -2202,10 +2337,15 @@ public sealed class ExecutionEngineTests
         {
             AccessCalls++;
 
+            if (AccessException is not null)
+            {
+                throw AccessException;
+            }
+
             return Task.FromResult(
                 new ExchangeCredentialAccessResult(
-                    "api-key",
-                    "api-secret",
+                    ApiKey,
+                    ApiSecret,
                     new ExchangeCredentialStateSnapshot(
                         request.ExchangeAccountId,
                         ExchangeCredentialStatus.Active,

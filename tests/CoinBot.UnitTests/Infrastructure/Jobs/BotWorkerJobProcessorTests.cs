@@ -117,6 +117,41 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_DispatchesBrokerBackedTestnetOrder_WhenExecutionDispatchModeIsBinanceTestnet()
+    {
+        await using var harness = CreateHarness(environmentName: Environments.Development);
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.SignalEvaluationMode = ExecutionEnvironment.Live;
+        harness.PilotOptions.ExecutionDispatchMode = ExecutionEnvironment.BinanceTestnet;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-testnet-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-testnet-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-testnet-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(ExecutionEnvironment.BinanceTestnet, persistedSignal.ExecutionEnvironment);
+        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.Equal(ExecutionEnvironment.BinanceTestnet, persistedOrder.ExecutionEnvironment);
+        Assert.Equal(ExecutionOrderExecutorKind.BinanceTestnet, persistedOrder.ExecutorKind);
+        Assert.Equal(1, harness.PrivateRestClient.EnsureMarginTypeCalls);
+        Assert.Equal(1, harness.PrivateRestClient.EnsureLeverageCalls);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal(0, harness.SpotPrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
     public async Task ProcessAsync_AllowsExplicitNonDevelopmentPilotHost_WhenConfigured()
     {
         await using var harness = CreateHarness(environmentName: Environments.Production);
@@ -209,6 +244,7 @@ public sealed class BotWorkerJobProcessorTests
         var bot = await SeedBotGraphAsync(harness.DbContext);
         ConfigurePilotScope(harness, bot);
         harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.ExecutionDispatchMode = ExecutionEnvironment.BinanceTestnet;
         await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-dup-1");
         await harness.SwitchService.SetTradeMasterStateAsync(
             TradeMasterSwitchState.Armed,
@@ -922,7 +958,7 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
-    public async Task ProcessAsync_PersistsSkippedEntryDecision_WhenReverseEntryIsRequestedAgainstOpenLongPosition()
+    public async Task ProcessAsync_ConvertsOpposingShortEntryIntoCloseOnlySellExit_WhenOpenLongPositionExists()
     {
         await using var harness = CreateHarness();
         var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
@@ -949,16 +985,18 @@ public sealed class BotWorkerJobProcessorTests
 
         var persistedSignal = await harness.DbContext.TradingStrategySignals
             .SingleAsync(entity => entity.SignalType == StrategySignalType.Entry);
-        var latestDecisionTrace = await harness.DbContext.DecisionTraces
-            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
-            .OrderByDescending(entity => entity.CreatedAtUtc)
-            .FirstAsync();
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
 
         Assert.True(result.IsSuccessful);
-        Assert.Empty(harness.DbContext.ExecutionOrders);
-        Assert.Equal("ReverseBlockedOpenPositionExists", latestDecisionTrace.DecisionReasonCode);
-        Assert.Contains("CurrentPositionDirection=Long", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
-        Assert.Contains("RequestedEntryDirection=Short", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Equal(StrategySignalType.Entry, persistedSignal.SignalType);
+        Assert.Equal(StrategySignalType.Exit, persistedOrder.SignalType);
+        Assert.Equal(ExecutionOrderSide.Sell, persistedOrder.Side);
+        Assert.True(persistedOrder.ReduceOnly);
+        Assert.Equal(0.125m, persistedOrder.Quantity);
+        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.Equal(ExecutionOrderSide.Sell, harness.PrivateRestClient.LastPlacementRequest?.Side);
+        Assert.True(harness.PrivateRestClient.LastPlacementRequest?.ReduceOnly);
+        Assert.Equal(0, harness.PrivateRestClient.EnsureMarginTypeCalls);
     }
 
     [Fact]
@@ -1030,7 +1068,7 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
-    public async Task ProcessAsync_PersistsSkippedEntryDecision_WhenReverseEntryIsRequestedAgainstOpenShortPosition()
+    public async Task ProcessAsync_ConvertsOpposingLongEntryIntoCloseOnlyBuyExit_WhenOpenShortPositionExists()
     {
         await using var harness = CreateHarness();
         var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
@@ -1059,14 +1097,18 @@ public sealed class BotWorkerJobProcessorTests
 
         var persistedSignal = await harness.DbContext.TradingStrategySignals
             .SingleAsync(entity => entity.SignalType == StrategySignalType.Entry);
-        var latestDecisionTrace = await harness.DbContext.DecisionTraces
-            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
-            .OrderByDescending(entity => entity.CreatedAtUtc)
-            .FirstAsync();
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
 
         Assert.True(result.IsSuccessful);
-        Assert.Empty(harness.DbContext.ExecutionOrders);
-        Assert.Equal("ReverseBlockedOpenPositionExists", latestDecisionTrace.DecisionReasonCode);
+        Assert.Equal(StrategySignalType.Entry, persistedSignal.SignalType);
+        Assert.Equal(StrategySignalType.Exit, persistedOrder.SignalType);
+        Assert.Equal(ExecutionOrderSide.Buy, persistedOrder.Side);
+        Assert.True(persistedOrder.ReduceOnly);
+        Assert.Equal(0.125m, persistedOrder.Quantity);
+        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.Equal(ExecutionOrderSide.Buy, harness.PrivateRestClient.LastPlacementRequest?.Side);
+        Assert.True(harness.PrivateRestClient.LastPlacementRequest?.ReduceOnly);
+        Assert.Equal(0, harness.PrivateRestClient.EnsureMarginTypeCalls);
     }
 
     [Fact]
@@ -2418,6 +2460,10 @@ public sealed class BotWorkerJobProcessorTests
             RestBaseUrl = "https://testnet.binance.example/futures-rest",
             WebSocketBaseUrl = "wss://testnet.binance.example/futures-private"
         });
+        var testnetOptions = Options.Create(new BinanceFuturesTestnetOptions
+        {
+            BaseUrl = privateDataOptions.Value.RestBaseUrl
+        });
         var marketDataOptions = Options.Create(new BinanceMarketDataOptions
         {
             RestBaseUrl = "https://testnet.binance.example/futures-market-rest",
@@ -2500,7 +2546,8 @@ public sealed class BotWorkerJobProcessorTests
                 privateRestClient,
                 NullLogger<BinanceExecutor>.Instance,
                 marketDataService: marketDataService,
-                privateDataOptions: privateDataOptions),
+                privateDataOptions: privateDataOptions,
+                binanceFuturesTestnetOptions: testnetOptions),
             new BinanceSpotExecutor(
                 dbContext,
                 credentialService,
@@ -3569,6 +3616,8 @@ public sealed class BotWorkerJobProcessorTests
 
         public string? LastPlacedClientOrderId { get; private set; }
 
+        public BinanceOrderPlacementRequest? LastPlacementRequest { get; private set; }
+
         public Task EnsureMarginTypeAsync(
             Guid exchangeAccountId,
             string symbol,
@@ -3600,6 +3649,7 @@ public sealed class BotWorkerJobProcessorTests
         {
             PlaceOrderCalls++;
             LastPlacedClientOrderId = request.ClientOrderId;
+            LastPlacementRequest = request;
 
             return Task.FromResult(
                 new BinanceOrderPlacementResult(

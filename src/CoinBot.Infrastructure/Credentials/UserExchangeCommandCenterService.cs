@@ -353,7 +353,7 @@ public sealed class UserExchangeCommandCenterService(
 
     private static UserExchangeEnvironmentSummary BuildEnvironmentSummary(TradingModeResolution resolution)
     {
-        var effectiveEnvironmentLabel = resolution.EffectiveMode == ExecutionEnvironment.Live ? "Live" : "Demo";
+        var effectiveEnvironmentLabel = ExecutionEnvironmentSemantics.ToOperatorLabel(resolution.EffectiveMode);
         var effectiveEnvironmentTone = resolution.EffectiveMode switch
         {
             ExecutionEnvironment.Live when resolution.HasExplicitLiveApproval => "warning",
@@ -570,7 +570,7 @@ public sealed class UserExchangeCommandCenterService(
         string spotEnvironmentScope,
         string futuresEnvironmentScope)
     {
-        var requestedEnvironmentLabel = requestedEnvironment == ExecutionEnvironment.Live ? "Live" : "Demo";
+        var requestedEnvironmentLabel = ExecutionEnvironmentSemantics.ToOperatorLabel(requestedEnvironment);
         return requestedTradeMode switch
         {
             ExchangeTradeModeSelection.Spot =>

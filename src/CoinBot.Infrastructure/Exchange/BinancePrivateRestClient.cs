@@ -53,15 +53,20 @@ public sealed class BinancePrivateRestClient(
         }
 
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        var exchangeCode = TryReadExchangeCode(responseBody);
+        var exchangeMessage = SanitizeExchangeMessage(TryReadExchangeMessage(responseBody));
 
-        if (string.Equals(TryReadExchangeCode(responseBody), "-4046", StringComparison.Ordinal))
+        if (IsMarginTypeAlreadyConfigured(exchangeCode, exchangeMessage))
         {
             return;
         }
 
-        await ThrowClockDriftAwareFailureAsync(
-            $"Binance margin type configuration failed with status {(int)response.StatusCode}.",
-            TryReadExchangeCode(responseBody),
+        await ThrowMarginTypeConfigurationFailureAsync(
+            (int)response.StatusCode,
+            normalizedSymbol,
+            normalizedMarginType,
+            exchangeCode,
+            exchangeMessage,
             responseBody,
             cancellationToken);
     }
@@ -664,6 +669,40 @@ public sealed class BinancePrivateRestClient(
         throw new InvalidOperationException(defaultMessage);
     }
 
+    private async Task ThrowMarginTypeConfigurationFailureAsync(
+        int httpStatusCode,
+        string symbol,
+        string requestedMarginType,
+        string? exchangeCode,
+        string? exchangeMessage,
+        string? responseBody,
+        CancellationToken cancellationToken)
+    {
+        if (IsClockDriftResponse(exchangeCode, responseBody))
+        {
+            await ThrowClockDriftAwareFailureAsync(
+                $"Binance margin type configuration failed with status {httpStatusCode}.",
+                exchangeCode,
+                responseBody,
+                cancellationToken);
+        }
+
+        var failureCode = IsMarginTypeChangeBlockedByOpenPosition(exchangeCode, exchangeMessage)
+            ? "BinanceMarginTypeChangeBlockedOpenPosition"
+            : "BinanceMarginTypeConfigurationFailed";
+        var safeDetail = BuildMarginTypeFailureDetail(
+            httpStatusCode,
+            symbol,
+            requestedMarginType,
+            exchangeCode,
+            exchangeMessage);
+        throw new BinanceExchangeRejectedException(
+            failureCode,
+            safeDetail,
+            exchangeCode,
+            httpStatusCode);
+    }
+
     private async Task ThrowOrderPlacementFailureAsync(
         int httpStatusCode,
         string? exchangeCode,
@@ -716,6 +755,34 @@ public sealed class BinancePrivateRestClient(
         return $"Binance futures order rejected with HTTP status {httpStatusCode}.";
     }
 
+    private static string BuildMarginTypeFailureDetail(
+        int httpStatusCode,
+        string symbol,
+        string requestedMarginType,
+        string? exchangeCode,
+        string? exchangeMessage)
+    {
+        var prefix =
+            $"Binance futures margin type request failed for {symbol} with requested margin type {requestedMarginType} and HTTP status {httpStatusCode}";
+
+        if (!string.IsNullOrWhiteSpace(exchangeCode) && !string.IsNullOrWhiteSpace(exchangeMessage))
+        {
+            return $"{prefix} (exchange code {exchangeCode}: {exchangeMessage}).";
+        }
+
+        if (!string.IsNullOrWhiteSpace(exchangeCode))
+        {
+            return $"{prefix} (exchange code {exchangeCode}).";
+        }
+
+        if (!string.IsNullOrWhiteSpace(exchangeMessage))
+        {
+            return $"{prefix} ({exchangeMessage}).";
+        }
+
+        return $"{prefix}.";
+    }
+
     private static string? SanitizeExchangeMessage(string? exchangeMessage)
     {
         if (string.IsNullOrWhiteSpace(exchangeMessage))
@@ -736,6 +803,24 @@ public sealed class BinancePrivateRestClient(
             : normalized.Length <= 180
                 ? normalized
                 : normalized[..180];
+    }
+
+    private static bool IsMarginTypeAlreadyConfigured(string? exchangeCode, string? exchangeMessage)
+    {
+        return string.Equals(exchangeCode, "-4046", StringComparison.Ordinal) ||
+               exchangeMessage?.Contains("no need to change margin type", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    private static bool IsMarginTypeChangeBlockedByOpenPosition(string? exchangeCode, string? exchangeMessage)
+    {
+        if (string.Equals(exchangeCode, "-4048", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return exchangeMessage?.Contains("open position", StringComparison.OrdinalIgnoreCase) == true ||
+               exchangeMessage?.Contains("position exists", StringComparison.OrdinalIgnoreCase) == true ||
+               exchangeMessage?.Contains("quantity exists", StringComparison.OrdinalIgnoreCase) == true;
     }
 
     private static string ComputeSignature(string payload, string secret)

@@ -148,6 +148,7 @@ public sealed class ExecutionEngine(
         }
 
         var executor = ResolveExecutor(requestedEnvironment, executionPlane);
+        var executorKind = ResolveExecutorKind(requestedEnvironment, executor.Kind);
         var utcNow = timeProvider.GetUtcNow().UtcDateTime;
         var order = new ExecutionOrder
         {
@@ -173,7 +174,7 @@ public sealed class ExecutionEngine(
             ReduceOnly = normalizedCommand.ReduceOnly,
             ReplacesExecutionOrderId = normalizedCommand.ReplacesExecutionOrderId,
             ExecutionEnvironment = requestedEnvironment,
-            ExecutorKind = executor.Kind,
+            ExecutorKind = executorKind,
             IdempotencyKey = idempotencyKey,
             RootCorrelationId = rootCorrelationId,
             ParentCorrelationId = NormalizeOptional(normalizedCommand.ParentCorrelationId),
@@ -271,7 +272,10 @@ public sealed class ExecutionEngine(
 
                 if (overrideEvaluation.IsBlocked)
                 {
-                    order.FailureCode = overrideEvaluation.BlockCode;
+                    order.FailureCode = ResolveIntentAwareFailureCode(
+                        normalizedCommand.Context,
+                        overrideEvaluation.BlockCode,
+                        riskBlocked: overrideEvaluation.RiskEvaluation?.IsVetoed ?? false);
                     order.FailureDetail = Truncate(overrideEvaluation.Message, 512);
                     ApplyPreSubmitRejectionMetadata(order);
 
@@ -317,9 +321,9 @@ public sealed class ExecutionEngine(
                                     strategyKey = order.StrategyKey,
                                     decisionOutcome = "Blocked",
                                     decisionReasonType = "UserExecutionOverride",
-                                    decisionReasonCode = overrideEvaluation.BlockCode,
-                                    blockCode = overrideEvaluation.BlockCode,
-                                    blockerCode = overrideEvaluation.BlockCode,
+                                    decisionReasonCode = order.FailureCode,
+                                    blockCode = order.FailureCode,
+                                    blockerCode = order.FailureCode,
                                     blockerSummary = overrideEvaluation.Message,
                                     guardSummary = overrideEvaluation.Message,
                                     message = overrideEvaluation.Message,
@@ -341,13 +345,13 @@ public sealed class ExecutionEngine(
                 }
             }
 
-            order.SubmittedToBroker = true;
             order.RejectionStage = ExecutionRejectionStage.None;
             order.RetryEligible = false;
             order.CooldownApplied = false;
             await dbContext.SaveChangesAsync(cancellationToken);
 
             var dispatchResult = await executor.DispatchAsync(order, normalizedCommand, cancellationToken);
+            order.SubmittedToBroker = true;
             order.ExternalOrderId = NormalizeOptional(dispatchResult.ExternalOrderId);
             order.SubmittedAtUtc = dispatchResult.SubmittedAtUtc;
             order.CooldownApplied = true;
@@ -442,7 +446,9 @@ public sealed class ExecutionEngine(
         }
         catch (ExecutionValidationException exception)
         {
-            order.FailureCode = exception.ReasonCode;
+            order.FailureCode = ResolveIntentAwareFailureCode(
+                normalizedCommand.Context,
+                exception.ReasonCode);
             order.FailureDetail = Truncate(exception.Message, 512);
             ApplyPreSubmitRejectionMetadata(order);
 
@@ -489,9 +495,9 @@ public sealed class ExecutionEngine(
                             strategyKey = order.StrategyKey,
                             decisionOutcome = "Rejected",
                             decisionReasonType = "Validation",
-                            decisionReasonCode = exception.ReasonCode,
-                            reasonCode = exception.ReasonCode,
-                            blockerCode = exception.ReasonCode,
+                            decisionReasonCode = order.FailureCode,
+                            reasonCode = order.FailureCode,
+                            blockerCode = order.FailureCode,
                             blockerSummary = exception.Message,
                             message = exception.Message,
                             side = order.Side.ToString(),
@@ -505,7 +511,9 @@ public sealed class ExecutionEngine(
         }
         catch (ExecutionGateRejectedException exception)
         {
-            order.FailureCode = exception.Reason.ToString();
+            order.FailureCode = ResolveIntentAwareFailureCode(
+                normalizedCommand.Context,
+                exception.Reason.ToString());
             order.FailureDetail = Truncate(exception.Message, 512);
             ApplyPreSubmitRejectionMetadata(order);
 
@@ -551,9 +559,9 @@ public sealed class ExecutionEngine(
                             strategyKey = order.StrategyKey,
                             decisionOutcome = "Rejected",
                             decisionReasonType = "ExecutionGate",
-                            decisionReasonCode = exception.Reason.ToString(),
-                            reason = exception.Reason.ToString(),
-                            blockerCode = exception.Reason.ToString(),
+                            decisionReasonCode = order.FailureCode,
+                            reason = order.FailureCode,
+                            blockerCode = order.FailureCode,
                             blockerSummary = exception.Message,
                             message = exception.Message,
                             environment = order.ExecutionEnvironment.ToString(),
@@ -1085,24 +1093,28 @@ public sealed class ExecutionEngine(
         ExecutionEnvironment requestedEnvironment,
         CancellationToken cancellationToken)
     {
-        ValidateRuntimeDemoExecution(command, requestedEnvironment);
+        ValidateRuntimeDispatchEnvironment(command, requestedEnvironment);
         ValidateProtectiveTargets(command);
         await ValidateReduceOnlyOrderAsync(command, requestedEnvironment, command.Plane, cancellationToken);
     }
 
-    private void ValidateRuntimeDemoExecution(ExecutionCommand command, ExecutionEnvironment requestedEnvironment)
+    private void ValidateRuntimeDispatchEnvironment(ExecutionCommand command, ExecutionEnvironment requestedEnvironment)
     {
-        if (requestedEnvironment != ExecutionEnvironment.Demo ||
-            runtimeOptionsValue.AllowInternalDemoExecution)
+        if (ExecutionEnvironmentSemantics.UsesInternalDemoExecution(
+                requestedEnvironment,
+                runtimeOptionsValue.AllowInternalDemoExecution))
         {
             return;
         }
 
-        if (command.Plane != ExchangeDataPlane.Futures)
+        if (ExecutionEnvironmentSemantics.UsesBrokerBackedTestnet(
+                requestedEnvironment,
+                runtimeOptionsValue.AllowInternalDemoExecution) &&
+            command.Plane != ExchangeDataPlane.Futures)
         {
             throw new ExecutionValidationException(
-                "RuntimeDemoFuturesOnly",
-                "Execution blocked because runtime demo execution requires Binance USD-M futures.");
+                "RuntimeTestnetFuturesOnly",
+                "Execution blocked because Binance Futures testnet execution requires Binance USD-M futures.");
         }
     }
 
@@ -1117,7 +1129,7 @@ public sealed class ExecutionEngine(
             return;
         }
 
-        if (requestedEnvironment == ExecutionEnvironment.Live &&
+        if (ExecutionEnvironmentSemantics.IsLiveLike(requestedEnvironment) &&
             plane == ExchangeDataPlane.Spot)
         {
             throw new ExecutionValidationException(
@@ -1326,15 +1338,28 @@ public sealed class ExecutionEngine(
     {
         return UsesInternalDemoExecution(requestedEnvironment)
             ? virtualExecutor
-            : plane == ExchangeDataPlane.Spot
+            : requestedEnvironment == ExecutionEnvironment.BinanceTestnet
+                ? binanceExecutor
+                : plane == ExchangeDataPlane.Spot
                 ? binanceSpotExecutor
                 : binanceExecutor;
     }
 
+    private static ExecutionOrderExecutorKind ResolveExecutorKind(
+        ExecutionEnvironment requestedEnvironment,
+        ExecutionOrderExecutorKind executorKind)
+    {
+        return requestedEnvironment == ExecutionEnvironment.BinanceTestnet &&
+               executorKind == ExecutionOrderExecutorKind.Binance
+            ? ExecutionOrderExecutorKind.BinanceTestnet
+            : executorKind;
+    }
+
     private bool UsesInternalDemoExecution(ExecutionEnvironment requestedEnvironment)
     {
-        return requestedEnvironment == ExecutionEnvironment.Demo &&
-            runtimeOptionsValue.AllowInternalDemoExecution;
+        return ExecutionEnvironmentSemantics.UsesInternalDemoExecution(
+            requestedEnvironment,
+            runtimeOptionsValue.AllowInternalDemoExecution);
     }
 
     private static DemoTradeSide MapTradeSide(ExecutionOrderSide side)
@@ -1455,6 +1480,25 @@ public sealed class ExecutionEngine(
         ExecutionCommand command,
         CancellationToken cancellationToken)
     {
+        if (command.RequestedEnvironment.HasValue)
+        {
+            if (command.IsDemo.HasValue)
+            {
+                var legacyRequestedEnvironment = command.IsDemo.Value
+                    ? ExecutionEnvironment.Demo
+                    : ExecutionEnvironment.Live;
+
+                if (legacyRequestedEnvironment != command.RequestedEnvironment.Value)
+                {
+                    throw new ExecutionValidationException(
+                        "RequestedEnvironmentConflict",
+                        "Execution blocked because RequestedEnvironment conflicts with the legacy IsDemo flag.");
+                }
+            }
+
+            return command.RequestedEnvironment.Value;
+        }
+
         if (command.IsDemo.HasValue)
         {
             return command.IsDemo.Value
@@ -1561,7 +1605,7 @@ public sealed class ExecutionEngine(
             command.ReduceOnly ? "true" : "false",
             command.BotId?.ToString("N") ?? "none",
             command.ExchangeAccountId?.ToString("N") ?? "none",
-            command.IsDemo?.ToString() ?? "auto",
+            command.RequestedEnvironment?.ToString() ?? command.IsDemo?.ToString() ?? "auto",
             command.ReplacesExecutionOrderId?.ToString("N") ?? "none");
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
 
@@ -1586,6 +1630,53 @@ public sealed class ExecutionEngine(
         }
 
         return string.Join(" | ", contextParts);
+    }
+
+    private static string? ReadContextValue(string? context, string key)
+    {
+        if (string.IsNullOrWhiteSpace(context))
+        {
+            return null;
+        }
+
+        var prefix = $"{key}=";
+        var segments = context.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        foreach (var segment in segments)
+        {
+            if (segment.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return segment[prefix.Length..].Trim();
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsExitCloseOnlyIntent(string? context)
+    {
+        return string.Equals(ReadContextValue(context, "ExecutionIntent"), "ExitCloseOnly", StringComparison.Ordinal);
+    }
+
+    private static string? ResolveIntentAwareFailureCode(string? context, string? failureCode, bool riskBlocked = false)
+    {
+        if (!IsExitCloseOnlyIntent(context))
+        {
+            return failureCode;
+        }
+
+        if (riskBlocked)
+        {
+            return "ExitCloseOnlyBlockedRisk";
+        }
+
+        return failureCode switch
+        {
+            nameof(ExecutionGateBlockedReason.PrivatePlaneStale) => "ExitCloseOnlyBlockedPrivatePlaneStale",
+            "ReduceOnlyWithoutOpenPosition" => "ExitCloseOnlyBlockedNoOpenPosition",
+            "ReduceOnlyQuantityInvalid" or "ReduceOnlyQuantityExceedsOpenPosition" or "ReduceOnlyWouldIncreaseExposure" => "ExitCloseOnlyBlockedQuantityInvalid",
+            _ => failureCode
+        };
     }
 
     private static ExchangeDataPlane ResolveExecutionPlane(
@@ -1725,15 +1816,21 @@ public sealed class ExecutionEngine(
         }
 
         if (!string.IsNullOrWhiteSpace(order.ExternalOrderId) &&
-            order.ExecutionEnvironment == ExecutionEnvironment.Demo)
+            ExecutionEnvironmentSemantics.UsesBrokerBackedTestnet(
+                order.ExecutionEnvironment,
+                runtimeOptionsValue.AllowInternalDemoExecution))
         {
             return Truncate(order.ExternalOrderId, 128);
         }
 
         if (order.SubmittedToBroker &&
-            order.ExecutionEnvironment == ExecutionEnvironment.Live)
+            ExecutionEnvironmentSemantics.IsBrokerBacked(
+                order.ExecutionEnvironment,
+                runtimeOptionsValue.AllowInternalDemoExecution))
         {
-            return hostEnvironment?.IsDevelopment() == true &&
+            return ExecutionEnvironmentSemantics.UsesBrokerBackedTestnet(
+                    order.ExecutionEnvironment,
+                    runtimeOptionsValue.AllowInternalDemoExecution) &&
                 order.Plane == ExchangeDataPlane.Futures
                 ? ExecutionClientOrderId.CreateDevelopmentFuturesPilot(order.Id)
                 : ExecutionClientOrderId.Create(order.Id);
@@ -1824,9 +1921,11 @@ public sealed class ExecutionEngine(
     private string ResolveExecutionEnvironmentLabel(ExecutionEnvironment executionEnvironment)
     {
         var runtimeLabel = hostEnvironment?.EnvironmentName ?? "Unknown";
-        var executionLabel = hostEnvironment?.IsDevelopment() == true && executionEnvironment == ExecutionEnvironment.Live
-            ? "Testnet"
-            : executionEnvironment.ToString();
+        var executionLabel = executionEnvironment switch
+        {
+            ExecutionEnvironment.BinanceTestnet => "Testnet",
+            _ => executionEnvironment.ToString()
+        };
 
         return $"{runtimeLabel}/{executionLabel}";
     }

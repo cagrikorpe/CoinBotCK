@@ -41,9 +41,11 @@ public sealed class ExecutionReconciliationService(
             .Where(entity =>
                 !entity.IsDeleted &&
                 (entity.ExecutionEnvironment == ExecutionEnvironment.Live ||
+                 entity.ExecutionEnvironment == ExecutionEnvironment.BinanceTestnet ||
                  (includeBrokerBackedDemoOrders &&
                   entity.ExecutionEnvironment == ExecutionEnvironment.Demo)) &&
-                entity.ExecutorKind == ExecutionOrderExecutorKind.Binance &&
+                (entity.ExecutorKind == ExecutionOrderExecutorKind.Binance ||
+                 entity.ExecutorKind == ExecutionOrderExecutorKind.BinanceTestnet) &&
                 entity.ExchangeAccountId.HasValue &&
                 (OpenStates.Contains(entity.State) ||
                  (entity.SubmittedToBroker &&

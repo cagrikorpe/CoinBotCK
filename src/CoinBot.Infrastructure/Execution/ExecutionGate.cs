@@ -235,15 +235,16 @@ public sealed class ExecutionGate(
 
         DemoSessionSnapshot? demoSessionSnapshot = null;
 
-        if (request.Environment == ExecutionEnvironment.Demo &&
-            executionRuntimeOptionsValue.AllowInternalDemoExecution &&
+        if (ExecutionEnvironmentSemantics.UsesInternalDemoExecution(
+                request.Environment,
+                executionRuntimeOptionsValue.AllowInternalDemoExecution) &&
             !string.IsNullOrWhiteSpace(request.UserId))
         {
             demoSessionSnapshot = await demoSessionService.RunConsistencyCheckAsync(request.UserId, cancellationToken);
             demoSessionSnapshot ??= await demoSessionService.ResetAsync(
                 new DemoSessionResetRequest(
                     request.UserId,
-                    ExecutionEnvironment.Demo,
+                    request.Environment,
                     request.Actor,
                     "Auto-bootstrap demo session for execution request.",
                     request.CorrelationId),
@@ -563,7 +564,7 @@ public sealed class ExecutionGate(
         }
 
         if (!pilotOptionsValue.Enabled ||
-            request.Environment != ExecutionEnvironment.Live ||
+            !ExecutionEnvironmentSemantics.IsLiveLike(request.Environment) ||
             request.Plane != ExchangeDataPlane.Futures ||
             string.IsNullOrWhiteSpace(request.UserId) ||
             !request.BotId.HasValue ||
@@ -824,7 +825,7 @@ public sealed class ExecutionGate(
             return ExecutionGateBlockedReason.TradeMasterDisarmed;
         }
 
-        if (requestedEnvironment == ExecutionEnvironment.Live &&
+        if (ExecutionEnvironmentSemantics.IsLiveLike(requestedEnvironment) &&
             snapshot.DemoModeEnabled &&
             !allowDevelopmentFuturesPilotOverride)
         {
@@ -1478,7 +1479,6 @@ public sealed class ExecutionGate(
         return false;
     }
 }
-
 
 
 

@@ -64,6 +64,11 @@ public sealed class BotWorkerJobProcessor(
     private const string EntrySupersededByRuntimeExitQualityDecisionCode = "EntrySupersededByRuntimeExitQuality";
     private const string ReverseBlockedOpenPositionExistsDecisionCode = "ReverseBlockedOpenPositionExists";
     private const string EntryDirectionModeBlockedDecisionCode = "EntryDirectionModeBlocked";
+    private const string ExitCloseOnlyIntentCode = "ExitCloseOnly";
+    private const string ExitCloseOnlyBlockedPrivatePlaneStaleDecisionCode = "ExitCloseOnlyBlockedPrivatePlaneStale";
+    private const string ExitCloseOnlyBlockedRiskDecisionCode = "ExitCloseOnlyBlockedRisk";
+    private const string ExitCloseOnlyBlockedNoOpenPositionDecisionCode = "ExitCloseOnlyBlockedNoOpenPosition";
+    private const string ExitCloseOnlyBlockedQuantityInvalidDecisionCode = "ExitCloseOnlyBlockedQuantityInvalid";
 
     private static readonly JsonSerializerOptions SerializerOptions = CreateSerializerOptions();
 
@@ -430,6 +435,55 @@ public sealed class BotWorkerJobProcessor(
         var entryDirection = signal.SignalType == StrategySignalType.Entry
             ? ResolveSignalDirection(signal)
             : StrategyTradeDirection.Neutral;
+        CloseOnlyExecutionIntent? closeOnlyIntent = null;
+
+        if (signal.SignalType == StrategySignalType.Entry &&
+            currentNetQuantity != 0m &&
+            IsActionableDirection(entryDirection))
+        {
+            var currentPositionDirection = currentPosition?.Direction
+                ?? (currentNetQuantity > 0m ? StrategyTradeDirection.Long : StrategyTradeDirection.Short);
+
+            if (currentPositionDirection == entryDirection)
+            {
+                await WriteEntrySkippedDecisionTraceAsync(
+                    bot.OwnerUserId,
+                    publishedVersion,
+                    signal,
+                    correlationId,
+                    strategyDecisionTrace,
+                    $"Entry signal was suppressed because an open {entryDirection.ToString().ToLowerInvariant()} position already exists for {signal.Symbol} on the selected exchange account.",
+                    currentNetQuantity,
+                    cancellationToken,
+                    decisionReasonCode: ResolveSameDirectionEntrySuppressedDecisionCode(entryDirection),
+                    referencePrice: marketState.ReferencePrice);
+
+                logger.LogInformation(
+                    "Bot execution pilot suppressed same-direction entry for BotId {BotId} because an open {Direction} position already exists for {Symbol}. StrategySignalId={StrategySignalId}.",
+                    bot.Id,
+                    entryDirection,
+                    signal.Symbol,
+                    signal.StrategySignalId);
+                return BackgroundJobProcessResult.Success();
+            }
+
+            closeOnlyIntent = new CloseOnlyExecutionIntent(
+                CurrentPositionDirection: currentPositionDirection,
+                OpenPositionQuantity: currentNetQuantity,
+                CloseSide: currentPositionDirection == StrategyTradeDirection.Long
+                    ? ExecutionOrderSide.Sell
+                    : ExecutionOrderSide.Buy);
+            signal = signal with { SignalType = StrategySignalType.Exit };
+            entryDirection = StrategyTradeDirection.Neutral;
+
+            logger.LogInformation(
+                "Bot execution pilot converted an opposing entry into a close-only exit candidate. BotId={BotId} Symbol={Symbol} CurrentPositionDirection={CurrentDirection} CloseSide={CloseSide} StrategySignalId={StrategySignalId}.",
+                bot.Id,
+                signal.Symbol,
+                closeOnlyIntent.CurrentPositionDirection,
+                closeOnlyIntent.CloseSide,
+                signal.StrategySignalId);
+        }
 
         if (signal.SignalType == StrategySignalType.Entry &&
             TryResolveEntryDirectionModeBlock(
@@ -542,58 +596,6 @@ public sealed class BotWorkerJobProcessor(
             return BackgroundJobProcessResult.Success();
         }
 
-        if (signal.SignalType == StrategySignalType.Entry &&
-            currentNetQuantity != 0m &&
-            IsActionableDirection(entryDirection))
-        {
-            var currentPositionDirection = currentPosition?.Direction
-                ?? (currentNetQuantity > 0m ? StrategyTradeDirection.Long : StrategyTradeDirection.Short);
-
-            if (currentPositionDirection == entryDirection)
-            {
-                await WriteEntrySkippedDecisionTraceAsync(
-                    bot.OwnerUserId,
-                    publishedVersion,
-                    signal,
-                    correlationId,
-                    strategyDecisionTrace,
-                    $"Entry signal was suppressed because an open {entryDirection.ToString().ToLowerInvariant()} position already exists for {signal.Symbol} on the selected exchange account.",
-                    currentNetQuantity,
-                    cancellationToken,
-                    decisionReasonCode: ResolveSameDirectionEntrySuppressedDecisionCode(entryDirection),
-                    referencePrice: marketState.ReferencePrice);
-
-                logger.LogInformation(
-                    "Bot execution pilot suppressed same-direction entry for BotId {BotId} because an open {Direction} position already exists for {Symbol}. StrategySignalId={StrategySignalId}.",
-                    bot.Id,
-                    entryDirection,
-                    signal.Symbol,
-                    signal.StrategySignalId);
-                return BackgroundJobProcessResult.Success();
-            }
-
-            await WriteEntrySkippedDecisionTraceAsync(
-                bot.OwnerUserId,
-                publishedVersion,
-                signal,
-                correlationId,
-                strategyDecisionTrace,
-                $"Entry signal was suppressed because reverse entries are disabled. CurrentPositionDirection={currentPositionDirection}; RequestedEntryDirection={entryDirection}; Symbol={signal.Symbol}.",
-                currentNetQuantity,
-                cancellationToken,
-                decisionReasonCode: ReverseBlockedOpenPositionExistsDecisionCode,
-                referencePrice: marketState.ReferencePrice);
-
-            logger.LogInformation(
-                "Bot execution pilot suppressed reverse entry for BotId {BotId} because reverse flow is disabled. CurrentPositionDirection={CurrentDirection} RequestedEntryDirection={RequestedDirection} Symbol={Symbol} StrategySignalId={StrategySignalId}.",
-                bot.Id,
-                currentPositionDirection,
-                entryDirection,
-                signal.Symbol,
-                signal.StrategySignalId);
-            return BackgroundJobProcessResult.Success();
-        }
-
         PilotDispatchPlan dispatchPlan;
 
         try
@@ -614,12 +616,20 @@ public sealed class BotWorkerJobProcessor(
                 (string.Equals(exception.ReasonCode, "ReduceOnlyWithoutOpenPosition", StringComparison.Ordinal) ||
                  string.Equals(exception.ReasonCode, "ReduceOnlyQuantityInvalid", StringComparison.Ordinal)))
             {
-                var decisionReasonCode = string.Equals(exception.ReasonCode, "ReduceOnlyQuantityInvalid", StringComparison.Ordinal)
-                    ? NoClosableQuantityForExitDecisionCode
-                    : NoOpenPositionForExitDecisionCode;
+                var decisionReasonCode = closeOnlyIntent is not null
+                    ? string.Equals(exception.ReasonCode, "ReduceOnlyQuantityInvalid", StringComparison.Ordinal)
+                        ? ExitCloseOnlyBlockedQuantityInvalidDecisionCode
+                        : ExitCloseOnlyBlockedNoOpenPositionDecisionCode
+                    : string.Equals(exception.ReasonCode, "ReduceOnlyQuantityInvalid", StringComparison.Ordinal)
+                        ? NoClosableQuantityForExitDecisionCode
+                        : NoOpenPositionForExitDecisionCode;
                 var decisionSummary = string.Equals(exception.ReasonCode, "ReduceOnlyQuantityInvalid", StringComparison.Ordinal)
-                    ? $"Exit signal was skipped because no closable reduce-only quantity could be resolved for {signal.Symbol} on the selected exchange account."
-                    : $"Exit signal was skipped because no open position exists for {signal.Symbol} on the selected exchange account.";
+                    ? closeOnlyIntent is not null
+                        ? $"Close-only exit candidate was skipped because no valid reduce-only quantity could be resolved for {signal.Symbol} on the selected exchange account."
+                        : $"Exit signal was skipped because no closable reduce-only quantity could be resolved for {signal.Symbol} on the selected exchange account."
+                    : closeOnlyIntent is not null
+                        ? $"Close-only exit candidate was skipped because no open position exists for {signal.Symbol} on the selected exchange account."
+                        : $"Exit signal was skipped because no open position exists for {signal.Symbol} on the selected exchange account.";
 
                 await WriteExitSkippedDecisionTraceAsync(
                     bot.OwnerUserId,
@@ -797,11 +807,14 @@ public sealed class BotWorkerJobProcessor(
             return BackgroundJobProcessResult.Success();
         }
 
-        var pilotExecutionContext = BuildPilotExecutionContext(
-            marginType!,
-            leverage!.Value,
-            pilotActivationEnabled,
-            executionDispatchMode);
+        var pilotExecutionContext = AppendExecutionIntentContext(
+            BuildPilotExecutionContext(
+                marginType!,
+                leverage!.Value,
+                pilotActivationEnabled,
+                executionDispatchMode),
+            closeOnlyIntent,
+            dispatchPlan);
         var preSubmitPilotEvaluation = await userExecutionOverrideGuard.EvaluateAsync(
             new UserExecutionOverrideEvaluationRequest(
                 bot.OwnerUserId,
@@ -818,9 +831,9 @@ public sealed class BotWorkerJobProcessor(
                 signal.Timeframe,
                 CurrentExecutionOrderId: null,
                 ReplacesExecutionOrderId: null,
-                ExchangeDataPlane.Futures,
-                exchangeAccount.Id,
-                dispatchPlan.ReduceOnly),
+                Plane: ExchangeDataPlane.Futures,
+                ExchangeAccountId: exchangeAccount.Id,
+                ReduceOnly: dispatchPlan.ReduceOnly),
             cancellationToken);
 
         if (TryResolveCooldownSkip(preSubmitPilotEvaluation, out var cooldownReasonCode, out var cooldownSummary))
@@ -882,7 +895,9 @@ public sealed class BotWorkerJobProcessor(
 
         if (preSubmitPilotEvaluation.IsBlocked)
         {
-            var blockCode = preSubmitPilotEvaluation.BlockCode ?? "UserExecutionOverrideBlocked";
+            var blockCode = closeOnlyIntent is not null && (preSubmitPilotEvaluation.RiskEvaluation?.IsVetoed ?? false)
+                ? ExitCloseOnlyBlockedRiskDecisionCode
+                : preSubmitPilotEvaluation.BlockCode ?? "UserExecutionOverrideBlocked";
             var blockSummary = preSubmitPilotEvaluation.Message ?? "Execution blocked by user execution override guard.";
 
             if (signal.SignalType == StrategySignalType.Exit)
@@ -946,12 +961,13 @@ public sealed class BotWorkerJobProcessor(
                     Price: marketState.ReferencePrice.Value,
                     BotId: bot.Id,
                     ExchangeAccountId: exchangeAccount.Id,
-                    IsDemo: executionDispatchMode == ExecutionEnvironment.Demo,
+                    IsDemo: executionDispatchMode == ExecutionEnvironment.Demo ? true : null,
                     IdempotencyKey: $"{idempotencyKey}:{signal.StrategySignalId:N}",
                     CorrelationId: null,
                     ParentCorrelationId: null,
                     Context: pilotExecutionContext,
-                    ReduceOnly: dispatchPlan.ReduceOnly),
+                    ReduceOnly: dispatchPlan.ReduceOnly,
+                    RequestedEnvironment: executionDispatchMode),
                 cancellationToken);
 
             logger.LogInformation(
@@ -3001,7 +3017,7 @@ public sealed class BotWorkerJobProcessor(
                 timeframe,
                 CurrentExecutionOrderId: null,
                 ReplacesExecutionOrderId: null,
-                ExchangeDataPlane.Futures),
+                Plane: ExchangeDataPlane.Futures),
             cancellationToken);
         var riskVetoReason = NormalizeRiskVetoReason(overrideEvaluation.RiskEvaluation);
         var riskVetoSummary = NormalizeRiskVetoSummary(overrideEvaluation.RiskEvaluation);
@@ -3537,6 +3553,20 @@ public sealed class BotWorkerJobProcessor(
             $"DevelopmentFuturesTestnetPilot=True | PilotActivationEnabled={pilotActivationEnabled} | PilotMarginType={marginType} | PilotLeverage={leverage:0.########}");
     }
 
+    private static string AppendExecutionIntentContext(
+        string baseContext,
+        CloseOnlyExecutionIntent? closeOnlyIntent,
+        PilotDispatchPlan dispatchPlan)
+    {
+        if (closeOnlyIntent is null)
+        {
+            return baseContext;
+        }
+
+        return FormattableString.Invariant(
+            $"{baseContext} | ExecutionIntent={ExitCloseOnlyIntentCode} | OpenPositionQuantity={closeOnlyIntent.OpenPositionQuantity:0.########} | CloseQuantity={dispatchPlan.Quantity:0.########} | CloseSide={closeOnlyIntent.CloseSide} | ReduceOnly={dispatchPlan.ReduceOnly} | AutoReverse=False");
+    }
+
     private sealed record ShadowHypotheticalEvaluation(
         bool SubmitAllowed,
         string? BlockReason,
@@ -3705,6 +3735,11 @@ public sealed class BotWorkerJobProcessor(
         CircuitBreakerStateCode StateCode,
         DateTime? CooldownUntilUtc,
         string? LastErrorCode);
+
+    private sealed record CloseOnlyExecutionIntent(
+        StrategyTradeDirection CurrentPositionDirection,
+        decimal OpenPositionQuantity,
+        ExecutionOrderSide CloseSide);
 
     private sealed record PilotDispatchPlan(
         ExecutionOrderSide Side,

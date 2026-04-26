@@ -81,7 +81,7 @@ public sealed class UserExecutionOverrideGuard(
             }
         }
 
-        if (request.Environment == ExecutionEnvironment.Live)
+        if (ExecutionEnvironmentSemantics.IsLiveLike(request.Environment))
         {
             var resolution = await tradingModeResolver.ResolveAsync(
                 new TradingModeResolutionRequest(
@@ -90,7 +90,7 @@ public sealed class UserExecutionOverrideGuard(
                     request.StrategyKey),
                 cancellationToken);
 
-            if (resolution.EffectiveMode != ExecutionEnvironment.Live &&
+            if (!ExecutionEnvironmentSemantics.IsLiveLike(resolution.EffectiveMode) &&
                 !pilotContextRequested)
             {
                 return Block(
@@ -302,7 +302,7 @@ public sealed class UserExecutionOverrideGuard(
         var allowedBotIds = optionsValue.ResolveNormalizedAllowedBotIds();
         var allowedSymbols = ResolveConfiguredPilotSymbols();
 
-        if (request.Environment != ExecutionEnvironment.Live)
+        if (!ExecutionEnvironmentSemantics.IsLiveLike(request.Environment))
         {
             blockedReasons.Add("UserExecutionPilotEnvironmentInvalid");
         }
@@ -573,7 +573,7 @@ public sealed class UserExecutionOverrideGuard(
         ExecutionOrderSide side,
         CancellationToken cancellationToken)
     {
-        if (environment == ExecutionEnvironment.Live &&
+        if (ExecutionEnvironmentSemantics.IsLiveLike(environment) &&
             plane == ExchangeDataPlane.Spot)
         {
             return false;
@@ -620,8 +620,9 @@ public sealed class UserExecutionOverrideGuard(
 
     private bool UsesInternalDemoExecution(ExecutionEnvironment environment)
     {
-        return environment == ExecutionEnvironment.Demo &&
-            executionRuntimeOptionsValue.AllowInternalDemoExecution;
+        return ExecutionEnvironmentSemantics.UsesInternalDemoExecution(
+            environment,
+            executionRuntimeOptionsValue.AllowInternalDemoExecution);
     }
 
     private static decimal ResolveSignedOrderQuantity(ExecutionOrder entity)

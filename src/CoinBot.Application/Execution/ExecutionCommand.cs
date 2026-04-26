@@ -33,4 +33,5 @@ public sealed record ExecutionCommand(
     string? AdministrativeOverrideReason = null,
     ExchangeDataPlane Plane = ExchangeDataPlane.Futures,
     decimal? QuoteQuantity = null,
-    string? TimeInForce = null);
+    string? TimeInForce = null,
+    ExecutionEnvironment? RequestedEnvironment = null);

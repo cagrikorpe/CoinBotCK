@@ -688,6 +688,137 @@ public sealed class MarketScannerHandoffIntegrationTests
     }
 
     [Fact]
+    public async Task MarketScannerHandoffService_PersistsPreparedAttempt_WithExplicitBinanceTestnetDispatchMode_OnSqlServer()
+    {
+        var databaseName = $"CoinBotMarketScannerHandoffTestnetInt_{Guid.NewGuid():N}";
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString(databaseName);
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlServer(connectionString).Options;
+        await using var dbContext = new ApplicationDbContext(options, new TestDataScopeContextAccessor());
+        await dbContext.Database.EnsureDeletedAsync();
+        await dbContext.Database.EnsureCreatedAsync();
+
+        try
+        {
+            var scanCycleId = Guid.NewGuid();
+            var strategyId = Guid.NewGuid();
+            var strategyVersionId = Guid.NewGuid();
+            var botId = Guid.NewGuid();
+            dbContext.Users.Add(new ApplicationUser
+            {
+                Id = "user-testnet",
+                UserName = "user-testnet",
+                NormalizedUserName = "USER-TESTNET",
+                Email = "user-testnet@coinbot.test",
+                NormalizedEmail = "USER-TESTNET@COINBOT.TEST",
+                FullName = "Scanner Handoff Testnet User"
+            });
+            dbContext.MarketScannerCycles.Add(new MarketScannerCycle
+            {
+                Id = scanCycleId,
+                StartedAtUtc = nowUtc.UtcDateTime.AddSeconds(-2),
+                CompletedAtUtc = nowUtc.UtcDateTime,
+                UniverseSource = "integration-test",
+                ScannedSymbolCount = 1,
+                EligibleCandidateCount = 1,
+                TopCandidateCount = 1,
+                BestCandidateSymbol = "BTCUSDT",
+                BestCandidateScore = 95m,
+                Summary = "integration-test"
+            });
+            dbContext.MarketScannerCandidates.Add(new MarketScannerCandidate
+            {
+                Id = Guid.Parse("abababab-abab-abab-abab-abababababab"),
+                ScanCycleId = scanCycleId,
+                Symbol = "BTCUSDT",
+                UniverseSource = "integration-test",
+                ObservedAtUtc = nowUtc.UtcDateTime,
+                LastCandleAtUtc = nowUtc.UtcDateTime,
+                LastPrice = 100m,
+                QuoteVolume24h = 250_000m,
+                IsEligible = true,
+                Score = 250_000m,
+                Rank = 1,
+                IsTopCandidate = true
+            });
+            dbContext.TradingStrategies.Add(new TradingStrategy
+            {
+                Id = strategyId,
+                OwnerUserId = "user-testnet",
+                StrategyKey = "scanner-handoff-testnet",
+                DisplayName = "Scanner Handoff Testnet",
+                PromotionState = StrategyPromotionState.LivePublished,
+                PublishedMode = ExecutionEnvironment.Live,
+                PublishedAtUtc = nowUtc.UtcDateTime.AddMinutes(-1)
+            });
+            dbContext.TradingStrategyVersions.Add(new TradingStrategyVersion
+            {
+                Id = strategyVersionId,
+                OwnerUserId = "user-testnet",
+                TradingStrategyId = strategyId,
+                SchemaVersion = 1,
+                VersionNumber = 1,
+                Status = StrategyVersionStatus.Published,
+                DefinitionJson = "{}",
+                PublishedAtUtc = nowUtc.UtcDateTime.AddMinutes(-1)
+            });
+            dbContext.TradingBots.Add(new TradingBot
+            {
+                Id = botId,
+                OwnerUserId = "user-testnet",
+                Name = "Scanner Handoff Testnet Bot",
+                StrategyKey = "scanner-handoff-testnet",
+                Symbol = "BTCUSDT",
+                IsEnabled = true
+            });
+            await dbContext.SaveChangesAsync();
+
+            var strategySignalService = new FakeStrategySignalService(CreateSignal(strategyId, strategyVersionId, "BTCUSDT", "1m", nowUtc.UtcDateTime));
+            var executionEngine = new FakeExecutionEngine(options, nowUtc.UtcDateTime);
+            var services = new ServiceCollection();
+            services.AddScoped<IDataScopeContextAccessor, TestDataScopeContextAccessor>();
+            services.AddScoped(provider => new ApplicationDbContext(options, provider.GetRequiredService<IDataScopeContextAccessor>()));
+            services.AddSingleton<IStrategySignalService>(strategySignalService);
+            services.AddSingleton<IExecutionGate>(new FakeExecutionGate(nowUtc.UtcDateTime));
+            services.AddSingleton<IUserExecutionOverrideGuard>(new FakeUserExecutionOverrideGuard());
+            services.AddSingleton<IExecutionEngine>(executionEngine);
+            await using var serviceProvider = services.BuildServiceProvider();
+            var handoffService = new MarketScannerHandoffService(
+                dbContext,
+                serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+                new FakeMarketDataService(nowUtc.UtcDateTime),
+                new FakeIndicatorDataService(CreateIndicatorSnapshot("BTCUSDT", "1m", nowUtc.UtcDateTime)),
+                new FakeSharedSymbolRegistry(),
+                new FakeDataLatencyCircuitBreaker(nowUtc.UtcDateTime),
+                Options.Create(new MarketScannerOptions { HandoffEnabled = true, AllowedQuoteAssets = ["USDT"] }),
+                Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m" }),
+                Options.Create(new BotExecutionPilotOptions
+                {
+                    SignalEvaluationMode = ExecutionEnvironment.Live,
+                    ExecutionDispatchMode = ExecutionEnvironment.BinanceTestnet,
+                    PilotActivationEnabled = true,
+                    PrimeHistoricalCandleCount = 34
+                }),
+                new FixedTimeProvider(nowUtc),
+                NullLogger<MarketScannerHandoffService>.Instance);
+
+            var attempt = await handoffService.RunOnceAsync(scanCycleId);
+            var persistedAttempt = await dbContext.MarketScannerHandoffAttempts.AsNoTracking().SingleAsync(entity => entity.Id == attempt.Id);
+            var executionOrder = await dbContext.ExecutionOrders.AsNoTracking().SingleAsync(entity => entity.StrategySignalId == persistedAttempt.StrategySignalId);
+
+            Assert.Equal("Prepared", persistedAttempt.ExecutionRequestStatus);
+            Assert.Equal(ExecutionEnvironment.BinanceTestnet, persistedAttempt.ExecutionEnvironment);
+            Assert.Equal(ExecutionOrderSide.Buy, persistedAttempt.ExecutionSide);
+            Assert.Equal(ExecutionEnvironment.BinanceTestnet, executionOrder.ExecutionEnvironment);
+            Assert.Equal(ExecutionOrderExecutorKind.BinanceTestnet, executionOrder.ExecutorKind);
+        }
+        finally
+        {
+            await dbContext.Database.EnsureDeletedAsync();
+        }
+    }
+
+    [Fact]
     public async Task MarketScannerHandoffService_PersistsRiskVetoSnapshotAndAdminReadModel_OnSqlServer()
     {
         var databaseName = $"CoinBotMarketScannerRiskHandoffInt_{Guid.NewGuid():N}";
@@ -1152,8 +1283,14 @@ public sealed class MarketScannerHandoffIntegrationTests
                 Price = command.Price,
                 ReduceOnly = command.ReduceOnly,
                 ReplacesExecutionOrderId = command.ReplacesExecutionOrderId,
-                ExecutionEnvironment = command.IsDemo == true ? ExecutionEnvironment.Demo : ExecutionEnvironment.Live,
-                ExecutorKind = command.IsDemo == true ? ExecutionOrderExecutorKind.Virtual : ExecutionOrderExecutorKind.Binance,
+                ExecutionEnvironment = command.RequestedEnvironment
+                    ?? (command.IsDemo == true ? ExecutionEnvironment.Demo : ExecutionEnvironment.Live),
+                ExecutorKind = command.RequestedEnvironment switch
+                {
+                    ExecutionEnvironment.BinanceTestnet => ExecutionOrderExecutorKind.BinanceTestnet,
+                    ExecutionEnvironment.Demo => ExecutionOrderExecutorKind.Virtual,
+                    _ => command.IsDemo == true ? ExecutionOrderExecutorKind.Virtual : ExecutionOrderExecutorKind.Binance
+                },
                 State = ExecutionOrderState.Received,
                 IdempotencyKey = command.IdempotencyKey ?? command.StrategySignalId.ToString("N"),
                 RootCorrelationId = command.CorrelationId ?? Guid.NewGuid().ToString("N"),

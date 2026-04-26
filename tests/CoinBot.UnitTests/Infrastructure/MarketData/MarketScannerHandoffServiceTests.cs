@@ -250,7 +250,8 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal(ExecutionEnvironment.Demo, order.ExecutionEnvironment);
         Assert.Equal(bot.ExchangeAccountId, order.ExchangeAccountId);
         Assert.Equal(ExecutionOrderExecutorKind.Virtual, order.ExecutorKind);
-        Assert.True(harness.ExecutionEngine.LastCommand?.IsDemo);
+        Assert.Equal(ExecutionEnvironment.Demo, harness.ExecutionEngine.LastCommand?.RequestedEnvironment);
+        Assert.Null(harness.ExecutionEngine.LastCommand?.IsDemo);
         Assert.Equal(bot.ExchangeAccountId, harness.ExecutionEngine.LastCommand?.ExchangeAccountId);
     }
 
@@ -287,7 +288,8 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal(ExecutionEnvironment.Live, harness.UserExecutionOverrideGuard.LastRequest?.Environment);
         var order = await harness.DbContext.ExecutionOrders.SingleAsync(entity => entity.StrategySignalId == attempt.StrategySignalId);
         Assert.Equal(ExecutionEnvironment.Live, order.ExecutionEnvironment);
-        Assert.False(harness.ExecutionEngine.LastCommand?.IsDemo);
+        Assert.Equal(ExecutionEnvironment.Live, harness.ExecutionEngine.LastCommand?.RequestedEnvironment);
+        Assert.Null(harness.ExecutionEngine.LastCommand?.IsDemo);
     }
 
     [Fact]
@@ -324,7 +326,47 @@ public sealed class MarketScannerHandoffServiceTests
         var order = await harness.DbContext.ExecutionOrders.SingleAsync(entity => entity.StrategySignalId == attempt.StrategySignalId);
         Assert.Equal(ExecutionEnvironment.Demo, order.ExecutionEnvironment);
         Assert.Equal(ExecutionOrderExecutorKind.Virtual, order.ExecutorKind);
-        Assert.True(harness.ExecutionEngine.LastCommand?.IsDemo);
+        Assert.Equal(ExecutionEnvironment.Demo, harness.ExecutionEngine.LastCommand?.RequestedEnvironment);
+        Assert.Null(harness.ExecutionEngine.LastCommand?.IsDemo);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_UsesConfiguredBinanceTestnetDispatchMode_WhenPilotIsActive_EvenIfTradingModeResolverReturnsLive()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        await using var harness = CreateHarness(
+            nowUtc,
+            new BotExecutionPilotOptions
+            {
+                SignalEvaluationMode = ExecutionEnvironment.Live,
+                ExecutionDispatchMode = ExecutionEnvironment.BinanceTestnet,
+                PilotActivationEnabled = true,
+                PrimeHistoricalCandleCount = 34
+            },
+            ExecutionEnvironment.Live);
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-testnet-pilot", "SOLUSDT", "pilot-testnet-dispatch");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 10_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "SOLUSDT", "1m", harness.NowUtc));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
+        Assert.Equal(ExecutionEnvironment.BinanceTestnet, attempt.ExecutionEnvironment);
+        Assert.Equal(ExecutionEnvironment.Live, harness.StrategySignalService.LastRequest?.EvaluationContext.Mode);
+        Assert.Equal(ExecutionEnvironment.BinanceTestnet, harness.StrategySignalService.LastRequest?.EffectiveExecutionEnvironment);
+        Assert.Equal(ExecutionEnvironment.BinanceTestnet, harness.ExecutionGate.LastRequest?.Environment);
+        Assert.Contains("DevelopmentFuturesTestnetPilot=True", harness.ExecutionGate.LastRequest?.Context, StringComparison.Ordinal);
+        Assert.Equal(ExecutionEnvironment.BinanceTestnet, harness.UserExecutionOverrideGuard.LastRequest?.Environment);
+        var order = await harness.DbContext.ExecutionOrders.SingleAsync(entity => entity.StrategySignalId == attempt.StrategySignalId);
+        Assert.Equal(ExecutionEnvironment.BinanceTestnet, order.ExecutionEnvironment);
+        Assert.Equal(ExecutionOrderExecutorKind.BinanceTestnet, order.ExecutorKind);
+        Assert.Equal(ExecutionEnvironment.BinanceTestnet, harness.ExecutionEngine.LastCommand?.RequestedEnvironment);
+        Assert.Null(harness.ExecutionEngine.LastCommand?.IsDemo);
     }
 
     [Fact]
@@ -669,7 +711,7 @@ public sealed class MarketScannerHandoffServiceTests
     }
 
     [Fact]
-    public async Task RunOnceAsync_SuppressesReverseEntry_WhenLivePositionExistsInOppositeDirection()
+    public async Task RunOnceAsync_ConvertsOpposingLongEntryIntoCloseOnlyBuyExit_WhenLiveShortPositionExists()
     {
         await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
         var scanCycleId = Guid.NewGuid();
@@ -683,13 +725,86 @@ public sealed class MarketScannerHandoffServiceTests
 
         var attempt = await harness.Service.RunOnceAsync(scanCycleId);
 
-        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
-        Assert.Equal("ReverseBlockedOpenPositionExists", attempt.BlockerCode);
+        Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
         Assert.Equal("Persisted", attempt.StrategyDecisionOutcome);
-        Assert.Contains("reverse entries are disabled", attempt.BlockerDetail, StringComparison.Ordinal);
-        Assert.Contains("CurrentPositionDirection=Short", attempt.BlockerDetail, StringComparison.Ordinal);
-        Assert.Null(harness.ExecutionGate.LastRequest);
-        Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
+        Assert.Equal(ExecutionOrderSide.Buy, attempt.ExecutionSide);
+        Assert.Equal(0.020m, attempt.ExecutionQuantity);
+        Assert.Contains("ExecutionIntent=ExitCloseOnly", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("OpenPositionQuantity=-0.02", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("CloseQuantity=0.02", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("CloseSide=Buy", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ReduceOnly=True", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("AutoReverse=False", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.NotNull(harness.ExecutionGate.LastRequest);
+        Assert.NotNull(harness.UserExecutionOverrideGuard.LastRequest);
+        Assert.Equal(StrategySignalType.Exit, harness.ExecutionEngine.LastCommand?.SignalType);
+        Assert.Equal(ExecutionOrderSide.Buy, harness.ExecutionEngine.LastCommand?.Side);
+        Assert.True(harness.ExecutionEngine.LastCommand?.ReduceOnly);
+        Assert.Contains("ExecutionIntent=ExitCloseOnly", harness.ExecutionEngine.LastCommand?.Context, StringComparison.Ordinal);
+        var order = await harness.DbContext.ExecutionOrders.SingleAsync(entity => entity.StrategySignalId == attempt.StrategySignalId);
+        Assert.Equal(StrategySignalType.Exit, order.SignalType);
+        Assert.True(order.ReduceOnly);
+        Assert.Equal(ExecutionOrderSide.Buy, order.Side);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_ConvertsOpposingShortEntryIntoCloseOnlySellExit_WhenLiveLongPositionExists()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-reverse-long", "SOLUSDT", "pilot-reverse-long");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 10_000m);
+        await SeedExchangePositionAsync(harness.DbContext, bot, "SOLUSDT", quantity: 0.030m, entryPrice: 100m, positionSide: "BOTH", observedAtUtc: harness.NowUtc);
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(
+            bot.TradingStrategyId,
+            bot.TradingStrategyVersionId,
+            "SOLUSDT",
+            "1m",
+            harness.NowUtc,
+            direction: StrategyTradeDirection.Short));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
+        Assert.Equal("Persisted", attempt.StrategyDecisionOutcome);
+        Assert.Equal(ExecutionOrderSide.Sell, attempt.ExecutionSide);
+        Assert.Equal(0.030m, attempt.ExecutionQuantity);
+        Assert.Contains("ExecutionIntent=ExitCloseOnly", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("OpenPositionQuantity=0.03", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("CloseQuantity=0.03", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("CloseSide=Sell", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ReduceOnly=True", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Equal(StrategySignalType.Exit, harness.ExecutionEngine.LastCommand?.SignalType);
+        Assert.Equal(ExecutionOrderSide.Sell, harness.ExecutionEngine.LastCommand?.Side);
+        Assert.True(harness.ExecutionEngine.LastCommand?.ReduceOnly);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_UsesStableCloseOnlyPrivatePlaneStaleBlocker_WhenGateRejectsCloseOnlyExit()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-closeonly-stale", "SOLUSDT", "pilot-closeonly-stale");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 10_000m);
+        await SeedExchangePositionAsync(harness.DbContext, bot, "SOLUSDT", quantity: 0.030m, entryPrice: 100m, positionSide: "SHORT", observedAtUtc: harness.NowUtc);
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "SOLUSDT", "1m", harness.NowUtc));
+        harness.ExecutionGate.BlockSymbol(
+            "SOLUSDT",
+            ExecutionGateBlockedReason.PrivatePlaneStale,
+            "Execution blocked because private plane is stale. PrivatePlaneFreshness=Stale; LastPrivateSyncAtUtc=2026-04-03T11:54:00.0000000Z");
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("ExitCloseOnlyBlockedPrivatePlaneStale", attempt.BlockerCode);
+        Assert.Contains("ExecutionIntent=ExitCloseOnly", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ReduceOnly=True", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Null(harness.ExecutionEngine.LastCommand);
         Assert.Empty(harness.DbContext.ExecutionOrders);
     }
@@ -704,9 +819,9 @@ public sealed class MarketScannerHandoffServiceTests
                 SignalEvaluationMode = ExecutionEnvironment.Live,
                 PrimeHistoricalCandleCount = 34,
                 EnableEntryHysteresis = true,
-                EntryHysteresisCooldownMinutes = 0,
+                EntryHysteresisCooldownMinutes = 15,
                 EntryHysteresisReentryBufferPercentage = 0m,
-                LongEntryHysteresisCooldownMinutes = 0,
+                LongEntryHysteresisCooldownMinutes = 15,
                 LongEntryHysteresisReentryBufferPercentage = 0.20m
             });
         var scanCycleId = Guid.NewGuid();
@@ -719,6 +834,11 @@ public sealed class MarketScannerHandoffServiceTests
             "BTCUSDT",
             price: 100m,
             createdAtUtc: harness.NowUtc.AddMinutes(-10));
+        await SeedExchangeAccountSyncStateAsync(
+            harness.DbContext,
+            bot.OwnerUserId,
+            bot.ExchangeAccountId,
+            harness.NowUtc);
         harness.MarketDataService.SetMetadata("BTCUSDT", "BTC", "USDT");
         harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", harness.NowUtc));
         harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "BTCUSDT", "1m", harness.NowUtc));
@@ -728,7 +848,7 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
         Assert.Equal("LongEntryHysteresisActive", attempt.BlockerCode);
         Assert.Equal("Persisted", attempt.StrategyDecisionOutcome);
-        Assert.Contains("long rearm", attempt.BlockerDetail, StringComparison.Ordinal);
+        Assert.Contains("cooldown is still active", attempt.BlockerDetail, StringComparison.Ordinal);
         Assert.Null(harness.ExecutionGate.LastRequest);
         Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
         Assert.Null(harness.ExecutionEngine.LastCommand);
@@ -745,9 +865,9 @@ public sealed class MarketScannerHandoffServiceTests
                 SignalEvaluationMode = ExecutionEnvironment.Live,
                 PrimeHistoricalCandleCount = 34,
                 EnableEntryHysteresis = true,
-                EntryHysteresisCooldownMinutes = 0,
+                EntryHysteresisCooldownMinutes = 15,
                 EntryHysteresisReentryBufferPercentage = 0m,
-                ShortEntryHysteresisCooldownMinutes = 0,
+                ShortEntryHysteresisCooldownMinutes = 15,
                 ShortEntryHysteresisReentryBufferPercentage = 0.20m
             });
         var scanCycleId = Guid.NewGuid();
@@ -764,6 +884,11 @@ public sealed class MarketScannerHandoffServiceTests
             price: 100m,
             createdAtUtc: harness.NowUtc.AddMinutes(-10),
             side: ExecutionOrderSide.Buy);
+        await SeedExchangeAccountSyncStateAsync(
+            harness.DbContext,
+            bot.OwnerUserId,
+            bot.ExchangeAccountId,
+            harness.NowUtc);
         harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
         harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
         harness.StrategySignalService.SetSignal(CreateEntrySignal(
@@ -779,7 +904,7 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
         Assert.Equal("ShortEntryHysteresisActive", attempt.BlockerCode);
         Assert.Equal("Persisted", attempt.StrategyDecisionOutcome);
-        Assert.Contains("short rearm", attempt.BlockerDetail, StringComparison.Ordinal);
+        Assert.Contains("cooldown is still active", attempt.BlockerDetail, StringComparison.Ordinal);
         Assert.Null(harness.ExecutionGate.LastRequest);
         Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
         Assert.Null(harness.ExecutionEngine.LastCommand);
@@ -1425,9 +1550,9 @@ public sealed class MarketScannerHandoffServiceTests
                 SignalEvaluationMode = ExecutionEnvironment.Live,
                 PrimeHistoricalCandleCount = 34,
                 EnableEntryHysteresis = true,
-                EntryHysteresisCooldownMinutes = 0,
+                EntryHysteresisCooldownMinutes = 15,
                 EntryHysteresisReentryBufferPercentage = 0m,
-                LongEntryHysteresisCooldownMinutes = 0,
+                LongEntryHysteresisCooldownMinutes = 15,
                 LongEntryHysteresisReentryBufferPercentage = 0.20m
             });
         var scanCycleId = Guid.NewGuid();
@@ -1450,6 +1575,11 @@ public sealed class MarketScannerHandoffServiceTests
             "BTCUSDT",
             price: 100m,
             createdAtUtc: harness.NowUtc.AddMinutes(-10));
+        await SeedExchangeAccountSyncStateAsync(
+            harness.DbContext,
+            bot.OwnerUserId,
+            bot.ExchangeAccountId,
+            harness.NowUtc);
 
         var secondAttempt = await harness.Service.RunOnceAsync(scanCycleId);
 
@@ -2206,6 +2336,29 @@ public sealed class MarketScannerHandoffServiceTests
         await dbContext.SaveChangesAsync();
     }
 
+    private static async Task SeedExchangeAccountSyncStateAsync(
+        ApplicationDbContext dbContext,
+        string ownerUserId,
+        Guid exchangeAccountId,
+        DateTime syncedAtUtc)
+    {
+        dbContext.ExchangeAccountSyncStates.Add(new ExchangeAccountSyncState
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = ownerUserId,
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            PrivateStreamConnectionState = ExchangePrivateStreamConnectionState.Connected,
+            LastPositionSyncedAtUtc = syncedAtUtc,
+            LastStateReconciledAtUtc = syncedAtUtc,
+            DriftStatus = ExchangeStateDriftStatus.InSync,
+            CreatedDate = syncedAtUtc,
+            UpdatedDate = syncedAtUtc
+        });
+
+        await dbContext.SaveChangesAsync();
+    }
+
     private static readonly JsonSerializerOptions StrategySignalSerializerOptions = CreateStrategySignalSerializerOptions();
 
     private static JsonSerializerOptions CreateStrategySignalSerializerOptions()
@@ -2351,8 +2504,14 @@ public sealed class MarketScannerHandoffServiceTests
                 Price = command.Price,
                 ReduceOnly = command.ReduceOnly,
                 ReplacesExecutionOrderId = command.ReplacesExecutionOrderId,
-                ExecutionEnvironment = command.IsDemo == true ? ExecutionEnvironment.Demo : ExecutionEnvironment.Live,
-                ExecutorKind = command.IsDemo == true ? ExecutionOrderExecutorKind.Virtual : ExecutionOrderExecutorKind.Binance,
+                ExecutionEnvironment = command.RequestedEnvironment
+                    ?? (command.IsDemo == true ? ExecutionEnvironment.Demo : ExecutionEnvironment.Live),
+                ExecutorKind = command.RequestedEnvironment switch
+                {
+                    ExecutionEnvironment.BinanceTestnet => ExecutionOrderExecutorKind.BinanceTestnet,
+                    ExecutionEnvironment.Demo => ExecutionOrderExecutorKind.Virtual,
+                    _ => command.IsDemo == true ? ExecutionOrderExecutorKind.Virtual : ExecutionOrderExecutorKind.Binance
+                },
                 State = ExecutionOrderState.Received,
                 IdempotencyKey = command.IdempotencyKey ?? command.StrategySignalId.ToString("N"),
                 RootCorrelationId = command.CorrelationId ?? Guid.NewGuid().ToString("N"),
