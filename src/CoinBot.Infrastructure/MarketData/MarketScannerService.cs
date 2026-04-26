@@ -132,7 +132,7 @@ public sealed class MarketScannerService(
         }
 
         await UpsertWorkerHeartbeatAsync(cycle, candidates, freshnessPause, cancellationToken);
-        await dbContext.SaveChangesAsync(cancellationToken);
+        await SaveWorkerHeartbeatAsync(cycle, candidates, freshnessPause, cancellationToken);
 
         logger.LogInformation(
             "Market scanner cycle completed. ScanCycleId={ScanCycleId} Scanned={ScannedSymbolCount} Eligible={EligibleCandidateCount} TopCandidates={TopCandidateCount} BestCandidate={BestCandidateSymbol}.",
@@ -740,6 +740,31 @@ public sealed class MarketScannerService(
         return $"ErrorCode=ScannerNumericOverflow; ScanCycleId={scanCycleId}; Symbol={symbol}; Field={fieldName}; Value={value.ToString(CultureInfo.InvariantCulture)}; Precision=38; Scale=18; Guard=MarketScannerService.ValidateNumericEnvelope";
     }
 
+    private async Task SaveWorkerHeartbeatAsync(
+        MarketScannerCycle cycle,
+        IReadOnlyCollection<MarketScannerCandidate> candidates,
+        FreshnessPauseSummary? freshnessPause,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException exception) when (IsWorkerHeartbeatUniqueConstraintViolation(exception))
+        {
+            dbContext.ChangeTracker.Clear();
+            var entity = await dbContext.WorkerHeartbeats
+                .SingleAsync(item => item.WorkerKey == WorkerKey, cancellationToken);
+            ApplyWorkerHeartbeat(entity, cycle, candidates, freshnessPause, timeProvider.GetUtcNow().UtcDateTime);
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            logger.LogWarning(
+                "MarketScannerDuplicateHeartbeatSkipped WorkerKey={WorkerKey} ScanCycleId={ScanCycleId}",
+                WorkerKey,
+                cycle.Id);
+        }
+    }
+
     private async Task UpsertWorkerHeartbeatAsync(
         MarketScannerCycle cycle,
         IReadOnlyCollection<MarketScannerCandidate> candidates,
@@ -760,6 +785,16 @@ public sealed class MarketScannerService(
             dbContext.WorkerHeartbeats.Add(entity);
         }
 
+        ApplyWorkerHeartbeat(entity, cycle, candidates, freshnessPause, nowUtc);
+    }
+
+    private void ApplyWorkerHeartbeat(
+        WorkerHeartbeat entity,
+        MarketScannerCycle cycle,
+        IReadOnlyCollection<MarketScannerCandidate> candidates,
+        FreshnessPauseSummary? freshnessPause,
+        DateTime nowUtc)
+    {
         var noUniverse = cycle.ScannedSymbolCount == 0;
         var noEligible = cycle.ScannedSymbolCount > 0 && cycle.EligibleCandidateCount == 0;
         var rejectionSummary = noEligible
@@ -811,6 +846,35 @@ public sealed class MarketScannerService(
                     scannerOptionsValue.ExecutionHost,
                     klineInterval),
                 2048);
+    }
+
+    private static bool IsWorkerHeartbeatUniqueConstraintViolation(DbUpdateException exception)
+    {
+        return TryGetSqlServerErrorNumber(exception.InnerException, out var sqlNumber) &&
+               (sqlNumber is 2601 or 2627);
+    }
+
+    private static bool TryGetSqlServerErrorNumber(Exception? exception, out int sqlNumber)
+    {
+        sqlNumber = default;
+        if (exception is null)
+        {
+            return false;
+        }
+
+        var numberProperty = exception.GetType().GetProperty("Number");
+        if (numberProperty?.PropertyType != typeof(int))
+        {
+            return false;
+        }
+
+        if (numberProperty.GetValue(exception) is not int value)
+        {
+            return false;
+        }
+
+        sqlNumber = value;
+        return exception.GetType().Name.Contains("SqlException", StringComparison.Ordinal);
     }
 
     private static void AddSymbols(IDictionary<string, SortedSet<string>> universe, IEnumerable<string> symbols, string source)

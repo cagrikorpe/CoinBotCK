@@ -10,6 +10,8 @@ using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.UnitTests.Infrastructure.Mfa;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -2856,11 +2858,111 @@ public sealed class MarketScannerServiceTests
         Assert.Equal([activeVersionId, inactiveVersionId], strategyEvaluatorService.RequestedVersionIds);
     }
 
-    private static ApplicationDbContext CreateDbContext()
+    [Fact]
+    public async Task RunOnceAsync_RecoversFromDuplicateWorkerHeartbeatInsertConflict()
     {
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var databaseName = Guid.NewGuid().ToString("N");
+        var databaseRoot = new InMemoryDatabaseRoot();
+        var seedOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(databaseName, databaseRoot)
             .Options;
+        var interceptor = new ThrowWorkerHeartbeatSaveExceptionInterceptor(seedOptions, sqlNumber: 2601);
+        await using var dbContext = CreateDbContext(databaseName, databaseRoot, interceptor);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        await dbContext.SaveChangesAsync();
+
+        var service = new MarketScannerService(
+            dbContext,
+            new FakeMarketDataService(),
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("BTCUSDT", "Binance", "BTC", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 10,
+                Min24hQuoteVolume = 100m,
+                MaxDataAgeSeconds = 120,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = false
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["BTCUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance);
+
+        var cycle = await service.RunOnceAsync();
+
+        var persistedCycle = await dbContext.MarketScannerCycles.SingleAsync(entity => entity.Id == cycle.Id);
+        var persistedCandidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+        var heartbeats = await dbContext.WorkerHeartbeats
+            .Where(entity => entity.WorkerKey == MarketScannerService.WorkerKey)
+            .ToListAsync();
+
+        Assert.True(interceptor.Triggered);
+        Assert.Single(heartbeats);
+        Assert.Equal("BTCUSDT", persistedCycle.BestCandidateSymbol);
+        Assert.Equal("BTCUSDT", persistedCandidate.Symbol);
+        Assert.Equal(MonitoringHealthState.Healthy, heartbeats[0].HealthState);
+        Assert.Null(heartbeats[0].LastErrorCode);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_DoesNotSwallowNonDuplicateWorkerHeartbeatSaveExceptions()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var databaseName = Guid.NewGuid().ToString("N");
+        var databaseRoot = new InMemoryDatabaseRoot();
+        var seedOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(databaseName, databaseRoot)
+            .Options;
+        var interceptor = new ThrowWorkerHeartbeatSaveExceptionInterceptor(seedOptions, sqlNumber: 1205);
+        await using var dbContext = CreateDbContext(databaseName, databaseRoot, interceptor);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        await dbContext.SaveChangesAsync();
+
+        var service = new MarketScannerService(
+            dbContext,
+            new FakeMarketDataService(),
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("BTCUSDT", "Binance", "BTC", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 10,
+                Min24hQuoteVolume = 100m,
+                MaxDataAgeSeconds = 120,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = false
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["BTCUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance);
+
+        var exception = await Assert.ThrowsAsync<DbUpdateException>(() => service.RunOnceAsync());
+
+        Assert.True(interceptor.Triggered);
+        Assert.IsType<FakeSqlException>(exception.InnerException);
+        Assert.Equal(1205, ((FakeSqlException)exception.InnerException!).Number);
+    }
+
+    private static ApplicationDbContext CreateDbContext(
+        string? databaseName = null,
+        InMemoryDatabaseRoot? databaseRoot = null,
+        params IInterceptor[] interceptors)
+    {
+        var optionsBuilder = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(databaseName ?? Guid.NewGuid().ToString("N"), databaseRoot);
+
+        if (interceptors.Length > 0)
+        {
+            optionsBuilder.AddInterceptors(interceptors);
+        }
+
+        var options = optionsBuilder.Options;
 
         return new ApplicationDbContext(options, new TestDataScopeContext());
     }
@@ -3327,5 +3429,67 @@ public sealed class MarketScannerServiceTests
         {
             return Task.FromResult(outcomeSummaryFactory(userId));
         }
+    }
+
+    private sealed class ThrowWorkerHeartbeatSaveExceptionInterceptor(
+        DbContextOptions<ApplicationDbContext> seedOptions,
+        int sqlNumber) : SaveChangesInterceptor
+    {
+        public bool Triggered { get; private set; }
+
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Triggered || eventData.Context is not ApplicationDbContext dbContext)
+            {
+                return result;
+            }
+
+            var pendingHeartbeat = dbContext.ChangeTracker
+                .Entries<WorkerHeartbeat>()
+                .SingleOrDefault(entry =>
+                    entry.State == EntityState.Added &&
+                    string.Equals(entry.Entity.WorkerKey, MarketScannerService.WorkerKey, StringComparison.Ordinal));
+
+            if (pendingHeartbeat is null)
+            {
+                return result;
+            }
+
+            Triggered = true;
+
+            if (sqlNumber is 2601 or 2627)
+            {
+                await using var seedContext = new ApplicationDbContext(seedOptions, new TestDataScopeContext());
+                if (!await seedContext.WorkerHeartbeats.AnyAsync(
+                        entity => entity.WorkerKey == MarketScannerService.WorkerKey,
+                        cancellationToken))
+                {
+                    seedContext.WorkerHeartbeats.Add(new WorkerHeartbeat
+                    {
+                        Id = Guid.NewGuid(),
+                        WorkerKey = MarketScannerService.WorkerKey,
+                        WorkerName = MarketScannerService.WorkerName,
+                        HealthState = MonitoringHealthState.Warning,
+                        FreshnessTier = MonitoringFreshnessTier.Hot,
+                        CircuitBreakerState = CircuitBreakerStateCode.HalfOpen,
+                        LastHeartbeatAtUtc = DateTime.UtcNow,
+                        LastUpdatedAtUtc = DateTime.UtcNow
+                    });
+                    await seedContext.SaveChangesAsync(cancellationToken);
+                }
+            }
+
+            throw new DbUpdateException(
+                "Simulated market scanner heartbeat persistence failure.",
+                new FakeSqlException(sqlNumber));
+        }
+    }
+
+    private sealed class FakeSqlException(int number) : Exception
+    {
+        public int Number { get; } = number;
     }
 }
