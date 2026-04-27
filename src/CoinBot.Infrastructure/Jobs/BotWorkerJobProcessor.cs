@@ -72,6 +72,15 @@ public sealed class BotWorkerJobProcessor(
     private const string ExitCloseOnlyBlockedUnprofitableLongDecisionCode = "ExitCloseOnlyBlockedUnprofitableLong";
     private const string ExitCloseOnlyBlockedUnprofitableShortDecisionCode = "ExitCloseOnlyBlockedUnprofitableShort";
     private const string ExitCloseOnlyAllowedTakeProfitDecisionCode = "ExitCloseOnlyAllowedTakeProfit";
+    private const string ExitReasonReverseSignal = "ReverseSignal";
+    private const string ExitReasonTakeProfit = "TakeProfit";
+    private const string ExitReasonStopLoss = "StopLoss";
+    private const string ExitReasonRiskExit = "RiskExit";
+    private const string ExitReasonManual = "Manual";
+    private const string ExitReasonEmergency = "Emergency";
+    private const string ExitReasonBlockedUnprofitable = "BlockedUnprofitable";
+    private const string ExitReasonPrivatePlaneStale = "PrivatePlaneStale";
+    private const string ExitReasonStaleMarketData = "StaleMarketData";
     private const decimal ExitCloseOnlyMinimumProfitPct = 0m;
 
     private static readonly JsonSerializerOptions SerializerOptions = CreateSerializerOptions();
@@ -934,7 +943,10 @@ public sealed class BotWorkerJobProcessor(
             var blockCode = closeOnlyIntent is not null && (preSubmitPilotEvaluation.RiskEvaluation?.IsVetoed ?? false)
                 ? ExitCloseOnlyBlockedRiskDecisionCode
                 : preSubmitPilotEvaluation.BlockCode ?? "UserExecutionOverrideBlocked";
-            var blockSummary = preSubmitPilotEvaluation.Message ?? "Execution blocked by user execution override guard.";
+            var blockSummary = AppendExitReasonToken(
+                preSubmitPilotEvaluation.Message ?? "Execution blocked by user execution override guard.",
+                blockCode,
+                isExitCloseOnly: signal.SignalType == StrategySignalType.Exit);
 
             if (signal.SignalType == StrategySignalType.Exit)
             {
@@ -1699,7 +1711,15 @@ public sealed class BotWorkerJobProcessor(
                 return new RuntimeExitQualityTrigger(
                     currentPosition.Direction,
                     TakeProfitTriggeredDecisionCode,
-                    $"Runtime exit quality triggered take profit for {bot.Symbol}. Direction=Long; EntryPrice={entryPrice:0.########}; ReferencePrice={referencePrice:0.########}; ThresholdPrice={takeProfitPrice:0.########}; NetQuantity={currentPosition.NetQuantity:0.########}.",
+                    BuildRuntimeExitQualitySummary(
+                        bot.Symbol,
+                        TakeProfitTriggeredDecisionCode,
+                        currentPosition.Direction,
+                        entryPrice,
+                        referencePrice,
+                        takeProfitPrice,
+                        currentPosition.NetQuantity,
+                        peakPrice: null),
                     takeProfitPrice,
                     referencePrice,
                     null);
@@ -1711,7 +1731,15 @@ public sealed class BotWorkerJobProcessor(
                 return new RuntimeExitQualityTrigger(
                     currentPosition.Direction,
                     StopLossTriggeredDecisionCode,
-                    $"Runtime exit quality triggered stop loss for {bot.Symbol}. Direction=Long; EntryPrice={entryPrice:0.########}; ReferencePrice={referencePrice:0.########}; ThresholdPrice={stopLossPrice:0.########}; NetQuantity={currentPosition.NetQuantity:0.########}.",
+                    BuildRuntimeExitQualitySummary(
+                        bot.Symbol,
+                        StopLossTriggeredDecisionCode,
+                        currentPosition.Direction,
+                        entryPrice,
+                        referencePrice,
+                        stopLossPrice,
+                        currentPosition.NetQuantity,
+                        peakPrice: null),
                     stopLossPrice,
                     referencePrice,
                     null);
@@ -1733,7 +1761,15 @@ public sealed class BotWorkerJobProcessor(
                 return new RuntimeExitQualityTrigger(
                     currentPosition.Direction,
                     TrailingStopTriggeredDecisionCode,
-                    $"Runtime exit quality triggered trailing stop for {bot.Symbol}. Direction=Long; EntryPrice={entryPrice:0.########}; PeakPrice={peakPriceSinceEntry.Value:0.########}; ReferencePrice={referencePrice:0.########}; ThresholdPrice={trailingStopPrice:0.########}; NetQuantity={currentPosition.NetQuantity:0.########}.",
+                    BuildRuntimeExitQualitySummary(
+                        bot.Symbol,
+                        TrailingStopTriggeredDecisionCode,
+                        currentPosition.Direction,
+                        entryPrice,
+                        referencePrice,
+                        trailingStopPrice,
+                        currentPosition.NetQuantity,
+                        peakPrice: peakPriceSinceEntry.Value),
                     trailingStopPrice,
                     referencePrice,
                     peakPriceSinceEntry.Value);
@@ -1748,7 +1784,16 @@ public sealed class BotWorkerJobProcessor(
                 return new RuntimeExitQualityTrigger(
                     currentPosition.Direction,
                     BreakEvenTriggeredDecisionCode,
-                    $"Runtime exit quality triggered break-even protection for {bot.Symbol}. Direction=Long; EntryPrice={entryPrice:0.########}; BreakEvenPrice={breakEvenPrice:0.########}; PeakPrice={peakPriceSinceEntry.Value:0.########}; ReferencePrice={referencePrice:0.########}; ThresholdPrice={breakEvenFloorPrice:0.########}; NetQuantity={currentPosition.NetQuantity:0.########}.",
+                    BuildRuntimeExitQualitySummary(
+                        bot.Symbol,
+                        BreakEvenTriggeredDecisionCode,
+                        currentPosition.Direction,
+                        entryPrice,
+                        referencePrice,
+                        breakEvenFloorPrice,
+                        currentPosition.NetQuantity,
+                        peakPrice: peakPriceSinceEntry.Value,
+                        breakEvenPrice: breakEvenPrice),
                     breakEvenFloorPrice,
                     referencePrice,
                     peakPriceSinceEntry.Value);
@@ -1763,7 +1808,15 @@ public sealed class BotWorkerJobProcessor(
             return new RuntimeExitQualityTrigger(
                 currentPosition.Direction,
                 TakeProfitTriggeredDecisionCode,
-                $"Runtime exit quality triggered take profit for {bot.Symbol}. Direction=Short; EntryPrice={entryPrice:0.########}; ReferencePrice={referencePrice:0.########}; ThresholdPrice={shortTakeProfitPrice:0.########}; NetQuantity={currentPosition.NetQuantity:0.########}.",
+                BuildRuntimeExitQualitySummary(
+                    bot.Symbol,
+                    TakeProfitTriggeredDecisionCode,
+                    currentPosition.Direction,
+                    entryPrice,
+                    referencePrice,
+                    shortTakeProfitPrice,
+                    currentPosition.NetQuantity,
+                    peakPrice: null),
                 shortTakeProfitPrice,
                 referencePrice,
                 null);
@@ -1775,7 +1828,15 @@ public sealed class BotWorkerJobProcessor(
             return new RuntimeExitQualityTrigger(
                 currentPosition.Direction,
                 StopLossTriggeredDecisionCode,
-                $"Runtime exit quality triggered stop loss for {bot.Symbol}. Direction=Short; EntryPrice={entryPrice:0.########}; ReferencePrice={referencePrice:0.########}; ThresholdPrice={shortStopLossPrice:0.########}; NetQuantity={currentPosition.NetQuantity:0.########}.",
+                BuildRuntimeExitQualitySummary(
+                    bot.Symbol,
+                    StopLossTriggeredDecisionCode,
+                    currentPosition.Direction,
+                    entryPrice,
+                    referencePrice,
+                    shortStopLossPrice,
+                    currentPosition.NetQuantity,
+                    peakPrice: null),
                 shortStopLossPrice,
                 referencePrice,
                 null);
@@ -1797,7 +1858,15 @@ public sealed class BotWorkerJobProcessor(
             return new RuntimeExitQualityTrigger(
                 currentPosition.Direction,
                 TrailingStopTriggeredDecisionCode,
-                $"Runtime exit quality triggered trailing stop for {bot.Symbol}. Direction=Short; EntryPrice={entryPrice:0.########}; TroughPrice={troughPriceSinceEntry.Value:0.########}; ReferencePrice={referencePrice:0.########}; ThresholdPrice={shortTrailingStopPrice:0.########}; NetQuantity={currentPosition.NetQuantity:0.########}.",
+                BuildRuntimeExitQualitySummary(
+                    bot.Symbol,
+                    TrailingStopTriggeredDecisionCode,
+                    currentPosition.Direction,
+                    entryPrice,
+                    referencePrice,
+                    shortTrailingStopPrice,
+                    currentPosition.NetQuantity,
+                    peakPrice: troughPriceSinceEntry.Value),
                 shortTrailingStopPrice,
                 referencePrice,
                 troughPriceSinceEntry.Value);
@@ -1812,7 +1881,16 @@ public sealed class BotWorkerJobProcessor(
             return new RuntimeExitQualityTrigger(
                 currentPosition.Direction,
                 BreakEvenTriggeredDecisionCode,
-                $"Runtime exit quality triggered break-even protection for {bot.Symbol}. Direction=Short; EntryPrice={entryPrice:0.########}; BreakEvenPrice={breakEvenPrice:0.########}; TroughPrice={troughPriceSinceEntry.Value:0.########}; ReferencePrice={referencePrice:0.########}; ThresholdPrice={shortBreakEvenFloorPrice:0.########}; NetQuantity={currentPosition.NetQuantity:0.########}.",
+                BuildRuntimeExitQualitySummary(
+                    bot.Symbol,
+                    BreakEvenTriggeredDecisionCode,
+                    currentPosition.Direction,
+                    entryPrice,
+                    referencePrice,
+                    shortBreakEvenFloorPrice,
+                    currentPosition.NetQuantity,
+                    peakPrice: troughPriceSinceEntry.Value,
+                    breakEvenPrice: breakEvenPrice),
                 shortBreakEvenFloorPrice,
                 referencePrice,
                 troughPriceSinceEntry.Value);
@@ -3133,6 +3211,8 @@ public sealed class BotWorkerJobProcessor(
         decimal? requestedQuantity = null,
         decimal? referencePrice = null)
     {
+        decisionSummary = AppendExitReasonToken(decisionSummary, decisionReasonCode, isExitCloseOnly: true);
+
         decimal? requestedNotional = requestedQuantity.HasValue && referencePrice.HasValue
             ? requestedQuantity.Value * referencePrice.Value
             : (decimal?)null;
@@ -3730,8 +3810,68 @@ public sealed class BotWorkerJobProcessor(
         decimal? estimatedPnlPct,
         decimal minimumProfitPct)
     {
+        var exitReason = ResolveExitReasonToken(reasonCode, isExitCloseOnly: true) ?? ExitReasonReverseSignal;
         return FormattableString.Invariant(
-            $"ExitPnlGuard={exitPnlGuardState}; ReasonCode={reasonCode}; PositionDirection={positionDirection}; EntryPrice={(entryPrice.HasValue ? entryPrice.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; ExitPrice={(exitPrice.HasValue ? exitPrice.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; CloseSide={closeSide}; ReduceOnly=True; EstimatedPnlQuote={(estimatedPnlQuote.HasValue ? estimatedPnlQuote.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; EstimatedPnlPct={(estimatedPnlPct.HasValue ? estimatedPnlPct.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; MinimumProfitPct={minimumProfitPct:0.########}");
+            $"ExitPnlGuard={exitPnlGuardState}; ExitReason={exitReason}; ReasonCode={reasonCode}; PositionDirection={positionDirection}; EntryPrice={(entryPrice.HasValue ? entryPrice.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; ExitPrice={(exitPrice.HasValue ? exitPrice.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; CloseSide={closeSide}; ReduceOnly=True; EstimatedPnlQuote={(estimatedPnlQuote.HasValue ? estimatedPnlQuote.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; EstimatedPnlPct={(estimatedPnlPct.HasValue ? estimatedPnlPct.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; MinimumProfitPct={minimumProfitPct:0.########}");
+    }
+
+    private static string BuildRuntimeExitQualitySummary(
+        string symbol,
+        string reasonCode,
+        StrategyTradeDirection direction,
+        decimal entryPrice,
+        decimal exitPrice,
+        decimal thresholdPrice,
+        decimal netQuantity,
+        decimal? peakPrice,
+        decimal? breakEvenPrice = null)
+    {
+        var closeSide = direction == StrategyTradeDirection.Long ? ExecutionOrderSide.Sell : ExecutionOrderSide.Buy;
+        var estimatedPnlQuote = direction == StrategyTradeDirection.Long
+            ? NormalizeDecimal((exitPrice - entryPrice) * Math.Abs(netQuantity))
+            : NormalizeDecimal((entryPrice - exitPrice) * Math.Abs(netQuantity));
+        var estimatedPnlPct = direction == StrategyTradeDirection.Long
+            ? NormalizeDecimal(((exitPrice - entryPrice) / entryPrice) * 100m)
+            : NormalizeDecimal(((entryPrice - exitPrice) / entryPrice) * 100m);
+        var exitReason = ResolveExitReasonToken(reasonCode) ?? ExitReasonRiskExit;
+        var peakSummary = peakPrice.HasValue
+            ? $"; PeakReferencePrice={peakPrice.Value.ToString("0.########", CultureInfo.InvariantCulture)}"
+            : string.Empty;
+        var breakEvenSummary = breakEvenPrice.HasValue
+            ? $"; BreakEvenPrice={breakEvenPrice.Value.ToString("0.########", CultureInfo.InvariantCulture)}"
+            : string.Empty;
+
+        return FormattableString.Invariant(
+            $"Runtime exit quality triggered {exitReason} for {symbol}. ExitReason={exitReason}; ReasonCode={reasonCode}; PositionDirection={direction}; EntryPrice={entryPrice:0.########}; ExitPrice={exitPrice:0.########}; ThresholdPrice={thresholdPrice:0.########}; CloseSide={closeSide}; ReduceOnly=True; EstimatedPnlQuote={estimatedPnlQuote:0.########}; EstimatedPnlPct={estimatedPnlPct:0.########}; NetQuantity={netQuantity:0.########}{peakSummary}{breakEvenSummary}.");
+    }
+
+    private static string AppendExitReasonToken(string summary, string reasonCode, bool isExitCloseOnly)
+    {
+        var exitReason = ResolveExitReasonToken(reasonCode, isExitCloseOnly);
+        if (string.IsNullOrWhiteSpace(exitReason) ||
+            summary.Contains("ExitReason=", StringComparison.Ordinal))
+        {
+            return summary;
+        }
+
+        return $"{summary} ExitReason={exitReason};";
+    }
+
+    private static string? ResolveExitReasonToken(string reasonCode, bool isExitCloseOnly = false)
+    {
+        return reasonCode switch
+        {
+            TakeProfitTriggeredDecisionCode => ExitReasonTakeProfit,
+            StopLossTriggeredDecisionCode => ExitReasonStopLoss,
+            TrailingStopTriggeredDecisionCode or BreakEvenTriggeredDecisionCode or ExitCloseOnlyBlockedRiskDecisionCode => ExitReasonRiskExit,
+            ExitCloseOnlyBlockedUnprofitableLongDecisionCode or ExitCloseOnlyBlockedUnprofitableShortDecisionCode => ExitReasonBlockedUnprofitable,
+            ExitCloseOnlyBlockedPrivatePlaneStaleDecisionCode or "PrivatePlaneStale" => ExitReasonPrivatePlaneStale,
+            "StaleMarketData" => ExitReasonStaleMarketData,
+            _ when reasonCode.Contains("Manual", StringComparison.Ordinal) => ExitReasonManual,
+            _ when reasonCode.Contains("Emergency", StringComparison.Ordinal) => ExitReasonEmergency,
+            _ when isExitCloseOnly => ExitReasonReverseSignal,
+            _ => null
+        };
     }
 
     private sealed record ShadowHypotheticalEvaluation(

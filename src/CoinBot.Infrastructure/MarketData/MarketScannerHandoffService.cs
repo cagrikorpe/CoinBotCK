@@ -59,6 +59,11 @@ public sealed class MarketScannerHandoffService(
     private const string ExitCloseOnlyBlockedUnprofitableLongCode = "ExitCloseOnlyBlockedUnprofitableLong";
     private const string ExitCloseOnlyBlockedUnprofitableShortCode = "ExitCloseOnlyBlockedUnprofitableShort";
     private const string ExitCloseOnlyAllowedTakeProfitCode = "ExitCloseOnlyAllowedTakeProfit";
+    private const string ExitReasonReverseSignal = "ReverseSignal";
+    private const string ExitReasonRiskExit = "RiskExit";
+    private const string ExitReasonPrivatePlaneStale = "PrivatePlaneStale";
+    private const string ExitReasonStaleMarketData = "StaleMarketData";
+    private const string ExitReasonBlockedUnprofitable = "BlockedUnprofitable";
     private const string DirectionalConflictShortAgainstBullishScannerCode = "DirectionalConflictShortAgainstBullishScanner";
     private const string DirectionalConflictLongAgainstBearishScannerCode = "DirectionalConflictLongAgainstBearishScanner";
     private const decimal ExitCloseOnlyMinimumProfitPct = 0m;
@@ -682,7 +687,12 @@ public sealed class MarketScannerHandoffService(
                             Truncate(
                                 $"UserExecutionOverrideGuard={overrideEvaluation.BlockCode ?? "Blocked"}; Symbol={symbol}; Timeframe={klineInterval}; {BuildLatencyGuardSummarySnippet(latencySnapshot)}; RiskSummary={overrideEvaluation.RiskEvaluation?.ReasonSummary ?? "n/a"}",
                                 512) ?? $"UserExecutionOverrideGuard={overrideEvaluation.BlockCode ?? "Blocked"}; Symbol={symbol}; Timeframe={klineInterval}",
-                            executionContext),
+                            executionContext,
+                            ResolveExitReasonToken(
+                                ResolveExecutionBlockerCode(
+                                    executionContext,
+                                    overrideEvaluation.BlockCode ?? "UserExecutionOverrideBlocked",
+                                    riskEvaluation: overrideEvaluation.RiskEvaluation))),
                         cancellationToken: cancellationToken,
                         riskEvaluation: overrideEvaluation.RiskEvaluation,
                         strategyResult: strategyResult);
@@ -782,7 +792,8 @@ public sealed class MarketScannerHandoffService(
                     correlationId: attemptCorrelationId,
                     guardSummary: AppendExecutionIntentGuardSummary(
                         $"ExecutionGate={exception.Reason}; Symbol={symbol}; Timeframe={klineInterval}",
-                        executionContext),
+                        executionContext,
+                        ResolveExitReasonToken(ResolveExecutionBlockerCode(executionContext, exception.Reason.ToString()))),
                     cancellationToken: cancellationToken,
                     strategyResult: strategyResult);
             }
@@ -2546,7 +2557,10 @@ public sealed class MarketScannerHandoffService(
         return normalized.Length <= maxLength ? normalized : normalized[..maxLength];
     }
 
-    private static string AppendExecutionIntentGuardSummary(string guardSummary, PreparedExecutionContext? executionContext)
+    private static string AppendExecutionIntentGuardSummary(
+        string guardSummary,
+        PreparedExecutionContext? executionContext,
+        string? exitReasonOverride = null)
     {
         if (executionContext is not { } resolvedExecutionContext ||
             !string.Equals(resolvedExecutionContext.ExecutionIntent, ExitCloseOnlyIntentCode, StringComparison.Ordinal))
@@ -2554,9 +2568,12 @@ public sealed class MarketScannerHandoffService(
             return guardSummary;
         }
 
-        var exitPnlGuardSummary = string.IsNullOrWhiteSpace(resolvedExecutionContext.ExitPnlGuardSummary)
+        var exitPnlGuardSummaryValue = OverrideExitReasonToken(
+            resolvedExecutionContext.ExitPnlGuardSummary,
+            exitReasonOverride);
+        var exitPnlGuardSummary = string.IsNullOrWhiteSpace(exitPnlGuardSummaryValue)
             ? string.Empty
-            : $"; {resolvedExecutionContext.ExitPnlGuardSummary}";
+            : $"; {exitPnlGuardSummaryValue}";
 
         return Truncate(
                    $"{guardSummary}; ExecutionIntent={resolvedExecutionContext.ExecutionIntent}; OpenPositionQuantity={resolvedExecutionContext.OpenPositionQuantity?.ToString("0.########", CultureInfo.InvariantCulture) ?? "n/a"}; CloseQuantity={resolvedExecutionContext.Quantity:0.########}; CloseSide={resolvedExecutionContext.CloseSide?.ToString() ?? resolvedExecutionContext.Side.ToString()}; ReduceOnly={resolvedExecutionContext.ReduceOnly}; AutoReverse={resolvedExecutionContext.AutoReverse}{exitPnlGuardSummary}",
@@ -3015,8 +3032,45 @@ public sealed class MarketScannerHandoffService(
         decimal? estimatedPnlPct,
         decimal minimumProfitPct)
     {
+        var exitReason = ResolveExitReasonToken(reasonCode, isExitCloseOnly: true) ?? ExitReasonReverseSignal;
+
         return FormattableString.Invariant(
-            $"ExitPnlGuard={exitPnlGuardState}; ReasonCode={reasonCode}; PositionDirection={positionDirection}; EntryPrice={entryPrice:0.########}; ExitPrice={exitPrice:0.########}; CloseSide={closeSide}; ReduceOnly={reduceOnly}; EstimatedPnlQuote={(estimatedPnlQuote.HasValue ? estimatedPnlQuote.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; EstimatedPnlPct={(estimatedPnlPct.HasValue ? estimatedPnlPct.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; MinimumProfitPct={minimumProfitPct:0.########}");
+            $"ExitReason={exitReason}; ExitPnlGuard={exitPnlGuardState}; ReasonCode={reasonCode}; PositionDirection={positionDirection}; EntryPrice={entryPrice:0.########}; ExitPrice={exitPrice:0.########}; CloseSide={closeSide}; ReduceOnly={reduceOnly}; EstimatedPnlQuote={(estimatedPnlQuote.HasValue ? estimatedPnlQuote.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; EstimatedPnlPct={(estimatedPnlPct.HasValue ? estimatedPnlPct.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; MinimumProfitPct={minimumProfitPct:0.########}");
+    }
+
+    private static string? ResolveExitReasonToken(string reasonCode, bool isExitCloseOnly = false)
+    {
+        return reasonCode switch
+        {
+            ExitCloseOnlyBlockedUnprofitableLongCode or ExitCloseOnlyBlockedUnprofitableShortCode => ExitReasonBlockedUnprofitable,
+            ExitCloseOnlyBlockedPrivatePlaneStaleCode or "PrivatePlaneStale" => ExitReasonPrivatePlaneStale,
+            ExitCloseOnlyBlockedRiskCode => ExitReasonRiskExit,
+            "StaleMarketData" => ExitReasonStaleMarketData,
+            _ when isExitCloseOnly => ExitReasonReverseSignal,
+            _ => null
+        };
+    }
+
+    private static string? OverrideExitReasonToken(string? exitPnlGuardSummary, string? exitReason)
+    {
+        if (string.IsNullOrWhiteSpace(exitPnlGuardSummary) || string.IsNullOrWhiteSpace(exitReason))
+        {
+            return exitPnlGuardSummary;
+        }
+
+        const string marker = "; ExitPnlGuard=";
+        if (exitPnlGuardSummary.StartsWith("ExitReason=", StringComparison.Ordinal))
+        {
+            var markerIndex = exitPnlGuardSummary.IndexOf(marker, StringComparison.Ordinal);
+            if (markerIndex > 0)
+            {
+                return $"ExitReason={exitReason}{exitPnlGuardSummary[markerIndex..]}";
+            }
+        }
+
+        return exitPnlGuardSummary.Contains("ExitReason=", StringComparison.Ordinal)
+            ? exitPnlGuardSummary
+            : $"ExitReason={exitReason}; {exitPnlGuardSummary}";
     }
 
     private static bool TryResolveDirectionalScannerConflict(

@@ -1153,6 +1153,7 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Empty(harness.DbContext.ExecutionOrders);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
         Assert.Equal("ExitCloseOnlyBlockedUnprofitableLong", latestDecisionTrace.DecisionReasonCode);
+        Assert.Contains("ExitReason=BlockedUnprofitable", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitPnlGuard=Blocked", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
     }
 
@@ -1196,6 +1197,7 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Empty(harness.DbContext.ExecutionOrders);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
         Assert.Equal("ExitCloseOnlyBlockedUnprofitableShort", latestDecisionTrace.DecisionReasonCode);
+        Assert.Contains("ExitReason=BlockedUnprofitable", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitPnlGuard=Blocked", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
     }
 
@@ -1248,6 +1250,7 @@ public sealed class BotWorkerJobProcessorTests
         Assert.True(persistedOrder.ReduceOnly);
         Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
         Assert.Equal("TakeProfitTriggered", exitTrace.DecisionReasonCode);
+        Assert.Contains("ExitReason=TakeProfit", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Equal("EntrySupersededByRuntimeExitQuality", entryTrace.DecisionReasonCode);
     }
 
@@ -1291,6 +1294,7 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal(ExecutionOrderSide.Buy, persistedOrder.Side);
         Assert.True(persistedOrder.ReduceOnly);
         Assert.Equal("StopLossTriggered", exitTrace.DecisionReasonCode);
+        Assert.Contains("ExitReason=StopLoss", exitTrace.DecisionSummary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1333,6 +1337,7 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal(ExecutionOrderSide.Buy, persistedOrder.Side);
         Assert.True(persistedOrder.ReduceOnly);
         Assert.Equal("TrailingStopTriggered", exitTrace.DecisionReasonCode);
+        Assert.Contains("ExitReason=RiskExit", exitTrace.DecisionSummary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1376,6 +1381,7 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal(ExecutionOrderSide.Buy, persistedOrder.Side);
         Assert.True(persistedOrder.ReduceOnly);
         Assert.Equal("BreakEvenTriggered", exitTrace.DecisionReasonCode);
+        Assert.Contains("ExitReason=RiskExit", exitTrace.DecisionSummary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1424,6 +1430,7 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
         Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
         Assert.Equal("TakeProfitTriggered", exitTrace.DecisionReasonCode);
+        Assert.Contains("ExitReason=TakeProfit", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Equal("EntrySupersededByRuntimeExitQuality", entryTrace.DecisionReasonCode);
     }
 

@@ -736,6 +736,7 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Contains("CloseSide=Buy", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ReduceOnly=True", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("AutoReverse=False", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitReason=ReverseSignal", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ExitPnlGuard=Allowed", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ReasonCode=ExitCloseOnlyAllowedTakeProfit", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.NotNull(harness.ExecutionGate.LastRequest);
@@ -781,6 +782,7 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Contains("CloseQuantity=0.03", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("CloseSide=Sell", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ReduceOnly=True", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitReason=ReverseSignal", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ExitPnlGuard=Allowed", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ReasonCode=ExitCloseOnlyAllowedTakeProfit", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Equal(StrategySignalType.Exit, harness.ExecutionEngine.LastCommand?.SignalType);
@@ -812,6 +814,7 @@ public sealed class MarketScannerHandoffServiceTests
 
         Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
         Assert.Equal("ExitCloseOnlyBlockedUnprofitableLong", attempt.BlockerCode);
+        Assert.Contains("ExitReason=BlockedUnprofitable", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ExitPnlGuard=Blocked", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ReasonCode=ExitCloseOnlyBlockedUnprofitableLong", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("EstimatedPnlQuote=-0.03", attempt.GuardSummary, StringComparison.Ordinal);
@@ -844,6 +847,7 @@ public sealed class MarketScannerHandoffServiceTests
 
         Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
         Assert.Equal("ExitCloseOnlyBlockedUnprofitableShort", attempt.BlockerCode);
+        Assert.Contains("ExitReason=BlockedUnprofitable", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ExitPnlGuard=Blocked", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ReasonCode=ExitCloseOnlyBlockedUnprofitableShort", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("EstimatedPnlQuote=-0.02", attempt.GuardSummary, StringComparison.Ordinal);
@@ -982,6 +986,7 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
         Assert.Equal("ExitCloseOnlyBlockedPrivatePlaneStale", attempt.BlockerCode);
         Assert.Contains("ExecutionIntent=ExitCloseOnly", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitReason=PrivatePlaneStale", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ReduceOnly=True", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Null(harness.ExecutionEngine.LastCommand);
         Assert.Empty(harness.DbContext.ExecutionOrders);
