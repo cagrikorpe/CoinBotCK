@@ -56,6 +56,8 @@ public sealed class MarketScannerHandoffService(
     private const string ExitCloseOnlyBlockedRiskCode = "ExitCloseOnlyBlockedRisk";
     private const string ExitCloseOnlyBlockedNoOpenPositionCode = "ExitCloseOnlyBlockedNoOpenPosition";
     private const string ExitCloseOnlyBlockedQuantityInvalidCode = "ExitCloseOnlyBlockedQuantityInvalid";
+    private const string DirectionalConflictShortAgainstBullishScannerCode = "DirectionalConflictShortAgainstBullishScanner";
+    private const string DirectionalConflictLongAgainstBearishScannerCode = "DirectionalConflictLongAgainstBearishScanner";
     private static readonly JsonSerializerOptions StrategySignalSerializerOptions = CreateStrategySignalSerializerOptions();
     private static readonly HashSet<string> ReplaySuppressedBlockedAttemptCodes = new(StringComparer.Ordinal)
     {
@@ -409,6 +411,39 @@ public sealed class MarketScannerHandoffService(
                         CloseSide: currentPositionDirection == StrategyTradeDirection.Long ? ExecutionOrderSide.Sell : ExecutionOrderSide.Buy,
                         AutoReverse: false);
                 }
+            }
+
+            if (executionContext.SignalType == StrategySignalType.Entry &&
+                TryResolveDirectionalScannerConflict(
+                    candidate,
+                    symbol,
+                    entryDirection,
+                    out var directionalConflictBlockerCode,
+                    out var directionalConflictBlockerDetail,
+                    out var directionalConflictGuardSummary))
+            {
+                latestAttempt = await PersistBlockedAttemptWithShadowDecisionAsync(
+                    scanCycleId,
+                    candidate,
+                    ownerBotMatch.OwnerUserId,
+                    ownerBotMatch,
+                    symbolMetadata,
+                    executionContext,
+                    strategySignal,
+                    strategyVeto: null,
+                    strategyDecisionOutcome: "Persisted",
+                    executionStatus: "Blocked",
+                    blockerCode: directionalConflictBlockerCode,
+                    blockerDetail: directionalConflictBlockerDetail,
+                    correlationId: attemptCorrelationId,
+                    guardSummary: AppendExecutionIntentGuardSummary(
+                        Truncate(
+                            $"{directionalConflictGuardSummary}; Symbol={symbol}; Timeframe={klineInterval}",
+                            512) ?? $"{directionalConflictGuardSummary}; Symbol={symbol}; Timeframe={klineInterval}",
+                        executionContext),
+                    cancellationToken: cancellationToken,
+                    strategyResult: strategyResult);
+                continue;
             }
 
             if (executionContext.SignalType == StrategySignalType.Entry &&
@@ -2729,6 +2764,51 @@ public sealed class MarketScannerHandoffService(
             StrategyTradeDirection.Short => "ShortEntryHysteresisActive",
             _ => "EntryHysteresisActive"
         };
+    }
+
+    private static bool TryResolveDirectionalScannerConflict(
+        MarketScannerCandidate candidate,
+        string symbol,
+        StrategyTradeDirection entryDirection,
+        out string blockerCode,
+        out string blockerDetail,
+        out string guardSummary)
+    {
+        blockerCode = string.Empty;
+        blockerDetail = string.Empty;
+        guardSummary = string.Empty;
+
+        if (entryDirection is not StrategyTradeDirection.Long and not StrategyTradeDirection.Short ||
+            string.IsNullOrWhiteSpace(candidate.ScoringSummary))
+        {
+            return false;
+        }
+
+        var scoringSummary = candidate.ScoringSummary!;
+        var hasBullishScannerBias =
+            scoringSummary.Contains("HasTrendBreakoutUp", StringComparison.Ordinal) ||
+            scoringSummary.Contains("TrendBreakoutConfirmed", StringComparison.Ordinal);
+        var hasBearishScannerBias =
+            scoringSummary.Contains("HasTrendBreakoutDown", StringComparison.Ordinal) ||
+            scoringSummary.Contains("TrendBreakdownConfirmed", StringComparison.Ordinal);
+
+        if (entryDirection == StrategyTradeDirection.Short && hasBullishScannerBias)
+        {
+            blockerCode = DirectionalConflictShortAgainstBullishScannerCode;
+            blockerDetail = $"Execution blocked because bullish scanner advisory conflicts with the requested short entry for {symbol}.";
+            guardSummary = "ScannerDirectionalConflict=ShortAgainstBullish";
+            return true;
+        }
+
+        if (entryDirection == StrategyTradeDirection.Long && hasBearishScannerBias)
+        {
+            blockerCode = DirectionalConflictLongAgainstBearishScannerCode;
+            blockerDetail = $"Execution blocked because bearish scanner advisory conflicts with the requested long entry for {symbol}.";
+            guardSummary = "ScannerDirectionalConflict=LongAgainstBearish";
+            return true;
+        }
+
+        return false;
     }
 
     private bool TryResolvePilotExecutionParameters(
