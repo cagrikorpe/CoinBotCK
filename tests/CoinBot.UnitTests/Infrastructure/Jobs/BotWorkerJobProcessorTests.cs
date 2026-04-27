@@ -971,6 +971,7 @@ public sealed class BotWorkerJobProcessorTests
         ConfigurePilotScope(harness, bot);
         harness.PilotOptions.PilotActivationEnabled = true;
         harness.PilotOptions.EnableRuntimeExitQuality = false;
+        harness.MarketDataService.SetLatestPrice(bot.Symbol, 81m);
         await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-entry-reverse-long-1", symbol: "SOLUSDT");
         await harness.SwitchService.SetTradeMasterStateAsync(
             TradeMasterSwitchState.Armed,
@@ -994,6 +995,7 @@ public sealed class BotWorkerJobProcessorTests
         Assert.True(persistedOrder.ReduceOnly);
         Assert.Equal(0.125m, persistedOrder.Quantity);
         Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
         Assert.Equal(ExecutionOrderSide.Sell, harness.PrivateRestClient.LastPlacementRequest?.Side);
         Assert.True(harness.PrivateRestClient.LastPlacementRequest?.ReduceOnly);
         Assert.Equal(0, harness.PrivateRestClient.EnsureMarginTypeCalls);
@@ -1083,6 +1085,7 @@ public sealed class BotWorkerJobProcessorTests
         ConfigurePilotScope(harness, bot);
         harness.PilotOptions.PilotActivationEnabled = true;
         harness.PilotOptions.EnableRuntimeExitQuality = false;
+        harness.MarketDataService.SetLatestPrice(bot.Symbol, 79m);
         await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-entry-reverse-1", symbol: "SOLUSDT");
         await harness.SwitchService.SetTradeMasterStateAsync(
             TradeMasterSwitchState.Armed,
@@ -1106,9 +1109,94 @@ public sealed class BotWorkerJobProcessorTests
         Assert.True(persistedOrder.ReduceOnly);
         Assert.Equal(0.125m, persistedOrder.Quantity);
         Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
         Assert.Equal(ExecutionOrderSide.Buy, harness.PrivateRestClient.LastPlacementRequest?.Side);
         Assert.True(harness.PrivateRestClient.LastPlacementRequest?.ReduceOnly);
         Assert.Equal(0, harness.PrivateRestClient.EnsureMarginTypeCalls);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_BlocksCloseOnlySellExit_WhenOpenLongPositionWouldCloseAtALoss()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(harness.DbContext, bot, CreateDirectionalPilotDefinitionJson("short"));
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot,
+            quantity: 0.125m,
+            entryPrice: 80m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.EnableRuntimeExitQuality = false;
+        harness.MarketDataService.SetLatestPrice(bot.Symbol, 79m);
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-entry-reverse-long-loss-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-entry-reverse-long-loss-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-entry-reverse-long-loss-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals
+            .SingleAsync(entity => entity.SignalType == StrategySignalType.Entry);
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal("ExitCloseOnlyBlockedUnprofitableLong", latestDecisionTrace.DecisionReasonCode);
+        Assert.Contains("ExitPnlGuard=Blocked", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_BlocksCloseOnlyBuyExit_WhenOpenShortPositionWouldCloseAtALoss()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot.OwnerUserId,
+            bot.ExchangeAccountId ?? throw new InvalidOperationException("Bot exchange account is required."),
+            bot.Symbol,
+            "SHORT",
+            0.125m,
+            80m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.EnableRuntimeExitQuality = false;
+        harness.MarketDataService.SetLatestPrice(bot.Symbol, 81m);
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-entry-reverse-short-loss-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-entry-reverse-short-loss-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-entry-reverse-short-loss-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals
+            .SingleAsync(entity => entity.SignalType == StrategySignalType.Entry);
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal("ExitCloseOnlyBlockedUnprofitableShort", latestDecisionTrace.DecisionReasonCode);
+        Assert.Contains("ExitPnlGuard=Blocked", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
     }
 
     [Fact]

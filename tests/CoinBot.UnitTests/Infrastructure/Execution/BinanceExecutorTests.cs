@@ -311,7 +311,8 @@ public sealed class BinanceExecutorTests
             harness.Order,
             CreateCommand(harness.ExchangeAccountId) with
             {
-                RequestedEnvironment = ExecutionEnvironment.Live
+                RequestedEnvironment = ExecutionEnvironment.Live,
+                Context = "NonPilotExecution=True"
             },
             CancellationToken.None));
 

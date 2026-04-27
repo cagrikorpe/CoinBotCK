@@ -43,7 +43,7 @@ public sealed class BinanceExecutor(
         ArgumentNullException.ThrowIfNull(command);
         var exchangeStopwatch = Stopwatch.StartNew();
 
-        ValidateRuntimeEnvironmentScope(order.ExecutionEnvironment);
+        ValidateRuntimeEnvironmentScope(order.ExecutionEnvironment, command.Context);
 
         var exchangeAccountId = command.ExchangeAccountId
             ?? throw new InvalidOperationException("Broker execution requires an exchange account.");
@@ -301,10 +301,11 @@ public sealed class BinanceExecutor(
         }
     }
 
-    private void ValidateRuntimeEnvironmentScope(ExecutionEnvironment requestedEnvironment)
+    private void ValidateRuntimeEnvironmentScope(ExecutionEnvironment requestedEnvironment, string? commandContext)
     {
         var normalizedTestnetBaseUrl = NormalizeOptional(binanceFuturesTestnetOptionsValue.BaseUrl);
         var requiresExplicitTestnetConfiguration = requestedEnvironment == ExecutionEnvironment.BinanceTestnet;
+        var isDevelopmentFuturesPilot = TryResolveDevelopmentFuturesPilot(commandContext, out _, out _);
 
         if (requiresExplicitTestnetConfiguration)
         {
@@ -372,6 +373,7 @@ public sealed class BinanceExecutor(
         }
 
         if (requestedEnvironment == ExecutionEnvironment.Live &&
+            !isDevelopmentFuturesPilot &&
             string.Equals(environmentScope, "Testnet", StringComparison.OrdinalIgnoreCase))
         {
             throw new ExecutionValidationException(

@@ -720,6 +720,7 @@ public sealed class MarketScannerHandoffServiceTests
         SeedCandidate(harness.DbContext, scanCycleId, "BTCUSDT", rank: 1, score: 10_000m);
         await SeedExchangePositionAsync(harness.DbContext, bot, "BTCUSDT", quantity: 0.020m, entryPrice: 100m, positionSide: "SHORT", observedAtUtc: harness.NowUtc);
         harness.MarketDataService.SetMetadata("BTCUSDT", "BTC", "USDT");
+        harness.MarketDataService.SetPrice("BTCUSDT", 99m);
         harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", harness.NowUtc));
         harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "BTCUSDT", "1m", harness.NowUtc));
 
@@ -735,6 +736,8 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Contains("CloseSide=Buy", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ReduceOnly=True", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("AutoReverse=False", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitPnlGuard=Allowed", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ReasonCode=ExitCloseOnlyAllowedTakeProfit", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.NotNull(harness.ExecutionGate.LastRequest);
         Assert.NotNull(harness.UserExecutionOverrideGuard.LastRequest);
         Assert.Equal(StrategySignalType.Exit, harness.ExecutionEngine.LastCommand?.SignalType);
@@ -757,6 +760,7 @@ public sealed class MarketScannerHandoffServiceTests
         SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 10_000m);
         await SeedExchangePositionAsync(harness.DbContext, bot, "SOLUSDT", quantity: 0.030m, entryPrice: 100m, positionSide: "BOTH", observedAtUtc: harness.NowUtc);
         harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.MarketDataService.SetPrice("SOLUSDT", 101m);
         harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
         harness.StrategySignalService.SetSignal(CreateEntrySignal(
             bot.TradingStrategyId,
@@ -777,9 +781,76 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Contains("CloseQuantity=0.03", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("CloseSide=Sell", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ReduceOnly=True", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitPnlGuard=Allowed", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ReasonCode=ExitCloseOnlyAllowedTakeProfit", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Equal(StrategySignalType.Exit, harness.ExecutionEngine.LastCommand?.SignalType);
         Assert.Equal(ExecutionOrderSide.Sell, harness.ExecutionEngine.LastCommand?.Side);
         Assert.True(harness.ExecutionEngine.LastCommand?.ReduceOnly);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_BlocksCloseOnlySellExit_WhenOpenLongPositionWouldCloseAtALoss()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-closeonly-loss-long", "SOLUSDT", "pilot-closeonly-loss-long");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 10_000m);
+        await SeedExchangePositionAsync(harness.DbContext, bot, "SOLUSDT", quantity: 0.030m, entryPrice: 100m, positionSide: "BOTH", observedAtUtc: harness.NowUtc);
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.MarketDataService.SetPrice("SOLUSDT", 99m);
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(
+            bot.TradingStrategyId,
+            bot.TradingStrategyVersionId,
+            "SOLUSDT",
+            "1m",
+            harness.NowUtc,
+            direction: StrategyTradeDirection.Short));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("ExitCloseOnlyBlockedUnprofitableLong", attempt.BlockerCode);
+        Assert.Contains("ExitPnlGuard=Blocked", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ReasonCode=ExitCloseOnlyBlockedUnprofitableLong", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("EstimatedPnlQuote=-0.03", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Null(harness.ExecutionGate.LastRequest);
+        Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
+        Assert.Null(harness.ExecutionEngine.LastCommand);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_BlocksCloseOnlyBuyExit_WhenOpenShortPositionWouldCloseAtALoss()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-closeonly-loss-short", "BTCUSDT", "pilot-closeonly-loss-short");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "BTCUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "BTCUSDT", rank: 1, score: 10_000m);
+        await SeedExchangePositionAsync(harness.DbContext, bot, "BTCUSDT", quantity: 0.020m, entryPrice: 100m, positionSide: "SHORT", observedAtUtc: harness.NowUtc);
+        harness.MarketDataService.SetMetadata("BTCUSDT", "BTC", "USDT");
+        harness.MarketDataService.SetPrice("BTCUSDT", 101m);
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(
+            bot.TradingStrategyId,
+            bot.TradingStrategyVersionId,
+            "BTCUSDT",
+            "1m",
+            harness.NowUtc));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("ExitCloseOnlyBlockedUnprofitableShort", attempt.BlockerCode);
+        Assert.Contains("ExitPnlGuard=Blocked", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ReasonCode=ExitCloseOnlyBlockedUnprofitableShort", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("EstimatedPnlQuote=-0.02", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Null(harness.ExecutionGate.LastRequest);
+        Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
+        Assert.Null(harness.ExecutionEngine.LastCommand);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
     }
 
     [Fact]
