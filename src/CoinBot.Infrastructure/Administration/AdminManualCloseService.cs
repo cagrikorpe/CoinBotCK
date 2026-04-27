@@ -174,7 +174,7 @@ public sealed class AdminManualCloseService(
         {
             return Fail(
                 ManualCloseNoOpenPositionCode,
-                $"ManualClose=True; ExecutionIntent={ManualCloseIntent}; Symbol={bot.Symbol}; Environment=BinanceTestnet; ReasonCode={ManualCloseNoOpenPositionCode}",
+                $"SignalType=Exit; ExecutionIntent={ManualCloseIntent}; ExitIntent={ManualCloseIntent}; EntrySource=n/a; ExitSource=Manual; ReverseEntryConvertedToCloseOnly=False; ManualClose=True; Symbol={bot.Symbol}; Environment=BinanceTestnet; ReasonCode={ManualCloseNoOpenPositionCode}",
                 "Acik pozisyon bulunamadi.");
         }
 
@@ -192,7 +192,7 @@ public sealed class AdminManualCloseService(
         {
             return Fail(
                 ManualCloseNoOpenPositionCode,
-                $"ManualClose=True; ExecutionIntent={ManualCloseIntent}; Symbol={position.Symbol}; Environment=BinanceTestnet; ReasonCode={ManualCloseNoOpenPositionCode}",
+                $"SignalType=Exit; ExecutionIntent={ManualCloseIntent}; ExitIntent={ManualCloseIntent}; EntrySource=n/a; ExitSource=Manual; ReverseEntryConvertedToCloseOnly=False; ManualClose=True; Symbol={position.Symbol}; Environment=BinanceTestnet; ReasonCode={ManualCloseNoOpenPositionCode}",
                 "Kapatilacak acik pozisyon bulunamadi.");
         }
 
@@ -304,7 +304,7 @@ public sealed class AdminManualCloseService(
     {
         var lastSyncAtUtc = ResolveLastPrivateSyncAtUtc(syncState);
         var ageMs = ResolveAgeMilliseconds(clock.GetUtcNow().UtcDateTime, lastSyncAtUtc);
-        return $"ManualClose=True; ExecutionIntent={ManualCloseIntent}; ExitSource=Manual; Environment=BinanceTestnet; ReasonCode={ManualClosePrivatePlaneStaleCode}; PrivateStreamState={syncState?.PrivateStreamConnectionState.ToString() ?? "Unavailable"}; DriftStatus={syncState?.DriftStatus.ToString() ?? "Unavailable"}; LastPrivateSyncAtUtc={lastSyncAtUtc?.ToString("O") ?? "missing"}; PrivatePlaneAgeMs={ageMs?.ToString(CultureInfo.InvariantCulture) ?? "missing"}; PrivatePlaneThresholdMs={checked(pilotOptionsValue.PrivatePlaneFreshnessThresholdSeconds * 1000)}";
+        return $"SignalType=Exit; ExecutionIntent={ManualCloseIntent}; ExitIntent={ManualCloseIntent}; EntrySource=n/a; ExitSource=Manual; ReverseEntryConvertedToCloseOnly=False; ManualClose=True; Environment=BinanceTestnet; ReasonCode={ManualClosePrivatePlaneStaleCode}; PrivateStreamState={syncState?.PrivateStreamConnectionState.ToString() ?? "Unavailable"}; DriftStatus={syncState?.DriftStatus.ToString() ?? "Unavailable"}; LastPrivateSyncAtUtc={lastSyncAtUtc?.ToString("O") ?? "missing"}; PrivatePlaneAgeMs={ageMs?.ToString(CultureInfo.InvariantCulture) ?? "missing"}; PrivatePlaneThresholdMs={checked(pilotOptionsValue.PrivatePlaneFreshnessThresholdSeconds * 1000)}";
     }
 
     private bool IsPrivatePlaneStale(ExchangeAccountSyncState? syncState)
@@ -436,9 +436,13 @@ public sealed class AdminManualCloseService(
         return string.Join(
             " | ",
             "DevelopmentFuturesTestnetPilot=True",
+            "SignalType=Exit",
             $"ExecutionIntent={ManualCloseIntent}",
+            $"ExitIntent={ManualCloseIntent}",
+            "EntrySource=n/a",
             "ManualClose=True",
             "ExitSource=Manual",
+            "ReverseEntryConvertedToCloseOnly=False",
             $"CloseSide={closeSide}",
             "ReduceOnly=True",
             "AutoReverse=False",

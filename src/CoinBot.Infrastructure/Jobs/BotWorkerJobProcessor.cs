@@ -858,6 +858,7 @@ public sealed class BotWorkerJobProcessor(
                 leverage!.Value,
                 pilotActivationEnabled,
                 executionDispatchMode),
+            signal.SignalType,
             closeOnlyIntent,
             dispatchPlan);
         var preSubmitPilotEvaluation = await userExecutionOverrideGuard.EvaluateAsync(
@@ -3211,7 +3212,13 @@ public sealed class BotWorkerJobProcessor(
         decimal? requestedQuantity = null,
         decimal? referencePrice = null)
     {
-        decisionSummary = AppendExitReasonToken(decisionSummary, decisionReasonCode, isExitCloseOnly: true);
+        var isExitCloseOnly = IsExitCloseOnlyDecision(decisionReasonCode, decisionSummary);
+        decisionSummary = AppendExitReasonToken(decisionSummary, decisionReasonCode, isExitCloseOnly);
+        decisionSummary = AppendSignalClassificationDecisionSummary(
+            decisionSummary,
+            signal.SignalType,
+            decisionReasonCode,
+            isExitCloseOnly);
 
         decimal? requestedNotional = requestedQuantity.HasValue && referencePrice.HasValue
             ? requestedQuantity.Value * referencePrice.Value
@@ -3265,6 +3272,12 @@ public sealed class BotWorkerJobProcessor(
         decimal? requestedQuantity = null,
         decimal? referencePrice = null)
     {
+        decisionSummary = AppendSignalClassificationDecisionSummary(
+            decisionSummary,
+            signal.SignalType,
+            decisionReasonCode,
+            isExitCloseOnly: false);
+
         decimal? requestedNotional = requestedQuantity.HasValue && referencePrice.HasValue
             ? requestedQuantity.Value * referencePrice.Value
             : (decimal?)null;
@@ -3671,12 +3684,19 @@ public sealed class BotWorkerJobProcessor(
 
     private static string AppendExecutionIntentContext(
         string baseContext,
+        StrategySignalType signalType,
         CloseOnlyExecutionIntent? closeOnlyIntent,
         PilotDispatchPlan dispatchPlan)
     {
         if (closeOnlyIntent is null)
         {
-            return baseContext;
+            if (signalType != StrategySignalType.Entry)
+            {
+                return baseContext;
+            }
+
+            return FormattableString.Invariant(
+                $"{baseContext} | SignalType=Entry | ExecutionIntent=Entry | ExitIntent=n/a | EntrySource=StrategyEntry | ExitSource=n/a | ReverseEntryConvertedToCloseOnly=False | ManualClose=False");
         }
 
         var exitPnlGuardSummary = string.IsNullOrWhiteSpace(closeOnlyIntent.ExitPnlGuardSummary)
@@ -3684,7 +3704,7 @@ public sealed class BotWorkerJobProcessor(
             : $" | {closeOnlyIntent.ExitPnlGuardSummary}";
 
         return FormattableString.Invariant(
-            $"{baseContext} | ExecutionIntent={ExitCloseOnlyIntentCode} | OpenPositionQuantity={closeOnlyIntent.OpenPositionQuantity:0.########} | CloseQuantity={dispatchPlan.Quantity:0.########} | CloseSide={closeOnlyIntent.CloseSide} | ReduceOnly={dispatchPlan.ReduceOnly} | AutoReverse=False{exitPnlGuardSummary}");
+            $"{baseContext} | SignalType=Reverse | ExecutionIntent={ExitCloseOnlyIntentCode} | ExitIntent={ExitCloseOnlyIntentCode} | EntrySource=StrategyEntry | ExitSource={ExitReasonReverseSignal} | ReverseEntryConvertedToCloseOnly=True | ManualClose=False | OpenPositionQuantity={closeOnlyIntent.OpenPositionQuantity:0.########} | CloseQuantity={dispatchPlan.Quantity:0.########} | CloseSide={closeOnlyIntent.CloseSide} | ReduceOnly={dispatchPlan.ReduceOnly} | AutoReverse=False{exitPnlGuardSummary}");
     }
 
     private CloseOnlyPnlGuardEvaluation EvaluateExitCloseOnlyPnlGuard(
@@ -3812,7 +3832,7 @@ public sealed class BotWorkerJobProcessor(
     {
         var exitReason = ResolveExitReasonToken(reasonCode, isExitCloseOnly: true) ?? ExitReasonReverseSignal;
         return FormattableString.Invariant(
-            $"ExitPnlGuard={exitPnlGuardState}; ExitReason={exitReason}; ReasonCode={reasonCode}; PositionDirection={positionDirection}; EntryPrice={(entryPrice.HasValue ? entryPrice.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; ExitPrice={(exitPrice.HasValue ? exitPrice.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; CloseSide={closeSide}; ReduceOnly=True; EstimatedPnlQuote={(estimatedPnlQuote.HasValue ? estimatedPnlQuote.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; EstimatedPnlPct={(estimatedPnlPct.HasValue ? estimatedPnlPct.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; MinimumProfitPct={minimumProfitPct:0.########}");
+            $"SignalType=Reverse; ExecutionIntent={ExitCloseOnlyIntentCode}; ExitIntent={ExitCloseOnlyIntentCode}; EntrySource=StrategyEntry; ExitSource={ExitReasonReverseSignal}; ReverseEntryConvertedToCloseOnly=True; ManualClose=False; ExitPnlGuard={exitPnlGuardState}; ExitReason={exitReason}; ReasonCode={reasonCode}; PositionDirection={positionDirection}; EntryPrice={(entryPrice.HasValue ? entryPrice.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; ExitPrice={(exitPrice.HasValue ? exitPrice.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; CloseSide={closeSide}; ReduceOnly=True; EstimatedPnlQuote={(estimatedPnlQuote.HasValue ? estimatedPnlQuote.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; EstimatedPnlPct={(estimatedPnlPct.HasValue ? estimatedPnlPct.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; MinimumProfitPct={minimumProfitPct:0.########}");
     }
 
     private static string BuildRuntimeExitQualitySummary(
@@ -3842,7 +3862,36 @@ public sealed class BotWorkerJobProcessor(
             : string.Empty;
 
         return FormattableString.Invariant(
-            $"Runtime exit quality triggered {exitReason} for {symbol}. ExitReason={exitReason}; ReasonCode={reasonCode}; PositionDirection={direction}; EntryPrice={entryPrice:0.########}; ExitPrice={exitPrice:0.########}; ThresholdPrice={thresholdPrice:0.########}; CloseSide={closeSide}; ReduceOnly=True; EstimatedPnlQuote={estimatedPnlQuote:0.########}; EstimatedPnlPct={estimatedPnlPct:0.########}; NetQuantity={netQuantity:0.########}{peakSummary}{breakEvenSummary}.");
+            $"Runtime exit quality triggered {exitReason} for {symbol}. SignalType=Exit; ExecutionIntent=n/a; ExitIntent=n/a; EntrySource=n/a; ExitSource={exitReason}; ReverseEntryConvertedToCloseOnly=False; ManualClose=False; ExitReason={exitReason}; ReasonCode={reasonCode}; PositionDirection={direction}; EntryPrice={entryPrice:0.########}; ExitPrice={exitPrice:0.########}; ThresholdPrice={thresholdPrice:0.########}; CloseSide={closeSide}; ReduceOnly=True; EstimatedPnlQuote={estimatedPnlQuote:0.########}; EstimatedPnlPct={estimatedPnlPct:0.########}; NetQuantity={netQuantity:0.########}{peakSummary}{breakEvenSummary}.");
+    }
+
+    private static bool IsExitCloseOnlyDecision(string reasonCode, string summary)
+    {
+        return reasonCode.StartsWith("ExitCloseOnly", StringComparison.Ordinal) ||
+               summary.Contains($"ExecutionIntent={ExitCloseOnlyIntentCode}", StringComparison.Ordinal) ||
+               summary.Contains("ExitPnlGuard=", StringComparison.Ordinal);
+    }
+
+    private static string AppendSignalClassificationDecisionSummary(
+        string summary,
+        StrategySignalType signalType,
+        string reasonCode,
+        bool isExitCloseOnly)
+    {
+        if (summary.Contains("ReverseEntryConvertedToCloseOnly=", StringComparison.Ordinal))
+        {
+            return summary;
+        }
+
+        string classification = isExitCloseOnly
+            ? $"SignalType=Reverse; ExecutionIntent={ExitCloseOnlyIntentCode}; ExitIntent={ExitCloseOnlyIntentCode}; EntrySource=StrategyEntry; ExitSource={ExitReasonReverseSignal}; ReverseEntryConvertedToCloseOnly=True; ManualClose=False;"
+            : signalType == StrategySignalType.Entry
+                ? "SignalType=Entry; ExecutionIntent=Entry; ExitIntent=n/a; EntrySource=StrategyEntry; ExitSource=n/a; ReverseEntryConvertedToCloseOnly=False; ManualClose=False;"
+                : $"SignalType=Exit; ExecutionIntent=n/a; ExitIntent=n/a; EntrySource=n/a; ExitSource={ResolveExitReasonToken(reasonCode) ?? "StrategyExit"}; ReverseEntryConvertedToCloseOnly=False; ManualClose=False;";
+
+        return string.IsNullOrWhiteSpace(summary)
+            ? classification
+            : $"{summary} {classification}";
     }
 
     private static string AppendExitReasonToken(string summary, string reasonCode, bool isExitCloseOnly)

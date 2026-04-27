@@ -670,6 +670,10 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal("SameDirectionLongEntrySuppressed", attempt.BlockerCode);
         Assert.Equal("Persisted", attempt.StrategyDecisionOutcome);
         Assert.Contains("open long position already exists", attempt.BlockerDetail, StringComparison.Ordinal);
+        Assert.Contains("SignalType=Entry", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("EntrySource=StrategyEntry", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitSource=n/a", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ReverseEntryConvertedToCloseOnly=False", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Null(harness.ExecutionGate.LastRequest);
         Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
         Assert.Null(harness.ExecutionEngine.LastCommand);
@@ -704,6 +708,10 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal("SameDirectionShortEntrySuppressed", attempt.BlockerCode);
         Assert.Equal("Persisted", attempt.StrategyDecisionOutcome);
         Assert.Contains("open short position already exists", attempt.BlockerDetail, StringComparison.Ordinal);
+        Assert.Contains("SignalType=Entry", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("EntrySource=StrategyEntry", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitSource=n/a", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ReverseEntryConvertedToCloseOnly=False", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Null(harness.ExecutionGate.LastRequest);
         Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
         Assert.Null(harness.ExecutionEngine.LastCommand);
@@ -736,6 +744,12 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Contains("CloseSide=Buy", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ReduceOnly=True", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("AutoReverse=False", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("SignalType=Reverse", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitIntent=ExitCloseOnly", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("EntrySource=StrategyEntry", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitSource=ReverseSignal", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ReverseEntryConvertedToCloseOnly=True", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ManualClose=False", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ExitReason=ReverseSignal", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ExitPnlGuard=Allowed", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ReasonCode=ExitCloseOnlyAllowedTakeProfit", attempt.GuardSummary, StringComparison.Ordinal);
@@ -744,7 +758,11 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal(StrategySignalType.Exit, harness.ExecutionEngine.LastCommand?.SignalType);
         Assert.Equal(ExecutionOrderSide.Buy, harness.ExecutionEngine.LastCommand?.Side);
         Assert.True(harness.ExecutionEngine.LastCommand?.ReduceOnly);
+        Assert.Contains("SignalType=Reverse", harness.ExecutionEngine.LastCommand?.Context, StringComparison.Ordinal);
         Assert.Contains("ExecutionIntent=ExitCloseOnly", harness.ExecutionEngine.LastCommand?.Context, StringComparison.Ordinal);
+        Assert.Contains("ExitIntent=ExitCloseOnly", harness.ExecutionEngine.LastCommand?.Context, StringComparison.Ordinal);
+        Assert.Contains("ExitSource=ReverseSignal", harness.ExecutionEngine.LastCommand?.Context, StringComparison.Ordinal);
+        Assert.Contains("ReverseEntryConvertedToCloseOnly=True", harness.ExecutionEngine.LastCommand?.Context, StringComparison.Ordinal);
         var order = await harness.DbContext.ExecutionOrders.SingleAsync(entity => entity.StrategySignalId == attempt.StrategySignalId);
         Assert.Equal(StrategySignalType.Exit, order.SignalType);
         Assert.True(order.ReduceOnly);
@@ -782,12 +800,19 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Contains("CloseQuantity=0.03", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("CloseSide=Sell", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ReduceOnly=True", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("SignalType=Reverse", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitIntent=ExitCloseOnly", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("EntrySource=StrategyEntry", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitSource=ReverseSignal", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ReverseEntryConvertedToCloseOnly=True", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ExitReason=ReverseSignal", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ExitPnlGuard=Allowed", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ReasonCode=ExitCloseOnlyAllowedTakeProfit", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Equal(StrategySignalType.Exit, harness.ExecutionEngine.LastCommand?.SignalType);
         Assert.Equal(ExecutionOrderSide.Sell, harness.ExecutionEngine.LastCommand?.Side);
         Assert.True(harness.ExecutionEngine.LastCommand?.ReduceOnly);
+        Assert.Contains("ExitSource=ReverseSignal", harness.ExecutionEngine.LastCommand?.Context, StringComparison.Ordinal);
+        Assert.Contains("ReverseEntryConvertedToCloseOnly=True", harness.ExecutionEngine.LastCommand?.Context, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -891,6 +916,8 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal("DirectionalConflictShortAgainstBullishScanner", attempt.BlockerCode);
         Assert.Contains("bullish scanner advisory conflicts", attempt.BlockerDetail, StringComparison.Ordinal);
         Assert.Contains("ScannerDirectionalConflict=ShortAgainstBullish", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("SignalType=Entry", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ReverseEntryConvertedToCloseOnly=False", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Null(harness.ExecutionGate.LastRequest);
         Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
         Assert.Null(harness.ExecutionEngine.LastCommand);
@@ -927,6 +954,8 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal("DirectionalConflictLongAgainstBearishScanner", attempt.BlockerCode);
         Assert.Contains("bearish scanner advisory conflicts", attempt.BlockerDetail, StringComparison.Ordinal);
         Assert.Contains("ScannerDirectionalConflict=LongAgainstBearish", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("SignalType=Entry", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ReverseEntryConvertedToCloseOnly=False", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Null(harness.ExecutionGate.LastRequest);
         Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
         Assert.Null(harness.ExecutionEngine.LastCommand);
@@ -986,6 +1015,9 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
         Assert.Equal("ExitCloseOnlyBlockedPrivatePlaneStale", attempt.BlockerCode);
         Assert.Contains("ExecutionIntent=ExitCloseOnly", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitIntent=ExitCloseOnly", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitSource=ReverseSignal", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ReverseEntryConvertedToCloseOnly=True", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ExitReason=PrivatePlaneStale", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ReduceOnly=True", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Null(harness.ExecutionEngine.LastCommand);

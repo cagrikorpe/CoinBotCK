@@ -27,7 +27,11 @@ public sealed class AdminManualCloseServiceTests
         Assert.Equal(ExecutionOrderSide.Sell, harness.ExecutionEngine.LastCommand!.Side);
         Assert.True(harness.ExecutionEngine.LastCommand.ReduceOnly);
         Assert.Equal(ExecutionEnvironment.BinanceTestnet, harness.ExecutionEngine.LastCommand.RequestedEnvironment);
+        Assert.Contains("SignalType=Exit", harness.ExecutionEngine.LastCommand.Context, StringComparison.Ordinal);
         Assert.Contains("ExecutionIntent=ManualExitCloseOnly", harness.ExecutionEngine.LastCommand.Context, StringComparison.Ordinal);
+        Assert.Contains("ExitIntent=ManualExitCloseOnly", harness.ExecutionEngine.LastCommand.Context, StringComparison.Ordinal);
+        Assert.Contains("ExitSource=Manual", harness.ExecutionEngine.LastCommand.Context, StringComparison.Ordinal);
+        Assert.Contains("ReverseEntryConvertedToCloseOnly=False", harness.ExecutionEngine.LastCommand.Context, StringComparison.Ordinal);
         Assert.Contains("ManualClose=True", harness.ExecutionEngine.LastCommand.Context, StringComparison.Ordinal);
     }
 
@@ -41,6 +45,7 @@ public sealed class AdminManualCloseServiceTests
         Assert.True(result.IsSuccess);
         Assert.Equal(ExecutionOrderSide.Buy, harness.ExecutionEngine.LastCommand!.Side);
         Assert.True(harness.ExecutionEngine.LastCommand.ReduceOnly);
+        Assert.Contains("ExitSource=Manual", harness.ExecutionEngine.LastCommand.Context, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -52,6 +57,9 @@ public sealed class AdminManualCloseServiceTests
 
         Assert.False(result.IsSuccess);
         Assert.Equal("ManualCloseNoOpenPosition", result.OutcomeCode);
+        Assert.Contains("SignalType=Exit", result.Summary, StringComparison.Ordinal);
+        Assert.Contains("ExitSource=Manual", result.Summary, StringComparison.Ordinal);
+        Assert.Contains("ReverseEntryConvertedToCloseOnly=False", result.Summary, StringComparison.Ordinal);
         Assert.Null(harness.ExecutionEngine.LastCommand);
     }
 
@@ -64,6 +72,9 @@ public sealed class AdminManualCloseServiceTests
 
         Assert.False(result.IsSuccess);
         Assert.Equal("ManualCloseBlockedPrivatePlaneStale", result.OutcomeCode);
+        Assert.Contains("SignalType=Exit", result.Summary, StringComparison.Ordinal);
+        Assert.Contains("ExitSource=Manual", result.Summary, StringComparison.Ordinal);
+        Assert.Contains("ReverseEntryConvertedToCloseOnly=False", result.Summary, StringComparison.Ordinal);
         Assert.Contains("PrivateStreamState=Disconnected", result.Summary, StringComparison.Ordinal);
         Assert.Null(harness.ExecutionEngine.LastCommand);
     }

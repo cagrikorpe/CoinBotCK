@@ -820,6 +820,10 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal("Skipped", latestDecisionTrace.DecisionOutcome);
         Assert.Equal("ExecutionSkip", latestDecisionTrace.DecisionReasonType);
         Assert.Equal("SameDirectionLongEntrySuppressed", latestDecisionTrace.DecisionReasonCode);
+        Assert.Contains("SignalType=Entry", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("EntrySource=StrategyEntry", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitSource=n/a", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ReverseEntryConvertedToCloseOnly=False", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -955,6 +959,10 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal(StrategySignalType.Entry, persistedSignal.SignalType);
         Assert.Empty(harness.DbContext.ExecutionOrders);
         Assert.Equal("SameDirectionShortEntrySuppressed", latestDecisionTrace.DecisionReasonCode);
+        Assert.Contains("SignalType=Entry", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("EntrySource=StrategyEntry", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitSource=n/a", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ReverseEntryConvertedToCloseOnly=False", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1153,6 +1161,10 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Empty(harness.DbContext.ExecutionOrders);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
         Assert.Equal("ExitCloseOnlyBlockedUnprofitableLong", latestDecisionTrace.DecisionReasonCode);
+        Assert.Contains("SignalType=Reverse", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitIntent=ExitCloseOnly", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitSource=ReverseSignal", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ReverseEntryConvertedToCloseOnly=True", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitReason=BlockedUnprofitable", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitPnlGuard=Blocked", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
     }
@@ -1197,6 +1209,10 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Empty(harness.DbContext.ExecutionOrders);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
         Assert.Equal("ExitCloseOnlyBlockedUnprofitableShort", latestDecisionTrace.DecisionReasonCode);
+        Assert.Contains("SignalType=Reverse", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitIntent=ExitCloseOnly", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitSource=ReverseSignal", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ReverseEntryConvertedToCloseOnly=True", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitReason=BlockedUnprofitable", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitPnlGuard=Blocked", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
     }
@@ -1250,6 +1266,9 @@ public sealed class BotWorkerJobProcessorTests
         Assert.True(persistedOrder.ReduceOnly);
         Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
         Assert.Equal("TakeProfitTriggered", exitTrace.DecisionReasonCode);
+        Assert.Contains("SignalType=Exit", exitTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitSource=TakeProfit", exitTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ReverseEntryConvertedToCloseOnly=False", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitReason=TakeProfit", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Equal("EntrySupersededByRuntimeExitQuality", entryTrace.DecisionReasonCode);
     }
@@ -1294,6 +1313,8 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal(ExecutionOrderSide.Buy, persistedOrder.Side);
         Assert.True(persistedOrder.ReduceOnly);
         Assert.Equal("StopLossTriggered", exitTrace.DecisionReasonCode);
+        Assert.Contains("SignalType=Exit", exitTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitSource=StopLoss", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitReason=StopLoss", exitTrace.DecisionSummary, StringComparison.Ordinal);
     }
 
@@ -1337,6 +1358,8 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal(ExecutionOrderSide.Buy, persistedOrder.Side);
         Assert.True(persistedOrder.ReduceOnly);
         Assert.Equal("TrailingStopTriggered", exitTrace.DecisionReasonCode);
+        Assert.Contains("SignalType=Exit", exitTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitSource=RiskExit", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitReason=RiskExit", exitTrace.DecisionSummary, StringComparison.Ordinal);
     }
 
@@ -1381,6 +1404,8 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal(ExecutionOrderSide.Buy, persistedOrder.Side);
         Assert.True(persistedOrder.ReduceOnly);
         Assert.Equal("BreakEvenTriggered", exitTrace.DecisionReasonCode);
+        Assert.Contains("SignalType=Exit", exitTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitSource=RiskExit", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitReason=RiskExit", exitTrace.DecisionSummary, StringComparison.Ordinal);
     }
 
