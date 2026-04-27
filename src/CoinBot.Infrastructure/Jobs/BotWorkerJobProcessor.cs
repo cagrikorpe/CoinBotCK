@@ -81,7 +81,14 @@ public sealed class BotWorkerJobProcessor(
     private const string ExitReasonBlockedUnprofitable = "BlockedUnprofitable";
     private const string ExitReasonPrivatePlaneStale = "PrivatePlaneStale";
     private const string ExitReasonStaleMarketData = "StaleMarketData";
-    private const decimal ExitCloseOnlyMinimumProfitPct = 0m;
+    private const decimal DefaultExitCloseOnlyMinimumProfitPct = 0m;
+    private const string ProfitPolicyAppliedToken = "ProfitPolicy=Applied";
+    private const string ReverseExitBlockedUnprofitablePolicyReason = "ReverseExitBlockedUnprofitable";
+    private const string ReverseSignalProfitablePolicyReason = "ReverseSignalProfitable";
+    private const string ReverseSignalProfitPolicyDisabledPolicyReason = "ReverseSignalProfitPolicyDisabled";
+    private const string TakeProfitThresholdReachedPolicyReason = "TakeProfitThresholdReached";
+    private const string StopLossThresholdReachedPolicyReason = "StopLossThresholdReached";
+    private const string RiskExitThresholdReachedPolicyReason = "RiskExitThresholdReached";
 
     private static readonly JsonSerializerOptions SerializerOptions = CreateSerializerOptions();
 
@@ -1726,7 +1733,8 @@ public sealed class BotWorkerJobProcessor(
                     null);
             }
 
-            if (TryResolveLowerPriceBoundary(entryPrice, optionsValue.StopLossPercentage, out var stopLossPrice) &&
+            if (optionsValue.AllowStopLossExit &&
+                TryResolveLowerPriceBoundary(entryPrice, optionsValue.StopLossPercentage, out var stopLossPrice) &&
                 referencePrice <= stopLossPrice)
             {
                 return new RuntimeExitQualityTrigger(
@@ -1753,7 +1761,8 @@ public sealed class BotWorkerJobProcessor(
                 marketState,
                 cancellationToken);
 
-            if (peakPriceSinceEntry.HasValue &&
+            if (optionsValue.AllowRiskExit &&
+                peakPriceSinceEntry.HasValue &&
                 TryResolveUpperPriceBoundary(entryPrice, optionsValue.TrailingStopActivationPercentage, out var trailingActivationPrice) &&
                 peakPriceSinceEntry.Value >= trailingActivationPrice &&
                 TryResolveLowerPriceBoundary(peakPriceSinceEntry.Value, optionsValue.TrailingStopPercentage, out var trailingStopPrice) &&
@@ -1776,7 +1785,8 @@ public sealed class BotWorkerJobProcessor(
                     peakPriceSinceEntry.Value);
             }
 
-            if (peakPriceSinceEntry.HasValue &&
+            if (optionsValue.AllowRiskExit &&
+                peakPriceSinceEntry.HasValue &&
                 TryResolveUpperPriceBoundary(entryPrice, optionsValue.BreakEvenActivationPercentage, out var breakEvenActivationPrice) &&
                 peakPriceSinceEntry.Value >= breakEvenActivationPrice &&
                 TryResolveUpperPriceBoundary(breakEvenPrice, optionsValue.BreakEvenBufferPercentage, out var breakEvenFloorPrice) &&
@@ -1823,7 +1833,8 @@ public sealed class BotWorkerJobProcessor(
                 null);
         }
 
-        if (TryResolveUpperPriceBoundary(entryPrice, optionsValue.StopLossPercentage, out var shortStopLossPrice) &&
+        if (optionsValue.AllowStopLossExit &&
+            TryResolveUpperPriceBoundary(entryPrice, optionsValue.StopLossPercentage, out var shortStopLossPrice) &&
             referencePrice >= shortStopLossPrice)
         {
             return new RuntimeExitQualityTrigger(
@@ -1850,7 +1861,8 @@ public sealed class BotWorkerJobProcessor(
             marketState,
             cancellationToken);
 
-        if (troughPriceSinceEntry.HasValue &&
+        if (optionsValue.AllowRiskExit &&
+            troughPriceSinceEntry.HasValue &&
             TryResolveLowerPriceBoundary(entryPrice, optionsValue.TrailingStopActivationPercentage, out var shortTrailingActivationPrice) &&
             troughPriceSinceEntry.Value <= shortTrailingActivationPrice &&
             TryResolveUpperPriceBoundary(troughPriceSinceEntry.Value, optionsValue.TrailingStopPercentage, out var shortTrailingStopPrice) &&
@@ -1873,7 +1885,8 @@ public sealed class BotWorkerJobProcessor(
                 troughPriceSinceEntry.Value);
         }
 
-        if (troughPriceSinceEntry.HasValue &&
+        if (optionsValue.AllowRiskExit &&
+            troughPriceSinceEntry.HasValue &&
             TryResolveLowerPriceBoundary(entryPrice, optionsValue.BreakEvenActivationPercentage, out var shortBreakEvenActivationPrice) &&
             troughPriceSinceEntry.Value <= shortBreakEvenActivationPrice &&
             TryResolveLowerPriceBoundary(breakEvenPrice, optionsValue.BreakEvenBufferPercentage, out var shortBreakEvenFloorPrice) &&
@@ -3714,6 +3727,8 @@ public sealed class BotWorkerJobProcessor(
         decimal? referencePrice)
     {
         var positionDirection = currentPosition?.Direction ?? StrategyTradeDirection.Neutral;
+        var minimumProfitPct = ResolveReverseExitMinimumProfitPct();
+        var exitOnReverseSignalOnlyIfProfitable = optionsValue.ExitOnReverseSignalOnlyIfProfitable;
         decimal closeQuantity;
         try
         {
@@ -3730,13 +3745,18 @@ public sealed class BotWorkerJobProcessor(
                 currentPosition?.EntryPrice,
                 referencePrice,
                 currentPosition?.Direction == StrategyTradeDirection.Long ? ExecutionOrderSide.Sell : ExecutionOrderSide.Buy,
+                openPositionQuantity: currentPosition?.NetQuantity,
+                closeQuantity: null,
                 estimatedPnlQuote: null,
                 estimatedPnlPct: null,
-                minimumProfitPct: ExitCloseOnlyMinimumProfitPct);
+                minimumProfitPct: minimumProfitPct,
+                exitPolicyDecision: "Blocked",
+                exitPolicyReason: ExitCloseOnlyBlockedQuantityInvalidDecisionCode,
+                exitOnReverseSignalOnlyIfProfitable: exitOnReverseSignalOnlyIfProfitable);
             return new CloseOnlyPnlGuardEvaluation(
                 IsBlocked: true,
                 DecisionReasonCode: ExitCloseOnlyBlockedQuantityInvalidDecisionCode,
-                DecisionSummary: $"Close-only exit candidate was skipped because a valid reduce-only quantity could not be resolved for {symbol}. {invalidSummary}",
+                DecisionSummary: invalidSummary,
                 GuardSummary: invalidSummary,
                 CloseQuantity: null);
         }
@@ -3752,13 +3772,18 @@ public sealed class BotWorkerJobProcessor(
                 currentPosition?.EntryPrice,
                 referencePrice,
                 currentPosition?.Direction == StrategyTradeDirection.Long ? ExecutionOrderSide.Sell : ExecutionOrderSide.Buy,
+                openPositionQuantity: currentPosition?.NetQuantity,
+                closeQuantity: closeQuantity,
                 estimatedPnlQuote: null,
                 estimatedPnlPct: null,
-                minimumProfitPct: ExitCloseOnlyMinimumProfitPct);
+                minimumProfitPct: minimumProfitPct,
+                exitPolicyDecision: "Blocked",
+                exitPolicyReason: ExitCloseOnlyBlockedQuantityInvalidDecisionCode,
+                exitOnReverseSignalOnlyIfProfitable: exitOnReverseSignalOnlyIfProfitable);
             return new CloseOnlyPnlGuardEvaluation(
                 IsBlocked: true,
                 DecisionReasonCode: ExitCloseOnlyBlockedQuantityInvalidDecisionCode,
-                DecisionSummary: $"Close-only exit candidate was skipped because a valid entry price or exit price could not be resolved for {symbol}. {invalidSummary}",
+                DecisionSummary: invalidSummary,
                 GuardSummary: invalidSummary,
                 CloseQuantity: closeQuantity);
         }
@@ -3770,7 +3795,8 @@ public sealed class BotWorkerJobProcessor(
             ? NormalizeDecimal(((exitPrice - entryPrice) / entryPrice) * 100m)
             : NormalizeDecimal(((entryPrice - exitPrice) / entryPrice) * 100m);
 
-        if (estimatedPnlQuote < 0m || estimatedPnlPct < ExitCloseOnlyMinimumProfitPct)
+        if (exitOnReverseSignalOnlyIfProfitable &&
+            (estimatedPnlQuote < 0m || estimatedPnlPct < minimumProfitPct))
         {
             var decisionReasonCode = currentPosition.Direction == StrategyTradeDirection.Long
                 ? ExitCloseOnlyBlockedUnprofitableLongDecisionCode
@@ -3782,13 +3808,18 @@ public sealed class BotWorkerJobProcessor(
                 entryPrice,
                 exitPrice,
                 currentPosition.Direction == StrategyTradeDirection.Long ? ExecutionOrderSide.Sell : ExecutionOrderSide.Buy,
+                openPositionQuantity: currentPosition.NetQuantity,
+                closeQuantity: closeQuantity,
                 estimatedPnlQuote,
                 estimatedPnlPct,
-                minimumProfitPct: ExitCloseOnlyMinimumProfitPct);
+                minimumProfitPct: minimumProfitPct,
+                exitPolicyDecision: "Blocked",
+                exitPolicyReason: ReverseExitBlockedUnprofitablePolicyReason,
+                exitOnReverseSignalOnlyIfProfitable: exitOnReverseSignalOnlyIfProfitable);
             return new CloseOnlyPnlGuardEvaluation(
                 IsBlocked: true,
                 DecisionReasonCode: decisionReasonCode,
-                DecisionSummary: $"Close-only exit candidate was skipped because estimated PnL is below the minimum threshold for {symbol}. {blockedSummary}",
+                DecisionSummary: blockedSummary,
                 GuardSummary: blockedSummary,
                 CloseQuantity: closeQuantity);
         }
@@ -3803,9 +3834,16 @@ public sealed class BotWorkerJobProcessor(
                 entryPrice,
                 exitPrice,
                 currentPosition.Direction == StrategyTradeDirection.Long ? ExecutionOrderSide.Sell : ExecutionOrderSide.Buy,
+                openPositionQuantity: currentPosition.NetQuantity,
+                closeQuantity: closeQuantity,
                 estimatedPnlQuote,
                 estimatedPnlPct,
-                minimumProfitPct: ExitCloseOnlyMinimumProfitPct),
+                minimumProfitPct: minimumProfitPct,
+                exitPolicyDecision: "Allowed",
+                exitPolicyReason: exitOnReverseSignalOnlyIfProfitable
+                    ? ReverseSignalProfitablePolicyReason
+                    : ReverseSignalProfitPolicyDisabledPolicyReason,
+                exitOnReverseSignalOnlyIfProfitable: exitOnReverseSignalOnlyIfProfitable),
             GuardSummary: BuildExitCloseOnlyPnlGuardSummary(
                 exitPnlGuardState: "Allowed",
                 reasonCode: ExitCloseOnlyAllowedTakeProfitDecisionCode,
@@ -3813,29 +3851,41 @@ public sealed class BotWorkerJobProcessor(
                 entryPrice,
                 exitPrice,
                 currentPosition.Direction == StrategyTradeDirection.Long ? ExecutionOrderSide.Sell : ExecutionOrderSide.Buy,
+                openPositionQuantity: currentPosition.NetQuantity,
+                closeQuantity: closeQuantity,
                 estimatedPnlQuote,
                 estimatedPnlPct,
-                minimumProfitPct: ExitCloseOnlyMinimumProfitPct),
+                minimumProfitPct: minimumProfitPct,
+                exitPolicyDecision: "Allowed",
+                exitPolicyReason: exitOnReverseSignalOnlyIfProfitable
+                    ? ReverseSignalProfitablePolicyReason
+                    : ReverseSignalProfitPolicyDisabledPolicyReason,
+                exitOnReverseSignalOnlyIfProfitable: exitOnReverseSignalOnlyIfProfitable),
             CloseQuantity: closeQuantity);
     }
 
-    private static string BuildExitCloseOnlyPnlGuardSummary(
+    private string BuildExitCloseOnlyPnlGuardSummary(
         string exitPnlGuardState,
         string reasonCode,
         StrategyTradeDirection positionDirection,
         decimal? entryPrice,
         decimal? exitPrice,
         ExecutionOrderSide closeSide,
+        decimal? openPositionQuantity,
+        decimal? closeQuantity,
         decimal? estimatedPnlQuote,
         decimal? estimatedPnlPct,
-        decimal minimumProfitPct)
+        decimal minimumProfitPct,
+        string exitPolicyDecision,
+        string exitPolicyReason,
+        bool exitOnReverseSignalOnlyIfProfitable)
     {
         var exitReason = ResolveExitReasonToken(reasonCode, isExitCloseOnly: true) ?? ExitReasonReverseSignal;
         return FormattableString.Invariant(
-            $"SignalType=Reverse; ExecutionIntent={ExitCloseOnlyIntentCode}; ExitIntent={ExitCloseOnlyIntentCode}; EntrySource=StrategyEntry; ExitSource={ExitReasonReverseSignal}; ReverseEntryConvertedToCloseOnly=True; ManualClose=False; ExitPnlGuard={exitPnlGuardState}; ExitReason={exitReason}; ReasonCode={reasonCode}; PositionDirection={positionDirection}; EntryPrice={(entryPrice.HasValue ? entryPrice.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; ExitPrice={(exitPrice.HasValue ? exitPrice.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; CloseSide={closeSide}; ReduceOnly=True; EstimatedPnlQuote={(estimatedPnlQuote.HasValue ? estimatedPnlQuote.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; EstimatedPnlPct={(estimatedPnlPct.HasValue ? estimatedPnlPct.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; MinimumProfitPct={minimumProfitPct:0.########}");
+            $"{ProfitPolicyAppliedToken}; ExitPolicyDecision={exitPolicyDecision}; ExitPolicyReason={exitPolicyReason}; MinTakeProfitPct={minimumProfitPct:0.########}; StopLossPct={optionsValue.StopLossPercentage:0.########}; ExitOnReverseSignalOnlyIfProfitable={exitOnReverseSignalOnlyIfProfitable}; EstimatedPnlQuote={(estimatedPnlQuote.HasValue ? estimatedPnlQuote.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; EstimatedPnlPct={(estimatedPnlPct.HasValue ? estimatedPnlPct.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; PositionEntryPrice={(entryPrice.HasValue ? entryPrice.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; CurrentPrice={(exitPrice.HasValue ? exitPrice.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; SignalType=Reverse; ExecutionIntent={ExitCloseOnlyIntentCode}; ExitIntent={ExitCloseOnlyIntentCode}; ExitSource={ExitReasonReverseSignal}; ReverseEntryConvertedToCloseOnly=True; CloseSide={closeSide}; ReduceOnly=True; ExitReason={exitReason}; ExitPnlGuard={exitPnlGuardState}; ReasonCode={reasonCode}");
     }
 
-    private static string BuildRuntimeExitQualitySummary(
+    private string BuildRuntimeExitQualitySummary(
         string symbol,
         string reasonCode,
         StrategyTradeDirection direction,
@@ -3860,9 +3910,28 @@ public sealed class BotWorkerJobProcessor(
         var breakEvenSummary = breakEvenPrice.HasValue
             ? $"; BreakEvenPrice={breakEvenPrice.Value.ToString("0.########", CultureInfo.InvariantCulture)}"
             : string.Empty;
+        var exitPolicyReason = ResolveRuntimeExitPolicyReason(reasonCode);
 
         return FormattableString.Invariant(
-            $"Runtime exit quality triggered {exitReason} for {symbol}. SignalType=Exit; ExecutionIntent=n/a; ExitIntent=n/a; EntrySource=n/a; ExitSource={exitReason}; ReverseEntryConvertedToCloseOnly=False; ManualClose=False; ExitReason={exitReason}; ReasonCode={reasonCode}; PositionDirection={direction}; EntryPrice={entryPrice:0.########}; ExitPrice={exitPrice:0.########}; ThresholdPrice={thresholdPrice:0.########}; CloseSide={closeSide}; ReduceOnly=True; EstimatedPnlQuote={estimatedPnlQuote:0.########}; EstimatedPnlPct={estimatedPnlPct:0.########}; NetQuantity={netQuantity:0.########}{peakSummary}{breakEvenSummary}.");
+            $"Runtime exit quality triggered {exitReason} for {symbol}. SignalType=Exit; ExecutionIntent=n/a; ExitIntent=n/a; EntrySource=n/a; ExitSource={exitReason}; ReverseEntryConvertedToCloseOnly=False; ManualClose=False; {ProfitPolicyAppliedToken}; ExitReason={exitReason}; ReasonCode={reasonCode}; ExitPolicyDecision=Allowed; ExitPolicyReason={exitPolicyReason}; MinTakeProfitPct={ResolveReverseExitMinimumProfitPct():0.########}; StopLossPct={optionsValue.StopLossPercentage:0.########}; ExitOnReverseSignalOnlyIfProfitable={optionsValue.ExitOnReverseSignalOnlyIfProfitable}; PositionDirection={direction}; EntryPrice={entryPrice:0.########}; PositionEntryPrice={entryPrice:0.########}; ExitPrice={exitPrice:0.########}; CurrentPrice={exitPrice:0.########}; ThresholdPrice={thresholdPrice:0.########}; CloseSide={closeSide}; ReduceOnly=True; EstimatedPnlQuote={estimatedPnlQuote:0.########}; EstimatedPnlPct={estimatedPnlPct:0.########}; NetQuantity={netQuantity:0.########}{peakSummary}{breakEvenSummary}.");
+    }
+
+    private decimal ResolveReverseExitMinimumProfitPct()
+    {
+        return optionsValue.MinTakeProfitPct < 0m
+            ? DefaultExitCloseOnlyMinimumProfitPct
+            : optionsValue.MinTakeProfitPct;
+    }
+
+    private static string ResolveRuntimeExitPolicyReason(string reasonCode)
+    {
+        return reasonCode switch
+        {
+            TakeProfitTriggeredDecisionCode => TakeProfitThresholdReachedPolicyReason,
+            StopLossTriggeredDecisionCode => StopLossThresholdReachedPolicyReason,
+            TrailingStopTriggeredDecisionCode or BreakEvenTriggeredDecisionCode => RiskExitThresholdReachedPolicyReason,
+            _ => reasonCode
+        };
     }
 
     private static bool IsExitCloseOnlyDecision(string reasonCode, string summary)

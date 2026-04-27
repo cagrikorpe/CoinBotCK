@@ -65,6 +65,15 @@ public sealed class BotExecutionPilotOptions
     public decimal TakeProfitPercentage { get; set; } = 0.60m;
 
     [Range(0, 100)]
+    public decimal MinTakeProfitPct { get; set; } = 0m;
+
+    public bool ExitOnReverseSignalOnlyIfProfitable { get; set; } = true;
+
+    public bool AllowStopLossExit { get; set; } = true;
+
+    public bool AllowRiskExit { get; set; } = true;
+
+    [Range(0, 100)]
     public decimal StopLossPercentage { get; set; } = 0.45m;
 
     [Range(0, 100)]
