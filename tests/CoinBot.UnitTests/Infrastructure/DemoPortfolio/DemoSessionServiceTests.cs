@@ -153,6 +153,216 @@ public sealed class DemoSessionServiceTests
     }
 
     [Fact]
+    public async Task RunConsistencyCheckAsync_DoesNotInsertDuplicatePositionProjection_WhenActiveProjectionAlreadyExists()
+    {
+        await using var harness = CreateHarness();
+        var botId = Guid.NewGuid();
+        var positionScopeKey = $"bot:{botId:N}";
+        harness.DbContext.TradingBots.Add(new TradingBot
+        {
+            Id = botId,
+            OwnerUserId = "user-existing-position",
+            Name = "Demo Bot",
+            StrategyKey = "demo-existing-position",
+            Symbol = "SOLUSDT",
+            IsEnabled = false,
+            OpenOrderCount = 0,
+            OpenPositionCount = 1
+        });
+        harness.DbContext.DemoSessions.Add(new DemoSession
+        {
+            OwnerUserId = "user-existing-position",
+            SequenceNumber = 1,
+            SeedAsset = "USDT",
+            SeedAmount = 10000m,
+            State = DemoSessionState.Active,
+            ConsistencyStatus = DemoConsistencyStatus.DriftDetected,
+            StartedAtUtc = At(0)
+        });
+        harness.DbContext.DemoLedgerTransactions.Add(new DemoLedgerTransaction
+        {
+            OwnerUserId = "user-existing-position",
+            OperationId = "mark-price:existing-position",
+            TransactionType = DemoLedgerTransactionType.MarkPriceUpdated,
+            BotId = botId,
+            PositionScopeKey = positionScopeKey,
+            Symbol = "SOLUSDT",
+            BaseAsset = "SOL",
+            QuoteAsset = "USDT",
+            PositionKind = DemoPositionKind.Futures,
+            MarginMode = DemoMarginMode.Cross,
+            Leverage = 1m,
+            PositionQuantityAfter = 0.06m,
+            PositionCostBasisAfter = 5.214m,
+            PositionAverageEntryPriceAfter = 86.9m,
+            CumulativeRealizedPnlAfter = 0m,
+            UnrealizedPnlAfter = 0.012m,
+            CumulativeFeesInQuoteAfter = 0.003m,
+            NetFundingInQuoteAfter = 0m,
+            LastPriceAfter = 87.1m,
+            MarkPriceAfter = 87.2m,
+            MaintenanceMarginRateAfter = 0.004m,
+            MaintenanceMarginAfter = 0.020856m,
+            MarginBalanceAfter = 5.226m,
+            LiquidationPriceAfter = 50m,
+            OccurredAtUtc = At(1),
+            CreatedDate = At(1),
+            UpdatedDate = At(1)
+        });
+        var existingPositionId = Guid.NewGuid();
+        harness.DbContext.DemoPositions.Add(new DemoPosition
+        {
+            Id = existingPositionId,
+            OwnerUserId = "user-existing-position",
+            BotId = botId,
+            PositionScopeKey = positionScopeKey,
+            Symbol = "SOLUSDT",
+            BaseAsset = "SOL",
+            QuoteAsset = "USDT",
+            PositionKind = DemoPositionKind.Futures,
+            MarginMode = DemoMarginMode.Cross,
+            Leverage = 1m,
+            Quantity = 0.06m,
+            CostBasis = 5.214m,
+            AverageEntryPrice = 86.9m,
+            RealizedPnl = 0m,
+            UnrealizedPnl = 0.012m,
+            TotalFeesInQuote = 0.003m,
+            NetFundingInQuote = 0m,
+            MaintenanceMarginRate = 0.004m,
+            MaintenanceMargin = 0.020856m,
+            MarginBalance = 5.226m,
+            LiquidationPrice = 50m,
+            LastMarkPrice = 87.2m,
+            LastPrice = 87.1m,
+            CreatedDate = At(1),
+            UpdatedDate = At(1)
+        });
+        await harness.DbContext.SaveChangesAsync();
+
+        _ = await harness.Service.RunConsistencyCheckAsync("user-existing-position");
+
+        var positions = await harness.DbContext.DemoPositions
+            .IgnoreQueryFilters()
+            .Where(entity => entity.OwnerUserId == "user-existing-position" && entity.PositionScopeKey == positionScopeKey && entity.Symbol == "SOLUSDT")
+            .ToListAsync();
+        var auditLogCount = await harness.DbContext.AuditLogs.CountAsync(entity => entity.Action == "DemoSession.MissingPositionProjectionRehydrated");
+
+        var position = Assert.Single(positions);
+        Assert.Equal(existingPositionId, position.Id);
+        Assert.False(position.IsDeleted);
+        Assert.Equal(0.06m, position.Quantity);
+        Assert.Equal(0, auditLogCount);
+    }
+
+    [Fact]
+    public async Task RunConsistencyCheckAsync_RevivesSoftDeletedPositionProjection_WhenLedgerSnapshotExists()
+    {
+        await using var harness = CreateHarness();
+        var botId = Guid.NewGuid();
+        var positionScopeKey = $"bot:{botId:N}";
+        harness.DbContext.TradingBots.Add(new TradingBot
+        {
+            Id = botId,
+            OwnerUserId = "user-revive-position",
+            Name = "Demo Bot",
+            StrategyKey = "demo-revive-position",
+            Symbol = "SOLUSDT",
+            IsEnabled = false,
+            OpenOrderCount = 0,
+            OpenPositionCount = 0
+        });
+        harness.DbContext.DemoSessions.Add(new DemoSession
+        {
+            OwnerUserId = "user-revive-position",
+            SequenceNumber = 1,
+            SeedAsset = "USDT",
+            SeedAmount = 10000m,
+            State = DemoSessionState.Active,
+            ConsistencyStatus = DemoConsistencyStatus.DriftDetected,
+            StartedAtUtc = At(0)
+        });
+        harness.DbContext.DemoLedgerTransactions.Add(new DemoLedgerTransaction
+        {
+            OwnerUserId = "user-revive-position",
+            OperationId = "mark-price:revive-position",
+            TransactionType = DemoLedgerTransactionType.MarkPriceUpdated,
+            BotId = botId,
+            PositionScopeKey = positionScopeKey,
+            Symbol = "SOLUSDT",
+            BaseAsset = "SOL",
+            QuoteAsset = "USDT",
+            PositionKind = DemoPositionKind.Futures,
+            MarginMode = DemoMarginMode.Cross,
+            Leverage = 1m,
+            PositionQuantityAfter = 0.06m,
+            PositionCostBasisAfter = 5.214m,
+            PositionAverageEntryPriceAfter = 86.9m,
+            CumulativeRealizedPnlAfter = 0m,
+            UnrealizedPnlAfter = 0.012m,
+            CumulativeFeesInQuoteAfter = 0.003m,
+            NetFundingInQuoteAfter = 0m,
+            LastPriceAfter = 87.1m,
+            MarkPriceAfter = 87.2m,
+            MaintenanceMarginRateAfter = 0.004m,
+            MaintenanceMarginAfter = 0.020856m,
+            MarginBalanceAfter = 5.226m,
+            LiquidationPriceAfter = 50m,
+            OccurredAtUtc = At(1),
+            CreatedDate = At(1),
+            UpdatedDate = At(1)
+        });
+        var existingPositionId = Guid.NewGuid();
+        var deletedPosition = new DemoPosition
+        {
+            Id = existingPositionId,
+            OwnerUserId = "user-revive-position",
+            BotId = botId,
+            PositionScopeKey = positionScopeKey,
+            Symbol = "SOLUSDT",
+            BaseAsset = "SOL",
+            QuoteAsset = "USDT",
+            PositionKind = DemoPositionKind.Futures,
+            MarginMode = DemoMarginMode.Cross,
+            Leverage = 1m,
+            Quantity = 0.01m,
+            CostBasis = 1m,
+            AverageEntryPrice = 100m,
+            RealizedPnl = 0m,
+            UnrealizedPnl = -0.01m,
+            TotalFeesInQuote = 0.001m,
+            NetFundingInQuote = 0m,
+            LastMarkPrice = 86m,
+            LastPrice = 86m,
+            CreatedDate = At(1),
+            UpdatedDate = At(1)
+        };
+        harness.DbContext.DemoPositions.Add(deletedPosition);
+        await harness.DbContext.SaveChangesAsync();
+        deletedPosition.IsDeleted = true;
+        harness.DbContext.DemoPositions.Update(deletedPosition);
+        await harness.DbContext.SaveChangesAsync();
+
+        var session = await harness.Service.RunConsistencyCheckAsync("user-revive-position");
+        var position = await harness.DbContext.DemoPositions
+            .IgnoreQueryFilters()
+            .SingleAsync(entity => entity.Id == existingPositionId);
+        var positions = await harness.DbContext.DemoPositions
+            .IgnoreQueryFilters()
+            .Where(entity => entity.OwnerUserId == "user-revive-position" && entity.PositionScopeKey == positionScopeKey && entity.Symbol == "SOLUSDT")
+            .ToListAsync();
+        var bot = await harness.DbContext.TradingBots.SingleAsync(entity => entity.Id == botId);
+
+        Assert.NotNull(session);
+        Assert.Single(positions);
+        Assert.Equal(existingPositionId, position.Id);
+        Assert.False(position.IsDeleted);
+        Assert.Equal(0.06m, position.Quantity);
+        Assert.Equal(87.2m, position.LastMarkPrice);
+        Assert.Equal(1, bot.OpenPositionCount);
+    }
+
+    [Fact]
     public async Task RunConsistencyCheckAsync_SeedsDefaultWallet_WhenActiveSessionHasNoPortfolioState()
     {
         await using var harness = CreateHarness();

@@ -183,15 +183,13 @@ public sealed class DemoSessionService(
             return MissingPositionProjectionRecoveryResult.Empty;
         }
 
-        var existingPositionKeys = (await dbContext.DemoPositions
+        var existingPositions = (await dbContext.DemoPositions
                 .IgnoreQueryFilters()
-                .Where(entity =>
-                    entity.OwnerUserId == session.OwnerUserId &&
-                    !entity.IsDeleted)
-                .Select(entity => new { entity.PositionScopeKey, entity.Symbol })
+                .Where(entity => entity.OwnerUserId == session.OwnerUserId)
                 .ToListAsync(cancellationToken))
-            .Select(entity => CreatePositionKey(entity.PositionScopeKey, entity.Symbol))
-            .ToHashSet(StringComparer.Ordinal);
+            .ToDictionary(
+                entity => CreatePositionKey(entity.PositionScopeKey, entity.Symbol),
+                StringComparer.Ordinal);
 
         var affectedBotIds = new HashSet<Guid>();
         var rehydratedPositionCount = 0;
@@ -200,13 +198,23 @@ public sealed class DemoSessionService(
         foreach (var transaction in latestTransactions)
         {
             var positionKey = CreatePositionKey(transaction.PositionScopeKey, transaction.Symbol!);
-            if (existingPositionKeys.Contains(positionKey))
+            if (existingPositions.TryGetValue(positionKey, out var existingPosition))
             {
-                continue;
+                if (!existingPosition.IsDeleted)
+                {
+                    continue;
+                }
+
+                ApplyPositionSnapshot(existingPosition, transaction);
+                existingPosition.IsDeleted = false;
+            }
+            else
+            {
+                var position = CreatePositionFromLedgerSnapshot(session.OwnerUserId, transaction);
+                dbContext.DemoPositions.Add(position);
+                existingPositions[positionKey] = position;
             }
 
-            dbContext.DemoPositions.Add(CreatePositionFromLedgerSnapshot(session.OwnerUserId, transaction));
-            existingPositionKeys.Add(positionKey);
             rehydratedPositionCount++;
             samplePositionKey ??= positionKey;
 
@@ -1168,45 +1176,52 @@ public sealed class DemoSessionService(
 
     private static DemoPosition CreatePositionFromLedgerSnapshot(string ownerUserId, DemoLedgerTransaction transaction)
     {
-        return new DemoPosition
+        var position = new DemoPosition
         {
-            OwnerUserId = ownerUserId,
-            BotId = transaction.BotId,
-            PositionScopeKey = transaction.PositionScopeKey,
-            Symbol = transaction.Symbol!,
-            BaseAsset = transaction.BaseAsset!,
-            QuoteAsset = transaction.QuoteAsset!,
-            PositionKind = transaction.PositionKind ?? DemoPositionKind.Spot,
-            MarginMode = transaction.MarginMode,
-            Leverage = transaction.Leverage,
-            Quantity = transaction.PositionQuantityAfter!.Value,
-            CostBasis = transaction.PositionCostBasisAfter!.Value,
-            AverageEntryPrice = transaction.PositionAverageEntryPriceAfter!.Value,
-            RealizedPnl = transaction.CumulativeRealizedPnlAfter!.Value,
-            UnrealizedPnl = transaction.UnrealizedPnlAfter!.Value,
-            TotalFeesInQuote = transaction.CumulativeFeesInQuoteAfter!.Value,
-            NetFundingInQuote = transaction.NetFundingInQuoteAfter ?? 0m,
-            MaintenanceMarginRate = transaction.MaintenanceMarginRateAfter,
-            MaintenanceMargin = transaction.MaintenanceMarginAfter,
-            MarginBalance = transaction.MarginBalanceAfter,
-            LiquidationPrice = transaction.LiquidationPriceAfter,
-            LastMarkPrice = transaction.MarkPriceAfter,
-            LastPrice = transaction.LastPriceAfter,
-            LastFillPrice = transaction.TransactionType == DemoLedgerTransactionType.FillApplied ? transaction.Price : null,
-            LastFundingRate = transaction.FundingRate,
-            LastFilledAtUtc = transaction.TransactionType == DemoLedgerTransactionType.FillApplied
-                ? NormalizeTimestamp(transaction.OccurredAtUtc)
-                : null,
-            LastValuationAtUtc = transaction.MarkPriceAfter.HasValue
-                ? NormalizeTimestamp(transaction.OccurredAtUtc)
-                : null,
-            LastFundingAppliedAtUtc = transaction.FundingRate.HasValue
-                ? NormalizeTimestamp(transaction.OccurredAtUtc)
-                : null
+            OwnerUserId = ownerUserId
         };
+
+        ApplyPositionSnapshot(position, transaction);
+        return position;
     }
 
     private static string CreatePositionKey(string positionScopeKey, string symbol) => $"{positionScopeKey}|{symbol}";
+
+    private static void ApplyPositionSnapshot(DemoPosition position, DemoLedgerTransaction transaction)
+    {
+        position.BotId = transaction.BotId;
+        position.PositionScopeKey = transaction.PositionScopeKey;
+        position.Symbol = transaction.Symbol!;
+        position.BaseAsset = transaction.BaseAsset!;
+        position.QuoteAsset = transaction.QuoteAsset!;
+        position.PositionKind = transaction.PositionKind ?? DemoPositionKind.Spot;
+        position.MarginMode = transaction.MarginMode;
+        position.Leverage = transaction.Leverage;
+        position.Quantity = transaction.PositionQuantityAfter!.Value;
+        position.CostBasis = transaction.PositionCostBasisAfter!.Value;
+        position.AverageEntryPrice = transaction.PositionAverageEntryPriceAfter!.Value;
+        position.RealizedPnl = transaction.CumulativeRealizedPnlAfter!.Value;
+        position.UnrealizedPnl = transaction.UnrealizedPnlAfter!.Value;
+        position.TotalFeesInQuote = transaction.CumulativeFeesInQuoteAfter!.Value;
+        position.NetFundingInQuote = transaction.NetFundingInQuoteAfter ?? 0m;
+        position.MaintenanceMarginRate = transaction.MaintenanceMarginRateAfter;
+        position.MaintenanceMargin = transaction.MaintenanceMarginAfter;
+        position.MarginBalance = transaction.MarginBalanceAfter;
+        position.LiquidationPrice = transaction.LiquidationPriceAfter;
+        position.LastMarkPrice = transaction.MarkPriceAfter;
+        position.LastPrice = transaction.LastPriceAfter;
+        position.LastFillPrice = transaction.TransactionType == DemoLedgerTransactionType.FillApplied ? transaction.Price : null;
+        position.LastFundingRate = transaction.FundingRate;
+        position.LastFilledAtUtc = transaction.TransactionType == DemoLedgerTransactionType.FillApplied
+            ? NormalizeTimestamp(transaction.OccurredAtUtc)
+            : null;
+        position.LastValuationAtUtc = transaction.MarkPriceAfter.HasValue
+            ? NormalizeTimestamp(transaction.OccurredAtUtc)
+            : null;
+        position.LastFundingAppliedAtUtc = transaction.FundingRate.HasValue
+            ? NormalizeTimestamp(transaction.OccurredAtUtc)
+            : null;
+    }
 
     private static string CreateCorrelationId() => Guid.NewGuid().ToString("N");
 

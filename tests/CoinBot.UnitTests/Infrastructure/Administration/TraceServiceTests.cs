@@ -3,6 +3,8 @@ using CoinBot.Infrastructure.Administration;
 using CoinBot.Infrastructure.Observability;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace CoinBot.UnitTests.Infrastructure.Administration;
 
@@ -156,6 +158,127 @@ public sealed class TraceServiceTests
         Assert.DoesNotContain("plain-secret", entity.ResponseMasked, StringComparison.Ordinal);
         Assert.DoesNotContain("abc123", entity.ResponseMasked, StringComparison.Ordinal);
         Assert.Contains("***REDACTED***", entity.ResponseMasked, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task WriteExecutionTraceAsync_ReturnsExistingTrace_WhenExecutionAttemptIdAlreadyExists()
+    {
+        await using var dbContext = CreateDbContext();
+        var service = CreateService(dbContext);
+        var executionOrderId = Guid.NewGuid();
+        var existingTraceId = Guid.NewGuid();
+        var createdAtUtc = new DateTime(2026, 4, 27, 12, 0, 0, DateTimeKind.Utc);
+
+        dbContext.ExecutionTraces.Add(new CoinBot.Domain.Entities.ExecutionTrace
+        {
+            Id = existingTraceId,
+            ExecutionOrderId = executionOrderId,
+            CorrelationId = "corr-existing-trace",
+            ExecutionAttemptId = "exe-existing-trace",
+            CommandId = "cmd-existing-trace",
+            UserId = "user-existing-trace",
+            Provider = "Binance.PrivateRest",
+            Endpoint = "/fapi/v1/order",
+            CreatedAtUtc = createdAtUtc
+        });
+        await dbContext.SaveChangesAsync();
+
+        var snapshot = await service.WriteExecutionTraceAsync(
+            new ExecutionTraceWriteRequest(
+                "cmd-new-trace",
+                "user-new-trace",
+                "Binance.PrivateRest",
+                "/fapi/v1/order?signature=abc123",
+                "{\"Authorization\":\"Bearer plain-token\"}",
+                "{\"apiSecret\":\"plain-secret\"}",
+                CorrelationId: "corr-new-trace",
+                ExecutionAttemptId: "exe-existing-trace",
+                ExecutionOrderId: executionOrderId,
+                HttpStatusCode: 200,
+                ExchangeCode: "OK",
+                LatencyMs: 15,
+                CreatedAtUtc: createdAtUtc.AddMinutes(1)));
+
+        var traces = await dbContext.ExecutionTraces
+            .Where(entity => entity.ExecutionAttemptId == "exe-existing-trace")
+            .ToListAsync();
+
+        var trace = Assert.Single(traces);
+        Assert.Equal(existingTraceId, snapshot.Id);
+        Assert.Equal(existingTraceId, trace.Id);
+        Assert.Equal("cmd-existing-trace", trace.CommandId);
+        Assert.Equal(createdAtUtc, trace.CreatedAtUtc);
+    }
+
+    [Fact]
+    public async Task WriteExecutionTraceAsync_RecoversFromDuplicateExecutionAttemptInsertConflict()
+    {
+        var databaseName = Guid.NewGuid().ToString("N");
+        var databaseRoot = new InMemoryDatabaseRoot();
+        var seedOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(databaseName, databaseRoot)
+            .Options;
+        var interceptor = new ThrowExecutionTraceSaveExceptionInterceptor(seedOptions, sqlNumber: 2601);
+        await using var dbContext = CreateDbContext(databaseName, databaseRoot, interceptor);
+        var service = CreateService(dbContext);
+
+        var snapshot = await service.WriteExecutionTraceAsync(
+            new ExecutionTraceWriteRequest(
+                "cmd-duplicate-trace",
+                "user-duplicate-trace",
+                "Binance.PrivateRest",
+                "/fapi/v1/order",
+                "{}",
+                "{}",
+                CorrelationId: "corr-duplicate-trace",
+                ExecutionAttemptId: "exe-duplicate-trace",
+                ExecutionOrderId: Guid.NewGuid(),
+                HttpStatusCode: 200,
+                ExchangeCode: "OK",
+                LatencyMs: 11,
+                CreatedAtUtc: new DateTime(2026, 4, 27, 12, 5, 0, DateTimeKind.Utc)));
+
+        var traces = await dbContext.ExecutionTraces
+            .Where(entity => entity.ExecutionAttemptId == "exe-duplicate-trace")
+            .ToListAsync();
+
+        var trace = Assert.Single(traces);
+        Assert.True(interceptor.Triggered);
+        Assert.Equal(trace.Id, snapshot.Id);
+        Assert.Equal("cmd-seeded-trace", trace.CommandId);
+    }
+
+    [Fact]
+    public async Task WriteExecutionTraceAsync_DoesNotSwallowNonDuplicateExecutionTraceSaveExceptions()
+    {
+        var databaseName = Guid.NewGuid().ToString("N");
+        var databaseRoot = new InMemoryDatabaseRoot();
+        var seedOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(databaseName, databaseRoot)
+            .Options;
+        var interceptor = new ThrowExecutionTraceSaveExceptionInterceptor(seedOptions, sqlNumber: 1205);
+        await using var dbContext = CreateDbContext(databaseName, databaseRoot, interceptor);
+        var service = CreateService(dbContext);
+
+        var exception = await Assert.ThrowsAsync<DbUpdateException>(() => service.WriteExecutionTraceAsync(
+            new ExecutionTraceWriteRequest(
+                "cmd-failed-trace",
+                "user-failed-trace",
+                "Binance.PrivateRest",
+                "/fapi/v1/order",
+                "{}",
+                "{}",
+                CorrelationId: "corr-failed-trace",
+                ExecutionAttemptId: "exe-failed-trace",
+                ExecutionOrderId: Guid.NewGuid(),
+                HttpStatusCode: 500,
+                ExchangeCode: "ERR",
+                LatencyMs: 23,
+                CreatedAtUtc: new DateTime(2026, 4, 27, 12, 10, 0, DateTimeKind.Utc))));
+
+        Assert.True(interceptor.Triggered);
+        Assert.IsType<FakeSqlException>(exception.InnerException);
+        Assert.Equal(1205, ((FakeSqlException)exception.InnerException!).Number);
     }
 
     [Fact]
@@ -426,11 +549,20 @@ public sealed class TraceServiceTests
             TimeProvider.System);
     }
 
-    private static ApplicationDbContext CreateDbContext()
+    private static ApplicationDbContext CreateDbContext(
+        string? databaseName = null,
+        InMemoryDatabaseRoot? databaseRoot = null,
+        params IInterceptor[] interceptors)
     {
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
-            .Options;
+        var optionsBuilder = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(databaseName ?? Guid.NewGuid().ToString("N"), databaseRoot);
+
+        if (interceptors.Length > 0)
+        {
+            optionsBuilder.AddInterceptors(interceptors);
+        }
+
+        var options = optionsBuilder.Options;
 
         return new ApplicationDbContext(options, new TestDataScopeContext());
     }
@@ -440,5 +572,66 @@ public sealed class TraceServiceTests
         public string? UserId => null;
 
         public bool HasIsolationBypass => true;
+    }
+
+    private sealed class ThrowExecutionTraceSaveExceptionInterceptor(
+        DbContextOptions<ApplicationDbContext> seedOptions,
+        int sqlNumber) : SaveChangesInterceptor
+    {
+        public bool Triggered { get; private set; }
+
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Triggered || eventData.Context is not ApplicationDbContext dbContext)
+            {
+                return result;
+            }
+
+            var pendingTrace = dbContext.ChangeTracker
+                .Entries<CoinBot.Domain.Entities.ExecutionTrace>()
+                .SingleOrDefault(entry => entry.State == EntityState.Added);
+
+            if (pendingTrace is null)
+            {
+                return result;
+            }
+
+            Triggered = true;
+
+            if (sqlNumber is 2601 or 2627)
+            {
+                await using var seedContext = new ApplicationDbContext(seedOptions, new TestDataScopeContext());
+                if (!await seedContext.ExecutionTraces.AnyAsync(
+                        entity => entity.ExecutionAttemptId == pendingTrace.Entity.ExecutionAttemptId,
+                        cancellationToken))
+                {
+                    seedContext.ExecutionTraces.Add(new CoinBot.Domain.Entities.ExecutionTrace
+                    {
+                        Id = Guid.NewGuid(),
+                        ExecutionOrderId = pendingTrace.Entity.ExecutionOrderId,
+                        CorrelationId = pendingTrace.Entity.CorrelationId,
+                        ExecutionAttemptId = pendingTrace.Entity.ExecutionAttemptId,
+                        CommandId = "cmd-seeded-trace",
+                        UserId = pendingTrace.Entity.UserId,
+                        Provider = pendingTrace.Entity.Provider,
+                        Endpoint = pendingTrace.Entity.Endpoint,
+                        CreatedAtUtc = pendingTrace.Entity.CreatedAtUtc
+                    });
+                    await seedContext.SaveChangesAsync(cancellationToken);
+                }
+            }
+
+            throw new DbUpdateException(
+                "Simulated execution trace persistence failure.",
+                new FakeSqlException(sqlNumber));
+        }
+    }
+
+    private sealed class FakeSqlException(int number) : Exception
+    {
+        public int Number { get; } = number;
     }
 }

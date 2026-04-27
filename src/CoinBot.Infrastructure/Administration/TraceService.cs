@@ -60,30 +60,62 @@ public sealed class TraceService(
         ExecutionTraceWriteRequest request,
         CancellationToken cancellationToken = default)
     {
+        var normalizedCorrelationId = NormalizeRequired(ResolveCorrelationId(request.CorrelationId), 128, nameof(request.CorrelationId));
+        var normalizedExecutionAttemptId = NormalizeRequired(ResolveExecutionAttemptId(request.ExecutionAttemptId), 64, nameof(request.ExecutionAttemptId));
+        var normalizedCommandId = NormalizeRequired(request.CommandId, 128, nameof(request.CommandId));
+        var normalizedUserId = NormalizeRequired(request.UserId, 450, nameof(request.UserId));
+        var normalizedProvider = NormalizeRequired(request.Provider, 64, nameof(request.Provider));
+        var normalizedEndpoint = NormalizeRequired(
+            SensitivePayloadMasker.Mask(request.Endpoint, 256),
+            256,
+            nameof(request.Endpoint));
+        var normalizedRequestMasked = NormalizeOptional(SensitivePayloadMasker.Mask(request.RequestMasked, 4096), 4096);
+        var normalizedResponseMasked = NormalizeOptional(SensitivePayloadMasker.Mask(request.ResponseMasked, 4096), 4096);
+        var normalizedExchangeCode = NormalizeOptional(request.ExchangeCode, 64);
+        var createdAtUtc = request.CreatedAtUtc?.ToUniversalTime() ?? timeProvider.GetUtcNow().UtcDateTime;
+
+        var existingTrace = await FindExecutionTraceByAttemptIdAsync(normalizedExecutionAttemptId, cancellationToken);
+        if (existingTrace is not null)
+        {
+            return Map(existingTrace);
+        }
+
         var entity = new ExecutionTrace
         {
             ExecutionOrderId = request.ExecutionOrderId,
-            CorrelationId = NormalizeRequired(ResolveCorrelationId(request.CorrelationId), 128, nameof(request.CorrelationId)),
-            ExecutionAttemptId = NormalizeRequired(ResolveExecutionAttemptId(request.ExecutionAttemptId), 64, nameof(request.ExecutionAttemptId)),
-            CommandId = NormalizeRequired(request.CommandId, 128, nameof(request.CommandId)),
-            UserId = NormalizeRequired(request.UserId, 450, nameof(request.UserId)),
-            Provider = NormalizeRequired(request.Provider, 64, nameof(request.Provider)),
-            Endpoint = NormalizeRequired(
-                SensitivePayloadMasker.Mask(request.Endpoint, 256),
-                256,
-                nameof(request.Endpoint)),
-            RequestMasked = NormalizeOptional(SensitivePayloadMasker.Mask(request.RequestMasked, 4096), 4096),
-            ResponseMasked = NormalizeOptional(SensitivePayloadMasker.Mask(request.ResponseMasked, 4096), 4096),
+            CorrelationId = normalizedCorrelationId,
+            ExecutionAttemptId = normalizedExecutionAttemptId,
+            CommandId = normalizedCommandId,
+            UserId = normalizedUserId,
+            Provider = normalizedProvider,
+            Endpoint = normalizedEndpoint,
+            RequestMasked = normalizedRequestMasked,
+            ResponseMasked = normalizedResponseMasked,
             HttpStatusCode = request.HttpStatusCode,
-            ExchangeCode = NormalizeOptional(request.ExchangeCode, 64),
+            ExchangeCode = normalizedExchangeCode,
             LatencyMs = request.LatencyMs.HasValue
                 ? Math.Max(0, request.LatencyMs.Value)
                 : null,
-            CreatedAtUtc = request.CreatedAtUtc?.ToUniversalTime() ?? timeProvider.GetUtcNow().UtcDateTime
+            CreatedAtUtc = createdAtUtc
         };
 
         dbContext.ExecutionTraces.Add(entity);
-        await dbContext.SaveChangesAsync(cancellationToken);
+
+        try
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException exception) when (IsDuplicateExecutionTraceConflict(exception))
+        {
+            dbContext.Entry(entity).State = EntityState.Detached;
+            existingTrace = await FindExecutionTraceByAttemptIdAsync(normalizedExecutionAttemptId, cancellationToken);
+            if (existingTrace is not null)
+            {
+                return Map(existingTrace);
+            }
+
+            throw;
+        }
 
         return Map(entity);
     }
@@ -446,6 +478,35 @@ public sealed class TraceService(
         return string.IsNullOrWhiteSpace(normalizedExecutionAttemptId)
             ? $"xea_{Guid.NewGuid():N}"[..32]
             : normalizedExecutionAttemptId;
+    }
+
+    private Task<ExecutionTrace?> FindExecutionTraceByAttemptIdAsync(
+        string executionAttemptId,
+        CancellationToken cancellationToken)
+    {
+        return dbContext.ExecutionTraces
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity => entity.ExecutionAttemptId == executionAttemptId)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .ThenByDescending(entity => entity.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    private static bool IsDuplicateExecutionTraceConflict(DbUpdateException exception)
+    {
+        for (var current = exception.InnerException; current is not null; current = current.InnerException)
+        {
+            var numberProperty = current.GetType().GetProperty("Number");
+            if (numberProperty?.PropertyType == typeof(int) &&
+                numberProperty.GetValue(current) is int sqlNumber &&
+                (sqlNumber == 2601 || sqlNumber == 2627))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static DecisionTraceSnapshot Map(DecisionTrace entity)

@@ -4,6 +4,7 @@ using CoinBot.Application.Abstractions.Exchange;
 using CoinBot.Application.Abstractions.ExchangeCredentials;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
+using CoinBot.Infrastructure.Administration;
 using CoinBot.Infrastructure.Auditing;
 using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Exchange;
@@ -282,6 +283,102 @@ public sealed class ExecutionReconciliationServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_DoesNotMarkUnknown_WhenExecutionTraceAlreadyExistsForReconciliationAttempt()
+    {
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 27, 9, 0, 0, TimeSpan.Zero));
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+            .Options;
+        await using var dbContext = new ApplicationDbContext(options, new TestDataScopeContext());
+        var auditLogService = new AuditLogService(dbContext, new CorrelationContextAccessor());
+        var lifecycleService = new ExecutionOrderLifecycleService(
+            dbContext,
+            auditLogService,
+            timeProvider,
+            NullLogger<ExecutionOrderLifecycleService>.Instance);
+        var traceService = new TraceService(dbContext, new CorrelationContextAccessor(), timeProvider);
+        var executionOrderId = new Guid("77777777-7777-7777-7777-777777777777");
+        var privateRestClient = new TraceWritingPrivateRestClient(
+            new BinanceOrderStatusSnapshot(
+                "BTCUSDT",
+                "binance-order-trace-1",
+                ExecutionClientOrderId.Create(executionOrderId),
+                "NEW",
+                0.05m,
+                0m,
+                0m,
+                0m,
+                0m,
+                0m,
+                timeProvider.GetUtcNow().UtcDateTime,
+                "Binance.PrivateRest.Order"),
+            traceService,
+            timeProvider);
+        var service = new ExecutionReconciliationService(
+            dbContext,
+            new FakeExchangeCredentialService(),
+            privateRestClient,
+            new FakeSpotPrivateRestClient(),
+            lifecycleService,
+            NullLogger<ExecutionReconciliationService>.Instance);
+
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = executionOrderId,
+            OwnerUserId = "user-reconcile-trace",
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            ExchangeAccountId = Guid.NewGuid(),
+            Plane = ExchangeDataPlane.Futures,
+            StrategyKey = "reconcile-trace-core",
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.05m,
+            Price = 65000m,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            State = ExecutionOrderState.Submitted,
+            IdempotencyKey = $"reconcile_trace_{executionOrderId:N}",
+            RootCorrelationId = "root-reconcile-trace-correlation-1",
+            ExternalOrderId = "binance-order-trace-1",
+            SubmittedToBroker = true,
+            SubmittedAtUtc = new DateTime(2026, 4, 27, 8, 55, 0, DateTimeKind.Utc),
+            ReconciliationStatus = ExchangeStateDriftStatus.Unknown,
+            LastStateChangedAtUtc = new DateTime(2026, 4, 27, 8, 56, 0, DateTimeKind.Utc)
+        });
+        dbContext.ExecutionTraces.Add(new ExecutionTrace
+        {
+            Id = Guid.NewGuid(),
+            ExecutionOrderId = executionOrderId,
+            CorrelationId = "root-reconcile-trace-correlation-1",
+            ExecutionAttemptId = executionOrderId.ToString("N"),
+            CommandId = executionOrderId.ToString("N"),
+            UserId = "user-reconcile-trace",
+            Provider = "Binance.PrivateRest",
+            Endpoint = "/fapi/v1/order",
+            CreatedAtUtc = new DateTime(2026, 4, 27, 8, 55, 5, DateTimeKind.Utc)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var reconciledCount = await service.RunOnceAsync();
+
+        var order = await dbContext.ExecutionOrders.SingleAsync(entity => entity.Id == executionOrderId);
+        var traceCount = await dbContext.ExecutionTraces.CountAsync(entity => entity.ExecutionAttemptId == executionOrderId.ToString("N"));
+
+        Assert.Equal(1, reconciledCount);
+        Assert.Equal(1, privateRestClient.GetOrderCalls);
+        Assert.Equal(ExchangeStateDriftStatus.InSync, order.ReconciliationStatus);
+        Assert.DoesNotContain("failed before exchange/system comparison completed", order.ReconciliationSummary ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, traceCount);
+    }
+
+    [Fact]
     public async Task RunOnceAsync_ReconcilesDemoBrokerOrder_WhenInternalDemoExecutionIsDisabled()
     {
         var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 4, 21, 8, 0, 0, TimeSpan.Zero));
@@ -525,6 +622,101 @@ public sealed class ExecutionReconciliationServiceTests
             CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
+        }
+
+        public Task<string> StartListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task KeepAliveListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task CloseListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<ExchangeAccountSnapshot> GetAccountSnapshotAsync(
+            Guid exchangeAccountId,
+            string ownerUserId,
+            string exchangeName,
+            string apiKey,
+            string apiSecret,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+    }
+
+    private sealed class TraceWritingPrivateRestClient(
+        BinanceOrderStatusSnapshot snapshot,
+        TraceService traceService,
+        AdjustableTimeProvider timeProvider) : IBinancePrivateRestClient
+    {
+        public int GetOrderCalls { get; private set; }
+
+        public Task<BinanceOrderPlacementResult> PlaceOrderAsync(
+            BinanceOrderPlacementRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task EnsureMarginTypeAsync(
+            Guid exchangeAccountId,
+            string symbol,
+            string marginType,
+            string apiKey,
+            string apiSecret,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task EnsureLeverageAsync(
+            Guid exchangeAccountId,
+            string symbol,
+            decimal leverage,
+            string apiKey,
+            string apiSecret,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<BinanceOrderStatusSnapshot> CancelOrderAsync(
+            BinanceOrderCancelRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public async Task<BinanceOrderStatusSnapshot> GetOrderAsync(
+            BinanceOrderQueryRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            GetOrderCalls++;
+            await traceService.WriteExecutionTraceAsync(
+                new CoinBot.Application.Abstractions.Administration.ExecutionTraceWriteRequest(
+                    request.CommandId,
+                    request.UserId,
+                    "Binance.PrivateRest",
+                    "/fapi/v1/order",
+                    "{}",
+                    "{\"status\":\"NEW\"}",
+                    CorrelationId: request.CorrelationId,
+                    ExecutionAttemptId: request.ExecutionAttemptId,
+                    ExecutionOrderId: request.ExecutionOrderId,
+                    HttpStatusCode: 200,
+                    ExchangeCode: "OK",
+                    LatencyMs: 5,
+                    CreatedAtUtc: timeProvider.GetUtcNow().UtcDateTime),
+                cancellationToken);
+
+            return snapshot;
         }
 
         public Task<string> StartListenKeyAsync(string apiKey, CancellationToken cancellationToken = default)
