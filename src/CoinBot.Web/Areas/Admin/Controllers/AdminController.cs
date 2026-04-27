@@ -66,6 +66,8 @@ public sealed class AdminController : Controller
     private const string ApprovalErrorTempDataKey = "AdminApprovalError";
     private const string AdminUserSuccessTempDataKey = "AdminUserSuccess";
     private const string AdminUserErrorTempDataKey = "AdminUserError";
+    private const string AdminBotOperationsSuccessTempDataKey = "AdminBotOperationsSuccess";
+    private const string AdminBotOperationsErrorTempDataKey = "AdminBotOperationsError";
     private const string CrisisPreviewViewDataKey = "AdminCrisisEscalationPreview";
     private const string CrisisSuccessTempDataKey = "AdminCrisisEscalationSuccess";
     private const string CrisisErrorTempDataKey = "AdminCrisisEscalationError";
@@ -106,6 +108,7 @@ public sealed class AdminController : Controller
     private readonly IAdminCommandRegistry adminCommandRegistry;
     private readonly IAdminGovernanceReadModelService? adminGovernanceReadModelService;
     private readonly IAdminWorkspaceReadModelService adminWorkspaceReadModelService;
+    private readonly IAdminManualCloseService? adminManualCloseService;
     private readonly IAdminMonitoringReadModelService? adminMonitoringReadModelService;
     private readonly IApprovalWorkflowService? approvalWorkflowService;
     private readonly ICrisisEscalationService? crisisEscalationService;
@@ -156,7 +159,8 @@ public sealed class AdminController : Controller
         IUserExchangeCommandCenterService? userExchangeCommandCenterService = null,
         UserManager<ApplicationUser>? userManager = null,
         IUltraDebugLogService? ultraDebugLogService = null,
-        ILogger<AdminController>? logger = null)
+        ILogger<AdminController>? logger = null,
+        IAdminManualCloseService? adminManualCloseService = null)
     {
         this.globalExecutionSwitchService = globalExecutionSwitchService;
         this.globalSystemStateService = globalSystemStateService;
@@ -167,6 +171,7 @@ public sealed class AdminController : Controller
         this.dataLatencyCircuitBreaker = dataLatencyCircuitBreaker;
         this.apiCredentialValidationService = apiCredentialValidationService;
         this.adminWorkspaceReadModelService = adminWorkspaceReadModelService;
+        this.adminManualCloseService = adminManualCloseService;
 
         this.strategyTemplateCatalogService = strategyTemplateCatalogService;
         this.criticalUserOperationAuthorizer = criticalUserOperationAuthorizer;
@@ -582,6 +587,62 @@ public sealed class AdminController : Controller
 
         ViewData["AdminBotOperationsPageSnapshot"] = await adminWorkspaceReadModelService.GetBotOperationsAsync(query, status, mode, cancellationToken);
         return View();
+    }
+
+    [HttpPost]
+    [Authorize(Policy = ApplicationPolicies.PlatformAdministration)]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> ManualCloseBotPosition(
+        string? botId,
+        CancellationToken cancellationToken)
+    {
+        var mfaResult = await EnforcePlatformAdminMfaAsync(
+            "Admin.BotOperations.ManualClose",
+            AdminBotOperationsErrorTempDataKey,
+            nameof(BotOperations),
+            null,
+            cancellationToken);
+
+        if (mfaResult is not null)
+        {
+            return mfaResult;
+        }
+
+        if (adminManualCloseService is null)
+        {
+            TempData[AdminBotOperationsErrorTempDataKey] = "Manual close servisi kullanilamiyor.";
+            return RedirectToAction(nameof(BotOperations));
+        }
+
+        if (!Guid.TryParse(botId, out var parsedBotId))
+        {
+            TempData[AdminBotOperationsErrorTempDataKey] = "Gecersiz bot secimi.";
+            return RedirectToAction(nameof(BotOperations));
+        }
+
+        var actorUserId = ResolveAdminUserId();
+        var result = await adminManualCloseService.CloseAsync(
+            new AdminManualCloseRequest(
+                parsedBotId,
+                actorUserId,
+                ResolveExecutionActor(),
+                HttpContext.TraceIdentifier),
+            cancellationToken);
+
+        await adminAuditLogService.WriteAsync(
+            BuildAdminAuditLogWriteRequest(
+                actorUserId,
+                result.IsSuccess ? "Admin.BotOperations.ManualClose" : "Admin.BotOperations.ManualCloseBlocked",
+                "TradingBot",
+                parsedBotId.ToString("N"),
+                oldValueSummary: null,
+                newValueSummary: result.Summary,
+                reason: "Manual reduce-only close requested from admin bot operations.",
+                correlationId: HttpContext.TraceIdentifier),
+            cancellationToken);
+
+        TempData[result.IsSuccess ? AdminBotOperationsSuccessTempDataKey : AdminBotOperationsErrorTempDataKey] = result.UserMessage;
+        return RedirectToAction(nameof(BotOperations));
     }
 
     [Authorize(Policy = ApplicationPolicies.TradeOperations)]

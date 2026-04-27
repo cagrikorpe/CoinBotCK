@@ -141,6 +141,74 @@ public sealed class AdminOverviewSurfaceTests
     }
 
     [Fact]
+    public void AdminSystemHealthView_RendersExitPnlGuardEvidenceSurface()
+    {
+        var operationalCardContent = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Areas",
+            "Admin",
+            "Views",
+            "Shared",
+            "Foundation",
+            "_AdminOperationalObservabilityCard.cshtml"));
+
+        Assert.Contains("data-cb-ops-exit-pnl-guard", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Exit PnL Guard", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Blocked unprofitable exits", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Last exit reason", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Last estimated PnL", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Reduce-only exits", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("CorrelationId", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("OwnerUserId", operationalCardContent, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AdminBotOperationsTable_RendersManualCloseDoubleConfirmSurface()
+    {
+        var content = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Areas",
+            "Admin",
+            "Views",
+            "Shared",
+            "Foundation",
+            "_AdminBotOperationsTable.cshtml"));
+
+        Assert.Contains("data-cb-admin-manual-close-panel", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-manual-close-button", content, StringComparison.Ordinal);
+        Assert.Contains("Close Position", content, StringComparison.Ordinal);
+        Assert.Contains("Confirm Reduce-Only Close", content, StringComparison.Ordinal);
+        Assert.Contains("ReduceOnly=True", content, StringComparison.Ordinal);
+        Assert.Contains("Environment=@row.ManualCloseEnvironmentLabel", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-manual-close-unavailable-reason", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-bot-last-error", content, StringComparison.Ordinal);
+        Assert.Contains("title=\"@row.LastError\"", content, StringComparison.Ordinal);
+        Assert.Contains("lastErrorPreview", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AdminBotOperationsView_RendersFullWidthTableLayout_AndMovesHelpCardBelow()
+    {
+        var content = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Areas",
+            "Admin",
+            "Views",
+            "Admin",
+            "BotOperations.cshtml"));
+
+        Assert.Contains("<div class=\"col-xl-12\">", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("col-xl-8", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("col-xl-4", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AdminSuperAdminPrimaryFlowModel_ExposesAdvancedTechnicalLinks()
     {
         var content = File.ReadAllText(Path.Combine(

@@ -396,6 +396,55 @@ public sealed class AdminControllerTests
     }
 
     [Fact]
+    public async Task ManualCloseBotPosition_RedirectsWithSuccess_WhenServiceSubmitsReduceOnlyClose()
+    {
+        var manualCloseService = new FakeAdminManualCloseService
+        {
+            Result = new AdminManualCloseResult(
+                true,
+                "ManualCloseSubmitted",
+                "ManualClose=True | ExecutionIntent=ManualExitCloseOnly | ReduceOnly=True | Symbol=SOLUSDT | Environment=BinanceTestnet",
+                "Reduce-only manual close emri gonderildi.")
+        };
+        var auditLogService = new FakeAdminAuditLogService();
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            auditLogService: auditLogService,
+            adminManualCloseService: manualCloseService);
+
+        var result = await controller.ManualCloseBotPosition(Guid.NewGuid().ToString(), CancellationToken.None);
+
+        var redirect = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.BotOperations), redirect.ActionName);
+        Assert.Equal("Reduce-only manual close emri gonderildi.", controller.TempData["AdminBotOperationsSuccess"]);
+        Assert.Single(manualCloseService.Requests);
+        Assert.Single(auditLogService.Requests);
+    }
+
+    [Fact]
+    public async Task ManualCloseBotPosition_RedirectsWithError_WhenServiceBlocks()
+    {
+        var manualCloseService = new FakeAdminManualCloseService
+        {
+            Result = new AdminManualCloseResult(
+                false,
+                "ManualCloseBlockedPrivatePlaneStale",
+                "ManualClose=True | ExecutionIntent=ManualExitCloseOnly | ReasonCode=ManualCloseBlockedPrivatePlaneStale",
+                "Private plane stale oldugu icin manuel close bloklandi.")
+        };
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            adminManualCloseService: manualCloseService);
+
+        var result = await controller.ManualCloseBotPosition(Guid.NewGuid().ToString(), CancellationToken.None);
+
+        var redirect = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.BotOperations), redirect.ActionName);
+        Assert.Equal("Private plane stale oldugu icin manuel close bloklandi.", controller.TempData["AdminBotOperationsError"]);
+        Assert.Single(manualCloseService.Requests);
+    }
+
+    [Fact]
     public async Task StrategyTemplates_LoadsCatalogAndSelectedArchivedTemplate()
     {
         var templateService = new FakeStrategyTemplateCatalogService();
@@ -3717,6 +3766,7 @@ public sealed class AdminControllerTests
         FakeGlobalPolicyEngine? globalPolicyEngine = null,
         FakeCrisisEscalationService? crisisEscalationService = null,
         FakeUltraDebugLogService? ultraDebugLogService = null,
+        FakeAdminManualCloseService? adminManualCloseService = null,
         BotExecutionPilotOptions? pilotOptions = null,
         string userId = "admin-01",
         string? email = "super-admin@coinbot.test",
@@ -3783,7 +3833,8 @@ public sealed class AdminControllerTests
             {
                 ServerTimeSyncRefreshSeconds = 30
             }),
-            ultraDebugLogService: ultraDebugLogService)
+            ultraDebugLogService: ultraDebugLogService,
+            adminManualCloseService: adminManualCloseService)
         {
             ControllerContext = new ControllerContext
             {
@@ -4800,6 +4851,22 @@ public sealed class AdminControllerTests
 
         public Task<CriticalUserOperationAuthorizationResult> AuthorizeAsync(
             CriticalUserOperationAuthorizationRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            Requests.Add(request);
+            return Task.FromResult(Result);
+        }
+    }
+
+    private sealed class FakeAdminManualCloseService : IAdminManualCloseService
+    {
+        public AdminManualCloseResult Result { get; set; } =
+            new(true, "ManualCloseSubmitted", "ManualClose=True", "Reduce-only manual close emri gonderildi.");
+
+        public List<AdminManualCloseRequest> Requests { get; } = [];
+
+        public Task<AdminManualCloseResult> CloseAsync(
+            AdminManualCloseRequest request,
             CancellationToken cancellationToken = default)
         {
             Requests.Add(request);

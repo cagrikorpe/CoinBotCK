@@ -60,6 +60,348 @@ public sealed class AdminWorkspaceReadModelServiceTests
     }
 
     [Fact]
+    public async Task GetBotOperationsAsync_ProjectsManualClosePreview_ForBinanceTestnetFuturesExposure()
+    {
+        var now = new DateTime(2026, 4, 27, 9, 30, 0, DateTimeKind.Utc);
+        await using var dbContext = CreateDbContext();
+        var exchangeAccountId = Guid.NewGuid();
+
+        dbContext.Users.Add(new ApplicationUser
+        {
+            Id = "usr-close",
+            UserName = "close-user",
+            FullName = "Close User",
+            TradingModeOverride = ExecutionEnvironment.BinanceTestnet
+        });
+        dbContext.ExchangeAccounts.Add(new ExchangeAccount
+        {
+            Id = exchangeAccountId,
+            OwnerUserId = "usr-close",
+            ExchangeName = "Binance",
+            DisplayName = "Binance Testnet",
+            CredentialStatus = ExchangeCredentialStatus.Active,
+            IsReadOnly = false,
+            CreatedDate = now,
+            UpdatedDate = now
+        });
+        dbContext.TradingBots.Add(new TradingBot
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "usr-close",
+            Name = "Manual Close Bot",
+            StrategyKey = "manual-close",
+            Symbol = "SOLUSDT",
+            ExchangeAccountId = exchangeAccountId,
+            IsEnabled = true,
+            OpenPositionCount = 1,
+            UpdatedDate = now
+        });
+        dbContext.ExchangePositions.Add(new ExchangePosition
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "usr-close",
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "SOLUSDT",
+            PositionSide = "BOTH",
+            Quantity = 0.06m,
+            EntryPrice = 100m,
+            BreakEvenPrice = 100m,
+            ExchangeUpdatedAtUtc = now,
+            SyncedAtUtc = now,
+            CreatedDate = now,
+            UpdatedDate = now
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminWorkspaceReadModelService(
+            dbContext,
+            new FakeAdminMonitoringReadModelService(now),
+            new FakeTradingModeResolver(),
+            new FixedTimeProvider(now));
+
+        var snapshot = await service.GetBotOperationsAsync("Manual Close Bot");
+        var row = Assert.Single(snapshot.Bots);
+
+        Assert.True(row.CanManualClose);
+        Assert.Equal("SOLUSDT", row.ManualCloseSymbol);
+        Assert.Equal("0.06", row.ManualClosePositionQuantityLabel);
+        Assert.Equal("Long", row.ManualClosePositionDirectionLabel);
+        Assert.Equal("Sell", row.ManualCloseSideLabel);
+        Assert.Equal("BinanceTestnet", row.ManualCloseEnvironmentLabel);
+    }
+
+    [Fact]
+    public async Task GetBotOperationsAsync_ProjectsManualClosePreview_ForStoppedShortFuturesExposure()
+    {
+        var now = new DateTime(2026, 4, 27, 9, 45, 0, DateTimeKind.Utc);
+        await using var dbContext = CreateDbContext();
+        var exchangeAccountId = Guid.NewGuid();
+
+        dbContext.Users.Add(new ApplicationUser
+        {
+            Id = "usr-stop-short",
+            UserName = "stop-short-user",
+            FullName = "Stop Short User",
+            TradingModeOverride = ExecutionEnvironment.BinanceTestnet
+        });
+        dbContext.ExchangeAccounts.Add(new ExchangeAccount
+        {
+            Id = exchangeAccountId,
+            OwnerUserId = "usr-stop-short",
+            ExchangeName = "Binance",
+            DisplayName = "Binance Testnet",
+            CredentialStatus = ExchangeCredentialStatus.Active,
+            IsReadOnly = false,
+            CreatedDate = now,
+            UpdatedDate = now
+        });
+        dbContext.TradingBots.Add(new TradingBot
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "usr-stop-short",
+            Name = "Stopped Manual Close Bot",
+            StrategyKey = "manual-close-stopped",
+            Symbol = "SOLUSDT",
+            ExchangeAccountId = exchangeAccountId,
+            IsEnabled = false,
+            OpenPositionCount = 1,
+            UpdatedDate = now
+        });
+        dbContext.ExchangePositions.Add(new ExchangePosition
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "USR-STOP-SHORT",
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "solusdt",
+            PositionSide = "BOTH",
+            Quantity = -0.06m,
+            EntryPrice = 100m,
+            BreakEvenPrice = 100m,
+            ExchangeUpdatedAtUtc = now,
+            SyncedAtUtc = now,
+            CreatedDate = now,
+            UpdatedDate = now
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminWorkspaceReadModelService(
+            dbContext,
+            new FakeAdminMonitoringReadModelService(now),
+            new FakeTradingModeResolver(),
+            new FixedTimeProvider(now));
+
+        var snapshot = await service.GetBotOperationsAsync("Stopped Manual Close Bot");
+        var row = Assert.Single(snapshot.Bots);
+
+        Assert.True(row.CanManualClose);
+        Assert.Equal("SOLUSDT", row.ManualCloseSymbol);
+        Assert.Equal("-0.06", row.ManualClosePositionQuantityLabel);
+        Assert.Equal("Short", row.ManualClosePositionDirectionLabel);
+        Assert.Equal("Buy", row.ManualCloseSideLabel);
+        Assert.Null(row.ManualClosePreviewUnavailableReason);
+    }
+
+    [Fact]
+    public async Task GetBotOperationsAsync_LeavesManualCloseUnavailable_WhenNoOpenPositionExists()
+    {
+        var now = new DateTime(2026, 4, 27, 10, 0, 0, DateTimeKind.Utc);
+        await using var dbContext = CreateDbContext();
+        var exchangeAccountId = Guid.NewGuid();
+
+        dbContext.Users.Add(new ApplicationUser
+        {
+            Id = "usr-no-pos",
+            UserName = "no-pos-user",
+            TradingModeOverride = ExecutionEnvironment.BinanceTestnet
+        });
+        dbContext.ExchangeAccounts.Add(new ExchangeAccount
+        {
+            Id = exchangeAccountId,
+            OwnerUserId = "usr-no-pos",
+            ExchangeName = "Binance",
+            DisplayName = "Binance Testnet",
+            CredentialStatus = ExchangeCredentialStatus.Active,
+            IsReadOnly = false,
+            CreatedDate = now,
+            UpdatedDate = now
+        });
+        dbContext.TradingBots.Add(new TradingBot
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "usr-no-pos",
+            Name = "No Position Bot",
+            StrategyKey = "manual-close-none",
+            Symbol = "SOLUSDT",
+            ExchangeAccountId = exchangeAccountId,
+            IsEnabled = true,
+            UpdatedDate = now
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminWorkspaceReadModelService(
+            dbContext,
+            new FakeAdminMonitoringReadModelService(now),
+            new FakeTradingModeResolver(),
+            new FixedTimeProvider(now));
+
+        var snapshot = await service.GetBotOperationsAsync("No Position Bot");
+        var row = Assert.Single(snapshot.Bots);
+
+        Assert.False(row.CanManualClose);
+        Assert.Null(row.ManualCloseSymbol);
+        Assert.Equal("ManualCloseNoOpenPosition", row.ManualClosePreviewUnavailableReason);
+    }
+
+    [Fact]
+    public async Task GetBotOperationsAsync_LeavesManualCloseUnavailable_WhenAccountMismatchExists()
+    {
+        var now = new DateTime(2026, 4, 27, 10, 15, 0, DateTimeKind.Utc);
+        await using var dbContext = CreateDbContext();
+        var botExchangeAccountId = Guid.NewGuid();
+        var positionExchangeAccountId = Guid.NewGuid();
+
+        dbContext.Users.Add(new ApplicationUser
+        {
+            Id = "usr-account-mismatch",
+            UserName = "account-mismatch-user",
+            TradingModeOverride = ExecutionEnvironment.BinanceTestnet
+        });
+        dbContext.ExchangeAccounts.AddRange(
+            new ExchangeAccount
+            {
+                Id = botExchangeAccountId,
+                OwnerUserId = "usr-account-mismatch",
+                ExchangeName = "Binance",
+                DisplayName = "Bot Account",
+                CredentialStatus = ExchangeCredentialStatus.Active,
+                IsReadOnly = false,
+                CreatedDate = now,
+                UpdatedDate = now
+            },
+            new ExchangeAccount
+            {
+                Id = positionExchangeAccountId,
+                OwnerUserId = "usr-account-mismatch",
+                ExchangeName = "Binance",
+                DisplayName = "Position Account",
+                CredentialStatus = ExchangeCredentialStatus.Active,
+                IsReadOnly = false,
+                CreatedDate = now,
+                UpdatedDate = now
+            });
+        dbContext.TradingBots.Add(new TradingBot
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "usr-account-mismatch",
+            Name = "Account Mismatch Bot",
+            StrategyKey = "manual-close-account-mismatch",
+            Symbol = "SOLUSDT",
+            ExchangeAccountId = botExchangeAccountId,
+            IsEnabled = true,
+            UpdatedDate = now
+        });
+        dbContext.ExchangePositions.Add(new ExchangePosition
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "usr-account-mismatch",
+            ExchangeAccountId = positionExchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "SOLUSDT",
+            PositionSide = "BOTH",
+            Quantity = -0.06m,
+            EntryPrice = 100m,
+            BreakEvenPrice = 100m,
+            ExchangeUpdatedAtUtc = now,
+            SyncedAtUtc = now,
+            CreatedDate = now,
+            UpdatedDate = now
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminWorkspaceReadModelService(
+            dbContext,
+            new FakeAdminMonitoringReadModelService(now),
+            new FakeTradingModeResolver(),
+            new FixedTimeProvider(now));
+
+        var snapshot = await service.GetBotOperationsAsync("Account Mismatch Bot");
+        var row = Assert.Single(snapshot.Bots);
+
+        Assert.False(row.CanManualClose);
+        Assert.Null(row.ManualCloseSymbol);
+        Assert.Equal("ManualCloseAccountMismatch", row.ManualClosePreviewUnavailableReason);
+    }
+
+    [Fact]
+    public async Task GetBotOperationsAsync_LeavesManualCloseUnavailable_WhenEnvironmentIsNotBinanceTestnet()
+    {
+        var now = new DateTime(2026, 4, 27, 10, 30, 0, DateTimeKind.Utc);
+        await using var dbContext = CreateDbContext();
+        var exchangeAccountId = Guid.NewGuid();
+
+        dbContext.Users.Add(new ApplicationUser
+        {
+            Id = "usr-demo-env",
+            UserName = "demo-env-user",
+            TradingModeOverride = ExecutionEnvironment.Demo
+        });
+        dbContext.ExchangeAccounts.Add(new ExchangeAccount
+        {
+            Id = exchangeAccountId,
+            OwnerUserId = "usr-demo-env",
+            ExchangeName = "Binance",
+            DisplayName = "Binance Testnet",
+            CredentialStatus = ExchangeCredentialStatus.Active,
+            IsReadOnly = false,
+            CreatedDate = now,
+            UpdatedDate = now
+        });
+        dbContext.TradingBots.Add(new TradingBot
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "usr-demo-env",
+            Name = "Demo Env Bot",
+            StrategyKey = "manual-close-demo",
+            Symbol = "SOLUSDT",
+            ExchangeAccountId = exchangeAccountId,
+            IsEnabled = true,
+            UpdatedDate = now
+        });
+        dbContext.ExchangePositions.Add(new ExchangePosition
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "usr-demo-env",
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "SOLUSDT",
+            PositionSide = "BOTH",
+            Quantity = 0.06m,
+            EntryPrice = 100m,
+            BreakEvenPrice = 100m,
+            ExchangeUpdatedAtUtc = now,
+            SyncedAtUtc = now,
+            CreatedDate = now,
+            UpdatedDate = now
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminWorkspaceReadModelService(
+            dbContext,
+            new FakeAdminMonitoringReadModelService(now),
+            new FakeTradingModeResolver(),
+            new FixedTimeProvider(now));
+
+        var snapshot = await service.GetBotOperationsAsync("Demo Env Bot");
+        var row = Assert.Single(snapshot.Bots);
+
+        Assert.False(row.CanManualClose);
+        Assert.Equal("SOLUSDT", row.ManualCloseSymbol);
+        Assert.Equal("ManualCloseEnvironmentMismatch", row.ManualClosePreviewUnavailableReason);
+    }
+
+    [Fact]
     public async Task GetSupportLookupAsync_UsesRealBotAndExchangeCounts_AndOnlyReturnsActualFailures()
     {
         var now = new DateTime(2026, 3, 31, 10, 0, 0, DateTimeKind.Utc);
@@ -816,7 +1158,5 @@ public sealed class AdminWorkspaceReadModelServiceTests
             """;
     }
 }
-
-
 
 

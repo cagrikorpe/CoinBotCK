@@ -223,6 +223,7 @@ public static class DependencyInjection
         services.AddScoped<IApprovalWorkflowService, ApprovalWorkflowService>();
         services.AddScoped<IAdminGovernanceReadModelService, AdminGovernanceReadModelService>();
         services.AddScoped<IAdminWorkspaceReadModelService, AdminWorkspaceReadModelService>();
+        services.AddScoped<IAdminManualCloseService, AdminManualCloseService>();
         services.AddScoped<ICrisisEscalationService, CrisisEscalationService>();
         services.AddScoped<IAdminShellReadModelService, AdminShellReadModelService>();
         services.AddScoped<IAdminMonitoringReadModelService, AdminMonitoringReadModelService>();

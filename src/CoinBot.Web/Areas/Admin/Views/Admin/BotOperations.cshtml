@@ -32,6 +32,32 @@
                     Meta = "Operational"
                 })
 
+                @if (TempData["AdminBotOperationsSuccess"] is string successMessage && !string.IsNullOrWhiteSpace(successMessage))
+                {
+                    <div class="mt-4">
+                        @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                        {
+                            Tone = "success",
+                            Title = "Manual close",
+                            Message = successMessage,
+                            Meta = "BinanceTestnet"
+                        })
+                    </div>
+                }
+
+                @if (TempData["AdminBotOperationsError"] is string errorMessage && !string.IsNullOrWhiteSpace(errorMessage))
+                {
+                    <div class="mt-4">
+                        @await Html.PartialAsync("Foundation/_AdminInfoStrip", new AdminInfoStripViewModel
+                        {
+                            Tone = "critical",
+                            Title = "Manual close",
+                            Message = errorMessage,
+                            Meta = "BinanceTestnet"
+                        })
+                    </div>
+                }
+
                 <div class="mt-6">
                     @await Html.PartialAsync("Foundation/_AdminBotSummaryMeta")
                 </div>
@@ -39,12 +65,14 @@
         </div>
     </div>
 
-    <div class="col-xl-8">
+    <div class="col-xl-12">
         @await Html.PartialAsync("Foundation/_AdminBotFilterBar")
         @await Html.PartialAsync("Foundation/_AdminBotOperationsTable")
     </div>
+</div>
 
-    <div class="col-xl-4">
+<div class="row">
+    <div class="col-xl-12">
         @await Html.PartialAsync("Foundation/_AdminBotHelpCard")
     </div>
 </div>

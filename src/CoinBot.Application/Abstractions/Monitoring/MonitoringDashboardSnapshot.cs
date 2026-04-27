@@ -50,6 +50,8 @@ public sealed record OperationalObservabilitySnapshot(
     string ExportSummary,
     IReadOnlyCollection<OperationalWarningSnapshot> CriticalWarnings)
 {
+    public OperationalExitPnlEvidenceSnapshot ExitPnlEvidence { get; init; } = OperationalExitPnlEvidenceSnapshot.Empty();
+
     public static OperationalObservabilitySnapshot Empty()
     {
         return new OperationalObservabilitySnapshot(
@@ -73,7 +75,42 @@ public sealed record OperationalObservabilitySnapshot(
             DiskPressureState: "Unknown",
             JanitorSummary: "No janitor heartbeat yet.",
             ExportSummary: "Export availability unknown.",
-            CriticalWarnings: Array.Empty<OperationalWarningSnapshot>());
+            CriticalWarnings: Array.Empty<OperationalWarningSnapshot>())
+        {
+            ExitPnlEvidence = OperationalExitPnlEvidenceSnapshot.Empty()
+        };
+    }
+}
+
+public sealed record OperationalExitPnlEvidenceSnapshot(
+    int LastExitCount,
+    int ProfitableExitCount,
+    int UnprofitableExitBlockedCount,
+    int StopLossExitCount,
+    int TakeProfitExitCount,
+    string? LastExitReason,
+    decimal? LastEstimatedPnlQuote,
+    decimal? LastEstimatedPnlPct,
+    DateTime? LastExitAtUtc,
+    string? LastExitSymbol,
+    string? LastExitSide,
+    bool? LastExitReduceOnly)
+{
+    public static OperationalExitPnlEvidenceSnapshot Empty()
+    {
+        return new OperationalExitPnlEvidenceSnapshot(
+            LastExitCount: 0,
+            ProfitableExitCount: 0,
+            UnprofitableExitBlockedCount: 0,
+            StopLossExitCount: 0,
+            TakeProfitExitCount: 0,
+            LastExitReason: null,
+            LastEstimatedPnlQuote: null,
+            LastEstimatedPnlPct: null,
+            LastExitAtUtc: null,
+            LastExitSymbol: null,
+            LastExitSide: null,
+            LastExitReduceOnly: null);
     }
 }
 

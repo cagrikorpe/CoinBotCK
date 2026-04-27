@@ -116,6 +116,7 @@ public sealed class AdminMonitoringReadModelService(
                 entity.BlockerCode
             })
             .ToListAsync(cancellationToken);
+        var exitPnlEvidence = await LoadExitPnlEvidenceAsync(windowStartUtc, cancellationToken);
         var decisionRows = await dbContext.AiShadowDecisions
             .AsNoTracking()
             .IgnoreQueryFilters()
@@ -217,7 +218,72 @@ public sealed class AdminMonitoringReadModelService(
             DiskPressureState: diskPressureState,
             JanitorSummary: janitorSummary,
             ExportSummary: exportSummary,
-            CriticalWarnings: criticalWarnings);
+            CriticalWarnings: criticalWarnings)
+        {
+            ExitPnlEvidence = exitPnlEvidence
+        };
+    }
+
+    private async Task<OperationalExitPnlEvidenceSnapshot> LoadExitPnlEvidenceAsync(
+        DateTime windowStartUtc,
+        CancellationToken cancellationToken)
+    {
+        var exitRows = await dbContext.DecisionTraces
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                !entity.IsDeleted &&
+                entity.CreatedAtUtc >= windowStartUtc &&
+                entity.DecisionSummary != null &&
+                entity.DecisionSummary.Contains("ExitReason="))
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .Take(200)
+            .Select(entity => new
+            {
+                entity.Symbol,
+                entity.SignalType,
+                entity.DecisionReasonCode,
+                entity.DecisionSummary,
+                entity.DecisionAtUtc,
+                entity.CreatedAtUtc
+            })
+            .ToListAsync(cancellationToken);
+
+        var parsedRows = exitRows
+            .Select(entity => ParseExitPnlEvidence(
+                entity.Symbol,
+                entity.SignalType,
+                entity.DecisionReasonCode,
+                entity.DecisionSummary,
+                entity.DecisionAtUtc,
+                entity.CreatedAtUtc))
+            .Where(entity => entity is not null)
+            .Cast<ExitPnlEvidenceRow>()
+            .ToArray();
+
+        if (parsedRows.Length == 0)
+        {
+            return OperationalExitPnlEvidenceSnapshot.Empty();
+        }
+
+        var latestRow = parsedRows
+            .OrderByDescending(entity => entity.ObservedAtUtc)
+            .ThenBy(entity => entity.Symbol, StringComparer.Ordinal)
+            .First();
+
+        return new OperationalExitPnlEvidenceSnapshot(
+            LastExitCount: parsedRows.Length,
+            ProfitableExitCount: parsedRows.Count(entity => entity.EstimatedPnlQuote.GetValueOrDefault() > 0m),
+            UnprofitableExitBlockedCount: parsedRows.Count(entity => string.Equals(entity.ExitReason, "BlockedUnprofitable", StringComparison.Ordinal)),
+            StopLossExitCount: parsedRows.Count(entity => string.Equals(entity.ExitReason, "StopLoss", StringComparison.Ordinal)),
+            TakeProfitExitCount: parsedRows.Count(entity => string.Equals(entity.ExitReason, "TakeProfit", StringComparison.Ordinal)),
+            LastExitReason: latestRow.ExitReason,
+            LastEstimatedPnlQuote: latestRow.EstimatedPnlQuote,
+            LastEstimatedPnlPct: latestRow.EstimatedPnlPct,
+            LastExitAtUtc: latestRow.ObservedAtUtc,
+            LastExitSymbol: latestRow.Symbol,
+            LastExitSide: latestRow.CloseSide,
+            LastExitReduceOnly: latestRow.ReduceOnly);
     }
 
     private async Task<MarketScannerDashboardSnapshot> LoadMarketScannerSnapshotAsync(CancellationToken cancellationToken)
@@ -1197,6 +1263,48 @@ public sealed class AdminMonitoringReadModelService(
             : normalized[..(maxLength - 1)].TrimEnd() + "…";
     }
 
+    private static ExitPnlEvidenceRow? ParseExitPnlEvidence(
+        string symbol,
+        string signalType,
+        string? decisionReasonCode,
+        string? decisionSummary,
+        DateTime? decisionAtUtc,
+        DateTime createdAtUtc)
+    {
+        var exitReason = ExecutionDecisionDiagnostics.ExtractToken("ExitReason", decisionSummary);
+        if (string.IsNullOrWhiteSpace(exitReason))
+        {
+            return null;
+        }
+
+        return new ExitPnlEvidenceRow(
+            Symbol: string.IsNullOrWhiteSpace(symbol) ? "n/a" : symbol.Trim(),
+            SignalType: string.IsNullOrWhiteSpace(signalType) ? "n/a" : signalType.Trim(),
+            DecisionReasonCode: string.IsNullOrWhiteSpace(decisionReasonCode) ? null : decisionReasonCode.Trim(),
+            ExitReason: exitReason,
+            EstimatedPnlQuote: TryParseDecimalToken("EstimatedPnlQuote", decisionSummary),
+            EstimatedPnlPct: TryParseDecimalToken("EstimatedPnlPct", decisionSummary),
+            CloseSide: ExecutionDecisionDiagnostics.ExtractToken("CloseSide", decisionSummary),
+            ReduceOnly: TryParseBooleanToken("ReduceOnly", decisionSummary),
+            ObservedAtUtc: NormalizeUtc(decisionAtUtc ?? createdAtUtc));
+    }
+
+    private static decimal? TryParseDecimalToken(string key, params string?[] sources)
+    {
+        var tokenValue = ExecutionDecisionDiagnostics.ExtractToken(key, sources);
+        return decimal.TryParse(tokenValue, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsedValue)
+            ? parsedValue
+            : null;
+    }
+
+    private static bool? TryParseBooleanToken(string key, params string?[] sources)
+    {
+        var tokenValue = ExecutionDecisionDiagnostics.ExtractToken(key, sources);
+        return bool.TryParse(tokenValue, out var parsedValue)
+            ? parsedValue
+            : null;
+    }
+
     private static int ResolveMonitoringHealthSeverity(MonitoringHealthState state)
     {
         return state switch
@@ -1329,4 +1437,15 @@ public sealed class AdminMonitoringReadModelService(
         string Title,
         string Summary,
         string? Reason);
+
+    private sealed record ExitPnlEvidenceRow(
+        string Symbol,
+        string SignalType,
+        string? DecisionReasonCode,
+        string ExitReason,
+        decimal? EstimatedPnlQuote,
+        decimal? EstimatedPnlPct,
+        string? CloseSide,
+        bool? ReduceOnly,
+        DateTime ObservedAtUtc);
 }

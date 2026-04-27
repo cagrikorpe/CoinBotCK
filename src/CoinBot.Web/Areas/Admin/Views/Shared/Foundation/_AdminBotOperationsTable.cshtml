@@ -1,7 +1,9 @@
 @using CoinBot.Application.Abstractions.Administration
+@using CoinBot.Contracts.Common
 @{
     var snapshot = ViewData["AdminBotOperationsPageSnapshot"] as AdminBotOperationsPageSnapshot;
     var bots = snapshot?.Bots ?? Array.Empty<AdminBotOperationSnapshot>();
+    var canManageManualClose = Context.User.HasClaim(ApplicationClaimTypes.Permission, ApplicationPermissions.PlatformAdministration);
 }
 
 <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-table-card">
@@ -51,6 +53,12 @@
                     {
                         foreach (var row in bots)
                         {
+                            var lastErrorPreview = row.LastError.Length > 220
+                                ? $"{row.LastError[..220]}..."
+                                : row.LastError;
+                            var showManualCloseSurface = canManageManualClose &&
+                                                         (!string.IsNullOrWhiteSpace(row.ManualCloseSymbol) ||
+                                                          !string.IsNullOrWhiteSpace(row.ManualClosePreviewUnavailableReason));
                             <tr>
                                 <td>
                                     <div class="cb-admin-user-cell">
@@ -71,11 +79,49 @@
                                 <td>@await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = row.ModeLabel, Tone = row.ModeTone, IconText = "MD" })</td>
                                 <td><div class="cb-admin-mini-stat"><strong>@row.StrategyKey</strong><small>Strategy key</small></div></td>
                                 <td>@await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = row.RiskLabel, Tone = row.RiskTone, IconText = "RK" })</td>
-                                <td><div class="cb-admin-mini-stat"><strong>@row.LastError</strong><small>@row.LastAction</small></div></td>
+                                <td>
+                                    <div class="cb-admin-mini-stat cb-admin-bot-last-error" data-cb-admin-bot-last-error title="@row.LastError">
+                                        <strong>@lastErrorPreview</strong>
+                                        <small>@row.LastAction</small>
+                                    </div>
+                                </td>
                                 <td>
                                     <div class="cb-admin-inline-actions cb-admin-inline-actions-compact">
                                         <a asp-area="Admin" asp-controller="Admin" asp-action="UserDetail" asp-route-id="@row.OwnerUserId" class="btn btn-xs btn-light-primary font-weight-bold">Kullanıcı</a>
                                         <a asp-area="Admin" asp-controller="Admin" asp-action="Audit" asp-route-query="@row.Name" class="btn btn-xs btn-light-primary font-weight-bold">Audit</a>
+                                        @if (showManualCloseSurface)
+                                        {
+                                            <details class="cb-admin-manual-close-panel" data-cb-admin-manual-close-panel>
+                                                <summary class="btn btn-xs btn-light-danger font-weight-bold" data-cb-admin-manual-close-button>Close Position</summary>
+                                                @if (!string.IsNullOrWhiteSpace(row.ManualCloseSymbol))
+                                                {
+                                                    <div class="cb-admin-mini-stat mt-3" data-cb-admin-manual-close-preview>
+                                                        <strong>@row.ManualCloseSymbol</strong>
+                                                        <small>Position @row.ManualClosePositionQuantityLabel | @row.ManualClosePositionDirectionLabel | Close @row.ManualCloseSideLabel</small>
+                                                        <small>ReduceOnly=True | Environment=@row.ManualCloseEnvironmentLabel</small>
+                                                    </div>
+                                                }
+                                                @if (row.CanManualClose)
+                                                {
+                                                    <form asp-area="Admin" asp-controller="Admin" asp-action="ManualCloseBotPosition" method="post" class="mt-3" data-cb-admin-manual-close-form>
+                                                        @Html.AntiForgeryToken()
+                                                        <input type="hidden" name="botId" value="@row.BotId" />
+                                                        <button type="submit" class="btn btn-xs btn-danger font-weight-bold" data-cb-admin-manual-close-confirm>Confirm Reduce-Only Close</button>
+                                                    </form>
+                                                }
+                                                else
+                                                {
+                                                    <div class="cb-admin-mini-stat mt-3" data-cb-admin-manual-close-unavailable>
+                                                        <strong>Close unavailable</strong>
+                                                        <small>Active BinanceTestnet futures position and writable credential are required.</small>
+                                                        @if (!string.IsNullOrWhiteSpace(row.ManualClosePreviewUnavailableReason))
+                                                        {
+                                                            <small data-cb-admin-manual-close-unavailable-reason>@row.ManualClosePreviewUnavailableReason</small>
+                                                        }
+                                                    </div>
+                                                }
+                                            </details>
+                                        }
                                     </div>
                                 </td>
                             </tr>

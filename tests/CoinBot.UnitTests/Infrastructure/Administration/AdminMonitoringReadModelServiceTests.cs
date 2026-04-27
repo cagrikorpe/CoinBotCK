@@ -1162,6 +1162,86 @@ public sealed class AdminMonitoringReadModelServiceTests
     }
 
     [Fact]
+    public async Task AdminDashboardReadModel_ParsesExitPnlEvidence_FromDecisionSummaries()
+    {
+        var now = new DateTime(2026, 4, 27, 12, 0, 0, DateTimeKind.Utc);
+        await using var dbContext = CreateDbContext();
+
+        dbContext.DecisionTraces.AddRange(
+            CreateDecisionTrace(
+                symbol: "SOLUSDT",
+                decisionReasonCode: "ExitCloseOnlyAllowedTakeProfit",
+                decisionSummary: "ExitPnlGuard=Allowed; ExitReason=ReverseSignal; ReasonCode=ExitCloseOnlyAllowedTakeProfit; PositionDirection=Short; EntryPrice=85.35; ExitPrice=84.9; CloseSide=Buy; ReduceOnly=True; EstimatedPnlQuote=0.027; EstimatedPnlPct=0.53; MinimumProfitPct=0;",
+                createdAtUtc: now.AddMinutes(-3)),
+            CreateDecisionTrace(
+                symbol: "SOLUSDT",
+                decisionReasonCode: "ExitCloseOnlyBlockedUnprofitableShort",
+                decisionSummary: "ExitPnlGuard=Blocked; ExitReason=BlockedUnprofitable; ReasonCode=ExitCloseOnlyBlockedUnprofitableShort; PositionDirection=Short; EntryPrice=85.35; ExitPrice=85.5; CloseSide=Buy; ReduceOnly=True; EstimatedPnlQuote=-0.009; EstimatedPnlPct=-0.17; MinimumProfitPct=0;",
+                createdAtUtc: now.AddMinutes(-2)),
+            CreateDecisionTrace(
+                symbol: "SOLUSDT",
+                decisionReasonCode: "StopLossTriggered",
+                decisionSummary: "Runtime exit quality triggered StopLoss for SOLUSDT. ExitReason=StopLoss; ReasonCode=StopLossTriggered; PositionDirection=Long; EntryPrice=85.1; ExitPrice=84.7; CloseSide=Sell; ReduceOnly=True; EstimatedPnlQuote=-0.024; EstimatedPnlPct=-0.47;",
+                createdAtUtc: now.AddMinutes(-1)),
+            CreateDecisionTrace(
+                symbol: "BTCUSDT",
+                decisionReasonCode: "TakeProfitTriggered",
+                decisionSummary: "Runtime exit quality triggered TakeProfit for BTCUSDT. ExitReason=TakeProfit; ReasonCode=TakeProfitTriggered; PositionDirection=Long; EntryPrice=64000; ExitPrice=64200; CloseSide=Sell; ReduceOnly=True; EstimatedPnlQuote=12.5; EstimatedPnlPct=0.31;",
+                createdAtUtc: now));
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            new FixedTimeProvider(now),
+            Options.Create(new DataLatencyGuardOptions()));
+
+        var snapshot = await service.GetSnapshotAsync();
+        var exitEvidence = snapshot.OperationalObservability.ExitPnlEvidence;
+
+        Assert.Equal(4, exitEvidence.LastExitCount);
+        Assert.Equal(2, exitEvidence.ProfitableExitCount);
+        Assert.Equal(1, exitEvidence.UnprofitableExitBlockedCount);
+        Assert.Equal(1, exitEvidence.StopLossExitCount);
+        Assert.Equal(1, exitEvidence.TakeProfitExitCount);
+        Assert.Equal("TakeProfit", exitEvidence.LastExitReason);
+        Assert.Equal(12.5m, exitEvidence.LastEstimatedPnlQuote);
+        Assert.Equal(0.31m, exitEvidence.LastEstimatedPnlPct);
+        Assert.Equal(now, exitEvidence.LastExitAtUtc);
+        Assert.Equal("BTCUSDT", exitEvidence.LastExitSymbol);
+        Assert.Equal("Sell", exitEvidence.LastExitSide);
+        Assert.True(exitEvidence.LastExitReduceOnly);
+    }
+
+    [Fact]
+    public async Task AdminDashboardReadModel_UsesEmptyExitPnlEvidence_WhenNoExitTokensExist()
+    {
+        var now = new DateTime(2026, 4, 27, 12, 0, 0, DateTimeKind.Utc);
+        await using var dbContext = CreateDbContext();
+        dbContext.DecisionTraces.Add(CreateDecisionTrace(
+            symbol: "SOLUSDT",
+            decisionReasonCode: "NoSignalCandidate",
+            decisionSummary: "Strategy did not produce an executable candidate.",
+            createdAtUtc: now));
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            new FixedTimeProvider(now),
+            Options.Create(new DataLatencyGuardOptions()));
+
+        var snapshot = await service.GetSnapshotAsync();
+        var exitEvidence = snapshot.OperationalObservability.ExitPnlEvidence;
+
+        Assert.Equal(0, exitEvidence.LastExitCount);
+        Assert.Null(exitEvidence.LastExitReason);
+        Assert.Null(exitEvidence.LastEstimatedPnlQuote);
+        Assert.Null(exitEvidence.LastExitAtUtc);
+        Assert.Null(exitEvidence.LastExitReduceOnly);
+    }
+
+    [Fact]
     public async Task AdminDashboardReadModel_DoesNotExposeSensitiveData()
     {
         var now = DateTime.UtcNow;
@@ -1240,6 +1320,8 @@ public sealed class AdminMonitoringReadModelServiceTests
         Assert.Equal("No janitor heartbeat yet.", snapshot.OperationalObservability.JanitorSummary);
         Assert.Empty(snapshot.OperationalObservability.BlockedReasons);
         Assert.Empty(snapshot.OperationalObservability.NoSubmitReasons);
+        Assert.Equal(0, snapshot.OperationalObservability.ExitPnlEvidence.LastExitCount);
+        Assert.Null(snapshot.OperationalObservability.ExitPnlEvidence.LastExitReason);
     }
 
     [Fact]
@@ -1311,6 +1393,34 @@ public sealed class AdminMonitoringReadModelServiceTests
             ConfidenceBucket = "High",
             FutureDataAvailability = AiShadowFutureDataAvailability.Available,
             ScoredAtUtc = scoredAtUtc
+        };
+    }
+
+    private static DecisionTrace CreateDecisionTrace(
+        string symbol,
+        string decisionReasonCode,
+        string decisionSummary,
+        DateTime createdAtUtc)
+    {
+        return new DecisionTrace
+        {
+            Id = Guid.NewGuid(),
+            CorrelationId = $"corr-{Guid.NewGuid():N}",
+            DecisionId = $"decision-{Guid.NewGuid():N}",
+            UserId = "admin-monitoring-test",
+            Symbol = symbol,
+            Timeframe = "1m",
+            StrategyVersion = "StrategyVersion:test",
+            SignalType = "Exit",
+            DecisionOutcome = "Allow",
+            DecisionReasonType = "Allow",
+            DecisionReasonCode = decisionReasonCode,
+            DecisionSummary = decisionSummary,
+            DecisionAtUtc = createdAtUtc,
+            SnapshotJson = "{}",
+            CreatedAtUtc = createdAtUtc,
+            CreatedDate = createdAtUtc,
+            UpdatedDate = createdAtUtc
         };
     }
 

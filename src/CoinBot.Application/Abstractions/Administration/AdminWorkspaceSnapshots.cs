@@ -161,7 +161,22 @@ public sealed record AdminBotOperationSnapshot(
     string LastAction,
     string LastError,
     int OpenOrderCount,
-    int OpenPositionCount);
+    int OpenPositionCount)
+{
+    public bool CanManualClose { get; init; }
+
+    public string? ManualCloseSymbol { get; init; }
+
+    public string? ManualClosePositionQuantityLabel { get; init; }
+
+    public string? ManualClosePositionDirectionLabel { get; init; }
+
+    public string? ManualCloseSideLabel { get; init; }
+
+    public string? ManualCloseEnvironmentLabel { get; init; }
+
+    public string? ManualClosePreviewUnavailableReason { get; init; }
+}
 
 public sealed record AdminBotOperationsPageSnapshot(
     string? Query,

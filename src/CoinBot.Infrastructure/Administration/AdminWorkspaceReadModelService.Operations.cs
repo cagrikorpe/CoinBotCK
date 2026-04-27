@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.Ai;
@@ -32,6 +33,39 @@ public sealed partial class AdminWorkspaceReadModelService
             .AsNoTracking()
             .ToDictionaryAsync(user => user.Id, user => user, cancellationToken);
         var latestOrderFailures = await LoadLatestOrderFailuresAsync(cancellationToken);
+        var exchangeAccountIds = bots
+            .Where(bot => bot.ExchangeAccountId.HasValue)
+            .Select(bot => bot.ExchangeAccountId!.Value)
+            .Distinct()
+            .ToArray();
+        var ownerUserIds = bots
+            .Select(bot => bot.OwnerUserId)
+            .Where(ownerUserId => !string.IsNullOrWhiteSpace(ownerUserId))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var normalizedOwnerUserIds = ownerUserIds
+            .Select(ownerUserId => ownerUserId.ToUpperInvariant())
+            .ToArray();
+        var exchangeAccounts = exchangeAccountIds.Length == 0
+            ? new Dictionary<Guid, ExchangeAccount>()
+            : await dbContext.ExchangeAccounts
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity => exchangeAccountIds.Contains(entity.Id) && !entity.IsDeleted)
+                .ToDictionaryAsync(entity => entity.Id, cancellationToken);
+        var exchangePositions = normalizedOwnerUserIds.Length == 0
+            ? Array.Empty<ExchangePosition>()
+            : await dbContext.ExchangePositions
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    normalizedOwnerUserIds.Contains(entity.OwnerUserId.ToUpper()) &&
+                    entity.Plane == ExchangeDataPlane.Futures &&
+                    entity.Quantity != 0m &&
+                    !entity.IsDeleted)
+                .OrderByDescending(entity => entity.UpdatedDate)
+                .ThenByDescending(entity => entity.CreatedDate)
+                .ToArrayAsync(cancellationToken);
 
         var rows = bots.Select(bot =>
         {
@@ -43,6 +77,30 @@ public sealed partial class AdminWorkspaceReadModelService
             var lastFailure = latestOrderFailures.TryGetValue(bot.Id, out var failure)
                 ? failure
                 : "No failure";
+            var ownerScopedPositions = exchangePositions
+                .Where(entity => string.Equals(entity.OwnerUserId, bot.OwnerUserId, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            var ownerSymbolPosition = string.IsNullOrWhiteSpace(bot.Symbol)
+                ? null
+                : ownerScopedPositions.FirstOrDefault(entity =>
+                    string.Equals(entity.Symbol, bot.Symbol, StringComparison.OrdinalIgnoreCase));
+            var openPosition = bot.ExchangeAccountId.HasValue && !string.IsNullOrWhiteSpace(bot.Symbol)
+                ? ownerScopedPositions.FirstOrDefault(entity =>
+                    entity.ExchangeAccountId == bot.ExchangeAccountId.Value &&
+                    string.Equals(entity.Symbol, bot.Symbol, StringComparison.OrdinalIgnoreCase))
+                : null;
+            exchangeAccounts.TryGetValue(bot.ExchangeAccountId ?? Guid.Empty, out var account);
+            var canManualClose = effectiveMode == ExecutionEnvironment.BinanceTestnet &&
+                                 openPosition is not null &&
+                                 account is not null &&
+                                 !account.IsReadOnly &&
+                                 account.CredentialStatus == ExchangeCredentialStatus.Active;
+            var manualClosePreviewUnavailableReason = ResolveManualClosePreviewUnavailableReason(
+                bot,
+                effectiveMode,
+                openPosition,
+                ownerSymbolPosition,
+                account);
 
             return new AdminBotOperationSnapshot(
                 bot.Id.ToString(),
@@ -59,7 +117,22 @@ public sealed partial class AdminWorkspaceReadModelService
                 bot.IsEnabled ? "Çalışıyor" : "Durduruldu",
                 lastFailure,
                 bot.OpenOrderCount,
-                bot.OpenPositionCount);
+                bot.OpenPositionCount)
+            {
+                CanManualClose = canManualClose,
+                ManualCloseSymbol = openPosition is null ? null : bot.Symbol ?? openPosition.Symbol,
+                ManualClosePositionQuantityLabel = openPosition is null
+                    ? null
+                    : openPosition.Quantity.ToString("0.########", CultureInfo.InvariantCulture),
+                ManualClosePositionDirectionLabel = openPosition is null
+                    ? null
+                    : openPosition.Quantity > 0m ? "Long" : "Short",
+                ManualCloseSideLabel = openPosition is null
+                    ? null
+                    : openPosition.Quantity > 0m ? "Sell" : "Buy",
+                ManualCloseEnvironmentLabel = openPosition is null ? null : ExecutionEnvironment.BinanceTestnet.ToString(),
+                ManualClosePreviewUnavailableReason = manualClosePreviewUnavailableReason
+            };
         }).ToArray();
 
         rows = rows
@@ -82,6 +155,43 @@ public sealed partial class AdminWorkspaceReadModelService
         };
 
         return new AdminBotOperationsPageSnapshot(normalizedQuery, normalizedStatus, normalizedMode, summaryTiles, rows, now);
+    }
+
+    private static string? ResolveManualClosePreviewUnavailableReason(
+        TradingBot bot,
+        ExecutionEnvironment effectiveMode,
+        ExchangePosition? openPosition,
+        ExchangePosition? ownerSymbolPosition,
+        ExchangeAccount? account)
+    {
+        if (openPosition is not null)
+        {
+            if (effectiveMode != ExecutionEnvironment.BinanceTestnet)
+            {
+                return "ManualCloseEnvironmentMismatch";
+            }
+
+            if (account is null)
+            {
+                return "ManualCloseAccountMismatch";
+            }
+
+            if (account.IsReadOnly || account.CredentialStatus != ExchangeCredentialStatus.Active)
+            {
+                return "ManualClosePreviewUnavailable";
+            }
+
+            return null;
+        }
+
+        if (!bot.ExchangeAccountId.HasValue || string.IsNullOrWhiteSpace(bot.Symbol))
+        {
+            return "ManualCloseNoMatchingPosition";
+        }
+
+        return ownerSymbolPosition is null
+            ? "ManualCloseNoOpenPosition"
+            : "ManualCloseAccountMismatch";
     }
 
     public async Task<AdminStrategyAiMonitoringPageSnapshot> GetStrategyAiMonitoringAsync(
