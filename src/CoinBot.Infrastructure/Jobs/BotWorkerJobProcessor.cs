@@ -64,6 +64,8 @@ public sealed class BotWorkerJobProcessor(
     private const string EntrySupersededByRuntimeExitQualityDecisionCode = "EntrySupersededByRuntimeExitQuality";
     private const string ReverseBlockedOpenPositionExistsDecisionCode = "ReverseBlockedOpenPositionExists";
     private const string EntryDirectionModeBlockedDecisionCode = "EntryDirectionModeBlocked";
+    private const string PositionAdoptionAmbiguousDecisionCode = "PositionAdoptionAmbiguous";
+    private const string AutoPositionManagementDisabledDecisionCode = "AutoPositionManagementDisabled";
     private const string ExitCloseOnlyIntentCode = "ExitCloseOnly";
     private const string ExitCloseOnlyBlockedPrivatePlaneStaleDecisionCode = "ExitCloseOnlyBlockedPrivatePlaneStale";
     private const string ExitCloseOnlyBlockedRiskDecisionCode = "ExitCloseOnlyBlockedRisk";
@@ -89,6 +91,8 @@ public sealed class BotWorkerJobProcessor(
     private const string TakeProfitThresholdReachedPolicyReason = "TakeProfitThresholdReached";
     private const string StopLossThresholdReachedPolicyReason = "StopLossThresholdReached";
     private const string RiskExitThresholdReachedPolicyReason = "RiskExitThresholdReached";
+    private const string PositionAdoptionAdoptedState = "Adopted";
+    private const string PositionAdoptionAmbiguousState = "Ambiguous";
 
     private static readonly JsonSerializerOptions SerializerOptions = CreateSerializerOptions();
 
@@ -367,16 +371,72 @@ public sealed class BotWorkerJobProcessor(
                 executionDispatchMode,
                 marketState.ReferencePrice,
                 cancellationToken);
+        var positionAdoption = currentPosition is null
+            ? PositionAdoptionResolution.Skipped
+            : await ResolvePositionAdoptionAsync(
+                bot,
+                exchangeAccount,
+                normalizedSymbol,
+                currentPosition.NetQuantity,
+                cancellationToken);
 
         if (currentPosition is not null)
         {
+            if (positionAdoption.IsAmbiguous)
+            {
+                var ambiguousSummary = "Position adoption blocked because multiple bots matched the same owner/exchange account/symbol futures scope.";
+
+                if (signal is not null)
+                {
+                    if (signal.SignalType == StrategySignalType.Exit)
+                    {
+                        await WriteExitSkippedDecisionTraceAsync(
+                            bot.OwnerUserId,
+                            publishedVersion,
+                            signal,
+                            correlationId,
+                            strategyDecisionTrace,
+                            PositionAdoptionAmbiguousDecisionCode,
+                            ambiguousSummary,
+                            currentNetQuantity,
+                            cancellationToken,
+                            positionAdoptionSummary: positionAdoption.Summary,
+                            requestedQuantity: Math.Abs(currentNetQuantity),
+                            referencePrice: marketState.ReferencePrice);
+                    }
+                    else
+                    {
+                        await WriteEntrySkippedDecisionTraceAsync(
+                            bot.OwnerUserId,
+                            publishedVersion,
+                            signal,
+                            correlationId,
+                            strategyDecisionTrace,
+                            ambiguousSummary,
+                            currentNetQuantity,
+                            cancellationToken,
+                            decisionReasonCode: PositionAdoptionAmbiguousDecisionCode,
+                            positionAdoptionSummary: positionAdoption.Summary,
+                            referencePrice: marketState.ReferencePrice);
+                    }
+                }
+
+                logger.LogInformation(
+                    "Bot execution pilot blocked automation for BotId {BotId} because open position adoption was ambiguous. Symbol={Symbol}.",
+                    bot.Id,
+                    normalizedSymbol);
+                return BackgroundJobProcessResult.Success();
+            }
+
             var activeReduceOnlyExitOrderExists = await HasActiveReduceOnlyExitOrderAsync(
                 bot,
                 exchangeAccount,
                 currentPosition,
                 cancellationToken);
+            var autoManageAdoptedPosition = IsAutoManageAdoptedPositionEnabled(positionAdoption);
 
-            if (!activeReduceOnlyExitOrderExists)
+            if (!activeReduceOnlyExitOrderExists &&
+                autoManageAdoptedPosition)
             {
                 var runtimeExitQualityTrigger = await EvaluateRuntimeExitQualityAsync(
                     bot,
@@ -390,6 +450,13 @@ public sealed class BotWorkerJobProcessor(
                 if (runtimeExitQualityTrigger is not null &&
                     (signal is null || signal.SignalType != StrategySignalType.Exit))
                 {
+                    runtimeExitQualityTrigger = runtimeExitQualityTrigger with
+                    {
+                        DecisionSummary = AppendPositionAdoptionSummary(
+                            runtimeExitQualityTrigger.DecisionSummary,
+                            positionAdoption.Summary)
+                    };
+
                     if (signal is not null && signal.SignalType == StrategySignalType.Entry)
                     {
                         await WriteEntrySkippedDecisionTraceAsync(
@@ -476,6 +543,7 @@ public sealed class BotWorkerJobProcessor(
                     currentNetQuantity,
                     cancellationToken,
                     decisionReasonCode: ResolveSameDirectionEntrySuppressedDecisionCode(entryDirection),
+                    positionAdoptionSummary: positionAdoption.Summary,
                     referencePrice: marketState.ReferencePrice);
 
                 logger.LogInformation(
@@ -487,13 +555,44 @@ public sealed class BotWorkerJobProcessor(
                 return BackgroundJobProcessResult.Success();
             }
 
+            if (!IsAutoManageAdoptedPositionEnabled(positionAdoption))
+            {
+                await WriteExitSkippedDecisionTraceAsync(
+                    bot.OwnerUserId,
+                    publishedVersion,
+                    signal,
+                    correlationId,
+                    strategyDecisionTrace,
+                    AutoPositionManagementDisabledDecisionCode,
+                    BuildAutoPositionManagementDisabledReverseSummary(
+                        signal.Symbol,
+                        currentPositionDirection == StrategyTradeDirection.Long
+                            ? ExecutionOrderSide.Sell
+                            : ExecutionOrderSide.Buy,
+                        currentNetQuantity,
+                        positionAdoption.Summary),
+                    currentNetQuantity,
+                    cancellationToken,
+                    positionAdoptionSummary: positionAdoption.Summary,
+                    requestedQuantity: Math.Abs(currentNetQuantity),
+                    referencePrice: marketState.ReferencePrice);
+
+                logger.LogInformation(
+                    "Bot execution pilot blocked reverse close-only automation for BotId {BotId} because adopted position auto-management is disabled. Symbol={Symbol} StrategySignalId={StrategySignalId}.",
+                    bot.Id,
+                    signal.Symbol,
+                    signal.StrategySignalId);
+                return BackgroundJobProcessResult.Success();
+            }
+
             closeOnlyIntent = new CloseOnlyExecutionIntent(
                 CurrentPositionDirection: currentPositionDirection,
                 OpenPositionQuantity: currentNetQuantity,
                 CloseSide: currentPositionDirection == StrategyTradeDirection.Long
                     ? ExecutionOrderSide.Sell
                     : ExecutionOrderSide.Buy,
-                ExitPnlGuardSummary: null);
+                ExitPnlGuardSummary: null,
+                PositionAdoptionSummary: positionAdoption.Summary);
             signal = signal with { SignalType = StrategySignalType.Exit };
             entryDirection = StrategyTradeDirection.Neutral;
 
@@ -509,7 +608,8 @@ public sealed class BotWorkerJobProcessor(
                 signal.Symbol,
                 currentPosition,
                 symbolMetadata,
-                marketState.ReferencePrice);
+                marketState.ReferencePrice,
+                positionAdoption.Summary);
             if (closeOnlyPnlGuard.IsBlocked)
             {
                 await WriteExitSkippedDecisionTraceAsync(
@@ -625,6 +725,33 @@ public sealed class BotWorkerJobProcessor(
                     signal.StrategySignalId);
                 return BackgroundJobProcessResult.Success();
             }
+        }
+
+        if (signal.SignalType == StrategySignalType.Exit &&
+            currentNetQuantity != 0m &&
+            currentPosition is not null &&
+            !IsAutoManageAdoptedPositionEnabled(positionAdoption))
+        {
+            await WriteExitSkippedDecisionTraceAsync(
+                bot.OwnerUserId,
+                publishedVersion,
+                signal,
+                correlationId,
+                strategyDecisionTrace,
+                AutoPositionManagementDisabledDecisionCode,
+                $"Exit signal was skipped because adopted position auto-management is disabled for {signal.Symbol} on the selected exchange account.",
+                currentNetQuantity,
+                cancellationToken,
+                positionAdoptionSummary: positionAdoption.Summary,
+                requestedQuantity: Math.Abs(currentNetQuantity),
+                referencePrice: marketState.ReferencePrice);
+
+            logger.LogInformation(
+                "Bot execution pilot skipped exit dispatch for BotId {BotId} because adopted position auto-management is disabled. Symbol={Symbol} StrategySignalId={StrategySignalId}.",
+                bot.Id,
+                signal.Symbol,
+                signal.StrategySignalId);
+            return BackgroundJobProcessResult.Success();
         }
 
         if (signal.SignalType == StrategySignalType.Exit && currentNetQuantity == 0m)
@@ -998,6 +1125,10 @@ public sealed class BotWorkerJobProcessor(
 
         try
         {
+            var dispatchIdempotencyKey = BuildDispatchIdempotencyKey(
+                signal,
+                executionDispatchMode,
+                dispatchPlan);
             var dispatchResult = await executionEngine.DispatchAsync(
                 new ExecutionCommand(
                     Actor: "system:bot-worker",
@@ -1018,7 +1149,7 @@ public sealed class BotWorkerJobProcessor(
                     BotId: bot.Id,
                     ExchangeAccountId: exchangeAccount.Id,
                     IsDemo: executionDispatchMode == ExecutionEnvironment.Demo ? true : null,
-                    IdempotencyKey: $"{idempotencyKey}:{signal.StrategySignalId:N}",
+                    IdempotencyKey: dispatchIdempotencyKey,
                     CorrelationId: null,
                     ParentCorrelationId: null,
                     Context: pilotExecutionContext,
@@ -3222,6 +3353,7 @@ public sealed class BotWorkerJobProcessor(
         string decisionSummary,
         decimal netQuantity,
         CancellationToken cancellationToken,
+        string? positionAdoptionSummary = null,
         decimal? requestedQuantity = null,
         decimal? referencePrice = null)
     {
@@ -3232,6 +3364,7 @@ public sealed class BotWorkerJobProcessor(
             signal.SignalType,
             decisionReasonCode,
             isExitCloseOnly);
+        decisionSummary = AppendPositionAdoptionSummary(decisionSummary, positionAdoptionSummary);
 
         decimal? requestedNotional = requestedQuantity.HasValue && referencePrice.HasValue
             ? requestedQuantity.Value * referencePrice.Value
@@ -3282,6 +3415,7 @@ public sealed class BotWorkerJobProcessor(
         decimal netQuantity,
         CancellationToken cancellationToken,
         string decisionReasonCode = "EntrySuppressed",
+        string? positionAdoptionSummary = null,
         decimal? requestedQuantity = null,
         decimal? referencePrice = null)
     {
@@ -3290,6 +3424,7 @@ public sealed class BotWorkerJobProcessor(
             signal.SignalType,
             decisionReasonCode,
             isExitCloseOnly: false);
+        decisionSummary = AppendPositionAdoptionSummary(decisionSummary, positionAdoptionSummary);
 
         decimal? requestedNotional = requestedQuantity.HasValue && referencePrice.HasValue
             ? requestedQuantity.Value * referencePrice.Value
@@ -3712,19 +3847,23 @@ public sealed class BotWorkerJobProcessor(
                 $"{baseContext} | SignalType=Entry | ExecutionIntent=Entry | ExitIntent=n/a | EntrySource=StrategyEntry | ExitSource=n/a | ReverseEntryConvertedToCloseOnly=False | ManualClose=False");
         }
 
+        var positionAdoptionSummary = string.IsNullOrWhiteSpace(closeOnlyIntent.PositionAdoptionSummary)
+            ? string.Empty
+            : $" | {ConvertSummaryTokensToExecutionContextSegment(closeOnlyIntent.PositionAdoptionSummary)}";
         var exitPnlGuardSummary = string.IsNullOrWhiteSpace(closeOnlyIntent.ExitPnlGuardSummary)
             ? string.Empty
             : $" | {closeOnlyIntent.ExitPnlGuardSummary}";
 
         return FormattableString.Invariant(
-            $"{baseContext} | SignalType=Reverse | ExecutionIntent={ExitCloseOnlyIntentCode} | ExitIntent={ExitCloseOnlyIntentCode} | EntrySource=StrategyEntry | ExitSource={ExitReasonReverseSignal} | ReverseEntryConvertedToCloseOnly=True | ManualClose=False | OpenPositionQuantity={closeOnlyIntent.OpenPositionQuantity:0.########} | CloseQuantity={dispatchPlan.Quantity:0.########} | CloseSide={closeOnlyIntent.CloseSide} | ReduceOnly={dispatchPlan.ReduceOnly} | AutoReverse=False{exitPnlGuardSummary}");
+            $"{baseContext} | SignalType=Reverse | ExecutionIntent={ExitCloseOnlyIntentCode} | ExitIntent={ExitCloseOnlyIntentCode} | EntrySource=StrategyEntry | ExitSource={ExitReasonReverseSignal} | ReverseEntryConvertedToCloseOnly=True | ManualClose=False | OpenPositionQuantity={closeOnlyIntent.OpenPositionQuantity:0.########} | CloseQuantity={dispatchPlan.Quantity:0.########} | CloseSide={closeOnlyIntent.CloseSide} | ReduceOnly={dispatchPlan.ReduceOnly} | AutoReverse=False{positionAdoptionSummary}{exitPnlGuardSummary}");
     }
 
     private CloseOnlyPnlGuardEvaluation EvaluateExitCloseOnlyPnlGuard(
         string symbol,
         CurrentPositionSnapshot? currentPosition,
         SymbolMetadataSnapshot symbolMetadata,
-        decimal? referencePrice)
+        decimal? referencePrice,
+        string? positionAdoptionSummary)
     {
         var positionDirection = currentPosition?.Direction ?? StrategyTradeDirection.Neutral;
         var minimumProfitPct = ResolveReverseExitMinimumProfitPct();
@@ -3738,7 +3877,8 @@ public sealed class BotWorkerJobProcessor(
         }
         catch (ExecutionValidationException)
         {
-            var invalidSummary = BuildExitCloseOnlyPnlGuardSummary(
+            var invalidSummary = AppendPositionAdoptionSummary(
+                BuildExitCloseOnlyPnlGuardSummary(
                 exitPnlGuardState: "Blocked",
                 reasonCode: ExitCloseOnlyBlockedQuantityInvalidDecisionCode,
                 positionDirection,
@@ -3752,7 +3892,8 @@ public sealed class BotWorkerJobProcessor(
                 minimumProfitPct: minimumProfitPct,
                 exitPolicyDecision: "Blocked",
                 exitPolicyReason: ExitCloseOnlyBlockedQuantityInvalidDecisionCode,
-                exitOnReverseSignalOnlyIfProfitable: exitOnReverseSignalOnlyIfProfitable);
+                exitOnReverseSignalOnlyIfProfitable: exitOnReverseSignalOnlyIfProfitable),
+                positionAdoptionSummary);
             return new CloseOnlyPnlGuardEvaluation(
                 IsBlocked: true,
                 DecisionReasonCode: ExitCloseOnlyBlockedQuantityInvalidDecisionCode,
@@ -3765,7 +3906,8 @@ public sealed class BotWorkerJobProcessor(
         var exitPrice = referencePrice ?? 0m;
         if (currentPosition is null || currentPosition.NetQuantity == 0m || entryPrice <= 0m || exitPrice <= 0m)
         {
-            var invalidSummary = BuildExitCloseOnlyPnlGuardSummary(
+            var invalidSummary = AppendPositionAdoptionSummary(
+                BuildExitCloseOnlyPnlGuardSummary(
                 exitPnlGuardState: "Blocked",
                 reasonCode: ExitCloseOnlyBlockedQuantityInvalidDecisionCode,
                 positionDirection,
@@ -3779,7 +3921,8 @@ public sealed class BotWorkerJobProcessor(
                 minimumProfitPct: minimumProfitPct,
                 exitPolicyDecision: "Blocked",
                 exitPolicyReason: ExitCloseOnlyBlockedQuantityInvalidDecisionCode,
-                exitOnReverseSignalOnlyIfProfitable: exitOnReverseSignalOnlyIfProfitable);
+                exitOnReverseSignalOnlyIfProfitable: exitOnReverseSignalOnlyIfProfitable),
+                positionAdoptionSummary);
             return new CloseOnlyPnlGuardEvaluation(
                 IsBlocked: true,
                 DecisionReasonCode: ExitCloseOnlyBlockedQuantityInvalidDecisionCode,
@@ -3801,7 +3944,8 @@ public sealed class BotWorkerJobProcessor(
             var decisionReasonCode = currentPosition.Direction == StrategyTradeDirection.Long
                 ? ExitCloseOnlyBlockedUnprofitableLongDecisionCode
                 : ExitCloseOnlyBlockedUnprofitableShortDecisionCode;
-            var blockedSummary = BuildExitCloseOnlyPnlGuardSummary(
+            var blockedSummary = AppendPositionAdoptionSummary(
+                BuildExitCloseOnlyPnlGuardSummary(
                 exitPnlGuardState: "Blocked",
                 reasonCode: decisionReasonCode,
                 currentPosition.Direction,
@@ -3815,7 +3959,8 @@ public sealed class BotWorkerJobProcessor(
                 minimumProfitPct: minimumProfitPct,
                 exitPolicyDecision: "Blocked",
                 exitPolicyReason: ReverseExitBlockedUnprofitablePolicyReason,
-                exitOnReverseSignalOnlyIfProfitable: exitOnReverseSignalOnlyIfProfitable);
+                exitOnReverseSignalOnlyIfProfitable: exitOnReverseSignalOnlyIfProfitable),
+                positionAdoptionSummary);
             return new CloseOnlyPnlGuardEvaluation(
                 IsBlocked: true,
                 DecisionReasonCode: decisionReasonCode,
@@ -3827,7 +3972,8 @@ public sealed class BotWorkerJobProcessor(
         return new CloseOnlyPnlGuardEvaluation(
             IsBlocked: false,
             DecisionReasonCode: ExitCloseOnlyAllowedTakeProfitDecisionCode,
-            DecisionSummary: BuildExitCloseOnlyPnlGuardSummary(
+            DecisionSummary: AppendPositionAdoptionSummary(
+                BuildExitCloseOnlyPnlGuardSummary(
                 exitPnlGuardState: "Allowed",
                 reasonCode: ExitCloseOnlyAllowedTakeProfitDecisionCode,
                 currentPosition.Direction,
@@ -3844,7 +3990,9 @@ public sealed class BotWorkerJobProcessor(
                     ? ReverseSignalProfitablePolicyReason
                     : ReverseSignalProfitPolicyDisabledPolicyReason,
                 exitOnReverseSignalOnlyIfProfitable: exitOnReverseSignalOnlyIfProfitable),
-            GuardSummary: BuildExitCloseOnlyPnlGuardSummary(
+                positionAdoptionSummary),
+            GuardSummary: AppendPositionAdoptionSummary(
+                BuildExitCloseOnlyPnlGuardSummary(
                 exitPnlGuardState: "Allowed",
                 reasonCode: ExitCloseOnlyAllowedTakeProfitDecisionCode,
                 currentPosition.Direction,
@@ -3861,7 +4009,95 @@ public sealed class BotWorkerJobProcessor(
                     ? ReverseSignalProfitablePolicyReason
                     : ReverseSignalProfitPolicyDisabledPolicyReason,
                 exitOnReverseSignalOnlyIfProfitable: exitOnReverseSignalOnlyIfProfitable),
+                positionAdoptionSummary),
             CloseQuantity: closeQuantity);
+    }
+
+    private async Task<PositionAdoptionResolution> ResolvePositionAdoptionAsync(
+        TradingBot bot,
+        ExchangeAccount exchangeAccount,
+        string normalizedSymbol,
+        decimal currentNetQuantity,
+        CancellationToken cancellationToken)
+    {
+        var matchingBotCount = await dbContext.TradingBots
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.OwnerUserId == bot.OwnerUserId &&
+                entity.ExchangeAccountId == exchangeAccount.Id &&
+                entity.Symbol == bot.Symbol &&
+                !entity.IsDeleted)
+            .CountAsync(cancellationToken);
+
+        return matchingBotCount > 1
+            ? PositionAdoptionResolution.Ambiguous(normalizedSymbol, currentNetQuantity, exchangeAccount.Id)
+            : PositionAdoptionResolution.Adopted(
+                normalizedSymbol,
+                currentNetQuantity,
+                exchangeAccount.Id,
+                bot.Id,
+                optionsValue.AutoManageAdoptedPositions);
+    }
+
+    private bool IsAutoManageAdoptedPositionEnabled(PositionAdoptionResolution positionAdoption)
+    {
+        return optionsValue.AutoManageAdoptedPositions &&
+               string.Equals(positionAdoption.State, PositionAdoptionAdoptedState, StringComparison.Ordinal);
+    }
+
+    private static string AppendPositionAdoptionSummary(string summary, string? positionAdoptionSummary)
+    {
+        if (string.IsNullOrWhiteSpace(positionAdoptionSummary) ||
+            summary.Contains("PositionAdoption=", StringComparison.Ordinal))
+        {
+            return summary;
+        }
+
+        foreach (var classificationMarker in new[]
+                 {
+                     "ManualClose=False;",
+                     "ReverseEntryConvertedToCloseOnly=True;",
+                     "ReverseEntryConvertedToCloseOnly=False;"
+                 })
+        {
+            var markerIndex = summary.IndexOf(classificationMarker, StringComparison.Ordinal);
+            if (markerIndex < 0)
+            {
+                continue;
+            }
+
+            var insertionIndex = markerIndex + classificationMarker.Length;
+            var prefix = summary[..insertionIndex].TrimEnd();
+            var suffix = summary[insertionIndex..].TrimStart();
+            return string.IsNullOrWhiteSpace(suffix)
+                ? $"{prefix} {positionAdoptionSummary}"
+                : $"{prefix} {positionAdoptionSummary}; {suffix}";
+        }
+
+        return $"{positionAdoptionSummary}; {summary}";
+    }
+
+    private static string ConvertSummaryTokensToExecutionContextSegment(string summary)
+    {
+        return summary.Replace("; ", " | ", StringComparison.Ordinal);
+    }
+
+    private static string BuildPositionAdoptionSummary(
+        string state,
+        string symbol,
+        decimal netQuantity,
+        Guid exchangeAccountId,
+        Guid? adoptedByBotId,
+        string adoptionReason,
+        bool autoManagementEnabled,
+        string autoManagementReason)
+    {
+        var side = netQuantity > 0m ? "Long" : "Short";
+        var adoptedPositionDetected = string.Equals(state, PositionAdoptionAdoptedState, StringComparison.Ordinal);
+        var ambiguousPositionDetected = string.Equals(state, PositionAdoptionAmbiguousState, StringComparison.Ordinal);
+        return FormattableString.Invariant(
+            $"PositionAdoption={state}; AdoptedPositionSymbol={symbol}; AdoptedExchangeAccountId={exchangeAccountId:D}; AdoptedByBotId={(adoptedByBotId.HasValue ? adoptedByBotId.Value.ToString("D") : "n/a")}; AutoManagementEnabled={(autoManagementEnabled ? "True" : "False")}; AutoPositionManagement={(autoManagementEnabled ? "True" : "False")}; AutoManagementReason={autoManagementReason}; AdoptedPosition={(adoptedPositionDetected ? "True" : "False")}; OrphanPositionDetected=False; AmbiguousPositionDetected={(ambiguousPositionDetected ? "True" : "False")}; AdoptionReason={adoptionReason}; AdoptedPositionQuantity={netQuantity:0.########}; AdoptedPositionSide={side}");
     }
 
     private string BuildExitCloseOnlyPnlGuardSummary(
@@ -3883,6 +4119,20 @@ public sealed class BotWorkerJobProcessor(
         var exitReason = ResolveExitReasonToken(reasonCode, isExitCloseOnly: true) ?? ExitReasonReverseSignal;
         return FormattableString.Invariant(
             $"{ProfitPolicyAppliedToken}; ExitPolicyDecision={exitPolicyDecision}; ExitPolicyReason={exitPolicyReason}; MinTakeProfitPct={minimumProfitPct:0.########}; StopLossPct={optionsValue.StopLossPercentage:0.########}; ExitOnReverseSignalOnlyIfProfitable={exitOnReverseSignalOnlyIfProfitable}; EstimatedPnlQuote={(estimatedPnlQuote.HasValue ? estimatedPnlQuote.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; EstimatedPnlPct={(estimatedPnlPct.HasValue ? estimatedPnlPct.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; PositionEntryPrice={(entryPrice.HasValue ? entryPrice.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; CurrentPrice={(exitPrice.HasValue ? exitPrice.Value.ToString("0.########", CultureInfo.InvariantCulture) : "n/a")}; SignalType=Reverse; ExecutionIntent={ExitCloseOnlyIntentCode}; ExitIntent={ExitCloseOnlyIntentCode}; ExitSource={ExitReasonReverseSignal}; ReverseEntryConvertedToCloseOnly=True; CloseSide={closeSide}; ReduceOnly=True; ExitReason={exitReason}; ExitPnlGuard={exitPnlGuardState}; ReasonCode={reasonCode}");
+    }
+
+    private string BuildAutoPositionManagementDisabledReverseSummary(
+        string symbol,
+        ExecutionOrderSide closeSide,
+        decimal openPositionQuantity,
+        string? positionAdoptionSummary)
+    {
+        var summary = FormattableString.Invariant(
+            $"SignalType=Reverse; ExecutionIntent={ExitCloseOnlyIntentCode}; ExitIntent={ExitCloseOnlyIntentCode}; EntrySource=StrategyEntry; ExitSource={ExitReasonReverseSignal}; ReverseEntryConvertedToCloseOnly=True; ManualClose=False; PositionAdoption=Adopted; AutoManagementEnabled=False; AutoPositionManagement=False; AutoManagementReason=ConfigDisabled; AdoptedPosition=True; OrphanPositionDetected=False; AmbiguousPositionDetected=False; OpenPositionQuantity={openPositionQuantity:0.########}; CloseSide={closeSide}; ReduceOnly=True; AutoReverse=False; ReasonCode={AutoPositionManagementDisabledDecisionCode}; Detail=AdoptedPositionAutoManagementDisabledFor{symbol}");
+
+        return string.IsNullOrWhiteSpace(positionAdoptionSummary)
+            ? summary
+            : $"{summary}; {positionAdoptionSummary}";
     }
 
     private string BuildRuntimeExitQualitySummary(
@@ -3913,7 +4163,7 @@ public sealed class BotWorkerJobProcessor(
         var exitPolicyReason = ResolveRuntimeExitPolicyReason(reasonCode);
 
         return FormattableString.Invariant(
-            $"Runtime exit quality triggered {exitReason} for {symbol}. SignalType=Exit; ExecutionIntent=n/a; ExitIntent=n/a; EntrySource=n/a; ExitSource={exitReason}; ReverseEntryConvertedToCloseOnly=False; ManualClose=False; {ProfitPolicyAppliedToken}; ExitReason={exitReason}; ReasonCode={reasonCode}; ExitPolicyDecision=Allowed; ExitPolicyReason={exitPolicyReason}; MinTakeProfitPct={ResolveReverseExitMinimumProfitPct():0.########}; StopLossPct={optionsValue.StopLossPercentage:0.########}; ExitOnReverseSignalOnlyIfProfitable={optionsValue.ExitOnReverseSignalOnlyIfProfitable}; PositionDirection={direction}; EntryPrice={entryPrice:0.########}; PositionEntryPrice={entryPrice:0.########}; ExitPrice={exitPrice:0.########}; CurrentPrice={exitPrice:0.########}; ThresholdPrice={thresholdPrice:0.########}; CloseSide={closeSide}; ReduceOnly=True; EstimatedPnlQuote={estimatedPnlQuote:0.########}; EstimatedPnlPct={estimatedPnlPct:0.########}; NetQuantity={netQuantity:0.########}{peakSummary}{breakEvenSummary}.");
+            $"Runtime exit quality triggered {exitReason} for {symbol}. SignalType=Exit; ExitSource={exitReason}; {ProfitPolicyAppliedToken}; ExitPolicyDecision=Allowed; ExitPolicyReason={exitPolicyReason}; CloseSide={closeSide}; ReduceOnly=True; AutoReverse=False; ExecutionIntent=n/a; ExitIntent=n/a; EntrySource=n/a; ReverseEntryConvertedToCloseOnly=False; ManualClose=False; ExitReason={exitReason}; ReasonCode={reasonCode}; MinTakeProfitPct={ResolveReverseExitMinimumProfitPct():0.########}; StopLossPct={optionsValue.StopLossPercentage:0.########}; ExitOnReverseSignalOnlyIfProfitable={optionsValue.ExitOnReverseSignalOnlyIfProfitable}; PositionDirection={direction}; EntryPrice={entryPrice:0.########}; PositionEntryPrice={entryPrice:0.########}; ExitPrice={exitPrice:0.########}; CurrentPrice={exitPrice:0.########}; ThresholdPrice={thresholdPrice:0.########}; EstimatedPnlQuote={estimatedPnlQuote:0.########}; EstimatedPnlPct={estimatedPnlPct:0.########}; NetQuantity={netQuantity:0.########}{peakSummary}{breakEvenSummary}.");
     }
 
     private decimal ResolveReverseExitMinimumProfitPct()
@@ -3960,7 +4210,7 @@ public sealed class BotWorkerJobProcessor(
 
         return string.IsNullOrWhiteSpace(summary)
             ? classification
-            : $"{summary} {classification}";
+            : $"{classification} {summary}";
     }
 
     private static string AppendExitReasonToken(string summary, string reasonCode, bool isExitCloseOnly)
@@ -4165,7 +4415,8 @@ public sealed class BotWorkerJobProcessor(
         StrategyTradeDirection CurrentPositionDirection,
         decimal OpenPositionQuantity,
         ExecutionOrderSide CloseSide,
-        string? ExitPnlGuardSummary);
+        string? ExitPnlGuardSummary,
+        string? PositionAdoptionSummary);
 
     private sealed record CloseOnlyPnlGuardEvaluation(
         bool IsBlocked,
@@ -4178,6 +4429,57 @@ public sealed class BotWorkerJobProcessor(
         ExecutionOrderSide Side,
         decimal Quantity,
         bool ReduceOnly);
+
+    private sealed record PositionAdoptionResolution(
+        string State,
+        string Summary,
+        bool IsAmbiguous)
+    {
+        public static PositionAdoptionResolution Skipped { get; } = new(
+            "Skipped",
+            "PositionAdoption=Skipped; AdoptionReason=NoOpenPosition; AutoManagementEnabled=False; AutoPositionManagement=False; AutoManagementReason=NoOpenPosition; AdoptedPosition=False; OrphanPositionDetected=False; AmbiguousPositionDetected=False",
+            false);
+
+        public static PositionAdoptionResolution Adopted(
+            string symbol,
+            decimal netQuantity,
+            Guid exchangeAccountId,
+            Guid botId,
+            bool autoManagementEnabled)
+        {
+            return new PositionAdoptionResolution(
+                PositionAdoptionAdoptedState,
+                BuildPositionAdoptionSummary(
+                    PositionAdoptionAdoptedState,
+                    symbol,
+                    netQuantity,
+                    exchangeAccountId,
+                    botId,
+                    "ExactBotAccountSymbolMatch",
+                    autoManagementEnabled,
+                    autoManagementEnabled ? "ConfigEnabled" : "ConfigDisabled"),
+                false);
+        }
+
+        public static PositionAdoptionResolution Ambiguous(
+            string symbol,
+            decimal netQuantity,
+            Guid exchangeAccountId)
+        {
+            return new PositionAdoptionResolution(
+                PositionAdoptionAmbiguousState,
+                BuildPositionAdoptionSummary(
+                    PositionAdoptionAmbiguousState,
+                    symbol,
+                    netQuantity,
+                    exchangeAccountId,
+                    null,
+                    "MultipleBotsMatchExactPositionScope",
+                    false,
+                    "AmbiguousPositionScope"),
+                true);
+        }
+    }
 
     private sealed record MarketStateResolution(
         StrategyIndicatorSnapshot? IndicatorSnapshot,
@@ -4197,5 +4499,13 @@ public sealed class BotWorkerJobProcessor(
         }
 
         return allowedSymbols.Contains(symbol);
+    }
+
+    private static string BuildDispatchIdempotencyKey(
+        StrategySignalSnapshot signal,
+        ExecutionEnvironment executionDispatchMode,
+        PilotDispatchPlan dispatchPlan)
+    {
+        return $"scanner-handoff:{signal.StrategySignalId:N}:{executionDispatchMode}:{signal.SignalType}:{dispatchPlan.Side}:{dispatchPlan.ReduceOnly}";
     }
 }

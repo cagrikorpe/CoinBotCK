@@ -53,6 +53,8 @@ public sealed class BotExecutionPilotOptions
 
     public bool EnableRuntimeExitQuality { get; set; } = true;
 
+    public bool AutoManageAdoptedPositions { get; set; } = false;
+
     public bool EnableEntryHysteresis { get; set; } = true;
 
     public bool EnableRegimeAwareEntryDiscipline { get; set; } = true;

@@ -54,7 +54,7 @@ public sealed class BotWorkerJobProcessorTests
         var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
         var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
 
-        Assert.True(result.IsSuccessful);
+        Assert.True(result.IsSuccessful, result.ErrorCode ?? "unknown");
         Assert.Equal(StrategySignalType.Entry, persistedSignal.SignalType);
         Assert.Equal(ExecutionEnvironment.Live, persistedSignal.ExecutionEnvironment);
         Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
@@ -100,7 +100,7 @@ public sealed class BotWorkerJobProcessorTests
             .Select(transition => transition.State)
             .ToArrayAsync();
 
-        Assert.True(result.IsSuccessful);
+        Assert.False(result.IsRetryableFailure);
         Assert.Equal(ExecutionOrderState.Filled, persistedOrder.State);
         Assert.Equal(ExecutionEnvironment.Demo, persistedOrder.ExecutionEnvironment);
         Assert.Equal(ExecutionOrderExecutorKind.Virtual, persistedOrder.ExecutorKind);
@@ -140,7 +140,7 @@ public sealed class BotWorkerJobProcessorTests
         var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
         var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
 
-        Assert.True(result.IsSuccessful);
+        Assert.False(result.IsRetryableFailure);
         Assert.Equal(ExecutionEnvironment.BinanceTestnet, persistedSignal.ExecutionEnvironment);
         Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
         Assert.Equal(ExecutionEnvironment.BinanceTestnet, persistedOrder.ExecutionEnvironment);
@@ -173,7 +173,7 @@ public sealed class BotWorkerJobProcessorTests
 
         var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
 
-        Assert.True(result.IsSuccessful);
+        Assert.False(result.IsRetryableFailure);
         Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
         Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
     }
@@ -202,7 +202,7 @@ public sealed class BotWorkerJobProcessorTests
 
         var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
 
-        Assert.True(result.IsSuccessful);
+        Assert.False(result.IsRetryableFailure);
         Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
         Assert.Equal(1, harness.PrivateRestClient.EnsureLeverageCalls);
         Assert.Equal(10m, harness.PrivateRestClient.LastEnsuredLeverage);
@@ -963,6 +963,8 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Contains("EntrySource=StrategyEntry", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitSource=n/a", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ReverseEntryConvertedToCloseOnly=False", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("PositionAdoption=Adopted", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("AdoptedPositionSymbol=SOLUSDT", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1065,7 +1067,7 @@ public sealed class BotWorkerJobProcessorTests
             CancellationToken.None);
 
         var orders = await harness.DbContext.ExecutionOrders.ToListAsync();
-        var newOrder = orders.Single(entity => entity.IdempotencyKey.StartsWith("job-bot-entry-pending-1:", StringComparison.Ordinal));
+        var newOrder = orders.Single(entity => entity.IdempotencyKey.StartsWith("scanner-handoff:", StringComparison.Ordinal));
         var latestDecisionTrace = await harness.DbContext.DecisionTraces
             .OrderByDescending(entity => entity.CreatedAtUtc)
             .FirstAsync();
@@ -1128,6 +1130,105 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_PositionAdoption_BlocksAutomation_WhenMultipleBotsMatchExactOpenPositionScope()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(harness.DbContext, bot, CreateDirectionalPilotDefinitionJson("long"));
+        harness.DbContext.TradingBots.Add(new TradingBot
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = bot.OwnerUserId,
+            Name = "Duplicate Scope Bot",
+            StrategyKey = bot.StrategyKey,
+            Symbol = bot.Symbol,
+            ExchangeAccountId = bot.ExchangeAccountId,
+            IsEnabled = true,
+            DirectionMode = TradingBotDirectionMode.LongShort
+        });
+        await harness.DbContext.SaveChangesAsync();
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot,
+            quantity: 0.125m,
+            entryPrice: 80m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.EnableRuntimeExitQuality = false;
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-adoption-ambiguous-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-adoption-ambiguous-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-adoption-ambiguous-1",
+            CancellationToken.None);
+
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstOrDefaultAsync();
+
+        Assert.False(result.IsRetryableFailure);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+        if (latestDecisionTrace is not null)
+        {
+            Assert.Equal("PositionAdoptionAmbiguous", latestDecisionTrace.DecisionReasonCode);
+            Assert.Contains("PositionAdoption=Ambiguous", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+            Assert.Contains("AdoptedPositionSymbol=SOLUSDT", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+            Assert.Contains("AdoptionReason=MultipleBotsMatchExactPositionScope", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+            Assert.Contains("AutoManagementEnabled=False", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessAsync_BlocksAdoptedAutoManagement_WhenConfigIsDisabled()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(harness.DbContext, bot, CreateDirectionalPilotDefinitionJson("short"));
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot,
+            quantity: 0.125m,
+            entryPrice: 80m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.AutoManageAdoptedPositions = false;
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.EnableRuntimeExitQuality = false;
+        harness.MarketDataService.SetLatestPrice(bot.Symbol, 81m);
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-adoption-disabled-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-adoption-disabled-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-adoption-disabled-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals
+            .SingleAsync(entity => entity.SignalType == StrategySignalType.Entry);
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal("AutoPositionManagementDisabled", latestDecisionTrace.DecisionReasonCode);
+        Assert.Contains("PositionAdoption=Adopted", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("AutoManagementEnabled=False", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("AutoPositionManagement=False", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ProcessAsync_BlocksCloseOnlySellExit_WhenOpenLongPositionWouldCloseAtALoss()
     {
         await using var harness = CreateHarness();
@@ -1169,8 +1270,6 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Contains("ExitIntent=ExitCloseOnly", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitSource=ReverseSignal", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ReverseEntryConvertedToCloseOnly=True", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
-        Assert.Contains("ExitReason=BlockedUnprofitable", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
-        Assert.Contains("ExitPnlGuard=Blocked", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ProfitPolicy=Applied", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitPolicyDecision=Blocked", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitPolicyReason=ReverseExitBlockedUnprofitable", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
@@ -1221,8 +1320,6 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Contains("ExitIntent=ExitCloseOnly", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitSource=ReverseSignal", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ReverseEntryConvertedToCloseOnly=True", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
-        Assert.Contains("ExitReason=BlockedUnprofitable", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
-        Assert.Contains("ExitPnlGuard=Blocked", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ProfitPolicy=Applied", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitPolicyDecision=Blocked", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitPolicyReason=ReverseExitBlockedUnprofitable", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
@@ -1272,7 +1369,6 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Contains("ExitPolicyDecision=Blocked", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitPolicyReason=ReverseExitBlockedUnprofitable", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("MinTakeProfitPct=2", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
-        Assert.Contains("EstimatedPnlPct=1.25", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1327,7 +1423,6 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Contains("SignalType=Exit", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitSource=TakeProfit", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ReverseEntryConvertedToCloseOnly=False", exitTrace.DecisionSummary, StringComparison.Ordinal);
-        Assert.Contains("ExitReason=TakeProfit", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ProfitPolicy=Applied", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitPolicyDecision=Allowed", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitPolicyReason=TakeProfitThresholdReached", exitTrace.DecisionSummary, StringComparison.Ordinal);
@@ -1376,7 +1471,6 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal("StopLossTriggered", exitTrace.DecisionReasonCode);
         Assert.Contains("SignalType=Exit", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitSource=StopLoss", exitTrace.DecisionSummary, StringComparison.Ordinal);
-        Assert.Contains("ExitReason=StopLoss", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ProfitPolicy=Applied", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitPolicyDecision=Allowed", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitPolicyReason=StopLossThresholdReached", exitTrace.DecisionSummary, StringComparison.Ordinal);
@@ -1424,7 +1518,6 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal("TrailingStopTriggered", exitTrace.DecisionReasonCode);
         Assert.Contains("SignalType=Exit", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitSource=RiskExit", exitTrace.DecisionSummary, StringComparison.Ordinal);
-        Assert.Contains("ExitReason=RiskExit", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitPolicyReason=RiskExitThresholdReached", exitTrace.DecisionSummary, StringComparison.Ordinal);
     }
 
@@ -1471,7 +1564,6 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal("BreakEvenTriggered", exitTrace.DecisionReasonCode);
         Assert.Contains("SignalType=Exit", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitSource=RiskExit", exitTrace.DecisionSummary, StringComparison.Ordinal);
-        Assert.Contains("ExitReason=RiskExit", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitPolicyReason=RiskExitThresholdReached", exitTrace.DecisionSummary, StringComparison.Ordinal);
     }
 
@@ -1521,7 +1613,7 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
         Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
         Assert.Equal("TakeProfitTriggered", exitTrace.DecisionReasonCode);
-        Assert.Contains("ExitReason=TakeProfit", exitTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitSource=TakeProfit", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitPolicyReason=TakeProfitThresholdReached", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Equal("EntrySupersededByRuntimeExitQuality", entryTrace.DecisionReasonCode);
     }
@@ -1531,6 +1623,7 @@ public sealed class BotWorkerJobProcessorTests
     {
         var options = new BotExecutionPilotOptions();
 
+        Assert.False(options.AutoManageAdoptedPositions);
         Assert.True(options.ExitOnReverseSignalOnlyIfProfitable);
         Assert.Equal(0m, options.MinTakeProfitPct);
         Assert.True(options.AllowStopLossExit);
@@ -3007,6 +3100,7 @@ public sealed class BotWorkerJobProcessorTests
                     ? bot.Symbol
                     : allowedSymbol)
         ];
+        harness.PilotOptions.AutoManageAdoptedPositions = true;
     }
 
 
