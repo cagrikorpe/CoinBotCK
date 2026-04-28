@@ -100,9 +100,14 @@ public sealed class BinancePrivateRestClient(
         if (!response.IsSuccessStatusCode)
         {
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            await ThrowClockDriftAwareFailureAsync(
-                $"Binance leverage configuration failed with status {(int)response.StatusCode}.",
-                TryReadExchangeCode(responseBody),
+            var exchangeCode = TryReadExchangeCode(responseBody);
+            var exchangeMessage = SanitizeExchangeMessage(TryReadExchangeMessage(responseBody));
+            await ThrowLeverageConfigurationFailureAsync(
+                (int)response.StatusCode,
+                normalizedSymbol,
+                normalizedLeverage,
+                exchangeCode,
+                exchangeMessage,
                 responseBody,
                 cancellationToken);
         }
@@ -703,6 +708,40 @@ public sealed class BinancePrivateRestClient(
             httpStatusCode);
     }
 
+    private async Task ThrowLeverageConfigurationFailureAsync(
+        int httpStatusCode,
+        string symbol,
+        decimal requestedLeverage,
+        string? exchangeCode,
+        string? exchangeMessage,
+        string? responseBody,
+        CancellationToken cancellationToken)
+    {
+        if (IsClockDriftResponse(exchangeCode, responseBody))
+        {
+            await ThrowClockDriftAwareFailureAsync(
+                $"Binance leverage configuration failed with status {httpStatusCode}.",
+                exchangeCode,
+                responseBody,
+                cancellationToken);
+        }
+
+        var failureCode = IsLeverageChangeBlockedByOpenPosition(exchangeCode, exchangeMessage)
+            ? "BinanceLeverageChangeBlockedOpenPosition"
+            : "BinanceLeverageConfigurationFailed";
+        var safeDetail = BuildLeverageFailureDetail(
+            httpStatusCode,
+            symbol,
+            requestedLeverage,
+            exchangeCode,
+            exchangeMessage);
+        throw new BinanceExchangeRejectedException(
+            failureCode,
+            safeDetail,
+            exchangeCode,
+            httpStatusCode);
+    }
+
     private async Task ThrowOrderPlacementFailureAsync(
         int httpStatusCode,
         string? exchangeCode,
@@ -783,6 +822,34 @@ public sealed class BinancePrivateRestClient(
         return $"{prefix}.";
     }
 
+    private static string BuildLeverageFailureDetail(
+        int httpStatusCode,
+        string symbol,
+        decimal requestedLeverage,
+        string? exchangeCode,
+        string? exchangeMessage)
+    {
+        var prefix =
+            $"Binance futures leverage request failed for {symbol} with requested leverage {requestedLeverage.ToString(CultureInfo.InvariantCulture)} and HTTP status {httpStatusCode}";
+
+        if (!string.IsNullOrWhiteSpace(exchangeCode) && !string.IsNullOrWhiteSpace(exchangeMessage))
+        {
+            return $"{prefix} (exchange code {exchangeCode}: {exchangeMessage}).";
+        }
+
+        if (!string.IsNullOrWhiteSpace(exchangeCode))
+        {
+            return $"{prefix} (exchange code {exchangeCode}).";
+        }
+
+        if (!string.IsNullOrWhiteSpace(exchangeMessage))
+        {
+            return $"{prefix} ({exchangeMessage}).";
+        }
+
+        return $"{prefix}.";
+    }
+
     private static string? SanitizeExchangeMessage(string? exchangeMessage)
     {
         if (string.IsNullOrWhiteSpace(exchangeMessage))
@@ -821,6 +888,23 @@ public sealed class BinancePrivateRestClient(
         return exchangeMessage?.Contains("open position", StringComparison.OrdinalIgnoreCase) == true ||
                exchangeMessage?.Contains("position exists", StringComparison.OrdinalIgnoreCase) == true ||
                exchangeMessage?.Contains("quantity exists", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    private static bool IsLeverageChangeBlockedByOpenPosition(string? exchangeCode, string? exchangeMessage)
+    {
+        if (string.Equals(exchangeCode, "-4161", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(exchangeMessage))
+        {
+            return false;
+        }
+
+        return exchangeMessage.Contains("open position", StringComparison.OrdinalIgnoreCase) ||
+               (exchangeMessage.Contains("position", StringComparison.OrdinalIgnoreCase) &&
+                exchangeMessage.Contains("leverage", StringComparison.OrdinalIgnoreCase));
     }
 
     private static string ComputeSignature(string payload, string secret)

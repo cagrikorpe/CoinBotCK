@@ -66,6 +66,9 @@ public sealed class BotWorkerJobProcessor(
     private const string EntryDirectionModeBlockedDecisionCode = "EntryDirectionModeBlocked";
     private const string PositionAdoptionAmbiguousDecisionCode = "PositionAdoptionAmbiguous";
     private const string AutoPositionManagementDisabledDecisionCode = "AutoPositionManagementDisabled";
+    private const string LeveragePolicyExceededDecisionCode = "LeveragePolicyExceeded";
+    private const string LeveragePolicyAllowedReasonCode = "LeveragePolicyAllowed";
+    private const string LeverageAlignmentSkippedForReduceOnlyReasonCode = "LeverageAlignmentSkippedForReduceOnly";
     private const string ExitCloseOnlyIntentCode = "ExitCloseOnly";
     private const string ExitCloseOnlyBlockedPrivatePlaneStaleDecisionCode = "ExitCloseOnlyBlockedPrivatePlaneStale";
     private const string ExitCloseOnlyBlockedRiskDecisionCode = "ExitCloseOnlyBlockedRisk";
@@ -986,12 +989,69 @@ public sealed class BotWorkerJobProcessor(
             return BackgroundJobProcessResult.Success();
         }
 
+        var leveragePolicy = EvaluatePilotLeveragePolicy(bot, dispatchPlan);
+        if (leveragePolicy.IsBlocked)
+        {
+            var leveragePolicySummary = AppendExecutionIntentContext(
+                BuildPilotExecutionContext(
+                    marginType!,
+                    leveragePolicy.EffectiveLeverage,
+                    pilotActivationEnabled,
+                    executionDispatchMode,
+                    leveragePolicy.Summary),
+                signal.SignalType,
+                closeOnlyIntent,
+                dispatchPlan);
+
+            if (signal.SignalType == StrategySignalType.Exit)
+            {
+                await WriteExitSkippedDecisionTraceAsync(
+                    bot.OwnerUserId,
+                    publishedVersion,
+                    signal,
+                    correlationId,
+                    strategyDecisionTrace,
+                    leveragePolicy.ReasonCode,
+                    leveragePolicySummary,
+                    currentNetQuantity,
+                    cancellationToken,
+                    requestedQuantity: dispatchPlan.Quantity,
+                    referencePrice: marketState.ReferencePrice.Value);
+            }
+            else
+            {
+                await WriteEntrySkippedDecisionTraceAsync(
+                    bot.OwnerUserId,
+                    publishedVersion,
+                    signal,
+                    correlationId,
+                    strategyDecisionTrace,
+                    leveragePolicySummary,
+                    currentNetQuantity,
+                    cancellationToken,
+                    decisionReasonCode: leveragePolicy.ReasonCode,
+                    requestedQuantity: dispatchPlan.Quantity,
+                    referencePrice: marketState.ReferencePrice.Value);
+            }
+
+            logger.LogInformation(
+                "Bot execution pilot blocked {SignalType} dispatch for BotId {BotId} because leverage policy failed closed. Symbol={Symbol} ReasonCode={ReasonCode} EffectiveLeverage={EffectiveLeverage} MaxAllowedLeverage={MaxAllowedLeverage}.",
+                signal.SignalType,
+                bot.Id,
+                signal.Symbol,
+                leveragePolicy.ReasonCode,
+                leveragePolicy.EffectiveLeverage,
+                leveragePolicy.MaxAllowedLeverage);
+            return BackgroundJobProcessResult.PermanentFailure(leveragePolicy.ReasonCode);
+        }
+
         var pilotExecutionContext = AppendExecutionIntentContext(
             BuildPilotExecutionContext(
                 marginType!,
-                leverage!.Value,
+                leveragePolicy.EffectiveLeverage,
                 pilotActivationEnabled,
-                executionDispatchMode),
+                executionDispatchMode,
+                leveragePolicy.Summary),
             signal.SignalType,
             closeOnlyIntent,
             dispatchPlan);
@@ -2696,17 +2756,11 @@ public sealed class BotWorkerJobProcessor(
         out string? marginType,
         out string? failureCode)
     {
-        leverage = bot.Leverage ?? 1m;
+        leverage = NormalizeConfiguredLeverage(bot.Leverage ?? 1m);
         marginType = string.IsNullOrWhiteSpace(bot.MarginType)
             ? "ISOLATED"
             : bot.MarginType.Trim().ToUpperInvariant();
         failureCode = null;
-
-        if (leverage != 1m && !IsClockDriftSmokeLeverageAllowed(bot, leverage))
-        {
-            failureCode = "PilotLeverageMustBeOne";
-            return false;
-        }
 
         if (!string.Equals(marginType, "ISOLATED", StringComparison.Ordinal))
         {
@@ -3818,16 +3872,120 @@ public sealed class BotWorkerJobProcessor(
         string marginType,
         decimal leverage,
         bool pilotActivationEnabled,
-        ExecutionEnvironment executionDispatchMode = ExecutionEnvironment.Live)
+        ExecutionEnvironment executionDispatchMode = ExecutionEnvironment.Live,
+        string? leveragePolicySummary = null)
     {
+        var leverageContext = string.IsNullOrWhiteSpace(leveragePolicySummary)
+            ? string.Empty
+            : $" | {leveragePolicySummary}";
         if (executionDispatchMode == ExecutionEnvironment.Demo)
         {
             return FormattableString.Invariant(
-                $"ControlledDemoBootstrap=True | ExecutionDispatchMode=Demo | PilotActivationEnabled={pilotActivationEnabled} | PilotMarginType={marginType} | PilotLeverage={leverage:0.########}");
+                $"ControlledDemoBootstrap=True | ExecutionDispatchMode=Demo | PilotActivationEnabled={pilotActivationEnabled} | PilotMarginType={marginType} | PilotLeverage={leverage:0.########}{leverageContext}");
         }
 
         return FormattableString.Invariant(
-            $"DevelopmentFuturesTestnetPilot=True | PilotActivationEnabled={pilotActivationEnabled} | PilotMarginType={marginType} | PilotLeverage={leverage:0.########}");
+            $"DevelopmentFuturesTestnetPilot=True | PilotActivationEnabled={pilotActivationEnabled} | PilotMarginType={marginType} | PilotLeverage={leverage:0.########}{leverageContext}");
+    }
+
+    private PilotLeveragePolicyEvaluation EvaluatePilotLeveragePolicy(
+        TradingBot bot,
+        PilotDispatchPlan dispatchPlan)
+    {
+        var requestedLeverage = bot.Leverage ?? 1m;
+        var effectiveLeverage = NormalizeConfiguredLeverage(requestedLeverage);
+        var leverageSource = bot.Leverage.HasValue ? "Bot" : "Default";
+        var maxAllowedLeverage = ResolveEffectiveMaxAllowedLeverage(bot, effectiveLeverage);
+
+        if (dispatchPlan.ReduceOnly)
+        {
+            return new PilotLeveragePolicyEvaluation(
+                IsBlocked: false,
+                RequestedLeverage: requestedLeverage,
+                EffectiveLeverage: effectiveLeverage,
+                MaxAllowedLeverage: maxAllowedLeverage,
+                LeverageSource: leverageSource,
+                Decision: "Skipped",
+                ReasonCode: LeverageAlignmentSkippedForReduceOnlyReasonCode,
+                AlignmentSkippedForReduceOnly: true,
+                Summary: BuildLeveragePolicySummary(
+                    requestedLeverage,
+                    effectiveLeverage,
+                    maxAllowedLeverage,
+                    leverageSource,
+                    "Skipped",
+                    LeverageAlignmentSkippedForReduceOnlyReasonCode,
+                    alignmentSkippedForReduceOnly: true));
+        }
+
+        if (effectiveLeverage > maxAllowedLeverage)
+        {
+            return new PilotLeveragePolicyEvaluation(
+                IsBlocked: true,
+                RequestedLeverage: requestedLeverage,
+                EffectiveLeverage: effectiveLeverage,
+                MaxAllowedLeverage: maxAllowedLeverage,
+                LeverageSource: leverageSource,
+                Decision: "Blocked",
+                ReasonCode: LeveragePolicyExceededDecisionCode,
+                AlignmentSkippedForReduceOnly: false,
+                Summary: BuildLeveragePolicySummary(
+                    requestedLeverage,
+                    effectiveLeverage,
+                    maxAllowedLeverage,
+                    leverageSource,
+                    "Blocked",
+                    LeveragePolicyExceededDecisionCode,
+                    alignmentSkippedForReduceOnly: false));
+        }
+
+        return new PilotLeveragePolicyEvaluation(
+            IsBlocked: false,
+            RequestedLeverage: requestedLeverage,
+            EffectiveLeverage: effectiveLeverage,
+            MaxAllowedLeverage: maxAllowedLeverage,
+            LeverageSource: leverageSource,
+            Decision: "Allowed",
+            ReasonCode: LeveragePolicyAllowedReasonCode,
+            AlignmentSkippedForReduceOnly: false,
+            Summary: BuildLeveragePolicySummary(
+                requestedLeverage,
+                effectiveLeverage,
+                maxAllowedLeverage,
+                leverageSource,
+                "Allowed",
+                LeveragePolicyAllowedReasonCode,
+                alignmentSkippedForReduceOnly: false));
+    }
+
+    private decimal ResolveEffectiveMaxAllowedLeverage(TradingBot bot, decimal effectiveLeverage)
+    {
+        var configuredMaxAllowedLeverage = NormalizeConfiguredLeverage(optionsValue.MaxAllowedLeverage);
+        return effectiveLeverage > configuredMaxAllowedLeverage &&
+               IsClockDriftSmokeLeverageAllowed(bot, effectiveLeverage)
+            ? effectiveLeverage
+            : configuredMaxAllowedLeverage;
+    }
+
+    private static decimal NormalizeConfiguredLeverage(decimal leverage)
+    {
+        var normalizedLeverage = decimal.Truncate(leverage);
+        return normalizedLeverage < 1m
+            ? 1m
+            : normalizedLeverage;
+    }
+
+    private static string BuildLeveragePolicySummary(
+        decimal requestedLeverage,
+        decimal effectiveLeverage,
+        decimal maxAllowedLeverage,
+        string leverageSource,
+        string decision,
+        string reasonCode,
+        bool alignmentSkippedForReduceOnly)
+    {
+        return FormattableString.Invariant(
+            $"RequestedLeverage={requestedLeverage:0.########}; EffectiveLeverage={effectiveLeverage:0.########}; MaxAllowedLeverage={maxAllowedLeverage:0.########}; LeverageSource={leverageSource}; LeveragePolicyDecision={decision}; LeveragePolicyReason={reasonCode}; LeverageAlignmentSkippedForReduceOnly={alignmentSkippedForReduceOnly}");
     }
 
     private static string AppendExecutionIntentContext(
@@ -4429,6 +4587,17 @@ public sealed class BotWorkerJobProcessor(
         ExecutionOrderSide Side,
         decimal Quantity,
         bool ReduceOnly);
+
+    private sealed record PilotLeveragePolicyEvaluation(
+        bool IsBlocked,
+        decimal RequestedLeverage,
+        decimal EffectiveLeverage,
+        decimal MaxAllowedLeverage,
+        string LeverageSource,
+        string Decision,
+        string ReasonCode,
+        bool AlignmentSkippedForReduceOnly,
+        string Summary);
 
     private sealed record PositionAdoptionResolution(
         string State,

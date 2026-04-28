@@ -52,6 +52,10 @@ public sealed record OperationalObservabilitySnapshot(
 {
     public OperationalExitPnlEvidenceSnapshot ExitPnlEvidence { get; init; } = OperationalExitPnlEvidenceSnapshot.Empty();
 
+    public OperationalPilotConfigEvidenceSnapshot PilotConfigEvidence { get; init; } = OperationalPilotConfigEvidenceSnapshot.Empty();
+
+    public OperationalPrivateSyncEvidenceSnapshot PrivateSyncEvidence { get; init; } = OperationalPrivateSyncEvidenceSnapshot.Empty();
+
     public static OperationalObservabilitySnapshot Empty()
     {
         return new OperationalObservabilitySnapshot(
@@ -77,8 +81,80 @@ public sealed record OperationalObservabilitySnapshot(
             ExportSummary: "Export availability unknown.",
             CriticalWarnings: Array.Empty<OperationalWarningSnapshot>())
         {
-            ExitPnlEvidence = OperationalExitPnlEvidenceSnapshot.Empty()
+            ExitPnlEvidence = OperationalExitPnlEvidenceSnapshot.Empty(),
+            PilotConfigEvidence = OperationalPilotConfigEvidenceSnapshot.Empty(),
+            PrivateSyncEvidence = OperationalPrivateSyncEvidenceSnapshot.Empty()
         };
+    }
+}
+
+public sealed record OperationalPilotConfigEvidenceSnapshot(
+    bool AutoManageAdoptedPositions,
+    string ExecutionDispatchMode,
+    int AllowedSymbolCount,
+    string AllowedSymbolsSummary,
+    int AllowedBotIdCount,
+    int AllowedUserIdCount,
+    int? AllowedExchangeAccountIdCount)
+{
+    public static OperationalPilotConfigEvidenceSnapshot Empty()
+    {
+        return new OperationalPilotConfigEvidenceSnapshot(
+            AutoManageAdoptedPositions: false,
+            ExecutionDispatchMode: "Unknown",
+            AllowedSymbolCount: 0,
+            AllowedSymbolsSummary: "n/a",
+            AllowedBotIdCount: 0,
+            AllowedUserIdCount: 0,
+            AllowedExchangeAccountIdCount: null);
+    }
+}
+
+public sealed record OperationalPrivateSyncEvidenceSnapshot(
+    string State,
+    string Summary,
+    string? ExchangeAccountId,
+    string Plane,
+    string PrivateStreamConnectionState,
+    string DriftStatus,
+    string DriftSummary,
+    int? BalanceMismatches,
+    int? PositionMismatches,
+    string SnapshotSource,
+    DateTime? LastDriftDetectedAtUtc,
+    DateTime? LastBalanceSyncedAtUtc,
+    DateTime? LastPositionSyncedAtUtc,
+    DateTime? LastStateReconciledAtUtc,
+    int? SyncAgeSeconds,
+    int ConsecutiveStreamFailureCount,
+    string? LastErrorCode,
+    DateTime? UpdatedDate,
+    int InactiveBlockedCredentialAccountCount,
+    int PrivatePlaneStaleRejectCount)
+{
+    public static OperationalPrivateSyncEvidenceSnapshot Empty()
+    {
+        return new OperationalPrivateSyncEvidenceSnapshot(
+            State: "Unknown",
+            Summary: "No futures private sync evidence yet.",
+            ExchangeAccountId: null,
+            Plane: "n/a",
+            PrivateStreamConnectionState: "Unknown",
+            DriftStatus: "Unknown",
+            DriftSummary: "n/a",
+            BalanceMismatches: null,
+            PositionMismatches: null,
+            SnapshotSource: "n/a",
+            LastDriftDetectedAtUtc: null,
+            LastBalanceSyncedAtUtc: null,
+            LastPositionSyncedAtUtc: null,
+            LastStateReconciledAtUtc: null,
+            SyncAgeSeconds: null,
+            ConsecutiveStreamFailureCount: 0,
+            LastErrorCode: null,
+            UpdatedDate: null,
+            InactiveBlockedCredentialAccountCount: 0,
+            PrivatePlaneStaleRejectCount: 0);
     }
 }
 

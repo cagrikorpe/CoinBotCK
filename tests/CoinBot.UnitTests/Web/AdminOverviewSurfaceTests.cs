@@ -132,6 +132,8 @@ public sealed class AdminOverviewSurfaceTests
         Assert.Contains("data-cb-ops-execution-readiness", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("data-cb-ops-ai-coverage", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("data-cb-ops-log-system-state", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-ops-pilot-config", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-ops-private-sync", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("data-cb-ops-blocked-reasons", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("data-cb-ops-no-submit-reasons", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("data-cb-ops-warning-list", operationalCardContent, StringComparison.Ordinal);
@@ -184,10 +186,74 @@ public sealed class AdminOverviewSurfaceTests
         Assert.Contains("Confirm Reduce-Only Close", content, StringComparison.Ordinal);
         Assert.Contains("ReduceOnly=True", content, StringComparison.Ordinal);
         Assert.Contains("Environment=@row.ManualCloseEnvironmentLabel", content, StringComparison.Ordinal);
+        Assert.Contains("method=\"post\"", content, StringComparison.Ordinal);
+        Assert.Contains("asp-action=\"ManualCloseBotPosition\"", content, StringComparison.Ordinal);
+        Assert.Contains("name=\"botId\"", content, StringComparison.Ordinal);
+        Assert.Contains("name=\"exchangeAccountId\"", content, StringComparison.Ordinal);
+        Assert.Contains("name=\"symbol\"", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-reauth-required=\"true\"", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-admin-manual-close-unavailable-reason", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-admin-bot-last-error", content, StringComparison.Ordinal);
         Assert.Contains("title=\"@row.LastError\"", content, StringComparison.Ordinal);
         Assert.Contains("lastErrorPreview", content, StringComparison.Ordinal);
+        Assert.Contains("@if (row.CanManualClose)", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AdminBotOperationsTable_RendersPositionAdoptionSurface_ForManualCloseCandidates()
+    {
+        var content = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Areas",
+            "Admin",
+            "Views",
+            "Shared",
+            "Foundation",
+            "_AdminBotOperationsTable.cshtml"));
+
+        Assert.Contains("data-cb-admin-position-adoption", content, StringComparison.Ordinal);
+        Assert.Contains("@row.PositionAdoption", content, StringComparison.Ordinal);
+        Assert.Contains("@row.AdoptedPositionSymbol", content, StringComparison.Ordinal);
+        Assert.Contains("@row.AdoptedPositionQuantity", content, StringComparison.Ordinal);
+        Assert.Contains("@row.AdoptionReason", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SiteJs_WiresManualCloseSummaryClick_ToRequestSubmit()
+    {
+        var content = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "wwwroot",
+            "js",
+            "site.js"));
+
+        Assert.Contains("data-cb-admin-manual-close-button", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-manual-close-form", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-manual-close-confirm", content, StringComparison.Ordinal);
+        Assert.Contains("window.confirm", content, StringComparison.Ordinal);
+        Assert.Contains("form.requestSubmit", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AdminTopbar_PrefersPageSpecificLastUpdatedTimestamp_WhenProvided()
+    {
+        var content = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Areas",
+            "Admin",
+            "Views",
+            "Shared",
+            "_AdminTopbar.cshtml"));
+
+        Assert.Contains("ViewData[\"AdminLastUpdatedAtUtc\"]", content, StringComparison.Ordinal);
+        Assert.Contains("pageLastUpdatedAtUtc", content, StringComparison.Ordinal);
+        Assert.Contains("healthSnapshot?.LastUpdatedAtUtc", content, StringComparison.Ordinal);
     }
 
     [Fact]

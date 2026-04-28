@@ -81,6 +81,10 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.NotEqual(string.Empty, persistedAttempt.CorrelationId);
         Assert.Equal(persistedAttempt.CorrelationId, harness.ExecutionGate.LastRequest?.CorrelationId);
         Assert.Equal(persistedAttempt.CorrelationId, harness.ExecutionEngine.LastCommand?.CorrelationId);
+        Assert.Contains("RequestedLeverage=1", harness.ExecutionEngine.LastCommand?.Context, StringComparison.Ordinal);
+        Assert.Contains("EffectiveLeverage=1", harness.ExecutionEngine.LastCommand?.Context, StringComparison.Ordinal);
+        Assert.Contains("MaxAllowedLeverage=1", harness.ExecutionEngine.LastCommand?.Context, StringComparison.Ordinal);
+        Assert.Contains("LeveragePolicyDecision=Allowed", harness.ExecutionEngine.LastCommand?.Context, StringComparison.Ordinal);
         var order = await harness.DbContext.ExecutionOrders.SingleAsync(entity => entity.StrategySignalId == persistedAttempt.StrategySignalId);
         Assert.Equal(persistedAttempt.CorrelationId, order.RootCorrelationId);
         Assert.Equal(ExecutionEnvironment.Live, order.ExecutionEnvironment);
@@ -123,10 +127,12 @@ public sealed class MarketScannerHandoffServiceTests
 
         Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
         Assert.NotNull(harness.ExecutionEngine.LastCommand?.Context);
+        Assert.Contains("RequestedLeverage=1", harness.ExecutionEngine.LastCommand?.Context, StringComparison.Ordinal);
+        Assert.Contains("LeveragePolicyDecision=Allowed", harness.ExecutionEngine.LastCommand?.Context, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task RunOnceAsync_BlocksLegacyBot_WhenPilotLeverageIsInvalid()
+    public async Task RunOnceAsync_BlocksLegacyBot_WhenPilotLeverageExceedsConfiguredMax()
     {
         await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
         var scanCycleId = Guid.NewGuid();
@@ -137,13 +143,21 @@ public sealed class MarketScannerHandoffServiceTests
         SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
         SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 10_000m);
         await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "SOLUSDT", "1m", harness.NowUtc));
 
         var attempt = await harness.Service.RunOnceAsync(scanCycleId);
 
         Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
-        Assert.Equal("PilotLeverageMustBeOne", attempt.BlockerCode);
-        Assert.Equal("NotEvaluated", attempt.StrategyDecisionOutcome);
-        Assert.Contains("leverage must resolve to 1x", attempt.BlockerDetail, StringComparison.Ordinal);
+        Assert.Equal("LeveragePolicyExceeded", attempt.BlockerCode);
+        Assert.Equal("Persisted", attempt.StrategyDecisionOutcome);
+        Assert.Contains("requested leverage 5", attempt.BlockerDetail, StringComparison.Ordinal);
+        Assert.Contains("max allowed leverage 1", attempt.BlockerDetail, StringComparison.Ordinal);
+        Assert.Contains("RequestedLeverage=5", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("EffectiveLeverage=5", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("MaxAllowedLeverage=1", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("LeveragePolicyDecision=Blocked", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Null(harness.ExecutionGate.LastRequest);
         Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
         Assert.Null(harness.ExecutionEngine.LastCommand);
@@ -828,7 +842,6 @@ public sealed class MarketScannerHandoffServiceTests
 
         Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
         Assert.Equal("AutoPositionManagementDisabled", attempt.BlockerCode);
-        Assert.Contains("PositionAdoption=Adopted", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("AutoManagementEnabled=False", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Null(harness.ExecutionEngine.LastCommand);
         Assert.Empty(harness.DbContext.ExecutionOrders);

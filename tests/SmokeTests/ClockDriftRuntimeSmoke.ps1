@@ -148,6 +148,59 @@ function Invoke-SqlRows {
     }
 }
 
+function Parse-DriftSummary {
+    param([string]$DriftSummary)
+
+    $result = [ordered]@{
+        BalanceMismatches = 'n/a'
+        PositionMismatches = 'n/a'
+        SnapshotSource = 'n/a'
+    }
+
+    if ([string]::IsNullOrWhiteSpace($DriftSummary)) {
+        return [pscustomobject]$result
+    }
+
+    foreach ($segment in $DriftSummary.Split(';', [System.StringSplitOptions]::RemoveEmptyEntries)) {
+        $separatorIndex = $segment.IndexOf('=')
+        if ($separatorIndex -le 0) {
+            continue
+        }
+
+        $key = $segment.Substring(0, $separatorIndex).Trim()
+        $value = $segment.Substring($separatorIndex + 1).Trim()
+        if ([string]::IsNullOrWhiteSpace($value)) {
+            continue
+        }
+
+        switch -Exact ($key) {
+            'BalanceMismatches' { $result.BalanceMismatches = $value; continue }
+            'PositionMismatches' { $result.PositionMismatches = $value; continue }
+            'SnapshotSource' { $result.SnapshotSource = $value; continue }
+        }
+    }
+
+    return [pscustomobject]$result
+}
+
+function Add-PrivateSyncDerivedFields {
+    param([pscustomobject]$Row)
+
+    if ($null -eq $Row) {
+        return $null
+    }
+
+    $parsed = Parse-DriftSummary -DriftSummary ([string]$Row.DriftSummary)
+    $syncReferenceAtUtc = if ($null -ne $Row.LastStateReconciledAtUtc) { [DateTime]$Row.LastStateReconciledAtUtc } elseif ($null -ne $Row.UpdatedDate) { [DateTime]$Row.UpdatedDate } else { $null }
+    $syncAgeSeconds = if ($null -eq $syncReferenceAtUtc) { $null } else { [int][Math]::Max(0, [Math]::Round(((Get-Date).ToUniversalTime() - $syncReferenceAtUtc).TotalSeconds, [MidpointRounding]::AwayFromZero)) }
+
+    $Row | Add-Member -NotePropertyName BalanceMismatches -NotePropertyValue $parsed.BalanceMismatches -Force
+    $Row | Add-Member -NotePropertyName PositionMismatches -NotePropertyValue $parsed.PositionMismatches -Force
+    $Row | Add-Member -NotePropertyName SnapshotSource -NotePropertyValue $parsed.SnapshotSource -Force
+    $Row | Add-Member -NotePropertyName SyncAgeSeconds -NotePropertyValue $syncAgeSeconds -Force
+    return $Row
+}
+
 function Start-ManagedProcess {
     param([string]$FilePath, [string[]]$ArgumentList, [string]$WorkingDirectory, [string]$StandardOutputPath, [string]$StandardErrorPath, [hashtable]$EnvironmentVariables)
     $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -RedirectStandardOutput $StandardOutputPath -RedirectStandardError $StandardErrorPath -Environment $EnvironmentVariables -PassThru -WindowStyle Hidden
@@ -680,6 +733,15 @@ SELECT TOP (1)
     v.ValidatedAtUtc,
     s.PrivateStreamConnectionState,
     s.DriftStatus,
+    s.DriftSummary,
+    s.LastDriftDetectedAtUtc,
+    s.LastBalanceSyncedAtUtc,
+    s.LastPositionSyncedAtUtc,
+    s.LastStateReconciledAtUtc,
+    s.ConsecutiveStreamFailureCount,
+    s.LastErrorCode,
+    s.UpdatedDate,
+    s.Plane,
     COALESCE(s.LastPrivateStreamEventAtUtc, s.LastBalanceSyncedAtUtc, s.LastPositionSyncedAtUtc, s.LastStateReconciledAtUtc) AS LastPrivateSyncAtUtc
 FROM ExchangeAccounts ea
 INNER JOIN TradingBots b ON b.ExchangeAccountId = ea.Id AND b.IsDeleted = 0 AND b.IsEnabled = 1
@@ -704,7 +766,7 @@ ORDER BY b.CreatedDate DESC;
         throw 'Source credential validation is not testnet-trade ready.'
     }
 
-    return [pscustomobject]@{ Preflight = $preflight; Source = $row }
+    return [pscustomobject]@{ Preflight = $preflight; Source = (Add-PrivateSyncDerivedFields -Row $row) }
 }
 
 function Seed-SmokeGraph {
@@ -773,13 +835,14 @@ function Get-ReadinessSnapshot {
     Invoke-SqlRow -ConnectionString $ConnectionString -CommandText @"
 SELECT TOP (1)
     d.StateCode, d.ReasonCode, d.LatestHeartbeatSource, d.LatestDataTimestampAtUtc, d.LatestHeartbeatReceivedAtUtc,
-    s.PrivateStreamConnectionState, s.DriftStatus,
+    s.PrivateStreamConnectionState, s.DriftStatus, s.DriftSummary, s.LastDriftDetectedAtUtc, s.LastBalanceSyncedAtUtc, s.LastPositionSyncedAtUtc, s.LastStateReconciledAtUtc, s.ConsecutiveStreamFailureCount, s.LastErrorCode, s.UpdatedDate, s.Plane,
     COALESCE(s.LastPrivateStreamEventAtUtc, s.LastBalanceSyncedAtUtc, s.LastPositionSyncedAtUtc, s.LastStateReconciledAtUtc) AS LastPrivateSyncAtUtc
 FROM ExchangeAccounts ea
 OUTER APPLY (SELECT TOP (1) * FROM DegradedModeStates WHERE LatestSymbol = @Symbol AND LatestTimeframe = @Timeframe AND IsDeleted = 0 ORDER BY UpdatedDate DESC, CreatedDate DESC) d
 OUTER APPLY (SELECT TOP (1) * FROM ExchangeAccountSyncStates WHERE ExchangeAccountId = @ExchangeAccountId AND Plane = 'Futures' AND IsDeleted = 0 ORDER BY UpdatedDate DESC, CreatedDate DESC) s
 WHERE ea.Id = @ExchangeAccountId;
 "@ -Parameters @{ ExchangeAccountId = $ExchangeAccountId; Symbol = $Symbol; Timeframe = $Timeframe }
+    | ForEach-Object { Add-PrivateSyncDerivedFields -Row $_ }
 }
 
 function Get-SmokeOrders { param([string]$ConnectionString, [guid]$BotId) Invoke-SqlRows -ConnectionString $ConnectionString -CommandText "SELECT TOP (10) Id, StrategySignalId, Plane, State, FailureCode, FailureDetail, RejectionStage, DuplicateSuppressed, RetryEligible, ReconciliationStatus, ReconciliationSummary, SubmittedToBroker, ExternalOrderId, FilledQuantity, AverageFillPrice, SubmittedAtUtc, LastReconciledAtUtc, LastStateChangedAtUtc, CreatedDate FROM ExecutionOrders WHERE BotId = @BotId AND IsDeleted = 0 ORDER BY CreatedDate DESC;" -Parameters @{ BotId = $BotId } }

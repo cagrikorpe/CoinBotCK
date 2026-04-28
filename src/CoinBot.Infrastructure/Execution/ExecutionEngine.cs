@@ -101,50 +101,14 @@ public sealed class ExecutionEngine(
 
         if (existingOrderId != Guid.Empty)
         {
-            logger.LogInformation(
-                "Execution command duplicate suppressed for OwnerUserId {OwnerUserId}, StrategySignalId {StrategySignalId}.",
-                normalizedCommand.OwnerUserId,
-                normalizedCommand.StrategySignalId);
-
-            await MarkDuplicateSuppressedAsync(existingOrderId, cancellationToken);
-
-            if (ultraDebugLogService is not null)
-            {
-                await ultraDebugLogService.WriteAsync(
-                    new UltraDebugLogEntry(
-                        Category: "execution.dispatch",
-                        EventName: "execution_duplicate_suppressed",
-                        Summary: $"Execution duplicate was suppressed for {normalizedCommand.Symbol}.",
-                        CorrelationId: rootCorrelationId,
-                        Symbol: normalizedCommand.Symbol,
-                        StrategySignalId: normalizedCommand.StrategySignalId.ToString("N"),
-                        Detail: new
-                        {
-                            category = "execution",
-                            sourceLayer = nameof(ExecutionEngine),
-                            symbol = normalizedCommand.Symbol,
-                            timeframe = normalizedCommand.Timeframe,
-                            botId = normalizedCommand.BotId,
-                            strategyId = normalizedCommand.TradingStrategyId,
-                            strategyVersionId = normalizedCommand.TradingStrategyVersionId,
-                            strategyKey = normalizedCommand.StrategyKey,
-                            decisionOutcome = "DuplicateSuppressed",
-                            decisionReasonType = "DuplicateSuppression",
-                            decisionReasonCode = "SuppressedDuplicate",
-                            existingOrderId,
-                            strategySignalId = normalizedCommand.StrategySignalId,
-                            requestedEnvironment = requestedEnvironment.ToString(),
-                            side = normalizedCommand.Side.ToString(),
-                            reduceOnly = normalizedCommand.ReduceOnly,
-                            plane = executionPlane.ToString(),
-                            latencyBreakdown = BuildExecutionLatencyBreakdown()
-                        }),
-                    cancellationToken);
-            }
-
-            return new ExecutionDispatchResult(
-                await GetSnapshotAsync(existingOrderId, cancellationToken),
-                IsDuplicate: true);
+            return await CreateDuplicateDispatchResultAsync(
+                normalizedCommand,
+                existingOrderId,
+                rootCorrelationId,
+                requestedEnvironment,
+                executionPlane,
+                BuildExecutionLatencyBreakdown,
+                cancellationToken);
         }
 
         var executor = ResolveExecutor(requestedEnvironment, executionPlane);
@@ -199,7 +163,50 @@ public sealed class ExecutionEngine(
             detail: "Execution command accepted.");
         transitions.Add(initialTransition);
         dbContext.ExecutionOrderTransitions.Add(initialTransition);
-        await dbContext.SaveChangesAsync(cancellationToken);
+
+        try
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException exception) when (IsExecutionOrderIdempotencyConflict(exception))
+        {
+            logger.LogInformation(
+                exception,
+                "Execution engine suppressed duplicate initial order persistence for OwnerUserId {OwnerUserId}, StrategySignalId {StrategySignalId}.",
+                normalizedCommand.OwnerUserId,
+                normalizedCommand.StrategySignalId);
+
+            DetachIfTracked(order);
+            DetachIfTracked(initialTransition);
+
+            existingOrderId = await ResolveExistingExecutionOrderIdempotencyIdAsync(
+                normalizedCommand.OwnerUserId,
+                idempotencyKey,
+                cancellationToken);
+
+            if (existingOrderId == Guid.Empty)
+            {
+                existingOrderId = await ResolveExistingExecutionOrderIntentIdAsync(
+                    normalizedCommand,
+                    requestedEnvironment,
+                    executionPlane,
+                    cancellationToken);
+            }
+
+            if (existingOrderId != Guid.Empty)
+            {
+                return await CreateDuplicateDispatchResultAsync(
+                    normalizedCommand,
+                    existingOrderId,
+                    rootCorrelationId,
+                    requestedEnvironment,
+                    executionPlane,
+                    BuildExecutionLatencyBreakdown,
+                    cancellationToken);
+            }
+
+            throw;
+        }
 
         var lastTransition = initialTransition;
         activity.SetTag("coinbot.execution.order_id", order.Id.ToString());
@@ -902,6 +909,39 @@ public sealed class ExecutionEngine(
             exception.InnerException?.Message.Contains(IndexName, StringComparison.OrdinalIgnoreCase) == true;
     }
 
+    private static bool IsExecutionOrderIdempotencyConflict(DbUpdateException exception)
+    {
+        const string IndexName = "IX_ExecutionOrders_OwnerUserId_IdempotencyKey";
+
+        if (exception.Message.Contains(IndexName, StringComparison.OrdinalIgnoreCase) ||
+            exception.InnerException?.Message.Contains(IndexName, StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return true;
+        }
+
+        for (var current = exception.InnerException; current is not null; current = current.InnerException)
+        {
+            var numberProperty = current.GetType().GetProperty("Number");
+            if (numberProperty?.PropertyType == typeof(int) &&
+                numberProperty.GetValue(current) is int sqlNumber &&
+                (sqlNumber == 2601 || sqlNumber == 2627))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void DetachIfTracked(object entity)
+    {
+        var entry = dbContext.Entry(entity);
+        if (entry.State != EntityState.Detached)
+        {
+            entry.State = EntityState.Detached;
+        }
+    }
+
     private static void SyncOrderState(ExecutionOrder target, ExecutionOrder source)
     {
         target.ExternalOrderId = source.ExternalOrderId;
@@ -1274,6 +1314,79 @@ public sealed class ExecutionEngine(
 
         existingOrder.DuplicateSuppressed = true;
         await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task<ExecutionDispatchResult> CreateDuplicateDispatchResultAsync(
+        ExecutionCommand normalizedCommand,
+        Guid existingOrderId,
+        string rootCorrelationId,
+        ExecutionEnvironment requestedEnvironment,
+        ExchangeDataPlane executionPlane,
+        Func<object> buildExecutionLatencyBreakdown,
+        CancellationToken cancellationToken)
+    {
+        logger.LogInformation(
+            "Execution command duplicate suppressed for OwnerUserId {OwnerUserId}, StrategySignalId {StrategySignalId}.",
+            normalizedCommand.OwnerUserId,
+            normalizedCommand.StrategySignalId);
+
+        await MarkDuplicateSuppressedAsync(existingOrderId, cancellationToken);
+
+        if (ultraDebugLogService is not null)
+        {
+            await ultraDebugLogService.WriteAsync(
+                new UltraDebugLogEntry(
+                    Category: "execution.dispatch",
+                    EventName: "execution_duplicate_suppressed",
+                    Summary: $"Execution duplicate was suppressed for {normalizedCommand.Symbol}.",
+                    CorrelationId: rootCorrelationId,
+                    Symbol: normalizedCommand.Symbol,
+                    StrategySignalId: normalizedCommand.StrategySignalId.ToString("N"),
+                    Detail: new
+                    {
+                        category = "execution",
+                        sourceLayer = nameof(ExecutionEngine),
+                        symbol = normalizedCommand.Symbol,
+                        timeframe = normalizedCommand.Timeframe,
+                        botId = normalizedCommand.BotId,
+                        strategyId = normalizedCommand.TradingStrategyId,
+                        strategyVersionId = normalizedCommand.TradingStrategyVersionId,
+                        strategyKey = normalizedCommand.StrategyKey,
+                        decisionOutcome = "DuplicateSuppressed",
+                        decisionReasonType = "DuplicateSuppression",
+                        decisionReasonCode = "SuppressedDuplicate",
+                        existingOrderId,
+                        strategySignalId = normalizedCommand.StrategySignalId,
+                        requestedEnvironment = requestedEnvironment.ToString(),
+                        side = normalizedCommand.Side.ToString(),
+                        reduceOnly = normalizedCommand.ReduceOnly,
+                        plane = executionPlane.ToString(),
+                        latencyBreakdown = buildExecutionLatencyBreakdown()
+                    }),
+                cancellationToken);
+        }
+
+        return new ExecutionDispatchResult(
+            await GetSnapshotAsync(existingOrderId, cancellationToken),
+            IsDuplicate: true);
+    }
+
+    private async Task<Guid> ResolveExistingExecutionOrderIdempotencyIdAsync(
+        string ownerUserId,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        return await dbContext.ExecutionOrders
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(entity =>
+                !entity.IsDeleted &&
+                entity.OwnerUserId == ownerUserId &&
+                entity.IdempotencyKey == idempotencyKey)
+            .OrderByDescending(entity => entity.LastStateChangedAtUtc)
+            .ThenByDescending(entity => entity.Id)
+            .Select(entity => entity.Id)
+            .FirstOrDefaultAsync(cancellationToken);
     }
 
     private async Task<Guid> ResolveExistingExecutionOrderIntentIdAsync(

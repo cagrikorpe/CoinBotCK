@@ -29,6 +29,9 @@ public sealed class BotExecutionPilotOptions
     [Range(1, 125)]
     public decimal DefaultLeverage { get; set; } = 1m;
 
+    [Range(1, 125)]
+    public decimal MaxAllowedLeverage { get; set; } = 1m;
+
     public bool AllowNonOneLeverageForClockDriftSmoke { get; set; } = false;
 
     [Required]

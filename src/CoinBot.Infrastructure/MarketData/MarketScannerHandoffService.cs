@@ -62,6 +62,9 @@ public sealed class MarketScannerHandoffService(
     private const string OrphanPositionDetectedCode = "OrphanPositionDetected";
     private const string PositionAdoptionAmbiguousCode = "PositionAdoptionAmbiguous";
     private const string AutoPositionManagementDisabledCode = "AutoPositionManagementDisabled";
+    private const string LeveragePolicyExceededCode = "LeveragePolicyExceeded";
+    private const string LeveragePolicyAllowedReasonCode = "LeveragePolicyAllowed";
+    private const string LeverageAlignmentSkippedForReduceOnlyReasonCode = "LeverageAlignmentSkippedForReduceOnly";
     private const string ExitReasonReverseSignal = "ReverseSignal";
     private const string ExitReasonRiskExit = "RiskExit";
     private const string ExitReasonPrivatePlaneStale = "PrivatePlaneStale";
@@ -655,6 +658,33 @@ public sealed class MarketScannerHandoffService(
                 }
             }
 
+            var leveragePolicy = EvaluatePilotLeveragePolicy(ownerBotMatch, executionContext);
+            if (leveragePolicy.IsBlocked)
+            {
+                latestAttempt = await PersistBlockedAttemptWithShadowDecisionAsync(
+                    scanCycleId,
+                    candidate,
+                    ownerBotMatch.OwnerUserId,
+                    ownerBotMatch,
+                    symbolMetadata,
+                    executionContext,
+                    strategySignal,
+                    strategyVeto: null,
+                    strategyDecisionOutcome: "Persisted",
+                    executionStatus: "Blocked",
+                    blockerCode: leveragePolicy.ReasonCode,
+                    blockerDetail: $"Scanner handoff blocked because requested leverage {leveragePolicy.RequestedLeverage:0.########} exceeds max allowed leverage {leveragePolicy.MaxAllowedLeverage:0.########} for {symbol} on the selected exchange account.",
+                    correlationId: attemptCorrelationId,
+                    guardSummary: AppendExecutionIntentGuardSummary(
+                        Truncate(
+                            $"{leveragePolicy.Summary}; Symbol={symbol}; Timeframe={klineInterval}",
+                            512) ?? $"{leveragePolicy.Summary}; Symbol={symbol}",
+                        executionContext),
+                    cancellationToken: cancellationToken,
+                    strategyResult: strategyResult);
+                continue;
+            }
+
             try
             {
                 var gateContext = BuildGateContext(
@@ -665,7 +695,8 @@ public sealed class MarketScannerHandoffService(
                     executionContext.Environment,
                     botExecutionOptionsValue,
                     marginType,
-                    leverage);
+                    leverage,
+                    leveragePolicy.Summary);
                 var correlationId = attemptCorrelationId;
                 var executionExchangeAccountId = ownerBotMatch.ExchangeAccountId;
 
@@ -820,6 +851,7 @@ public sealed class MarketScannerHandoffService(
                     strategySignal,
                     strategyResult,
                     dispatchResult,
+                    leveragePolicy.Summary,
                     correlationId,
                     cancellationToken);
                 return latestAttempt;
@@ -1797,6 +1829,7 @@ public sealed class MarketScannerHandoffService(
         StrategySignalSnapshot strategySignal,
         StrategySignalGenerationResult strategyResult,
         ExecutionDispatchResult dispatchResult,
+        string? leveragePolicySummary,
         string correlationId,
         CancellationToken cancellationToken)
     {
@@ -1814,7 +1847,7 @@ public sealed class MarketScannerHandoffService(
             blockerCode: null,
             blockerDetail: null,
             correlationId,
-            guardSummary: BuildPreparedGuardSummary(candidate.Symbol, strategyResult, strategySignal, latencySnapshot, executionContext, dispatchResult));
+            guardSummary: BuildPreparedGuardSummary(candidate.Symbol, strategyResult, strategySignal, latencySnapshot, executionContext, dispatchResult, leveragePolicySummary));
 
         dbContext.MarketScannerHandoffAttempts.Add(attempt);
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -2084,19 +2117,14 @@ public sealed class MarketScannerHandoffService(
         StrategySignalSnapshot strategySignal,
         DegradedModeSnapshot latencySnapshot,
         PreparedExecutionContext executionContext,
-        ExecutionDispatchResult dispatchResult)
+        ExecutionDispatchResult dispatchResult,
+        string? leveragePolicySummary)
     {
-        var signalSummary = string.IsNullOrWhiteSpace(strategySignal.ExplainabilityPayload.UiLog.Summary)
-            ? strategySignal.ExplainabilityPayload.ConfidenceSnapshot.Summary
-            : strategySignal.ExplainabilityPayload.UiLog.Summary;
-        var openPositionQuantity = executionContext.OpenPositionQuantity?.ToString("0.########", CultureInfo.InvariantCulture) ?? "n/a";
-        var closeQuantity = string.Equals(executionContext.ExecutionIntent, ExitCloseOnlyIntentCode, StringComparison.Ordinal)
-            ? executionContext.Quantity.ToString("0.########", CultureInfo.InvariantCulture)
-            : "n/a";
-        var closeSide = executionContext.CloseSide?.ToString() ?? "n/a";
-
+        var leveragePolicySegment = string.IsNullOrWhiteSpace(leveragePolicySummary)
+            ? string.Empty
+            : $"{leveragePolicySummary}; ";
         var summary =
-            $"ExecutionGate=Allowed; UserExecutionOverride=Allowed; ExecutionDispatch=Dispatched; Symbol={symbol}; Timeframe={klineInterval}; {BuildLatencyGuardSummarySnippet(latencySnapshot)}; ExecutionIntent={executionContext.ExecutionIntent}; OpenPositionQuantity={openPositionQuantity}; CloseQuantity={closeQuantity}; CloseSide={closeSide}; ReduceOnly={executionContext.ReduceOnly}; AutoReverse={executionContext.AutoReverse}; {(string.IsNullOrWhiteSpace(executionContext.ExitPnlGuardSummary) ? string.Empty : $"{executionContext.ExitPnlGuardSummary}; ")}DispatchDuplicate={dispatchResult.IsDuplicate}; ExecutorKind={dispatchResult.Order.ExecutorKind}; ExecutionOrderState={dispatchResult.Order.State}; ExecutionOrderFailureCode={dispatchResult.Order.FailureCode ?? "none"}; ExecutionOrderId={dispatchResult.Order.ExecutionOrderId:N}; StrategySignalSummary={signalSummary}";
+            $"{leveragePolicySegment}ExecutionGate=Allowed; UserExecutionOverride=Allowed; ExecutionDispatch=Dispatched; Symbol={symbol}; Timeframe={klineInterval}; {BuildLatencyGuardSummarySnippet(latencySnapshot)}; {(string.IsNullOrWhiteSpace(executionContext.ExitPnlGuardSummary) ? string.Empty : $"{executionContext.ExitPnlGuardSummary}; ")}DispatchDuplicate={dispatchResult.IsDuplicate}; ExecutorKind={dispatchResult.Order.ExecutorKind}; ExecutionOrderState={dispatchResult.Order.State}; ExecutionOrderFailureCode={dispatchResult.Order.FailureCode ?? "none"}; ExecutionOrderId={dispatchResult.Order.ExecutionOrderId:N}";
 
         return AppendExecutionIntentGuardSummary(summary, executionContext);
     }
@@ -2454,20 +2482,130 @@ public sealed class MarketScannerHandoffService(
         ExecutionEnvironment executionEnvironment,
         BotExecutionPilotOptions pilotOptions,
         string marginType,
-        decimal leverage)
+        decimal leverage,
+        string? leveragePolicySummary = null)
     {
-        var context = $"ScannerHandoff=True | ScanCycleId={scanCycleId:N} | CandidateId={candidate.Id:N} | CandidateRank={candidate.Rank?.ToString(CultureInfo.InvariantCulture) ?? "n/a"} | BotId={botMatch.BotId:N}";
+        var context = "ScannerHandoff=True";
         if (executionEnvironment != ExecutionEnvironment.Live &&
             executionEnvironment != ExecutionEnvironment.BinanceTestnet ||
             !pilotOptions.PilotActivationEnabled)
         {
-            return AppendExecutionIntentGuardSummary(context, executionContext);
+            return AppendExecutionIntentGuardSummary(
+                FormattableString.Invariant(
+                    $"{context} | ScanCycleId={scanCycleId:N} | CandidateId={candidate.Id:N} | CandidateRank={candidate.Rank?.ToString(CultureInfo.InvariantCulture) ?? "n/a"} | BotId={botMatch.BotId:N}"),
+                executionContext,
+                maxLength: 1024);
         }
 
+        var leverageContext = string.IsNullOrWhiteSpace(leveragePolicySummary)
+            ? string.Empty
+            : $" | {leveragePolicySummary}";
         return AppendExecutionIntentGuardSummary(
             FormattableString.Invariant(
-                $"{context} | DevelopmentFuturesTestnetPilot=True | PilotActivationEnabled={pilotOptions.PilotActivationEnabled} | PilotMarginType={marginType} | PilotLeverage={leverage:0.########}"),
-            executionContext);
+                $"{context} | DevelopmentFuturesTestnetPilot=True | PilotActivationEnabled={pilotOptions.PilotActivationEnabled}{leverageContext} | PilotMarginType={marginType} | PilotLeverage={leverage:0.########} | ScanCycleId={scanCycleId:N} | CandidateId={candidate.Id:N} | CandidateRank={candidate.Rank?.ToString(CultureInfo.InvariantCulture) ?? "n/a"} | BotId={botMatch.BotId:N}"),
+            executionContext,
+            maxLength: 1024);
+    }
+
+    private PilotLeveragePolicyEvaluation EvaluatePilotLeveragePolicy(
+        BotStrategyMatch botMatch,
+        PreparedExecutionContext executionContext)
+    {
+        var requestedLeverage = botMatch.Leverage ?? 1m;
+        var effectiveLeverage = NormalizeConfiguredLeverage(requestedLeverage);
+        var leverageSource = botMatch.Leverage.HasValue ? "Bot" : "Default";
+        var maxAllowedLeverage = ResolveEffectiveMaxAllowedLeverage(effectiveLeverage);
+
+        if (executionContext.ReduceOnly)
+        {
+            return new PilotLeveragePolicyEvaluation(
+                IsBlocked: false,
+                RequestedLeverage: requestedLeverage,
+                EffectiveLeverage: effectiveLeverage,
+                MaxAllowedLeverage: maxAllowedLeverage,
+                LeverageSource: leverageSource,
+                Decision: "Skipped",
+                ReasonCode: LeverageAlignmentSkippedForReduceOnlyReasonCode,
+                AlignmentSkippedForReduceOnly: true,
+                Summary: BuildLeveragePolicySummary(
+                    requestedLeverage,
+                    effectiveLeverage,
+                    maxAllowedLeverage,
+                    leverageSource,
+                    "Skipped",
+                    LeverageAlignmentSkippedForReduceOnlyReasonCode,
+                    alignmentSkippedForReduceOnly: true));
+        }
+
+        if (effectiveLeverage > maxAllowedLeverage)
+        {
+            return new PilotLeveragePolicyEvaluation(
+                IsBlocked: true,
+                RequestedLeverage: requestedLeverage,
+                EffectiveLeverage: effectiveLeverage,
+                MaxAllowedLeverage: maxAllowedLeverage,
+                LeverageSource: leverageSource,
+                Decision: "Blocked",
+                ReasonCode: LeveragePolicyExceededCode,
+                AlignmentSkippedForReduceOnly: false,
+                Summary: BuildLeveragePolicySummary(
+                    requestedLeverage,
+                    effectiveLeverage,
+                    maxAllowedLeverage,
+                    leverageSource,
+                    "Blocked",
+                    LeveragePolicyExceededCode,
+                    alignmentSkippedForReduceOnly: false));
+        }
+
+        return new PilotLeveragePolicyEvaluation(
+            IsBlocked: false,
+            RequestedLeverage: requestedLeverage,
+            EffectiveLeverage: effectiveLeverage,
+            MaxAllowedLeverage: maxAllowedLeverage,
+            LeverageSource: leverageSource,
+            Decision: "Allowed",
+            ReasonCode: LeveragePolicyAllowedReasonCode,
+            AlignmentSkippedForReduceOnly: false,
+            Summary: BuildLeveragePolicySummary(
+                requestedLeverage,
+                effectiveLeverage,
+                maxAllowedLeverage,
+                leverageSource,
+                "Allowed",
+                LeveragePolicyAllowedReasonCode,
+                alignmentSkippedForReduceOnly: false));
+    }
+
+    private decimal ResolveEffectiveMaxAllowedLeverage(decimal effectiveLeverage)
+    {
+        var configuredMaxAllowedLeverage = NormalizeConfiguredLeverage(botExecutionOptionsValue.MaxAllowedLeverage);
+        return effectiveLeverage > configuredMaxAllowedLeverage &&
+               hostEnvironment?.IsDevelopment() == true &&
+               botExecutionOptionsValue.AllowNonOneLeverageForClockDriftSmoke
+            ? effectiveLeverage
+            : configuredMaxAllowedLeverage;
+    }
+
+    private static decimal NormalizeConfiguredLeverage(decimal leverage)
+    {
+        var normalizedLeverage = decimal.Truncate(leverage);
+        return normalizedLeverage < 1m
+            ? 1m
+            : normalizedLeverage;
+    }
+
+    private static string BuildLeveragePolicySummary(
+        decimal requestedLeverage,
+        decimal effectiveLeverage,
+        decimal maxAllowedLeverage,
+        string leverageSource,
+        string decision,
+        string reasonCode,
+        bool alignmentSkippedForReduceOnly)
+    {
+        return FormattableString.Invariant(
+            $"RequestedLeverage={requestedLeverage:0.########}; EffectiveLeverage={effectiveLeverage:0.########}; MaxAllowedLeverage={maxAllowedLeverage:0.########}; LeverageSource={leverageSource}; LeveragePolicyDecision={decision}; LeveragePolicyReason={reasonCode}; LeverageAlignmentSkippedForReduceOnly={alignmentSkippedForReduceOnly}");
     }
 
     private static string BuildExecutionCommandContext(
@@ -2776,7 +2914,8 @@ public sealed class MarketScannerHandoffService(
     private static string AppendExecutionIntentGuardSummary(
         string guardSummary,
         PreparedExecutionContext? executionContext,
-        string? exitReasonOverride = null)
+        string? exitReasonOverride = null,
+        int maxLength = 512)
     {
         if (executionContext is not { } resolvedExecutionContext)
         {
@@ -2791,7 +2930,7 @@ public sealed class MarketScannerHandoffService(
                     "SignalType=Entry; ExecutionIntent=Entry; ExitIntent=n/a; EntrySource=StrategyEntry; ExitSource=n/a; ReverseEntryConvertedToCloseOnly=False; ManualClose=False",
                     resolvedExecutionContext.PositionAdoptionSummary,
                     guardSummary);
-            return Truncate(entrySummary, 512) ?? guardSummary;
+            return Truncate(entrySummary, maxLength) ?? guardSummary;
         }
 
         var exitSummary = guardSummary;
@@ -2822,7 +2961,7 @@ public sealed class MarketScannerHandoffService(
         {
             exitSummary = AppendPositionAdoptionSummary(exitSummary, resolvedExecutionContext.PositionAdoptionSummary);
         }
-        return Truncate(exitSummary, 512) ?? guardSummary;
+        return Truncate(exitSummary, maxLength) ?? guardSummary;
     }
 
     private static string BuildGuardSummaryWithPositionAdoption(
@@ -2835,7 +2974,7 @@ public sealed class MarketScannerHandoffService(
             return $"{classificationSummary}; {guardSummary}";
         }
 
-        return $"{classificationSummary}; {positionAdoptionSummary}; {guardSummary}";
+        return $"{classificationSummary}; {guardSummary}; {positionAdoptionSummary}";
     }
 
     private static string AppendPositionAdoptionSummary(string summary, string? positionAdoptionSummary)
@@ -3507,18 +3646,11 @@ public sealed class MarketScannerHandoffService(
         out string marginType,
         out string? failureCode)
     {
-        leverage = botMatch.Leverage ?? 1m;
+        leverage = NormalizeConfiguredLeverage(botMatch.Leverage ?? 1m);
         marginType = string.IsNullOrWhiteSpace(botMatch.MarginType)
             ? "ISOLATED"
             : botMatch.MarginType.Trim().ToUpperInvariant();
         failureCode = null;
-
-        if (leverage != 1m &&
-            !(hostEnvironment?.IsDevelopment() == true && botExecutionOptionsValue.AllowNonOneLeverageForClockDriftSmoke))
-        {
-            failureCode = "PilotLeverageMustBeOne";
-            return false;
-        }
 
         if (!string.Equals(marginType, "ISOLATED", StringComparison.Ordinal))
         {
@@ -3533,7 +3665,6 @@ public sealed class MarketScannerHandoffService(
     {
         return failureCode switch
         {
-            "PilotLeverageMustBeOne" => "Scanner handoff blocked because pilot bot leverage must resolve to 1x.",
             "PilotMarginTypeMustBeIsolated" => "Scanner handoff blocked because pilot bot margin type must resolve to ISOLATED.",
             _ => "Scanner handoff blocked because pilot execution parameters are invalid."
         };
@@ -3560,6 +3691,17 @@ public sealed class MarketScannerHandoffService(
         bool AutoReverse,
         string? ExitPnlGuardSummary,
         string? PositionAdoptionSummary);
+
+    private sealed record PilotLeveragePolicyEvaluation(
+        bool IsBlocked,
+        decimal RequestedLeverage,
+        decimal EffectiveLeverage,
+        decimal MaxAllowedLeverage,
+        string LeverageSource,
+        string Decision,
+        string ReasonCode,
+        bool AlignmentSkippedForReduceOnly,
+        string Summary);
 
     private sealed record CurrentPositionSnapshot(
         StrategyTradeDirection Direction,

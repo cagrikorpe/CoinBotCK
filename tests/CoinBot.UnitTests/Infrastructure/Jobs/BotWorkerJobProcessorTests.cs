@@ -65,6 +65,7 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal(0.002m, persistedOrder.Quantity);
         Assert.Equal(1, harness.PrivateRestClient.EnsureMarginTypeCalls);
         Assert.Equal(1, harness.PrivateRestClient.EnsureLeverageCalls);
+        Assert.Equal(1m, harness.PrivateRestClient.LastEnsuredLeverage);
         Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
         Assert.Equal(0, harness.SpotPrivateRestClient.PlaceOrderCalls);
         Assert.StartsWith("cbp0_", harness.PrivateRestClient.LastPlacedClientOrderId, StringComparison.Ordinal);
@@ -210,7 +211,7 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
-    public async Task ProcessAsync_RejectsDevelopmentPilotLeverageAboveOne_WhenClockDriftSmokeOverrideIsDisabled()
+    public async Task ProcessAsync_BlocksDevelopmentPilotLeverageAboveConfiguredMax_WhenClockDriftSmokeOverrideIsDisabled()
     {
         await using var harness = CreateHarness();
         var bot = await SeedBotGraphAsync(harness.DbContext);
@@ -232,7 +233,7 @@ public sealed class BotWorkerJobProcessorTests
 
         Assert.False(result.IsSuccessful);
         Assert.False(result.IsRetryableFailure);
-        Assert.Equal("PilotLeverageMustBeOne", result.ErrorCode);
+        Assert.Equal("LeveragePolicyExceeded", result.ErrorCode);
         Assert.Equal(0, harness.PrivateRestClient.EnsureLeverageCalls);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
     }
@@ -429,6 +430,7 @@ public sealed class BotWorkerJobProcessorTests
         Assert.True(persistedOrder.ReduceOnly);
         Assert.Equal(1.250m, persistedOrder.Quantity);
         Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.Equal(0, harness.PrivateRestClient.EnsureLeverageCalls);
         Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
     }
 
@@ -1624,6 +1626,7 @@ public sealed class BotWorkerJobProcessorTests
         var options = new BotExecutionPilotOptions();
 
         Assert.False(options.AutoManageAdoptedPositions);
+        Assert.Equal(1m, options.MaxAllowedLeverage);
         Assert.True(options.ExitOnReverseSignalOnlyIfProfitable);
         Assert.Equal(0m, options.MinTakeProfitPct);
         Assert.True(options.AllowStopLossExit);

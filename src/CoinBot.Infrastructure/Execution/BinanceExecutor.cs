@@ -8,6 +8,7 @@ using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Exchange;
+using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -26,11 +27,13 @@ public sealed class BinanceExecutor(
     IBinanceExchangeInfoClient? exchangeInfoClient = null,
     IOptions<BinancePrivateDataOptions>? privateDataOptions = null,
     IOptions<BinanceFuturesTestnetOptions>? binanceFuturesTestnetOptions = null,
+    IOptions<BotExecutionPilotOptions>? botExecutionPilotOptions = null,
     IUltraDebugLogService? ultraDebugLogService = null) : IExecutionTargetExecutor
 {
     private const string BreakerActor = "system:order-execution";
     private readonly BinancePrivateDataOptions? privateDataOptionsValue = privateDataOptions?.Value;
     private readonly BinanceFuturesTestnetOptions binanceFuturesTestnetOptionsValue = binanceFuturesTestnetOptions?.Value ?? new BinanceFuturesTestnetOptions();
+    private readonly BotExecutionPilotOptions pilotOptionsValue = botExecutionPilotOptions?.Value ?? new BotExecutionPilotOptions();
 
     public ExecutionOrderExecutorKind Kind => ExecutionOrderExecutorKind.Binance;
 
@@ -80,9 +83,15 @@ public sealed class BinanceExecutor(
                 cancellationToken);
             var symbolMetadata = await ResolveSymbolMetadataAsync(command.Symbol, cancellationToken);
             ValidateOrderPreflight(command, symbolMetadata);
+            var hasPilotContext = TryResolveDevelopmentFuturesPilot(command.Context, out var marginType, out var leverage);
+            if (hasPilotContext)
+            {
+                ValidatePilotLeveragePolicy(command, leverage!.Value);
+            }
+
             await ValidateFuturesMarginAvailabilityAsync(exchangeAccountId, command, symbolMetadata, cancellationToken);
 
-            if (TryResolveDevelopmentFuturesPilot(command.Context, out var marginType, out var leverage))
+            if (hasPilotContext)
             {
                 if (!command.ReduceOnly)
                 {
@@ -753,10 +762,50 @@ public sealed class BinanceExecutor(
             ReadContextValue(context, "PilotLeverage"),
             CultureInfo.InvariantCulture,
             out var parsedLeverage)
-            ? parsedLeverage
+            ? NormalizePilotLeverage(parsedLeverage)
             : null;
 
         return !string.IsNullOrWhiteSpace(marginType) && leverage.HasValue;
+    }
+
+    private void ValidatePilotLeveragePolicy(ExecutionCommand command, decimal leverage)
+    {
+        if (command.ReduceOnly)
+        {
+            return;
+        }
+
+        var effectiveLeverage = NormalizePilotLeverage(leverage);
+        var maxAllowedLeverage = ResolveMaxAllowedLeverage(command.Context);
+        if (effectiveLeverage <= maxAllowedLeverage)
+        {
+            return;
+        }
+
+        throw new ExecutionValidationException(
+            "LeveragePolicyExceeded",
+            $"Execution blocked because requested leverage {FormatDecimal(effectiveLeverage)} exceeds max allowed leverage {FormatDecimal(maxAllowedLeverage)} for pilot futures execution.");
+    }
+
+    private decimal ResolveMaxAllowedLeverage(string? context)
+    {
+        if (decimal.TryParse(
+                ReadContextValue(context, "MaxAllowedLeverage"),
+                CultureInfo.InvariantCulture,
+                out var parsedMaxAllowedLeverage))
+        {
+            return NormalizePilotLeverage(parsedMaxAllowedLeverage);
+        }
+
+        return NormalizePilotLeverage(pilotOptionsValue.MaxAllowedLeverage);
+    }
+
+    private static decimal NormalizePilotLeverage(decimal leverage)
+    {
+        var normalizedLeverage = decimal.Truncate(leverage);
+        return normalizedLeverage < 1m
+            ? 1m
+            : normalizedLeverage;
     }
 
     private static string BuildClientOrderId(Guid executionOrderId, string? context)
@@ -804,7 +853,9 @@ public sealed class BinanceExecutor(
         }
 
         var prefix = $"{key}=";
-        var segments = context.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var segments = context.Split(
+            ['|', ';'],
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         foreach (var segment in segments)
         {

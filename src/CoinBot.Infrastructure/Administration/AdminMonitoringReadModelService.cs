@@ -5,6 +5,7 @@ using CoinBot.Application.Abstractions.Monitoring;
 using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Execution;
+using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -23,6 +24,7 @@ public sealed class AdminMonitoringReadModelService(
     IMemoryCache memoryCache,
     TimeProvider timeProvider,
     IOptions<DataLatencyGuardOptions> dataLatencyGuardOptions,
+    IOptions<BotExecutionPilotOptions>? botExecutionPilotOptions = null,
     ISharedMarketDataCacheObservabilityCollector? sharedMarketDataCacheObservabilityCollector = null,
     IUltraDebugLogService? ultraDebugLogService = null) : IAdminMonitoringReadModelService
 {
@@ -31,6 +33,7 @@ public sealed class AdminMonitoringReadModelService(
         .SetSize(1)
         .SetAbsoluteExpiration(TimeSpan.FromSeconds(3));
     private readonly int staleThresholdMilliseconds = checked(dataLatencyGuardOptions.Value.StaleDataThresholdSeconds * 1000);
+    private readonly BotExecutionPilotOptions botExecutionPilotOptionsValue = botExecutionPilotOptions?.Value ?? new();
 
     public Task<MonitoringDashboardSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
     {
@@ -117,6 +120,46 @@ public sealed class AdminMonitoringReadModelService(
             })
             .ToListAsync(cancellationToken);
         var exitPnlEvidence = await LoadExitPnlEvidenceAsync(windowStartUtc, cancellationToken);
+        var enabledBotRows = await dbContext.TradingBots
+            .AsNoTracking()
+            .Where(entity =>
+                !entity.IsDeleted &&
+                entity.IsEnabled &&
+                entity.ExchangeAccountId.HasValue &&
+                entity.Symbol != null)
+            .Select(entity => new MonitoringBotScopeRow(
+                entity.Id,
+                entity.OwnerUserId,
+                entity.ExchangeAccountId!.Value,
+                entity.Symbol!))
+            .ToListAsync(cancellationToken);
+        var openPositionRows = await dbContext.ExchangePositions
+            .AsNoTracking()
+            .Where(entity =>
+                !entity.IsDeleted &&
+                entity.Plane == ExchangeDataPlane.Futures &&
+                entity.Quantity != 0m)
+            .Select(entity => new MonitoringOpenPositionRow(
+                entity.ExchangeAccountId,
+                entity.OwnerUserId,
+                entity.Symbol))
+            .ToListAsync(cancellationToken);
+        var syncStateRows = await dbContext.ExchangeAccountSyncStates
+            .AsNoTracking()
+            .Where(entity =>
+                !entity.IsDeleted &&
+                entity.Plane == ExchangeDataPlane.Futures)
+            .OrderByDescending(entity => entity.UpdatedDate)
+            .ThenByDescending(entity => entity.CreatedDate)
+            .ToListAsync(cancellationToken);
+        var privatePlaneStaleRejectCount = await dbContext.ExecutionOrders
+            .AsNoTracking()
+            .Where(entity =>
+                !entity.IsDeleted &&
+                entity.CreatedDate >= windowStartUtc &&
+                !entity.SubmittedToBroker &&
+                entity.FailureCode == "PrivatePlaneStale")
+            .CountAsync(cancellationToken);
         var decisionRows = await dbContext.AiShadowDecisions
             .AsNoTracking()
             .IgnoreQueryFilters()
@@ -187,6 +230,14 @@ public sealed class AdminMonitoringReadModelService(
         var logSystemState = ResolveLogSystemState(ultraDebugLogHealth);
         var janitorSummary = BuildJanitorSummary(ultraDebugLogHealth);
         var exportSummary = BuildExportSummary(ultraDebugLogHealth);
+        var pilotConfigEvidence = BuildPilotConfigEvidence(botExecutionPilotOptionsValue);
+        var privateSyncEvidence = BuildPrivateSyncEvidence(
+            utcNow,
+            botExecutionPilotOptionsValue,
+            enabledBotRows,
+            openPositionRows,
+            syncStateRows,
+            privatePlaneStaleRejectCount);
         var criticalWarnings = BuildCriticalWarnings(
             healthSnapshotEntities,
             workerHeartbeatEntities,
@@ -220,7 +271,9 @@ public sealed class AdminMonitoringReadModelService(
             ExportSummary: exportSummary,
             CriticalWarnings: criticalWarnings)
         {
-            ExitPnlEvidence = exitPnlEvidence
+            ExitPnlEvidence = exitPnlEvidence,
+            PilotConfigEvidence = pilotConfigEvidence,
+            PrivateSyncEvidence = privateSyncEvidence
         };
     }
 
@@ -1066,6 +1119,265 @@ public sealed class AdminMonitoringReadModelService(
             .ToArray();
     }
 
+    private static OperationalPilotConfigEvidenceSnapshot BuildPilotConfigEvidence(BotExecutionPilotOptions options)
+    {
+        var allowedSymbols = options.ResolveNormalizedAllowedSymbols();
+        var allowedSymbolsSummary = allowedSymbols.Length switch
+        {
+            0 => "all",
+            <= 5 => string.Join(", ", allowedSymbols),
+            _ => string.Join(", ", allowedSymbols.Take(5)) + $" +{allowedSymbols.Length - 5} more"
+        };
+
+        return new OperationalPilotConfigEvidenceSnapshot(
+            AutoManageAdoptedPositions: options.AutoManageAdoptedPositions,
+            ExecutionDispatchMode: options.ExecutionDispatchMode.ToString(),
+            AllowedSymbolCount: allowedSymbols.Length,
+            AllowedSymbolsSummary: allowedSymbolsSummary,
+            AllowedBotIdCount: options.ResolveNormalizedAllowedBotIds().Length,
+            AllowedUserIdCount: options.ResolveNormalizedAllowedUserIds().Length,
+            AllowedExchangeAccountIdCount: null);
+    }
+
+    private static OperationalPrivateSyncEvidenceSnapshot BuildPrivateSyncEvidence(
+        DateTime utcNow,
+        BotExecutionPilotOptions options,
+        IReadOnlyCollection<MonitoringBotScopeRow> enabledBotRows,
+        IReadOnlyCollection<MonitoringOpenPositionRow> openPositionRows,
+        IReadOnlyCollection<ExchangeAccountSyncState> syncStateRows,
+        int privatePlaneStaleRejectCount)
+    {
+        if (syncStateRows.Count == 0)
+        {
+            return OperationalPrivateSyncEvidenceSnapshot.Empty() with
+            {
+                Summary = $"No futures private sync evidence yet. PrivatePlaneStaleRejects={privatePlaneStaleRejectCount}.",
+                PrivatePlaneStaleRejectCount = privatePlaneStaleRejectCount
+            };
+        }
+
+        var latestSyncRows = syncStateRows
+            .GroupBy(entity => new MonitoringAccountScopeKey(entity.ExchangeAccountId, entity.OwnerUserId, entity.Plane))
+            .Select(group => group
+                .OrderByDescending(entity => entity.UpdatedDate)
+                .ThenByDescending(entity => entity.CreatedDate)
+                .First())
+            .ToArray();
+        var enabledBotScopeKeys = enabledBotRows
+            .Select(entity => new MonitoringAccountScopeKey(entity.ExchangeAccountId, entity.OwnerUserId, ExchangeDataPlane.Futures))
+            .ToHashSet();
+        var openPositionKeys = openPositionRows
+            .Select(entity => new MonitoringPositionScopeKey(
+                entity.ExchangeAccountId,
+                entity.OwnerUserId,
+                NormalizeSymbol(entity.Symbol)))
+            .ToHashSet();
+        var allowedSymbolSet = new HashSet<string>(options.ResolveNormalizedAllowedSymbols(), StringComparer.Ordinal);
+        var allowedBotIdSet = new HashSet<string>(options.ResolveNormalizedAllowedBotIds(), StringComparer.OrdinalIgnoreCase);
+        var allowedUserIdSet = new HashSet<string>(options.ResolveNormalizedAllowedUserIds(), StringComparer.Ordinal);
+        var pilotScopedBotRows = enabledBotRows
+            .Where(entity => MatchesPilotScope(entity, allowedSymbolSet, allowedBotIdSet, allowedUserIdSet))
+            .ToArray();
+        var pilotScopedAccountKeys = pilotScopedBotRows
+            .Select(entity => new MonitoringAccountScopeKey(entity.ExchangeAccountId, entity.OwnerUserId, ExchangeDataPlane.Futures))
+            .ToHashSet();
+        var pilotScopedOpenPositionAccountKeys = pilotScopedBotRows
+            .Where(entity => openPositionKeys.Contains(new MonitoringPositionScopeKey(
+                entity.ExchangeAccountId,
+                entity.OwnerUserId,
+                NormalizeSymbol(entity.Symbol))))
+            .Select(entity => new MonitoringAccountScopeKey(entity.ExchangeAccountId, entity.OwnerUserId, ExchangeDataPlane.Futures))
+            .ToHashSet();
+        var enabledOpenPositionAccountKeys = enabledBotRows
+            .Where(entity => openPositionKeys.Contains(new MonitoringPositionScopeKey(
+                entity.ExchangeAccountId,
+                entity.OwnerUserId,
+                NormalizeSymbol(entity.Symbol))))
+            .Select(entity => new MonitoringAccountScopeKey(entity.ExchangeAccountId, entity.OwnerUserId, ExchangeDataPlane.Futures))
+            .ToHashSet();
+
+        var selectedSyncRow = latestSyncRows
+            .OrderByDescending(entity => ResolvePrivateSyncPriority(
+                new MonitoringAccountScopeKey(entity.ExchangeAccountId, entity.OwnerUserId, entity.Plane),
+                pilotScopedOpenPositionAccountKeys,
+                pilotScopedAccountKeys,
+                enabledOpenPositionAccountKeys,
+                enabledBotScopeKeys))
+            .ThenByDescending(entity => entity.UpdatedDate)
+            .ThenByDescending(entity => entity.CreatedDate)
+            .FirstOrDefault();
+        var inactiveBlockedCredentialAccountCount = latestSyncRows.Count(entity =>
+            string.Equals(entity.LastErrorCode, "CredentialAccessBlocked", StringComparison.OrdinalIgnoreCase) &&
+            !enabledBotScopeKeys.Contains(new MonitoringAccountScopeKey(entity.ExchangeAccountId, entity.OwnerUserId, entity.Plane)));
+
+        if (selectedSyncRow is null)
+        {
+            return OperationalPrivateSyncEvidenceSnapshot.Empty() with
+            {
+                Summary = $"No futures private sync evidence yet. PrivatePlaneStaleRejects={privatePlaneStaleRejectCount}.",
+                PrivatePlaneStaleRejectCount = privatePlaneStaleRejectCount,
+                InactiveBlockedCredentialAccountCount = inactiveBlockedCredentialAccountCount
+            };
+        }
+
+        var parsedDriftSummary = ParseDriftSummary(selectedSyncRow.DriftSummary);
+        var lastStateReconciledAtUtc = NormalizeUtcNullable(selectedSyncRow.LastStateReconciledAtUtc);
+        var updatedDateUtc = NormalizeUtc(selectedSyncRow.UpdatedDate);
+        var syncReferenceAtUtc = lastStateReconciledAtUtc ?? updatedDateUtc;
+        var syncAgeSeconds = Math.Max(
+            0,
+            (int)Math.Round(
+                (utcNow - syncReferenceAtUtc).TotalSeconds,
+                MidpointRounding.AwayFromZero));
+        var state = ResolvePrivateSyncEvidenceState(selectedSyncRow, syncAgeSeconds, options.PrivatePlaneFreshnessThresholdSeconds);
+        var balanceMismatches = parsedDriftSummary.BalanceMismatches?.ToString(CultureInfo.InvariantCulture) ?? "n/a";
+        var positionMismatches = parsedDriftSummary.PositionMismatches?.ToString(CultureInfo.InvariantCulture) ?? "n/a";
+        var snapshotSource = parsedDriftSummary.SnapshotSource ?? "n/a";
+        var summary = $"Stream={selectedSyncRow.PrivateStreamConnectionState}; Drift={selectedSyncRow.DriftStatus}; BalanceMismatches={balanceMismatches}; PositionMismatches={positionMismatches}; SnapshotSource={snapshotSource}; SyncAgeSec={syncAgeSeconds}; PrivatePlaneStaleRejects={privatePlaneStaleRejectCount}; InactiveBlockedCredentialAccounts={inactiveBlockedCredentialAccountCount}; LastErrorCode={selectedSyncRow.LastErrorCode ?? "n/a"}";
+
+        return new OperationalPrivateSyncEvidenceSnapshot(
+            State: state,
+            Summary: summary,
+            ExchangeAccountId: selectedSyncRow.ExchangeAccountId.ToString("D"),
+            Plane: selectedSyncRow.Plane.ToString(),
+            PrivateStreamConnectionState: selectedSyncRow.PrivateStreamConnectionState.ToString(),
+            DriftStatus: selectedSyncRow.DriftStatus.ToString(),
+            DriftSummary: string.IsNullOrWhiteSpace(selectedSyncRow.DriftSummary) ? "n/a" : selectedSyncRow.DriftSummary.Trim(),
+            BalanceMismatches: parsedDriftSummary.BalanceMismatches,
+            PositionMismatches: parsedDriftSummary.PositionMismatches,
+            SnapshotSource: snapshotSource,
+            LastDriftDetectedAtUtc: NormalizeUtcNullable(selectedSyncRow.LastDriftDetectedAtUtc),
+            LastBalanceSyncedAtUtc: NormalizeUtcNullable(selectedSyncRow.LastBalanceSyncedAtUtc),
+            LastPositionSyncedAtUtc: NormalizeUtcNullable(selectedSyncRow.LastPositionSyncedAtUtc),
+            LastStateReconciledAtUtc: lastStateReconciledAtUtc,
+            SyncAgeSeconds: syncAgeSeconds,
+            ConsecutiveStreamFailureCount: selectedSyncRow.ConsecutiveStreamFailureCount,
+            LastErrorCode: string.IsNullOrWhiteSpace(selectedSyncRow.LastErrorCode) ? null : selectedSyncRow.LastErrorCode.Trim(),
+            UpdatedDate: updatedDateUtc,
+            InactiveBlockedCredentialAccountCount: inactiveBlockedCredentialAccountCount,
+            PrivatePlaneStaleRejectCount: privatePlaneStaleRejectCount);
+    }
+
+    private static bool MatchesPilotScope(
+        MonitoringBotScopeRow entity,
+        IReadOnlySet<string> allowedSymbols,
+        IReadOnlySet<string> allowedBotIds,
+        IReadOnlySet<string> allowedUserIds)
+    {
+        if (allowedSymbols.Count > 0 && !allowedSymbols.Contains(NormalizeSymbol(entity.Symbol)))
+        {
+            return false;
+        }
+
+        if (allowedBotIds.Count > 0 && !allowedBotIds.Contains(entity.Id.ToString("N")))
+        {
+            return false;
+        }
+
+        return allowedUserIds.Count == 0 || allowedUserIds.Contains(entity.OwnerUserId);
+    }
+
+    private static int ResolvePrivateSyncPriority(
+        MonitoringAccountScopeKey accountScopeKey,
+        IReadOnlySet<MonitoringAccountScopeKey> pilotScopedOpenPositionAccountKeys,
+        IReadOnlySet<MonitoringAccountScopeKey> pilotScopedAccountKeys,
+        IReadOnlySet<MonitoringAccountScopeKey> enabledOpenPositionAccountKeys,
+        IReadOnlySet<MonitoringAccountScopeKey> enabledBotScopeKeys)
+    {
+        if (pilotScopedOpenPositionAccountKeys.Contains(accountScopeKey))
+        {
+            return 4;
+        }
+
+        if (pilotScopedAccountKeys.Contains(accountScopeKey))
+        {
+            return 3;
+        }
+
+        if (enabledOpenPositionAccountKeys.Contains(accountScopeKey))
+        {
+            return 2;
+        }
+
+        return enabledBotScopeKeys.Contains(accountScopeKey) ? 1 : 0;
+    }
+
+    private static string ResolvePrivateSyncEvidenceState(
+        ExchangeAccountSyncState entity,
+        int syncAgeSeconds,
+        int freshnessThresholdSeconds)
+    {
+        if (entity.PrivateStreamConnectionState == ExchangePrivateStreamConnectionState.Connected &&
+            entity.DriftStatus == ExchangeStateDriftStatus.InSync &&
+            string.IsNullOrWhiteSpace(entity.LastErrorCode) &&
+            syncAgeSeconds <= freshnessThresholdSeconds)
+        {
+            return "Healthy";
+        }
+
+        if (!string.IsNullOrWhiteSpace(entity.LastErrorCode) ||
+            entity.ConsecutiveStreamFailureCount > 0 ||
+            syncAgeSeconds > freshnessThresholdSeconds)
+        {
+            return "Warning";
+        }
+
+        return entity.PrivateStreamConnectionState is ExchangePrivateStreamConnectionState.Connecting or ExchangePrivateStreamConnectionState.Reconnecting ||
+               entity.DriftStatus == ExchangeStateDriftStatus.DriftDetected
+            ? "Warning"
+            : "Watching";
+    }
+
+    private static DriftSummaryParts ParseDriftSummary(string? driftSummary)
+    {
+        if (string.IsNullOrWhiteSpace(driftSummary))
+        {
+            return DriftSummaryParts.Empty;
+        }
+
+        int? balanceMismatches = null;
+        int? positionMismatches = null;
+        string? snapshotSource = null;
+        var segments = driftSummary.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        foreach (var segment in segments)
+        {
+            var separatorIndex = segment.IndexOf('=');
+            if (separatorIndex <= 0 || separatorIndex == segment.Length - 1)
+            {
+                continue;
+            }
+
+            var key = segment[..separatorIndex].Trim();
+            var value = segment[(separatorIndex + 1)..].Trim();
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            if (string.Equals(key, "BalanceMismatches", StringComparison.OrdinalIgnoreCase) &&
+                int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedBalanceMismatches))
+            {
+                balanceMismatches = parsedBalanceMismatches;
+                continue;
+            }
+
+            if (string.Equals(key, "PositionMismatches", StringComparison.OrdinalIgnoreCase) &&
+                int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedPositionMismatches))
+            {
+                positionMismatches = parsedPositionMismatches;
+                continue;
+            }
+
+            if (string.Equals(key, "SnapshotSource", StringComparison.OrdinalIgnoreCase))
+            {
+                snapshotSource = value;
+            }
+        }
+
+        return new DriftSummaryParts(balanceMismatches, positionMismatches, snapshotSource);
+    }
+
     private static string ResolveLogSystemState(UltraDebugLogHealthSnapshot ultraDebugLogHealth)
     {
         if (IsUnavailableLogHealth(ultraDebugLogHealth))
@@ -1409,6 +1721,13 @@ public sealed class AdminMonitoringReadModelService(
         };
     }
 
+    private static string NormalizeSymbol(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : value.Trim().ToUpperInvariant();
+    }
+
     private static DateTime? NormalizeUtcNullable(DateTime? value)
     {
         return value.HasValue
@@ -1437,6 +1756,35 @@ public sealed class AdminMonitoringReadModelService(
         string Title,
         string Summary,
         string? Reason);
+
+    private readonly record struct MonitoringAccountScopeKey(
+        Guid ExchangeAccountId,
+        string OwnerUserId,
+        ExchangeDataPlane Plane);
+
+    private readonly record struct MonitoringPositionScopeKey(
+        Guid ExchangeAccountId,
+        string OwnerUserId,
+        string Symbol);
+
+    private sealed record MonitoringBotScopeRow(
+        Guid Id,
+        string OwnerUserId,
+        Guid ExchangeAccountId,
+        string Symbol);
+
+    private sealed record MonitoringOpenPositionRow(
+        Guid ExchangeAccountId,
+        string OwnerUserId,
+        string Symbol);
+
+    private sealed record DriftSummaryParts(
+        int? BalanceMismatches,
+        int? PositionMismatches,
+        string? SnapshotSource)
+    {
+        public static DriftSummaryParts Empty { get; } = new(null, null, null);
+    }
 
     private sealed record ExitPnlEvidenceRow(
         string Symbol,

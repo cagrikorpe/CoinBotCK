@@ -78,7 +78,18 @@
                                 <td>@await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = row.StatusLabel, Tone = row.StatusTone, IconText = "ST" })</td>
                                 <td>@await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = row.ModeLabel, Tone = row.ModeTone, IconText = "MD" })</td>
                                 <td><div class="cb-admin-mini-stat"><strong>@row.StrategyKey</strong><small>Strategy key</small></div></td>
-                                <td>@await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = row.RiskLabel, Tone = row.RiskTone, IconText = "RK" })</td>
+                                <td>
+                                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = row.RiskLabel, Tone = row.RiskTone, IconText = "RK" })
+                                    @if (!string.IsNullOrWhiteSpace(row.PositionAdoption) &&
+                                         !string.Equals(row.PositionAdoption, "Skipped", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        <div class="cb-admin-mini-stat mt-2" data-cb-admin-position-adoption>
+                                            <strong>@row.PositionAdoption</strong>
+                                            <small>@row.AdoptedPositionSymbol | @row.AdoptedPositionQuantity | @row.AdoptedPositionSide</small>
+                                            <small>@row.AdoptionReason</small>
+                                        </div>
+                                    }
+                                </td>
                                 <td>
                                     <div class="cb-admin-mini-stat cb-admin-bot-last-error" data-cb-admin-bot-last-error title="@row.LastError">
                                         <strong>@lastErrorPreview</strong>
@@ -103,9 +114,11 @@
                                                 }
                                                 @if (row.CanManualClose)
                                                 {
-                                                    <form asp-area="Admin" asp-controller="Admin" asp-action="ManualCloseBotPosition" method="post" class="mt-3" data-cb-admin-manual-close-form>
+                                                    <form asp-area="Admin" asp-controller="Admin" asp-action="ManualCloseBotPosition" method="post" class="mt-3" data-cb-admin-manual-close-form data-cb-reauth-required="true">
                                                         @Html.AntiForgeryToken()
                                                         <input type="hidden" name="botId" value="@row.BotId" />
+                                                        <input type="hidden" name="exchangeAccountId" value="@row.ManualCloseExchangeAccountId" />
+                                                        <input type="hidden" name="symbol" value="@row.ManualCloseSymbol" />
                                                         <button type="submit" class="btn btn-xs btn-danger font-weight-bold" data-cb-admin-manual-close-confirm>Confirm Reduce-Only Close</button>
                                                     </form>
                                                 }

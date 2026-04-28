@@ -7,6 +7,7 @@ using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Exchange;
 using CoinBot.Infrastructure.Execution;
+using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.UnitTests.Infrastructure.Mfa;
@@ -599,6 +600,84 @@ public sealed class BinanceExecutorTests
     }
 
     [Fact]
+    public async Task DispatchAsync_FailsClosed_WhenPilotLeverageExceedsConfiguredMax()
+    {
+        await using var harness = await CreateHarnessAsync(
+            privateDataOptions: new BinancePrivateDataOptions
+            {
+                RestBaseUrl = "https://demo-fapi.binance.com",
+                WebSocketBaseUrl = "wss://fstream.binancefuture.com",
+                SpotRestBaseUrl = "https://api.binance.com",
+                SpotWebSocketBaseUrl = "wss://stream.binance.com:9443"
+            },
+            testnetOptions: new BinanceFuturesTestnetOptions
+            {
+                BaseUrl = "https://demo-fapi.binance.com",
+                ApiKey = "testnet-api-key",
+                ApiSecret = "testnet-api-secret"
+            },
+            pilotOptions: new BotExecutionPilotOptions
+            {
+                MaxAllowedLeverage = 1m
+            });
+        harness.Order.ExecutionEnvironment = ExecutionEnvironment.BinanceTestnet;
+        harness.Order.ExecutorKind = ExecutionOrderExecutorKind.BinanceTestnet;
+
+        var exception = await Assert.ThrowsAsync<ExecutionValidationException>(() => harness.Executor.DispatchAsync(
+            harness.Order,
+            CreateCommand(harness.ExchangeAccountId) with
+            {
+                RequestedEnvironment = ExecutionEnvironment.BinanceTestnet,
+                Context = "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=2 | RequestedLeverage=2 | EffectiveLeverage=2 | MaxAllowedLeverage=1 | LeverageSource=Bot | LeveragePolicyDecision=Blocked | LeveragePolicyReason=LeveragePolicyExceeded | LeverageAlignmentSkippedForReduceOnly=False"
+            },
+            CancellationToken.None));
+
+        Assert.Equal("LeveragePolicyExceeded", exception.ReasonCode);
+        Assert.Equal(0, harness.PrivateRestClient.EnsureMarginTypeCalls);
+        Assert.Equal(0, harness.PrivateRestClient.EnsureLeverageCalls);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_FailsClosed_WithStableReason_WhenLeverageAlignmentFails()
+    {
+        await using var harness = await CreateHarnessAsync(
+            privateDataOptions: new BinancePrivateDataOptions
+            {
+                RestBaseUrl = "https://demo-fapi.binance.com",
+                WebSocketBaseUrl = "wss://fstream.binancefuture.com",
+                SpotRestBaseUrl = "https://api.binance.com",
+                SpotWebSocketBaseUrl = "wss://stream.binance.com:9443"
+            },
+            testnetOptions: new BinanceFuturesTestnetOptions
+            {
+                BaseUrl = "https://demo-fapi.binance.com",
+                ApiKey = "testnet-api-key",
+                ApiSecret = "testnet-api-secret"
+            });
+        harness.Order.ExecutionEnvironment = ExecutionEnvironment.BinanceTestnet;
+        harness.Order.ExecutorKind = ExecutionOrderExecutorKind.BinanceTestnet;
+        harness.PrivateRestClient.EnsureLeverageException = new BinanceExchangeRejectedException(
+            "BinanceLeverageConfigurationFailed",
+            "Binance futures leverage request failed for BTCUSDT with requested leverage 1 and HTTP status 400.",
+            "-4003",
+            400);
+
+        var exception = await Assert.ThrowsAsync<BinanceExchangeRejectedException>(() => harness.Executor.DispatchAsync(
+            harness.Order,
+            CreateCommand(harness.ExchangeAccountId) with
+            {
+                RequestedEnvironment = ExecutionEnvironment.BinanceTestnet
+            },
+            CancellationToken.None));
+
+        Assert.Equal("BinanceLeverageConfigurationFailed", exception.FailureCode);
+        Assert.Equal(1, harness.PrivateRestClient.EnsureMarginTypeCalls);
+        Assert.Equal(1, harness.PrivateRestClient.EnsureLeverageCalls);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
     public async Task DispatchAsync_LiveMode_UsesDbBackedCredentialStore()
     {
         await using var harness = await CreateHarnessAsync();
@@ -765,6 +844,7 @@ public sealed class BinanceExecutorTests
         IDependencyCircuitBreakerStateManager? dependencyCircuitBreakerStateManager = null,
         BinancePrivateDataOptions? privateDataOptions = null,
         BinanceFuturesTestnetOptions? testnetOptions = null,
+        BotExecutionPilotOptions? pilotOptions = null,
         FakeExchangeCredentialService? credentialService = null)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -849,7 +929,8 @@ public sealed class BinanceExecutorTests
             resolvedMarketDataService,
             resolvedExchangeInfoClient,
             Options.Create(resolvedPrivateDataOptions),
-            Options.Create(resolvedTestnetOptions));
+            Options.Create(resolvedTestnetOptions),
+            Options.Create(pilotOptions ?? new BotExecutionPilotOptions()));
 
         return new TestHarness(
             dbContext,
@@ -985,6 +1066,8 @@ public sealed class BinanceExecutorTests
 
         public Exception? EnsureMarginTypeException { get; set; }
 
+        public Exception? EnsureLeverageException { get; set; }
+
         public Task EnsureMarginTypeAsync(
             Guid exchangeAccountId,
             string symbol,
@@ -1012,6 +1095,12 @@ public sealed class BinanceExecutorTests
             CancellationToken cancellationToken = default)
         {
             EnsureLeverageCalls++;
+
+            if (EnsureLeverageException is not null)
+            {
+                throw EnsureLeverageException;
+            }
+
             return Task.CompletedTask;
         }
 

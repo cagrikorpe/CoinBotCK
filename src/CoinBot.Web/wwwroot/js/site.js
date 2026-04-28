@@ -116,6 +116,43 @@
         }
     }
 
+    function handleAdminManualCloseTrigger(event) {
+        const trigger = event.target.closest('[data-cb-admin-manual-close-button]');
+        if (!trigger) {
+            return false;
+        }
+
+        const panel = trigger.closest('[data-cb-admin-manual-close-panel]');
+        const form = panel?.querySelector('[data-cb-admin-manual-close-form]');
+        const submitButton = panel?.querySelector('[data-cb-admin-manual-close-confirm]');
+        if (!panel || !form || !submitButton) {
+            return false;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        if (panel.dataset.cbManualCloseSubmitting === 'true') {
+            return true;
+        }
+
+        const symbol = form.querySelector('input[name="symbol"]')?.value?.trim();
+        const message = symbol
+            ? symbol + ' reduce-only close emri gonderilsin mi?'
+            : 'Reduce-only close emri gonderilsin mi?';
+        if (!window.confirm(message)) {
+            return true;
+        }
+
+        panel.dataset.cbManualCloseSubmitting = 'true';
+        if (typeof form.requestSubmit === 'function') {
+            form.requestSubmit(submitButton);
+        } else {
+            submitButton.click();
+        }
+
+        return true;
+    }
+
 
     document.addEventListener('DOMContentLoaded', function () {
         applyStoredState();
@@ -127,6 +164,10 @@
     themeToggle?.addEventListener('click', toggleTheme);
 
     document.addEventListener('click', function (event) {
+        if (handleAdminManualCloseTrigger(event)) {
+            return;
+        }
+
         const drawerTrigger = event.target.closest('[data-cb-drawer-target]');
         const drawerClose = event.target.closest('[data-cb-drawer-close]');
 

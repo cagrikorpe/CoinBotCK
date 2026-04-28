@@ -163,9 +163,13 @@ public sealed record AdminBotOperationSnapshot(
     int OpenOrderCount,
     int OpenPositionCount)
 {
+    public string? Symbol { get; init; }
+
     public bool CanManualClose { get; init; }
 
     public string? ManualCloseSymbol { get; init; }
+
+    public string? ManualCloseExchangeAccountId { get; init; }
 
     public string? ManualClosePositionQuantityLabel { get; init; }
 
@@ -176,6 +180,22 @@ public sealed record AdminBotOperationSnapshot(
     public string? ManualCloseEnvironmentLabel { get; init; }
 
     public string? ManualClosePreviewUnavailableReason { get; init; }
+
+    public string? PositionAdoption { get; init; }
+
+    public string? AdoptedPositionSymbol { get; init; }
+
+    public string? AdoptedPositionQuantity { get; init; }
+
+    public string? AdoptedPositionSide { get; init; }
+
+    public string? AdoptedExchangeAccountId { get; init; }
+
+    public string? AdoptedByBotId { get; init; }
+
+    public string? AdoptionReason { get; init; }
+
+    public bool AutoManagementEnabled { get; init; }
 }
 
 public sealed record AdminBotOperationsPageSnapshot(

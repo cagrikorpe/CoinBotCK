@@ -23,12 +23,59 @@ public sealed partial class AdminWorkspaceReadModelService
         var normalizedStatus = NormalizeOptional(status);
         var normalizedMode = NormalizeOptional(mode);
 
-        var bots = await dbContext.TradingBots
+        var latestBotIds = await dbContext.TradingBots
             .AsNoTracking()
+            .IgnoreQueryFilters()
             .Where(bot => !bot.IsDeleted)
             .OrderByDescending(bot => bot.UpdatedDate)
+            .Select(bot => bot.Id)
             .Take(200)
-            .ToListAsync(cancellationToken);
+            .ToArrayAsync(cancellationToken);
+        var openFuturesPositionBotIds = await dbContext.TradingBots
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Join(
+                dbContext.ExchangePositions
+                    .AsNoTracking()
+                    .IgnoreQueryFilters()
+                    .Where(position =>
+                        position.Plane == ExchangeDataPlane.Futures &&
+                        position.Quantity != 0m &&
+                        !position.IsDeleted),
+                bot => new
+                {
+                    OwnerUserId = bot.OwnerUserId.ToUpper(),
+                    Symbol = bot.Symbol == null ? null : bot.Symbol.ToUpper(),
+                    ExchangeAccountId = bot.ExchangeAccountId
+                },
+                position => new
+                {
+                    OwnerUserId = position.OwnerUserId.ToUpper(),
+                    Symbol = position.Symbol == null ? null : position.Symbol.ToUpper(),
+                    ExchangeAccountId = (Guid?)position.ExchangeAccountId
+                },
+                (bot, position) => new
+                {
+                    bot.Id,
+                    position.UpdatedDate
+                })
+            .Where(entity => entity.UpdatedDate != default)
+            .OrderByDescending(entity => entity.UpdatedDate)
+            .Select(entity => entity.Id)
+            .Distinct()
+            .ToArrayAsync(cancellationToken);
+        var visibleBotIds = latestBotIds
+            .Concat(openFuturesPositionBotIds)
+            .Distinct()
+            .ToArray();
+        var bots = visibleBotIds.Length == 0
+            ? new List<TradingBot>()
+            : await dbContext.TradingBots
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(bot => !bot.IsDeleted && visibleBotIds.Contains(bot.Id))
+                .OrderByDescending(bot => bot.UpdatedDate)
+                .ToListAsync(cancellationToken);
         var users = await dbContext.Users
             .AsNoTracking()
             .ToDictionaryAsync(user => user.Id, user => user, cancellationToken);
@@ -66,6 +113,63 @@ public sealed partial class AdminWorkspaceReadModelService
                 .OrderByDescending(entity => entity.UpdatedDate)
                 .ThenByDescending(entity => entity.CreatedDate)
                 .ToArrayAsync(cancellationToken);
+        var manualCloseExecutionEvidence = exchangeAccountIds.Length == 0
+            ? Array.Empty<ManualCloseExecutionEvidence>()
+            : await dbContext.ExecutionOrders
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.ExchangeAccountId.HasValue &&
+                    exchangeAccountIds.Contains(entity.ExchangeAccountId.Value) &&
+                    normalizedOwnerUserIds.Contains(entity.OwnerUserId.ToUpper()) &&
+                    entity.Plane == ExchangeDataPlane.Futures &&
+                    entity.SubmittedToBroker &&
+                    !entity.IsDeleted)
+                .OrderByDescending(entity => entity.LastStateChangedAtUtc)
+                .ThenByDescending(entity => entity.CreatedDate)
+                .Take(1000)
+                .Select(entity => new ManualCloseExecutionEvidence(
+                    entity.OwnerUserId,
+                    entity.ExchangeAccountId!.Value,
+                    entity.Symbol,
+                    entity.ExecutionEnvironment,
+                    entity.ExecutorKind))
+                .ToArrayAsync(cancellationToken);
+        var exactBotScopeCounts = bots
+            .Select(bot => TryCreateBotOperationsPositionScopeKey(bot.OwnerUserId, bot.ExchangeAccountId, bot.Symbol))
+            .Where(scopeKey => scopeKey is not null)
+            .Select(scopeKey => scopeKey!.Value)
+            .GroupBy(scopeKey => scopeKey)
+            .ToDictionary(group => group.Key, group => group.Count());
+        var openPositionScopes = exchangePositions
+            .Where(entity => !string.IsNullOrWhiteSpace(entity.Symbol))
+            .GroupBy(entity => new BotOperationsPositionScopeKey(
+                entity.OwnerUserId.ToUpperInvariant(),
+                entity.ExchangeAccountId,
+                NormalizeBotOperationsSymbol(entity.Symbol)))
+            .Select(group =>
+            {
+                var latestPosition = group
+                    .OrderByDescending(entity => entity.UpdatedDate)
+                    .ThenByDescending(entity => entity.CreatedDate)
+                    .First();
+
+                return new BotOperationsPositionScopeSnapshot(
+                    group.Key,
+                    latestPosition,
+                    group.Sum(entity => entity.Quantity));
+            })
+            .ToArray();
+        var openPositionScopesByKey = openPositionScopes.ToDictionary(scope => scope.Key);
+        var adoptedOrObservedPositionCount = openPositionScopes.Count(scope =>
+            exactBotScopeCounts.TryGetValue(scope.Key, out var count) &&
+            count == 1);
+        var orphanPositionCount = openPositionScopes.Count(scope =>
+            !exactBotScopeCounts.TryGetValue(scope.Key, out var count) ||
+            count == 0);
+        var ambiguousPositionCount = openPositionScopes.Count(scope =>
+            exactBotScopeCounts.TryGetValue(scope.Key, out var count) &&
+            count > 1);
 
         var rows = bots.Select(bot =>
         {
@@ -84,20 +188,42 @@ public sealed partial class AdminWorkspaceReadModelService
                 ? null
                 : ownerScopedPositions.FirstOrDefault(entity =>
                     string.Equals(entity.Symbol, bot.Symbol, StringComparison.OrdinalIgnoreCase));
-            var openPosition = bot.ExchangeAccountId.HasValue && !string.IsNullOrWhiteSpace(bot.Symbol)
-                ? ownerScopedPositions.FirstOrDefault(entity =>
-                    entity.ExchangeAccountId == bot.ExchangeAccountId.Value &&
-                    string.Equals(entity.Symbol, bot.Symbol, StringComparison.OrdinalIgnoreCase))
+            var positionScopeKey = TryCreateBotOperationsPositionScopeKey(bot.OwnerUserId, bot.ExchangeAccountId, bot.Symbol);
+            var positionScope = positionScopeKey.HasValue &&
+                                openPositionScopesByKey.TryGetValue(positionScopeKey.Value, out var resolvedPositionScope)
+                ? resolvedPositionScope
                 : null;
+            var openPosition = positionScope?.LatestPosition;
+            var botOpenPositionCount = openPosition is null ? 0 : 1;
+            var exactBotScopeCount = positionScopeKey.HasValue &&
+                                     exactBotScopeCounts.TryGetValue(positionScopeKey.Value, out var resolvedExactBotScopeCount)
+                ? resolvedExactBotScopeCount
+                : 0;
+            var resolvedPositionQuantity = positionScope?.NetQuantity ?? openPosition?.Quantity;
+            var positionAdoption = ResolvePositionAdoption(
+                bot,
+                openPosition,
+                ownerSymbolPosition,
+                exactBotScopeCount);
             exchangeAccounts.TryGetValue(bot.ExchangeAccountId ?? Guid.Empty, out var account);
-            var canManualClose = effectiveMode == ExecutionEnvironment.BinanceTestnet &&
+            var hasBinanceTestnetExecutionEvidence = bot.ExchangeAccountId.HasValue &&
+                                                     !string.IsNullOrWhiteSpace(bot.Symbol) &&
+                                                     manualCloseExecutionEvidence.Any(entity =>
+                                                         string.Equals(entity.OwnerUserId, bot.OwnerUserId, StringComparison.OrdinalIgnoreCase) &&
+                                                         entity.ExchangeAccountId == bot.ExchangeAccountId.Value &&
+                                                         string.Equals(entity.Symbol, bot.Symbol, StringComparison.OrdinalIgnoreCase) &&
+                                                         (entity.ExecutionEnvironment == ExecutionEnvironment.BinanceTestnet ||
+                                                          entity.ExecutorKind == ExecutionOrderExecutorKind.BinanceTestnet));
+            var isManualCloseEnvironmentBinanceTestnet = effectiveMode == ExecutionEnvironment.BinanceTestnet ||
+                                                         hasBinanceTestnetExecutionEvidence;
+            var canManualClose = isManualCloseEnvironmentBinanceTestnet &&
                                  openPosition is not null &&
                                  account is not null &&
                                  !account.IsReadOnly &&
                                  account.CredentialStatus == ExchangeCredentialStatus.Active;
             var manualClosePreviewUnavailableReason = ResolveManualClosePreviewUnavailableReason(
                 bot,
-                effectiveMode,
+                isManualCloseEnvironmentBinanceTestnet,
                 openPosition,
                 ownerSymbolPosition,
                 account);
@@ -112,15 +238,19 @@ public sealed partial class AdminWorkspaceReadModelService
                 BuildTradingModeLabel(effectiveMode),
                 BuildTradingModeTone(effectiveMode),
                 bot.StrategyKey,
-                bot.OpenPositionCount > 0 ? "Exposure var" : "Exposure yok",
-                bot.OpenPositionCount > 0 ? "warning" : "neutral",
+                botOpenPositionCount > 0 ? "Exposure var" : "Exposure yok",
+                botOpenPositionCount > 0 ? "warning" : "neutral",
                 bot.IsEnabled ? "Çalışıyor" : "Durduruldu",
                 lastFailure,
                 bot.OpenOrderCount,
-                bot.OpenPositionCount)
+                botOpenPositionCount)
             {
+                Symbol = bot.Symbol,
                 CanManualClose = canManualClose,
                 ManualCloseSymbol = openPosition is null ? null : bot.Symbol ?? openPosition.Symbol,
+                ManualCloseExchangeAccountId = openPosition is null
+                    ? null
+                    : openPosition.ExchangeAccountId.ToString("D"),
                 ManualClosePositionQuantityLabel = openPosition is null
                     ? null
                     : openPosition.Quantity.ToString("0.########", CultureInfo.InvariantCulture),
@@ -130,8 +260,26 @@ public sealed partial class AdminWorkspaceReadModelService
                 ManualCloseSideLabel = openPosition is null
                     ? null
                     : openPosition.Quantity > 0m ? "Sell" : "Buy",
-                ManualCloseEnvironmentLabel = openPosition is null ? null : ExecutionEnvironment.BinanceTestnet.ToString(),
-                ManualClosePreviewUnavailableReason = manualClosePreviewUnavailableReason
+                ManualCloseEnvironmentLabel = openPosition is null || !isManualCloseEnvironmentBinanceTestnet
+                    ? null
+                    : ExecutionEnvironment.BinanceTestnet.ToString(),
+                ManualClosePreviewUnavailableReason = manualClosePreviewUnavailableReason,
+                PositionAdoption = positionAdoption.State,
+                AdoptedPositionSymbol = openPosition is null ? null : bot.Symbol ?? openPosition.Symbol,
+                AdoptedPositionQuantity = openPosition is null || !resolvedPositionQuantity.HasValue
+                    ? null
+                    : resolvedPositionQuantity.Value.ToString("0.########", CultureInfo.InvariantCulture),
+                AdoptedPositionSide = openPosition is null || !resolvedPositionQuantity.HasValue
+                    ? null
+                    : resolvedPositionQuantity.Value > 0m ? "Long" : "Short",
+                AdoptedExchangeAccountId = openPosition is null
+                    ? null
+                    : openPosition.ExchangeAccountId.ToString("D"),
+                AdoptedByBotId = openPosition is null || !string.Equals(positionAdoption.State, "Adopted", StringComparison.OrdinalIgnoreCase)
+                    ? null
+                    : bot.Id.ToString("D"),
+                AdoptionReason = positionAdoption.Reason,
+                AutoManagementEnabled = false
             };
         }).ToArray();
 
@@ -144,6 +292,10 @@ public sealed partial class AdminWorkspaceReadModelService
                           row.StatusLabel.Contains(normalizedStatus, StringComparison.OrdinalIgnoreCase))
             .Where(row => string.IsNullOrWhiteSpace(normalizedMode) ||
                           row.ModeLabel.Contains(normalizedMode, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(row => row.CanManualClose)
+            .ThenByDescending(row => row.OpenPositionCount)
+            .ThenBy(row => row.Symbol ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(row => row.Name, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
         var summaryTiles = new[]
@@ -151,6 +303,9 @@ public sealed partial class AdminWorkspaceReadModelService
             new AdminStatTileSnapshot("Toplam bot", bots.Count.ToString(System.Globalization.CultureInfo.InvariantCulture), "User-owned bots", "info"),
             new AdminStatTileSnapshot("Aktif bot", rows.Count(row => row.StatusTone == "healthy").ToString(System.Globalization.CultureInfo.InvariantCulture), "Running / enabled", "healthy"),
             new AdminStatTileSnapshot("Pozisyonlu bot", rows.Count(row => row.OpenPositionCount > 0).ToString(System.Globalization.CultureInfo.InvariantCulture), "Open exposure", "warning"),
+            new AdminStatTileSnapshot("Adopted/Observed", adoptedOrObservedPositionCount.ToString(System.Globalization.CultureInfo.InvariantCulture), "Restart-visible futures positions", "info"),
+            new AdminStatTileSnapshot("Orphan pozisyon", orphanPositionCount.ToString(System.Globalization.CultureInfo.InvariantCulture), "No exact bot/account/symbol match", orphanPositionCount > 0 ? "warning" : "healthy"),
+            new AdminStatTileSnapshot("Ambiguous pozisyon", ambiguousPositionCount.ToString(System.Globalization.CultureInfo.InvariantCulture), "Multiple bots match same scope", ambiguousPositionCount > 0 ? "critical" : "healthy"),
             new AdminStatTileSnapshot("Hata botu", rows.Count(row => !string.Equals(row.LastError, "No failure", StringComparison.OrdinalIgnoreCase)).ToString(System.Globalization.CultureInfo.InvariantCulture), "Execution failures", "critical")
         };
 
@@ -159,14 +314,14 @@ public sealed partial class AdminWorkspaceReadModelService
 
     private static string? ResolveManualClosePreviewUnavailableReason(
         TradingBot bot,
-        ExecutionEnvironment effectiveMode,
+        bool isBinanceTestnetEnvironment,
         ExchangePosition? openPosition,
         ExchangePosition? ownerSymbolPosition,
         ExchangeAccount? account)
     {
         if (openPosition is not null)
         {
-            if (effectiveMode != ExecutionEnvironment.BinanceTestnet)
+            if (!isBinanceTestnetEnvironment)
             {
                 return "ManualCloseEnvironmentMismatch";
             }
@@ -193,6 +348,75 @@ public sealed partial class AdminWorkspaceReadModelService
             ? "ManualCloseNoOpenPosition"
             : "ManualCloseAccountMismatch";
     }
+
+    private static BotOperationsPositionScopeKey? TryCreateBotOperationsPositionScopeKey(
+        string ownerUserId,
+        Guid? exchangeAccountId,
+        string? symbol)
+    {
+        if (!exchangeAccountId.HasValue ||
+            string.IsNullOrWhiteSpace(ownerUserId) ||
+            string.IsNullOrWhiteSpace(symbol))
+        {
+            return null;
+        }
+
+        return new BotOperationsPositionScopeKey(
+            ownerUserId.ToUpperInvariant(),
+            exchangeAccountId.Value,
+            NormalizeBotOperationsSymbol(symbol));
+    }
+
+    private static BotOperationsPositionAdoption ResolvePositionAdoption(
+        TradingBot bot,
+        ExchangePosition? exactOpenPosition,
+        ExchangePosition? ownerSymbolPosition,
+        int exactBotScopeCount)
+    {
+        if (exactOpenPosition is null)
+        {
+            return ownerSymbolPosition is null
+                ? new BotOperationsPositionAdoption("Skipped", "No exact futures position matched this bot scope.")
+                : new BotOperationsPositionAdoption("Skipped", "A futures position exists for the owner/symbol, but not for this exchange account scope.");
+        }
+
+        if (exactBotScopeCount > 1)
+        {
+            return new BotOperationsPositionAdoption("Ambiguous", "Multiple bots matched the same owner/exchange account/symbol futures scope.");
+        }
+
+        return bot.IsEnabled
+            ? new BotOperationsPositionAdoption("Adopted", "Enabled bot matched the restart-visible futures position scope.")
+            : new BotOperationsPositionAdoption("Observed", "Stopped bot matched the restart-visible futures position scope.");
+    }
+
+    private static string NormalizeBotOperationsSymbol(string symbol)
+    {
+        return string.IsNullOrWhiteSpace(symbol)
+            ? string.Empty
+            : symbol.Trim().ToUpperInvariant();
+    }
+
+    private sealed record ManualCloseExecutionEvidence(
+        string OwnerUserId,
+        Guid ExchangeAccountId,
+        string Symbol,
+        ExecutionEnvironment ExecutionEnvironment,
+        ExecutionOrderExecutorKind ExecutorKind);
+
+    private readonly record struct BotOperationsPositionScopeKey(
+        string OwnerUserId,
+        Guid ExchangeAccountId,
+        string Symbol);
+
+    private sealed record BotOperationsPositionScopeSnapshot(
+        BotOperationsPositionScopeKey Key,
+        ExchangePosition LatestPosition,
+        decimal NetQuantity);
+
+    private sealed record BotOperationsPositionAdoption(
+        string State,
+        string Reason);
 
     public async Task<AdminStrategyAiMonitoringPageSnapshot> GetStrategyAiMonitoringAsync(
         string? query = null,
@@ -1416,6 +1640,7 @@ public sealed partial class AdminWorkspaceReadModelService
     {
         var latestFailures = await dbContext.ExecutionOrders
             .AsNoTracking()
+            .IgnoreQueryFilters()
             .Where(order => !order.IsDeleted && order.FailureCode != null)
             .OrderByDescending(order => order.UpdatedDate)
             .Select(order => new { order.BotId, order.FailureCode, order.FailureDetail })

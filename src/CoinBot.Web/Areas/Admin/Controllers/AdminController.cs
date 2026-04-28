@@ -585,7 +585,9 @@ public sealed class AdminController : Controller
             activeNav: "BotOperations",
             breadcrumbItems: new[] { "Super Admin", "Operasyon", "Bot Operasyonları" });
 
-        ViewData["AdminBotOperationsPageSnapshot"] = await adminWorkspaceReadModelService.GetBotOperationsAsync(query, status, mode, cancellationToken);
+        var snapshot = await adminWorkspaceReadModelService.GetBotOperationsAsync(query, status, mode, cancellationToken);
+        ViewData["AdminBotOperationsPageSnapshot"] = snapshot;
+        ViewData["AdminLastUpdatedAtUtc"] = snapshot.LastRefreshedAtUtc;
         return View();
     }
 
@@ -594,6 +596,8 @@ public sealed class AdminController : Controller
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> ManualCloseBotPosition(
         string? botId,
+        string? exchangeAccountId,
+        string? symbol,
         CancellationToken cancellationToken)
     {
         var mfaResult = await EnforcePlatformAdminMfaAsync(
@@ -621,9 +625,18 @@ public sealed class AdminController : Controller
         }
 
         var actorUserId = ResolveAdminUserId();
+        Guid? parsedExchangeAccountId = null;
+        if (!string.IsNullOrWhiteSpace(exchangeAccountId) &&
+            Guid.TryParse(exchangeAccountId, out var exchangeAccountGuid))
+        {
+            parsedExchangeAccountId = exchangeAccountGuid;
+        }
+
         var result = await adminManualCloseService.CloseAsync(
             new AdminManualCloseRequest(
                 parsedBotId,
+                parsedExchangeAccountId,
+                symbol,
                 actorUserId,
                 ResolveExecutionActor(),
                 HttpContext.TraceIdentifier),

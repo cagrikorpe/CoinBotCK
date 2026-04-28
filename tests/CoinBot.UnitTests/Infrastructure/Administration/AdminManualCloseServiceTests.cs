@@ -33,6 +33,9 @@ public sealed class AdminManualCloseServiceTests
         Assert.Contains("ExitSource=Manual", harness.ExecutionEngine.LastCommand.Context, StringComparison.Ordinal);
         Assert.Contains("ReverseEntryConvertedToCloseOnly=False", harness.ExecutionEngine.LastCommand.Context, StringComparison.Ordinal);
         Assert.Contains("ManualClose=True", harness.ExecutionEngine.LastCommand.Context, StringComparison.Ordinal);
+        Assert.Contains($"ExchangeAccountId={harness.ExchangeAccountId:D}", harness.ExecutionEngine.LastCommand.Context, StringComparison.Ordinal);
+        Assert.Contains("ManualClose=True", result.Summary, StringComparison.Ordinal);
+        Assert.Contains("ExitSource=Manual", result.Summary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -60,6 +63,31 @@ public sealed class AdminManualCloseServiceTests
         Assert.Contains("SignalType=Exit", result.Summary, StringComparison.Ordinal);
         Assert.Contains("ExitSource=Manual", result.Summary, StringComparison.Ordinal);
         Assert.Contains("ReverseEntryConvertedToCloseOnly=False", result.Summary, StringComparison.Ordinal);
+        Assert.Null(harness.ExecutionEngine.LastCommand);
+    }
+
+    [Fact]
+    public async Task ManualClose_MissingExchangeAccountScope_DoesNotDispatch()
+    {
+        await using var harness = await ManualCloseHarness.CreateAsync(positionQuantity: 0.06m);
+
+        var result = await harness.Service.CloseAsync(harness.CreateRequest(omitExchangeAccountId: true));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal("ManualCloseAccountScopeMissing", result.OutcomeCode);
+        Assert.Contains("ExchangeAccountId=missing", result.Summary, StringComparison.Ordinal);
+        Assert.Null(harness.ExecutionEngine.LastCommand);
+    }
+
+    [Fact]
+    public async Task ManualClose_AccountScopeMismatch_DoesNotDispatch()
+    {
+        await using var harness = await ManualCloseHarness.CreateAsync(positionQuantity: 0.06m);
+
+        var result = await harness.Service.CloseAsync(harness.CreateRequest(exchangeAccountId: Guid.NewGuid()));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal("ManualCloseAccountScopeMismatch", result.OutcomeCode);
         Assert.Null(harness.ExecutionEngine.LastCommand);
     }
 
@@ -131,18 +159,69 @@ public sealed class AdminManualCloseServiceTests
         Assert.Null(harness.ExecutionEngine.LastCommand);
     }
 
+    [Fact]
+    public async Task ManualClose_LiveModeWithBinanceTestnetExecutionEvidence_DispatchesReduceOnlyClose()
+    {
+        await using var harness = await ManualCloseHarness.CreateAsync(
+            positionQuantity: 0.14m,
+            effectiveMode: ExecutionEnvironment.Live,
+            seedBrokerBackedTestnetExecutionEvidence: true);
+
+        var result = await harness.Service.CloseAsync(harness.CreateRequest());
+
+        Assert.True(result.IsSuccess);
+        Assert.NotNull(harness.ExecutionEngine.LastCommand);
+        Assert.Equal(ExecutionOrderSide.Sell, harness.ExecutionEngine.LastCommand!.Side);
+        Assert.True(harness.ExecutionEngine.LastCommand.ReduceOnly);
+        Assert.Equal(ExecutionEnvironment.BinanceTestnet, harness.ExecutionEngine.LastCommand.RequestedEnvironment);
+        Assert.Equal(1, harness.ExecutionEngine.DispatchCalls);
+    }
+
+    [Fact]
+    public async Task ManualClose_ExplicitAccountScope_ClosesOnlySelectedAccount_WhenMirroredPositionExists()
+    {
+        await using var harness = await ManualCloseHarness.CreateAsync(
+            positionQuantity: 0.14m,
+            seedMirroredPosition: true);
+
+        var result = await harness.Service.CloseAsync(harness.CreateRequest());
+
+        Assert.True(result.IsSuccess);
+        Assert.NotNull(harness.ExecutionEngine.LastCommand);
+        Assert.Equal(harness.ExchangeAccountId, harness.ExecutionEngine.LastCommand!.ExchangeAccountId);
+        Assert.Equal(ExecutionOrderSide.Sell, harness.ExecutionEngine.LastCommand.Side);
+        Assert.Equal(1, harness.ExecutionEngine.DispatchCalls);
+    }
+
+    [Fact]
+    public async Task ManualClose_DoubleRequest_SubmitsAtMostOnce()
+    {
+        await using var harness = await ManualCloseHarness.CreateAsync(positionQuantity: -0.14m);
+        harness.ExecutionEngine.SuppressDuplicateRequests = true;
+
+        var first = await harness.Service.CloseAsync(harness.CreateRequest());
+        var second = await harness.Service.CloseAsync(harness.CreateRequest());
+
+        Assert.True(first.IsSuccess);
+        Assert.True(second.IsDuplicate);
+        Assert.Equal("ManualCloseSubmitted", second.OutcomeCode);
+        Assert.Equal(1, harness.ExecutionEngine.DispatchCalls);
+    }
+
     private sealed class ManualCloseHarness : IAsyncDisposable
     {
         private ManualCloseHarness(
             ApplicationDbContext dbContext,
             AdminManualCloseService service,
             FakeExecutionEngine executionEngine,
-            Guid botId)
+            Guid botId,
+            Guid exchangeAccountId)
         {
             DbContext = dbContext;
             Service = service;
             ExecutionEngine = executionEngine;
             BotId = botId;
+            ExchangeAccountId = exchangeAccountId;
         }
 
         public ApplicationDbContext DbContext { get; }
@@ -153,9 +232,17 @@ public sealed class AdminManualCloseServiceTests
 
         public Guid BotId { get; }
 
-        public AdminManualCloseRequest CreateRequest()
+        public Guid ExchangeAccountId { get; }
+
+        public AdminManualCloseRequest CreateRequest(Guid? exchangeAccountId = null, string? symbol = "SOLUSDT", bool omitExchangeAccountId = false)
         {
-            return new AdminManualCloseRequest(BotId, "admin-01", "admin:admin-01", "corr-manual-close");
+            return new AdminManualCloseRequest(
+                BotId,
+                omitExchangeAccountId ? null : exchangeAccountId ?? ExchangeAccountId,
+                symbol,
+                "admin-01",
+                "admin:admin-01",
+                "corr-manual-close");
         }
 
         public ValueTask DisposeAsync() => DbContext.DisposeAsync();
@@ -167,7 +254,9 @@ public sealed class AdminManualCloseServiceTests
             bool readOnlyAccount = false,
             bool mismatchedAccountOwner = false,
             ExchangeCredentialStatus credentialStatus = ExchangeCredentialStatus.Active,
-            ExecutionEnvironment effectiveMode = ExecutionEnvironment.BinanceTestnet)
+            ExecutionEnvironment effectiveMode = ExecutionEnvironment.BinanceTestnet,
+            bool seedBrokerBackedTestnetExecutionEvidence = false,
+            bool seedMirroredPosition = false)
         {
             var options = new DbContextOptionsBuilder<ApplicationDbContext>()
                 .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
@@ -243,6 +332,61 @@ public sealed class AdminManualCloseServiceTests
                 });
             }
 
+            if (seedMirroredPosition)
+            {
+                dbContext.ExchangePositions.Add(new ExchangePosition
+                {
+                    Id = Guid.NewGuid(),
+                    OwnerUserId = "mirror-user",
+                    ExchangeAccountId = Guid.NewGuid(),
+                    Plane = ExchangeDataPlane.Futures,
+                    Symbol = "SOLUSDT",
+                    PositionSide = "BOTH",
+                    Quantity = -0.22m,
+                    EntryPrice = 88m,
+                    BreakEvenPrice = 88m,
+                    ExchangeUpdatedAtUtc = now,
+                    SyncedAtUtc = now,
+                    CreatedDate = now,
+                    UpdatedDate = now
+                });
+            }
+
+            if (seedBrokerBackedTestnetExecutionEvidence)
+            {
+                dbContext.ExecutionOrders.Add(new ExecutionOrder
+                {
+                    Id = Guid.NewGuid(),
+                    OwnerUserId = "user-1",
+                    TradingStrategyId = Guid.NewGuid(),
+                    TradingStrategyVersionId = Guid.NewGuid(),
+                    StrategySignalId = Guid.NewGuid(),
+                    SignalType = StrategySignalType.Entry,
+                    BotId = botId,
+                    ExchangeAccountId = exchangeAccountId,
+                    Plane = ExchangeDataPlane.Futures,
+                    StrategyKey = "manual-close",
+                    Symbol = "SOLUSDT",
+                    Timeframe = "1m",
+                    BaseAsset = "SOL",
+                    QuoteAsset = "USDT",
+                    Side = ExecutionOrderSide.Buy,
+                    OrderType = ExecutionOrderType.Market,
+                    Quantity = Math.Abs(positionQuantity),
+                    Price = 100m,
+                    ReduceOnly = false,
+                    ExecutionEnvironment = ExecutionEnvironment.BinanceTestnet,
+                    ExecutorKind = ExecutionOrderExecutorKind.BinanceTestnet,
+                    State = ExecutionOrderState.Filled,
+                    SubmittedToBroker = true,
+                    SubmittedAtUtc = now,
+                    IdempotencyKey = $"seed-manual-close-{Guid.NewGuid():N}",
+                    RootCorrelationId = "seed-manual-close-corr",
+                    ExternalOrderId = "seed-manual-close-ext",
+                    LastStateChangedAtUtc = now
+                });
+            }
+
             await dbContext.SaveChangesAsync();
 
             var executionEngine = new FakeExecutionEngine();
@@ -257,68 +401,83 @@ public sealed class AdminManualCloseServiceTests
                 }),
                 new FixedTimeProvider(now));
 
-            return new ManualCloseHarness(dbContext, service, executionEngine, botId);
+            return new ManualCloseHarness(dbContext, service, executionEngine, botId, exchangeAccountId);
         }
     }
 
     private sealed class FakeExecutionEngine : IExecutionEngine
     {
+        private readonly Dictionary<string, ExecutionOrderSnapshot> snapshotsByIdempotencyKey = new(StringComparer.Ordinal);
+
         public ExecutionCommand? LastCommand { get; private set; }
+
+        public int DispatchCalls { get; private set; }
+
+        public bool SuppressDuplicateRequests { get; set; }
 
         public Task<ExecutionDispatchResult> DispatchAsync(ExecutionCommand command, CancellationToken cancellationToken = default)
         {
             LastCommand = command;
-            return Task.FromResult(
-                new ExecutionDispatchResult(
-                    new ExecutionOrderSnapshot(
-                        Guid.NewGuid(),
-                        command.TradingStrategyId,
-                        command.TradingStrategyVersionId,
-                        command.StrategySignalId,
-                        command.SignalType,
-                        command.BotId,
-                        command.ExchangeAccountId,
-                        command.StrategyKey,
-                        command.Symbol,
-                        command.Timeframe,
-                        command.BaseAsset,
-                        command.QuoteAsset,
-                        command.Side,
-                        command.OrderType,
-                        command.Quantity,
-                        command.Price,
-                        0m,
-                        null,
-                        null,
-                        null,
-                        null,
-                        true,
-                        null,
-                        ExecutionEnvironment.BinanceTestnet,
-                        ExecutionOrderExecutorKind.BinanceTestnet,
-                        ExecutionOrderState.Submitted,
-                        "manual-close",
-                        "corr-manual-close",
-                        null,
-                        "ext-1",
-                        null,
-                        null,
-                        ExecutionRejectionStage.None,
-                        true,
-                        false,
-                        false,
-                        false,
-                        false,
-                        false,
-                        null,
-                        DateTime.UtcNow,
-                        null,
-                        ExchangeStateDriftStatus.Unknown,
-                        null,
-                        null,
-                        DateTime.UtcNow,
-                        Array.Empty<ExecutionOrderTransitionSnapshot>()),
-                    false));
+            var idempotencyKey = command.IdempotencyKey ?? Guid.NewGuid().ToString("N");
+
+            if (SuppressDuplicateRequests &&
+                snapshotsByIdempotencyKey.TryGetValue(idempotencyKey, out var existingSnapshot))
+            {
+                return Task.FromResult(new ExecutionDispatchResult(existingSnapshot, true));
+            }
+
+            DispatchCalls++;
+            var snapshot = new ExecutionOrderSnapshot(
+                Guid.NewGuid(),
+                command.TradingStrategyId,
+                command.TradingStrategyVersionId,
+                command.StrategySignalId,
+                command.SignalType,
+                command.BotId,
+                command.ExchangeAccountId,
+                command.StrategyKey,
+                command.Symbol,
+                command.Timeframe,
+                command.BaseAsset,
+                command.QuoteAsset,
+                command.Side,
+                command.OrderType,
+                command.Quantity,
+                command.Price,
+                0m,
+                null,
+                null,
+                null,
+                null,
+                true,
+                null,
+                ExecutionEnvironment.BinanceTestnet,
+                ExecutionOrderExecutorKind.BinanceTestnet,
+                ExecutionOrderState.Submitted,
+                idempotencyKey,
+                "corr-manual-close",
+                null,
+                "ext-1",
+                null,
+                null,
+                ExecutionRejectionStage.None,
+                true,
+                false,
+                false,
+                false,
+                false,
+                false,
+                null,
+                DateTime.UtcNow,
+                null,
+                ExchangeStateDriftStatus.Unknown,
+                null,
+                null,
+                DateTime.UtcNow,
+                Array.Empty<ExecutionOrderTransitionSnapshot>());
+            snapshotsByIdempotencyKey[idempotencyKey] = snapshot;
+
+            return Task.FromResult(new ExecutionDispatchResult(snapshot, false));
         }
     }
 

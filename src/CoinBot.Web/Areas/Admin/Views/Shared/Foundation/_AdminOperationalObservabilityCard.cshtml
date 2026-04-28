@@ -12,6 +12,8 @@
         .ThenBy(item => item.ReasonCode, StringComparer.Ordinal)
         .ToArray();
     var exitPnl = operational.ExitPnlEvidence ?? OperationalExitPnlEvidenceSnapshot.Empty();
+    var pilotConfig = operational.PilotConfigEvidence ?? OperationalPilotConfigEvidenceSnapshot.Empty();
+    var privateSync = operational.PrivateSyncEvidence ?? OperationalPrivateSyncEvidenceSnapshot.Empty();
     var criticalWarnings = operational.CriticalWarnings
         .ToArray();
 
@@ -73,6 +75,41 @@
                 <div class="cb-admin-info-strip-text" data-cb-ops-worker-heartbeat-summary>@operational.WorkerHeartbeatSummary</div>
             </div>
             <span class="cb-admin-info-strip-meta">Bounded</span>
+        </div>
+
+        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4" data-cb-ops-pilot-config>
+            <div>
+                <div class="cb-admin-info-strip-title">Pilot config</div>
+                <div class="cb-admin-info-strip-text" data-cb-ops-pilot-config-summary>
+                    AutoManageAdoptedPositions=@pilotConfig.AutoManageAdoptedPositions · Dispatch=@pilotConfig.ExecutionDispatchMode · Symbols @pilotConfig.AllowedSymbolCount (@pilotConfig.AllowedSymbolsSummary)
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-ops-pilot-config-scope>
+                    Allowed bot ids @pilotConfig.AllowedBotIdCount · Allowed user ids @pilotConfig.AllowedUserIdCount · Allowed exchange accounts @(pilotConfig.AllowedExchangeAccountIdCount?.ToString() ?? "n/a")
+                </div>
+            </div>
+            <span class="cb-admin-info-strip-meta">Effective</span>
+        </div>
+
+        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4" data-cb-ops-private-sync>
+            <div>
+                <div class="cb-admin-info-strip-title">Private sync</div>
+                <div class="cb-admin-info-strip-text" data-cb-ops-private-sync-summary>
+                    State=@privateSync.State · Account=@(privateSync.ExchangeAccountId ?? "n/a") · Plane=@privateSync.Plane · Stream=@privateSync.PrivateStreamConnectionState · Drift=@privateSync.DriftStatus · AgeSec=@(privateSync.SyncAgeSeconds?.ToString() ?? "n/a")
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-ops-private-sync-drift>
+                    Balance mismatches @((privateSync.BalanceMismatches?.ToString() ?? "n/a")) · Position mismatches @((privateSync.PositionMismatches?.ToString() ?? "n/a")) · Snapshot source @privateSync.SnapshotSource
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-ops-private-sync-timestamps>
+                    Last balance sync @(privateSync.LastBalanceSyncedAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "n/a") · Last position sync @(privateSync.LastPositionSyncedAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "n/a") · Reconciled @(privateSync.LastStateReconciledAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "n/a")
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-ops-private-sync-health>
+                    Drift summary @privateSync.DriftSummary · Last drift @(privateSync.LastDriftDetectedAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "n/a") · Consecutive failures @privateSync.ConsecutiveStreamFailureCount · Last error @(privateSync.LastErrorCode ?? "none")
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-ops-private-sync-safety>
+                    Updated @(privateSync.UpdatedDate?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "n/a") · Inactive blocked credential accounts @privateSync.InactiveBlockedCredentialAccountCount · PrivatePlaneStale rejects @privateSync.PrivatePlaneStaleRejectCount
+                </div>
+            </div>
+            <span class="cb-admin-info-strip-meta">Futures</span>
         </div>
 
         <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4" data-cb-ops-scanner-summary>

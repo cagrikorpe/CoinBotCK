@@ -398,6 +398,8 @@ public sealed class AdminControllerTests
     [Fact]
     public async Task ManualCloseBotPosition_RedirectsWithSuccess_WhenServiceSubmitsReduceOnlyClose()
     {
+        var botId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
         var manualCloseService = new FakeAdminManualCloseService
         {
             Result = new AdminManualCloseResult(
@@ -412,18 +414,24 @@ public sealed class AdminControllerTests
             auditLogService: auditLogService,
             adminManualCloseService: manualCloseService);
 
-        var result = await controller.ManualCloseBotPosition(Guid.NewGuid().ToString(), CancellationToken.None);
+        var result = await controller.ManualCloseBotPosition(botId.ToString(), exchangeAccountId.ToString(), "SOLUSDT", CancellationToken.None);
 
         var redirect = Assert.IsType<RedirectToActionResult>(result);
         Assert.Equal(nameof(AdminController.BotOperations), redirect.ActionName);
         Assert.Equal("Reduce-only manual close emri gonderildi.", controller.TempData["AdminBotOperationsSuccess"]);
-        Assert.Single(manualCloseService.Requests);
-        Assert.Single(auditLogService.Requests);
+        var request = Assert.Single(manualCloseService.Requests);
+        Assert.Equal(botId, request.BotId);
+        Assert.Equal(exchangeAccountId, request.ExchangeAccountId);
+        Assert.Equal("SOLUSDT", request.Symbol);
+        var audit = Assert.Single(auditLogService.Requests);
+        Assert.Equal("Admin.BotOperations.ManualClose", audit.ActionType);
     }
 
     [Fact]
     public async Task ManualCloseBotPosition_RedirectsWithError_WhenServiceBlocks()
     {
+        var botId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
         var manualCloseService = new FakeAdminManualCloseService
         {
             Result = new AdminManualCloseResult(
@@ -432,16 +440,89 @@ public sealed class AdminControllerTests
                 "ManualClose=True | ExecutionIntent=ManualExitCloseOnly | ReasonCode=ManualCloseBlockedPrivatePlaneStale",
                 "Private plane stale oldugu icin manuel close bloklandi.")
         };
+        var auditLogService = new FakeAdminAuditLogService();
         var controller = CreateController(
             new FakeGlobalExecutionSwitchService(),
+            auditLogService: auditLogService,
             adminManualCloseService: manualCloseService);
 
-        var result = await controller.ManualCloseBotPosition(Guid.NewGuid().ToString(), CancellationToken.None);
+        var result = await controller.ManualCloseBotPosition(botId.ToString(), exchangeAccountId.ToString(), "SOLUSDT", CancellationToken.None);
 
         var redirect = Assert.IsType<RedirectToActionResult>(result);
         Assert.Equal(nameof(AdminController.BotOperations), redirect.ActionName);
         Assert.Equal("Private plane stale oldugu icin manuel close bloklandi.", controller.TempData["AdminBotOperationsError"]);
-        Assert.Single(manualCloseService.Requests);
+        var request = Assert.Single(manualCloseService.Requests);
+        Assert.Equal(botId, request.BotId);
+        Assert.Equal(exchangeAccountId, request.ExchangeAccountId);
+        Assert.Equal("SOLUSDT", request.Symbol);
+        var audit = Assert.Single(auditLogService.Requests);
+        Assert.Equal("Admin.BotOperations.ManualCloseBlocked", audit.ActionType);
+    }
+
+    [Fact]
+    public async Task BotOperations_ReturnsMatchingOpenPositionBot_FromWorkspaceSnapshot()
+    {
+        var now = new DateTime(2026, 4, 28, 8, 30, 0, DateTimeKind.Utc);
+        var exchangeAccountId = Guid.NewGuid();
+        var workspaceService = new FakeAdminWorkspaceReadModelService
+        {
+            BotOperationsSnapshot = new AdminBotOperationsPageSnapshot(
+                null,
+                null,
+                null,
+                Array.Empty<AdminStatTileSnapshot>(),
+                [
+                    new AdminBotOperationSnapshot(
+                        "474A064C-6EF8-4E8A-82C7-7F150D8BBAD2",
+                        "scope-test-sol-03",
+                        "5a8675cf-cbcb-4c28-82fb-304aee442895",
+                        "Scope SOL User",
+                        "Aktif",
+                        "healthy",
+                        "Demo",
+                        "neutral",
+                        "scope-test-sol",
+                        "Exposure var",
+                        "warning",
+                        "Çalışıyor",
+                        "No failure",
+                        0,
+                        1)
+                    {
+                        CanManualClose = true,
+                        ManualCloseSymbol = "SOLUSDT",
+                        ManualCloseExchangeAccountId = exchangeAccountId.ToString("D"),
+                        ManualClosePositionQuantityLabel = "0.14",
+                        ManualClosePositionDirectionLabel = "Long",
+                        ManualCloseSideLabel = "Sell",
+                        ManualCloseEnvironmentLabel = "BinanceTestnet",
+                        PositionAdoption = "Adopted",
+                        AdoptedPositionSymbol = "SOLUSDT",
+                        AdoptedPositionQuantity = "0.14",
+                        AdoptedPositionSide = "Long",
+                        AdoptedExchangeAccountId = exchangeAccountId.ToString("D"),
+                        AdoptionReason = "Enabled bot matched the restart-visible futures position scope.",
+                        AutoManagementEnabled = false
+                    }
+                ],
+                now)
+        };
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            workspaceReadModelService: workspaceService);
+
+        var result = await controller.BotOperations(null, null, null, CancellationToken.None);
+
+        var view = Assert.IsType<ViewResult>(result);
+        var snapshot = Assert.IsType<AdminBotOperationsPageSnapshot>(controller.ViewData["AdminBotOperationsPageSnapshot"]);
+        var row = Assert.Single(snapshot.Bots);
+        Assert.Equal(now, Assert.IsType<DateTime>(controller.ViewData["AdminLastUpdatedAtUtc"]));
+        Assert.Equal("scope-test-sol-03", row.Name);
+        Assert.Equal("SOLUSDT", row.ManualCloseSymbol);
+        Assert.Equal(exchangeAccountId.ToString("D"), row.ManualCloseExchangeAccountId);
+        Assert.True(row.CanManualClose);
+        Assert.Equal("Adopted", row.PositionAdoption);
+        Assert.Equal("SOLUSDT", row.AdoptedPositionSymbol);
     }
 
     [Fact]

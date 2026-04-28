@@ -36,7 +36,10 @@
         : environmentLabel == "DEGRADED"
             ? "degraded"
             : "warning";
-    var lastUpdatedAtUtc = healthSnapshot?.LastUpdatedAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss");
+    DateTime? pageLastUpdatedAtUtc = ViewData["AdminLastUpdatedAtUtc"] is DateTime value
+        ? value
+        : null;
+    var lastUpdatedAtUtc = (pageLastUpdatedAtUtc ?? healthSnapshot?.LastUpdatedAtUtc)?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss");
     var stateLabel = healthSnapshot?.SystemState.ToString() ?? "Active";
 }
 <div id="kt_header" class="header header-fixed cb-shell-header cb-admin-header">

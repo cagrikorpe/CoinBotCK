@@ -7,6 +7,7 @@ using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Administration;
 using CoinBot.Infrastructure.Execution;
+using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -875,7 +876,7 @@ public sealed class AdminMonitoringReadModelServiceTests
             new MemoryCache(new MemoryCacheOptions()),
             new FixedTimeProvider(now),
             Options.Create(new DataLatencyGuardOptions()),
-            cacheCollector);
+            sharedMarketDataCacheObservabilityCollector: cacheCollector);
 
         var snapshot = await service.GetSnapshotAsync();
 
@@ -1214,6 +1215,222 @@ public sealed class AdminMonitoringReadModelServiceTests
     }
 
     [Fact]
+    public async Task AdminDashboardReadModel_ProjectsPilotConfigAndPrivateSyncEvidence()
+    {
+        var now = new DateTime(2026, 4, 29, 9, 15, 0, DateTimeKind.Utc);
+        var botId = Guid.NewGuid();
+        var activeAccountId = Guid.Parse("8F61C0E3-D082-4F28-4080-08DE97E95FBB");
+        await using var dbContext = CreateDbContext();
+
+        dbContext.TradingBots.Add(new TradingBot
+        {
+            Id = botId,
+            OwnerUserId = "pilot-owner",
+            ExchangeAccountId = activeAccountId,
+            Name = "scope-test-sol-03",
+            StrategyKey = "pilot-core",
+            Symbol = "SOLUSDT",
+            IsEnabled = true,
+            CreatedDate = now.AddDays(-1),
+            UpdatedDate = now.AddHours(-2)
+        });
+        dbContext.ExchangePositions.Add(new ExchangePosition
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "pilot-owner",
+            ExchangeAccountId = activeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "SOLUSDT",
+            PositionSide = "Long",
+            Quantity = 0.14m,
+            EntryPrice = 83.89m,
+            BreakEvenPrice = 83.923556m,
+            UnrealizedProfit = 0.12m,
+            MarginType = "isolated",
+            ExchangeUpdatedAtUtc = now.AddSeconds(-20),
+            SyncedAtUtc = now.AddSeconds(-15),
+            CreatedDate = now.AddMinutes(-5),
+            UpdatedDate = now.AddSeconds(-10)
+        });
+        dbContext.ExchangeAccountSyncStates.AddRange(
+            new ExchangeAccountSyncState
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = "pilot-owner",
+                ExchangeAccountId = activeAccountId,
+                Plane = ExchangeDataPlane.Futures,
+                PrivateStreamConnectionState = ExchangePrivateStreamConnectionState.Connected,
+                DriftStatus = ExchangeStateDriftStatus.InSync,
+                DriftSummary = "BalanceMismatches=0; PositionMismatches=0; SnapshotSource=Binance.PrivateRest.Account+PositionRisk",
+                LastDriftDetectedAtUtc = now.AddMinutes(-1),
+                LastBalanceSyncedAtUtc = now.AddSeconds(-25),
+                LastPositionSyncedAtUtc = now.AddSeconds(-20),
+                LastStateReconciledAtUtc = now.AddSeconds(-10),
+                ConsecutiveStreamFailureCount = 0,
+                LastErrorCode = null,
+                CreatedDate = now.AddMinutes(-2),
+                UpdatedDate = now.AddSeconds(-5)
+            },
+            new ExchangeAccountSyncState
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = "inactive-owner",
+                ExchangeAccountId = Guid.NewGuid(),
+                Plane = ExchangeDataPlane.Futures,
+                PrivateStreamConnectionState = ExchangePrivateStreamConnectionState.Disconnected,
+                DriftStatus = ExchangeStateDriftStatus.Unknown,
+                DriftSummary = "malformed",
+                LastErrorCode = "CredentialAccessBlocked",
+                CreatedDate = now.AddMinutes(-3),
+                UpdatedDate = now.AddMinutes(-1)
+            });
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "pilot-owner",
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Exit,
+            BotId = botId,
+            ExchangeAccountId = activeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            StrategyKey = "pilot-core",
+            Symbol = "SOLUSDT",
+            Timeframe = "1m",
+            BaseAsset = "SOL",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Sell,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.14m,
+            Price = 83.80m,
+            ReduceOnly = true,
+            ExecutionEnvironment = ExecutionEnvironment.BinanceTestnet,
+            ExecutorKind = ExecutionOrderExecutorKind.BinanceTestnet,
+            State = ExecutionOrderState.Rejected,
+            IdempotencyKey = "pilot-private-plane-stale",
+            RootCorrelationId = "corr-private-plane-stale",
+            FailureCode = "PrivatePlaneStale",
+            FailureDetail = "Private plane stale.",
+            RejectionStage = ExecutionRejectionStage.PreSubmit,
+            SubmittedToBroker = false,
+            LastStateChangedAtUtc = now.AddMinutes(-5),
+            CreatedDate = now.AddMinutes(-5),
+            UpdatedDate = now.AddMinutes(-5)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            new FixedTimeProvider(now),
+            Options.Create(new DataLatencyGuardOptions()),
+            Options.Create(new BotExecutionPilotOptions
+            {
+                AutoManageAdoptedPositions = true,
+                ExecutionDispatchMode = ExecutionEnvironment.BinanceTestnet,
+                AllowedSymbols = ["SOLUSDT"],
+                AllowedBotIds = [botId.ToString("D")],
+                AllowedUserIds = ["pilot-owner"]
+            }));
+
+        var snapshot = await service.GetSnapshotAsync();
+        var pilotConfig = snapshot.OperationalObservability.PilotConfigEvidence;
+        var privateSync = snapshot.OperationalObservability.PrivateSyncEvidence;
+
+        Assert.True(pilotConfig.AutoManageAdoptedPositions);
+        Assert.Equal("BinanceTestnet", pilotConfig.ExecutionDispatchMode);
+        Assert.Equal(1, pilotConfig.AllowedSymbolCount);
+        Assert.Equal("SOLUSDT", pilotConfig.AllowedSymbolsSummary);
+        Assert.Equal(1, pilotConfig.AllowedBotIdCount);
+        Assert.Equal(1, pilotConfig.AllowedUserIdCount);
+        Assert.Null(pilotConfig.AllowedExchangeAccountIdCount);
+
+        Assert.Equal("Healthy", privateSync.State);
+        Assert.Equal(activeAccountId.ToString("D"), privateSync.ExchangeAccountId);
+        Assert.Equal("Futures", privateSync.Plane);
+        Assert.Equal("Connected", privateSync.PrivateStreamConnectionState);
+        Assert.Equal("InSync", privateSync.DriftStatus);
+        Assert.Equal(0, privateSync.BalanceMismatches);
+        Assert.Equal(0, privateSync.PositionMismatches);
+        Assert.Equal("Binance.PrivateRest.Account+PositionRisk", privateSync.SnapshotSource);
+        Assert.Equal(10, privateSync.SyncAgeSeconds);
+        Assert.Equal(1, privateSync.InactiveBlockedCredentialAccountCount);
+        Assert.Equal(1, privateSync.PrivatePlaneStaleRejectCount);
+    }
+
+    [Fact]
+    public async Task AdminDashboardReadModel_DriftSummaryParser_IsSafeForMalformedValues()
+    {
+        var now = new DateTime(2026, 4, 29, 9, 30, 0, DateTimeKind.Utc);
+        var botId = Guid.NewGuid();
+        var accountId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext();
+
+        dbContext.TradingBots.Add(new TradingBot
+        {
+            Id = botId,
+            OwnerUserId = "pilot-owner",
+            ExchangeAccountId = accountId,
+            Name = "pilot-bot",
+            StrategyKey = "pilot-core",
+            Symbol = "SOLUSDT",
+            IsEnabled = true,
+            CreatedDate = now.AddDays(-1),
+            UpdatedDate = now.AddMinutes(-20)
+        });
+        dbContext.ExchangePositions.Add(new ExchangePosition
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "pilot-owner",
+            ExchangeAccountId = accountId,
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "SOLUSDT",
+            PositionSide = "Short",
+            Quantity = -0.14m,
+            EntryPrice = 83.89m,
+            BreakEvenPrice = 83.923556m,
+            UnrealizedProfit = -0.12m,
+            MarginType = "isolated",
+            ExchangeUpdatedAtUtc = now.AddSeconds(-20),
+            SyncedAtUtc = now.AddSeconds(-15),
+            CreatedDate = now.AddMinutes(-5),
+            UpdatedDate = now.AddSeconds(-10)
+        });
+        dbContext.ExchangeAccountSyncStates.Add(new ExchangeAccountSyncState
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "pilot-owner",
+            ExchangeAccountId = accountId,
+            Plane = ExchangeDataPlane.Futures,
+            PrivateStreamConnectionState = ExchangePrivateStreamConnectionState.Connected,
+            DriftStatus = ExchangeStateDriftStatus.InSync,
+            DriftSummary = "not-a-kv-summary",
+            CreatedDate = now.AddMinutes(-1),
+            UpdatedDate = now.AddSeconds(-5)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            new FixedTimeProvider(now),
+            Options.Create(new DataLatencyGuardOptions()),
+            Options.Create(new BotExecutionPilotOptions
+            {
+                AllowedSymbols = ["SOLUSDT"]
+            }));
+
+        var snapshot = await service.GetSnapshotAsync();
+        var privateSync = snapshot.OperationalObservability.PrivateSyncEvidence;
+
+        Assert.Equal("n/a", privateSync.SnapshotSource);
+        Assert.Null(privateSync.BalanceMismatches);
+        Assert.Null(privateSync.PositionMismatches);
+        Assert.Equal("not-a-kv-summary", privateSync.DriftSummary);
+    }
+
+    [Fact]
     public async Task AdminDashboardReadModel_UsesEmptyExitPnlEvidence_WhenNoExitTokensExist()
     {
         var now = new DateTime(2026, 4, 27, 12, 0, 0, DateTimeKind.Utc);
@@ -1292,6 +1509,9 @@ public sealed class AdminMonitoringReadModelServiceTests
             snapshot.OperationalObservability.AiShadowOutcomeCoverageSummary,
             snapshot.OperationalObservability.JanitorSummary,
             snapshot.OperationalObservability.ExportSummary,
+            snapshot.OperationalObservability.PilotConfigEvidence.AllowedSymbolsSummary,
+            snapshot.OperationalObservability.PrivateSyncEvidence.Summary,
+            snapshot.OperationalObservability.PrivateSyncEvidence.DriftSummary,
             string.Join(" | ", snapshot.OperationalObservability.NoSubmitReasons.Select(item => item.ReasonCode)),
             string.Join(" | ", snapshot.OperationalObservability.BlockedReasons.Select(item => item.ReasonCode)),
             string.Join(" | ", snapshot.OperationalObservability.CriticalWarnings.Select(item => item.Summary)));

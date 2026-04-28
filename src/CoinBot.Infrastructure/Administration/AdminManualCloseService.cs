@@ -28,6 +28,10 @@ public sealed class AdminManualCloseService(
     private const string ManualCloseCredentialUnavailableCode = "ManualCloseCredentialUnavailable";
     private const string ManualCloseReadOnlyAccountCode = "ManualCloseReadOnlyAccount";
     private const string ManualCloseOwnershipMismatchCode = "ManualCloseOwnershipMismatch";
+    private const string ManualCloseAccountScopeMissingCode = "ManualCloseAccountScopeMissing";
+    private const string ManualCloseAccountScopeMismatchCode = "ManualCloseAccountScopeMismatch";
+    private const string ManualCloseSymbolScopeMissingCode = "ManualCloseSymbolScopeMissing";
+    private const string ManualCloseSymbolScopeMismatchCode = "ManualCloseSymbolScopeMismatch";
     private const string ManualCloseEnvironmentInvalidCode = "ManualCloseEnvironmentInvalid";
     private const string ManualCloseBotMissingCode = "ManualCloseBotNotFound";
     private const string ManualCloseBotConfigurationInvalidCode = "ManualCloseBotConfigurationInvalid";
@@ -56,6 +60,7 @@ public sealed class AdminManualCloseService(
         NormalizeRequired(request.ActorUserId, nameof(request.ActorUserId), 450);
         var normalizedExecutionActor = NormalizeRequired(request.ExecutionActor, nameof(request.ExecutionActor), 256);
         var normalizedCorrelationId = NormalizeOptional(request.CorrelationId, 128);
+        var normalizedRequestedSymbol = NormalizeOptional(request.Symbol, 64)?.ToUpperInvariant();
         var bot = await dbContext.TradingBots
             .IgnoreQueryFilters()
             .AsNoTracking()
@@ -72,7 +77,7 @@ public sealed class AdminManualCloseService(
                 "Bot bulunamadi.");
         }
 
-        if (bot.ExchangeAccountId is not Guid exchangeAccountId ||
+        if (bot.ExchangeAccountId is not Guid configuredExchangeAccountId ||
             string.IsNullOrWhiteSpace(bot.Symbol))
         {
             return Fail(
@@ -81,18 +86,72 @@ public sealed class AdminManualCloseService(
                 "Bot icin exchange hesabi veya sembol tanimli degil.");
         }
 
+        if (!request.ExchangeAccountId.HasValue || request.ExchangeAccountId.Value == Guid.Empty)
+        {
+            return Fail(
+                ManualCloseAccountScopeMissingCode,
+                BuildBlockedSummary(
+                    ManualCloseAccountScopeMissingCode,
+                    exchangeAccountId: null,
+                    symbol: normalizedRequestedSymbol ?? bot.Symbol),
+                "Exchange hesap scope'u belirtilmeden manuel close yapilamaz.");
+        }
+
+        var exchangeAccountId = request.ExchangeAccountId.Value;
+        var normalizedBotSymbol = bot.Symbol.Trim().ToUpperInvariant();
+
+        if (normalizedRequestedSymbol is null)
+        {
+            return Fail(
+                ManualCloseSymbolScopeMissingCode,
+                BuildBlockedSummary(
+                    ManualCloseSymbolScopeMissingCode,
+                    exchangeAccountId,
+                    normalizedBotSymbol),
+                "Sembol scope'u belirtilmeden manuel close yapilamaz.");
+        }
+
+        if (configuredExchangeAccountId != exchangeAccountId)
+        {
+            return Fail(
+                ManualCloseAccountScopeMismatchCode,
+                BuildBlockedSummary(
+                    ManualCloseAccountScopeMismatchCode,
+                    exchangeAccountId,
+                    normalizedRequestedSymbol),
+                "Secilen exchange hesap scope'u bot ile eslesmiyor.");
+        }
+
+        if (!string.Equals(normalizedBotSymbol, normalizedRequestedSymbol, StringComparison.OrdinalIgnoreCase))
+        {
+            return Fail(
+                ManualCloseSymbolScopeMismatchCode,
+                BuildBlockedSummary(
+                    ManualCloseSymbolScopeMismatchCode,
+                    exchangeAccountId,
+                    normalizedRequestedSymbol),
+                "Secilen sembol bot ile eslesmiyor.");
+        }
+
         var resolvedMode = await tradingModeResolver.ResolveAsync(
             new TradingModeResolutionRequest(
                 bot.OwnerUserId,
                 bot.Id,
                 bot.StrategyKey),
             cancellationToken);
+        var latestBrokerBackedEnvironment = await ResolveLatestBrokerBackedEnvironmentAsync(
+            bot.OwnerUserId,
+            exchangeAccountId,
+            normalizedBotSymbol,
+            cancellationToken);
+        var isBinanceTestnetScope = resolvedMode.EffectiveMode == ExecutionEnvironment.BinanceTestnet ||
+                                    latestBrokerBackedEnvironment == ExecutionEnvironment.BinanceTestnet;
 
-        if (resolvedMode.EffectiveMode != ExecutionEnvironment.BinanceTestnet)
+        if (!isBinanceTestnetScope)
         {
             return Fail(
                 ManualCloseEnvironmentInvalidCode,
-                $"Manual close blocked because the effective environment is {resolvedMode.EffectiveMode}, not BinanceTestnet.",
+                $"Manual close blocked because the effective environment is {resolvedMode.EffectiveMode} and no BinanceTestnet broker-backed execution evidence was found for the open futures position scope.",
                 "Manual close yalnizca BinanceTestnet icin kullanilabilir.");
         }
 
@@ -152,7 +211,7 @@ public sealed class AdminManualCloseService(
         {
             return Fail(
                 ManualClosePrivatePlaneStaleCode,
-                BuildPrivatePlaneStaleSummary(syncState),
+                BuildPrivatePlaneStaleSummary(syncState, exchangeAccountId, normalizedBotSymbol),
                 "Private plane stale oldugu icin manuel close bloklandi.");
         }
 
@@ -163,7 +222,7 @@ public sealed class AdminManualCloseService(
                 entity.ExchangeAccountId == exchangeAccountId &&
                 entity.OwnerUserId == bot.OwnerUserId &&
                 entity.Plane == ExchangeDataPlane.Futures &&
-                entity.Symbol == bot.Symbol &&
+                entity.Symbol == normalizedBotSymbol &&
                 entity.Quantity != 0m &&
                 !entity.IsDeleted)
             .OrderByDescending(entity => entity.UpdatedDate)
@@ -174,7 +233,10 @@ public sealed class AdminManualCloseService(
         {
             return Fail(
                 ManualCloseNoOpenPositionCode,
-                $"SignalType=Exit; ExecutionIntent={ManualCloseIntent}; ExitIntent={ManualCloseIntent}; EntrySource=n/a; ExitSource=Manual; ReverseEntryConvertedToCloseOnly=False; ManualClose=True; Symbol={bot.Symbol}; Environment=BinanceTestnet; ReasonCode={ManualCloseNoOpenPositionCode}",
+                BuildBlockedSummary(
+                    ManualCloseNoOpenPositionCode,
+                    exchangeAccountId,
+                    normalizedBotSymbol),
                 "Acik pozisyon bulunamadi.");
         }
 
@@ -192,7 +254,10 @@ public sealed class AdminManualCloseService(
         {
             return Fail(
                 ManualCloseNoOpenPositionCode,
-                $"SignalType=Exit; ExecutionIntent={ManualCloseIntent}; ExitIntent={ManualCloseIntent}; EntrySource=n/a; ExitSource=Manual; ReverseEntryConvertedToCloseOnly=False; ManualClose=True; Symbol={position.Symbol}; Environment=BinanceTestnet; ReasonCode={ManualCloseNoOpenPositionCode}",
+                BuildBlockedSummary(
+                    ManualCloseNoOpenPositionCode,
+                    exchangeAccountId,
+                    position.Symbol),
                 "Kapatilacak acik pozisyon bulunamadi.");
         }
 
@@ -202,6 +267,7 @@ public sealed class AdminManualCloseService(
         var (baseAsset, quoteAsset) = await ResolveAssetsAsync(position.Symbol, cancellationToken);
         var context = BuildContext(
             normalizedExecutionActor,
+            exchangeAccountId,
             position.Symbol,
             position.Quantity,
             closeQuantity,
@@ -290,6 +356,10 @@ public sealed class AdminManualCloseService(
             ManualCloseCredentialUnavailableCode => "Exchange credential aktif degil.",
             ManualCloseReadOnlyAccountCode => "Salt-okunur exchange hesabi ile manuel close yapilamaz.",
             ManualCloseOwnershipMismatchCode => "Bot, hesap veya pozisyon sahipligi eslesmiyor.",
+            ManualCloseAccountScopeMissingCode => "Exchange hesap scope'u belirtilmeden manuel close yapilamaz.",
+            ManualCloseAccountScopeMismatchCode => "Secilen exchange hesap scope'u bot ile eslesmiyor.",
+            ManualCloseSymbolScopeMissingCode => "Sembol scope'u belirtilmeden manuel close yapilamaz.",
+            ManualCloseSymbolScopeMismatchCode => "Secilen sembol bot ile eslesmiyor.",
             ManualCloseEnvironmentInvalidCode => "Manual close yalnizca BinanceTestnet icin kullanilabilir.",
             _ => order.FailureDetail ?? "Manual close basarisiz oldu."
         };
@@ -300,11 +370,11 @@ public sealed class AdminManualCloseService(
         return $"{context} | OutcomeCode={outcomeCode} | OrderState={order.State} | SubmittedToBroker={order.SubmittedToBroker} | ExecutorKind={order.ExecutorKind} | ExecutionEnvironment={order.ExecutionEnvironment}";
     }
 
-    private string BuildPrivatePlaneStaleSummary(ExchangeAccountSyncState? syncState)
+    private string BuildPrivatePlaneStaleSummary(ExchangeAccountSyncState? syncState, Guid exchangeAccountId, string symbol)
     {
         var lastSyncAtUtc = ResolveLastPrivateSyncAtUtc(syncState);
         var ageMs = ResolveAgeMilliseconds(clock.GetUtcNow().UtcDateTime, lastSyncAtUtc);
-        return $"SignalType=Exit; ExecutionIntent={ManualCloseIntent}; ExitIntent={ManualCloseIntent}; EntrySource=n/a; ExitSource=Manual; ReverseEntryConvertedToCloseOnly=False; ManualClose=True; Environment=BinanceTestnet; ReasonCode={ManualClosePrivatePlaneStaleCode}; PrivateStreamState={syncState?.PrivateStreamConnectionState.ToString() ?? "Unavailable"}; DriftStatus={syncState?.DriftStatus.ToString() ?? "Unavailable"}; LastPrivateSyncAtUtc={lastSyncAtUtc?.ToString("O") ?? "missing"}; PrivatePlaneAgeMs={ageMs?.ToString(CultureInfo.InvariantCulture) ?? "missing"}; PrivatePlaneThresholdMs={checked(pilotOptionsValue.PrivatePlaneFreshnessThresholdSeconds * 1000)}";
+        return $"{BuildBlockedSummary(ManualClosePrivatePlaneStaleCode, exchangeAccountId, symbol)}; PrivateStreamState={syncState?.PrivateStreamConnectionState.ToString() ?? "Unavailable"}; DriftStatus={syncState?.DriftStatus.ToString() ?? "Unavailable"}; LastPrivateSyncAtUtc={lastSyncAtUtc?.ToString("O") ?? "missing"}; PrivatePlaneAgeMs={ageMs?.ToString(CultureInfo.InvariantCulture) ?? "missing"}; PrivatePlaneThresholdMs={checked(pilotOptionsValue.PrivatePlaneFreshnessThresholdSeconds * 1000)}";
     }
 
     private bool IsPrivatePlaneStale(ExchangeAccountSyncState? syncState)
@@ -397,6 +467,42 @@ public sealed class AdminManualCloseService(
         return 1m;
     }
 
+    private async Task<ExecutionEnvironment?> ResolveLatestBrokerBackedEnvironmentAsync(
+        string ownerUserId,
+        Guid exchangeAccountId,
+        string symbol,
+        CancellationToken cancellationToken)
+    {
+        var evidence = await dbContext.ExecutionOrders
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(entity =>
+                entity.OwnerUserId == ownerUserId &&
+                entity.ExchangeAccountId == exchangeAccountId &&
+                entity.Symbol == symbol &&
+                entity.Plane == ExchangeDataPlane.Futures &&
+                entity.SubmittedToBroker &&
+                !entity.IsDeleted)
+            .OrderByDescending(entity => entity.LastStateChangedAtUtc)
+            .ThenByDescending(entity => entity.CreatedDate)
+            .Select(entity => new
+            {
+                entity.ExecutionEnvironment,
+                entity.ExecutorKind
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (evidence is null)
+        {
+            return null;
+        }
+
+        return evidence.ExecutionEnvironment == ExecutionEnvironment.BinanceTestnet ||
+               evidence.ExecutorKind == ExecutionOrderExecutorKind.BinanceTestnet
+            ? ExecutionEnvironment.BinanceTestnet
+            : evidence.ExecutionEnvironment;
+    }
+
     private async Task<(string BaseAsset, string QuoteAsset)> ResolveAssetsAsync(
         string symbol,
         CancellationToken cancellationToken)
@@ -427,6 +533,7 @@ public sealed class AdminManualCloseService(
 
     private static string BuildContext(
         string executionActor,
+        Guid exchangeAccountId,
         string symbol,
         decimal openPositionQuantity,
         decimal closeQuantity,
@@ -443,6 +550,7 @@ public sealed class AdminManualCloseService(
             "ManualClose=True",
             "ExitSource=Manual",
             "ReverseEntryConvertedToCloseOnly=False",
+            $"ExchangeAccountId={exchangeAccountId:D}",
             $"CloseSide={closeSide}",
             "ReduceOnly=True",
             "AutoReverse=False",
@@ -452,6 +560,26 @@ public sealed class AdminManualCloseService(
             "Environment=BinanceTestnet",
             $"PositionDirection={positionDirection}",
             $"ManualCloseRequestedBy={executionActor}");
+    }
+
+    private static string BuildBlockedSummary(
+        string reasonCode,
+        Guid? exchangeAccountId,
+        string symbol)
+    {
+        return string.Join(
+            "; ",
+            "SignalType=Exit",
+            $"ExecutionIntent={ManualCloseIntent}",
+            $"ExitIntent={ManualCloseIntent}",
+            "EntrySource=n/a",
+            "ExitSource=Manual",
+            "ReverseEntryConvertedToCloseOnly=False",
+            "ManualClose=True",
+            $"Symbol={symbol}",
+            $"ExchangeAccountId={(exchangeAccountId.HasValue ? exchangeAccountId.Value.ToString("D") : "missing")}",
+            "Environment=BinanceTestnet",
+            $"ReasonCode={reasonCode}");
     }
 
     private static string BuildIdempotencyKey(

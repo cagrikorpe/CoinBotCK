@@ -844,7 +844,8 @@ public sealed class MarketScannerService(
                     candidates,
                     scannerOptionsValue.HandoffEnabled,
                     scannerOptionsValue.ExecutionHost,
-                    klineInterval),
+                    klineInterval,
+                    botExecutionOptionsValue),
                 2048);
     }
 
@@ -2789,19 +2790,27 @@ public sealed class MarketScannerService(
         IReadOnlyCollection<MarketScannerCandidate> candidates,
         bool handoffEnabled,
         string? executionHost,
-        string timeframe)
+        string timeframe,
+        BotExecutionPilotOptions pilotOptions)
     {
         var rejectedReason = BuildRejectionBreakdown(candidates, maxEntries: 6, maxSymbolsPerReason: 3) ?? "none";
         var normalizedExecutionHost = string.IsNullOrWhiteSpace(executionHost)
             ? "n/a"
             : executionHost.Trim();
+        var allowedSymbols = pilotOptions.ResolveNormalizedAllowedSymbols();
         var aiRankingFallbackCount = candidates.Count(candidate =>
             string.Equals(ExtractToken(candidate.ScoringSummary, "ScannerRankingMode"), "ClassicalFallback", StringComparison.Ordinal));
         var adaptiveSuppressionCount = candidates.Count(candidate =>
             string.Equals(ExtractToken(candidate.ScoringSummary, "ScannerAdaptiveFilterState"), "Suppressed", StringComparison.Ordinal));
         var topCandidateChangedByAiCount = ResolveTopCandidateChangedByAiCount(candidates);
+        var allowedSymbolsSummary = allowedSymbols.Length switch
+        {
+            0 => "all",
+            <= 4 => string.Join(",", allowedSymbols),
+            _ => string.Join(",", allowedSymbols.Take(4)) + $"+{allowedSymbols.Length - 4}"
+        };
 
-        return $"ScanCycleId={cycle.Id}; Timeframe={timeframe}; HandoffEnabled={handoffEnabled}; ExecutionHost={normalizedExecutionHost}; UniverseSource={cycle.UniverseSource}; Scanned={cycle.ScannedSymbolCount}; Eligible={cycle.EligibleCandidateCount}; Top={cycle.TopCandidateCount}; BestCandidate={cycle.BestCandidateSymbol ?? "n/a"}; BestScore={cycle.BestCandidateScore?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a"}; AiRankingFallbackCount={aiRankingFallbackCount}; AiRankingSuppressionCount={adaptiveSuppressionCount}; AiRankingTopCandidateChangedCount={topCandidateChangedByAiCount}; TopRejectReason={rejectedReason}; CompletedAtUtc={cycle.CompletedAtUtc:O}";
+        return $"ScanCycleId={cycle.Id}; Timeframe={timeframe}; HandoffEnabled={handoffEnabled}; ExecutionHost={normalizedExecutionHost}; UniverseSource={cycle.UniverseSource}; Scanned={cycle.ScannedSymbolCount}; Eligible={cycle.EligibleCandidateCount}; Top={cycle.TopCandidateCount}; BestCandidate={cycle.BestCandidateSymbol ?? "n/a"}; BestScore={cycle.BestCandidateScore?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a"}; AiRankingFallbackCount={aiRankingFallbackCount}; AiRankingSuppressionCount={adaptiveSuppressionCount}; AiRankingTopCandidateChangedCount={topCandidateChangedByAiCount}; PilotAutoManageAdoptedPositions={pilotOptions.AutoManageAdoptedPositions}; PilotExecutionDispatchMode={pilotOptions.ExecutionDispatchMode}; PilotAllowedSymbolsCount={allowedSymbols.Length}; PilotAllowedSymbols={allowedSymbolsSummary}; PilotAllowedBotIdsCount={pilotOptions.ResolveNormalizedAllowedBotIds().Length}; PilotAllowedUserIdsCount={pilotOptions.ResolveNormalizedAllowedUserIds().Length}; PilotAllowedExchangeAccountIdsCount=n/a; TopRejectReason={rejectedReason}; CompletedAtUtc={cycle.CompletedAtUtc:O}";
     }
 
     private static string? ResolveDominantRejectionReason(IReadOnlyCollection<MarketScannerCandidate> candidates)

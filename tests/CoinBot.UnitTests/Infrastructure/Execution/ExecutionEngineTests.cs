@@ -868,6 +868,73 @@ public sealed class ExecutionEngineTests
     }
 
     [Fact]
+    public async Task DispatchAsync_SuppressesDuplicateCommand_WhenSharedScannerSignalKeyIsReusedAcrossSources()
+    {
+        await using var harness = CreateHarness(
+            environmentName: Environments.Development,
+            enableRiskPolicyEvaluator: true,
+            testnetExecutionOptions: new BinanceFuturesTestnetOptions
+            {
+                BaseUrl = "https://testnet.binance.example/futures-rest",
+                ApiKey = "testnet-api-key",
+                ApiSecret = "testnet-api-secret"
+            });
+        var exchangeAccountId = Guid.NewGuid();
+        var botId = Guid.NewGuid();
+        var strategySignalId = Guid.NewGuid();
+        await SeedExchangeAccountAsync(harness.DbContext, "user-shared-dup", exchangeAccountId);
+        await SeedBotAsync(harness.DbContext, "user-shared-dup", botId, "pilot-shared-dup");
+        await SeedPilotSafetyPrerequisitesAsync(
+            harness.DbContext,
+            "user-shared-dup",
+            exchangeAccountId,
+            harness.TimeProvider.GetUtcNow().UtcDateTime);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.AllowedUserIds = ["user-shared-dup"];
+        harness.PilotOptions.AllowedBotIds = [botId.ToString("N")];
+        harness.PilotOptions.AllowedSymbols = ["BTCUSDT"];
+        await PrimeFreshMarketDataAsync(harness, "corr-shared-dup-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-shared-dup",
+            context: "Open testnet execution",
+            correlationId: "corr-shared-dup-2");
+
+        var idempotencyKey = $"scanner-handoff:{strategySignalId:N}:{ExecutionEnvironment.BinanceTestnet}:{StrategySignalType.Entry}:{ExecutionOrderSide.Buy}:{false}";
+        var scannerCommand = CreateCommand(
+            ownerUserId: "user-shared-dup",
+            strategyKey: "pilot-shared-dup",
+            isDemo: null,
+            botId: botId,
+            exchangeAccountId: exchangeAccountId) with
+        {
+            Actor = "system:market-scanner",
+            RequestedEnvironment = ExecutionEnvironment.BinanceTestnet,
+            StrategySignalId = strategySignalId,
+            Context = "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+            IdempotencyKey = idempotencyKey,
+            CorrelationId = "corr-shared-root",
+            Quantity = 0.002m,
+            Price = 65000m
+        };
+
+        var botWorkerCommand = scannerCommand with
+        {
+            Actor = "system:bot-worker"
+        };
+
+        var first = await harness.Engine.DispatchAsync(scannerCommand, CancellationToken.None);
+        var second = await harness.Engine.DispatchAsync(botWorkerCommand, CancellationToken.None);
+
+        Assert.False(first.IsDuplicate);
+        Assert.True(second.IsDuplicate);
+        Assert.True(second.Order.DuplicateSuppressed);
+        Assert.Equal(first.Order.ExecutionOrderId, second.Order.ExecutionOrderId);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal(1, await harness.DbContext.ExecutionOrders.CountAsync());
+    }
+
+    [Fact]
     public async Task DispatchAsync_SuppressesDuplicateCommand_ByStrategySignalIntent_WhenPreSubmitRejectedOrderAlreadyExists()
     {
         await using var harness = CreateHarness();
@@ -1500,6 +1567,128 @@ public sealed class ExecutionEngineTests
         Assert.Equal(ExecutionRejectionStage.PreSubmit, result.Order.RejectionStage);
         Assert.False(result.Order.SubmittedToBroker);
         Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_PersistsStableFailureCode_WhenLeverageConfigurationFails()
+    {
+        await using var harness = CreateHarness(
+            environmentName: Environments.Development,
+            enableRiskPolicyEvaluator: true,
+            testnetExecutionOptions: new BinanceFuturesTestnetOptions
+            {
+                BaseUrl = "https://testnet.binance.example/futures-rest",
+                ApiKey = "testnet-api-key",
+                ApiSecret = "testnet-api-secret"
+            });
+        var exchangeAccountId = Guid.NewGuid();
+        var botId = Guid.NewGuid();
+        await SeedExchangeAccountAsync(harness.DbContext, "user-lev-fail", exchangeAccountId);
+        await SeedBotAsync(harness.DbContext, "user-lev-fail", botId, "pilot-lev-fail");
+        await SeedPilotSafetyPrerequisitesAsync(
+            harness.DbContext,
+            "user-lev-fail",
+            exchangeAccountId,
+            harness.TimeProvider.GetUtcNow().UtcDateTime);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.AllowedUserIds = ["user-lev-fail"];
+        harness.PilotOptions.AllowedBotIds = [botId.ToString("N")];
+        harness.PilotOptions.AllowedSymbols = ["BTCUSDT"];
+        harness.PrivateRestClient.EnsureLeverageException = new BinanceExchangeRejectedException(
+            "BinanceLeverageConfigurationFailed",
+            "Binance futures leverage request failed for BTCUSDT with requested leverage 1 and HTTP status 400.",
+            "-4003",
+            400);
+        await PrimeFreshMarketDataAsync(harness, "corr-lev-fail-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-lev-fail",
+            context: "Open leverage failure execution",
+            correlationId: "corr-lev-fail-2");
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-lev-fail",
+                strategyKey: "pilot-lev-fail",
+                isDemo: null,
+                botId: botId,
+                exchangeAccountId: exchangeAccountId) with
+            {
+                Actor = "system:bot-worker",
+                RequestedEnvironment = ExecutionEnvironment.BinanceTestnet,
+                Context = "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1 | RequestedLeverage=1 | EffectiveLeverage=1 | MaxAllowedLeverage=1 | LeverageSource=Default | LeveragePolicyDecision=Allowed | LeveragePolicyReason=LeveragePolicyAllowed | LeverageAlignmentSkippedForReduceOnly=False",
+                Quantity = 0.002m,
+                Price = 65000m
+            },
+            CancellationToken.None);
+
+        Assert.Equal(ExecutionOrderState.Rejected, result.Order.State);
+        Assert.Equal("BinanceLeverageConfigurationFailed", result.Order.FailureCode);
+        Assert.Equal(ExecutionRejectionStage.PreSubmit, result.Order.RejectionStage);
+        Assert.False(result.Order.SubmittedToBroker);
+        Assert.Equal(1, harness.PrivateRestClient.EnsureLeverageCalls);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_PersistsStableFailureCode_WhenLeverageChangeIsBlockedByOpenPosition()
+    {
+        await using var harness = CreateHarness(
+            environmentName: Environments.Development,
+            enableRiskPolicyEvaluator: true,
+            testnetExecutionOptions: new BinanceFuturesTestnetOptions
+            {
+                BaseUrl = "https://testnet.binance.example/futures-rest",
+                ApiKey = "testnet-api-key",
+                ApiSecret = "testnet-api-secret"
+            });
+        var exchangeAccountId = Guid.NewGuid();
+        var botId = Guid.NewGuid();
+        await SeedExchangeAccountAsync(harness.DbContext, "user-lev-open-pos", exchangeAccountId);
+        await SeedBotAsync(harness.DbContext, "user-lev-open-pos", botId, "pilot-lev-open-pos");
+        await SeedPilotSafetyPrerequisitesAsync(
+            harness.DbContext,
+            "user-lev-open-pos",
+            exchangeAccountId,
+            harness.TimeProvider.GetUtcNow().UtcDateTime);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.AllowedUserIds = ["user-lev-open-pos"];
+        harness.PilotOptions.AllowedBotIds = [botId.ToString("N")];
+        harness.PilotOptions.AllowedSymbols = ["BTCUSDT"];
+        harness.PrivateRestClient.EnsureLeverageException = new BinanceExchangeRejectedException(
+            "BinanceLeverageChangeBlockedOpenPosition",
+            "Binance futures leverage request failed for BTCUSDT with requested leverage 1 and HTTP status 400 (exchange code -4161: leverage change blocked by open position).",
+            "-4161",
+            400);
+        await PrimeFreshMarketDataAsync(harness, "corr-lev-open-pos-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-lev-open-pos",
+            context: "Open leverage failure execution",
+            correlationId: "corr-lev-open-pos-2");
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-lev-open-pos",
+                strategyKey: "pilot-lev-open-pos",
+                isDemo: null,
+                botId: botId,
+                exchangeAccountId: exchangeAccountId) with
+            {
+                Actor = "system:bot-worker",
+                RequestedEnvironment = ExecutionEnvironment.BinanceTestnet,
+                Context = "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1 | RequestedLeverage=1 | EffectiveLeverage=1 | MaxAllowedLeverage=1 | LeverageSource=Default | LeveragePolicyDecision=Allowed | LeveragePolicyReason=LeveragePolicyAllowed | LeverageAlignmentSkippedForReduceOnly=False",
+                Quantity = 0.002m,
+                Price = 65000m
+            },
+            CancellationToken.None);
+
+        Assert.Equal(ExecutionOrderState.Rejected, result.Order.State);
+        Assert.Equal("BinanceLeverageChangeBlockedOpenPosition", result.Order.FailureCode);
+        Assert.Equal(ExecutionRejectionStage.PreSubmit, result.Order.RejectionStage);
+        Assert.False(result.Order.SubmittedToBroker);
+        Assert.Equal(1, harness.PrivateRestClient.EnsureLeverageCalls);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
     }
 
     [Fact]
@@ -2386,6 +2575,8 @@ public sealed class ExecutionEngineTests
 
         public Exception? PlaceOrderException { get; set; }
 
+        public Exception? EnsureLeverageException { get; set; }
+
         public Task EnsureMarginTypeAsync(
             Guid exchangeAccountId,
             string symbol,
@@ -2407,6 +2598,12 @@ public sealed class ExecutionEngineTests
             CancellationToken cancellationToken = default)
         {
             EnsureLeverageCalls++;
+
+            if (EnsureLeverageException is not null)
+            {
+                throw EnsureLeverageException;
+            }
+
             return Task.CompletedTask;
         }
 

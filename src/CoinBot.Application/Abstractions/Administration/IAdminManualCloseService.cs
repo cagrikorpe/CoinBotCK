@@ -11,6 +11,8 @@ public interface IAdminManualCloseService
 
 public sealed record AdminManualCloseRequest(
     Guid BotId,
+    Guid? ExchangeAccountId,
+    string? Symbol,
     string ActorUserId,
     string ExecutionActor,
     string? CorrelationId);
