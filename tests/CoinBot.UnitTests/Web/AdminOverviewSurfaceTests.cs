@@ -185,14 +185,24 @@ public sealed class AdminOverviewSurfaceTests
             "Foundation",
             "_AdminOperationalObservabilityCard.cshtml"));
 
+        Assert.Contains("data-cb-admin-exit-pnl-evidence", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("data-cb-ops-exit-pnl-guard", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("Exit PnL Guard", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Recent exit orders", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Recent entry orders", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("ExitSource", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("ExitPolicyDecision", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("ExitPolicyReason", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("PnL", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Last exit summary", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("reverse blocked", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("Last exit reason", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("Last estimated PnL", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("Reduce-only exits", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("data-cb-ops-exit-pnl-last-summary", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("data-cb-ops-exit-pnl-blocked-summary", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-recent-exit-orders", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-recent-entry-orders", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("data-cb-ops-exit-orders", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("data-cb-ops-entry-orders", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("data-cb-ops-exit-order-row", operationalCardContent, StringComparison.Ordinal);

@@ -130,12 +130,17 @@
             <span class="cb-admin-info-strip-meta">Latest cycle</span>
         </div>
 
-        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4" data-cb-ops-exit-pnl-guard>
+        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4" data-cb-ops-exit-pnl-guard data-cb-admin-exit-pnl-evidence>
             <div>
                 <div class="cb-admin-info-strip-title">Exit PnL Guard</div>
+                <div class="cb-admin-info-strip-text" data-cb-admin-exit-pnl-evidence-fields>
+                    Last exit summary · ExitSource · ExitPolicyDecision · ExitPolicyReason · PnL
+                </div>
                 @if (!exitPnl.LastExitAtUtc.HasValue)
                 {
-                    <div class="cb-admin-info-strip-text" data-cb-ops-exit-pnl-empty>No exit evidence in bounded window.</div>
+                    <div class="cb-admin-info-strip-text mt-2" data-cb-ops-exit-pnl-empty>
+                        Last exit summary n/a · No exit evidence in bounded window.
+                    </div>
                 }
                 else
                 {
@@ -143,10 +148,10 @@
                         Last exit reason @((exitPnl.LastExitReason ?? "n/a")) · @(exitPnl.LastExitSymbol ?? "n/a") · @((exitPnl.LastExitSide ?? "n/a")) · @(exitPnl.LastExitAtUtc.Value.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss")) UTC
                     </div>
                     <div class="cb-admin-info-strip-text mt-2" data-cb-ops-exit-pnl-last-summary>
-                        @exitPnl.LastExitSummary
+                        Last exit summary @exitPnl.LastExitSummary
                     </div>
                     <div class="cb-admin-info-strip-text mt-2" data-cb-ops-exit-pnl-latest-summary>
-                        Last estimated PnL @(exitPnl.LastEstimatedPnlQuote?.ToString("0.########") ?? "n/a") · pct @(exitPnl.LastEstimatedPnlPct?.ToString("0.########") ?? "n/a") · Reduce-only exits @((exitPnl.LastExitReduceOnly?.ToString() ?? "n/a"))
+                        ExitSource @((exitPnl.LastExitReason ?? "n/a")) · ExitPolicyDecision n/a · ExitPolicyReason n/a · Last estimated PnL @(exitPnl.LastEstimatedPnlQuote?.ToString("0.########") ?? "n/a") · PnL pct @(exitPnl.LastEstimatedPnlPct?.ToString("0.########") ?? "n/a") · Reduce-only exits @((exitPnl.LastExitReduceOnly?.ToString() ?? "n/a"))
                     </div>
                     @if (!string.IsNullOrWhiteSpace(exitPnl.LastBlockedExitSummary))
                     {
@@ -164,9 +169,10 @@
 
         <div class="row mt-4">
             <div class="col-xl-6">
-                <div class="cb-admin-info-strip cb-admin-info-strip-info" data-cb-ops-exit-orders>
+                <div class="cb-admin-info-strip cb-admin-info-strip-info" data-cb-ops-exit-orders data-cb-admin-recent-exit-orders>
                     <div>
                         <div class="cb-admin-info-strip-title">Recent exit orders</div>
+                        <div class="cb-admin-info-strip-text">ExitSource · ExitPolicyDecision · ExitPolicyReason · PnL</div>
                         @if (recentExitOrders.Length == 0)
                         {
                             <div class="cb-admin-info-strip-text" data-cb-ops-exit-orders-empty>No recent exit order evidence in bounded window.</div>
@@ -185,9 +191,10 @@
                 </div>
             </div>
             <div class="col-xl-6">
-                <div class="cb-admin-info-strip cb-admin-info-strip-info" data-cb-ops-entry-orders>
+                <div class="cb-admin-info-strip cb-admin-info-strip-info" data-cb-ops-entry-orders data-cb-admin-recent-entry-orders>
                     <div>
                         <div class="cb-admin-info-strip-title">Recent entry orders</div>
+                        <div class="cb-admin-info-strip-text">EntrySource · Quantity · Price · State</div>
                         @if (recentEntryOrders.Length == 0)
                         {
                             <div class="cb-admin-info-strip-text" data-cb-ops-entry-orders-empty>No recent entry order evidence in bounded window.</div>
