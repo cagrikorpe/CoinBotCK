@@ -231,6 +231,38 @@ public sealed class MarketScannerHandoffServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_BlocksEntry_WhenExecutionAllowlistContainsOnlyWhitespace()
+    {
+        await using var harness = CreateHarness(
+            new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero),
+            new BotExecutionPilotOptions
+            {
+                SignalEvaluationMode = ExecutionEnvironment.Live,
+                PrimeHistoricalCandleCount = 34,
+                AllowedExecutionSymbols = [" ", "\t"]
+            });
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-btc-allowlist-whitespace", "BTCUSDT", "pilot-btc-allowlist-whitespace");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "BTCUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "BTCUSDT", rank: 1, score: 10_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("BTCUSDT", "BTC", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "BTCUSDT", "1m", harness.NowUtc));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("SymbolAllowlistEmpty", attempt.BlockerCode);
+        Assert.Contains("AllowedExecutionSymbols=none", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("SymbolAllowlistDecision=Blocked", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Null(harness.ExecutionGate.LastRequest);
+        Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
+        Assert.Null(harness.ExecutionEngine.LastCommand);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+    }
+
+    [Fact]
     public async Task RunOnceAsync_UsesProtectedMinNotionalSizingParity_ForEntryQuantity()
     {
         await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
@@ -722,7 +754,14 @@ public sealed class MarketScannerHandoffServiceTests
     [Fact]
     public async Task RunOnceAsync_SuppressesSameDirectionLongEntry_WhenLiveLongPositionAlreadyExists()
     {
-        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        await using var harness = CreateHarness(
+            new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero),
+            new BotExecutionPilotOptions
+            {
+                SignalEvaluationMode = ExecutionEnvironment.Live,
+                PrimeHistoricalCandleCount = 34,
+                AllowedExecutionSymbols = ["BTCUSDT"]
+            });
         var scanCycleId = Guid.NewGuid();
         var bot = await SeedBotGraphAsync(harness.DbContext, "user-long-open", "BTCUSDT", "pilot-long-open");
         SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "BTCUSDT");
@@ -738,6 +777,10 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal("SameDirectionLongEntrySuppressed", attempt.BlockerCode);
         Assert.Equal("Persisted", attempt.StrategyDecisionOutcome);
         Assert.Contains("open long position already exists", attempt.BlockerDetail, StringComparison.Ordinal);
+        Assert.Contains("SymbolExecutionAllowlist=Applied", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("AllowedExecutionSymbols=BTCUSDT", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("SymbolAllowlistDecision=Allowed", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("SymbolAllowlistReason=SymbolAllowlistAllowed", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("SignalType=Entry", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("EntrySource=StrategyEntry", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ExitSource=n/a", attempt.GuardSummary, StringComparison.Ordinal);
@@ -755,7 +798,14 @@ public sealed class MarketScannerHandoffServiceTests
     [Fact]
     public async Task RunOnceAsync_SuppressesSameDirectionShortEntry_WhenLiveShortPositionAlreadyExists()
     {
-        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        await using var harness = CreateHarness(
+            new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero),
+            new BotExecutionPilotOptions
+            {
+                SignalEvaluationMode = ExecutionEnvironment.Live,
+                PrimeHistoricalCandleCount = 34,
+                AllowedExecutionSymbols = ["SOLUSDT"]
+            });
         var scanCycleId = Guid.NewGuid();
         var bot = await SeedBotGraphAsync(harness.DbContext, "user-short-open", "SOLUSDT", "pilot-short-open");
         var botEntity = await harness.DbContext.TradingBots.SingleAsync(entity => entity.Id == bot.BotId);
@@ -780,6 +830,10 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal("SameDirectionShortEntrySuppressed", attempt.BlockerCode);
         Assert.Equal("Persisted", attempt.StrategyDecisionOutcome);
         Assert.Contains("open short position already exists", attempt.BlockerDetail, StringComparison.Ordinal);
+        Assert.Contains("SymbolExecutionAllowlist=Applied", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("AllowedExecutionSymbols=SOLUSDT", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("SymbolAllowlistDecision=Allowed", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("SymbolAllowlistReason=SymbolAllowlistAllowed", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("SignalType=Entry", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("EntrySource=StrategyEntry", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ExitSource=n/a", attempt.GuardSummary, StringComparison.Ordinal);

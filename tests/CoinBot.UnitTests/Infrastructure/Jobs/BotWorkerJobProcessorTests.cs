@@ -277,6 +277,78 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_BlocksEntry_WhenExecutionAllowlistIsExplicitlyEmpty()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.AllowedExecutionSymbols = [];
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-allowlist-empty-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-allowlist-empty-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-allowlist-empty-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.False(result.IsSuccessful);
+        Assert.False(result.IsRetryableFailure);
+        Assert.Equal("SymbolAllowlistEmpty", result.ErrorCode);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal("SymbolAllowlistEmpty", latestDecisionTrace.DecisionReasonCode);
+        Assert.Contains("AllowedExecutionSymbols=none", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("SymbolAllowlistDecision=Blocked", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_BlocksEntry_WhenExecutionAllowlistContainsOnlyWhitespace()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.AllowedExecutionSymbols = [" ", "\t"];
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-allowlist-whitespace-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-allowlist-whitespace-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-allowlist-whitespace-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.False(result.IsSuccessful);
+        Assert.False(result.IsRetryableFailure);
+        Assert.Equal("SymbolAllowlistEmpty", result.ErrorCode);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal("SymbolAllowlistEmpty", latestDecisionTrace.DecisionReasonCode);
+        Assert.Contains("AllowedExecutionSymbols=none", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("SymbolAllowlistDecision=Blocked", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ProcessAsync_AllowsReduceOnlyCloseOnlyExit_WhenSymbolIsOutsideExecutionAllowlist()
     {
         await using var harness = CreateHarness();
@@ -870,6 +942,7 @@ public sealed class BotWorkerJobProcessorTests
         ConfigurePilotScope(harness, bot);
         harness.PilotOptions.PilotActivationEnabled = true;
         harness.PilotOptions.EnableRuntimeExitQuality = false;
+        harness.PilotOptions.AllowedExecutionSymbols = ["SOLUSDT"];
         await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-entry-same-1", symbol: "SOLUSDT");
         await harness.SwitchService.SetTradeMasterStateAsync(
             TradeMasterSwitchState.Armed,
@@ -899,6 +972,10 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal("Skipped", latestDecisionTrace.DecisionOutcome);
         Assert.Equal("ExecutionSkip", latestDecisionTrace.DecisionReasonType);
         Assert.Equal("SameDirectionLongEntrySuppressed", latestDecisionTrace.DecisionReasonCode);
+        Assert.Contains("SymbolExecutionAllowlist=Applied", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("AllowedExecutionSymbols=SOLUSDT", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("SymbolAllowlistDecision=Allowed", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("SymbolAllowlistReason=SymbolAllowlistAllowed", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("SignalType=Entry", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("EntrySource=StrategyEntry", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitSource=n/a", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);

@@ -392,6 +392,11 @@ public sealed class MarketScannerHandoffService(
                 continue;
             }
 
+            var entrySymbolAllowlistPolicy = executionContext.SignalType == StrategySignalType.Entry
+                ? EvaluateSymbolExecutionAllowlist(symbol, reduceOnly: false)
+                : SymbolExecutionAllowlistEvaluation.NotConfigured;
+            var activeSymbolAllowlistPolicy = entrySymbolAllowlistPolicy;
+
             if (IsActionableDirection(entryDirection))
             {
                 currentNetQuantity = await ResolveCurrentNetQuantityAsync(
@@ -419,6 +424,37 @@ public sealed class MarketScannerHandoffService(
 
                     if (currentPositionDirection == entryDirection)
                     {
+                        if (entrySymbolAllowlistPolicy.IsBlocked)
+                        {
+                            latestAttempt = await PersistBlockedAttemptWithShadowDecisionAsync(
+                                scanCycleId,
+                                candidate,
+                                ownerBotMatch.OwnerUserId,
+                                ownerBotMatch,
+                                symbolMetadata,
+                                executionContext,
+                                strategySignal,
+                                strategyVeto: null,
+                                strategyDecisionOutcome: "Persisted",
+                                executionStatus: "Blocked",
+                                blockerCode: entrySymbolAllowlistPolicy.ReasonCode,
+                                blockerDetail: entrySymbolAllowlistPolicy.ReasonCode switch
+                                {
+                                    SymbolAllowlistEmptyCode => "Scanner handoff blocked because the execution symbol allowlist is empty for entry execution.",
+                                    _ => $"Scanner handoff blocked because {symbol} is outside the allowed execution symbol set."
+                                },
+                                correlationId: attemptCorrelationId,
+                                guardSummary: Truncate(
+                                        BuildCompactEntrySuppressionGuardSummary(
+                                            entrySymbolAllowlistPolicy.Summary ?? $"SymbolExecutionAllowlist=Applied; SelectedSymbol={symbol}",
+                                            executionContext.PositionAdoptionSummary),
+                                        512)
+                                    ?? $"SignalType=Entry; SymbolExecutionAllowlist=Applied; SelectedSymbol={symbol}",
+                                cancellationToken: cancellationToken,
+                                strategyResult: strategyResult);
+                            continue;
+                        }
+
                         latestAttempt = await PersistBlockedAttemptWithShadowDecisionAsync(
                             scanCycleId,
                             candidate,
@@ -433,11 +469,14 @@ public sealed class MarketScannerHandoffService(
                             blockerCode: ResolveSameDirectionEntrySuppressedBlockerCode(entryDirection),
                             blockerDetail: $"Entry signal was suppressed because an open {entryDirection.ToString().ToLowerInvariant()} position already exists for {symbol} on the selected exchange account.",
                             correlationId: attemptCorrelationId,
-                            guardSummary: AppendExecutionIntentGuardSummary(
-                                Truncate(
-                                    $"OpenPositionSuppression=SameDirection; EntryDirection={entryDirection}; CurrentNetQuantity={currentNetQuantity:0.########}; Symbol={symbol}; Timeframe={klineInterval}",
-                                    512) ?? $"OpenPositionSuppression=SameDirection; Symbol={symbol}; Timeframe={klineInterval}",
-                                executionContext),
+                            guardSummary: Truncate(
+                                    BuildCompactEntrySuppressionGuardSummary(
+                                        PrependGuardSummarySegment(
+                                            entrySymbolAllowlistPolicy.Summary,
+                                            $"OpenPositionSuppression=SameDirection; EntryDirection={entryDirection}; CurrentNetQuantity={currentNetQuantity:0.########}"),
+                                        executionContext.PositionAdoptionSummary),
+                                    512)
+                                ?? "SignalType=Entry; OpenPositionSuppression=SameDirection",
                             cancellationToken: cancellationToken,
                             strategyResult: strategyResult);
                         continue;
@@ -457,6 +496,7 @@ public sealed class MarketScannerHandoffService(
                         AutoReverse: false,
                         ExitPnlGuardSummary: null,
                         PositionAdoptionSummary: positionAdoptionSummary);
+                    activeSymbolAllowlistPolicy = EvaluateSymbolExecutionAllowlist(symbol, executionContext.ReduceOnly);
 
                     if (!botExecutionOptionsValue.AutoManageAdoptedPositions)
                     {
@@ -476,8 +516,10 @@ public sealed class MarketScannerHandoffService(
                             correlationId: attemptCorrelationId,
                             guardSummary: AppendExecutionIntentGuardSummary(
                                 Truncate(
-                                    $"AutoManagementEnabled=False; AutoPositionManagement=False; AutoManagementReason=ConfigDisabled; AdoptedPosition=True; OrphanPositionDetected=False; AmbiguousPositionDetected=False; Symbol={symbol}; Timeframe={klineInterval}",
-                                    512) ?? $"AutoPositionManagement=False; Symbol={symbol}; Timeframe={klineInterval}",
+                                    PrependGuardSummarySegment(
+                                        activeSymbolAllowlistPolicy.Summary,
+                                        "AutoManagementEnabled=False; AutoPositionManagement=False; AutoManagementReason=ConfigDisabled; AdoptedPosition=True; OrphanPositionDetected=False; AmbiguousPositionDetected=False"),
+                                    512) ?? "AutoPositionManagement=False",
                                 executionContext),
                             cancellationToken: cancellationToken,
                             strategyResult: strategyResult);
@@ -506,8 +548,10 @@ public sealed class MarketScannerHandoffService(
                             correlationId: attemptCorrelationId,
                             guardSummary: AppendExecutionIntentGuardSummary(
                                 Truncate(
-                                    $"{exitCloseOnlyPnlGuard.Summary}; Symbol={symbol}; Timeframe={klineInterval}",
-                                    512) ?? $"{exitCloseOnlyPnlGuard.Summary}; Symbol={symbol}; Timeframe={klineInterval}",
+                                    PrependGuardSummarySegment(
+                                        activeSymbolAllowlistPolicy.Summary,
+                                        exitCloseOnlyPnlGuard.Summary),
+                                    512) ?? exitCloseOnlyPnlGuard.Summary,
                                 executionContext),
                             cancellationToken: cancellationToken,
                             strategyResult: strategyResult);
@@ -516,6 +560,37 @@ public sealed class MarketScannerHandoffService(
 
                     executionContext = executionContext with { ExitPnlGuardSummary = exitCloseOnlyPnlGuard.Summary };
                 }
+            }
+
+            if (executionContext.SignalType == StrategySignalType.Entry &&
+                entrySymbolAllowlistPolicy.IsBlocked)
+            {
+                latestAttempt = await PersistBlockedAttemptWithShadowDecisionAsync(
+                    scanCycleId,
+                    candidate,
+                    ownerBotMatch.OwnerUserId,
+                    ownerBotMatch,
+                    symbolMetadata,
+                    executionContext,
+                    strategySignal,
+                    strategyVeto: null,
+                    strategyDecisionOutcome: "Persisted",
+                    executionStatus: "Blocked",
+                    blockerCode: entrySymbolAllowlistPolicy.ReasonCode,
+                    blockerDetail: entrySymbolAllowlistPolicy.ReasonCode switch
+                    {
+                        SymbolAllowlistEmptyCode => "Scanner handoff blocked because the execution symbol allowlist is empty for entry execution.",
+                        _ => $"Scanner handoff blocked because {symbol} is outside the allowed execution symbol set."
+                    },
+                    correlationId: attemptCorrelationId,
+                    guardSummary: AppendExecutionIntentGuardSummary(
+                        Truncate(
+                            entrySymbolAllowlistPolicy.Summary,
+                            512) ?? $"SymbolExecutionAllowlist=Applied; SelectedSymbol={symbol}",
+                        executionContext),
+                    cancellationToken: cancellationToken,
+                    strategyResult: strategyResult);
+                continue;
             }
 
             if (executionContext.SignalType == StrategySignalType.Entry &&
@@ -543,8 +618,10 @@ public sealed class MarketScannerHandoffService(
                     correlationId: attemptCorrelationId,
                     guardSummary: AppendExecutionIntentGuardSummary(
                         Truncate(
-                            $"{directionalConflictGuardSummary}; Symbol={symbol}; Timeframe={klineInterval}",
-                            512) ?? $"{directionalConflictGuardSummary}; Symbol={symbol}; Timeframe={klineInterval}",
+                            PrependGuardSummarySegment(
+                                entrySymbolAllowlistPolicy.Summary,
+                                directionalConflictGuardSummary),
+                            512) ?? directionalConflictGuardSummary,
                         executionContext),
                     cancellationToken: cancellationToken,
                     strategyResult: strategyResult);
@@ -570,8 +647,10 @@ public sealed class MarketScannerHandoffService(
                     correlationId: attemptCorrelationId,
                     guardSummary: AppendExecutionIntentGuardSummary(
                         Truncate(
-                            $"EntryDirectionModeBlocked; BotDirectionMode={ownerBotMatch.DirectionMode}; EntryDirection={entryDirection}; Symbol={symbol}; Timeframe={klineInterval}",
-                            512) ?? $"EntryDirectionModeBlocked; BotDirectionMode={ownerBotMatch.DirectionMode}; EntryDirection={entryDirection}; Symbol={symbol}; Timeframe={klineInterval}",
+                            PrependGuardSummarySegment(
+                                entrySymbolAllowlistPolicy.Summary,
+                                $"EntryDirectionModeBlocked; BotDirectionMode={ownerBotMatch.DirectionMode}; EntryDirection={entryDirection}"),
+                            512) ?? "EntryDirectionModeBlocked",
                         executionContext),
                     cancellationToken: cancellationToken,
                     strategyResult: strategyResult);
@@ -617,10 +696,14 @@ public sealed class MarketScannerHandoffService(
                     blockerCode: "DuplicateExecutionRequestSuppressed",
                     blockerDetail: "Scanner handoff skipped execution request creation because this strategy signal already has a prepared handoff or execution order.",
                     correlationId: attemptCorrelationId,
-                    guardSummary: Truncate(
-                        $"DuplicateExecutionRequest=Suppressed; StrategySignalId={strategySignal.StrategySignalId:N}; IndicatorCloseTimeUtc={strategySignal.IndicatorCloseTimeUtc:O}; Symbol={symbol}; Timeframe={klineInterval}",
-                        512)
-                        ?? $"DuplicateExecutionRequest=Suppressed; Symbol={symbol}; Timeframe={klineInterval}",
+                    guardSummary: AppendExecutionIntentGuardSummary(
+                        Truncate(
+                            PrependGuardSummarySegment(
+                                entrySymbolAllowlistPolicy.Summary,
+                                $"DuplicateExecutionRequest=Suppressed; StrategySignalId={strategySignal.StrategySignalId:N}; IndicatorCloseTimeUtc={strategySignal.IndicatorCloseTimeUtc:O}"),
+                            512)
+                            ?? "DuplicateExecutionRequest=Suppressed",
+                        executionContext),
                     cancellationToken: cancellationToken,
                     strategyResult: strategyResult);
                 continue;
@@ -653,8 +736,10 @@ public sealed class MarketScannerHandoffService(
                         correlationId: attemptCorrelationId,
                         guardSummary: AppendExecutionIntentGuardSummary(
                             Truncate(
-                                $"EntryHysteresis=Active; EntryDirection={entryDirection}; Symbol={symbol}; Timeframe={klineInterval}",
-                                512) ?? $"EntryHysteresis=Active; Symbol={symbol}; Timeframe={klineInterval}",
+                                PrependGuardSummarySegment(
+                                    entrySymbolAllowlistPolicy.Summary,
+                                    $"EntryHysteresis=Active; EntryDirection={entryDirection}"),
+                                512) ?? "EntryHysteresis=Active",
                             executionContext),
                         cancellationToken: cancellationToken,
                         strategyResult: strategyResult);
@@ -662,7 +747,9 @@ public sealed class MarketScannerHandoffService(
                 }
             }
 
-            var symbolAllowlistPolicy = EvaluateSymbolExecutionAllowlist(symbol, executionContext.ReduceOnly);
+            var symbolAllowlistPolicy = executionContext.SignalType == StrategySignalType.Entry
+                ? entrySymbolAllowlistPolicy
+                : activeSymbolAllowlistPolicy;
             if (symbolAllowlistPolicy.IsBlocked)
             {
                 latestAttempt = await PersistBlockedAttemptWithShadowDecisionAsync(
@@ -712,8 +799,10 @@ public sealed class MarketScannerHandoffService(
                     correlationId: attemptCorrelationId,
                     guardSummary: AppendExecutionIntentGuardSummary(
                         Truncate(
-                            $"{leveragePolicy.Summary}; Symbol={symbol}; Timeframe={klineInterval}",
-                            512) ?? $"{leveragePolicy.Summary}; Symbol={symbol}",
+                            PrependGuardSummarySegment(
+                                symbolAllowlistPolicy.Summary,
+                                leveragePolicy.Summary),
+                            512) ?? leveragePolicy.Summary,
                         executionContext),
                     cancellationToken: cancellationToken,
                     strategyResult: strategyResult);
@@ -800,8 +889,10 @@ public sealed class MarketScannerHandoffService(
                         correlationId: correlationId,
                         guardSummary: AppendExecutionIntentGuardSummary(
                             Truncate(
-                                $"UserExecutionOverrideGuard={overrideEvaluation.BlockCode ?? "Blocked"}; Symbol={symbol}; Timeframe={klineInterval}; {BuildLatencyGuardSummarySnippet(latencySnapshot)}; RiskSummary={overrideEvaluation.RiskEvaluation?.ReasonSummary ?? "n/a"}",
-                                512) ?? $"UserExecutionOverrideGuard={overrideEvaluation.BlockCode ?? "Blocked"}; Symbol={symbol}; Timeframe={klineInterval}",
+                                PrependGuardSummarySegment(
+                                    symbolAllowlistPolicy.Summary,
+                                    $"UserExecutionOverrideGuard={overrideEvaluation.BlockCode ?? "Blocked"}; {BuildLatencyGuardSummarySnippet(latencySnapshot)}; RiskSummary={overrideEvaluation.RiskEvaluation?.ReasonSummary ?? "n/a"}"),
+                                512) ?? $"UserExecutionOverrideGuard={overrideEvaluation.BlockCode ?? "Blocked"}",
                             executionContext,
                             ResolveExitReasonToken(
                                 ResolveExecutionBlockerCode(
@@ -832,8 +923,10 @@ public sealed class MarketScannerHandoffService(
                         correlationId: correlationId,
                         guardSummary: AppendExecutionIntentGuardSummary(
                             Truncate(
-                                $"ExecutionGate=Allowed; UserExecutionOverride=Allowed; AiShadowMode=ObserveOnly; Symbol={symbol}; Timeframe={klineInterval}; {BuildLatencyGuardSummarySnippet(latencySnapshot)}",
-                                512) ?? $"ExecutionGate=Allowed; UserExecutionOverride=Allowed; AiShadowMode=ObserveOnly; Symbol={symbol}; Timeframe={klineInterval}",
+                                PrependGuardSummarySegment(
+                                    symbolAllowlistPolicy.Summary,
+                                    $"ExecutionGate=Allowed; UserExecutionOverride=Allowed; AiShadowMode=ObserveOnly; {BuildLatencyGuardSummarySnippet(latencySnapshot)}"),
+                                512) ?? "ExecutionGate=Allowed; UserExecutionOverride=Allowed; AiShadowMode=ObserveOnly",
                             executionContext),
                         cancellationToken: cancellationToken,
                         riskEvaluation: overrideEvaluation.RiskEvaluation,
@@ -910,7 +1003,9 @@ public sealed class MarketScannerHandoffService(
                     blockerDetail: exception.Message,
                     correlationId: attemptCorrelationId,
                     guardSummary: AppendExecutionIntentGuardSummary(
-                        $"ExecutionGate={exception.Reason}; Symbol={symbol}; Timeframe={klineInterval}",
+                        PrependGuardSummarySegment(
+                            symbolAllowlistPolicy.Summary,
+                            $"ExecutionGate={exception.Reason}; Symbol={symbol}; Timeframe={klineInterval}"),
                         executionContext,
                         ResolveExitReasonToken(ResolveExecutionBlockerCode(executionContext, exception.Reason.ToString()))),
                     cancellationToken: cancellationToken,
@@ -2728,6 +2823,51 @@ public sealed class MarketScannerHandoffService(
         string reasonCode)
     {
         return $"SymbolExecutionAllowlist=Applied; AllowedExecutionSymbols={allowedExecutionSymbolsSummary}; SymbolAllowlistDecision={decision}; SymbolAllowlistReason={reasonCode}; SelectedSymbol={symbol}";
+    }
+
+    private static string PrependGuardSummarySegment(string? segment, string summary)
+    {
+        return string.IsNullOrWhiteSpace(segment)
+            ? summary
+            : $"{segment}; {summary}";
+    }
+
+    private static string BuildCompactEntrySuppressionGuardSummary(
+        string summary,
+        string? positionAdoptionSummary)
+    {
+        var compactPositionAdoptionSummary = BuildCompactPositionAdoptionGuardSummary(positionAdoptionSummary);
+        var compactSummary =
+            $"SignalType=Entry; EntrySource=StrategyEntry; ExitSource=n/a; ReverseEntryConvertedToCloseOnly=False; {summary}";
+
+        if (!string.IsNullOrWhiteSpace(compactPositionAdoptionSummary))
+        {
+            compactSummary = $"{compactSummary}; {compactPositionAdoptionSummary}";
+        }
+
+        return compactSummary;
+    }
+
+    private static string BuildCompactPositionAdoptionGuardSummary(string? positionAdoptionSummary)
+    {
+        if (string.IsNullOrWhiteSpace(positionAdoptionSummary))
+        {
+            return string.Empty;
+        }
+
+        string[] allowedPrefixes =
+        [
+            "PositionAdoption=",
+            "AdoptedPositionSymbol=",
+            "AdoptedExchangeAccountId=",
+            "AutoManagementEnabled="
+        ];
+
+        return string.Join(
+            "; ",
+            positionAdoptionSummary
+                .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(token => allowedPrefixes.Any(prefix => token.StartsWith(prefix, StringComparison.Ordinal))));
     }
 
     private static string BuildExecutionCommandContext(

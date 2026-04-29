@@ -530,6 +530,10 @@ public sealed class BotWorkerJobProcessor(
             ? ResolveSignalDirection(signal)
             : StrategyTradeDirection.Neutral;
         CloseOnlyExecutionIntent? closeOnlyIntent = null;
+        var entrySymbolAllowlistPolicy = signal.SignalType == StrategySignalType.Entry
+            ? EvaluateSymbolExecutionAllowlist(normalizedSymbol, reduceOnly: false)
+            : SymbolExecutionAllowlistEvaluation.NotConfigured;
+        var activeSymbolAllowlistPolicy = entrySymbolAllowlistPolicy;
 
         if (signal.SignalType == StrategySignalType.Entry &&
             currentNetQuantity != 0m &&
@@ -540,17 +544,45 @@ public sealed class BotWorkerJobProcessor(
 
             if (currentPositionDirection == entryDirection)
             {
+                if (entrySymbolAllowlistPolicy.IsBlocked)
+                {
+                    var blockedAllowlistSummary = PrependDecisionSummarySegment(
+                        entrySymbolAllowlistPolicy.Summary,
+                        positionAdoption.Summary);
+                    await WriteEntrySkippedDecisionTraceAsync(
+                        bot.OwnerUserId,
+                        publishedVersion,
+                        signal,
+                        correlationId,
+                        strategyDecisionTrace,
+                        blockedAllowlistSummary,
+                        currentNetQuantity,
+                        cancellationToken,
+                        decisionReasonCode: entrySymbolAllowlistPolicy.ReasonCode,
+                        referencePrice: marketState.ReferencePrice);
+
+                    logger.LogInformation(
+                        "Bot execution pilot blocked entry for BotId {BotId} because symbol execution allowlist failed closed before same-direction suppression. Symbol={Symbol} ReasonCode={ReasonCode} StrategySignalId={StrategySignalId}.",
+                        bot.Id,
+                        signal.Symbol,
+                        entrySymbolAllowlistPolicy.ReasonCode,
+                        signal.StrategySignalId);
+                    return BackgroundJobProcessResult.PermanentFailure(entrySymbolAllowlistPolicy.ReasonCode);
+                }
+
+                var sameDirectionSummary = PrependDecisionSummarySegment(
+                    entrySymbolAllowlistPolicy.Summary,
+                    $"{positionAdoption.Summary}; Entry signal was suppressed because an open {entryDirection.ToString().ToLowerInvariant()} position already exists for {signal.Symbol} on the selected exchange account.");
                 await WriteEntrySkippedDecisionTraceAsync(
                     bot.OwnerUserId,
                     publishedVersion,
                     signal,
                     correlationId,
                     strategyDecisionTrace,
-                    $"Entry signal was suppressed because an open {entryDirection.ToString().ToLowerInvariant()} position already exists for {signal.Symbol} on the selected exchange account.",
+                    sameDirectionSummary,
                     currentNetQuantity,
                     cancellationToken,
                     decisionReasonCode: ResolveSameDirectionEntrySuppressedDecisionCode(entryDirection),
-                    positionAdoptionSummary: positionAdoption.Summary,
                     referencePrice: marketState.ReferencePrice);
 
                 logger.LogInformation(
@@ -571,13 +603,15 @@ public sealed class BotWorkerJobProcessor(
                     correlationId,
                     strategyDecisionTrace,
                     AutoPositionManagementDisabledDecisionCode,
-                    BuildAutoPositionManagementDisabledReverseSummary(
-                        signal.Symbol,
-                        currentPositionDirection == StrategyTradeDirection.Long
-                            ? ExecutionOrderSide.Sell
-                            : ExecutionOrderSide.Buy,
-                        currentNetQuantity,
-                        positionAdoption.Summary),
+                    PrependDecisionSummarySegment(
+                        activeSymbolAllowlistPolicy.Summary,
+                        BuildAutoPositionManagementDisabledReverseSummary(
+                            signal.Symbol,
+                            currentPositionDirection == StrategyTradeDirection.Long
+                                ? ExecutionOrderSide.Sell
+                                : ExecutionOrderSide.Buy,
+                            currentNetQuantity,
+                            positionAdoption.Summary)),
                     currentNetQuantity,
                     cancellationToken,
                     positionAdoptionSummary: positionAdoption.Summary,
@@ -600,6 +634,7 @@ public sealed class BotWorkerJobProcessor(
                     : ExecutionOrderSide.Buy,
                 ExitPnlGuardSummary: null,
                 PositionAdoptionSummary: positionAdoption.Summary);
+            activeSymbolAllowlistPolicy = EvaluateSymbolExecutionAllowlist(normalizedSymbol, reduceOnly: true);
             signal = signal with { SignalType = StrategySignalType.Exit };
             entryDirection = StrategyTradeDirection.Neutral;
 
@@ -626,7 +661,9 @@ public sealed class BotWorkerJobProcessor(
                     correlationId,
                     strategyDecisionTrace,
                     closeOnlyPnlGuard.DecisionReasonCode,
-                    closeOnlyPnlGuard.DecisionSummary,
+                    PrependDecisionSummarySegment(
+                        activeSymbolAllowlistPolicy.Summary,
+                        closeOnlyPnlGuard.DecisionSummary),
                     currentNetQuantity,
                     cancellationToken,
                     requestedQuantity: closeOnlyPnlGuard.CloseQuantity,
@@ -644,6 +681,29 @@ public sealed class BotWorkerJobProcessor(
             closeOnlyIntent = closeOnlyIntent with { ExitPnlGuardSummary = closeOnlyPnlGuard.GuardSummary };
         }
 
+        if (signal.SignalType == StrategySignalType.Entry && entrySymbolAllowlistPolicy.IsBlocked)
+        {
+            await WriteEntrySkippedDecisionTraceAsync(
+                bot.OwnerUserId,
+                publishedVersion,
+                signal,
+                correlationId,
+                strategyDecisionTrace,
+                entrySymbolAllowlistPolicy.Summary ?? $"SymbolExecutionAllowlist=Applied; SelectedSymbol={signal.Symbol}",
+                currentNetQuantity,
+                cancellationToken,
+                decisionReasonCode: entrySymbolAllowlistPolicy.ReasonCode,
+                referencePrice: marketState.ReferencePrice);
+
+            logger.LogInformation(
+                "Bot execution pilot blocked entry for BotId {BotId} because symbol execution allowlist failed closed. Symbol={Symbol} ReasonCode={ReasonCode} StrategySignalId={StrategySignalId}.",
+                bot.Id,
+                signal.Symbol,
+                entrySymbolAllowlistPolicy.ReasonCode,
+                signal.StrategySignalId);
+            return BackgroundJobProcessResult.PermanentFailure(entrySymbolAllowlistPolicy.ReasonCode);
+        }
+
         if (signal.SignalType == StrategySignalType.Entry &&
             TryResolveEntryDirectionModeBlock(
                 bot,
@@ -656,7 +716,9 @@ public sealed class BotWorkerJobProcessor(
                 signal,
                 correlationId,
                 strategyDecisionTrace,
-                directionModeBlockSummary!,
+                PrependDecisionSummarySegment(
+                    entrySymbolAllowlistPolicy.Summary,
+                    directionModeBlockSummary!),
                 currentNetQuantity,
                 cancellationToken,
                 decisionReasonCode: EntryDirectionModeBlockedDecisionCode,
@@ -686,7 +748,9 @@ public sealed class BotWorkerJobProcessor(
                 signal,
                 correlationId,
                 strategyDecisionTrace,
-                regimeBlockSummary!,
+                PrependDecisionSummarySegment(
+                    entrySymbolAllowlistPolicy.Summary,
+                    regimeBlockSummary!),
                 currentNetQuantity,
                 cancellationToken,
                 decisionReasonCode: ResolveEntryRegimeFilterBlockedDecisionCode(entryDirection),
@@ -719,7 +783,9 @@ public sealed class BotWorkerJobProcessor(
                     signal,
                     correlationId,
                     strategyDecisionTrace,
-                    hysteresisSummary,
+                    PrependDecisionSummarySegment(
+                        entrySymbolAllowlistPolicy.Summary,
+                        hysteresisSummary),
                     currentNetQuantity,
                     cancellationToken,
                     decisionReasonCode: ResolveEntryHysteresisActiveDecisionCode(entryDirection),
@@ -914,7 +980,9 @@ public sealed class BotWorkerJobProcessor(
                     correlationId,
                     strategyDecisionTrace,
                     dispatchSafetyReasonCode!,
-                    dispatchSafetySummary!,
+                    PrependDecisionSummarySegment(
+                        activeSymbolAllowlistPolicy.Summary,
+                        dispatchSafetySummary!),
                     currentNetQuantity,
                     cancellationToken,
                     requestedQuantity: dispatchPlan.Quantity,
@@ -928,7 +996,9 @@ public sealed class BotWorkerJobProcessor(
                     signal,
                     correlationId,
                     strategyDecisionTrace,
-                    dispatchSafetySummary!,
+                    PrependDecisionSummarySegment(
+                        activeSymbolAllowlistPolicy.Summary,
+                        dispatchSafetySummary!),
                     currentNetQuantity,
                     cancellationToken,
                     decisionReasonCode: dispatchSafetyReasonCode!,
@@ -961,7 +1031,9 @@ public sealed class BotWorkerJobProcessor(
                     correlationId,
                     strategyDecisionTrace,
                     OrderExecutionBreakerActiveDecisionCode,
-                    breakerSummary,
+                    PrependDecisionSummarySegment(
+                        activeSymbolAllowlistPolicy.Summary,
+                        breakerSummary),
                     currentNetQuantity,
                     cancellationToken,
                     requestedQuantity: dispatchPlan.Quantity,
@@ -975,7 +1047,9 @@ public sealed class BotWorkerJobProcessor(
                     signal,
                     correlationId,
                     strategyDecisionTrace,
-                    breakerSummary,
+                    PrependDecisionSummarySegment(
+                        activeSymbolAllowlistPolicy.Summary,
+                        breakerSummary),
                     currentNetQuantity,
                     cancellationToken,
                     decisionReasonCode: OrderExecutionBreakerActiveDecisionCode,
@@ -993,7 +1067,9 @@ public sealed class BotWorkerJobProcessor(
             return BackgroundJobProcessResult.Success();
         }
 
-        var symbolAllowlistPolicy = EvaluateSymbolExecutionAllowlist(normalizedSymbol, dispatchPlan.ReduceOnly);
+        var symbolAllowlistPolicy = signal.SignalType == StrategySignalType.Entry
+            ? entrySymbolAllowlistPolicy
+            : activeSymbolAllowlistPolicy;
         if (symbolAllowlistPolicy.IsBlocked)
         {
             var allowlistExecutionContext = AppendExecutionIntentContext(
@@ -4133,6 +4209,13 @@ public sealed class BotWorkerJobProcessor(
         return string.IsNullOrWhiteSpace(segment)
             ? context
             : $"{context} | {segment}";
+    }
+
+    private static string PrependDecisionSummarySegment(string? segment, string summary)
+    {
+        return string.IsNullOrWhiteSpace(segment)
+            ? summary
+            : $"{segment}; {summary}";
     }
 
     private static string AppendExecutionIntentContext(
