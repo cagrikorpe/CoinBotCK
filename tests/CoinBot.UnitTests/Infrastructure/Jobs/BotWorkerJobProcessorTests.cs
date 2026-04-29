@@ -1716,6 +1716,8 @@ public sealed class BotWorkerJobProcessorTests
             70000m);
         ConfigurePilotScope(harness, bot);
         harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.EnableTrailingTakeProfit = true;
+        harness.PilotOptions.TakeProfitPercentage = 5m;
         harness.MarketDataService.SetLatestPrice(bot.Symbol, 69600m);
         await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-runtime-short-trailing-1");
         await harness.SwitchService.SetTradeMasterStateAsync(
@@ -1741,8 +1743,58 @@ public sealed class BotWorkerJobProcessorTests
         Assert.True(persistedOrder.ReduceOnly);
         Assert.Equal("TrailingStopTriggered", exitTrace.DecisionReasonCode);
         Assert.Contains("SignalType=Exit", exitTrace.DecisionSummary, StringComparison.Ordinal);
-        Assert.Contains("ExitSource=RiskExit", exitTrace.DecisionSummary, StringComparison.Ordinal);
-        Assert.Contains("ExitPolicyReason=RiskExitThresholdReached", exitTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitSource=TrailingTakeProfit", exitTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitPolicyReason=TrailingTakeProfitRetrace", exitTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("TrailingState=ExitAllowed", exitTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("TrailingReferenceType=Trough", exitTrace.DecisionSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_SubmitsRuntimeExit_WhenTrailingStopQualityIsTriggeredForLongPosition()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        await SetPublishedStrategyDefinitionAsync(harness.DbContext, bot, CreateDirectionalPilotDefinitionJson("long"));
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot,
+            quantity: 0.140m,
+            entryPrice: 80m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.EnableTrailingTakeProfit = true;
+        harness.PilotOptions.TakeProfitPercentage = 5m;
+        harness.HistoricalKlineClient.SetFlatCandle(bot.Symbol, 80m, 81m, 79.5m, 80.8m);
+        harness.MarketDataService.SetLatestPrice(bot.Symbol, 80.75m);
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-runtime-long-trailing-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-runtime-long-trailing-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-runtime-long-trailing-1",
+            CancellationToken.None);
+
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
+        var exitSignal = await harness.DbContext.TradingStrategySignals.SingleAsync(entity => entity.SignalType == StrategySignalType.Exit);
+        var exitTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == exitSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(ExecutionOrderSide.Sell, persistedOrder.Side);
+        Assert.True(persistedOrder.ReduceOnly);
+        Assert.Equal("TrailingStopTriggered", exitTrace.DecisionReasonCode);
+        Assert.Contains("SignalType=Exit", exitTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitSource=TrailingTakeProfit", exitTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitPolicyReason=TrailingTakeProfitRetrace", exitTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("TrailingState=ExitAllowed", exitTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("TrailingReferenceType=Peak", exitTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("TrailingReferencePrice=81", exitTrace.DecisionSummary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1792,6 +1844,112 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_PreservesSameDirectionDecision_WhenTrailingTakeProfitIsNotYetArmed()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        await SetPublishedStrategyDefinitionAsync(harness.DbContext, bot, CreateDirectionalPilotDefinitionJson("long"));
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot,
+            quantity: 0.140m,
+            entryPrice: 80m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.EnableTrailingTakeProfit = true;
+        harness.PilotOptions.TakeProfitPercentage = 5m;
+        harness.HistoricalKlineClient.SetFlatCandle(bot.Symbol, 80m, 80.30m, 79.8m, 80.2m);
+        harness.MarketDataService.SetLatestPrice(bot.Symbol, 80.25m);
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-runtime-long-trailing-inactive-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-runtime-long-trailing-inactive-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-runtime-long-trailing-inactive-1",
+            CancellationToken.None);
+
+        var persistedSignals = await harness.DbContext.TradingStrategySignals.ToListAsync();
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Single(persistedSignals);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal("SameDirectionLongEntrySuppressed", latestDecisionTrace.DecisionReasonCode);
+        Assert.Contains("TrailingState=Inactive", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("TrailingReason=ActivationThresholdNotReached", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("TrailingReferenceType=Peak", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_FailsClosed_WhenTrailingTakeProfitCannotResolveReferencePrice()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        await SetPublishedStrategyDefinitionAsync(harness.DbContext, bot, CreateDirectionalPilotDefinitionJson("long"));
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot,
+            quantity: 0.140m,
+            entryPrice: 80m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.EnableTrailingTakeProfit = true;
+        harness.PilotOptions.TakeProfitPercentage = 5m;
+        harness.HistoricalKlineClient.SetFlatCandle(bot.Symbol, 0m, 0m, 0m, 0m);
+        harness.MarketDataService.ClearLatestPrice(bot.Symbol);
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-runtime-long-trailing-blocked-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-runtime-long-trailing-blocked-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-runtime-long-trailing-blocked-1",
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccessful);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task BuildTrailingTakeProfitStatusSummary_ReturnsBlockedFailClosedReason_WhenReferencePriceIsMissing()
+    {
+        await using var harness = CreateHarness();
+        var method = typeof(BotWorkerJobProcessor).GetMethod(
+            "BuildTrailingTakeProfitStatusSummary",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+        Assert.NotNull(method);
+
+        var summary = method!.Invoke(
+            harness.Processor,
+            [
+                CoinBot.Application.Abstractions.Strategies.StrategyTradeDirection.Long,
+                "Blocked",
+                "ReferencePriceUnavailable",
+                80m,
+                null,
+                null,
+                null,
+                null
+            ]) as string;
+
+        Assert.NotNull(summary);
+        Assert.Contains("TrailingState=Blocked", summary, StringComparison.Ordinal);
+        Assert.Contains("TrailingReason=ReferencePriceUnavailable", summary, StringComparison.Ordinal);
+        Assert.Contains("TrailingFailClosed=True", summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ProcessAsync_SubmitsRuntimeExit_WhenTakeProfitQualityIsTriggered()
     {
         await using var harness = CreateHarness();
@@ -1837,9 +1995,106 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
         Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
         Assert.Equal("TakeProfitTriggered", exitTrace.DecisionReasonCode);
+        Assert.Contains("SignalType=Exit", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitSource=TakeProfit", exitTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ReverseEntryConvertedToCloseOnly=False", exitTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ProfitPolicy=Applied", exitTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitPolicyDecision=Allowed", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Contains("ExitPolicyReason=TakeProfitThresholdReached", exitTrace.DecisionSummary, StringComparison.Ordinal);
         Assert.Equal("EntrySupersededByRuntimeExitQuality", entryTrace.DecisionReasonCode);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_SubmitsRuntimeExit_WhenStopLossQualityIsTriggeredForLongPosition()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext);
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot,
+            quantity: 0.002m,
+            entryPrice: 60000m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.MarketDataService.SetLatestPrice(bot.Symbol, 59730m);
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-runtime-long-sl-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-runtime-long-sl-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-runtime-long-sl-1",
+            CancellationToken.None);
+
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
+        var exitSignal = await harness.DbContext.TradingStrategySignals.SingleAsync(entity => entity.SignalType == StrategySignalType.Exit);
+        var exitTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == exitSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(ExecutionOrderSide.Sell, persistedOrder.Side);
+        Assert.True(persistedOrder.ReduceOnly);
+        Assert.Equal("StopLossTriggered", exitTrace.DecisionReasonCode);
+        Assert.Contains("SignalType=Exit", exitTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitSource=StopLoss", exitTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ReverseEntryConvertedToCloseOnly=False", exitTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ProfitPolicy=Applied", exitTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitPolicyDecision=Allowed", exitTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitPolicyReason=StopLossThresholdReached", exitTrace.DecisionSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PreservesReverseSignalExitSource_WhenTrailingTakeProfitIsEnabled()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SetPublishedStrategyDefinitionAsync(harness.DbContext, bot, CreateDirectionalPilotDefinitionJson("short"));
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot,
+            quantity: 0.125m,
+            entryPrice: 80m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.EnableTrailingTakeProfit = true;
+        harness.PilotOptions.AllowRiskExit = false;
+        harness.PilotOptions.TrailingStopActivationPercentage = 1m;
+        harness.HistoricalKlineClient.SetFlatCandle(bot.Symbol, 80m, 80.2m, 79.9m, 80.15m);
+        harness.MarketDataService.SetLatestPrice(bot.Symbol, 80.20m);
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-entry-reverse-long-trailing-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-entry-reverse-long-trailing-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-entry-reverse-long-trailing-1",
+            CancellationToken.None);
+
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
+        var persistedSignals = await harness.DbContext.TradingStrategySignals
+            .OrderBy(entity => entity.GeneratedAtUtc)
+            .ToListAsync();
+        var decisionTraces = await harness.DbContext.DecisionTraces
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .ToListAsync();
+
+        Assert.True(result.IsSuccessful);
+        Assert.Single(persistedSignals);
+        Assert.Equal(StrategySignalType.Entry, persistedSignals[0].SignalType);
+        Assert.Equal(StrategySignalType.Exit, persistedOrder.SignalType);
+        Assert.Equal(ExecutionOrderSide.Sell, persistedOrder.Side);
+        Assert.True(persistedOrder.ReduceOnly);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.DoesNotContain(decisionTraces, entity =>
+            string.Equals(entity.DecisionReasonCode, "TrailingStopTriggered", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1853,6 +2108,7 @@ public sealed class BotWorkerJobProcessorTests
         Assert.Equal(0m, options.MinTakeProfitPct);
         Assert.True(options.AllowStopLossExit);
         Assert.True(options.AllowRiskExit);
+        Assert.False(options.EnableTrailingTakeProfit);
     }
 
     [Fact]
@@ -3927,10 +4183,20 @@ public sealed class BotWorkerJobProcessorTests
             ["ETHUSDT"] = 65000m,
             ["SOLUSDT"] = 80m
         };
+        private readonly HashSet<string> missingLatestPrices = new(StringComparer.Ordinal);
 
         public void SetLatestPrice(string symbol, decimal price)
         {
-            latestPrices[symbol.Trim().ToUpperInvariant()] = price;
+            var normalizedSymbol = symbol.Trim().ToUpperInvariant();
+            missingLatestPrices.Remove(normalizedSymbol);
+            latestPrices[normalizedSymbol] = price;
+        }
+
+        public void ClearLatestPrice(string symbol)
+        {
+            var normalizedSymbol = symbol.Trim().ToUpperInvariant();
+            latestPrices.Remove(normalizedSymbol);
+            missingLatestPrices.Add(normalizedSymbol);
         }
 
         public ValueTask TrackSymbolAsync(string symbol, CancellationToken cancellationToken = default)
@@ -3949,6 +4215,11 @@ public sealed class BotWorkerJobProcessorTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             var normalizedSymbol = symbol.Trim().ToUpperInvariant();
+            if (missingLatestPrices.Contains(normalizedSymbol))
+            {
+                return ValueTask.FromResult<MarketPriceSnapshot?>(null);
+            }
+
             latestPrices.TryGetValue(normalizedSymbol, out var price);
             if (price <= 0m)
             {

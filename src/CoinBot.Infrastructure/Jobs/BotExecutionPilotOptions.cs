@@ -80,6 +80,8 @@ public sealed class BotExecutionPilotOptions
 
     public bool AllowRiskExit { get; set; } = true;
 
+    public bool EnableTrailingTakeProfit { get; set; } = false;
+
     [Range(0, 100)]
     public decimal StopLossPercentage { get; set; } = 0.45m;
 
