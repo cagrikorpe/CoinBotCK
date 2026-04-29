@@ -43,12 +43,13 @@
             <div class="cb-admin-summary-card">
                 <span class="cb-admin-summary-label">Universe</span>
                 <strong data-cb-scanner-universe>@scanner.UniverseSource</strong>
-                <small data-cb-scanner-counts>@scanner.ScannedSymbolCount scanned / @scanner.EligibleCandidateCount eligible</small>
+                <small data-cb-scanner-counts>@scanner.ScannedSymbolCount scanned / @scanner.EligibleCandidateCount eligible / <span data-cb-scanner-top-count>@scanner.TopCandidateCount</span> top</small>
             </div>
             <div class="cb-admin-summary-card">
                 <span class="cb-admin-summary-label">Best candidate</span>
                 <strong data-cb-scanner-best-symbol>@(scanner.BestCandidateSymbol ?? "n/a")</strong>
                 <small data-cb-scanner-best-score>@(scanner.BestCandidateScore?.ToString("0.####") ?? "n/a") score</small>
+                <small class="d-block mt-1" data-cb-scanner-best-ranking-summary>@(scanner.BestCandidateRankingSummary ?? "n/a")</small>
             </div>
         </div>
 
@@ -89,6 +90,28 @@
                 }
             </div>
             <span class="cb-admin-info-strip-meta">Rollback via config</span>
+        </div>
+
+        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4" data-cb-scanner-observability-summary>
+            <div>
+                <div class="cb-admin-info-strip-title">Decision distribution</div>
+                <div class="cb-admin-info-strip-text" data-cb-scanner-rejection-distribution>
+                    Rejections @(scanner.RejectionSummary ?? "n/a")
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-scanner-directional-conflict-summary>
+                    Directional conflict @(scanner.DirectionalConflictSummary ?? "n/a")
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-scanner-same-direction-summary>
+                    Same direction @(scanner.SameDirectionSummary ?? "n/a")
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-scanner-duplicate-summary>
+                    Duplicate @(scanner.DuplicateSummary ?? "n/a")
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-scanner-guardrail-summary>
+                    Guardrails @(scanner.GuardrailSummary ?? "n/a")
+                </div>
+            </div>
+            <span class="cb-admin-info-strip-meta">Latest 100 blocked</span>
         </div>
 
         <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6" data-cb-scanner-handoff-strip>
@@ -250,6 +273,17 @@
                                     · AI @(candidate.AdvisoryShadowScore?.ToString() ?? "n/a")
                                     · Combined @(candidate.AiRankingCombinedScore?.ToString("0.####") ?? "n/a")
                                 </small>
+                                <small class="cb-admin-job-meta d-block mt-1" data-cb-scanner-top-ranking-decision>
+                                    @(candidate.RankingDecision ?? "n/a") · @(candidate.RankingReasonCode ?? "n/a") · @(candidate.RankingSummary ?? "n/a")
+                                </small>
+                                <small class="cb-admin-job-meta d-block mt-1" data-cb-scanner-top-quality-summary>
+                                    Candidate @(candidate.CandidateScore?.ToString("0.####") ?? "n/a")
+                                    · Risk penalty @(candidate.RiskPenalty?.ToString("0.####") ?? "n/a")
+                                    · Volatility @(candidate.VolatilityScore?.ToString("0.####") ?? "n/a")
+                                    · Liquidity @(candidate.LiquidityScore?.ToString("0.####") ?? "n/a")
+                                    · Trend @(candidate.TrendAlignment ?? "n/a")
+                                    · Conflict @(candidate.DirectionalConflictStatus ?? "n/a")
+                                </small>
                                 @if (candidate.AiRankingInfluenceWeight.HasValue || candidate.AiRankingOutcomeCoveragePercent.HasValue)
                                 {
                                     <small class="cb-admin-job-meta d-block mt-1" data-cb-scanner-top-ranking-guardrails>
@@ -316,6 +350,17 @@
                                 {
                                     <small class="cb-admin-job-meta d-block mt-2" data-cb-scanner-rejected-ranking-mode>@candidate.AiRankingMode</small>
                                 }
+                                <small class="cb-admin-job-meta d-block mt-1" data-cb-scanner-rejected-ranking-decision>
+                                    @(candidate.RankingDecision ?? "Rejected") · @(candidate.RankingReasonCode ?? candidate.RejectionReason ?? "n/a") · @(candidate.RankingSummary ?? "n/a")
+                                </small>
+                                <small class="cb-admin-job-meta d-block mt-1" data-cb-scanner-rejected-quality-summary>
+                                    Candidate @(candidate.CandidateScore?.ToString("0.####") ?? "n/a")
+                                    · Risk penalty @(candidate.RiskPenalty?.ToString("0.####") ?? "n/a")
+                                    · Volatility @(candidate.VolatilityScore?.ToString("0.####") ?? "n/a")
+                                    · Liquidity @(candidate.LiquidityScore?.ToString("0.####") ?? "n/a")
+                                    · Trend @(candidate.TrendAlignment ?? "n/a")
+                                    · Conflict @(candidate.DirectionalConflictStatus ?? "n/a")
+                                </small>
                                 @if (!string.IsNullOrWhiteSpace(candidate.AiRankingFallbackReason))
                                 {
                                     <small class="cb-admin-job-meta d-block mt-1" data-cb-scanner-rejected-ranking-fallback>Fallback @candidate.AiRankingFallbackReason</small>

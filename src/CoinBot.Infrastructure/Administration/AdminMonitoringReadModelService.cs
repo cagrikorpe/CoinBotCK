@@ -395,6 +395,16 @@ public sealed class AdminMonitoringReadModelService(
             .OrderByDescending(entity => entity.CompletedAtUtc)
             .ThenByDescending(entity => entity.CreatedDate)
             .FirstOrDefaultAsync(cancellationToken);
+        var recentBlockedReasonCodes = await dbContext.MarketScannerHandoffAttempts
+            .AsNoTracking()
+            .Where(entity =>
+                !entity.IsDeleted &&
+                entity.ExecutionRequestStatus != "Prepared")
+            .OrderByDescending(entity => entity.CompletedAtUtc)
+            .ThenByDescending(entity => entity.CreatedDate)
+            .Select(entity => entity.BlockerCode)
+            .Take(100)
+            .ToListAsync(cancellationToken);
         var degradedModeStates = await LoadDegradedModeStatesAsync(
             [latestHandoffEntity, lastSuccessfulHandoffEntity, lastBlockedHandoffEntity],
             cancellationToken);
@@ -423,9 +433,11 @@ public sealed class AdminMonitoringReadModelService(
             NormalizeUtc(latestCycle.CompletedAtUtc),
             Math.Max(0, latestCycle.ScannedSymbolCount - excludedCandidateCount),
             Math.Max(0, latestCycle.EligibleCandidateCount - excludedEligibleCount),
+            topCandidateEntities.Length,
             latestCycle.UniverseSource,
             bestCandidate?.Symbol,
             bestCandidate?.Score,
+            BuildBestCandidateRankingSummary(bestCandidate),
             topCandidateEntities.Select(MapMarketScannerCandidate).ToArray(),
             rejectedSampleEntities.Select(MapMarketScannerCandidate).ToArray(),
             MapMarketScannerHandoffAttempt(latestHandoffEntity, ResolveDegradedModeState(latestHandoffEntity, degradedModeStates)),
@@ -433,6 +445,10 @@ public sealed class AdminMonitoringReadModelService(
             MapMarketScannerHandoffAttempt(lastBlockedHandoffEntity, ResolveDegradedModeState(lastBlockedHandoffEntity, degradedModeStates)),
             cycleSummary,
             rejectionSummary,
+            BuildBlockedReasonSummary(recentBlockedReasonCodes, IsDirectionalConflictReasonCode),
+            BuildBlockedReasonSummary(recentBlockedReasonCodes, IsSameDirectionReasonCode),
+            BuildBlockedReasonSummary(recentBlockedReasonCodes, IsDuplicateReasonCode),
+            BuildBlockedReasonSummary(recentBlockedReasonCodes, IsGuardrailReasonCode),
             aiRankingFallbackCount,
             aiRankingSuppressionCount,
             aiRankingTopCandidateChangedCount,
@@ -675,6 +691,15 @@ public sealed class AdminMonitoringReadModelService(
             entity.Score,
             entity.Rank,
             entity.IsTopCandidate,
+            TryParseDecimalToken("CandidateScore", entity.ScoringSummary),
+            TryParseDecimalToken("RiskPenalty", entity.ScoringSummary),
+            TryParseDecimalToken("VolatilityScore", entity.ScoringSummary),
+            TryParseDecimalToken("LiquidityScore", entity.ScoringSummary),
+            ExecutionDecisionDiagnostics.ExtractToken("TrendAlignment", entity.ScoringSummary),
+            ExecutionDecisionDiagnostics.ExtractToken("DirectionalConflictStatus", entity.ScoringSummary),
+            ExecutionDecisionDiagnostics.ExtractToken("RankingDecision", entity.ScoringSummary),
+            ExecutionDecisionDiagnostics.ExtractToken("RankingReasonCode", entity.ScoringSummary),
+            ExecutionDecisionDiagnostics.ExtractToken("RankingSummary", entity.ScoringSummary),
             ResolveCandidateAiRankingMode(entity.ScoringSummary),
             ResolveCandidateAiRankingClassicalScore(entity.ScoringSummary),
             ResolveCandidateAiRankingCombinedScore(entity.ScoringSummary),
@@ -971,6 +996,79 @@ public sealed class AdminMonitoringReadModelService(
         return rejectionGroups.Length == 0
             ? null
             : string.Join(" | ", rejectionGroups);
+    }
+
+    private static string? BuildBestCandidateRankingSummary(MarketScannerCandidateEntity? bestCandidate)
+    {
+        if (bestCandidate is null)
+        {
+            return null;
+        }
+
+        var scoringSummary = bestCandidate.ScoringSummary;
+        var rankingDecision = ExecutionDecisionDiagnostics.ExtractToken("RankingDecision", scoringSummary) ?? "Selected";
+        var rankingReasonCode = ExecutionDecisionDiagnostics.ExtractToken("RankingReasonCode", scoringSummary) ?? "n/a";
+        var candidateScore = TryParseDecimalToken("CandidateScore", scoringSummary) ?? bestCandidate.Score;
+        var marketScore = TryParseDecimalToken("MarketScore", scoringSummary) ?? bestCandidate.MarketScore;
+        var strategyScore = ExecutionDecisionDiagnostics.ExtractToken("StrategyScore", scoringSummary)
+            ?? (bestCandidate.StrategyScore?.ToString(CultureInfo.InvariantCulture) ?? "n/a");
+        var riskPenalty = TryParseDecimalToken("RiskPenalty", scoringSummary);
+        var volatilityScore = TryParseDecimalToken("VolatilityScore", scoringSummary);
+        var liquidityScore = TryParseDecimalToken("LiquidityScore", scoringSummary);
+        var trendAlignment = ExecutionDecisionDiagnostics.ExtractToken("TrendAlignment", scoringSummary) ?? "n/a";
+        var directionalConflictStatus = ExecutionDecisionDiagnostics.ExtractToken("DirectionalConflictStatus", scoringSummary) ?? "n/a";
+
+        return $"{rankingDecision} · {rankingReasonCode} · Score {candidateScore.ToString("0.####", CultureInfo.InvariantCulture)} · Market {marketScore.ToString("0.####", CultureInfo.InvariantCulture)} · Strategy {strategyScore} · Risk penalty {(riskPenalty?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a")} · Volatility {(volatilityScore?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a")} · Liquidity {(liquidityScore?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a")} · Trend {trendAlignment} · Conflict {directionalConflictStatus}";
+    }
+
+    private static string? BuildBlockedReasonSummary(
+        IEnumerable<string?> reasonCodes,
+        Func<string, bool> predicate)
+    {
+        var groups = reasonCodes
+            .Select(reason => string.IsNullOrWhiteSpace(reason) ? null : reason.Trim())
+            .Where(reason => reason is not null)
+            .Cast<string>()
+            .Where(predicate)
+            .GroupBy(reason => reason, StringComparer.Ordinal)
+            .OrderByDescending(group => group.Count())
+            .ThenBy(group => group.Key, StringComparer.Ordinal)
+            .Take(4)
+            .Select(group => $"{group.Key}:{group.Count()}")
+            .ToArray();
+
+        return groups.Length == 0
+            ? null
+            : string.Join(" | ", groups);
+    }
+
+    private static bool IsDirectionalConflictReasonCode(string reasonCode)
+    {
+        return reasonCode.StartsWith("DirectionalConflict", StringComparison.Ordinal);
+    }
+
+    private static bool IsSameDirectionReasonCode(string reasonCode)
+    {
+        return reasonCode.StartsWith("SameDirection", StringComparison.Ordinal);
+    }
+
+    private static bool IsDuplicateReasonCode(string reasonCode)
+    {
+        return reasonCode.Contains("Duplicate", StringComparison.Ordinal);
+    }
+
+    private static bool IsGuardrailReasonCode(string reasonCode)
+    {
+        return reasonCode.StartsWith("Stale", StringComparison.Ordinal) ||
+               reasonCode.StartsWith("Continuity", StringComparison.Ordinal) ||
+               reasonCode.Contains("Cooldown", StringComparison.Ordinal) ||
+               reasonCode.Contains("Allowlist", StringComparison.Ordinal) ||
+               reasonCode.StartsWith("SymbolExecution", StringComparison.Ordinal) ||
+               reasonCode.StartsWith("SymbolAllowlist", StringComparison.Ordinal) ||
+               reasonCode.StartsWith("Risk", StringComparison.Ordinal) ||
+               reasonCode.StartsWith("UserExecutionRisk", StringComparison.Ordinal) ||
+               reasonCode.StartsWith("TradeMaster", StringComparison.Ordinal) ||
+               reasonCode.StartsWith("PrivatePlaneStale", StringComparison.Ordinal);
     }
 
     private static string ResolveSystemHealthState(

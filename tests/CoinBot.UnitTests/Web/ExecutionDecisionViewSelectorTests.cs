@@ -53,6 +53,11 @@ public sealed class ExecutionDecisionViewSelectorTests
         Assert.Contains("data-cb-scanner-risk-symbol-exposure", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-scanner-risk-concurrent", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-scanner-risk-coin", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-best-ranking-summary", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-directional-conflict-summary", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-same-direction-summary", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-duplicate-summary", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-guardrail-summary", content, StringComparison.Ordinal);
     }
 
     [Fact]

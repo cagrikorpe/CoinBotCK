@@ -143,6 +143,35 @@ public sealed class AdminOverviewSurfaceTests
     }
 
     [Fact]
+    public void AdminMarketScannerCard_RendersScannerDecisionObservabilitySurface()
+    {
+        var content = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Areas",
+            "Admin",
+            "Views",
+            "Shared",
+            "Foundation",
+            "_AdminMarketScannerCard.cshtml"));
+
+        Assert.Contains("data-cb-scanner-top-count", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-best-ranking-summary", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-observability-summary", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-directional-conflict-summary", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-same-direction-summary", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-duplicate-summary", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-guardrail-summary", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-top-ranking-decision", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-top-quality-summary", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-scanner-rejected-ranking-decision", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("CorrelationId", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("OwnerUserId", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("ScoringSummary", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AdminSystemHealthView_RendersExitPnlGuardEvidenceSurface()
     {
         var operationalCardContent = File.ReadAllText(Path.Combine(
