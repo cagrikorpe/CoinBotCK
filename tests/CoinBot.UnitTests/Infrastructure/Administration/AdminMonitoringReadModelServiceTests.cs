@@ -1321,6 +1321,231 @@ public sealed class AdminMonitoringReadModelServiceTests
     }
 
     [Fact]
+    public async Task AdminDashboardReadModel_PairsExecutionOrdersIntoStrategyProfitQualityEvidence()
+    {
+        var now = new DateTime(2026, 4, 29, 12, 0, 0, DateTimeKind.Utc);
+        await using var dbContext = CreateDbContext();
+
+        var strategyId = Guid.NewGuid();
+        var strategyVersionId = Guid.NewGuid();
+        var reverseEntrySignalId = Guid.NewGuid();
+        var stopLossEntrySignalId = Guid.NewGuid();
+        var stopLossExitSignalId = Guid.NewGuid();
+        var manualEntrySignalId = Guid.NewGuid();
+
+        dbContext.TradingStrategySignals.AddRange(
+            CreateStrategySignal(reverseEntrySignalId, strategyId, strategyVersionId, StrategySignalType.Entry, "SOLUSDT", now.AddMinutes(-30)),
+            CreateStrategySignal(stopLossEntrySignalId, strategyId, strategyVersionId, StrategySignalType.Entry, "SOLUSDT", now.AddMinutes(-20)),
+            CreateStrategySignal(stopLossExitSignalId, strategyId, strategyVersionId, StrategySignalType.Exit, "SOLUSDT", now.AddMinutes(-19)),
+            CreateStrategySignal(manualEntrySignalId, strategyId, strategyVersionId, StrategySignalType.Entry, "BTCUSDT", now.AddMinutes(-10)));
+
+        dbContext.DecisionTraces.Add(CreateDecisionTrace(
+            symbol: "SOLUSDT",
+            decisionReasonCode: "StopLossTriggered",
+            decisionSummary: "Runtime exit quality triggered StopLoss for SOLUSDT. ExitReason=StopLoss; EntrySource=n/a; ExitSource=StopLoss; ReasonCode=StopLossTriggered; PositionDirection=Long; EntryPrice=100; ExitPrice=95; CloseSide=Sell; ReduceOnly=True; EstimatedPnlQuote=-5; EstimatedPnlPct=-5; PeakReferencePrice=102;",
+            createdAtUtc: now.AddMinutes(-19),
+            strategySignalId: stopLossExitSignalId));
+
+        dbContext.ExecutionOrders.AddRange(
+            CreateExecutionOrder(
+                strategySignalId: reverseEntrySignalId,
+                strategyId: strategyId,
+                strategyVersionId: strategyVersionId,
+                strategyKey: "alpha-core",
+                symbol: "SOLUSDT",
+                signalType: StrategySignalType.Entry,
+                side: ExecutionOrderSide.Buy,
+                quantity: 1m,
+                price: 100m,
+                reduceOnly: false,
+                createdAtUtc: now.AddMinutes(-30)),
+            CreateExecutionOrder(
+                strategySignalId: reverseEntrySignalId,
+                strategyId: strategyId,
+                strategyVersionId: strategyVersionId,
+                strategyKey: "alpha-core",
+                symbol: "SOLUSDT",
+                signalType: StrategySignalType.Exit,
+                side: ExecutionOrderSide.Sell,
+                quantity: 1m,
+                price: 105m,
+                reduceOnly: true,
+                createdAtUtc: now.AddMinutes(-29)),
+            CreateExecutionOrder(
+                strategySignalId: stopLossEntrySignalId,
+                strategyId: strategyId,
+                strategyVersionId: strategyVersionId,
+                strategyKey: "alpha-core",
+                symbol: "SOLUSDT",
+                signalType: StrategySignalType.Entry,
+                side: ExecutionOrderSide.Buy,
+                quantity: 1m,
+                price: 100m,
+                reduceOnly: false,
+                createdAtUtc: now.AddMinutes(-20)),
+            CreateExecutionOrder(
+                strategySignalId: stopLossExitSignalId,
+                strategyId: strategyId,
+                strategyVersionId: strategyVersionId,
+                strategyKey: "alpha-core",
+                symbol: "SOLUSDT",
+                signalType: StrategySignalType.Exit,
+                side: ExecutionOrderSide.Sell,
+                quantity: 1m,
+                price: 95m,
+                reduceOnly: true,
+                createdAtUtc: now.AddMinutes(-19)),
+            CreateExecutionOrder(
+                strategySignalId: manualEntrySignalId,
+                strategyId: strategyId,
+                strategyVersionId: strategyVersionId,
+                strategyKey: "beta-core",
+                symbol: "BTCUSDT",
+                signalType: StrategySignalType.Entry,
+                side: ExecutionOrderSide.Sell,
+                quantity: 2m,
+                price: 50m,
+                reduceOnly: false,
+                createdAtUtc: now.AddMinutes(-10)),
+            CreateExecutionOrder(
+                strategySignalId: Guid.NewGuid(),
+                strategyId: strategyId,
+                strategyVersionId: strategyVersionId,
+                strategyKey: "__admin_manual_close__",
+                symbol: "BTCUSDT",
+                signalType: StrategySignalType.Exit,
+                side: ExecutionOrderSide.Buy,
+                quantity: 2m,
+                price: 47.5m,
+                reduceOnly: true,
+                createdAtUtc: now.AddMinutes(-9)));
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            new FixedTimeProvider(now),
+            Options.Create(new DataLatencyGuardOptions()));
+
+        var snapshot = await service.GetSnapshotAsync();
+        var profitQuality = snapshot.OperationalObservability.StrategyProfitQuality;
+
+        Assert.Equal(3, profitQuality.PairedTradeCount);
+        Assert.Equal(0, profitQuality.UnpairedEntryCount);
+        Assert.Equal(0, profitQuality.UnpairedExitCount);
+        Assert.Equal(2, profitQuality.WinCount);
+        Assert.Equal(1, profitQuality.LossCount);
+        Assert.Equal(66.67m, profitQuality.WinRatePercent);
+        Assert.Equal(5m, profitQuality.AverageProfitQuote);
+        Assert.Equal(-5m, profitQuality.AverageLossQuote);
+        Assert.Equal(1.66666667m, profitQuality.AverageNetPnlQuote);
+        Assert.Equal(1.66666667m, profitQuality.AverageNetPnlPct);
+        Assert.Equal(2m, profitQuality.MaxFavorableExcursionQuote);
+        Assert.Null(profitQuality.MaxAdverseExcursionQuote);
+
+        var reverseRow = Assert.Single(
+            profitQuality.StrategySummaries,
+            row =>
+                row.StrategyKey == "alpha-core" &&
+                row.Symbol == "SOLUSDT" &&
+                row.ExitSource == "ReverseSignal");
+        Assert.Equal(1, reverseRow.WinCount);
+        Assert.Equal(5m, reverseRow.AverageNetPnlQuote);
+
+        var stopLossRow = Assert.Single(
+            profitQuality.StrategySummaries,
+            row =>
+                row.StrategyKey == "alpha-core" &&
+                row.Symbol == "SOLUSDT" &&
+                row.ExitSource == "StopLoss");
+        Assert.Equal(1, stopLossRow.LossCount);
+        Assert.Equal(-5m, stopLossRow.AverageNetPnlQuote);
+        Assert.Equal(2m, stopLossRow.MaxFavorableExcursionQuote);
+
+        var manualRow = Assert.Single(
+            profitQuality.StrategySummaries,
+            row =>
+                row.StrategyKey == "beta-core" &&
+                row.Symbol == "BTCUSDT" &&
+                row.ExitSource == "Manual");
+        Assert.Equal(1, manualRow.WinCount);
+        Assert.Equal(5m, manualRow.AverageNetPnlQuote);
+    }
+
+    [Fact]
+    public async Task AdminDashboardReadModel_HandlesUnpairedProfitQualityRowsSafely_WhenPriceOrPairingDataIsMissing()
+    {
+        var now = new DateTime(2026, 4, 29, 13, 0, 0, DateTimeKind.Utc);
+        await using var dbContext = CreateDbContext();
+
+        var strategyId = Guid.NewGuid();
+        var strategyVersionId = Guid.NewGuid();
+        var entrySignalId = Guid.NewGuid();
+
+        dbContext.TradingStrategySignals.Add(CreateStrategySignal(
+            entrySignalId,
+            strategyId,
+            strategyVersionId,
+            StrategySignalType.Entry,
+            "SOLUSDT",
+            now.AddMinutes(-5)));
+
+        dbContext.ExecutionOrders.AddRange(
+            CreateExecutionOrder(
+                strategySignalId: entrySignalId,
+                strategyId: strategyId,
+                strategyVersionId: strategyVersionId,
+                strategyKey: "alpha-core",
+                symbol: "SOLUSDT",
+                signalType: StrategySignalType.Entry,
+                side: ExecutionOrderSide.Buy,
+                quantity: 1m,
+                price: 100m,
+                reduceOnly: false,
+                createdAtUtc: now.AddMinutes(-5)),
+            CreateExecutionOrder(
+                strategySignalId: Guid.NewGuid(),
+                strategyId: strategyId,
+                strategyVersionId: strategyVersionId,
+                strategyKey: "alpha-core",
+                symbol: "SOLUSDT",
+                signalType: StrategySignalType.Exit,
+                side: ExecutionOrderSide.Sell,
+                quantity: 1m,
+                price: 0m,
+                reduceOnly: true,
+                createdAtUtc: now.AddMinutes(-4)),
+            CreateExecutionOrder(
+                strategySignalId: Guid.NewGuid(),
+                strategyId: strategyId,
+                strategyVersionId: strategyVersionId,
+                strategyKey: "__admin_manual_close__",
+                symbol: "BTCUSDT",
+                signalType: StrategySignalType.Exit,
+                side: ExecutionOrderSide.Buy,
+                quantity: 1m,
+                price: 48m,
+                reduceOnly: true,
+                createdAtUtc: now.AddMinutes(-3)));
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            new FixedTimeProvider(now),
+            Options.Create(new DataLatencyGuardOptions()));
+
+        var snapshot = await service.GetSnapshotAsync();
+        var profitQuality = snapshot.OperationalObservability.StrategyProfitQuality;
+
+        Assert.Equal(0, profitQuality.PairedTradeCount);
+        Assert.Equal(1, profitQuality.UnpairedEntryCount);
+        Assert.Equal(2, profitQuality.UnpairedExitCount);
+        Assert.Empty(profitQuality.StrategySummaries);
+        Assert.Contains("No paired trades found", profitQuality.Summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AdminDashboardReadModel_ProjectsPilotConfigAndPrivateSyncEvidence()
     {
         var now = new DateTime(2026, 4, 29, 9, 15, 0, DateTimeKind.Utc);
@@ -1726,11 +1951,13 @@ public sealed class AdminMonitoringReadModelServiceTests
         string symbol,
         string decisionReasonCode,
         string decisionSummary,
-        DateTime createdAtUtc)
+        DateTime createdAtUtc,
+        Guid? strategySignalId = null)
     {
         return new DecisionTrace
         {
             Id = Guid.NewGuid(),
+            StrategySignalId = strategySignalId,
             CorrelationId = $"corr-{Guid.NewGuid():N}",
             DecisionId = $"decision-{Guid.NewGuid():N}",
             UserId = "admin-monitoring-test",
@@ -1745,6 +1972,86 @@ public sealed class AdminMonitoringReadModelServiceTests
             DecisionAtUtc = createdAtUtc,
             SnapshotJson = "{}",
             CreatedAtUtc = createdAtUtc,
+            CreatedDate = createdAtUtc,
+            UpdatedDate = createdAtUtc
+        };
+    }
+
+    private static TradingStrategySignal CreateStrategySignal(
+        Guid signalId,
+        Guid strategyId,
+        Guid strategyVersionId,
+        StrategySignalType signalType,
+        string symbol,
+        DateTime generatedAtUtc)
+    {
+        return new TradingStrategySignal
+        {
+            Id = signalId,
+            OwnerUserId = "admin-monitoring-test",
+            TradingStrategyId = strategyId,
+            TradingStrategyVersionId = strategyVersionId,
+            StrategyVersionNumber = 1,
+            StrategySchemaVersion = 2,
+            SignalType = signalType,
+            ExecutionEnvironment = ExecutionEnvironment.BinanceTestnet,
+            Symbol = symbol,
+            Timeframe = "1m",
+            IndicatorOpenTimeUtc = generatedAtUtc.AddMinutes(-1),
+            IndicatorCloseTimeUtc = generatedAtUtc,
+            IndicatorReceivedAtUtc = generatedAtUtc,
+            GeneratedAtUtc = generatedAtUtc,
+            IndicatorSnapshotJson = "{}",
+            RuleResultSnapshotJson = "{}",
+            CreatedDate = generatedAtUtc,
+            UpdatedDate = generatedAtUtc
+        };
+    }
+
+    private static ExecutionOrder CreateExecutionOrder(
+        Guid strategySignalId,
+        Guid strategyId,
+        Guid strategyVersionId,
+        string strategyKey,
+        string symbol,
+        StrategySignalType signalType,
+        ExecutionOrderSide side,
+        decimal quantity,
+        decimal price,
+        bool reduceOnly,
+        DateTime createdAtUtc)
+    {
+        return new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "admin-monitoring-test",
+            TradingStrategyId = strategyId,
+            TradingStrategyVersionId = strategyVersionId,
+            StrategySignalId = strategySignalId,
+            SignalType = signalType,
+            BotId = Guid.Parse("474A064C-6EF8-4E8A-82C7-7F150D8BBAD2"),
+            ExchangeAccountId = Guid.Parse("8F61C0E3-D082-4F28-4080-08DE97E95FBB"),
+            Plane = ExchangeDataPlane.Futures,
+            StrategyKey = strategyKey,
+            Symbol = symbol,
+            Timeframe = "1m",
+            BaseAsset = symbol[..^4],
+            QuoteAsset = "USDT",
+            Side = side,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = quantity,
+            Price = price,
+            FilledQuantity = 0m,
+            AverageFillPrice = null,
+            ReduceOnly = reduceOnly,
+            ExecutionEnvironment = ExecutionEnvironment.BinanceTestnet,
+            ExecutorKind = ExecutionOrderExecutorKind.BinanceTestnet,
+            State = ExecutionOrderState.Submitted,
+            IdempotencyKey = $"profit-quality-{Guid.NewGuid():N}",
+            RootCorrelationId = $"corr-{Guid.NewGuid():N}",
+            SubmittedToBroker = true,
+            SubmittedAtUtc = createdAtUtc,
+            LastStateChangedAtUtc = createdAtUtc,
             CreatedDate = createdAtUtc,
             UpdatedDate = createdAtUtc
         };

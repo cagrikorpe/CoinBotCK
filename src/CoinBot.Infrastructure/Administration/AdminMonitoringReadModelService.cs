@@ -120,6 +120,7 @@ public sealed class AdminMonitoringReadModelService(
             })
             .ToListAsync(cancellationToken);
         var exitPnlEvidence = await LoadExitPnlEvidenceAsync(windowStartUtc, cancellationToken);
+        var strategyProfitQuality = await LoadStrategyProfitQualityAsync(utcNow.AddDays(-30), cancellationToken);
         var enabledBotRows = await dbContext.TradingBots
             .AsNoTracking()
             .Where(entity =>
@@ -272,6 +273,7 @@ public sealed class AdminMonitoringReadModelService(
             CriticalWarnings: criticalWarnings)
         {
             ExitPnlEvidence = exitPnlEvidence,
+            StrategyProfitQuality = strategyProfitQuality,
             PilotConfigEvidence = pilotConfigEvidence,
             PrivateSyncEvidence = privateSyncEvidence
         };
@@ -337,6 +339,299 @@ public sealed class AdminMonitoringReadModelService(
             LastExitSymbol: latestRow.Symbol,
             LastExitSide: latestRow.CloseSide,
             LastExitReduceOnly: latestRow.ReduceOnly);
+    }
+
+    private async Task<OperationalStrategyProfitQualitySnapshot> LoadStrategyProfitQualityAsync(
+        DateTime windowStartUtc,
+        CancellationToken cancellationToken)
+    {
+        var orderRows = await dbContext.ExecutionOrders
+            .AsNoTracking()
+            .Where(entity =>
+                !entity.IsDeleted &&
+                entity.Plane == ExchangeDataPlane.Futures &&
+                entity.ExecutionEnvironment == ExecutionEnvironment.BinanceTestnet &&
+                entity.SubmittedToBroker &&
+                entity.CreatedDate >= windowStartUtc &&
+                (entity.SignalType == StrategySignalType.Entry || entity.SignalType == StrategySignalType.Exit) &&
+                entity.Quantity > 0m)
+            .OrderBy(entity => entity.CreatedDate)
+            .ThenBy(entity => entity.SubmittedAtUtc ?? entity.CreatedDate)
+            .ThenBy(entity => entity.Id)
+            .Take(500)
+            .Select(entity => new StrategyProfitOrderRow(
+                entity.Id,
+                entity.StrategySignalId,
+                entity.BotId,
+                entity.ExchangeAccountId,
+                entity.OwnerUserId,
+                entity.StrategyKey,
+                entity.Symbol,
+                entity.SignalType,
+                entity.Side,
+                entity.Quantity,
+                entity.FilledQuantity,
+                entity.Price,
+                entity.AverageFillPrice,
+                entity.ReduceOnly,
+                entity.CreatedDate,
+                entity.SubmittedAtUtc,
+                entity.LastStateChangedAtUtc))
+            .ToListAsync(cancellationToken);
+
+        if (orderRows.Count == 0)
+        {
+            return OperationalStrategyProfitQualitySnapshot.Empty();
+        }
+
+        var strategySignalIds = orderRows
+            .Select(entity => entity.StrategySignalId)
+            .Distinct()
+            .ToArray();
+        var signalTypeById = strategySignalIds.Length == 0
+            ? new Dictionary<Guid, StrategySignalType>()
+            : await dbContext.TradingStrategySignals
+                .AsNoTracking()
+                .Where(entity => strategySignalIds.Contains(entity.Id) && !entity.IsDeleted)
+                .ToDictionaryAsync(entity => entity.Id, entity => entity.SignalType, cancellationToken);
+        var decisionTraceBySignalId = strategySignalIds.Length == 0
+            ? new Dictionary<Guid, DecisionTraceSummaryRow>()
+            : (await dbContext.DecisionTraces
+                    .AsNoTracking()
+                    .IgnoreQueryFilters()
+                    .Where(entity =>
+                        !entity.IsDeleted &&
+                        entity.StrategySignalId.HasValue &&
+                        strategySignalIds.Contains(entity.StrategySignalId.Value))
+                    .OrderByDescending(entity => entity.CreatedAtUtc)
+                    .ThenByDescending(entity => entity.CreatedDate)
+                    .Select(entity => new
+                    {
+                        StrategySignalId = entity.StrategySignalId!.Value,
+                        entity.DecisionReasonCode,
+                        entity.DecisionSummary,
+                        entity.DecisionAtUtc,
+                        entity.CreatedAtUtc
+                    })
+                    .ToListAsync(cancellationToken))
+                .GroupBy(entity => entity.StrategySignalId)
+                .ToDictionary(
+                    group => group.Key,
+                    group =>
+                    {
+                        var latest = group.First();
+                        return new DecisionTraceSummaryRow(
+                            latest.DecisionReasonCode,
+                            latest.DecisionSummary,
+                            NormalizeUtc(latest.DecisionAtUtc ?? latest.CreatedAtUtc));
+                    });
+
+        var openEntryLots = new Dictionary<StrategyProfitPairingKey, Queue<OpenEntryLot>>();
+        var pairedTrades = new List<PairedTradeEvidenceRow>();
+        var unpairedExitCount = 0;
+
+        foreach (var orderRow in orderRows)
+        {
+            var quantity = ResolveEffectiveOrderQuantity(orderRow);
+            var price = ResolveEffectiveOrderPrice(orderRow);
+            var trace = decisionTraceBySignalId.GetValueOrDefault(orderRow.StrategySignalId);
+            var pairingKey = new StrategyProfitPairingKey(
+                orderRow.OwnerUserId,
+                orderRow.BotId,
+                orderRow.ExchangeAccountId,
+                orderRow.Symbol);
+
+            if (orderRow.SignalType == StrategySignalType.Entry && !orderRow.ReduceOnly)
+            {
+                EnqueueOpenEntryLot(openEntryLots, pairingKey, new OpenEntryLot(
+                    strategyKey: string.IsNullOrWhiteSpace(orderRow.StrategyKey) ? "n/a" : orderRow.StrategyKey.Trim(),
+                    symbol: string.IsNullOrWhiteSpace(orderRow.Symbol) ? "n/a" : orderRow.Symbol.Trim(),
+                    entrySide: orderRow.Side,
+                    entrySource: ResolveEntrySource(trace),
+                    entryPrice: price,
+                    remainingQuantity: quantity,
+                    usedEstimatedPricing: !(orderRow.AverageFillPrice.HasValue && orderRow.AverageFillPrice.Value > 0m),
+                    openedAtUtc: NormalizeUtc(orderRow.SubmittedAtUtc ?? orderRow.LastStateChangedAtUtc)));
+                continue;
+            }
+
+            if (orderRow.SignalType != StrategySignalType.Exit || !orderRow.ReduceOnly)
+            {
+                continue;
+            }
+
+            if (quantity <= 0m || !price.HasValue || price.Value <= 0m)
+            {
+                unpairedExitCount++;
+                continue;
+            }
+
+            if (!openEntryLots.TryGetValue(pairingKey, out var openLots) || openLots.Count == 0)
+            {
+                unpairedExitCount++;
+                continue;
+            }
+
+            var remainingExitQuantity = quantity;
+            while (remainingExitQuantity > 0m && openLots.Count > 0)
+            {
+                var openLot = openLots.Peek();
+                if (openLot.RemainingQuantity <= 0m || !openLot.EntryPrice.HasValue || openLot.EntryPrice.Value <= 0m)
+                {
+                    openLots.Dequeue();
+                    continue;
+                }
+
+                var matchedQuantity = Math.Min(openLot.RemainingQuantity, remainingExitQuantity);
+                var netPnlQuote = CalculateNetPnlQuote(openLot.EntrySide, openLot.EntryPrice.Value, price.Value, matchedQuantity);
+                var netPnlPct = CalculateNetPnlPct(openLot.EntrySide, openLot.EntryPrice.Value, price.Value);
+                var mfeQuote = CalculateExcursionQuote(
+                    openLot.EntrySide,
+                    openLot.EntryPrice.Value,
+                    matchedQuantity,
+                    TryParseDecimalToken("PeakReferencePrice", trace?.DecisionSummary));
+                var maeQuote = CalculateExcursionQuote(
+                    openLot.EntrySide,
+                    openLot.EntryPrice.Value,
+                    matchedQuantity,
+                    TryParseDecimalToken("AdverseReferencePrice", trace?.DecisionSummary));
+
+                pairedTrades.Add(new PairedTradeEvidenceRow(
+                    openLot.StrategyKey,
+                    openLot.Symbol,
+                    openLot.EntrySource,
+                    ResolveExitSource(orderRow, trace, signalTypeById),
+                    matchedQuantity,
+                    netPnlQuote,
+                    netPnlPct,
+                    mfeQuote,
+                    maeQuote,
+                    NormalizeUtc(orderRow.SubmittedAtUtc ?? orderRow.LastStateChangedAtUtc),
+                    openLot.UsedEstimatedPricing || !(orderRow.AverageFillPrice.HasValue && orderRow.AverageFillPrice.Value > 0m)));
+
+                openLot.RemainingQuantity -= matchedQuantity;
+                remainingExitQuantity -= matchedQuantity;
+
+                if (openLot.RemainingQuantity <= 0m)
+                {
+                    openLots.Dequeue();
+                }
+            }
+
+            if (remainingExitQuantity > 0m)
+            {
+                unpairedExitCount++;
+            }
+        }
+
+        var unpairedEntryCount = openEntryLots.Values.Sum(queue => queue.Count(entity => entity.RemainingQuantity > 0m));
+        if (pairedTrades.Count == 0)
+        {
+            return OperationalStrategyProfitQualitySnapshot.Empty() with
+            {
+                UnpairedEntryCount = unpairedEntryCount,
+                UnpairedExitCount = unpairedExitCount,
+                Summary = $"No paired trades found. Unpaired entries={unpairedEntryCount}; Unpaired exits={unpairedExitCount}."
+            };
+        }
+
+        var overallWins = pairedTrades.Count(entity => entity.NetPnlQuote > 0m);
+        var overallLosses = pairedTrades.Count(entity => entity.NetPnlQuote < 0m);
+        var overallWinRate = pairedTrades.Count == 0
+            ? 0m
+            : Math.Round((decimal)overallWins * 100m / pairedTrades.Count, 2, MidpointRounding.AwayFromZero);
+        var overallAverageProfit = ResolveAverageMetric(pairedTrades.Where(entity => entity.NetPnlQuote > 0m).Select(entity => entity.NetPnlQuote));
+        var overallAverageLoss = ResolveAverageMetric(pairedTrades.Where(entity => entity.NetPnlQuote < 0m).Select(entity => entity.NetPnlQuote));
+        var overallAverageNetPnlQuote = ResolveAverageMetric(pairedTrades.Select(entity => entity.NetPnlQuote));
+        var overallAverageNetPnlPct = ResolveAverageMetric(pairedTrades.Select(entity => entity.NetPnlPct));
+        var overallMaxFavorableExcursionQuote = pairedTrades
+            .Where(entity => entity.MaxFavorableExcursionQuote.HasValue)
+            .Select(entity => entity.MaxFavorableExcursionQuote!.Value)
+            .DefaultIfEmpty()
+            .Max();
+        var overallMaxAdverseExcursionQuote = pairedTrades
+            .Where(entity => entity.MaxAdverseExcursionQuote.HasValue)
+            .Select(entity => entity.MaxAdverseExcursionQuote!.Value)
+            .DefaultIfEmpty()
+            .Max();
+        var strategySummaries = pairedTrades
+            .GroupBy(entity => new
+            {
+                entity.StrategyKey,
+                entity.Symbol,
+                entity.EntrySource,
+                entity.ExitSource
+            })
+            .Select(group =>
+            {
+                var rows = group.ToArray();
+                var wins = rows.Count(entity => entity.NetPnlQuote > 0m);
+                var losses = rows.Count(entity => entity.NetPnlQuote < 0m);
+                var winRate = rows.Length == 0
+                    ? 0m
+                    : Math.Round((decimal)wins * 100m / rows.Length, 2, MidpointRounding.AwayFromZero);
+                var avgProfit = ResolveAverageMetric(rows.Where(entity => entity.NetPnlQuote > 0m).Select(entity => entity.NetPnlQuote));
+                var avgLoss = ResolveAverageMetric(rows.Where(entity => entity.NetPnlQuote < 0m).Select(entity => entity.NetPnlQuote));
+                var avgNetQuote = ResolveAverageMetric(rows.Select(entity => entity.NetPnlQuote));
+                var avgNetPct = ResolveAverageMetric(rows.Select(entity => entity.NetPnlPct));
+                var maxFavorable = rows
+                    .Where(entity => entity.MaxFavorableExcursionQuote.HasValue)
+                    .Select(entity => entity.MaxFavorableExcursionQuote!.Value)
+                    .DefaultIfEmpty()
+                    .Max();
+                var maxAdverse = rows
+                    .Where(entity => entity.MaxAdverseExcursionQuote.HasValue)
+                    .Select(entity => entity.MaxAdverseExcursionQuote!.Value)
+                    .DefaultIfEmpty()
+                    .Max();
+                var lastClosedTradeAtUtc = rows.Max(entity => entity.ClosedAtUtc);
+                var usesEstimatedPricing = rows.Any(entity => entity.UsesEstimatedPricing);
+
+                return new OperationalStrategyProfitQualityRowSnapshot(
+                    StrategyKey: group.Key.StrategyKey,
+                    Symbol: group.Key.Symbol,
+                    EntrySource: group.Key.EntrySource,
+                    ExitSource: group.Key.ExitSource,
+                    PairedTradeCount: rows.Length,
+                    WinCount: wins,
+                    LossCount: losses,
+                    WinRatePercent: winRate,
+                    AverageProfitQuote: avgProfit,
+                    AverageLossQuote: avgLoss,
+                    AverageNetPnlQuote: avgNetQuote,
+                    AverageNetPnlPct: avgNetPct,
+                    MaxFavorableExcursionQuote: maxFavorable > 0m ? maxFavorable : null,
+                    MaxAdverseExcursionQuote: maxAdverse > 0m ? maxAdverse : null,
+                    LastClosedTradeAtUtc: lastClosedTradeAtUtc,
+                    UsesEstimatedPricing: usesEstimatedPricing,
+                    Summary: $"{rows.Length} trades · {wins}W/{losses}L · win {winRate.ToString("0.##", CultureInfo.InvariantCulture)}% · avg pnl {(avgNetQuote.HasValue ? avgNetQuote.Value.ToString("0.####", CultureInfo.InvariantCulture) : "n/a")}.");
+            })
+            .OrderByDescending(entity => entity.LastClosedTradeAtUtc)
+            .ThenByDescending(entity => entity.PairedTradeCount)
+            .ThenBy(entity => entity.StrategyKey, StringComparer.Ordinal)
+            .ThenBy(entity => entity.Symbol, StringComparer.Ordinal)
+            .ThenBy(entity => entity.ExitSource, StringComparer.Ordinal)
+            .ToArray();
+
+        var lastClosedTradeAtUtc = pairedTrades.Max(entity => entity.ClosedAtUtc);
+        var summary = $"{pairedTrades.Count} paired trades · {overallWins}W/{overallLosses}L · win {overallWinRate.ToString("0.##", CultureInfo.InvariantCulture)}% · unpaired entries {unpairedEntryCount} · unpaired exits {unpairedExitCount}.";
+
+        return new OperationalStrategyProfitQualitySnapshot(
+            PairedTradeCount: pairedTrades.Count,
+            UnpairedEntryCount: unpairedEntryCount,
+            UnpairedExitCount: unpairedExitCount,
+            WinCount: overallWins,
+            LossCount: overallLosses,
+            WinRatePercent: overallWinRate,
+            AverageProfitQuote: overallAverageProfit,
+            AverageLossQuote: overallAverageLoss,
+            AverageNetPnlQuote: overallAverageNetPnlQuote,
+            AverageNetPnlPct: overallAverageNetPnlPct,
+            MaxFavorableExcursionQuote: overallMaxFavorableExcursionQuote > 0m ? overallMaxFavorableExcursionQuote : null,
+            MaxAdverseExcursionQuote: overallMaxAdverseExcursionQuote > 0m ? overallMaxAdverseExcursionQuote : null,
+            LastClosedTradeAtUtc: lastClosedTradeAtUtc,
+            Summary: summary,
+            StrategySummaries: strategySummaries);
     }
 
     private async Task<MarketScannerDashboardSnapshot> LoadMarketScannerSnapshotAsync(CancellationToken cancellationToken)
@@ -1699,6 +1994,140 @@ public sealed class AdminMonitoringReadModelService(
             ObservedAtUtc: NormalizeUtc(decisionAtUtc ?? createdAtUtc));
     }
 
+    private static void EnqueueOpenEntryLot(
+        IDictionary<StrategyProfitPairingKey, Queue<OpenEntryLot>> buckets,
+        StrategyProfitPairingKey key,
+        OpenEntryLot lot)
+    {
+        if (!buckets.TryGetValue(key, out var queue))
+        {
+            queue = new Queue<OpenEntryLot>();
+            buckets[key] = queue;
+        }
+
+        queue.Enqueue(lot);
+    }
+
+    private static string ResolveEntrySource(DecisionTraceSummaryRow? trace)
+    {
+        var token = ExecutionDecisionDiagnostics.ExtractToken("EntrySource", trace?.DecisionSummary);
+        return string.IsNullOrWhiteSpace(token) || string.Equals(token, "n/a", StringComparison.OrdinalIgnoreCase)
+            ? "StrategyEntry"
+            : token;
+    }
+
+    private static string ResolveExitSource(
+        StrategyProfitOrderRow order,
+        DecisionTraceSummaryRow? trace,
+        IReadOnlyDictionary<Guid, StrategySignalType> signalTypeById)
+    {
+        if (string.Equals(order.StrategyKey, "__admin_manual_close__", StringComparison.Ordinal))
+        {
+            return "Manual";
+        }
+
+        var token = ExecutionDecisionDiagnostics.ExtractToken("ExitSource", trace?.DecisionSummary);
+        if (!string.IsNullOrWhiteSpace(token) &&
+            !string.Equals(token, "n/a", StringComparison.OrdinalIgnoreCase))
+        {
+            return token;
+        }
+
+        if (order.SignalType == StrategySignalType.Exit &&
+            order.ReduceOnly &&
+            signalTypeById.TryGetValue(order.StrategySignalId, out var sourceSignalType) &&
+            sourceSignalType == StrategySignalType.Entry)
+        {
+            return "ReverseSignal";
+        }
+
+        return trace?.DecisionReasonCode switch
+        {
+            "TakeProfitTriggered" => "TakeProfit",
+            "StopLossTriggered" => "StopLoss",
+            "TrailingStopTriggered" => "TrailingTakeProfit",
+            "BreakEvenTriggered" => "RiskExit",
+            _ => order.ReduceOnly ? "UnknownCloseOnly" : "n/a"
+        };
+    }
+
+    private static decimal? ResolveEffectiveOrderPrice(StrategyProfitOrderRow order)
+    {
+        if (order.AverageFillPrice.HasValue && order.AverageFillPrice.Value > 0m)
+        {
+            return order.AverageFillPrice.Value;
+        }
+
+        return order.Price > 0m ? order.Price : null;
+    }
+
+    private static decimal ResolveEffectiveOrderQuantity(StrategyProfitOrderRow order)
+    {
+        return order.FilledQuantity > 0m
+            ? order.FilledQuantity
+            : (order.Quantity > 0m ? order.Quantity : 0m);
+    }
+
+    private static decimal CalculateNetPnlQuote(
+        ExecutionOrderSide entrySide,
+        decimal entryPrice,
+        decimal exitPrice,
+        decimal quantity)
+    {
+        if (entrySide == ExecutionOrderSide.Buy)
+        {
+            return Math.Round((exitPrice - entryPrice) * quantity, 8, MidpointRounding.AwayFromZero);
+        }
+
+        return Math.Round((entryPrice - exitPrice) * quantity, 8, MidpointRounding.AwayFromZero);
+    }
+
+    private static decimal CalculateNetPnlPct(
+        ExecutionOrderSide entrySide,
+        decimal entryPrice,
+        decimal exitPrice)
+    {
+        if (entryPrice <= 0m)
+        {
+            return 0m;
+        }
+
+        var pnlPct = entrySide == ExecutionOrderSide.Buy
+            ? ((exitPrice - entryPrice) / entryPrice) * 100m
+            : ((entryPrice - exitPrice) / entryPrice) * 100m;
+
+        return Math.Round(pnlPct, 8, MidpointRounding.AwayFromZero);
+    }
+
+    private static decimal? CalculateExcursionQuote(
+        ExecutionOrderSide entrySide,
+        decimal entryPrice,
+        decimal quantity,
+        decimal? referencePrice)
+    {
+        if (!referencePrice.HasValue || referencePrice.Value <= 0m || entryPrice <= 0m || quantity <= 0m)
+        {
+            return null;
+        }
+
+        var excursion = entrySide == ExecutionOrderSide.Buy
+            ? (referencePrice.Value - entryPrice) * quantity
+            : (entryPrice - referencePrice.Value) * quantity;
+        excursion = Math.Round(excursion, 8, MidpointRounding.AwayFromZero);
+        return excursion > 0m ? excursion : null;
+    }
+
+    private static decimal? ResolveAverageMetric(IEnumerable<decimal> values)
+    {
+        var materialized = values.ToArray();
+        if (materialized.Length == 0)
+        {
+            return null;
+        }
+
+        return Math.Round(materialized.Average(), 8, MidpointRounding.AwayFromZero);
+    }
+
     private static decimal? TryParseDecimalToken(string key, params string?[] sources)
     {
         var tokenValue = ExecutionDecisionDiagnostics.ExtractToken(key, sources);
@@ -1894,4 +2323,86 @@ public sealed class AdminMonitoringReadModelService(
         string? CloseSide,
         bool? ReduceOnly,
         DateTime ObservedAtUtc);
+
+    private sealed record StrategyProfitOrderRow(
+        Guid Id,
+        Guid StrategySignalId,
+        Guid? BotId,
+        Guid? ExchangeAccountId,
+        string OwnerUserId,
+        string StrategyKey,
+        string Symbol,
+        StrategySignalType SignalType,
+        ExecutionOrderSide Side,
+        decimal Quantity,
+        decimal FilledQuantity,
+        decimal Price,
+        decimal? AverageFillPrice,
+        bool ReduceOnly,
+        DateTime CreatedDate,
+        DateTime? SubmittedAtUtc,
+        DateTime LastStateChangedAtUtc);
+
+    private sealed record DecisionTraceSummaryRow(
+        string? DecisionReasonCode,
+        string? DecisionSummary,
+        DateTime ObservedAtUtc);
+
+    private sealed class OpenEntryLot
+    {
+        public OpenEntryLot(
+            string strategyKey,
+            string symbol,
+            ExecutionOrderSide entrySide,
+            string entrySource,
+            decimal? entryPrice,
+            decimal remainingQuantity,
+            bool usedEstimatedPricing,
+            DateTime openedAtUtc)
+        {
+            StrategyKey = strategyKey;
+            Symbol = symbol;
+            EntrySide = entrySide;
+            EntrySource = entrySource;
+            EntryPrice = entryPrice;
+            RemainingQuantity = remainingQuantity;
+            UsedEstimatedPricing = usedEstimatedPricing;
+            OpenedAtUtc = openedAtUtc;
+        }
+
+        public string StrategyKey { get; }
+
+        public string Symbol { get; }
+
+        public ExecutionOrderSide EntrySide { get; }
+
+        public string EntrySource { get; }
+
+        public decimal? EntryPrice { get; }
+
+        public decimal RemainingQuantity { get; set; }
+
+        public bool UsedEstimatedPricing { get; }
+
+        public DateTime OpenedAtUtc { get; }
+    }
+
+    private readonly record struct StrategyProfitPairingKey(
+        string OwnerUserId,
+        Guid? BotId,
+        Guid? ExchangeAccountId,
+        string Symbol);
+
+    private sealed record PairedTradeEvidenceRow(
+        string StrategyKey,
+        string Symbol,
+        string EntrySource,
+        string ExitSource,
+        decimal MatchedQuantity,
+        decimal NetPnlQuote,
+        decimal NetPnlPct,
+        decimal? MaxFavorableExcursionQuote,
+        decimal? MaxAdverseExcursionQuote,
+        DateTime ClosedAtUtc,
+        bool UsesEstimatedPricing);
 }

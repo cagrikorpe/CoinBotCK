@@ -52,6 +52,8 @@ public sealed record OperationalObservabilitySnapshot(
 {
     public OperationalExitPnlEvidenceSnapshot ExitPnlEvidence { get; init; } = OperationalExitPnlEvidenceSnapshot.Empty();
 
+    public OperationalStrategyProfitQualitySnapshot StrategyProfitQuality { get; init; } = OperationalStrategyProfitQualitySnapshot.Empty();
+
     public OperationalPilotConfigEvidenceSnapshot PilotConfigEvidence { get; init; } = OperationalPilotConfigEvidenceSnapshot.Empty();
 
     public OperationalPrivateSyncEvidenceSnapshot PrivateSyncEvidence { get; init; } = OperationalPrivateSyncEvidenceSnapshot.Empty();
@@ -82,11 +84,69 @@ public sealed record OperationalObservabilitySnapshot(
             CriticalWarnings: Array.Empty<OperationalWarningSnapshot>())
         {
             ExitPnlEvidence = OperationalExitPnlEvidenceSnapshot.Empty(),
+            StrategyProfitQuality = OperationalStrategyProfitQualitySnapshot.Empty(),
             PilotConfigEvidence = OperationalPilotConfigEvidenceSnapshot.Empty(),
             PrivateSyncEvidence = OperationalPrivateSyncEvidenceSnapshot.Empty()
         };
     }
 }
+
+public sealed record OperationalStrategyProfitQualitySnapshot(
+    int PairedTradeCount,
+    int UnpairedEntryCount,
+    int UnpairedExitCount,
+    int WinCount,
+    int LossCount,
+    decimal WinRatePercent,
+    decimal? AverageProfitQuote,
+    decimal? AverageLossQuote,
+    decimal? AverageNetPnlQuote,
+    decimal? AverageNetPnlPct,
+    decimal? MaxFavorableExcursionQuote,
+    decimal? MaxAdverseExcursionQuote,
+    DateTime? LastClosedTradeAtUtc,
+    string Summary,
+    IReadOnlyCollection<OperationalStrategyProfitQualityRowSnapshot> StrategySummaries)
+{
+    public static OperationalStrategyProfitQualitySnapshot Empty()
+    {
+        return new OperationalStrategyProfitQualitySnapshot(
+            PairedTradeCount: 0,
+            UnpairedEntryCount: 0,
+            UnpairedExitCount: 0,
+            WinCount: 0,
+            LossCount: 0,
+            WinRatePercent: 0m,
+            AverageProfitQuote: null,
+            AverageLossQuote: null,
+            AverageNetPnlQuote: null,
+            AverageNetPnlPct: null,
+            MaxFavorableExcursionQuote: null,
+            MaxAdverseExcursionQuote: null,
+            LastClosedTradeAtUtc: null,
+            Summary: "No paired strategy profit quality evidence yet.",
+            StrategySummaries: Array.Empty<OperationalStrategyProfitQualityRowSnapshot>());
+    }
+}
+
+public sealed record OperationalStrategyProfitQualityRowSnapshot(
+    string StrategyKey,
+    string Symbol,
+    string EntrySource,
+    string ExitSource,
+    int PairedTradeCount,
+    int WinCount,
+    int LossCount,
+    decimal WinRatePercent,
+    decimal? AverageProfitQuote,
+    decimal? AverageLossQuote,
+    decimal? AverageNetPnlQuote,
+    decimal? AverageNetPnlPct,
+    decimal? MaxFavorableExcursionQuote,
+    decimal? MaxAdverseExcursionQuote,
+    DateTime? LastClosedTradeAtUtc,
+    bool UsesEstimatedPricing,
+    string Summary);
 
 public sealed record OperationalPilotConfigEvidenceSnapshot(
     bool AutoManageAdoptedPositions,
