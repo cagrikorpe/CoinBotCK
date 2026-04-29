@@ -39,6 +39,8 @@ public sealed class BotExecutionPilotOptions
 
     public string[] AllowedSymbols { get; set; } = [];
 
+    public string[]? AllowedExecutionSymbols { get; set; }
+
     public string[] AllowedUserIds { get; set; } = [];
 
     public string[] AllowedBotIds { get; set; } = [];
@@ -168,13 +170,40 @@ public sealed class BotExecutionPilotOptions
     public void NormalizeScopeCollections()
     {
         AllowedSymbols = ResolveNormalizedAllowedSymbols();
+        if (AllowedExecutionSymbols is not null)
+        {
+            AllowedExecutionSymbols = ResolveNormalizedAllowedExecutionSymbols();
+        }
+
         AllowedUserIds = ResolveNormalizedAllowedUserIds();
         AllowedBotIds = ResolveNormalizedAllowedBotIds();
     }
 
     internal string[] ResolveNormalizedAllowedSymbols()
     {
-        return AllowedSymbols
+        return NormalizeSymbols(AllowedSymbols);
+    }
+
+    internal bool TryResolveNormalizedAllowedExecutionSymbols(out string[] allowedExecutionSymbols)
+    {
+        if (AllowedExecutionSymbols is null)
+        {
+            allowedExecutionSymbols = [];
+            return false;
+        }
+
+        allowedExecutionSymbols = ResolveNormalizedAllowedExecutionSymbols();
+        return true;
+    }
+
+    internal string[] ResolveNormalizedAllowedExecutionSymbols()
+    {
+        return NormalizeSymbols(AllowedExecutionSymbols);
+    }
+
+    private static string[] NormalizeSymbols(IEnumerable<string?>? values)
+    {
+        return (values ?? [])
             .Where(item => !string.IsNullOrWhiteSpace(item))
             .Select(item => item.Trim().ToUpperInvariant())
             .Distinct(StringComparer.Ordinal)

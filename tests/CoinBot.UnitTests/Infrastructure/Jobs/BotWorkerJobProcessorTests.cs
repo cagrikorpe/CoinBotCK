@@ -239,6 +239,83 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_BlocksEntry_WhenSymbolIsOutsideExecutionAllowlist()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.AllowedExecutionSymbols = ["BTCUSDT"];
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-allowlist-block-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-allowlist-block-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-allowlist-block-1",
+            CancellationToken.None);
+
+        var persistedSignal = await harness.DbContext.TradingStrategySignals.SingleAsync();
+        var latestDecisionTrace = await harness.DbContext.DecisionTraces
+            .Where(entity => entity.StrategySignalId == persistedSignal.Id)
+            .OrderByDescending(entity => entity.CreatedAtUtc)
+            .FirstAsync();
+
+        Assert.False(result.IsSuccessful);
+        Assert.False(result.IsRetryableFailure);
+        Assert.Equal("SymbolExecutionNotAllowed", result.ErrorCode);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.Equal("SymbolExecutionNotAllowed", latestDecisionTrace.DecisionReasonCode);
+        Assert.Contains("SymbolExecutionAllowlist=Applied", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("AllowedExecutionSymbols=BTCUSDT", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("SymbolAllowlistDecision=Blocked", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+        Assert.Contains("SelectedSymbol=SOLUSDT", latestDecisionTrace.DecisionSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_AllowsReduceOnlyCloseOnlyExit_WhenSymbolIsOutsideExecutionAllowlist()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot.OwnerUserId,
+            bot.ExchangeAccountId ?? throw new InvalidOperationException("Bot exchange account is required."),
+            bot.Symbol,
+            "SHORT",
+            0.125m,
+            80m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.EnableRuntimeExitQuality = false;
+        harness.PilotOptions.AllowedExecutionSymbols = ["BTCUSDT"];
+        harness.MarketDataService.SetLatestPrice(bot.Symbol, 79m);
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-allowlist-close-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-allowlist-close-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-allowlist-close-1",
+            CancellationToken.None);
+
+        var persistedOrder = await harness.DbContext.ExecutionOrders.SingleAsync();
+        Assert.True(result.IsSuccessful);
+        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.True(persistedOrder.ReduceOnly);
+        Assert.Equal(ExecutionOrderSide.Buy, persistedOrder.Side);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.True(harness.PrivateRestClient.LastPlacementRequest?.ReduceOnly);
+    }
+
+    [Fact]
     public async Task ProcessAsync_SuppressesDuplicatePilotExecution_WhenTheSameBotRunsTwice()
     {
         await using var harness = CreateHarness();

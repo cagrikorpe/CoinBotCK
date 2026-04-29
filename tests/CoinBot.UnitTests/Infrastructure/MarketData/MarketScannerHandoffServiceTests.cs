@@ -165,6 +165,72 @@ public sealed class MarketScannerHandoffServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_BlocksEntry_WhenSymbolIsOutsideExecutionAllowlist()
+    {
+        await using var harness = CreateHarness(
+            new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero),
+            new BotExecutionPilotOptions
+            {
+                SignalEvaluationMode = ExecutionEnvironment.Live,
+                PrimeHistoricalCandleCount = 34,
+                AllowedExecutionSymbols = ["BTCUSDT"]
+            });
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-sol-allowlist-block", "SOLUSDT", "pilot-sol-allowlist-block");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "SOLUSDT", rank: 1, score: 10_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "SOLUSDT", "1m", harness.NowUtc));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("SymbolExecutionNotAllowed", attempt.BlockerCode);
+        Assert.Contains("SymbolExecutionAllowlist=Applied", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("AllowedExecutionSymbols=BTCUSDT", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("SymbolAllowlistDecision=Blocked", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("SelectedSymbol=SOLUSDT", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Null(harness.ExecutionGate.LastRequest);
+        Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
+        Assert.Null(harness.ExecutionEngine.LastCommand);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_BlocksEntry_WhenExecutionAllowlistIsExplicitlyEmpty()
+    {
+        await using var harness = CreateHarness(
+            new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero),
+            new BotExecutionPilotOptions
+            {
+                SignalEvaluationMode = ExecutionEnvironment.Live,
+                PrimeHistoricalCandleCount = 34,
+                AllowedExecutionSymbols = []
+            });
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-btc-allowlist-empty", "BTCUSDT", "pilot-btc-allowlist-empty");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "BTCUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "BTCUSDT", rank: 1, score: 10_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("BTCUSDT", "BTC", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "BTCUSDT", "1m", harness.NowUtc));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("SymbolAllowlistEmpty", attempt.BlockerCode);
+        Assert.Contains("AllowedExecutionSymbols=none", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("SymbolAllowlistDecision=Blocked", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Null(harness.ExecutionGate.LastRequest);
+        Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
+        Assert.Null(harness.ExecutionEngine.LastCommand);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+    }
+
+    [Fact]
     public async Task RunOnceAsync_UsesProtectedMinNotionalSizingParity_ForEntryQuantity()
     {
         await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
@@ -901,6 +967,37 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal(StrategySignalType.Exit, order.SignalType);
         Assert.True(order.ReduceOnly);
         Assert.Equal(ExecutionOrderSide.Buy, order.Side);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_SkipsExecutionAllowlist_ForReduceOnlyCloseOnlyExit()
+    {
+        await using var harness = CreateHarness(
+            new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero),
+            new BotExecutionPilotOptions
+            {
+                SignalEvaluationMode = ExecutionEnvironment.Live,
+                PrimeHistoricalCandleCount = 34,
+                AllowedExecutionSymbols = ["SOLUSDT"]
+            });
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-reverse-allowlist-skip", "BTCUSDT", "pilot-reverse-allowlist-skip");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "BTCUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "BTCUSDT", rank: 1, score: 10_000m);
+        await SeedExchangePositionAsync(harness.DbContext, bot, "BTCUSDT", quantity: 0.020m, entryPrice: 100m, positionSide: "SHORT", observedAtUtc: harness.NowUtc);
+        harness.MarketDataService.SetMetadata("BTCUSDT", "BTC", "USDT");
+        harness.MarketDataService.SetPrice("BTCUSDT", 99m);
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "BTCUSDT", "1m", harness.NowUtc));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
+        Assert.Contains("SymbolExecutionAllowlist=Applied", harness.ExecutionEngine.LastCommand?.Context, StringComparison.Ordinal);
+        Assert.Contains("AllowedExecutionSymbols=SOLUSDT", harness.ExecutionEngine.LastCommand?.Context, StringComparison.Ordinal);
+        Assert.Contains("SymbolAllowlistDecision=SkippedForCloseOnly", harness.ExecutionEngine.LastCommand?.Context, StringComparison.Ordinal);
+        Assert.Contains("SymbolAllowlistReason=SymbolAllowlistSkippedForCloseOnly", harness.ExecutionEngine.LastCommand?.Context, StringComparison.Ordinal);
+        Assert.Contains("ReduceOnly=True", harness.ExecutionEngine.LastCommand?.Context, StringComparison.Ordinal);
     }
 
     [Fact]

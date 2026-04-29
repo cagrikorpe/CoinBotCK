@@ -69,6 +69,10 @@ public sealed class BotWorkerJobProcessor(
     private const string LeveragePolicyExceededDecisionCode = "LeveragePolicyExceeded";
     private const string LeveragePolicyAllowedReasonCode = "LeveragePolicyAllowed";
     private const string LeverageAlignmentSkippedForReduceOnlyReasonCode = "LeverageAlignmentSkippedForReduceOnly";
+    private const string SymbolExecutionNotAllowedDecisionCode = "SymbolExecutionNotAllowed";
+    private const string SymbolAllowlistEmptyDecisionCode = "SymbolAllowlistEmpty";
+    private const string SymbolAllowlistAllowedReasonCode = "SymbolAllowlistAllowed";
+    private const string SymbolAllowlistSkippedForCloseOnlyReasonCode = "SymbolAllowlistSkippedForCloseOnly";
     private const string ExitCloseOnlyIntentCode = "ExitCloseOnly";
     private const string ExitCloseOnlyBlockedPrivatePlaneStaleDecisionCode = "ExitCloseOnlyBlockedPrivatePlaneStale";
     private const string ExitCloseOnlyBlockedRiskDecisionCode = "ExitCloseOnlyBlockedRisk";
@@ -989,16 +993,73 @@ public sealed class BotWorkerJobProcessor(
             return BackgroundJobProcessResult.Success();
         }
 
+        var symbolAllowlistPolicy = EvaluateSymbolExecutionAllowlist(normalizedSymbol, dispatchPlan.ReduceOnly);
+        if (symbolAllowlistPolicy.IsBlocked)
+        {
+            var allowlistExecutionContext = AppendExecutionIntentContext(
+                AppendPilotContextSegment(
+                    BuildPilotExecutionContext(
+                        marginType!,
+                        leverage!.Value,
+                        pilotActivationEnabled,
+                        executionDispatchMode),
+                    symbolAllowlistPolicy.Summary),
+                signal.SignalType,
+                closeOnlyIntent,
+                dispatchPlan);
+
+            if (signal.SignalType == StrategySignalType.Exit)
+            {
+                await WriteExitSkippedDecisionTraceAsync(
+                    bot.OwnerUserId,
+                    publishedVersion,
+                    signal,
+                    correlationId,
+                    strategyDecisionTrace,
+                    symbolAllowlistPolicy.ReasonCode,
+                    allowlistExecutionContext,
+                    currentNetQuantity,
+                    cancellationToken,
+                    requestedQuantity: dispatchPlan.Quantity,
+                    referencePrice: marketState.ReferencePrice.Value);
+            }
+            else
+            {
+                await WriteEntrySkippedDecisionTraceAsync(
+                    bot.OwnerUserId,
+                    publishedVersion,
+                    signal,
+                    correlationId,
+                    strategyDecisionTrace,
+                    allowlistExecutionContext,
+                    currentNetQuantity,
+                    cancellationToken,
+                    decisionReasonCode: symbolAllowlistPolicy.ReasonCode,
+                    requestedQuantity: dispatchPlan.Quantity,
+                    referencePrice: marketState.ReferencePrice.Value);
+            }
+
+            logger.LogInformation(
+                "Bot execution pilot blocked {SignalType} dispatch for BotId {BotId} because symbol execution allowlist failed closed. Symbol={Symbol} ReasonCode={ReasonCode}.",
+                signal.SignalType,
+                bot.Id,
+                normalizedSymbol,
+                symbolAllowlistPolicy.ReasonCode);
+            return BackgroundJobProcessResult.PermanentFailure(symbolAllowlistPolicy.ReasonCode);
+        }
+
         var leveragePolicy = EvaluatePilotLeveragePolicy(bot, dispatchPlan);
         if (leveragePolicy.IsBlocked)
         {
             var leveragePolicySummary = AppendExecutionIntentContext(
-                BuildPilotExecutionContext(
-                    marginType!,
-                    leveragePolicy.EffectiveLeverage,
-                    pilotActivationEnabled,
-                    executionDispatchMode,
-                    leveragePolicy.Summary),
+                AppendPilotContextSegment(
+                    BuildPilotExecutionContext(
+                        marginType!,
+                        leveragePolicy.EffectiveLeverage,
+                        pilotActivationEnabled,
+                        executionDispatchMode,
+                        leveragePolicy.Summary),
+                    symbolAllowlistPolicy.Summary),
                 signal.SignalType,
                 closeOnlyIntent,
                 dispatchPlan);
@@ -1046,12 +1107,14 @@ public sealed class BotWorkerJobProcessor(
         }
 
         var pilotExecutionContext = AppendExecutionIntentContext(
-            BuildPilotExecutionContext(
-                marginType!,
-                leveragePolicy.EffectiveLeverage,
-                pilotActivationEnabled,
-                executionDispatchMode,
-                leveragePolicy.Summary),
+            AppendPilotContextSegment(
+                BuildPilotExecutionContext(
+                    marginType!,
+                    leveragePolicy.EffectiveLeverage,
+                    pilotActivationEnabled,
+                    executionDispatchMode,
+                    leveragePolicy.Summary),
+                symbolAllowlistPolicy.Summary),
             signal.SignalType,
             closeOnlyIntent,
             dispatchPlan);
@@ -3958,6 +4021,74 @@ public sealed class BotWorkerJobProcessor(
                 alignmentSkippedForReduceOnly: false));
     }
 
+    private SymbolExecutionAllowlistEvaluation EvaluateSymbolExecutionAllowlist(
+        string symbol,
+        bool reduceOnly)
+    {
+        if (!optionsValue.TryResolveNormalizedAllowedExecutionSymbols(out var allowedExecutionSymbols))
+        {
+            return SymbolExecutionAllowlistEvaluation.NotConfigured;
+        }
+
+        var normalizedSymbol = MarketDataSymbolNormalizer.Normalize(symbol);
+        var allowedExecutionSymbolsSummary = allowedExecutionSymbols.Length == 0
+            ? "none"
+            : string.Join(",", allowedExecutionSymbols);
+
+        if (reduceOnly)
+        {
+            return new SymbolExecutionAllowlistEvaluation(
+                IsConfigured: true,
+                IsBlocked: false,
+                Decision: "SkippedForCloseOnly",
+                ReasonCode: SymbolAllowlistSkippedForCloseOnlyReasonCode,
+                Summary: BuildSymbolExecutionAllowlistSummary(
+                    normalizedSymbol,
+                    allowedExecutionSymbolsSummary,
+                    "SkippedForCloseOnly",
+                    SymbolAllowlistSkippedForCloseOnlyReasonCode));
+        }
+
+        if (allowedExecutionSymbols.Length == 0)
+        {
+            return new SymbolExecutionAllowlistEvaluation(
+                IsConfigured: true,
+                IsBlocked: true,
+                Decision: "Blocked",
+                ReasonCode: SymbolAllowlistEmptyDecisionCode,
+                Summary: BuildSymbolExecutionAllowlistSummary(
+                    normalizedSymbol,
+                    allowedExecutionSymbolsSummary,
+                    "Blocked",
+                    SymbolAllowlistEmptyDecisionCode));
+        }
+
+        if (!allowedExecutionSymbols.Contains(normalizedSymbol, StringComparer.Ordinal))
+        {
+            return new SymbolExecutionAllowlistEvaluation(
+                IsConfigured: true,
+                IsBlocked: true,
+                Decision: "Blocked",
+                ReasonCode: SymbolExecutionNotAllowedDecisionCode,
+                Summary: BuildSymbolExecutionAllowlistSummary(
+                    normalizedSymbol,
+                    allowedExecutionSymbolsSummary,
+                    "Blocked",
+                    SymbolExecutionNotAllowedDecisionCode));
+        }
+
+        return new SymbolExecutionAllowlistEvaluation(
+            IsConfigured: true,
+            IsBlocked: false,
+            Decision: "Allowed",
+            ReasonCode: SymbolAllowlistAllowedReasonCode,
+            Summary: BuildSymbolExecutionAllowlistSummary(
+                normalizedSymbol,
+                allowedExecutionSymbolsSummary,
+                "Allowed",
+                SymbolAllowlistAllowedReasonCode));
+    }
+
     private decimal ResolveEffectiveMaxAllowedLeverage(TradingBot bot, decimal effectiveLeverage)
     {
         var configuredMaxAllowedLeverage = NormalizeConfiguredLeverage(optionsValue.MaxAllowedLeverage);
@@ -3986,6 +4117,22 @@ public sealed class BotWorkerJobProcessor(
     {
         return FormattableString.Invariant(
             $"RequestedLeverage={requestedLeverage:0.########}; EffectiveLeverage={effectiveLeverage:0.########}; MaxAllowedLeverage={maxAllowedLeverage:0.########}; LeverageSource={leverageSource}; LeveragePolicyDecision={decision}; LeveragePolicyReason={reasonCode}; LeverageAlignmentSkippedForReduceOnly={alignmentSkippedForReduceOnly}");
+    }
+
+    private static string BuildSymbolExecutionAllowlistSummary(
+        string symbol,
+        string allowedExecutionSymbolsSummary,
+        string decision,
+        string reasonCode)
+    {
+        return $"SymbolExecutionAllowlist=Applied; AllowedExecutionSymbols={allowedExecutionSymbolsSummary}; SymbolAllowlistDecision={decision}; SymbolAllowlistReason={reasonCode}; SelectedSymbol={symbol}";
+    }
+
+    private static string AppendPilotContextSegment(string context, string? segment)
+    {
+        return string.IsNullOrWhiteSpace(segment)
+            ? context
+            : $"{context} | {segment}";
     }
 
     private static string AppendExecutionIntentContext(
@@ -4598,6 +4745,17 @@ public sealed class BotWorkerJobProcessor(
         string ReasonCode,
         bool AlignmentSkippedForReduceOnly,
         string Summary);
+
+    private sealed record SymbolExecutionAllowlistEvaluation(
+        bool IsConfigured,
+        bool IsBlocked,
+        string Decision,
+        string ReasonCode,
+        string? Summary)
+    {
+        public static SymbolExecutionAllowlistEvaluation NotConfigured { get; } =
+            new(false, false, "Allowed", SymbolAllowlistAllowedReasonCode, null);
+    }
 
     private sealed record PositionAdoptionResolution(
         string State,

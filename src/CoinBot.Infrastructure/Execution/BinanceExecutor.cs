@@ -86,6 +86,7 @@ public sealed class BinanceExecutor(
             var hasPilotContext = TryResolveDevelopmentFuturesPilot(command.Context, out var marginType, out var leverage);
             if (hasPilotContext)
             {
+                ValidatePilotSymbolExecutionAllowlist(command);
                 ValidatePilotLeveragePolicy(command, leverage!.Value);
             }
 
@@ -785,6 +786,30 @@ public sealed class BinanceExecutor(
         throw new ExecutionValidationException(
             "LeveragePolicyExceeded",
             $"Execution blocked because requested leverage {FormatDecimal(effectiveLeverage)} exceeds max allowed leverage {FormatDecimal(maxAllowedLeverage)} for pilot futures execution.");
+    }
+
+    private void ValidatePilotSymbolExecutionAllowlist(ExecutionCommand command)
+    {
+        if (command.ReduceOnly ||
+            !pilotOptionsValue.TryResolveNormalizedAllowedExecutionSymbols(out var allowedExecutionSymbols))
+        {
+            return;
+        }
+
+        var normalizedSymbol = MarketDataSymbolNormalizer.Normalize(command.Symbol);
+        if (allowedExecutionSymbols.Length == 0)
+        {
+            throw new ExecutionValidationException(
+                "SymbolAllowlistEmpty",
+                "Execution blocked because the pilot execution symbol allowlist is empty for entry execution.");
+        }
+
+        if (!allowedExecutionSymbols.Contains(normalizedSymbol, StringComparer.Ordinal))
+        {
+            throw new ExecutionValidationException(
+                "SymbolExecutionNotAllowed",
+                $"Execution blocked because {normalizedSymbol} is outside the allowed execution symbol set.");
+        }
     }
 
     private decimal ResolveMaxAllowedLeverage(string? context)

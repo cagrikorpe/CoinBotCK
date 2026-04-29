@@ -65,6 +65,10 @@ public sealed class MarketScannerHandoffService(
     private const string LeveragePolicyExceededCode = "LeveragePolicyExceeded";
     private const string LeveragePolicyAllowedReasonCode = "LeveragePolicyAllowed";
     private const string LeverageAlignmentSkippedForReduceOnlyReasonCode = "LeverageAlignmentSkippedForReduceOnly";
+    private const string SymbolExecutionNotAllowedCode = "SymbolExecutionNotAllowed";
+    private const string SymbolAllowlistEmptyCode = "SymbolAllowlistEmpty";
+    private const string SymbolAllowlistAllowedReasonCode = "SymbolAllowlistAllowed";
+    private const string SymbolAllowlistSkippedForCloseOnlyReasonCode = "SymbolAllowlistSkippedForCloseOnly";
     private const string ExitReasonReverseSignal = "ReverseSignal";
     private const string ExitReasonRiskExit = "RiskExit";
     private const string ExitReasonPrivatePlaneStale = "PrivatePlaneStale";
@@ -658,6 +662,37 @@ public sealed class MarketScannerHandoffService(
                 }
             }
 
+            var symbolAllowlistPolicy = EvaluateSymbolExecutionAllowlist(symbol, executionContext.ReduceOnly);
+            if (symbolAllowlistPolicy.IsBlocked)
+            {
+                latestAttempt = await PersistBlockedAttemptWithShadowDecisionAsync(
+                    scanCycleId,
+                    candidate,
+                    ownerBotMatch.OwnerUserId,
+                    ownerBotMatch,
+                    symbolMetadata,
+                    executionContext,
+                    strategySignal,
+                    strategyVeto: null,
+                    strategyDecisionOutcome: "Persisted",
+                    executionStatus: "Blocked",
+                    blockerCode: symbolAllowlistPolicy.ReasonCode,
+                    blockerDetail: symbolAllowlistPolicy.ReasonCode switch
+                    {
+                        SymbolAllowlistEmptyCode => "Scanner handoff blocked because the execution symbol allowlist is empty for entry execution.",
+                        _ => $"Scanner handoff blocked because {symbol} is outside the allowed execution symbol set."
+                    },
+                    correlationId: attemptCorrelationId,
+                    guardSummary: AppendExecutionIntentGuardSummary(
+                        Truncate(
+                            $"{symbolAllowlistPolicy.Summary}; Symbol={symbol}; Timeframe={klineInterval}",
+                            512) ?? $"{symbolAllowlistPolicy.Summary}; Symbol={symbol}",
+                        executionContext),
+                    cancellationToken: cancellationToken,
+                    strategyResult: strategyResult);
+                continue;
+            }
+
             var leveragePolicy = EvaluatePilotLeveragePolicy(ownerBotMatch, executionContext);
             if (leveragePolicy.IsBlocked)
             {
@@ -696,7 +731,8 @@ public sealed class MarketScannerHandoffService(
                     botExecutionOptionsValue,
                     marginType,
                     leverage,
-                    leveragePolicy.Summary);
+                    leveragePolicy.Summary,
+                    symbolAllowlistPolicy.Summary);
                 var correlationId = attemptCorrelationId;
                 var executionExchangeAccountId = ownerBotMatch.ExchangeAccountId;
 
@@ -852,6 +888,7 @@ public sealed class MarketScannerHandoffService(
                     strategyResult,
                     dispatchResult,
                     leveragePolicy.Summary,
+                    symbolAllowlistPolicy.Summary,
                     correlationId,
                     cancellationToken);
                 return latestAttempt;
@@ -1830,6 +1867,7 @@ public sealed class MarketScannerHandoffService(
         StrategySignalGenerationResult strategyResult,
         ExecutionDispatchResult dispatchResult,
         string? leveragePolicySummary,
+        string? symbolAllowlistSummary,
         string correlationId,
         CancellationToken cancellationToken)
     {
@@ -1847,7 +1885,7 @@ public sealed class MarketScannerHandoffService(
             blockerCode: null,
             blockerDetail: null,
             correlationId,
-            guardSummary: BuildPreparedGuardSummary(candidate.Symbol, strategyResult, strategySignal, latencySnapshot, executionContext, dispatchResult, leveragePolicySummary));
+            guardSummary: BuildPreparedGuardSummary(candidate.Symbol, strategyResult, strategySignal, latencySnapshot, executionContext, dispatchResult, leveragePolicySummary, symbolAllowlistSummary));
 
         dbContext.MarketScannerHandoffAttempts.Add(attempt);
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -2118,13 +2156,17 @@ public sealed class MarketScannerHandoffService(
         DegradedModeSnapshot latencySnapshot,
         PreparedExecutionContext executionContext,
         ExecutionDispatchResult dispatchResult,
-        string? leveragePolicySummary)
+        string? leveragePolicySummary,
+        string? symbolAllowlistSummary)
     {
         var leveragePolicySegment = string.IsNullOrWhiteSpace(leveragePolicySummary)
             ? string.Empty
             : $"{leveragePolicySummary}; ";
+        var symbolAllowlistSegment = string.IsNullOrWhiteSpace(symbolAllowlistSummary)
+            ? string.Empty
+            : $"{symbolAllowlistSummary}; ";
         var summary =
-            $"{leveragePolicySegment}ExecutionGate=Allowed; UserExecutionOverride=Allowed; ExecutionDispatch=Dispatched; Symbol={symbol}; Timeframe={klineInterval}; {BuildLatencyGuardSummarySnippet(latencySnapshot)}; {(string.IsNullOrWhiteSpace(executionContext.ExitPnlGuardSummary) ? string.Empty : $"{executionContext.ExitPnlGuardSummary}; ")}DispatchDuplicate={dispatchResult.IsDuplicate}; ExecutorKind={dispatchResult.Order.ExecutorKind}; ExecutionOrderState={dispatchResult.Order.State}; ExecutionOrderFailureCode={dispatchResult.Order.FailureCode ?? "none"}; ExecutionOrderId={dispatchResult.Order.ExecutionOrderId:N}";
+            $"{leveragePolicySegment}{symbolAllowlistSegment}ExecutionGate=Allowed; UserExecutionOverride=Allowed; ExecutionDispatch=Dispatched; Symbol={symbol}; Timeframe={klineInterval}; {BuildLatencyGuardSummarySnippet(latencySnapshot)}; {(string.IsNullOrWhiteSpace(executionContext.ExitPnlGuardSummary) ? string.Empty : $"{executionContext.ExitPnlGuardSummary}; ")}DispatchDuplicate={dispatchResult.IsDuplicate}; ExecutorKind={dispatchResult.Order.ExecutorKind}; ExecutionOrderState={dispatchResult.Order.State}; ExecutionOrderFailureCode={dispatchResult.Order.FailureCode ?? "none"}; ExecutionOrderId={dispatchResult.Order.ExecutionOrderId:N}";
 
         return AppendExecutionIntentGuardSummary(summary, executionContext);
     }
@@ -2483,26 +2525,29 @@ public sealed class MarketScannerHandoffService(
         BotExecutionPilotOptions pilotOptions,
         string marginType,
         decimal leverage,
-        string? leveragePolicySummary = null)
+        string? leveragePolicySummary = null,
+        string? symbolAllowlistSummary = null)
     {
         var context = "ScannerHandoff=True";
+        var leverageContext = string.IsNullOrWhiteSpace(leveragePolicySummary)
+            ? string.Empty
+            : $" | {leveragePolicySummary}";
+        var symbolAllowlistContext = string.IsNullOrWhiteSpace(symbolAllowlistSummary)
+            ? string.Empty
+            : $" | {symbolAllowlistSummary}";
         if (executionEnvironment != ExecutionEnvironment.Live &&
             executionEnvironment != ExecutionEnvironment.BinanceTestnet ||
             !pilotOptions.PilotActivationEnabled)
         {
             return AppendExecutionIntentGuardSummary(
                 FormattableString.Invariant(
-                    $"{context} | ScanCycleId={scanCycleId:N} | CandidateId={candidate.Id:N} | CandidateRank={candidate.Rank?.ToString(CultureInfo.InvariantCulture) ?? "n/a"} | BotId={botMatch.BotId:N}"),
+                    $"{context}{symbolAllowlistContext} | ScanCycleId={scanCycleId:N} | CandidateId={candidate.Id:N} | CandidateRank={candidate.Rank?.ToString(CultureInfo.InvariantCulture) ?? "n/a"} | BotId={botMatch.BotId:N}"),
                 executionContext,
                 maxLength: 1024);
         }
-
-        var leverageContext = string.IsNullOrWhiteSpace(leveragePolicySummary)
-            ? string.Empty
-            : $" | {leveragePolicySummary}";
         return AppendExecutionIntentGuardSummary(
             FormattableString.Invariant(
-                $"{context} | DevelopmentFuturesTestnetPilot=True | PilotActivationEnabled={pilotOptions.PilotActivationEnabled}{leverageContext} | PilotMarginType={marginType} | PilotLeverage={leverage:0.########} | ScanCycleId={scanCycleId:N} | CandidateId={candidate.Id:N} | CandidateRank={candidate.Rank?.ToString(CultureInfo.InvariantCulture) ?? "n/a"} | BotId={botMatch.BotId:N}"),
+                $"{context} | DevelopmentFuturesTestnetPilot=True | PilotActivationEnabled={pilotOptions.PilotActivationEnabled}{leverageContext}{symbolAllowlistContext} | PilotMarginType={marginType} | PilotLeverage={leverage:0.########} | ScanCycleId={scanCycleId:N} | CandidateId={candidate.Id:N} | CandidateRank={candidate.Rank?.ToString(CultureInfo.InvariantCulture) ?? "n/a"} | BotId={botMatch.BotId:N}"),
             executionContext,
             maxLength: 1024);
     }
@@ -2577,6 +2622,74 @@ public sealed class MarketScannerHandoffService(
                 alignmentSkippedForReduceOnly: false));
     }
 
+    private SymbolExecutionAllowlistEvaluation EvaluateSymbolExecutionAllowlist(
+        string symbol,
+        bool reduceOnly)
+    {
+        if (!botExecutionOptionsValue.TryResolveNormalizedAllowedExecutionSymbols(out var allowedExecutionSymbols))
+        {
+            return SymbolExecutionAllowlistEvaluation.NotConfigured;
+        }
+
+        var normalizedSymbol = MarketDataSymbolNormalizer.Normalize(symbol);
+        var allowedExecutionSymbolsSummary = allowedExecutionSymbols.Length == 0
+            ? "none"
+            : string.Join(",", allowedExecutionSymbols);
+
+        if (reduceOnly)
+        {
+            return new SymbolExecutionAllowlistEvaluation(
+                IsConfigured: true,
+                IsBlocked: false,
+                Decision: "SkippedForCloseOnly",
+                ReasonCode: SymbolAllowlistSkippedForCloseOnlyReasonCode,
+                Summary: BuildSymbolExecutionAllowlistSummary(
+                    normalizedSymbol,
+                    allowedExecutionSymbolsSummary,
+                    "SkippedForCloseOnly",
+                    SymbolAllowlistSkippedForCloseOnlyReasonCode));
+        }
+
+        if (allowedExecutionSymbols.Length == 0)
+        {
+            return new SymbolExecutionAllowlistEvaluation(
+                IsConfigured: true,
+                IsBlocked: true,
+                Decision: "Blocked",
+                ReasonCode: SymbolAllowlistEmptyCode,
+                Summary: BuildSymbolExecutionAllowlistSummary(
+                    normalizedSymbol,
+                    allowedExecutionSymbolsSummary,
+                    "Blocked",
+                    SymbolAllowlistEmptyCode));
+        }
+
+        if (!allowedExecutionSymbols.Contains(normalizedSymbol, StringComparer.Ordinal))
+        {
+            return new SymbolExecutionAllowlistEvaluation(
+                IsConfigured: true,
+                IsBlocked: true,
+                Decision: "Blocked",
+                ReasonCode: SymbolExecutionNotAllowedCode,
+                Summary: BuildSymbolExecutionAllowlistSummary(
+                    normalizedSymbol,
+                    allowedExecutionSymbolsSummary,
+                    "Blocked",
+                    SymbolExecutionNotAllowedCode));
+        }
+
+        return new SymbolExecutionAllowlistEvaluation(
+            IsConfigured: true,
+            IsBlocked: false,
+            Decision: "Allowed",
+            ReasonCode: SymbolAllowlistAllowedReasonCode,
+            Summary: BuildSymbolExecutionAllowlistSummary(
+                normalizedSymbol,
+                allowedExecutionSymbolsSummary,
+                "Allowed",
+                SymbolAllowlistAllowedReasonCode));
+    }
+
     private decimal ResolveEffectiveMaxAllowedLeverage(decimal effectiveLeverage)
     {
         var configuredMaxAllowedLeverage = NormalizeConfiguredLeverage(botExecutionOptionsValue.MaxAllowedLeverage);
@@ -2606,6 +2719,15 @@ public sealed class MarketScannerHandoffService(
     {
         return FormattableString.Invariant(
             $"RequestedLeverage={requestedLeverage:0.########}; EffectiveLeverage={effectiveLeverage:0.########}; MaxAllowedLeverage={maxAllowedLeverage:0.########}; LeverageSource={leverageSource}; LeveragePolicyDecision={decision}; LeveragePolicyReason={reasonCode}; LeverageAlignmentSkippedForReduceOnly={alignmentSkippedForReduceOnly}");
+    }
+
+    private static string BuildSymbolExecutionAllowlistSummary(
+        string symbol,
+        string allowedExecutionSymbolsSummary,
+        string decision,
+        string reasonCode)
+    {
+        return $"SymbolExecutionAllowlist=Applied; AllowedExecutionSymbols={allowedExecutionSymbolsSummary}; SymbolAllowlistDecision={decision}; SymbolAllowlistReason={reasonCode}; SelectedSymbol={symbol}";
     }
 
     private static string BuildExecutionCommandContext(
@@ -3702,6 +3824,17 @@ public sealed class MarketScannerHandoffService(
         string ReasonCode,
         bool AlignmentSkippedForReduceOnly,
         string Summary);
+
+    private sealed record SymbolExecutionAllowlistEvaluation(
+        bool IsConfigured,
+        bool IsBlocked,
+        string Decision,
+        string ReasonCode,
+        string? Summary)
+    {
+        public static SymbolExecutionAllowlistEvaluation NotConfigured { get; } =
+            new(false, false, "Allowed", SymbolAllowlistAllowedReasonCode, null);
+    }
 
     private sealed record CurrentPositionSnapshot(
         StrategyTradeDirection Direction,

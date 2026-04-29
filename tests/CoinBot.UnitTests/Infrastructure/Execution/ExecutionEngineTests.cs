@@ -1631,6 +1631,63 @@ public sealed class ExecutionEngineTests
     }
 
     [Fact]
+    public async Task DispatchAsync_PersistsStableFailureCode_WhenPilotExecutionSymbolIsOutsideAllowlist()
+    {
+        await using var harness = CreateHarness(
+            environmentName: Environments.Development,
+            enableRiskPolicyEvaluator: true,
+            testnetExecutionOptions: new BinanceFuturesTestnetOptions
+            {
+                BaseUrl = "https://testnet.binance.example/futures-rest",
+                ApiKey = "testnet-api-key",
+                ApiSecret = "testnet-api-secret"
+            });
+        var exchangeAccountId = Guid.NewGuid();
+        var botId = Guid.NewGuid();
+        await SeedExchangeAccountAsync(harness.DbContext, "user-symbol-allowlist-block", exchangeAccountId);
+        await SeedBotAsync(harness.DbContext, "user-symbol-allowlist-block", botId, "pilot-symbol-allowlist-block");
+        await SeedPilotSafetyPrerequisitesAsync(
+            harness.DbContext,
+            "user-symbol-allowlist-block",
+            exchangeAccountId,
+            harness.TimeProvider.GetUtcNow().UtcDateTime);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.AllowedUserIds = ["user-symbol-allowlist-block"];
+        harness.PilotOptions.AllowedBotIds = [botId.ToString("N")];
+        harness.PilotOptions.AllowedSymbols = ["BTCUSDT"];
+        harness.PilotOptions.AllowedExecutionSymbols = ["SOLUSDT"];
+        await PrimeFreshMarketDataAsync(harness, "corr-symbol-allowlist-block-1");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-symbol-allowlist-block",
+            context: "Open symbol allowlist blocked execution",
+            correlationId: "corr-symbol-allowlist-block-2");
+
+        var result = await harness.Engine.DispatchAsync(
+            CreateCommand(
+                ownerUserId: "user-symbol-allowlist-block",
+                strategyKey: "pilot-symbol-allowlist-block",
+                isDemo: null,
+                botId: botId,
+                exchangeAccountId: exchangeAccountId) with
+            {
+                Actor = "system:bot-worker",
+                RequestedEnvironment = ExecutionEnvironment.BinanceTestnet,
+                Context = "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                Quantity = 0.002m,
+                Price = 65000m
+            },
+            CancellationToken.None);
+
+        Assert.Equal(ExecutionOrderState.Rejected, result.Order.State);
+        Assert.Equal("SymbolExecutionNotAllowed", result.Order.FailureCode);
+        Assert.Equal(ExecutionRejectionStage.PreSubmit, result.Order.RejectionStage);
+        Assert.False(result.Order.SubmittedToBroker);
+        Assert.Equal(0, harness.PrivateRestClient.EnsureLeverageCalls);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
     public async Task DispatchAsync_PersistsStableFailureCode_WhenLeverageChangeIsBlockedByOpenPosition()
     {
         await using var harness = CreateHarness(
@@ -2011,7 +2068,8 @@ public sealed class ExecutionEngineTests
                     BaseUrl = privateDataOptions.Value.RestBaseUrl,
                     ApiKey = "testnet-api-key",
                     ApiSecret = "testnet-api-secret"
-                })),
+                }),
+                botExecutionPilotOptions: Options.Create(pilotOptions)),
             new BinanceSpotExecutor(
                 dbContext,
                 credentialService,

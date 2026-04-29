@@ -429,7 +429,7 @@ public sealed class RedisSharedMarketDataCacheIntegrationTests
                 adminMemoryCache,
                 new FixedTimeProvider(nowUtc.AddSeconds(2)),
                 Options.Create(new DataLatencyGuardOptions()),
-                cacheCollector);
+                sharedMarketDataCacheObservabilityCollector: cacheCollector);
 
             var dashboardSnapshot = await adminService.GetSnapshotAsync();
 

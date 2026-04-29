@@ -639,6 +639,88 @@ public sealed class BinanceExecutorTests
     }
 
     [Fact]
+    public async Task DispatchAsync_FailsClosed_WhenPilotExecutionSymbolIsOutsideAllowlist()
+    {
+        await using var harness = await CreateHarnessAsync(
+            privateDataOptions: new BinancePrivateDataOptions
+            {
+                RestBaseUrl = "https://demo-fapi.binance.com",
+                WebSocketBaseUrl = "wss://fstream.binancefuture.com",
+                SpotRestBaseUrl = "https://api.binance.com",
+                SpotWebSocketBaseUrl = "wss://stream.binance.com:9443"
+            },
+            testnetOptions: new BinanceFuturesTestnetOptions
+            {
+                BaseUrl = "https://demo-fapi.binance.com",
+                ApiKey = "testnet-api-key",
+                ApiSecret = "testnet-api-secret"
+            },
+            pilotOptions: new BotExecutionPilotOptions
+            {
+                AllowedExecutionSymbols = ["SOLUSDT"]
+            });
+        harness.Order.ExecutionEnvironment = ExecutionEnvironment.BinanceTestnet;
+        harness.Order.ExecutorKind = ExecutionOrderExecutorKind.BinanceTestnet;
+
+        var exception = await Assert.ThrowsAsync<ExecutionValidationException>(() => harness.Executor.DispatchAsync(
+            harness.Order,
+            CreateCommand(harness.ExchangeAccountId) with
+            {
+                RequestedEnvironment = ExecutionEnvironment.BinanceTestnet,
+                Context = "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1"
+            },
+            CancellationToken.None));
+
+        Assert.Equal("SymbolExecutionNotAllowed", exception.ReasonCode);
+        Assert.Equal(0, harness.PrivateRestClient.EnsureMarginTypeCalls);
+        Assert.Equal(0, harness.PrivateRestClient.EnsureLeverageCalls);
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_AllowsReduceOnlyExit_WhenPilotExecutionSymbolIsOutsideAllowlist()
+    {
+        await using var harness = await CreateHarnessAsync(
+            privateDataOptions: new BinancePrivateDataOptions
+            {
+                RestBaseUrl = "https://demo-fapi.binance.com",
+                WebSocketBaseUrl = "wss://fstream.binancefuture.com",
+                SpotRestBaseUrl = "https://api.binance.com",
+                SpotWebSocketBaseUrl = "wss://stream.binance.com:9443"
+            },
+            testnetOptions: new BinanceFuturesTestnetOptions
+            {
+                BaseUrl = "https://demo-fapi.binance.com",
+                ApiKey = "testnet-api-key",
+                ApiSecret = "testnet-api-secret"
+            },
+            pilotOptions: new BotExecutionPilotOptions
+            {
+                AllowedExecutionSymbols = ["SOLUSDT"]
+            });
+        harness.Order.ExecutionEnvironment = ExecutionEnvironment.BinanceTestnet;
+        harness.Order.ExecutorKind = ExecutionOrderExecutorKind.BinanceTestnet;
+
+        var result = await harness.Executor.DispatchAsync(
+            harness.Order,
+            CreateCommand(harness.ExchangeAccountId) with
+            {
+                RequestedEnvironment = ExecutionEnvironment.BinanceTestnet,
+                SignalType = StrategySignalType.Exit,
+                Side = ExecutionOrderSide.Sell,
+                ReduceOnly = true,
+                Quantity = 0.002m,
+                Context = "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1 | ExecutionIntent=ExitCloseOnly | ReduceOnly=True | AutoReverse=False"
+            },
+            CancellationToken.None);
+
+        Assert.Equal("binance-order-1", result.ExternalOrderId);
+        Assert.Equal(0, harness.PrivateRestClient.EnsureMarginTypeCalls);
+        Assert.Equal(0, harness.PrivateRestClient.EnsureLeverageCalls);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
     public async Task DispatchAsync_FailsClosed_WithStableReason_WhenLeverageAlignmentFails()
     {
         await using var harness = await CreateHarnessAsync(
