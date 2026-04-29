@@ -98,6 +98,7 @@ public sealed class MarketScannerServiceTests
         Assert.Equal(3, eth.Rank);
         Assert.False(eth.IsTopCandidate);
         Assert.Equal("enabled-bot+historical-candles+registry", eth.UniverseSource);
+        Assert.Contains("RankingDecision=Ranked", eth.ScoringSummary, StringComparison.Ordinal);
         Assert.False(sol.IsEligible);
         Assert.Equal("LowQuoteVolume", sol.RejectionReason);
         Assert.Equal(MonitoringHealthState.Healthy, heartbeat.HealthState);
@@ -267,6 +268,9 @@ public sealed class MarketScannerServiceTests
         Assert.Equal(100m, btc.MarketScore);
         Assert.Equal(95, btc.StrategyScore);
         Assert.Equal(96.6667m, btc.Score);
+        Assert.Contains("CandidateScore=96.6667", btc.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("MarketScore=100", btc.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("LiquidityScore=100", btc.ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("StrategyKey=scanner-btc", btc.ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("StrategyScore=95", btc.ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("ScannerLabels=HasTrendBreakoutUp", btc.ScoringSummary, StringComparison.Ordinal);
@@ -274,15 +278,22 @@ public sealed class MarketScannerServiceTests
         Assert.Contains("ScannerReasonSummary=Bullish trend breakout confirmed above the Bollinger mid-band with positive MACD alignment.", btc.ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("ScannerShadowScore=55", btc.ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("ScannerShadowContributions=TrendBreakoutConfirmed:+55", btc.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("TrendAlignment=Bullish", btc.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("DirectionalConflictStatus=NotEvaluated", btc.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("RankingDecision=Selected", btc.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("RankingReasonCode=HighestCompositeScore", btc.ScoringSummary, StringComparison.Ordinal);
 
         Assert.Equal(100m, eth.MarketScore);
         Assert.Equal(5, eth.StrategyScore);
         Assert.Equal(36.6667m, eth.Score);
+        Assert.Contains("RankingDecision=Selected", eth.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("RankingReasonCode=LowerCompositeScore", eth.ScoringSummary, StringComparison.Ordinal);
         Assert.InRange(btc.MarketScore, 0m, 100m);
         Assert.InRange(eth.MarketScore, 0m, 100m);
         Assert.InRange(btc.Score, 0m, 100m);
         Assert.InRange(eth.Score, 0m, 100m);
         Assert.True(btc.Score > eth.Score);
+        Assert.Contains("RankingReason=HighestCompositeScore", cycle.Summary, StringComparison.Ordinal);
         Assert.Contains("HandoffEnabled=True", heartbeat.Detail ?? string.Empty, StringComparison.Ordinal);
         Assert.Equal("BTCUSDT", strategyEvaluatorService.RequestedSymbols[0]);
         Assert.Equal("ETHUSDT", strategyEvaluatorService.RequestedSymbols[1]);
@@ -483,6 +494,8 @@ public sealed class MarketScannerServiceTests
         Assert.False(candidate.IsEligible);
         Assert.Equal("NoEnabledBotForSymbol", candidate.RejectionReason);
         Assert.Contains("StrategyOutcome=NoEnabledBotForSymbol", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("RankingDecision=Rejected", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("RankingReasonCode=NoEnabledBotForSymbol", candidate.ScoringSummary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -917,6 +930,9 @@ public sealed class MarketScannerServiceTests
         Assert.Equal(0m, candidate.Score);
         Assert.Contains("EntryDirection=Long", candidate.ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("BotDirectionMode=ShortOnly", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("DirectionalConflictStatus=BlockedByBotDirectionMode", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("RankingDecision=Rejected", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("RankingReasonCode=EntryDirectionModeBlocked", candidate.ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("EntryDirectionModeBlocked:1 [SOLUSDT]", cycle.Summary, StringComparison.Ordinal);
     }
 
@@ -1981,13 +1997,18 @@ public sealed class MarketScannerServiceTests
             NullLogger<MarketScannerService>.Instance);
 
         var cycle = await service.RunOnceAsync();
-        var rankedSymbols = await dbContext.MarketScannerCandidates
+        var rankedCandidates = await dbContext.MarketScannerCandidates
             .Where(entity => entity.ScanCycleId == cycle.Id && entity.IsEligible)
             .OrderBy(entity => entity.Rank)
-            .Select(entity => entity.Symbol)
             .ToListAsync();
+        var rankedSymbols = rankedCandidates.Select(entity => entity.Symbol).ToList();
 
         Assert.Equal(["BTCUSDT", "ETHUSDT"], rankedSymbols);
+        Assert.Contains("RankingDecision=Selected", rankedCandidates[0].ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("RankingReasonCode=StableSymbolTieBreak", rankedCandidates[0].ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("RankingDecision=Selected", rankedCandidates[1].ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("RankingReasonCode=StableSymbolTieBreakLost", rankedCandidates[1].ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("RankingReason=StableSymbolTieBreak", cycle.Summary, StringComparison.Ordinal);
     }
 
     [Fact]

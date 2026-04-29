@@ -438,6 +438,9 @@ public sealed class MarketScannerService(
             StrategyScore = strategyScoring.StrategyScore,
             ScoringSummary = BuildCandidateScoringSummary(
                 strategyScoring.ScoringSummary,
+                marketScore,
+                strategyScoring.StrategyScore,
+                rejectionReason,
                 marketWindow,
                 candidateIntelligence,
                 rankingSummary),
@@ -456,11 +459,37 @@ public sealed class MarketScannerService(
             .OrderByDescending(item => item.Score)
             .ThenBy(item => item.Symbol, StringComparer.Ordinal)
             .ToArray();
+        var tiedScores = eligibleCandidates
+            .GroupBy(item => item.Score)
+            .Where(group => group.Count() > 1)
+            .Select(group => group.Key)
+            .ToHashSet();
 
         for (var index = 0; index < eligibleCandidates.Length; index++)
         {
-            eligibleCandidates[index].Rank = index + 1;
-            eligibleCandidates[index].IsTopCandidate = index < scannerOptionsValue.TopCandidateCount;
+            var candidate = eligibleCandidates[index];
+            candidate.Rank = index + 1;
+            candidate.IsTopCandidate = index < scannerOptionsValue.TopCandidateCount;
+            AnnotateRankingObservability(
+                candidate,
+                candidate.IsTopCandidate ? "Selected" : "Ranked",
+                ResolveEligibleRankingReasonCode(candidate, index, tiedScores),
+                candidate.IsTopCandidate
+                    ? "SelectedByRanking"
+                    : "EligibleButLowerRanked");
+        }
+
+        foreach (var candidate in candidates.Where(item => !item.IsEligible))
+        {
+            AnnotateRankingObservability(
+                candidate,
+                "Rejected",
+                string.IsNullOrWhiteSpace(candidate.RejectionReason)
+                    ? "CandidateIneligible"
+                    : candidate.RejectionReason!,
+                string.IsNullOrWhiteSpace(candidate.RejectionReason)
+                    ? "RejectedByEligibility"
+                    : $"RejectedBy{candidate.RejectionReason}");
         }
     }
 
@@ -2226,16 +2255,31 @@ public sealed class MarketScannerService(
 
     private string? BuildCandidateScoringSummary(
         string? scoringSummary,
+        decimal marketScore,
+        int? strategyScore,
+        string? rejectionReason,
         ScannerMarketWindowSnapshot marketWindow,
         ScannerCandidateIntelligenceSummary candidateIntelligence,
         ScannerCandidateRankingSummary rankingSummary)
     {
-        var summarySegments = new List<string>(8);
+        var trendAlignment = ResolveTrendAlignment(candidateIntelligence, scoringSummary);
+        var directionalConflictStatus = ResolveDirectionalConflictStatus(rejectionReason, scoringSummary);
+        var riskPenalty = ResolveRiskPenalty(rejectionReason);
+        var volatilityScore = ResolveVolatilityScore(candidateIntelligence);
+        var summarySegments = new List<string>(16);
         if (!string.IsNullOrWhiteSpace(scoringSummary))
         {
             summarySegments.Add(scoringSummary!);
         }
 
+        summarySegments.Add($"CandidateScore={rankingSummary.EffectiveScore.ToString("0.####", CultureInfo.InvariantCulture)}");
+        summarySegments.Add($"MarketScore={marketScore.ToString("0.####", CultureInfo.InvariantCulture)}");
+        summarySegments.Add($"StrategyScore={(strategyScore?.ToString(CultureInfo.InvariantCulture) ?? "n/a")}");
+        summarySegments.Add($"RiskPenalty={riskPenalty.ToString("0.####", CultureInfo.InvariantCulture)}");
+        summarySegments.Add($"VolatilityScore={volatilityScore.ToString("0.####", CultureInfo.InvariantCulture)}");
+        summarySegments.Add($"LiquidityScore={marketScore.ToString("0.####", CultureInfo.InvariantCulture)}");
+        summarySegments.Add($"TrendAlignment={trendAlignment}");
+        summarySegments.Add($"DirectionalConflictStatus={directionalConflictStatus}");
         summarySegments.Add($"ScannerRankingMode={rankingSummary.RankingMode}");
         summarySegments.Add($"ScannerClassicalScore={(rankingSummary.ClassicalScore?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a")}");
         summarySegments.Add($"ScannerCombinedScore={(rankingSummary.CombinedScore?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a")}");
@@ -2716,6 +2760,119 @@ public sealed class MarketScannerService(
         return Truncate(string.Join("; ", segments), CandidateScoringSummaryMaxLength);
     }
 
+    private static string? PrependSummaryToken(string? summary, string key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return Truncate(summary, CandidateScoringSummaryMaxLength);
+        }
+
+        var withoutToken = UpsertSummaryToken(summary, key, null);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return withoutToken;
+        }
+
+        var token = $"{key}={value}";
+        return string.IsNullOrWhiteSpace(withoutToken)
+            ? Truncate(token, CandidateScoringSummaryMaxLength)
+            : Truncate($"{token}; {withoutToken}", CandidateScoringSummaryMaxLength);
+    }
+
+    private static void AnnotateRankingObservability(
+        MarketScannerCandidate candidate,
+        string rankingDecision,
+        string rankingReasonCode,
+        string rankingSummary)
+    {
+        candidate.ScoringSummary = PrependSummaryToken(candidate.ScoringSummary, "RankingSummary", rankingSummary);
+        candidate.ScoringSummary = PrependSummaryToken(candidate.ScoringSummary, "RankingReasonCode", rankingReasonCode);
+        candidate.ScoringSummary = PrependSummaryToken(candidate.ScoringSummary, "RankingDecision", rankingDecision);
+    }
+
+    private static string ResolveEligibleRankingReasonCode(
+        MarketScannerCandidate candidate,
+        int rankIndex,
+        ISet<decimal> tiedScores)
+    {
+        if (tiedScores.Contains(candidate.Score))
+        {
+            return rankIndex == 0
+                ? "StableSymbolTieBreak"
+                : "StableSymbolTieBreakLost";
+        }
+
+        return rankIndex == 0
+            ? "HighestCompositeScore"
+            : "LowerCompositeScore";
+    }
+
+    private static decimal ResolveVolatilityScore(ScannerCandidateIntelligenceSummary candidateIntelligence)
+    {
+        var score = 0m;
+        if (candidateIntelligence.Labels.Contains("HasCompressionBreakoutSetup", StringComparer.Ordinal))
+        {
+            score += CompressionBreakoutSetupShadowScore;
+        }
+
+        if (candidateIntelligence.Labels.Contains("HasTrendBreakoutUp", StringComparer.Ordinal) ||
+            candidateIntelligence.Labels.Contains("HasTrendBreakoutDown", StringComparer.Ordinal))
+        {
+            score += TrendBreakoutShadowScore;
+        }
+
+        return decimal.Round(
+            ClampScoreBand(score),
+            4,
+            MidpointRounding.AwayFromZero);
+    }
+
+    private static decimal ResolveRiskPenalty(string? rejectionReason)
+    {
+        return !string.IsNullOrWhiteSpace(rejectionReason) &&
+               rejectionReason.StartsWith("StrategyRiskVetoed", StringComparison.Ordinal)
+            ? 100m
+            : 0m;
+    }
+
+    private static string ResolveTrendAlignment(
+        ScannerCandidateIntelligenceSummary candidateIntelligence,
+        string? scoringSummary)
+    {
+        if (candidateIntelligence.Labels.Contains("HasTrendBreakoutUp", StringComparer.Ordinal))
+        {
+            return "Bullish";
+        }
+
+        if (candidateIntelligence.Labels.Contains("HasTrendBreakoutDown", StringComparer.Ordinal))
+        {
+            return "Bearish";
+        }
+
+        if (candidateIntelligence.Labels.Contains("HasCompressionBreakoutSetup", StringComparer.Ordinal))
+        {
+            return "CompressionSetup";
+        }
+
+        return ExtractToken(scoringSummary, "EntryDirection") switch
+        {
+            "Long" => "Bullish",
+            "Short" => "Bearish",
+            _ => "Neutral"
+        };
+    }
+
+    private static string ResolveDirectionalConflictStatus(string? rejectionReason, string? scoringSummary)
+    {
+        if (string.Equals(rejectionReason, "EntryDirectionModeBlocked", StringComparison.Ordinal) ||
+            string.Equals(ExtractToken(scoringSummary, "StrategyBlocker"), "EntryDirectionModeBlocked", StringComparison.Ordinal))
+        {
+            return "BlockedByBotDirectionMode";
+        }
+
+        return "NotEvaluated";
+    }
+
     private static int ResolveTopCandidateChangedByAiCount(IReadOnlyCollection<MarketScannerCandidate> candidates)
     {
         var eligibleCandidates = candidates
@@ -2776,7 +2933,8 @@ public sealed class MarketScannerService(
 
         if (bestCandidate is not null)
         {
-            return $"Market scanner evaluated {cycle.ScannedSymbolCount} symbols and ranked {bestCandidate.Symbol} #{bestCandidate.Rank} with score {bestCandidate.Score.ToString("0.####", CultureInfo.InvariantCulture)}.";
+            var rankingReason = ExtractToken(bestCandidate.ScoringSummary, "RankingReasonCode") ?? "n/a";
+            return $"Market scanner evaluated {cycle.ScannedSymbolCount} symbols and ranked {bestCandidate.Symbol} #{bestCandidate.Rank} with score {bestCandidate.Score.ToString("0.####", CultureInfo.InvariantCulture)}. RankingReason={rankingReason}.";
         }
 
         var rejectionSummary = BuildRejectionBreakdown(candidates, maxEntries: 4, maxSymbolsPerReason: 2);
