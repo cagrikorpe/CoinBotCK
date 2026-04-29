@@ -1214,6 +1214,7 @@ public sealed class BotWorkerJobProcessor(
                 ExchangeAccountId: exchangeAccount.Id,
                 ReduceOnly: dispatchPlan.ReduceOnly),
             cancellationToken);
+        var concurrencyGuardSummary = ExtractConcurrencyGuardSummary(preSubmitPilotEvaluation.GuardSummary);
 
         if (TryResolveCooldownSkip(preSubmitPilotEvaluation, out var cooldownReasonCode, out var cooldownSummary))
         {
@@ -1277,8 +1278,13 @@ public sealed class BotWorkerJobProcessor(
             var blockCode = closeOnlyIntent is not null && (preSubmitPilotEvaluation.RiskEvaluation?.IsVetoed ?? false)
                 ? ExitCloseOnlyBlockedRiskDecisionCode
                 : preSubmitPilotEvaluation.BlockCode ?? "UserExecutionOverrideBlocked";
+            var blockSummarySource = string.IsNullOrWhiteSpace(concurrencyGuardSummary)
+                ? preSubmitPilotEvaluation.Message ?? "Execution blocked by user execution override guard."
+                : PrependDecisionSummarySegment(
+                    concurrencyGuardSummary,
+                    preSubmitPilotEvaluation.Message ?? "Execution blocked by user execution override guard.");
             var blockSummary = AppendExitReasonToken(
-                preSubmitPilotEvaluation.Message ?? "Execution blocked by user execution override guard.",
+                blockSummarySource,
                 blockCode,
                 isExitCloseOnly: signal.SignalType == StrategySignalType.Exit);
 
@@ -1320,6 +1326,11 @@ public sealed class BotWorkerJobProcessor(
                 signal.Symbol,
                 blockCode);
             return BackgroundJobProcessResult.Success();
+        }
+
+        if (!string.IsNullOrWhiteSpace(concurrencyGuardSummary))
+        {
+            pilotExecutionContext = AppendPilotContextSegment(pilotExecutionContext, concurrencyGuardSummary);
         }
 
         try
@@ -3979,6 +3990,10 @@ public sealed class BotWorkerJobProcessor(
                string.Equals(blockCode, "UserExecutionBotCooldownActive", StringComparison.Ordinal) ||
                string.Equals(blockCode, "UserExecutionSymbolCooldownActive", StringComparison.Ordinal) ||
                string.Equals(blockCode, "UserExecutionMaxOpenPositionsExceeded", StringComparison.Ordinal) ||
+               string.Equals(blockCode, "RiskConcurrencyMaxOpenPositionsExceeded", StringComparison.Ordinal) ||
+               string.Equals(blockCode, "RiskConcurrencyMaxPendingOrdersExceeded", StringComparison.Ordinal) ||
+               string.Equals(blockCode, "RiskConcurrencyMaxSymbolExposureExceeded", StringComparison.Ordinal) ||
+               string.Equals(blockCode, "RiskConcurrencyMaxSymbolsExceeded", StringComparison.Ordinal) ||
                string.Equals(blockCode, "UserExecutionSymbolConflict", StringComparison.Ordinal) ||
                string.Equals(blockCode, "PilotConfigurationMissing", StringComparison.Ordinal) ||
                string.Equals(blockCode, "PilotRequiresDevelopment", StringComparison.Ordinal) ||
@@ -4209,6 +4224,45 @@ public sealed class BotWorkerJobProcessor(
         return string.IsNullOrWhiteSpace(segment)
             ? context
             : $"{context} | {segment}";
+    }
+
+    private static string? ExtractConcurrencyGuardSummary(string? guardSummary)
+    {
+        if (string.IsNullOrWhiteSpace(guardSummary))
+        {
+            return null;
+        }
+
+        string[] allowedPrefixes =
+        [
+            "ConcurrencyPolicy=",
+            "MaxOpenPositionsPerUser=",
+            "CurrentOpenPositionsPerUser=",
+            "MaxOpenPositionsGlobal=",
+            "CurrentOpenPositionsGlobal=",
+            "MaxOpenPositionsPerSymbol=",
+            "CurrentOpenPositionsPerSymbol=",
+            "MaxPendingOrdersPerUser=",
+            "CurrentPendingOrdersPerUser=",
+            "MaxConcurrentEntryOrdersPerUser=",
+            "CurrentConcurrentEntryOrdersPerUser=",
+            "MaxConcurrentEntryOrdersPerSymbol=",
+            "CurrentConcurrentEntryOrdersPerSymbol=",
+            "MaxSymbolsWithOpenPositionPerUser=",
+            "CurrentSymbolsWithOpenPositionPerUser=",
+            "ConcurrencyDecision=",
+            "ConcurrencyReason=",
+            "ConcurrencyLimitSkippedForCloseOnly="
+        ];
+
+        var filteredTokens = guardSummary
+            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(token => allowedPrefixes.Any(prefix => token.StartsWith(prefix, StringComparison.Ordinal)))
+            .ToArray();
+
+        return filteredTokens.Length == 0
+            ? null
+            : string.Join("; ", filteredTokens);
     }
 
     private static string PrependDecisionSummarySegment(string? segment, string summary)

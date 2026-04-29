@@ -94,6 +94,10 @@ public sealed class MarketScannerHandoffService(
         "UserExecutionBotCooldownActive",
         "UserExecutionSymbolCooldownActive",
         "UserExecutionMaxOpenPositionsExceeded",
+        "RiskConcurrencyMaxOpenPositionsExceeded",
+        "RiskConcurrencyMaxPendingOrdersExceeded",
+        "RiskConcurrencyMaxSymbolExposureExceeded",
+        "RiskConcurrencyMaxSymbolsExceeded",
         "SameDirectionLongEntrySuppressed",
         "SameDirectionShortEntrySuppressed",
         "ReverseBlockedOpenPositionExists",
@@ -867,6 +871,7 @@ public sealed class MarketScannerHandoffService(
                         ExchangeAccountId: executionExchangeAccountId,
                         ReduceOnly: executionContext.ReduceOnly),
                     cancellationToken: cancellationToken);
+                var concurrencyGuardSummary = ExtractConcurrencyGuardSummary(overrideEvaluation.GuardSummary);
 
                 if (overrideEvaluation.IsBlocked)
                 {
@@ -890,8 +895,10 @@ public sealed class MarketScannerHandoffService(
                         guardSummary: AppendExecutionIntentGuardSummary(
                             Truncate(
                                 PrependGuardSummarySegment(
-                                    symbolAllowlistPolicy.Summary,
-                                    $"UserExecutionOverrideGuard={overrideEvaluation.BlockCode ?? "Blocked"}; {BuildLatencyGuardSummarySnippet(latencySnapshot)}; RiskSummary={overrideEvaluation.RiskEvaluation?.ReasonSummary ?? "n/a"}"),
+                                    concurrencyGuardSummary,
+                                    PrependGuardSummarySegment(
+                                        symbolAllowlistPolicy.Summary,
+                                        $"UserExecutionOverrideGuard={overrideEvaluation.BlockCode ?? "Blocked"}; {BuildLatencyGuardSummarySnippet(latencySnapshot)}; RiskSummary={overrideEvaluation.RiskEvaluation?.ReasonSummary ?? "n/a"}")),
                                 512) ?? $"UserExecutionOverrideGuard={overrideEvaluation.BlockCode ?? "Blocked"}",
                             executionContext,
                             ResolveExitReasonToken(
@@ -924,8 +931,10 @@ public sealed class MarketScannerHandoffService(
                         guardSummary: AppendExecutionIntentGuardSummary(
                             Truncate(
                                 PrependGuardSummarySegment(
-                                    symbolAllowlistPolicy.Summary,
-                                    $"ExecutionGate=Allowed; UserExecutionOverride=Allowed; AiShadowMode=ObserveOnly; {BuildLatencyGuardSummarySnippet(latencySnapshot)}"),
+                                    concurrencyGuardSummary,
+                                    PrependGuardSummarySegment(
+                                        symbolAllowlistPolicy.Summary,
+                                        $"ExecutionGate=Allowed; UserExecutionOverride=Allowed; AiShadowMode=ObserveOnly; {BuildLatencyGuardSummarySnippet(latencySnapshot)}")),
                                 512) ?? "ExecutionGate=Allowed; UserExecutionOverride=Allowed; AiShadowMode=ObserveOnly",
                             executionContext),
                         cancellationToken: cancellationToken,
@@ -982,6 +991,7 @@ public sealed class MarketScannerHandoffService(
                     dispatchResult,
                     leveragePolicy.Summary,
                     symbolAllowlistPolicy.Summary,
+                    concurrencyGuardSummary,
                     correlationId,
                     cancellationToken);
                 return latestAttempt;
@@ -1963,6 +1973,7 @@ public sealed class MarketScannerHandoffService(
         ExecutionDispatchResult dispatchResult,
         string? leveragePolicySummary,
         string? symbolAllowlistSummary,
+        string? concurrencyGuardSummary,
         string correlationId,
         CancellationToken cancellationToken)
     {
@@ -1980,7 +1991,7 @@ public sealed class MarketScannerHandoffService(
             blockerCode: null,
             blockerDetail: null,
             correlationId,
-            guardSummary: BuildPreparedGuardSummary(candidate.Symbol, strategyResult, strategySignal, latencySnapshot, executionContext, dispatchResult, leveragePolicySummary, symbolAllowlistSummary));
+            guardSummary: BuildPreparedGuardSummary(candidate.Symbol, strategyResult, strategySignal, latencySnapshot, executionContext, dispatchResult, leveragePolicySummary, symbolAllowlistSummary, concurrencyGuardSummary));
 
         dbContext.MarketScannerHandoffAttempts.Add(attempt);
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -2252,7 +2263,8 @@ public sealed class MarketScannerHandoffService(
         PreparedExecutionContext executionContext,
         ExecutionDispatchResult dispatchResult,
         string? leveragePolicySummary,
-        string? symbolAllowlistSummary)
+        string? symbolAllowlistSummary,
+        string? concurrencyGuardSummary)
     {
         var leveragePolicySegment = string.IsNullOrWhiteSpace(leveragePolicySummary)
             ? string.Empty
@@ -2260,8 +2272,11 @@ public sealed class MarketScannerHandoffService(
         var symbolAllowlistSegment = string.IsNullOrWhiteSpace(symbolAllowlistSummary)
             ? string.Empty
             : $"{symbolAllowlistSummary}; ";
+        var concurrencySegment = string.IsNullOrWhiteSpace(concurrencyGuardSummary)
+            ? string.Empty
+            : $"{concurrencyGuardSummary}; ";
         var summary =
-            $"{leveragePolicySegment}{symbolAllowlistSegment}ExecutionGate=Allowed; UserExecutionOverride=Allowed; ExecutionDispatch=Dispatched; Symbol={symbol}; Timeframe={klineInterval}; {BuildLatencyGuardSummarySnippet(latencySnapshot)}; {(string.IsNullOrWhiteSpace(executionContext.ExitPnlGuardSummary) ? string.Empty : $"{executionContext.ExitPnlGuardSummary}; ")}DispatchDuplicate={dispatchResult.IsDuplicate}; ExecutorKind={dispatchResult.Order.ExecutorKind}; ExecutionOrderState={dispatchResult.Order.State}; ExecutionOrderFailureCode={dispatchResult.Order.FailureCode ?? "none"}; ExecutionOrderId={dispatchResult.Order.ExecutionOrderId:N}";
+            $"{concurrencySegment}{leveragePolicySegment}{symbolAllowlistSegment}ExecutionGate=Allowed; UserExecutionOverride=Allowed; ExecutionDispatch=Dispatched; Symbol={symbol}; Timeframe={klineInterval}; {BuildLatencyGuardSummarySnippet(latencySnapshot)}; {(string.IsNullOrWhiteSpace(executionContext.ExitPnlGuardSummary) ? string.Empty : $"{executionContext.ExitPnlGuardSummary}; ")}DispatchDuplicate={dispatchResult.IsDuplicate}; ExecutorKind={dispatchResult.Order.ExecutorKind}; ExecutionOrderState={dispatchResult.Order.State}; ExecutionOrderFailureCode={dispatchResult.Order.FailureCode ?? "none"}; ExecutionOrderId={dispatchResult.Order.ExecutionOrderId:N}";
 
         return AppendExecutionIntentGuardSummary(summary, executionContext);
     }
@@ -2830,6 +2845,45 @@ public sealed class MarketScannerHandoffService(
         return string.IsNullOrWhiteSpace(segment)
             ? summary
             : $"{segment}; {summary}";
+    }
+
+    private static string? ExtractConcurrencyGuardSummary(string? guardSummary)
+    {
+        if (string.IsNullOrWhiteSpace(guardSummary))
+        {
+            return null;
+        }
+
+        string[] allowedPrefixes =
+        [
+            "ConcurrencyPolicy=",
+            "MaxOpenPositionsPerUser=",
+            "CurrentOpenPositionsPerUser=",
+            "MaxOpenPositionsGlobal=",
+            "CurrentOpenPositionsGlobal=",
+            "MaxOpenPositionsPerSymbol=",
+            "CurrentOpenPositionsPerSymbol=",
+            "MaxPendingOrdersPerUser=",
+            "CurrentPendingOrdersPerUser=",
+            "MaxConcurrentEntryOrdersPerUser=",
+            "CurrentConcurrentEntryOrdersPerUser=",
+            "MaxConcurrentEntryOrdersPerSymbol=",
+            "CurrentConcurrentEntryOrdersPerSymbol=",
+            "MaxSymbolsWithOpenPositionPerUser=",
+            "CurrentSymbolsWithOpenPositionPerUser=",
+            "ConcurrencyDecision=",
+            "ConcurrencyReason=",
+            "ConcurrencyLimitSkippedForCloseOnly="
+        ];
+
+        var filteredTokens = guardSummary
+            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(token => allowedPrefixes.Any(prefix => token.StartsWith(prefix, StringComparison.Ordinal)))
+            .ToArray();
+
+        return filteredTokens.Length == 0
+            ? null
+            : string.Join("; ", filteredTokens);
     }
 
     private static string BuildCompactEntrySuppressionGuardSummary(

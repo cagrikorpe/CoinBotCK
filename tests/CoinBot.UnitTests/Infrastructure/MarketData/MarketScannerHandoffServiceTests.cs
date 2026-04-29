@@ -1055,6 +1055,59 @@ public sealed class MarketScannerHandoffServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_PreservesConcurrencyGuardSummary_WhenUserExecutionOverrideBlocksEntry()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-concurrency-block", "BTCUSDT", "pilot-concurrency-block");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "BTCUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "BTCUSDT", rank: 1, score: 10_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("BTCUSDT", "BTC", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "BTCUSDT", "1m", harness.NowUtc));
+        harness.UserExecutionOverrideGuard.BlockSymbol(
+            "BTCUSDT",
+            "RiskConcurrencyMaxPendingOrdersExceeded",
+            "Execution blocked because max pending orders per user limit was reached.",
+            "ConcurrencyPolicy=Applied; MaxPendingOrdersPerUser=1; CurrentPendingOrdersPerUser=1; ConcurrencyDecision=Blocked; ConcurrencyReason=MaxPendingOrdersPerUserReached; ConcurrencyLimitSkippedForCloseOnly=False");
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("RiskConcurrencyMaxPendingOrdersExceeded", attempt.BlockerCode);
+        Assert.Contains("ConcurrencyPolicy=Applied", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("CurrentPendingOrdersPerUser=1", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ConcurrencyDecision=Blocked", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ConcurrencyReason=MaxPendingOrdersPerUserReached", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Null(harness.ExecutionEngine.LastCommand);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_AllowsReduceOnlyCloseOnlyExit_WhenOverrideGuardProvidesConcurrencySkipSummary()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-concurrency-skip", "BTCUSDT", "pilot-concurrency-skip");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "BTCUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "BTCUSDT", rank: 1, score: 10_000m);
+        await SeedExchangePositionAsync(harness.DbContext, bot, "BTCUSDT", quantity: 0.020m, entryPrice: 100m, positionSide: "SHORT", observedAtUtc: harness.NowUtc);
+        harness.MarketDataService.SetMetadata("BTCUSDT", "BTC", "USDT");
+        harness.MarketDataService.SetPrice("BTCUSDT", 99m);
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "BTCUSDT", "1m", harness.NowUtc));
+        harness.UserExecutionOverrideGuard.AllowedGuardSummary =
+            "ConcurrencyPolicy=Applied; MaxPendingOrdersPerUser=1; CurrentPendingOrdersPerUser=1; ConcurrencyDecision=SkippedForCloseOnly; ConcurrencyReason=RiskConcurrencyLimitSkippedForCloseOnly; ConcurrencyLimitSkippedForCloseOnly=True";
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
+        Assert.NotNull(harness.ExecutionEngine.LastCommand);
+        Assert.True(harness.ExecutionEngine.LastCommand?.ReduceOnly);
+        Assert.False(string.IsNullOrWhiteSpace(attempt.GuardSummary));
+    }
+
+    [Fact]
     public async Task RunOnceAsync_ConvertsOpposingShortEntryIntoCloseOnlySellExit_WhenLiveLongPositionExists()
     {
         await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
@@ -2985,14 +3038,16 @@ public sealed class MarketScannerHandoffServiceTests
 
     private sealed class FakeUserExecutionOverrideGuard : IUserExecutionOverrideGuard
     {
-        private readonly Dictionary<string, (string Code, string Message)> blockedSymbols = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, (string Code, string Message, string? GuardSummary)> blockedSymbols = new(StringComparer.Ordinal);
         private readonly List<string> requestedSymbols = [];
 
         public UserExecutionOverrideEvaluationRequest? LastRequest { get; private set; }
 
         public IReadOnlyCollection<string> RequestedSymbols => requestedSymbols;
 
-        public void BlockSymbol(string symbol, string code, string message) => blockedSymbols[symbol] = (code, message);
+        public string? AllowedGuardSummary { get; set; }
+
+        public void BlockSymbol(string symbol, string code, string message, string? guardSummary = null) => blockedSymbols[symbol] = (code, message, guardSummary);
 
         public Task<UserExecutionOverrideEvaluationResult> EvaluateAsync(UserExecutionOverrideEvaluationRequest request, CancellationToken cancellationToken = default)
         {
@@ -3000,10 +3055,10 @@ public sealed class MarketScannerHandoffServiceTests
             requestedSymbols.Add(request.Symbol);
             if (blockedSymbols.TryGetValue(request.Symbol, out var blocked))
             {
-                return Task.FromResult(new UserExecutionOverrideEvaluationResult(true, blocked.Code, blocked.Message));
+                return Task.FromResult(new UserExecutionOverrideEvaluationResult(true, blocked.Code, blocked.Message, null, null, blocked.GuardSummary));
             }
 
-            return Task.FromResult(new UserExecutionOverrideEvaluationResult(false, null, null));
+            return Task.FromResult(new UserExecutionOverrideEvaluationResult(false, null, null, null, null, AllowedGuardSummary));
         }
     }
 

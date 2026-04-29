@@ -161,6 +161,24 @@ public sealed class BotExecutionPilotOptions
     [Range(0, 100)]
     public int MaxOpenPositionsPerUser { get; set; } = 1;
 
+    [Range(0, 100)]
+    public int MaxOpenPositionsGlobal { get; set; } = 1;
+
+    [Range(0, 100)]
+    public int MaxOpenPositionsPerSymbol { get; set; } = 1;
+
+    [Range(0, 100)]
+    public int MaxPendingOrdersPerUser { get; set; } = 1;
+
+    [Range(0, 100)]
+    public int MaxConcurrentEntryOrdersPerUser { get; set; } = 1;
+
+    [Range(0, 100)]
+    public int MaxConcurrentEntryOrdersPerSymbol { get; set; } = 1;
+
+    [Range(0, 100)]
+    public int MaxSymbolsWithOpenPositionPerUser { get; set; } = 1;
+
     [Range(1, 3600)]
     public int PrivatePlaneFreshnessThresholdSeconds { get; set; } = 120;
 

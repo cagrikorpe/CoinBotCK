@@ -331,7 +331,10 @@ public sealed class UserExecutionOverrideGuardTests
             logger: NullLogger<UserExecutionOverrideGuard>.Instance,
             botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
             {
-                PerBotCooldownSeconds = 120
+                PerBotCooldownSeconds = 120,
+                MaxPendingOrdersPerUser = 2,
+                MaxConcurrentEntryOrdersPerUser = 2,
+                MaxConcurrentEntryOrdersPerSymbol = 2
             }));
 
         var result = await guard.EvaluateAsync(
@@ -388,7 +391,10 @@ public sealed class UserExecutionOverrideGuardTests
             logger: NullLogger<UserExecutionOverrideGuard>.Instance,
             botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
             {
-                PerSymbolCooldownSeconds = 60
+                PerSymbolCooldownSeconds = 60,
+                MaxPendingOrdersPerUser = 2,
+                MaxConcurrentEntryOrdersPerUser = 2,
+                MaxConcurrentEntryOrdersPerSymbol = 2
             }));
 
         var result = await guard.EvaluateAsync(
@@ -446,7 +452,10 @@ public sealed class UserExecutionOverrideGuardTests
             logger: NullLogger<UserExecutionOverrideGuard>.Instance,
             botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
             {
-                PerBotCooldownSeconds = 120
+                PerBotCooldownSeconds = 120,
+                MaxPendingOrdersPerUser = 2,
+                MaxConcurrentEntryOrdersPerUser = 2,
+                MaxConcurrentEntryOrdersPerSymbol = 2
             }));
 
         var result = await guard.EvaluateAsync(
@@ -503,7 +512,10 @@ public sealed class UserExecutionOverrideGuardTests
             logger: NullLogger<UserExecutionOverrideGuard>.Instance,
             botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
             {
-                PerSymbolCooldownSeconds = 60
+                PerSymbolCooldownSeconds = 60,
+                MaxPendingOrdersPerUser = 2,
+                MaxConcurrentEntryOrdersPerUser = 2,
+                MaxConcurrentEntryOrdersPerSymbol = 2
             }));
 
         var result = await guard.EvaluateAsync(
@@ -562,7 +574,10 @@ public sealed class UserExecutionOverrideGuardTests
             logger: NullLogger<UserExecutionOverrideGuard>.Instance,
             botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
             {
-                PerBotCooldownSeconds = 1
+                PerBotCooldownSeconds = 1,
+                MaxPendingOrdersPerUser = 2,
+                MaxConcurrentEntryOrdersPerUser = 2,
+                MaxConcurrentEntryOrdersPerSymbol = 2
             }));
 
         var result = await guard.EvaluateAsync(
@@ -645,7 +660,227 @@ public sealed class UserExecutionOverrideGuardTests
             CancellationToken.None);
 
         Assert.True(result.IsBlocked);
-        Assert.Equal("UserExecutionMaxOpenPositionsExceeded", result.BlockCode);
+        Assert.Equal("RiskConcurrencyMaxOpenPositionsExceeded", result.BlockCode);
+        Assert.Contains("ConcurrencyPolicy=Applied", result.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("CurrentOpenPositionsPerUser=2", result.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ConcurrencyDecision=Blocked", result.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ConcurrencyReason=MaxOpenPositionsPerUserReached", result.GuardSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_BlocksWhenPendingOrderLimitIsReached()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "user-pending-limit",
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            StrategyKey = "pending-core",
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.01m,
+            Price = 65000m,
+            ExecutionEnvironment = ExecutionEnvironment.Demo,
+            State = ExecutionOrderState.Submitted,
+            SubmittedToBroker = true,
+            IdempotencyKey = "pending-order-limit",
+            RootCorrelationId = "pending-order-limit-root",
+            LastStateChangedAtUtc = DateTime.UtcNow,
+            CreatedDate = DateTime.UtcNow,
+            UpdatedDate = DateTime.UtcNow
+        });
+        await dbContext.SaveChangesAsync();
+
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                MaxOpenPositionsPerUser = 5,
+                MaxOpenPositionsGlobal = 5,
+                MaxOpenPositionsPerSymbol = 5,
+                MaxPendingOrdersPerUser = 1,
+                MaxConcurrentEntryOrdersPerUser = 5,
+                MaxConcurrentEntryOrdersPerSymbol = 5,
+                MaxSymbolsWithOpenPositionPerUser = 5
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-pending-limit",
+                "SOLUSDT",
+                ExecutionEnvironment.Demo,
+                ExecutionOrderSide.Buy,
+                1m,
+                100m,
+                StrategyKey: "pending-core"),
+            CancellationToken.None);
+
+        Assert.True(result.IsBlocked);
+        Assert.Equal("RiskConcurrencyMaxPendingOrdersExceeded", result.BlockCode);
+        Assert.Contains("CurrentPendingOrdersPerUser=1", result.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ConcurrencyReason=MaxPendingOrdersPerUserReached", result.GuardSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_BlocksWhenPerSymbolOpenPositionLimitIsReached()
+    {
+        await using var dbContext = CreateDbContext();
+        var nowUtc = new DateTime(2026, 4, 16, 10, 0, 0, DateTimeKind.Utc);
+        dbContext.ExchangePositions.AddRange(
+            new ExchangePosition
+            {
+                OwnerUserId = "user-alpha",
+                ExchangeAccountId = Guid.NewGuid(),
+                Plane = ExchangeDataPlane.Futures,
+                Symbol = "SOLUSDT",
+                PositionSide = "LONG",
+                Quantity = 0.25m,
+                EntryPrice = 100m,
+                BreakEvenPrice = 100m,
+                MarginType = "isolated",
+                ExchangeUpdatedAtUtc = nowUtc,
+                SyncedAtUtc = nowUtc
+            },
+            new ExchangePosition
+            {
+                OwnerUserId = "user-beta",
+                ExchangeAccountId = Guid.NewGuid(),
+                Plane = ExchangeDataPlane.Futures,
+                Symbol = "SOLUSDT",
+                PositionSide = "LONG",
+                Quantity = 0.30m,
+                EntryPrice = 101m,
+                BreakEvenPrice = 101m,
+                MarginType = "isolated",
+                ExchangeUpdatedAtUtc = nowUtc,
+                SyncedAtUtc = nowUtc
+            });
+        await dbContext.SaveChangesAsync();
+
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(ExecutionEnvironment.Live),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                MaxOpenPositionsPerUser = 5,
+                MaxOpenPositionsGlobal = 5,
+                MaxOpenPositionsPerSymbol = 1,
+                MaxPendingOrdersPerUser = 5,
+                MaxConcurrentEntryOrdersPerUser = 5,
+                MaxConcurrentEntryOrdersPerSymbol = 5,
+                MaxSymbolsWithOpenPositionPerUser = 5
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-gamma",
+                "SOLUSDT",
+                ExecutionEnvironment.Live,
+                ExecutionOrderSide.Buy,
+                1m,
+                100m,
+                StrategyKey: "symbol-limit-core",
+                Plane: ExchangeDataPlane.Futures),
+            CancellationToken.None);
+
+        Assert.True(result.IsBlocked);
+        Assert.Equal("RiskConcurrencyMaxSymbolExposureExceeded", result.BlockCode);
+        Assert.Contains("CurrentOpenPositionsPerSymbol=2", result.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ConcurrencyReason=MaxOpenPositionsPerSymbolReached", result.GuardSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_SkipsConcurrencyLimitsForReduceOnlyClose()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.DemoPositions.Add(new DemoPosition
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "user-reduce-only",
+            PositionScopeKey = "scope-sol",
+            Symbol = "SOLUSDT",
+            BaseAsset = "SOL",
+            QuoteAsset = "USDT",
+            PositionKind = DemoPositionKind.Futures,
+            MarginMode = DemoMarginMode.Isolated,
+            Leverage = 1m,
+            Quantity = 0.5m,
+            CostBasis = 40m,
+            AverageEntryPrice = 80m,
+            UnrealizedPnl = 0m,
+            LastMarkPrice = 80m,
+            MarginBalance = 50m
+        });
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "user-reduce-only",
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            StrategyKey = "reduce-only-core",
+            Symbol = "ETHUSDT",
+            Timeframe = "1m",
+            BaseAsset = "ETH",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 1m,
+            Price = 2000m,
+            ExecutionEnvironment = ExecutionEnvironment.Demo,
+            State = ExecutionOrderState.Submitted,
+            SubmittedToBroker = true,
+            IdempotencyKey = "reduce-only-concurrency-open",
+            RootCorrelationId = "reduce-only-concurrency-root",
+            LastStateChangedAtUtc = DateTime.UtcNow,
+            CreatedDate = DateTime.UtcNow,
+            UpdatedDate = DateTime.UtcNow
+        });
+        await dbContext.SaveChangesAsync();
+
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                MaxOpenPositionsPerUser = 1,
+                MaxOpenPositionsGlobal = 1,
+                MaxOpenPositionsPerSymbol = 1,
+                MaxPendingOrdersPerUser = 1,
+                MaxConcurrentEntryOrdersPerUser = 1,
+                MaxConcurrentEntryOrdersPerSymbol = 1,
+                MaxSymbolsWithOpenPositionPerUser = 1
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-reduce-only",
+                "SOLUSDT",
+                ExecutionEnvironment.Demo,
+                ExecutionOrderSide.Sell,
+                0.5m,
+                80m,
+                StrategyKey: "reduce-only-core",
+                ReduceOnly: true),
+            CancellationToken.None);
+
+        Assert.False(result.IsBlocked, result.BlockCode);
+        Assert.Contains("ConcurrencyDecision=SkippedForCloseOnly", result.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ConcurrencyReason=RiskConcurrencyLimitSkippedForCloseOnly", result.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ConcurrencyLimitSkippedForCloseOnly=True", result.GuardSummary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -740,7 +975,13 @@ public sealed class UserExecutionOverrideGuardTests
             logger: NullLogger<UserExecutionOverrideGuard>.Instance,
             botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
             {
-                MaxOpenPositionsPerUser = 1
+                MaxOpenPositionsPerUser = 1,
+                MaxOpenPositionsGlobal = 5,
+                MaxOpenPositionsPerSymbol = 5,
+                MaxSymbolsWithOpenPositionPerUser = 5,
+                MaxPendingOrdersPerUser = 5,
+                MaxConcurrentEntryOrdersPerUser = 5,
+                MaxConcurrentEntryOrdersPerSymbol = 5
             }));
 
         var result = await guard.EvaluateAsync(

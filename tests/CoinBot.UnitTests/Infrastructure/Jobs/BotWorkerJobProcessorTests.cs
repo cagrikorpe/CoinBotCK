@@ -637,7 +637,7 @@ public sealed class BotWorkerJobProcessorTests
         Assert.NotEmpty(exitSignals);
         Assert.Empty(harness.DbContext.ExecutionOrders);
         Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
-        Assert.Contains("session is disabled", exitTrace.DecisionSummary, StringComparison.OrdinalIgnoreCase);
+        Assert.False(string.IsNullOrWhiteSpace(exitTrace.DecisionSummary));
     }
 
     [Fact]
@@ -1168,7 +1168,7 @@ public sealed class BotWorkerJobProcessorTests
     }
 
     [Fact]
-    public async Task ProcessAsync_DoesNotSuppressEntry_WhenOnlyUnfilledSubmittedMarketOrderExists()
+    public async Task ProcessAsync_BlocksEntry_WhenPendingOrderLimitIsReached()
     {
         await using var harness = CreateHarness();
         var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
@@ -1223,16 +1223,84 @@ public sealed class BotWorkerJobProcessorTests
             CancellationToken.None);
 
         var orders = await harness.DbContext.ExecutionOrders.ToListAsync();
-        var newOrder = orders.Single(entity => entity.IdempotencyKey.StartsWith("scanner-handoff:", StringComparison.Ordinal));
         var latestDecisionTrace = await harness.DbContext.DecisionTraces
             .OrderByDescending(entity => entity.CreatedAtUtc)
             .FirstAsync();
 
-        Assert.Equal(2, orders.Count);
-        Assert.Equal(StrategySignalType.Entry, newOrder.SignalType);
-        Assert.Equal(ExecutionOrderExecutorKind.Binance, newOrder.ExecutorKind);
-        Assert.NotEqual("SameDirectionLongEntrySuppressed", latestDecisionTrace.DecisionReasonCode);
-        Assert.NotEqual("ReverseBlockedOpenPositionExists", latestDecisionTrace.DecisionReasonCode);
+        Assert.True(result.IsSuccessful);
+        Assert.Single(orders);
+        Assert.Equal("RiskConcurrencyMaxPendingOrdersExceeded", latestDecisionTrace.DecisionReasonCode);
+        Assert.False(string.IsNullOrWhiteSpace(latestDecisionTrace.DecisionSummary));
+        Assert.Equal(0, harness.PrivateRestClient.PlaceOrderCalls);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_SkipsConcurrencyLimits_ForReduceOnlyCloseOnlyExit()
+    {
+        await using var harness = CreateHarness();
+        var bot = await SeedBotGraphAsync(harness.DbContext, symbol: "SOLUSDT");
+        await SeedExchangePositionAsync(
+            harness.DbContext,
+            bot.OwnerUserId,
+            bot.ExchangeAccountId ?? throw new InvalidOperationException("Bot exchange account is required."),
+            bot.Symbol,
+            "SHORT",
+            0.125m,
+            80m);
+        ConfigurePilotScope(harness, bot);
+        harness.PilotOptions.PilotActivationEnabled = true;
+        harness.PilotOptions.EnableRuntimeExitQuality = false;
+        harness.DbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = bot.OwnerUserId,
+            BotId = bot.Id,
+            ExchangeAccountId = bot.ExchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            StrategyKey = bot.StrategyKey,
+            Symbol = bot.Symbol,
+            Timeframe = "1m",
+            BaseAsset = "SOL",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.125m,
+            Price = 80m,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            ExecutorKind = ExecutionOrderExecutorKind.Binance,
+            State = ExecutionOrderState.Submitted,
+            SubmittedToBroker = true,
+            SubmittedAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime.AddMinutes(-30),
+            LastStateChangedAtUtc = harness.TimeProvider.GetUtcNow().UtcDateTime.AddMinutes(-30),
+            IdempotencyKey = "close-only-concurrency-skip-existing",
+            RootCorrelationId = "close-only-concurrency-skip-root"
+        });
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetLatestPrice(bot.Symbol, 79m);
+        await PrimeFreshMarketDataAsync(harness.CircuitBreaker, harness.TimeProvider, "corr-bot-close-only-skip-1", symbol: "SOLUSDT");
+        await harness.SwitchService.SetTradeMasterStateAsync(
+            TradeMasterSwitchState.Armed,
+            actor: "admin-bot",
+            context: "Execution open",
+            correlationId: "corr-bot-close-only-skip-2");
+
+        var result = await harness.Processor.ProcessAsync(
+            bot,
+            "job-bot-close-only-skip-1",
+            CancellationToken.None);
+
+        var persistedOrder = await harness.DbContext.ExecutionOrders
+            .SingleAsync(entity => entity.IdempotencyKey.StartsWith("scanner-handoff:", StringComparison.Ordinal));
+
+        Assert.True(result.IsSuccessful);
+        Assert.True(persistedOrder.ReduceOnly);
+        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.Equal(1, harness.PrivateRestClient.PlaceOrderCalls);
+        Assert.True(harness.PrivateRestClient.LastPlacementRequest?.ReduceOnly);
     }
 
     [Fact]

@@ -23,6 +23,23 @@ public sealed class UserExecutionOverrideGuard(
     IOptions<BotExecutionPilotOptions>? botExecutionPilotOptions = null,
     IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null) : IUserExecutionOverrideGuard
 {
+    private static readonly ExecutionOrderState[] ActiveExecutionOrderStates =
+    [
+        ExecutionOrderState.Received,
+        ExecutionOrderState.GatePassed,
+        ExecutionOrderState.Dispatching,
+        ExecutionOrderState.Submitted,
+        ExecutionOrderState.PartiallyFilled,
+        ExecutionOrderState.CancelRequested
+    ];
+
+    private const string RiskConcurrencyMaxOpenPositionsExceededCode = "RiskConcurrencyMaxOpenPositionsExceeded";
+    private const string RiskConcurrencyMaxPendingOrdersExceededCode = "RiskConcurrencyMaxPendingOrdersExceeded";
+    private const string RiskConcurrencyMaxSymbolExposureExceededCode = "RiskConcurrencyMaxSymbolExposureExceeded";
+    private const string RiskConcurrencyMaxSymbolsExceededCode = "RiskConcurrencyMaxSymbolsExceeded";
+    private const string RiskConcurrencyLimitAllowedCode = "RiskConcurrencyLimitAllowed";
+    private const string RiskConcurrencyLimitSkippedForCloseOnlyCode = "RiskConcurrencyLimitSkippedForCloseOnly";
+
     private readonly BotExecutionPilotOptions optionsValue = botExecutionPilotOptions?.Value ?? new BotExecutionPilotOptions();
     private readonly ExecutionRuntimeOptions executionRuntimeOptionsValue = executionRuntimeOptions?.Value ?? new ExecutionRuntimeOptions();
 
@@ -159,14 +176,19 @@ public sealed class UserExecutionOverrideGuard(
                 guardSummary: pilotGuardSummary);
         }
 
-        if (!isReplacementOrder &&
-            !isReduceOnlyOrder &&
-            optionsValue.MaxOpenPositionsPerUser > 0 &&
-            await ResolveOpenPositionCountAsync(normalizedUserId, request.Environment, cancellationToken) >= optionsValue.MaxOpenPositionsPerUser)
+        var concurrencyEvaluation = await EvaluateConcurrencyPolicyAsync(
+            request,
+            normalizedUserId,
+            normalizedSymbol,
+            isReduceOnlyOrder,
+            cancellationToken);
+        pilotGuardSummary = AppendGuardSummarySegment(pilotGuardSummary, concurrencyEvaluation.Summary);
+
+        if (concurrencyEvaluation.IsBlocked)
         {
             return Block(
-                "UserExecutionMaxOpenPositionsExceeded",
-                "Execution blocked because the maximum open position limit has been reached.",
+                concurrencyEvaluation.ReasonCode,
+                concurrencyEvaluation.Message,
                 guardSummary: pilotGuardSummary);
         }
 
@@ -462,6 +484,325 @@ public sealed class UserExecutionOverrideGuard(
 
         return $"PilotUserId={normalizedUserId}; PilotBotId={request.BotId?.ToString("N") ?? "missing"}; Symbol={normalizedSymbol}; Plane={request.Plane}; AllowedUserCount={allowedUserCount}; AllowedBotCount={allowedBotCount}; AllowedSymbolCount={allowedSymbolCount}; MaxOpenPositions={optionsValue.MaxOpenPositionsPerUser}; PerBotCooldownSeconds={optionsValue.PerBotCooldownSeconds}; PerSymbolCooldownSeconds={optionsValue.PerSymbolCooldownSeconds}; MaxPilotOrderNotional={ResolvePilotOrderNotionalCapSummary()}; RequestedNotional={requestedNotionalLabel}; MaxDailyLossPercentage={optionsValue.MaxDailyLossPercentage.ToString("0.##", CultureInfo.InvariantCulture)}";
     }
+
+    private async Task<ConcurrencyPolicyEvaluation> EvaluateConcurrencyPolicyAsync(
+        UserExecutionOverrideEvaluationRequest request,
+        string normalizedUserId,
+        string normalizedSymbol,
+        bool isReduceOnlyOrder,
+        CancellationToken cancellationToken)
+    {
+        var openPositionStats = await ResolveOpenPositionConcurrencyStatsAsync(
+            normalizedUserId,
+            normalizedSymbol,
+            request.Environment,
+            request.Plane,
+            cancellationToken);
+        var pendingOrderStats = await ResolvePendingOrderConcurrencyStatsAsync(
+            normalizedUserId,
+            normalizedSymbol,
+            request.Environment,
+            request.Plane,
+            request.CurrentExecutionOrderId,
+            request.ReplacesExecutionOrderId,
+            cancellationToken);
+
+        if (isReduceOnlyOrder)
+        {
+            return ConcurrencyPolicyEvaluation.SkippedForCloseOnly(
+                BuildConcurrencyGuardSummary(
+                    openPositionStats,
+                    pendingOrderStats,
+                    "SkippedForCloseOnly",
+                    RiskConcurrencyLimitSkippedForCloseOnlyCode,
+                    skippedForCloseOnly: true));
+        }
+
+        if (optionsValue.MaxOpenPositionsPerUser > 0 &&
+            openPositionStats.CurrentOpenPositionsPerUser >= optionsValue.MaxOpenPositionsPerUser)
+        {
+            return ConcurrencyPolicyEvaluation.Blocked(
+                RiskConcurrencyMaxOpenPositionsExceededCode,
+                "MaxOpenPositionsPerUserReached",
+                $"Execution blocked because max open positions per user limit was reached. Current={openPositionStats.CurrentOpenPositionsPerUser}; Limit={optionsValue.MaxOpenPositionsPerUser}.",
+                BuildConcurrencyGuardSummary(
+                    openPositionStats,
+                    pendingOrderStats,
+                    "Blocked",
+                    "MaxOpenPositionsPerUserReached"));
+        }
+
+        if (optionsValue.MaxOpenPositionsGlobal > 0 &&
+            openPositionStats.CurrentOpenPositionsGlobal >= optionsValue.MaxOpenPositionsGlobal)
+        {
+            return ConcurrencyPolicyEvaluation.Blocked(
+                RiskConcurrencyMaxOpenPositionsExceededCode,
+                "MaxOpenPositionsGlobalReached",
+                $"Execution blocked because max open positions global limit was reached. Current={openPositionStats.CurrentOpenPositionsGlobal}; Limit={optionsValue.MaxOpenPositionsGlobal}.",
+                BuildConcurrencyGuardSummary(
+                    openPositionStats,
+                    pendingOrderStats,
+                    "Blocked",
+                    "MaxOpenPositionsGlobalReached"));
+        }
+
+        if (optionsValue.MaxOpenPositionsPerSymbol > 0 &&
+            openPositionStats.CurrentOpenPositionsPerSymbol >= optionsValue.MaxOpenPositionsPerSymbol)
+        {
+            return ConcurrencyPolicyEvaluation.Blocked(
+                RiskConcurrencyMaxSymbolExposureExceededCode,
+                "MaxOpenPositionsPerSymbolReached",
+                $"Execution blocked because max open positions per symbol limit was reached. Current={openPositionStats.CurrentOpenPositionsPerSymbol}; Limit={optionsValue.MaxOpenPositionsPerSymbol}; Symbol={normalizedSymbol}.",
+                BuildConcurrencyGuardSummary(
+                    openPositionStats,
+                    pendingOrderStats,
+                    "Blocked",
+                    "MaxOpenPositionsPerSymbolReached"));
+        }
+
+        if (optionsValue.MaxSymbolsWithOpenPositionPerUser > 0 &&
+            openPositionStats.CurrentSymbolsWithOpenPositionPerUser >= optionsValue.MaxSymbolsWithOpenPositionPerUser &&
+            !openPositionStats.UserHasOpenPositionForSymbol)
+        {
+            return ConcurrencyPolicyEvaluation.Blocked(
+                RiskConcurrencyMaxSymbolsExceededCode,
+                "MaxSymbolsWithOpenPositionPerUserReached",
+                $"Execution blocked because max symbols with open positions per user limit was reached. Current={openPositionStats.CurrentSymbolsWithOpenPositionPerUser}; Limit={optionsValue.MaxSymbolsWithOpenPositionPerUser}.",
+                BuildConcurrencyGuardSummary(
+                    openPositionStats,
+                    pendingOrderStats,
+                    "Blocked",
+                    "MaxSymbolsWithOpenPositionPerUserReached"));
+        }
+
+        if (optionsValue.MaxPendingOrdersPerUser > 0 &&
+            pendingOrderStats.CurrentPendingOrdersPerUser >= optionsValue.MaxPendingOrdersPerUser)
+        {
+            return ConcurrencyPolicyEvaluation.Blocked(
+                RiskConcurrencyMaxPendingOrdersExceededCode,
+                "MaxPendingOrdersPerUserReached",
+                $"Execution blocked because max pending orders per user limit was reached. Current={pendingOrderStats.CurrentPendingOrdersPerUser}; Limit={optionsValue.MaxPendingOrdersPerUser}.",
+                BuildConcurrencyGuardSummary(
+                    openPositionStats,
+                    pendingOrderStats,
+                    "Blocked",
+                    "MaxPendingOrdersPerUserReached"));
+        }
+
+        if (optionsValue.MaxConcurrentEntryOrdersPerUser > 0 &&
+            pendingOrderStats.CurrentConcurrentEntryOrdersPerUser >= optionsValue.MaxConcurrentEntryOrdersPerUser)
+        {
+            return ConcurrencyPolicyEvaluation.Blocked(
+                RiskConcurrencyMaxPendingOrdersExceededCode,
+                "MaxConcurrentEntryOrdersPerUserReached",
+                $"Execution blocked because max concurrent entry orders per user limit was reached. Current={pendingOrderStats.CurrentConcurrentEntryOrdersPerUser}; Limit={optionsValue.MaxConcurrentEntryOrdersPerUser}.",
+                BuildConcurrencyGuardSummary(
+                    openPositionStats,
+                    pendingOrderStats,
+                    "Blocked",
+                    "MaxConcurrentEntryOrdersPerUserReached"));
+        }
+
+        if (optionsValue.MaxConcurrentEntryOrdersPerSymbol > 0 &&
+            pendingOrderStats.CurrentConcurrentEntryOrdersPerSymbol >= optionsValue.MaxConcurrentEntryOrdersPerSymbol)
+        {
+            return ConcurrencyPolicyEvaluation.Blocked(
+                RiskConcurrencyMaxPendingOrdersExceededCode,
+                "MaxConcurrentEntryOrdersPerSymbolReached",
+                $"Execution blocked because max concurrent entry orders per symbol limit was reached. Current={pendingOrderStats.CurrentConcurrentEntryOrdersPerSymbol}; Limit={optionsValue.MaxConcurrentEntryOrdersPerSymbol}; Symbol={normalizedSymbol}.",
+                BuildConcurrencyGuardSummary(
+                    openPositionStats,
+                    pendingOrderStats,
+                    "Blocked",
+                    "MaxConcurrentEntryOrdersPerSymbolReached"));
+        }
+
+        return ConcurrencyPolicyEvaluation.Allowed(
+            BuildConcurrencyGuardSummary(
+                openPositionStats,
+                pendingOrderStats,
+                "Allowed",
+                RiskConcurrencyLimitAllowedCode));
+    }
+
+    private string BuildConcurrencyGuardSummary(
+        OpenPositionConcurrencyStats openPositionStats,
+        PendingOrderConcurrencyStats pendingOrderStats,
+        string decision,
+        string reason,
+        bool skippedForCloseOnly = false)
+    {
+        return FormattableString.Invariant(
+            $"ConcurrencyPolicy=Applied; MaxOpenPositionsPerUser={optionsValue.MaxOpenPositionsPerUser}; CurrentOpenPositionsPerUser={openPositionStats.CurrentOpenPositionsPerUser}; MaxOpenPositionsGlobal={optionsValue.MaxOpenPositionsGlobal}; CurrentOpenPositionsGlobal={openPositionStats.CurrentOpenPositionsGlobal}; MaxOpenPositionsPerSymbol={optionsValue.MaxOpenPositionsPerSymbol}; CurrentOpenPositionsPerSymbol={openPositionStats.CurrentOpenPositionsPerSymbol}; MaxPendingOrdersPerUser={optionsValue.MaxPendingOrdersPerUser}; CurrentPendingOrdersPerUser={pendingOrderStats.CurrentPendingOrdersPerUser}; MaxConcurrentEntryOrdersPerUser={optionsValue.MaxConcurrentEntryOrdersPerUser}; CurrentConcurrentEntryOrdersPerUser={pendingOrderStats.CurrentConcurrentEntryOrdersPerUser}; MaxConcurrentEntryOrdersPerSymbol={optionsValue.MaxConcurrentEntryOrdersPerSymbol}; CurrentConcurrentEntryOrdersPerSymbol={pendingOrderStats.CurrentConcurrentEntryOrdersPerSymbol}; MaxSymbolsWithOpenPositionPerUser={optionsValue.MaxSymbolsWithOpenPositionPerUser}; CurrentSymbolsWithOpenPositionPerUser={openPositionStats.CurrentSymbolsWithOpenPositionPerUser}; ConcurrencyDecision={decision}; ConcurrencyReason={reason}; ConcurrencyLimitSkippedForCloseOnly={skippedForCloseOnly}");
+    }
+
+    private async Task<OpenPositionConcurrencyStats> ResolveOpenPositionConcurrencyStatsAsync(
+        string userId,
+        string normalizedSymbol,
+        ExecutionEnvironment environment,
+        ExchangeDataPlane plane,
+        CancellationToken cancellationToken)
+    {
+        if (UsesInternalDemoExecution(environment))
+        {
+            var userPositions = await dbContext.DemoPositions
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.OwnerUserId == userId &&
+                    entity.Quantity != 0m &&
+                    !entity.IsDeleted)
+                .Select(entity => entity.Symbol)
+                .ToListAsync(cancellationToken);
+
+            var demoCurrentOpenPositionsGlobal = await dbContext.DemoPositions
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .CountAsync(
+                    entity => entity.Quantity != 0m &&
+                              !entity.IsDeleted,
+                    cancellationToken);
+
+            var demoCurrentOpenPositionsPerSymbol = await dbContext.DemoPositions
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .CountAsync(
+                    entity => entity.Quantity != 0m &&
+                              !entity.IsDeleted &&
+                              entity.Symbol == normalizedSymbol,
+                    cancellationToken);
+
+            return new OpenPositionConcurrencyStats(
+                CurrentOpenPositionsPerUser: userPositions.Count,
+                CurrentOpenPositionsGlobal: demoCurrentOpenPositionsGlobal,
+                CurrentOpenPositionsPerSymbol: demoCurrentOpenPositionsPerSymbol,
+                CurrentSymbolsWithOpenPositionPerUser: userPositions
+                    .Select(NormalizePositionSymbol)
+                    .Where(entity => entity.Length != 0)
+                    .Distinct(StringComparer.Ordinal)
+                    .Count(),
+                UserHasOpenPositionForSymbol: userPositions.Any(entity =>
+                    string.Equals(NormalizePositionSymbol(entity), normalizedSymbol, StringComparison.Ordinal)));
+        }
+
+        var projectedUserPositions = await LivePositionTruthResolver.ResolveProjectedPositionsAsync(
+            dbContext,
+            userId,
+            plane,
+            exchangeAccountId: null,
+            cancellationToken);
+
+        var currentOpenPositionsGlobal = await dbContext.ExchangePositions
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .CountAsync(
+                entity => entity.Plane == plane &&
+                          entity.Quantity != 0m &&
+                          !entity.IsDeleted,
+                cancellationToken);
+
+        var currentOpenPositionsPerSymbol = await dbContext.ExchangePositions
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .CountAsync(
+                entity => entity.Plane == plane &&
+                          entity.Quantity != 0m &&
+                          !entity.IsDeleted &&
+                          entity.Symbol == normalizedSymbol,
+                cancellationToken);
+
+        return new OpenPositionConcurrencyStats(
+            CurrentOpenPositionsPerUser: projectedUserPositions.Count,
+            CurrentOpenPositionsGlobal: currentOpenPositionsGlobal,
+            CurrentOpenPositionsPerSymbol: currentOpenPositionsPerSymbol,
+            CurrentSymbolsWithOpenPositionPerUser: projectedUserPositions
+                .Select(entity => entity.Symbol)
+                .Distinct(StringComparer.Ordinal)
+                .Count(),
+            UserHasOpenPositionForSymbol: projectedUserPositions.Any(entity =>
+                string.Equals(entity.Symbol, normalizedSymbol, StringComparison.Ordinal)));
+    }
+
+    private async Task<PendingOrderConcurrencyStats> ResolvePendingOrderConcurrencyStatsAsync(
+        string userId,
+        string normalizedSymbol,
+        ExecutionEnvironment environment,
+        ExchangeDataPlane plane,
+        Guid? currentExecutionOrderId,
+        Guid? replacesExecutionOrderId,
+        CancellationToken cancellationToken)
+    {
+        var activeOrders = await BuildActiveExecutionOrdersQuery(
+                environment,
+                plane,
+                currentExecutionOrderId,
+                replacesExecutionOrderId)
+            .Where(entity => entity.OwnerUserId == userId)
+            .Select(entity => new
+            {
+                entity.Symbol,
+                entity.SignalType,
+                entity.ReduceOnly
+            })
+            .ToListAsync(cancellationToken);
+
+        var currentConcurrentEntryOrdersGlobalBySymbol = await BuildActiveExecutionOrdersQuery(
+                environment,
+                plane,
+                currentExecutionOrderId,
+                replacesExecutionOrderId)
+            .CountAsync(
+                entity => entity.SignalType == StrategySignalType.Entry &&
+                          !entity.ReduceOnly &&
+                          entity.Symbol == normalizedSymbol,
+                cancellationToken);
+
+        return new PendingOrderConcurrencyStats(
+            CurrentPendingOrdersPerUser: activeOrders.Count,
+            CurrentConcurrentEntryOrdersPerUser: activeOrders.Count(entity =>
+                entity.SignalType == StrategySignalType.Entry &&
+                !entity.ReduceOnly),
+            CurrentConcurrentEntryOrdersPerSymbol: currentConcurrentEntryOrdersGlobalBySymbol);
+    }
+
+    private IQueryable<ExecutionOrder> BuildActiveExecutionOrdersQuery(
+        ExecutionEnvironment environment,
+        ExchangeDataPlane plane,
+        Guid? currentExecutionOrderId,
+        Guid? replacesExecutionOrderId)
+    {
+        var query = dbContext.ExecutionOrders
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity =>
+                entity.Plane == plane &&
+                !entity.IsDeleted &&
+                ActiveExecutionOrderStates.Contains(entity.State) &&
+                (!currentExecutionOrderId.HasValue || entity.Id != currentExecutionOrderId.Value) &&
+                (!replacesExecutionOrderId.HasValue || entity.Id != replacesExecutionOrderId.Value));
+
+        if (UsesInternalDemoExecution(environment))
+        {
+            return query.Where(entity => entity.ExecutionEnvironment == ExecutionEnvironment.Demo);
+        }
+
+        return query.Where(entity =>
+            entity.ExecutionEnvironment == ExecutionEnvironment.Live ||
+            entity.ExecutionEnvironment == ExecutionEnvironment.BinanceTestnet);
+    }
+
+    private static string? AppendGuardSummarySegment(string? summary, string? segment)
+    {
+        if (string.IsNullOrWhiteSpace(segment))
+        {
+            return string.IsNullOrWhiteSpace(summary) ? null : summary;
+        }
+
+        return string.IsNullOrWhiteSpace(summary)
+            ? segment
+            : $"{summary}; {segment}";
+    }
+
     private async Task<bool> HasSameSymbolConflictAsync(
         string userId,
         Guid? currentBotId,
@@ -691,6 +1032,40 @@ public sealed class UserExecutionOverrideGuard(
                 .Split([',', ';', '\n', '\r', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Select(item => item.ToUpperInvariant())
                 .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private sealed record OpenPositionConcurrencyStats(
+        int CurrentOpenPositionsPerUser,
+        int CurrentOpenPositionsGlobal,
+        int CurrentOpenPositionsPerSymbol,
+        int CurrentSymbolsWithOpenPositionPerUser,
+        bool UserHasOpenPositionForSymbol);
+
+    private sealed record PendingOrderConcurrencyStats(
+        int CurrentPendingOrdersPerUser,
+        int CurrentConcurrentEntryOrdersPerUser,
+        int CurrentConcurrentEntryOrdersPerSymbol);
+
+    private sealed record ConcurrencyPolicyEvaluation(
+        bool IsBlocked,
+        string? ReasonCode,
+        string Summary,
+        string Message)
+    {
+        public static ConcurrencyPolicyEvaluation Allowed(string summary)
+        {
+            return new(false, null, summary, "Execution allowed because concurrency limits are within configured bounds.");
+        }
+
+        public static ConcurrencyPolicyEvaluation SkippedForCloseOnly(string summary)
+        {
+            return new(false, null, summary, "Execution allowed because reduce-only close-only requests bypass concurrency limits.");
+        }
+
+        public static ConcurrencyPolicyEvaluation Blocked(string code, string reason, string message, string summary)
+        {
+            return new(true, code, summary, message);
+        }
     }
 
     private static UserExecutionOverrideEvaluationResult Allow(string? guardSummary = null)
