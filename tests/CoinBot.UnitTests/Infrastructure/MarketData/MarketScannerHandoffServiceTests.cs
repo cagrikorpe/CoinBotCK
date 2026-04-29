@@ -1710,6 +1710,45 @@ public sealed class MarketScannerHandoffServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_PersistsRiskConcurrencyVetoEvidence_AndStopsBeforeBrokerSubmit()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-risk-max-positions", "ETHUSDT", "pilot-risk-max-positions");
+        SeedScanCycle(harness.DbContext, scanCycleId);
+        SeedCandidate(harness.DbContext, scanCycleId, "ETHUSDT", rank: 1, score: 9_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("ETHUSDT", "ETH", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("ETHUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetVeto(CreateVeto(
+            bot.TradingStrategyId,
+            bot.TradingStrategyVersionId,
+            "ETHUSDT",
+            "1m",
+            harness.NowUtc,
+            RiskVetoReasonCode.MaxConcurrentPositionsBreached,
+            "Max concurrent positions breached by strategy risk check.",
+            currentOpenPositionCount: 1,
+            projectedOpenPositionCount: 2,
+            maxConcurrentPositions: 1,
+            riskScopeSummary: "Reason=MaxConcurrentPositionsBreached; Scope=User:user-risk-max-positions/Bot:pilot-risk-max-positions/Symbol:ETHUSDT/Coin:ETH/Timeframe:1m; OpenPositions=1->2/1."));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("ETHUSDT", attempt.SelectedSymbol);
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("StrategyVetoed", attempt.BlockerCode);
+        Assert.Equal("Vetoed", attempt.RiskOutcome);
+        Assert.Equal("MaxConcurrentPositionsBreached", attempt.RiskVetoReasonCode);
+        Assert.Equal(1, attempt.RiskCurrentOpenPositions);
+        Assert.Equal(2, attempt.RiskProjectedOpenPositions);
+        Assert.Equal(1, attempt.RiskMaxConcurrentPositions);
+        Assert.Contains("OpenPositions=1->2/1", attempt.RiskSummary, StringComparison.Ordinal);
+        Assert.Equal("Vetoed", attempt.StrategyDecisionOutcome);
+        Assert.Null(harness.ExecutionEngine.LastCommand);
+    }
+
+    [Fact]
     public async Task RunOnceAsync_PersistsExecutionGateBlocker_ForSelectedSymbolOnly_WhenLatencyGuardRejects()
     {
         await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
@@ -2955,7 +2994,18 @@ public sealed class MarketScannerHandoffServiceTests
         return options;
     }
 
-    private static StrategySignalVetoSnapshot CreateVeto(Guid tradingStrategyId, Guid tradingStrategyVersionId, string symbol, string timeframe, DateTime evaluatedAtUtc, RiskVetoReasonCode reasonCode, string summary)
+    private static StrategySignalVetoSnapshot CreateVeto(
+        Guid tradingStrategyId,
+        Guid tradingStrategyVersionId,
+        string symbol,
+        string timeframe,
+        DateTime evaluatedAtUtc,
+        RiskVetoReasonCode reasonCode,
+        string summary,
+        int? currentOpenPositionCount = null,
+        int? projectedOpenPositionCount = null,
+        int? maxConcurrentPositions = null,
+        string? riskScopeSummary = null)
     {
         var indicatorSnapshot = CreateIndicatorSnapshot(symbol, timeframe, evaluatedAtUtc);
         return new StrategySignalVetoSnapshot(
@@ -2972,7 +3022,21 @@ public sealed class MarketScannerHandoffServiceTests
             indicatorSnapshot.CloseTimeUtc,
             indicatorSnapshot.ReceivedAtUtc,
             evaluatedAtUtc,
-            new StrategySignalConfidenceSnapshot(12, StrategySignalConfidenceBand.Low, 0, 3, true, false, true, reasonCode, false, summary),
+            new StrategySignalConfidenceSnapshot(
+                12,
+                StrategySignalConfidenceBand.Low,
+                0,
+                3,
+                true,
+                false,
+                true,
+                reasonCode,
+                false,
+                summary,
+                CurrentOpenPositionCount: currentOpenPositionCount,
+                ProjectedOpenPositionCount: projectedOpenPositionCount,
+                MaxConcurrentPositions: maxConcurrentPositions,
+                RiskScopeSummary: riskScopeSummary),
             new StrategySignalLogExplainabilitySnapshot("Veto", summary, ["risk"], ["scanner"]));
     }
 
