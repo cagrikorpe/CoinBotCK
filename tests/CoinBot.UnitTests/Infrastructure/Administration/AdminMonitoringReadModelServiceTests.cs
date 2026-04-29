@@ -1309,8 +1309,11 @@ public sealed class AdminMonitoringReadModelServiceTests
         Assert.Equal(4, exitEvidence.LastExitCount);
         Assert.Equal(2, exitEvidence.ProfitableExitCount);
         Assert.Equal(1, exitEvidence.UnprofitableExitBlockedCount);
+        Assert.Equal(1, exitEvidence.ReverseBlockedUnprofitableCount);
         Assert.Equal(1, exitEvidence.StopLossExitCount);
         Assert.Equal(1, exitEvidence.TakeProfitExitCount);
+        Assert.Equal(0, exitEvidence.TrailingExitCount);
+        Assert.Equal(0, exitEvidence.ManualCloseCount);
         Assert.Equal("TakeProfit", exitEvidence.LastExitReason);
         Assert.Equal(12.5m, exitEvidence.LastEstimatedPnlQuote);
         Assert.Equal(0.31m, exitEvidence.LastEstimatedPnlPct);
@@ -1318,6 +1321,111 @@ public sealed class AdminMonitoringReadModelServiceTests
         Assert.Equal("BTCUSDT", exitEvidence.LastExitSymbol);
         Assert.Equal("Sell", exitEvidence.LastExitSide);
         Assert.True(exitEvidence.LastExitReduceOnly);
+        Assert.Contains("TakeProfit", exitEvidence.LastExitSummary, StringComparison.Ordinal);
+        Assert.Contains("Blocked", exitEvidence.LastBlockedExitSummary, StringComparison.Ordinal);
+        Assert.Empty(exitEvidence.RecentEntryOrders);
+        Assert.Empty(exitEvidence.RecentExitOrders);
+    }
+
+    [Fact]
+    public async Task AdminDashboardReadModel_ProjectsRecentEntryAndExitOrderEvidence_WithPolicySources()
+    {
+        var now = new DateTime(2026, 4, 29, 15, 0, 0, DateTimeKind.Utc);
+        await using var dbContext = CreateDbContext();
+
+        var strategyId = Guid.NewGuid();
+        var strategyVersionId = Guid.NewGuid();
+        var entrySignalId = Guid.NewGuid();
+        var trailingExitSignalId = Guid.NewGuid();
+
+        dbContext.TradingStrategySignals.AddRange(
+            CreateStrategySignal(entrySignalId, strategyId, strategyVersionId, StrategySignalType.Entry, "SOLUSDT", now.AddMinutes(-5)),
+            CreateStrategySignal(trailingExitSignalId, strategyId, strategyVersionId, StrategySignalType.Exit, "SOLUSDT", now.AddMinutes(-2)));
+
+        dbContext.DecisionTraces.AddRange(
+            CreateDecisionTrace(
+                symbol: "SOLUSDT",
+                decisionReasonCode: "TrailingStopTriggered",
+                decisionSummary: "ExitSource=TrailingTakeProfit; ExitPolicyDecision=Allowed; ExitPolicyReason=TrailingTakeProfitRetrace; EstimatedPnlQuote=4.5; EstimatedPnlPct=1.2; CloseSide=Sell; ReduceOnly=True;",
+                createdAtUtc: now.AddMinutes(-2),
+                strategySignalId: trailingExitSignalId),
+            CreateDecisionTrace(
+                symbol: "SOLUSDT",
+                decisionReasonCode: "ExitCloseOnlyBlockedUnprofitableLong",
+                decisionSummary: "ExitSource=ReverseSignal; ExitPolicyDecision=Blocked; ExitPolicyReason=ExitCloseOnlyBlockedUnprofitableLong; EstimatedPnlQuote=-1.2; EstimatedPnlPct=-0.4; CloseSide=Sell; ReduceOnly=True;",
+                createdAtUtc: now.AddMinutes(-3)));
+
+        dbContext.ExecutionOrders.AddRange(
+            CreateExecutionOrder(
+                strategySignalId: entrySignalId,
+                strategyId: strategyId,
+                strategyVersionId: strategyVersionId,
+                strategyKey: "alpha-core",
+                symbol: "SOLUSDT",
+                signalType: StrategySignalType.Entry,
+                side: ExecutionOrderSide.Buy,
+                quantity: 1m,
+                price: 100m,
+                reduceOnly: false,
+                createdAtUtc: now.AddMinutes(-5)),
+            CreateExecutionOrder(
+                strategySignalId: trailingExitSignalId,
+                strategyId: strategyId,
+                strategyVersionId: strategyVersionId,
+                strategyKey: "alpha-core",
+                symbol: "SOLUSDT",
+                signalType: StrategySignalType.Exit,
+                side: ExecutionOrderSide.Sell,
+                quantity: 1m,
+                price: 104.5m,
+                reduceOnly: true,
+                createdAtUtc: now.AddMinutes(-2)),
+            CreateExecutionOrder(
+                strategySignalId: Guid.NewGuid(),
+                strategyId: strategyId,
+                strategyVersionId: strategyVersionId,
+                strategyKey: "__admin_manual_close__",
+                symbol: "BTCUSDT",
+                signalType: StrategySignalType.Exit,
+                side: ExecutionOrderSide.Buy,
+                quantity: 0.5m,
+                price: 64010m,
+                reduceOnly: true,
+                createdAtUtc: now.AddMinutes(-1)));
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            new FixedTimeProvider(now),
+            Options.Create(new DataLatencyGuardOptions()));
+
+        var snapshot = await service.GetSnapshotAsync();
+        var exitEvidence = snapshot.OperationalObservability.ExitPnlEvidence;
+
+        Assert.Equal(2, exitEvidence.LastExitCount);
+        Assert.Equal(1, exitEvidence.ReverseBlockedUnprofitableCount);
+        Assert.Equal(1, exitEvidence.TrailingExitCount);
+        Assert.Equal(1, exitEvidence.ManualCloseCount);
+        Assert.Contains("TrailingTakeProfit", exitEvidence.LastExitSummary, StringComparison.Ordinal);
+        Assert.Contains("ExitCloseOnlyBlockedUnprofitableLong", exitEvidence.LastBlockedExitSummary, StringComparison.Ordinal);
+
+        var entryRow = Assert.Single(exitEvidence.RecentEntryOrders);
+        Assert.Equal("SOLUSDT", entryRow.Symbol);
+        Assert.Equal("Entry", entryRow.SignalType);
+        Assert.Equal("StrategyEntry", entryRow.SourceLabel);
+
+        Assert.Equal(2, exitEvidence.RecentExitOrders.Count);
+        var trailingRow = Assert.Single(exitEvidence.RecentExitOrders, row => row.Symbol == "SOLUSDT");
+        Assert.Equal("TrailingTakeProfit", trailingRow.SourceLabel);
+        Assert.Equal("Allowed", trailingRow.PolicyDecision);
+        Assert.Equal("TrailingTakeProfitRetrace", trailingRow.PolicyReason);
+        Assert.Equal(4.5m, trailingRow.EstimatedPnlQuote);
+        Assert.Equal(1.2m, trailingRow.EstimatedPnlPct);
+
+        var manualRow = Assert.Single(exitEvidence.RecentExitOrders, row => row.Symbol == "BTCUSDT");
+        Assert.Equal("Manual", manualRow.SourceLabel);
+        Assert.Equal("n/a", manualRow.PolicyDecision);
     }
 
     [Fact]
@@ -1787,6 +1895,13 @@ public sealed class AdminMonitoringReadModelServiceTests
         Assert.Null(exitEvidence.LastEstimatedPnlQuote);
         Assert.Null(exitEvidence.LastExitAtUtc);
         Assert.Null(exitEvidence.LastExitReduceOnly);
+        Assert.Equal(0, exitEvidence.ReverseBlockedUnprofitableCount);
+        Assert.Equal(0, exitEvidence.TrailingExitCount);
+        Assert.Equal(0, exitEvidence.ManualCloseCount);
+        Assert.Equal("No exit evidence in bounded window.", exitEvidence.LastExitSummary);
+        Assert.Null(exitEvidence.LastBlockedExitSummary);
+        Assert.Empty(exitEvidence.RecentEntryOrders);
+        Assert.Empty(exitEvidence.RecentExitOrders);
     }
 
     [Fact]

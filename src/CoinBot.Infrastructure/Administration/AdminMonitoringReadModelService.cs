@@ -283,14 +283,17 @@ public sealed class AdminMonitoringReadModelService(
         DateTime windowStartUtc,
         CancellationToken cancellationToken)
     {
-        var exitRows = await dbContext.DecisionTraces
+        var exitDecisionRows = await dbContext.DecisionTraces
             .AsNoTracking()
             .IgnoreQueryFilters()
             .Where(entity =>
                 !entity.IsDeleted &&
                 entity.CreatedAtUtc >= windowStartUtc &&
                 entity.DecisionSummary != null &&
-                entity.DecisionSummary.Contains("ExitReason="))
+                (entity.DecisionSummary.Contains("ExitReason=") ||
+                 entity.DecisionSummary.Contains("ExitSource=") ||
+                 entity.DecisionSummary.Contains("ExitPolicyDecision=") ||
+                 entity.DecisionSummary.Contains("ExitPnlGuard=")))
             .OrderByDescending(entity => entity.CreatedAtUtc)
             .Take(200)
             .Select(entity => new
@@ -304,7 +307,7 @@ public sealed class AdminMonitoringReadModelService(
             })
             .ToListAsync(cancellationToken);
 
-        var parsedRows = exitRows
+        var parsedRows = exitDecisionRows
             .Select(entity => ParseExitPnlEvidence(
                 entity.Symbol,
                 entity.SignalType,
@@ -316,7 +319,101 @@ public sealed class AdminMonitoringReadModelService(
             .Cast<ExitPnlEvidenceRow>()
             .ToArray();
 
-        if (parsedRows.Length == 0)
+        var recentOrderRows = await dbContext.ExecutionOrders
+            .AsNoTracking()
+            .Where(entity =>
+                !entity.IsDeleted &&
+                entity.Plane == ExchangeDataPlane.Futures &&
+                entity.ExecutionEnvironment == ExecutionEnvironment.BinanceTestnet &&
+                entity.CreatedDate >= windowStartUtc &&
+                (entity.SignalType == StrategySignalType.Entry || entity.SignalType == StrategySignalType.Exit) &&
+                entity.Quantity > 0m)
+            .OrderByDescending(entity => entity.CreatedDate)
+            .ThenByDescending(entity => entity.LastStateChangedAtUtc)
+            .ThenByDescending(entity => entity.Id)
+            .Take(40)
+            .Select(entity => new StrategyProfitOrderRow(
+                entity.Id,
+                entity.StrategySignalId,
+                entity.BotId,
+                entity.ExchangeAccountId,
+                entity.OwnerUserId,
+                entity.StrategyKey,
+                entity.Symbol,
+                entity.SignalType,
+                entity.Side,
+                entity.Quantity,
+                entity.FilledQuantity,
+                entity.Price,
+                entity.AverageFillPrice,
+                entity.ReduceOnly,
+                entity.CreatedDate,
+                entity.SubmittedAtUtc,
+                entity.LastStateChangedAtUtc,
+                entity.State,
+                entity.SubmittedToBroker))
+            .ToListAsync(cancellationToken);
+
+        var orderSignalIds = recentOrderRows
+            .Select(entity => entity.StrategySignalId)
+            .Distinct()
+            .ToArray();
+        var signalTypeById = orderSignalIds.Length == 0
+            ? new Dictionary<Guid, StrategySignalType>()
+            : await dbContext.TradingStrategySignals
+                .AsNoTracking()
+                .Where(entity => orderSignalIds.Contains(entity.Id) && !entity.IsDeleted)
+                .ToDictionaryAsync(entity => entity.Id, entity => entity.SignalType, cancellationToken);
+        var decisionTraceBySignalId = orderSignalIds.Length == 0
+            ? new Dictionary<Guid, DecisionTraceSummaryRow>()
+            : (await dbContext.DecisionTraces
+                    .AsNoTracking()
+                    .IgnoreQueryFilters()
+                    .Where(entity =>
+                        !entity.IsDeleted &&
+                        entity.StrategySignalId.HasValue &&
+                        orderSignalIds.Contains(entity.StrategySignalId.Value))
+                    .OrderByDescending(entity => entity.CreatedAtUtc)
+                    .ThenByDescending(entity => entity.CreatedDate)
+                    .Select(entity => new
+                    {
+                        StrategySignalId = entity.StrategySignalId!.Value,
+                        entity.DecisionReasonCode,
+                        entity.DecisionSummary,
+                        entity.DecisionAtUtc,
+                        entity.CreatedAtUtc
+                    })
+                    .ToListAsync(cancellationToken))
+                .GroupBy(entity => entity.StrategySignalId)
+                .ToDictionary(
+                    group => group.Key,
+                    group =>
+                    {
+                        var latest = group.First();
+                        return new DecisionTraceSummaryRow(
+                            latest.DecisionReasonCode,
+                            latest.DecisionSummary,
+                            NormalizeUtc(latest.DecisionAtUtc ?? latest.CreatedAtUtc));
+                    });
+
+        var recentEntryOrders = recentOrderRows
+            .Where(entity => entity.SignalType == StrategySignalType.Entry && !entity.ReduceOnly)
+            .Take(5)
+            .Select(entity => MapOrderEvidenceRow(
+                entity,
+                decisionTraceBySignalId.GetValueOrDefault(entity.StrategySignalId),
+                signalTypeById))
+            .ToArray();
+        var recentExitOrders = recentOrderRows
+            .Where(entity => entity.SignalType == StrategySignalType.Exit)
+            .Take(5)
+            .Select(entity => MapOrderEvidenceRow(
+                entity,
+                decisionTraceBySignalId.GetValueOrDefault(entity.StrategySignalId),
+                signalTypeById))
+            .ToArray();
+
+        if (parsedRows.Length == 0 && recentEntryOrders.Length == 0 && recentExitOrders.Length == 0)
         {
             return OperationalExitPnlEvidenceSnapshot.Empty();
         }
@@ -324,21 +421,56 @@ public sealed class AdminMonitoringReadModelService(
         var latestRow = parsedRows
             .OrderByDescending(entity => entity.ObservedAtUtc)
             .ThenBy(entity => entity.Symbol, StringComparer.Ordinal)
-            .First();
+            .FirstOrDefault();
+        var latestBlockedRow = parsedRows
+            .Where(IsBlockedExitDecision)
+            .OrderByDescending(entity => entity.ObservedAtUtc)
+            .ThenBy(entity => entity.Symbol, StringComparer.Ordinal)
+            .FirstOrDefault();
+        var latestExitOrder = recentExitOrders
+            .OrderByDescending(entity => entity.ObservedAtUtc)
+            .ThenBy(entity => entity.Symbol, StringComparer.Ordinal)
+            .FirstOrDefault();
+
+        var lastExitReason = latestRow?.ExitSource ?? latestExitOrder?.SourceLabel;
+        var lastEstimatedPnlQuote = latestRow?.EstimatedPnlQuote ?? latestExitOrder?.EstimatedPnlQuote;
+        var lastEstimatedPnlPct = latestRow?.EstimatedPnlPct ?? latestExitOrder?.EstimatedPnlPct;
+        var lastExitAtUtc = latestRow?.ObservedAtUtc ?? latestExitOrder?.ObservedAtUtc;
+        var lastExitSymbol = latestRow?.Symbol ?? latestExitOrder?.Symbol;
+        var lastExitSide = latestRow?.CloseSide ?? latestExitOrder?.Side;
+        var lastExitReduceOnly = latestRow?.ReduceOnly ?? latestExitOrder?.ReduceOnly;
+        var reverseBlockedUnprofitableCount = parsedRows.Count(IsReverseBlockedUnprofitable);
+        var trailingExitCount = parsedRows.Count(entity => string.Equals(entity.ExitSource, "TrailingTakeProfit", StringComparison.Ordinal));
+        var manualCloseCount = recentExitOrders.Count(entity => string.Equals(entity.SourceLabel, "Manual", StringComparison.Ordinal));
+        var lastExitSummary = latestRow is not null
+            ? BuildExitDecisionSummary(latestRow)
+            : (latestExitOrder is not null ? latestExitOrder.Summary : "No exit evidence in bounded window.");
+        var lastBlockedExitSummary = latestBlockedRow is null
+            ? null
+            : BuildExitDecisionSummary(latestBlockedRow);
 
         return new OperationalExitPnlEvidenceSnapshot(
             LastExitCount: parsedRows.Length,
             ProfitableExitCount: parsedRows.Count(entity => entity.EstimatedPnlQuote.GetValueOrDefault() > 0m),
-            UnprofitableExitBlockedCount: parsedRows.Count(entity => string.Equals(entity.ExitReason, "BlockedUnprofitable", StringComparison.Ordinal)),
-            StopLossExitCount: parsedRows.Count(entity => string.Equals(entity.ExitReason, "StopLoss", StringComparison.Ordinal)),
-            TakeProfitExitCount: parsedRows.Count(entity => string.Equals(entity.ExitReason, "TakeProfit", StringComparison.Ordinal)),
-            LastExitReason: latestRow.ExitReason,
-            LastEstimatedPnlQuote: latestRow.EstimatedPnlQuote,
-            LastEstimatedPnlPct: latestRow.EstimatedPnlPct,
-            LastExitAtUtc: latestRow.ObservedAtUtc,
-            LastExitSymbol: latestRow.Symbol,
-            LastExitSide: latestRow.CloseSide,
-            LastExitReduceOnly: latestRow.ReduceOnly);
+            UnprofitableExitBlockedCount: reverseBlockedUnprofitableCount,
+            StopLossExitCount: parsedRows.Count(entity => string.Equals(entity.ExitSource, "StopLoss", StringComparison.Ordinal)),
+            TakeProfitExitCount: parsedRows.Count(entity => string.Equals(entity.ExitSource, "TakeProfit", StringComparison.Ordinal)),
+            LastExitReason: lastExitReason,
+            LastEstimatedPnlQuote: lastEstimatedPnlQuote,
+            LastEstimatedPnlPct: lastEstimatedPnlPct,
+            LastExitAtUtc: lastExitAtUtc,
+            LastExitSymbol: lastExitSymbol,
+            LastExitSide: lastExitSide,
+            LastExitReduceOnly: lastExitReduceOnly)
+        {
+            ReverseBlockedUnprofitableCount = reverseBlockedUnprofitableCount,
+            TrailingExitCount = trailingExitCount,
+            ManualCloseCount = manualCloseCount,
+            LastExitSummary = lastExitSummary,
+            LastBlockedExitSummary = lastBlockedExitSummary,
+            RecentEntryOrders = recentEntryOrders,
+            RecentExitOrders = recentExitOrders
+        };
     }
 
     private async Task<OperationalStrategyProfitQualitySnapshot> LoadStrategyProfitQualityAsync(
@@ -376,7 +508,9 @@ public sealed class AdminMonitoringReadModelService(
                 entity.ReduceOnly,
                 entity.CreatedDate,
                 entity.SubmittedAtUtc,
-                entity.LastStateChangedAtUtc))
+                entity.LastStateChangedAtUtc,
+                entity.State,
+                entity.SubmittedToBroker))
             .ToListAsync(cancellationToken);
 
         if (orderRows.Count == 0)
@@ -1976,22 +2110,134 @@ public sealed class AdminMonitoringReadModelService(
         DateTime? decisionAtUtc,
         DateTime createdAtUtc)
     {
-        var exitReason = ExecutionDecisionDiagnostics.ExtractToken("ExitReason", decisionSummary);
-        if (string.IsNullOrWhiteSpace(exitReason))
+        var exitSource = ExecutionDecisionDiagnostics.ExtractToken("ExitSource", decisionSummary);
+        if (string.IsNullOrWhiteSpace(exitSource))
+        {
+            exitSource = ExecutionDecisionDiagnostics.ExtractToken("ExitReason", decisionSummary);
+        }
+
+        if (string.IsNullOrWhiteSpace(exitSource))
+        {
+            exitSource = decisionReasonCode switch
+            {
+                "TakeProfitTriggered" => "TakeProfit",
+                "StopLossTriggered" => "StopLoss",
+                "TrailingStopTriggered" => "TrailingTakeProfit",
+                "BreakEvenTriggered" => "RiskExit",
+                "ExitCloseOnlyBlockedUnprofitableLong" or "ExitCloseOnlyBlockedUnprofitableShort" => "ReverseSignal",
+                _ => null
+            };
+        }
+
+        if (string.IsNullOrWhiteSpace(exitSource))
         {
             return null;
+        }
+
+        var exitPolicyDecision = ExecutionDecisionDiagnostics.ExtractToken("ExitPolicyDecision", decisionSummary);
+        if (string.IsNullOrWhiteSpace(exitPolicyDecision))
+        {
+            exitPolicyDecision = ExecutionDecisionDiagnostics.ExtractToken("ExitPnlGuard", decisionSummary);
+        }
+
+        if (string.IsNullOrWhiteSpace(exitPolicyDecision))
+        {
+            exitPolicyDecision = string.Equals(exitSource, "BlockedUnprofitable", StringComparison.Ordinal)
+                ? "Blocked"
+                : "Allowed";
+        }
+
+        var exitPolicyReason = ExecutionDecisionDiagnostics.ExtractToken("ExitPolicyReason", decisionSummary);
+        if (string.IsNullOrWhiteSpace(exitPolicyReason))
+        {
+            exitPolicyReason = ExecutionDecisionDiagnostics.ExtractToken("ReasonCode", decisionSummary);
+        }
+
+        if (string.IsNullOrWhiteSpace(exitPolicyReason))
+        {
+            exitPolicyReason = decisionReasonCode;
         }
 
         return new ExitPnlEvidenceRow(
             Symbol: string.IsNullOrWhiteSpace(symbol) ? "n/a" : symbol.Trim(),
             SignalType: string.IsNullOrWhiteSpace(signalType) ? "n/a" : signalType.Trim(),
             DecisionReasonCode: string.IsNullOrWhiteSpace(decisionReasonCode) ? null : decisionReasonCode.Trim(),
-            ExitReason: exitReason,
+            ExitSource: exitSource,
+            ExitPolicyDecision: exitPolicyDecision ?? "n/a",
+            ExitPolicyReason: string.IsNullOrWhiteSpace(exitPolicyReason) ? "n/a" : exitPolicyReason.Trim(),
             EstimatedPnlQuote: TryParseDecimalToken("EstimatedPnlQuote", decisionSummary),
             EstimatedPnlPct: TryParseDecimalToken("EstimatedPnlPct", decisionSummary),
             CloseSide: ExecutionDecisionDiagnostics.ExtractToken("CloseSide", decisionSummary),
             ReduceOnly: TryParseBooleanToken("ReduceOnly", decisionSummary),
             ObservedAtUtc: NormalizeUtc(decisionAtUtc ?? createdAtUtc));
+    }
+
+    private static OperationalOrderEvidenceRowSnapshot MapOrderEvidenceRow(
+        StrategyProfitOrderRow order,
+        DecisionTraceSummaryRow? trace,
+        IReadOnlyDictionary<Guid, StrategySignalType> signalTypeById)
+    {
+        var sourceLabel = order.SignalType == StrategySignalType.Entry && !order.ReduceOnly
+            ? ResolveEntrySource(trace)
+            : ResolveExitSource(order, trace, signalTypeById);
+        var policyDecision = order.SignalType == StrategySignalType.Exit
+            ? ExecutionDecisionDiagnostics.ExtractToken("ExitPolicyDecision", trace?.DecisionSummary)
+                ?? ExecutionDecisionDiagnostics.ExtractToken("ExitPnlGuard", trace?.DecisionSummary)
+                ?? "n/a"
+            : "n/a";
+        var policyReason = order.SignalType == StrategySignalType.Exit
+            ? ExecutionDecisionDiagnostics.ExtractToken("ExitPolicyReason", trace?.DecisionSummary)
+                ?? ExecutionDecisionDiagnostics.ExtractToken("ReasonCode", trace?.DecisionSummary)
+                ?? trace?.DecisionReasonCode
+                ?? "n/a"
+            : trace?.DecisionReasonCode ?? "n/a";
+        var pnlQuote = TryParseDecimalToken("EstimatedPnlQuote", trace?.DecisionSummary);
+        var pnlPct = TryParseDecimalToken("EstimatedPnlPct", trace?.DecisionSummary);
+        var observedAtUtc = NormalizeUtc(order.SubmittedAtUtc ?? order.LastStateChangedAtUtc);
+        var effectivePrice = ResolveEffectiveOrderPrice(order);
+        var effectiveQuantity = ResolveEffectiveOrderQuantity(order);
+        var summary = $"{order.SignalType} · {sourceLabel} · {policyDecision} · reason {policyReason} · qty {effectiveQuantity.ToString("0.########", CultureInfo.InvariantCulture)} · price {(effectivePrice?.ToString("0.########", CultureInfo.InvariantCulture) ?? "n/a")}";
+
+        return new OperationalOrderEvidenceRowSnapshot(
+            ObservedAtUtc: observedAtUtc,
+            Symbol: string.IsNullOrWhiteSpace(order.Symbol) ? "n/a" : order.Symbol.Trim(),
+            SignalType: order.SignalType.ToString(),
+            Side: order.Side.ToString(),
+            Quantity: effectiveQuantity,
+            Price: effectivePrice,
+            ReduceOnly: order.ReduceOnly,
+            State: order.State.ToString(),
+            SubmittedToBroker: order.SubmittedToBroker,
+            SourceLabel: sourceLabel,
+            PolicyDecision: policyDecision,
+            PolicyReason: policyReason,
+            EstimatedPnlQuote: pnlQuote,
+            EstimatedPnlPct: pnlPct,
+            Summary: summary);
+    }
+
+    private static bool IsBlockedExitDecision(ExitPnlEvidenceRow row)
+    {
+        return string.Equals(row.ExitPolicyDecision, "Blocked", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsReverseBlockedUnprofitable(ExitPnlEvidenceRow row)
+    {
+        if (string.Equals(row.ExitSource, "BlockedUnprofitable", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return IsBlockedExitDecision(row) &&
+               (string.Equals(row.ExitSource, "ReverseSignal", StringComparison.Ordinal) ||
+                row.ExitPolicyReason.Contains("BlockedUnprofitable", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(row.DecisionReasonCode, "ExitCloseOnlyBlockedUnprofitableLong", StringComparison.Ordinal) ||
+                string.Equals(row.DecisionReasonCode, "ExitCloseOnlyBlockedUnprofitableShort", StringComparison.Ordinal));
+    }
+
+    private static string BuildExitDecisionSummary(ExitPnlEvidenceRow row)
+    {
+        return $"{row.ExitSource} · {row.ExitPolicyDecision} · {row.ExitPolicyReason} · {row.Symbol} · pnl {(row.EstimatedPnlQuote?.ToString("0.########", CultureInfo.InvariantCulture) ?? "n/a")} · pct {(row.EstimatedPnlPct?.ToString("0.########", CultureInfo.InvariantCulture) ?? "n/a")}";
     }
 
     private static void EnqueueOpenEntryLot(
@@ -2317,7 +2563,9 @@ public sealed class AdminMonitoringReadModelService(
         string Symbol,
         string SignalType,
         string? DecisionReasonCode,
-        string ExitReason,
+        string ExitSource,
+        string ExitPolicyDecision,
+        string ExitPolicyReason,
         decimal? EstimatedPnlQuote,
         decimal? EstimatedPnlPct,
         string? CloseSide,
@@ -2341,7 +2589,9 @@ public sealed class AdminMonitoringReadModelService(
         bool ReduceOnly,
         DateTime CreatedDate,
         DateTime? SubmittedAtUtc,
-        DateTime LastStateChangedAtUtc);
+        DateTime LastStateChangedAtUtc,
+        ExecutionOrderState State,
+        bool SubmittedToBroker);
 
     private sealed record DecisionTraceSummaryRow(
         string? DecisionReasonCode,

@@ -12,6 +12,8 @@
         .ThenBy(item => item.ReasonCode, StringComparer.Ordinal)
         .ToArray();
     var exitPnl = operational.ExitPnlEvidence ?? OperationalExitPnlEvidenceSnapshot.Empty();
+    var recentEntryOrders = exitPnl.RecentEntryOrders.ToArray();
+    var recentExitOrders = exitPnl.RecentExitOrders.ToArray();
     var pilotConfig = operational.PilotConfigEvidence ?? OperationalPilotConfigEvidenceSnapshot.Empty();
     var privateSync = operational.PrivateSyncEvidence ?? OperationalPrivateSyncEvidenceSnapshot.Empty();
     var criticalWarnings = operational.CriticalWarnings
@@ -140,15 +142,69 @@
                     <div class="cb-admin-info-strip-text" data-cb-ops-exit-pnl-latest>
                         Last exit reason @((exitPnl.LastExitReason ?? "n/a")) · @(exitPnl.LastExitSymbol ?? "n/a") · @((exitPnl.LastExitSide ?? "n/a")) · @(exitPnl.LastExitAtUtc.Value.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss")) UTC
                     </div>
+                    <div class="cb-admin-info-strip-text mt-2" data-cb-ops-exit-pnl-last-summary>
+                        @exitPnl.LastExitSummary
+                    </div>
                     <div class="cb-admin-info-strip-text mt-2" data-cb-ops-exit-pnl-latest-summary>
                         Last estimated PnL @(exitPnl.LastEstimatedPnlQuote?.ToString("0.########") ?? "n/a") · pct @(exitPnl.LastEstimatedPnlPct?.ToString("0.########") ?? "n/a") · Reduce-only exits @((exitPnl.LastExitReduceOnly?.ToString() ?? "n/a"))
                     </div>
+                    @if (!string.IsNullOrWhiteSpace(exitPnl.LastBlockedExitSummary))
+                    {
+                        <div class="cb-admin-info-strip-text mt-2" data-cb-ops-exit-pnl-blocked-summary>
+                            Last blocked exit @exitPnl.LastBlockedExitSummary
+                        </div>
+                    }
                     <div class="cb-admin-info-strip-text mt-2" data-cb-ops-exit-pnl-counts>
-                        Last exits @exitPnl.LastExitCount · profitable @exitPnl.ProfitableExitCount · Blocked unprofitable exits @exitPnl.UnprofitableExitBlockedCount · take-profit @exitPnl.TakeProfitExitCount · stop-loss @exitPnl.StopLossExitCount
+                        Exit decisions @exitPnl.LastExitCount · profitable @exitPnl.ProfitableExitCount · reverse blocked @exitPnl.ReverseBlockedUnprofitableCount · take-profit @exitPnl.TakeProfitExitCount · stop-loss @exitPnl.StopLossExitCount · trailing @exitPnl.TrailingExitCount · manual @exitPnl.ManualCloseCount
                     </div>
                 }
             </div>
             <span class="cb-admin-info-strip-meta">Last 24h</span>
+        </div>
+
+        <div class="row mt-4">
+            <div class="col-xl-6">
+                <div class="cb-admin-info-strip cb-admin-info-strip-info" data-cb-ops-exit-orders>
+                    <div>
+                        <div class="cb-admin-info-strip-title">Recent exit orders</div>
+                        @if (recentExitOrders.Length == 0)
+                        {
+                            <div class="cb-admin-info-strip-text" data-cb-ops-exit-orders-empty>No recent exit order evidence in bounded window.</div>
+                        }
+                        else
+                        {
+                            foreach (var order in recentExitOrders)
+                            {
+                                <div class="cb-admin-info-strip-text mt-1" data-cb-ops-exit-order-row>
+                                    @order.ObservedAtUtc.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") UTC · @order.Symbol · @order.SourceLabel · @order.PolicyDecision · @order.PolicyReason · pnl @(order.EstimatedPnlQuote?.ToString("0.########") ?? "n/a") / @(order.EstimatedPnlPct?.ToString("0.########") ?? "n/a") · @order.State
+                                </div>
+                            }
+                        }
+                    </div>
+                    <span class="cb-admin-info-strip-meta">Last 5</span>
+                </div>
+            </div>
+            <div class="col-xl-6">
+                <div class="cb-admin-info-strip cb-admin-info-strip-info" data-cb-ops-entry-orders>
+                    <div>
+                        <div class="cb-admin-info-strip-title">Recent entry orders</div>
+                        @if (recentEntryOrders.Length == 0)
+                        {
+                            <div class="cb-admin-info-strip-text" data-cb-ops-entry-orders-empty>No recent entry order evidence in bounded window.</div>
+                        }
+                        else
+                        {
+                            foreach (var order in recentEntryOrders)
+                            {
+                                <div class="cb-admin-info-strip-text mt-1" data-cb-ops-entry-order-row>
+                                    @order.ObservedAtUtc.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") UTC · @order.Symbol · @order.SourceLabel · qty @order.Quantity.ToString("0.########") · price @(order.Price?.ToString("0.########") ?? "n/a") · @order.State
+                                </div>
+                            }
+                        }
+                    </div>
+                    <span class="cb-admin-info-strip-meta">Last 5</span>
+                </div>
+            </div>
         </div>
 
         <div class="row mt-6">

@@ -232,6 +232,20 @@ public sealed record OperationalExitPnlEvidenceSnapshot(
     string? LastExitSide,
     bool? LastExitReduceOnly)
 {
+    public int ReverseBlockedUnprofitableCount { get; init; }
+
+    public int TrailingExitCount { get; init; }
+
+    public int ManualCloseCount { get; init; }
+
+    public string LastExitSummary { get; init; } = "No exit evidence in bounded window.";
+
+    public string? LastBlockedExitSummary { get; init; }
+
+    public IReadOnlyCollection<OperationalOrderEvidenceRowSnapshot> RecentEntryOrders { get; init; } = Array.Empty<OperationalOrderEvidenceRowSnapshot>();
+
+    public IReadOnlyCollection<OperationalOrderEvidenceRowSnapshot> RecentExitOrders { get; init; } = Array.Empty<OperationalOrderEvidenceRowSnapshot>();
+
     public static OperationalExitPnlEvidenceSnapshot Empty()
     {
         return new OperationalExitPnlEvidenceSnapshot(
@@ -246,9 +260,35 @@ public sealed record OperationalExitPnlEvidenceSnapshot(
             LastExitAtUtc: null,
             LastExitSymbol: null,
             LastExitSide: null,
-            LastExitReduceOnly: null);
+            LastExitReduceOnly: null)
+        {
+            ReverseBlockedUnprofitableCount = 0,
+            TrailingExitCount = 0,
+            ManualCloseCount = 0,
+            LastExitSummary = "No exit evidence in bounded window.",
+            LastBlockedExitSummary = null,
+            RecentEntryOrders = Array.Empty<OperationalOrderEvidenceRowSnapshot>(),
+            RecentExitOrders = Array.Empty<OperationalOrderEvidenceRowSnapshot>()
+        };
     }
 }
+
+public sealed record OperationalOrderEvidenceRowSnapshot(
+    DateTime ObservedAtUtc,
+    string Symbol,
+    string SignalType,
+    string Side,
+    decimal Quantity,
+    decimal? Price,
+    bool ReduceOnly,
+    string State,
+    bool SubmittedToBroker,
+    string SourceLabel,
+    string PolicyDecision,
+    string PolicyReason,
+    decimal? EstimatedPnlQuote,
+    decimal? EstimatedPnlPct,
+    string Summary);
 
 public sealed record OperationalExecutionReadinessSnapshot(
     string State,
