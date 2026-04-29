@@ -362,7 +362,7 @@ public sealed class MarketScannerServiceTests
 
         var cycle = await service.RunOnceAsync();
 
-        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id && entity.Symbol == "BTCUSDT");
         Assert.Contains("ScannerLabels=HasCompressionBreakoutSetup", candidate.ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("ScannerReasonCodes=CompressionBreakoutSetupDetected", candidate.ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("ScannerShadowScore=80", candidate.ScoringSummary, StringComparison.Ordinal);
@@ -444,7 +444,7 @@ public sealed class MarketScannerServiceTests
 
         var cycle = await service.RunOnceAsync();
 
-        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id && entity.Symbol == "BTCUSDT");
         Assert.NotNull(candidate.ScoringSummary);
         Assert.True(candidate.ScoringSummary!.Length <= 2048);
         Assert.Contains("ScannerReasonCodes=TrendBreakoutConfirmed", candidate.ScoringSummary, StringComparison.Ordinal);
@@ -490,12 +490,108 @@ public sealed class MarketScannerServiceTests
 
         var cycle = await service.RunOnceAsync();
 
-        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id && entity.Symbol == "BTCUSDT");
         Assert.False(candidate.IsEligible);
         Assert.Equal("NoEnabledBotForSymbol", candidate.RejectionReason);
         Assert.Contains("StrategyOutcome=NoEnabledBotForSymbol", candidate.ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("RankingDecision=Rejected", candidate.ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("RankingReasonCode=NoEnabledBotForSymbol", candidate.ScoringSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_RejectsCandidate_WhenSymbolFallsOutsideConfiguredBotScope()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        await SeedStrategyGraphAsync(dbContext, "user-scope-block", "BTCUSDT", "scanner-scope-block", "{}", allowedSymbolsCsv: "ETHUSDT");
+        SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        await dbContext.SaveChangesAsync();
+
+        var marketDataService = new FakeMarketDataService();
+        marketDataService.SetLatestPrice("BTCUSDT", 100m, nowUtc.UtcDateTime);
+
+        var service = new MarketScannerService(
+            dbContext,
+            marketDataService,
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("BTCUSDT", "Binance", "BTC", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 10,
+                Min24hQuoteVolume = 100m,
+                MaxDataAgeSeconds = 120,
+                StrategyScoreWeight = 2m,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = true
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["BTCUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance,
+            handoffService: null,
+            indicatorDataService: new FakeIndicatorDataService(),
+            strategyEvaluatorService: new FakeStrategyEvaluatorService(),
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }));
+
+        var cycle = await service.RunOnceAsync();
+
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+        Assert.False(candidate.IsEligible);
+        Assert.Equal("CandidateOutsideBotSymbolScope", candidate.RejectionReason);
+        Assert.Contains("StrategyOutcome=CandidateOutsideBotSymbolScope", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("RankingReasonCode=CandidateOutsideBotSymbolScope", candidate.ScoringSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_AllowsCandidate_WhenSymbolMatchesConfiguredBotScope_AndPrimarySymbolDiffers()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        var strategy = await SeedStrategyGraphAsync(dbContext, "user-scope-allow", "BTCUSDT", "scanner-scope-allow", "{}", allowedSymbolsCsv: "ETHUSDT");
+        SeedCandles(dbContext, "ETHUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        await dbContext.SaveChangesAsync();
+
+        var marketDataService = new FakeMarketDataService();
+        marketDataService.SetLatestPrice("ETHUSDT", 100m, nowUtc.UtcDateTime);
+        var indicatorDataService = new FakeIndicatorDataService();
+        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("ETHUSDT", "1m", nowUtc.UtcDateTime));
+        var strategyEvaluatorService = new FakeStrategyEvaluatorService();
+        strategyEvaluatorService.SetReport("ETHUSDT", CreateEvaluationReport(strategy.TradingStrategyId, strategy.TradingStrategyVersionId, "scanner-scope-allow", "ETHUSDT", "1m", nowUtc.UtcDateTime, 95, "Scope allow accepted."));
+
+        var service = new MarketScannerService(
+            dbContext,
+            marketDataService,
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("ETHUSDT", "Binance", "ETH", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 10,
+                Min24hQuoteVolume = 100m,
+                MaxDataAgeSeconds = 120,
+                StrategyScoreWeight = 2m,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = true
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["ETHUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance,
+            handoffService: null,
+            indicatorDataService,
+            strategyEvaluatorService,
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }));
+
+        var cycle = await service.RunOnceAsync();
+
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id && entity.Symbol == "ETHUSDT");
+        Assert.True(candidate.IsEligible);
+        Assert.Null(candidate.RejectionReason);
+        Assert.Equal("ETHUSDT", cycle.BestCandidateSymbol);
+        Assert.Contains("StrategyKey=scanner-scope-allow", candidate.ScoringSummary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -3020,7 +3116,8 @@ public sealed class MarketScannerServiceTests
         string symbol,
         string strategyKey,
         string definitionJson,
-        TradingBotDirectionMode directionMode = TradingBotDirectionMode.LongOnly)
+        TradingBotDirectionMode directionMode = TradingBotDirectionMode.LongOnly,
+        string? allowedSymbolsCsv = null)
     {
         var tradingStrategyId = Guid.NewGuid();
         var tradingStrategyVersionId = Guid.NewGuid();
@@ -3053,6 +3150,7 @@ public sealed class MarketScannerServiceTests
             Name = $"{strategyKey} bot",
             StrategyKey = strategyKey,
             Symbol = symbol,
+            AllowedSymbolsCsv = allowedSymbolsCsv,
             DirectionMode = directionMode,
             IsEnabled = true
         });

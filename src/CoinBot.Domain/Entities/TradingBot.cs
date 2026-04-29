@@ -10,6 +10,8 @@ public sealed class TradingBot : UserOwnedEntity
 
     public string? Symbol { get; set; }
 
+    public string? AllowedSymbolsCsv { get; set; }
+
     public decimal? Quantity { get; set; }
 
     public Guid? ExchangeAccountId { get; set; }

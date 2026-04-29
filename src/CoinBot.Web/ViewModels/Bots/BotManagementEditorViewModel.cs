@@ -1,5 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using CoinBot.Domain.Enums;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 
 namespace CoinBot.Web.ViewModels.Bots;
 
@@ -10,6 +12,7 @@ public sealed class BotManagementEditorViewModel
         bool isEditMode,
         BotManagementInputModel form,
         IReadOnlyCollection<BotManagementOptionViewModel> symbolOptions,
+        IReadOnlyCollection<string> scannerUniverseSymbols,
         IReadOnlyCollection<BotManagementOptionViewModel> strategyOptions,
         IReadOnlyCollection<BotManagementOptionViewModel> exchangeAccountOptions)
     {
@@ -17,6 +20,7 @@ public sealed class BotManagementEditorViewModel
         IsEditMode = isEditMode;
         Form = form;
         SymbolOptions = symbolOptions;
+        ScannerUniverseSymbols = scannerUniverseSymbols;
         StrategyOptions = strategyOptions;
         ExchangeAccountOptions = exchangeAccountOptions;
     }
@@ -28,6 +32,8 @@ public sealed class BotManagementEditorViewModel
     public BotManagementInputModel Form { get; }
 
     public IReadOnlyCollection<BotManagementOptionViewModel> SymbolOptions { get; }
+
+    public IReadOnlyCollection<string> ScannerUniverseSymbols { get; }
 
     public IReadOnlyCollection<BotManagementOptionViewModel> StrategyOptions { get; }
 
@@ -47,6 +53,11 @@ public sealed class BotManagementInputModel
     [Required(ErrorMessage = "Pilot sembol zorunludur.")]
     [StringLength(32)]
     public string Symbol { get; set; } = "BTCUSDT";
+
+    [BindNever]
+    public IReadOnlyCollection<string> ScannerUniverseSymbols { get; set; } = Array.Empty<string>();
+
+    public List<string> AllowedSymbols { get; set; } = [];
 
     [Range(typeof(decimal), "0.000000000000000001", "1000000000000000000", ErrorMessage = "Quantity pozitif olmalıdır.")]
     public decimal? Quantity { get; set; }

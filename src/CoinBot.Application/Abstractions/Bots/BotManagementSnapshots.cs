@@ -93,6 +93,7 @@ public sealed record BotManagementEditorSnapshot(
     Guid? BotId,
     BotManagementDraftSnapshot Draft,
     IReadOnlyCollection<string> SymbolOptions,
+    IReadOnlyCollection<string> ScannerUniverseSymbols,
     IReadOnlyCollection<BotStrategyOptionSnapshot> StrategyOptions,
     IReadOnlyCollection<BotExchangeAccountOptionSnapshot> ExchangeAccountOptions);
 
@@ -100,6 +101,7 @@ public sealed record BotManagementDraftSnapshot(
     string Name,
     string StrategyKey,
     string Symbol,
+    IReadOnlyCollection<string> AllowedSymbols,
     decimal? Quantity,
     Guid? ExchangeAccountId,
     decimal? Leverage,
@@ -122,6 +124,7 @@ public sealed record BotManagementSaveCommand(
     string Name,
     string StrategyKey,
     string Symbol,
+    IReadOnlyCollection<string> AllowedSymbols,
     decimal? Quantity,
     Guid? ExchangeAccountId,
     decimal? Leverage,
@@ -136,5 +139,3 @@ public sealed record BotManagementSaveResult(
     bool IsEnabled,
     string? FailureCode,
     string? FailureReason);
-
-

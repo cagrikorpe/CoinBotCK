@@ -1877,14 +1877,27 @@ public sealed class MarketScannerService(
                 entity.OwnerUserId,
                 entity.StrategyKey,
                 entity.Symbol,
+                entity.AllowedSymbolsCsv,
                 entity.DirectionMode
             })
             .ToListAsync(cancellationToken);
         MarketScannerStrategyBindingResolution? bindingMiss = null;
+        var hasPrimarySymbolMatch = false;
+        var hasConfiguredScopedBot = false;
 
         foreach (var bot in candidateBots)
         {
-            if (!string.Equals(MarketDataSymbolNormalizer.Normalize(bot.Symbol!), symbol, StringComparison.Ordinal))
+            if (HasConfiguredAllowedSymbols(bot.AllowedSymbolsCsv))
+            {
+                hasConfiguredScopedBot = true;
+            }
+
+            if (string.Equals(MarketDataSymbolNormalizer.Normalize(bot.Symbol!), symbol, StringComparison.Ordinal))
+            {
+                hasPrimarySymbolMatch = true;
+            }
+
+            if (!BotAllowsSymbolScope(bot.Symbol, bot.AllowedSymbolsCsv, symbol))
             {
                 continue;
             }
@@ -1944,10 +1957,54 @@ public sealed class MarketScannerService(
                 null);
         }
 
-        return bindingMiss ?? new MarketScannerStrategyBindingResolution(
+        if (bindingMiss is not null)
+        {
+            return bindingMiss;
+        }
+
+        if (hasPrimarySymbolMatch || hasConfiguredScopedBot)
+        {
+            return new MarketScannerStrategyBindingResolution(
+                null,
+                "CandidateOutsideBotSymbolScope",
+                $"StrategyScore=n/a; StrategyOutcome=CandidateOutsideBotSymbolScope; Symbol={symbol}; Timeframe={klineInterval}");
+        }
+
+        return new MarketScannerStrategyBindingResolution(
             null,
             "NoEnabledBotForSymbol",
             $"StrategyScore=n/a; StrategyOutcome=NoEnabledBotForSymbol; Symbol={symbol}; Timeframe={klineInterval}");
+    }
+
+    private static bool BotAllowsSymbolScope(string? primarySymbol, string? allowedSymbolsCsv, string normalizedSymbol)
+    {
+        var configuredAllowedSymbols = ParseAllowedSymbolsCsv(allowedSymbolsCsv);
+        if (configuredAllowedSymbols.Length > 0)
+        {
+            return configuredAllowedSymbols.Contains(normalizedSymbol, StringComparer.Ordinal);
+        }
+
+        return string.Equals(
+            MarketDataSymbolNormalizer.Normalize(primarySymbol),
+            normalizedSymbol,
+            StringComparison.Ordinal);
+    }
+
+    private static bool HasConfiguredAllowedSymbols(string? allowedSymbolsCsv)
+    {
+        return ParseAllowedSymbolsCsv(allowedSymbolsCsv).Length > 0;
+    }
+
+    private static string[] ParseAllowedSymbolsCsv(string? allowedSymbolsCsv)
+    {
+        return (allowedSymbolsCsv ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(symbol => !string.IsNullOrWhiteSpace(symbol))
+            .Select(MarketDataSymbolNormalizer.Normalize)
+            .Where(symbol => !string.IsNullOrWhiteSpace(symbol))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(symbol => symbol, StringComparer.Ordinal)
+            .ToArray();
     }
 
     private static string ResolveStrategyOutcomeRejectionReason(

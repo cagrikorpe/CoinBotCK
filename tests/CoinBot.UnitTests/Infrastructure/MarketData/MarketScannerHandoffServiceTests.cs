@@ -263,6 +263,59 @@ public sealed class MarketScannerHandoffServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_BlocksCandidate_WhenSelectedSymbolFallsOutsideConfiguredBotScope()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        _ = await SeedBotGraphAsync(harness.DbContext, "user-scope-block", "BTCUSDT", "pilot-scope-block", allowedSymbolsCsv: "ETHUSDT");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "BTCUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "BTCUSDT", rank: 1, score: 10_000m);
+        await harness.DbContext.SaveChangesAsync();
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("CandidateOutsideBotSymbolScope", attempt.BlockerCode);
+        Assert.Contains("CandidateSymbol=BTCUSDT", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Null(harness.ExecutionGate.LastRequest);
+        Assert.Null(harness.UserExecutionOverrideGuard.LastRequest);
+        Assert.Null(harness.ExecutionEngine.LastCommand);
+        Assert.Empty(harness.DbContext.ExecutionOrders);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_PreparesCandidate_WhenSelectedSymbolMatchesConfiguredBotScope_AndPrimarySymbolDiffers()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        await using var harness = CreateHarness(
+            nowUtc,
+            new BotExecutionPilotOptions
+            {
+                SignalEvaluationMode = ExecutionEnvironment.Live,
+                ExecutionDispatchMode = ExecutionEnvironment.Live,
+                PilotActivationEnabled = true,
+                PrimeHistoricalCandleCount = 34
+            });
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-scope-allow", "BTCUSDT", "pilot-scope-allow", allowedSymbolsCsv: "ETHUSDT");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "ETHUSDT");
+        SeedCandidate(harness.DbContext, scanCycleId, "ETHUSDT", rank: 1, score: 10_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("ETHUSDT", "ETH", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("ETHUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "ETHUSDT", "1m", harness.NowUtc));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
+        Assert.Equal(bot.BotId, attempt.BotId);
+        Assert.Equal("ETHUSDT", attempt.SelectedSymbol);
+        Assert.Equal("ETHUSDT", harness.ExecutionGate.LastRequest?.Symbol);
+        Assert.Equal(bot.ExchangeAccountId, harness.ExecutionGate.LastRequest?.ExchangeAccountId);
+        Assert.Equal("ETHUSDT", harness.ExecutionEngine.LastCommand?.Symbol);
+    }
+
+    [Fact]
     public async Task RunOnceAsync_UsesProtectedMinNotionalSizingParity_ForEntryQuantity()
     {
         await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
@@ -2670,7 +2723,7 @@ public sealed class MarketScannerHandoffServiceTests
         return new TestHarness(dbContext, service, serviceProvider, marketDataService, indicatorDataService, strategySignalService, executionGate, userExecutionOverrideGuard, executionEngine, demoSessionService, nowUtc.UtcDateTime);
     }
 
-    private static async Task<BotGraph> SeedBotGraphAsync(ApplicationDbContext dbContext, string ownerUserId, string symbol, string strategyKey, string definitionJson = "{}")
+    private static async Task<BotGraph> SeedBotGraphAsync(ApplicationDbContext dbContext, string ownerUserId, string symbol, string strategyKey, string definitionJson = "{}", string? allowedSymbolsCsv = null)
     {
         var tradingStrategyId = Guid.NewGuid();
         var tradingStrategyVersionId = Guid.NewGuid();
@@ -2714,6 +2767,7 @@ public sealed class MarketScannerHandoffServiceTests
             Name = strategyKey,
             StrategyKey = strategyKey,
             Symbol = symbol,
+            AllowedSymbolsCsv = allowedSymbolsCsv,
             ExchangeAccountId = exchangeAccountId,
             IsEnabled = true
         });

@@ -195,6 +195,7 @@ public class BotsController(
             form.Name,
             form.StrategyKey,
             form.Symbol,
+            form.AllowedSymbols,
             form.Quantity,
             form.ExchangeAccountId,
             form.Leverage,
@@ -321,13 +322,17 @@ public class BotsController(
             Name = snapshot.Draft.Name,
             StrategyKey = snapshot.Draft.StrategyKey,
             Symbol = snapshot.Draft.Symbol,
+            AllowedSymbols = snapshot.Draft.AllowedSymbols.ToList(),
             Quantity = snapshot.Draft.Quantity,
             ExchangeAccountId = snapshot.Draft.ExchangeAccountId,
             Leverage = snapshot.Draft.Leverage ?? 1m,
             MarginType = snapshot.Draft.MarginType,
             DirectionMode = snapshot.Draft.DirectionMode,
-            IsEnabled = snapshot.Draft.IsEnabled
+            IsEnabled = snapshot.Draft.IsEnabled,
+            ScannerUniverseSymbols = snapshot.ScannerUniverseSymbols
         };
+
+        form.ScannerUniverseSymbols = snapshot.ScannerUniverseSymbols;
 
         return new BotManagementEditorViewModel(
             snapshot.BotId,
@@ -336,6 +341,7 @@ public class BotsController(
             snapshot.SymbolOptions
                 .Select(option => new BotManagementOptionViewModel(option, option))
                 .ToArray(),
+            snapshot.ScannerUniverseSymbols,
             snapshot.StrategyOptions
                 .Select(option => new BotManagementOptionViewModel(
                     option.StrategyKey,

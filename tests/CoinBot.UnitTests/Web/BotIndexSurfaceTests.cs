@@ -80,9 +80,22 @@ public sealed class BotIndexSurfaceTests
         Assert.Contains("Strateji hazır değil.", content, StringComparison.Ordinal);
         Assert.Contains("Strateji oluştur", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-bot-direction-mode-select", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-scanner-universe", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-scanner-universe-empty", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-scanner-universe-list", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-symbol-select", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-allowed-symbols", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-allowed-symbols-empty", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-allowed-symbols-list", content, StringComparison.Ordinal);
+        Assert.Contains("name=\"AllowedSymbols\"", content, StringComparison.Ordinal);
+        Assert.Contains("Scanner Universe", content, StringComparison.Ordinal);
+        Assert.Contains("Allowed Symbols", content, StringComparison.Ordinal);
+        Assert.Contains("Allowed symbol seçimi için scanner universe configured değil.", content, StringComparison.Ordinal);
+        Assert.Contains("Scanner universe configured değil.", content, StringComparison.Ordinal);
         Assert.Contains("LongOnly", content, StringComparison.Ordinal);
         Assert.Contains("ShortOnly", content, StringComparison.Ordinal);
         Assert.Contains("LongShort", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("multiple", content, StringComparison.OrdinalIgnoreCase);
 
         Assert.DoesNotContain("execution analytics", content, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("ReasonCode", content, StringComparison.Ordinal);

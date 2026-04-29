@@ -9,6 +9,7 @@ using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Execution;
 using CoinBot.Infrastructure.Jobs;
+using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Mfa;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -37,6 +38,7 @@ public sealed class BotManagementServiceTests
                 "Directional Bot",
                 "strategy-direction",
                 "BTCUSDT",
+                [],
                 0.01m,
                 exchangeAccount.Id,
                 1m,
@@ -63,6 +65,7 @@ public sealed class BotManagementServiceTests
                 "Pilot Create",
                 "pilot-create",
                 "ETHUSDT",
+                [],
                 0.001m,
                 exchangeAccountId,
                 1m,
@@ -111,6 +114,7 @@ public sealed class BotManagementServiceTests
                 "Pilot Update 2",
                 "pilot-update",
                 "BTCUSDT",
+                [],
                 0.002m,
                 exchangeAccountId,
                 1m,
@@ -339,6 +343,7 @@ public sealed class BotManagementServiceTests
                 "Pilot",
                 "pilot-owner",
                 "BTCUSDT",
+                [],
                 null,
                 exchangeAccountId,
                 1m,
@@ -704,6 +709,7 @@ public sealed class BotManagementServiceTests
                 "Pilot Mfa",
                 "pilot-mfa",
                 "BTCUSDT",
+                [],
                 0.001m,
                 exchangeAccountId,
                 1m,
@@ -764,6 +770,152 @@ public sealed class BotManagementServiceTests
     }
 
     [Fact]
+    public async Task GetCreateEditorAsync_MapsConfiguredScannerUniverseSymbols()
+    {
+        var ownerUserId = "normal-user-scanner-universe";
+        await using var context = CreateContext(currentUserId: ownerUserId, hasIsolationBypass: false);
+        _ = await SeedStrategyAndExchangeAccountAsync(context, ownerUserId, "own-strategy");
+        var service = CreateService(
+            context,
+            marketDataOptions: new BinanceMarketDataOptions
+            {
+                SeedSymbols = ["solusdt", "btcusdt", "ethusdt"]
+            },
+            historicalGapFillerOptions: new HistoricalGapFillerOptions
+            {
+                Symbols = ["ETHUSDT", "BNBUSDT", "XRPUSDT"]
+            });
+
+        var editor = await service.GetCreateEditorAsync(ownerUserId);
+
+        Assert.Equal(["BNBUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"], editor.ScannerUniverseSymbols);
+        Assert.Equal("BTCUSDT", editor.Draft.Symbol);
+    }
+
+    [Fact]
+    public async Task GetCreateEditorAsync_ReturnsEmptyScannerUniverse_WhenConfigIsMissing()
+    {
+        var ownerUserId = "normal-user-empty-universe";
+        await using var context = CreateContext(currentUserId: ownerUserId, hasIsolationBypass: false);
+        _ = await SeedStrategyAndExchangeAccountAsync(context, ownerUserId, "own-strategy");
+        var service = CreateService(
+            context,
+            marketDataOptions: new BinanceMarketDataOptions(),
+            historicalGapFillerOptions: new HistoricalGapFillerOptions());
+
+        var editor = await service.GetCreateEditorAsync(ownerUserId);
+
+        Assert.Empty(editor.ScannerUniverseSymbols);
+        Assert.Equal("BTCUSDT", editor.Draft.Symbol);
+    }
+
+    [Fact]
+    public async Task CreateAsync_PersistsNormalizedAllowedSymbolsCsv()
+    {
+        await using var context = CreateContext();
+        var ownerUserId = "user-bot-allowed-symbols";
+        var exchangeAccountId = await SeedStrategyAndExchangeAccountAsync(context, ownerUserId, "pilot-allowed-symbols");
+        var service = CreateService(
+            context,
+            marketDataOptions: new BinanceMarketDataOptions
+            {
+                SeedSymbols = ["solusdt", "ethusdt"]
+            });
+
+        var result = await service.CreateAsync(
+            ownerUserId,
+            new BotManagementSaveCommand(
+                "Scoped Bot",
+                "pilot-allowed-symbols",
+                "SOLUSDT",
+                [" ethusdt ", "SOLUSDT", "solusdt"],
+                0.001m,
+                exchangeAccountId,
+                1m,
+                "ISOLATED",
+                false),
+            $"user:{ownerUserId}");
+
+        var bot = await context.TradingBots.SingleAsync(entity => entity.OwnerUserId == ownerUserId);
+
+        Assert.True(result.IsSuccessful);
+        Assert.Equal("ETHUSDT,SOLUSDT", bot.AllowedSymbolsCsv);
+    }
+
+    [Fact]
+    public async Task CreateAsync_Fails_WhenAllowedSymbolsContainScannerUniverseOutsideValue()
+    {
+        await using var context = CreateContext();
+        var ownerUserId = "user-bot-allowed-symbols-invalid";
+        var exchangeAccountId = await SeedStrategyAndExchangeAccountAsync(context, ownerUserId, "pilot-allowed-symbols-invalid");
+        var service = CreateService(
+            context,
+            marketDataOptions: new BinanceMarketDataOptions
+            {
+                SeedSymbols = ["solusdt", "ethusdt"]
+            });
+
+        var result = await service.CreateAsync(
+            ownerUserId,
+            new BotManagementSaveCommand(
+                "Scoped Bot Invalid",
+                "pilot-allowed-symbols-invalid",
+                "SOLUSDT",
+                ["SOLUSDT", "ADAUSDT"],
+                0.001m,
+                exchangeAccountId,
+                1m,
+                "ISOLATED",
+                false),
+            $"user:{ownerUserId}");
+
+        Assert.False(result.IsSuccessful);
+        Assert.Equal("BotAllowedSymbolOutsideScannerUniverse", result.FailureCode);
+        Assert.DoesNotContain(context.TradingBots, entity => entity.OwnerUserId == ownerUserId);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_KeepsPrimarySymbolFallback_WhenAllowedSymbolsAreCleared()
+    {
+        await using var context = CreateContext();
+        var ownerUserId = "user-bot-allowed-symbols-clear";
+        var exchangeAccountId = await SeedStrategyAndExchangeAccountAsync(context, ownerUserId, "pilot-allowed-symbols-clear");
+        var bot = await SeedBotAsync(context, ownerUserId, exchangeAccountId, isEnabled: true);
+        bot.AllowedSymbolsCsv = "ETHUSDT,SOLUSDT";
+        await context.SaveChangesAsync();
+        var service = CreateService(
+            context,
+            marketDataOptions: new BinanceMarketDataOptions
+            {
+                SeedSymbols = ["btcusdt", "ethusdt", "solusdt"]
+            });
+
+        var result = await service.UpdateAsync(
+            ownerUserId,
+            bot.Id,
+            new BotManagementSaveCommand(
+                bot.Name,
+                bot.StrategyKey,
+                bot.Symbol!,
+                [],
+                bot.Quantity,
+                exchangeAccountId,
+                bot.Leverage,
+                bot.MarginType ?? "ISOLATED",
+                bot.IsEnabled,
+                bot.DirectionMode),
+            $"user:{ownerUserId}");
+
+        var updatedBot = await context.TradingBots.SingleAsync(entity => entity.Id == bot.Id);
+        var editor = await service.GetEditEditorAsync(ownerUserId, bot.Id);
+
+        Assert.True(result.IsSuccessful);
+        Assert.Null(updatedBot.AllowedSymbolsCsv);
+        Assert.NotNull(editor);
+        Assert.Equal(["BTCUSDT"], editor!.Draft.AllowedSymbols);
+    }
+
+    [Fact]
     public async Task CreateAsync_UsesOwnedStrategySelection_WithoutMaterialization()
     {
         var ownerUserId = "normal-user-own-strategy";
@@ -778,6 +930,7 @@ public sealed class BotManagementServiceTests
                 "Own Strategy Bot",
                 "own-create-strategy",
                 "BTCUSDT",
+                [],
                 0.001m,
                 exchangeAccountId,
                 1m,
@@ -816,6 +969,7 @@ public sealed class BotManagementServiceTests
                 "Shared Template Bot",
                 "shared-bind-template",
                 "BTCUSDT",
+                [],
                 0.001m,
                 exchangeAccountId,
                 1m,
@@ -859,6 +1013,7 @@ public sealed class BotManagementServiceTests
                 "Private Leak Bot",
                 "other-private-template",
                 "BTCUSDT",
+                [],
                 0.001m,
                 exchangeAccountId,
                 1m,
@@ -878,7 +1033,9 @@ public sealed class BotManagementServiceTests
         ApplicationDbContext context,
         TimeProvider? timeProvider = null,
         ICriticalUserOperationAuthorizer? criticalUserOperationAuthorizer = null,
-        IStrategyTemplateCatalogService? strategyTemplateCatalogService = null)
+        IStrategyTemplateCatalogService? strategyTemplateCatalogService = null,
+        BinanceMarketDataOptions? marketDataOptions = null,
+        HistoricalGapFillerOptions? historicalGapFillerOptions = null)
     {
         return new BotManagementService(
             context,
@@ -891,6 +1048,8 @@ public sealed class BotManagementServiceTests
             timeProvider ?? new FakeTimeProvider(),
             Options.Create(CreatePilotOptions()),
             Options.Create(new DataLatencyGuardOptions()),
+            Options.Create(marketDataOptions ?? new BinanceMarketDataOptions()),
+            Options.Create(historicalGapFillerOptions ?? new HistoricalGapFillerOptions()),
             strategyTemplateCatalogService: strategyTemplateCatalogService ?? new StrategyTemplateCatalogService(
                 new StrategyRuleParser(),
                 new StrategyDefinitionValidator(),
@@ -1218,5 +1377,3 @@ public sealed class BotManagementServiceTests
         }
     }
 }
-
-

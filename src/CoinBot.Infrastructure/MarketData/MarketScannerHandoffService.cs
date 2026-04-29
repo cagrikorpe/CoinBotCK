@@ -1456,9 +1456,9 @@ public sealed class MarketScannerHandoffService(
                 .AsNoTracking()
                 .IgnoreQueryFilters()
                 .Where(entity => entity.IsEnabled && !entity.IsDeleted && entity.Symbol != null)
-                .Select(entity => new { entity.OwnerUserId, entity.Symbol })
+                .Select(entity => new { entity.OwnerUserId, entity.Symbol, entity.AllowedSymbolsCsv })
                 .ToListAsync(cancellationToken))
-            .Where(entity => candidateSymbols.Contains(MarketDataSymbolNormalizer.Normalize(entity.Symbol!)))
+            .Where(entity => candidateSymbols.Any(symbol => BotAllowsSymbolScope(entity.Symbol, entity.AllowedSymbolsCsv, symbol)))
             .Select(entity => entity.OwnerUserId)
             .Where(ownerUserId => !string.IsNullOrWhiteSpace(ownerUserId))
             .Distinct(StringComparer.Ordinal)
@@ -1564,9 +1564,15 @@ public sealed class MarketScannerHandoffService(
                 "NoOpenPosition",
                 false,
                 "NoOpenPosition");
+            var noMatchBlockerCode = await HasConfiguredBotScopeMissAsync(normalizedSymbol, cancellationToken)
+                ? "CandidateOutsideBotSymbolScope"
+                : "NoMatchingEnabledBot";
+            var noMatchBlockerDetail = string.Equals(noMatchBlockerCode, "CandidateOutsideBotSymbolScope", StringComparison.Ordinal)
+                ? $"No enabled bot allowed {normalizedSymbol} inside its configured symbol scope."
+                : $"No enabled bot with a published strategy was available for {normalizedSymbol}.";
             return BotMatchResolution.Blocked(
-                "NoMatchingEnabledBot",
-                $"No enabled bot with a published strategy was available for {normalizedSymbol}.",
+                noMatchBlockerCode,
+                noMatchBlockerDetail,
                 $"CandidateSymbol={normalizedSymbol}",
                 skippedSummary);
         }
@@ -1597,6 +1603,7 @@ public sealed class MarketScannerHandoffService(
                 entity.OwnerUserId,
                 entity.StrategyKey,
                 entity.Symbol!,
+                entity.AllowedSymbolsCsv,
                 entity.ExchangeAccountId,
                 entity.DirectionMode,
                 entity.Leverage,
@@ -1606,7 +1613,7 @@ public sealed class MarketScannerHandoffService(
 
         foreach (var bot in candidateBots)
         {
-            if (!string.Equals(MarketDataSymbolNormalizer.Normalize(bot.Symbol!), normalizedSymbol, StringComparison.Ordinal))
+            if (!BotAllowsSymbolScope(bot.Symbol, bot.AllowedSymbolsCsv, normalizedSymbol))
             {
                 continue;
             }
@@ -1621,6 +1628,74 @@ public sealed class MarketScannerHandoffService(
         }
 
         return matches.ToArray();
+    }
+
+    private async Task<bool> HasConfiguredBotScopeMissAsync(string normalizedSymbol, CancellationToken cancellationToken)
+    {
+        var candidateBots = await dbContext.TradingBots
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(entity => entity.IsEnabled && !entity.IsDeleted && entity.Symbol != null)
+            .Select(entity => new
+            {
+                entity.Symbol,
+                entity.AllowedSymbolsCsv
+            })
+            .ToListAsync(cancellationToken);
+
+        var hasPrimarySymbolMatch = false;
+        var hasConfiguredScopedBot = false;
+
+        foreach (var bot in candidateBots)
+        {
+            if (HasConfiguredAllowedSymbols(bot.AllowedSymbolsCsv))
+            {
+                hasConfiguredScopedBot = true;
+            }
+
+            if (string.Equals(MarketDataSymbolNormalizer.Normalize(bot.Symbol!), normalizedSymbol, StringComparison.Ordinal))
+            {
+                hasPrimarySymbolMatch = true;
+            }
+
+            if (BotAllowsSymbolScope(bot.Symbol, bot.AllowedSymbolsCsv, normalizedSymbol))
+            {
+                return false;
+            }
+        }
+
+        return hasPrimarySymbolMatch || hasConfiguredScopedBot;
+    }
+
+    private static bool BotAllowsSymbolScope(string? primarySymbol, string? allowedSymbolsCsv, string normalizedSymbol)
+    {
+        var configuredAllowedSymbols = ParseAllowedSymbolsCsv(allowedSymbolsCsv);
+        if (configuredAllowedSymbols.Length > 0)
+        {
+            return configuredAllowedSymbols.Contains(normalizedSymbol, StringComparer.Ordinal);
+        }
+
+        return string.Equals(
+            MarketDataSymbolNormalizer.Normalize(primarySymbol),
+            normalizedSymbol,
+            StringComparison.Ordinal);
+    }
+
+    private static bool HasConfiguredAllowedSymbols(string? allowedSymbolsCsv)
+    {
+        return ParseAllowedSymbolsCsv(allowedSymbolsCsv).Length > 0;
+    }
+
+    private static string[] ParseAllowedSymbolsCsv(string? allowedSymbolsCsv)
+    {
+        return (allowedSymbolsCsv ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(symbol => !string.IsNullOrWhiteSpace(symbol))
+            .Select(MarketDataSymbolNormalizer.Normalize)
+            .Where(symbol => !string.IsNullOrWhiteSpace(symbol))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(symbol => symbol, StringComparer.Ordinal)
+            .ToArray();
     }
 
     private async Task<BotStrategyMatch?> TryResolveBotStrategyMatchAsync(
@@ -3424,6 +3499,7 @@ public sealed class MarketScannerHandoffService(
         string OwnerUserId,
         string StrategyKey,
         string Symbol,
+        string? AllowedSymbolsCsv,
         Guid? ExchangeAccountId,
         TradingBotDirectionMode DirectionMode,
         decimal? Leverage,

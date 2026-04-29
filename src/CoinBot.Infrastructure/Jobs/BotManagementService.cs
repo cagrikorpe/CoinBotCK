@@ -7,6 +7,7 @@ using CoinBot.Domain.Entities;
 using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Dashboard;
 using CoinBot.Infrastructure.Execution;
+using CoinBot.Infrastructure.MarketData;
 using CoinBot.Infrastructure.Mfa;
 using CoinBot.Infrastructure.Persistence;
 using CoinBot.Infrastructure.Strategies;
@@ -22,6 +23,8 @@ public sealed class BotManagementService(
     TimeProvider timeProvider,
     IOptions<BotExecutionPilotOptions> options,
     IOptions<DataLatencyGuardOptions> dataLatencyGuardOptions,
+    IOptions<BinanceMarketDataOptions> marketDataOptions,
+    IOptions<HistoricalGapFillerOptions> historicalGapFillerOptions,
     UserOperationsStreamHub? userOperationsStreamHub = null,
     IStrategyTemplateCatalogService? strategyTemplateCatalogService = null) : IBotManagementService
 {
@@ -29,6 +32,8 @@ public sealed class BotManagementService(
     private const int LastExecutionBlockDetailMaxLength = 240;
     private readonly BotExecutionPilotOptions optionsValue = options.Value;
     private readonly int staleThresholdMilliseconds = checked(dataLatencyGuardOptions.Value.StaleDataThresholdSeconds * 1000);
+    private readonly BinanceMarketDataOptions marketDataOptionsValue = marketDataOptions.Value;
+    private readonly HistoricalGapFillerOptions historicalGapFillerOptionsValue = historicalGapFillerOptions.Value;
 
     public async Task<BotManagementPageSnapshot> GetPageAsync(string ownerUserId, CancellationToken cancellationToken = default)
     {
@@ -427,6 +432,7 @@ public sealed class BotManagementService(
             Name: string.Empty,
             StrategyKey: string.Empty,
             Symbol: NormalizeSymbol(optionsValue.DefaultSymbol),
+            AllowedSymbols: [],
             Quantity: null,
             ExchangeAccountId: await ResolveSingleActiveExchangeAccountIdAsync(ownerUserId, cancellationToken),
             Leverage: 1m,
@@ -459,6 +465,7 @@ public sealed class BotManagementService(
             bot.Name,
             bot.StrategyKey,
             NormalizeSymbol(bot.Symbol),
+            ResolveDraftAllowedSymbols(bot.AllowedSymbolsCsv, bot.Symbol),
             bot.Quantity,
             bot.ExchangeAccountId,
             bot.Leverage ?? 1m,
@@ -512,6 +519,8 @@ public sealed class BotManagementService(
             return new BotManagementSaveResult(null, false, false, false, "StrategyNotFound", "Seçilen strateji bulunamadı.");
         }
 
+        var normalizedAllowedSymbols = ResolveAllowedSymbolsForPersistence(command.AllowedSymbols);
+
         var bot = new TradingBot
         {
             Id = Guid.NewGuid(),
@@ -519,6 +528,7 @@ public sealed class BotManagementService(
             Name = NormalizeRequired(command.Name, nameof(command.Name)),
             StrategyKey = resolvedStrategyKey,
             Symbol = NormalizeSymbol(command.Symbol),
+            AllowedSymbolsCsv = BuildAllowedSymbolsCsv(normalizedAllowedSymbols),
             Quantity = NormalizeQuantity(command.Quantity),
             ExchangeAccountId = command.ExchangeAccountId,
             Leverage = NormalizeLeverage(command.Leverage),
@@ -599,10 +609,13 @@ public sealed class BotManagementService(
             return new BotManagementSaveResult(botId, false, false, bot.IsEnabled, "StrategyNotFound", "Seçilen strateji bulunamadı.");
         }
 
+        var normalizedAllowedSymbols = ResolveAllowedSymbolsForPersistence(command.AllowedSymbols);
+
         var wasEnabled = bot.IsEnabled;
         bot.Name = NormalizeRequired(command.Name, nameof(command.Name));
         bot.StrategyKey = resolvedStrategyKey;
         bot.Symbol = NormalizeSymbol(command.Symbol);
+        bot.AllowedSymbolsCsv = BuildAllowedSymbolsCsv(normalizedAllowedSymbols);
         bot.Quantity = NormalizeQuantity(command.Quantity);
         bot.ExchangeAccountId = command.ExchangeAccountId;
         bot.Leverage = NormalizeLeverage(command.Leverage);
@@ -716,6 +729,18 @@ public sealed class BotManagementService(
             return new BotManagementSaveResult(currentBotId, false, false, false, "PilotSymbolNotAllowed", "Pilot bot yalnizca izinli futures sembolleri ile kaydedilebilir.");
         }
 
+        var invalidAllowedSymbols = ResolveInvalidAllowedSymbols(command.AllowedSymbols);
+        if (invalidAllowedSymbols.Length > 0)
+        {
+            return new BotManagementSaveResult(
+                currentBotId,
+                false,
+                false,
+                false,
+                "BotAllowedSymbolOutsideScannerUniverse",
+                $"Allowed symbol seçimi scanner universe dışında: {string.Join(", ", invalidAllowedSymbols)}");
+        }
+
         if (command.Quantity is decimal quantity && quantity <= 0m)
         {
             return new BotManagementSaveResult(currentBotId, false, false, false, "QuantityMustBePositive", "Quantity pozitif olmalıdır.");
@@ -799,7 +824,13 @@ public sealed class BotManagementService(
                 !entity.IsReadOnly))
             .ToArray();
 
-        return new BotManagementEditorSnapshot(botId, draft, ResolveSymbolOptions(draft.Symbol), strategyOptions, exchangeAccountOptions);
+        return new BotManagementEditorSnapshot(
+            botId,
+            draft,
+            ResolveSymbolOptions(draft.Symbol),
+            ResolveScannerUniverseSymbols(),
+            strategyOptions,
+            exchangeAccountOptions);
     }
 
     private async Task<bool> StrategySelectionExistsAsync(
@@ -1254,6 +1285,75 @@ public sealed class BotManagementService(
         return ResolveSymbolOptions(symbol).Contains(symbol, StringComparer.Ordinal);
     }
 
+    private IReadOnlyCollection<string> ResolveDraftAllowedSymbols(string? allowedSymbolsCsv, string? primarySymbol)
+    {
+        var configuredAllowedSymbols = ParseAllowedSymbolsCsv(allowedSymbolsCsv);
+        if (configuredAllowedSymbols.Length > 0)
+        {
+            return configuredAllowedSymbols
+                .Where(symbol => ResolveScannerUniverseSymbols().Contains(symbol, StringComparer.Ordinal))
+                .ToArray();
+        }
+
+        var normalizedPrimarySymbol = NormalizeSymbol(primarySymbol);
+        return ResolveScannerUniverseSymbols().Contains(normalizedPrimarySymbol, StringComparer.Ordinal)
+            ? [normalizedPrimarySymbol]
+            : [];
+    }
+
+    private string[] ResolveAllowedSymbolsForPersistence(IReadOnlyCollection<string>? allowedSymbols)
+    {
+        var scannerUniverse = ResolveScannerUniverseSymbols();
+        if (scannerUniverse.Length == 0)
+        {
+            return [];
+        }
+
+        var scannerUniverseSet = new HashSet<string>(scannerUniverse, StringComparer.Ordinal);
+        return (allowedSymbols ?? [])
+            .Where(symbol => !string.IsNullOrWhiteSpace(symbol))
+            .Select(symbol => symbol.Trim().ToUpperInvariant())
+            .Where(scannerUniverseSet.Contains)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(symbol => symbol, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private string[] ResolveInvalidAllowedSymbols(IReadOnlyCollection<string>? allowedSymbols)
+    {
+        if (allowedSymbols is null || allowedSymbols.Count == 0)
+        {
+            return [];
+        }
+
+        var scannerUniverseSet = new HashSet<string>(ResolveScannerUniverseSymbols(), StringComparer.Ordinal);
+        return allowedSymbols
+            .Where(symbol => !string.IsNullOrWhiteSpace(symbol))
+            .Select(symbol => symbol.Trim().ToUpperInvariant())
+            .Where(symbol => !scannerUniverseSet.Contains(symbol))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(symbol => symbol, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static string[] ParseAllowedSymbolsCsv(string? allowedSymbolsCsv)
+    {
+        return (allowedSymbolsCsv ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(symbol => !string.IsNullOrWhiteSpace(symbol))
+            .Select(symbol => symbol.Trim().ToUpperInvariant())
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(symbol => symbol, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static string? BuildAllowedSymbolsCsv(IReadOnlyCollection<string> allowedSymbols)
+    {
+        return allowedSymbols.Count == 0
+            ? null
+            : string.Join(",", allowedSymbols);
+    }
+
     private static (string Label, string Tone, string Summary) ResolveRuntimeDirection(ExecutionOrder? order)
     {
         if (order is null)
@@ -1649,9 +1749,18 @@ public sealed class BotManagementService(
             .OrderBy(item => item, StringComparer.Ordinal)
             .ToArray();
     }
+
+    private string[] ResolveScannerUniverseSymbols()
+    {
+        return (marketDataOptionsValue.SeedSymbols ?? [])
+            .Concat(historicalGapFillerOptionsValue.Symbols ?? [])
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Select(item => item.Trim().ToUpperInvariant())
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(item => item, StringComparer.Ordinal)
+            .ToArray();
+    }
 }
-
-
 
 
 

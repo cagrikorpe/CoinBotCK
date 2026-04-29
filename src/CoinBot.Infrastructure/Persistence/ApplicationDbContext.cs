@@ -2048,6 +2048,9 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         builder.Property(entity => entity.Symbol)
             .HasMaxLength(32);
 
+        builder.Property(entity => entity.AllowedSymbolsCsv)
+            .HasMaxLength(512);
+
         builder.Property(entity => entity.Quantity)
             .HasPrecision(38, 18);
 

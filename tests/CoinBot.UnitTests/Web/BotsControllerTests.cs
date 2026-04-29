@@ -468,6 +468,7 @@ public sealed class BotsControllerTests
         Assert.Equal("Editor", viewResult.ViewName);
         Assert.Equal(TradingBotDirectionMode.LongOnly, model.Form.DirectionMode);
         Assert.False(model.IsEditMode);
+        Assert.Equal(["BTCUSDT", "ETHUSDT", "SOLUSDT"], model.ScannerUniverseSymbols);
     }
 
     [Fact]
@@ -485,6 +486,7 @@ public sealed class BotsControllerTests
         Assert.Equal("Editor", viewResult.ViewName);
         Assert.True(model.IsEditMode);
         Assert.Equal(botId, model.BotId);
+        Assert.Equal(["BTCUSDT", "ETHUSDT", "SOLUSDT"], model.ScannerUniverseSymbols);
     }
 
     [Fact]
@@ -523,6 +525,26 @@ public sealed class BotsControllerTests
         Assert.Equal("Editor", viewResult.ViewName);
         Assert.False(model.IsEditMode);
         Assert.Empty(managementService.CreateRequests);
+        Assert.Equal(["BTCUSDT", "ETHUSDT", "SOLUSDT"], model.ScannerUniverseSymbols);
+    }
+
+    [Fact]
+    public async Task Edit_Get_ReturnsSafeEmptyScannerUniverse_WhenSnapshotIsEmpty()
+    {
+        var managementService = CreateManagementService();
+        managementService.EditSnapshot = managementService.EditSnapshot! with
+        {
+            ScannerUniverseSymbols = []
+        };
+        var controller = CreateController(managementService, new FakeBotPilotControlService(), new FakeUserSettingsService(), "user-bot-03", "trace-bot-003");
+
+        var result = await controller.Edit(managementService.EditBotId, CancellationToken.None);
+
+        var viewResult = Assert.IsType<ViewResult>(result);
+        var model = Assert.IsType<BotManagementEditorViewModel>(viewResult.Model);
+
+        Assert.Empty(model.ScannerUniverseSymbols);
+        Assert.Equal("BTCUSDT", model.Form.Symbol);
     }
 
     [Fact]
@@ -541,6 +563,8 @@ public sealed class BotsControllerTests
         Assert.Equal(nameof(BotsController.Index), redirectResult.ActionName);
         Assert.Equal(managementService.EditBotId, request.BotId);
         Assert.Equal(TradingBotDirectionMode.LongShort, request.Command.DirectionMode);
+        Assert.Equal("BTCUSDT", request.Command.Symbol);
+        Assert.Equal(["BTCUSDT", "ETHUSDT"], request.Command.AllowedSymbols);
         Assert.Equal("Pilot bot guncellendi.", controller.TempData["BotControlSuccess"]);
     }
 
@@ -618,8 +642,9 @@ public sealed class BotsControllerTests
         var editBotId = Guid.NewGuid();
         var editorSnapshot = new BotManagementEditorSnapshot(
             editBotId,
-            new BotManagementDraftSnapshot("Pilot A", "strategy-a", "BTCUSDT", null, null, 1m, "ISOLATED", false, TradingBotDirectionMode.LongOnly),
+            new BotManagementDraftSnapshot("Pilot A", "strategy-a", "BTCUSDT", ["BTCUSDT"], null, null, 1m, "ISOLATED", false, TradingBotDirectionMode.LongOnly),
             ["BTCUSDT", "ETHUSDT"],
+            ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
             [new BotStrategyOptionSnapshot("strategy-a", "Strategy A", true)],
             [new BotExchangeAccountOptionSnapshot(Guid.NewGuid(), "Pilot Futures", true, true)]);
 
@@ -638,6 +663,7 @@ public sealed class BotsControllerTests
             Name = "Pilot A",
             StrategyKey = "strategy-a",
             Symbol = "BTCUSDT",
+            AllowedSymbols = ["BTCUSDT", "ETHUSDT"],
             Quantity = 0.001m,
             Leverage = 1m,
             MarginType = "ISOLATED",
@@ -674,7 +700,8 @@ public sealed class BotsControllerTests
 
         public BotManagementEditorSnapshot CreateSnapshot { get; set; } = new(
             null,
-            new BotManagementDraftSnapshot(string.Empty, string.Empty, "BTCUSDT", null, null, 1m, "ISOLATED", false, TradingBotDirectionMode.LongOnly),
+            new BotManagementDraftSnapshot(string.Empty, string.Empty, "BTCUSDT", ["BTCUSDT"], null, null, 1m, "ISOLATED", false, TradingBotDirectionMode.LongOnly),
+            ["BTCUSDT"],
             ["BTCUSDT"],
             [],
             []);
