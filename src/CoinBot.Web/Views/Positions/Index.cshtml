@@ -27,6 +27,16 @@
                         <button type="button" class="btn btn-light-primary font-weight-bold" data-cb-positions-refresh>Yenile</button>
                     </div>
                 </div>
+
+                @if (TempData["PositionsManualCloseSuccess"] is string manualCloseSuccess && !string.IsNullOrWhiteSpace(manualCloseSuccess))
+                {
+                    <div class="cb-validation-summary cb-validation-summary-success mt-6" role="alert" data-cb-user-manual-close-success>@manualCloseSuccess</div>
+                }
+
+                @if (TempData["PositionsManualCloseError"] is string manualCloseError && !string.IsNullOrWhiteSpace(manualCloseError))
+                {
+                    <div class="cb-validation-summary cb-validation-summary-danger mt-6" role="alert" data-cb-user-manual-close-error>@manualCloseError</div>
+                }
             </div>
         </div>
     </div>

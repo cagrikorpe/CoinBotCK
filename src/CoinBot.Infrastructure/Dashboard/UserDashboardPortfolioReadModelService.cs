@@ -16,6 +16,12 @@ public sealed class UserDashboardPortfolioReadModelService(
     private const int TradeHistoryRowLimit = 50;
     private const decimal PnlConsistencyTolerance = 0.0001m;
     private const decimal PrecisionEpsilon = 0.000000000000000001m;
+    private const string TestnetEnvironmentLabel = "Testnet";
+    private const string DemoEnvironmentLabel = "Demo";
+    private const string LiveEnvironmentLabel = "Live";
+    private const string UnknownEnvironmentLabel = "n/a";
+    private const string ManualCloseUnavailableMissingBot = "Pozisyon icin tekil bot eslesmesi bulunamadi.";
+    private const string ManualCloseUnavailableEnvironment = "Close action yalnizca Testnet futures pozisyonlari icin hazir.";
 
     public async Task<UserDashboardPortfolioSnapshot> GetSnapshotAsync(
         string userId,
@@ -71,8 +77,86 @@ public sealed class UserDashboardPortfolioReadModelService(
             .OrderByDescending(entity => Math.Abs(entity.UnrealizedProfit))
             .ThenBy(entity => entity.Symbol)
             .ToListAsync(cancellationToken);
+        var futuresScopeKeys = livePositions
+            .Where(entity => entity.Plane == ExchangeDataPlane.Futures)
+            .Select(entity => CreatePositionScopeKey(entity.ExchangeAccountId, entity.Symbol))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var scopeSymbols = livePositions
+            .Where(entity => entity.Plane == ExchangeDataPlane.Futures)
+            .Select(entity => entity.Symbol.Trim().ToUpperInvariant())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var scopeAccountIds = livePositions
+            .Where(entity => entity.Plane == ExchangeDataPlane.Futures)
+            .Select(entity => entity.ExchangeAccountId)
+            .Distinct()
+            .ToArray();
+        var matchingBots = futuresScopeKeys.Length == 0
+            ? []
+            : await dbContext.TradingBots
+                .AsNoTracking()
+                .Where(entity =>
+                    entity.OwnerUserId == normalizedUserId &&
+                    entity.ExchangeAccountId.HasValue &&
+                    !string.IsNullOrWhiteSpace(entity.Symbol) &&
+                    scopeAccountIds.Contains(entity.ExchangeAccountId.Value) &&
+                    scopeSymbols.Contains(entity.Symbol) &&
+                    !entity.IsDeleted)
+                .Select(entity => new
+                {
+                    entity.Id,
+                    entity.ExchangeAccountId,
+                    entity.Symbol
+                })
+                .ToListAsync(cancellationToken);
+        var botIdsByScope = matchingBots
+            .GroupBy(
+                entity => CreatePositionScopeKey(entity.ExchangeAccountId!.Value, entity.Symbol),
+                StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Select(entity => entity.Id).Distinct().ToArray(),
+                StringComparer.Ordinal);
+        var latestExecutionEvidence = futuresScopeKeys.Length == 0
+            ? []
+            : await dbContext.ExecutionOrders
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.OwnerUserId == normalizedUserId &&
+                    entity.ExchangeAccountId.HasValue &&
+                    scopeAccountIds.Contains(entity.ExchangeAccountId.Value) &&
+                    scopeSymbols.Contains(entity.Symbol) &&
+                    entity.Plane == ExchangeDataPlane.Futures &&
+                    entity.SubmittedToBroker &&
+                    !entity.IsDeleted)
+                .OrderByDescending(entity => entity.LastStateChangedAtUtc)
+                .ThenByDescending(entity => entity.CreatedDate)
+                .Select(entity => new
+                {
+                    entity.ExchangeAccountId,
+                    entity.Symbol,
+                    entity.ExecutionEnvironment,
+                    entity.ExecutorKind
+                })
+                .ToListAsync(cancellationToken);
+        var environmentByScope = latestExecutionEvidence
+            .GroupBy(
+                entity => CreatePositionScopeKey(entity.ExchangeAccountId!.Value, entity.Symbol),
+                StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => ResolveEnvironmentBadge(group.First().ExecutionEnvironment, group.First().ExecutorKind),
+                StringComparer.Ordinal);
         var positions = livePositions
-            .Select(MapLivePositionSnapshot)
+            .Select(entity =>
+            {
+                var scopeKey = CreatePositionScopeKey(entity.ExchangeAccountId, entity.Symbol);
+                botIdsByScope.TryGetValue(scopeKey, out var scopedBotIds);
+                environmentByScope.TryGetValue(scopeKey, out var environmentBadge);
+                return MapLivePositionSnapshot(entity, scopedBotIds, environmentBadge);
+            })
             .ToList();
 
         var syncStates = activeAccounts.Count == 0
@@ -117,7 +201,14 @@ public sealed class UserDashboardPortfolioReadModelService(
                 demoPosition.CostBasis,
                 demoPosition.LastMarkPrice ?? demoPosition.LastPrice,
                 null,
-                null));
+                null,
+                null,
+                DemoEnvironmentLabel,
+                "neutral",
+                false,
+                false,
+                null,
+                "Close action yalnizca broker-backed Testnet futures pozisyonlari icin kullanilabilir."));
         }
 
         var spotFillRows = activeAccounts.Count == 0
@@ -152,7 +243,14 @@ public sealed class UserDashboardPortfolioReadModelService(
                 holding.CostBasis,
                 holding.MarkPrice,
                 holding.AvailableQuantity,
-                holding.LockedQuantity));
+                holding.LockedQuantity,
+                holding.ExchangeAccountId,
+                holding.Plane == ExchangeDataPlane.Spot ? DemoEnvironmentLabel : UnknownEnvironmentLabel,
+                "neutral",
+                false,
+                false,
+                null,
+                "Close action yalnizca broker-backed Testnet futures pozisyonlari icin kullanilabilir."));
         }
 
         var tradeHistory = await BuildTradeHistoryAsync(normalizedUserId, livePositions, demoPositions, spotHoldings, cancellationToken);
@@ -849,9 +947,24 @@ public sealed class UserDashboardPortfolioReadModelService(
         return NormalizeDecimal(spotLedgerRows.Sum(entity => entity.QuoteQuantity) / filledQuantity);
     }
 
-    private static UserDashboardPositionSnapshot MapLivePositionSnapshot(ExchangePosition entity)
+    private static UserDashboardPositionSnapshot MapLivePositionSnapshot(
+        ExchangePosition entity,
+        Guid[]? scopedBotIds,
+        (string Label, string Tone)? environmentBadge)
     {
         var normalizedQuantity = NormalizeDecimal(entity.Quantity);
+        var uniqueBotId = scopedBotIds is { Length: 1 }
+            ? scopedBotIds[0]
+            : (Guid?)null;
+        var environment = environmentBadge ?? (UnknownEnvironmentLabel, "neutral");
+        var canManualClose = entity.Plane == ExchangeDataPlane.Futures &&
+                             uniqueBotId.HasValue &&
+                             string.Equals(environment.Label, TestnetEnvironmentLabel, StringComparison.Ordinal);
+        var manualCloseUnavailableReason = canManualClose
+            ? null
+            : !uniqueBotId.HasValue
+                ? ManualCloseUnavailableMissingBot
+                : ManualCloseUnavailableEnvironment;
 
         return new UserDashboardPositionSnapshot(
             entity.Symbol,
@@ -869,7 +982,37 @@ public sealed class UserDashboardPortfolioReadModelService(
             ResolvePositionCostBasis(normalizedQuantity, entity.EntryPrice),
             ResolveLivePositionMarkPrice(normalizedQuantity, entity.EntryPrice, entity.UnrealizedProfit),
             null,
-            null);
+            null,
+            entity.ExchangeAccountId,
+            environment.Label,
+            environment.Tone,
+            true,
+            canManualClose,
+            uniqueBotId,
+            manualCloseUnavailableReason);
+    }
+
+    private static string CreatePositionScopeKey(Guid exchangeAccountId, string symbol)
+    {
+        return $"{exchangeAccountId:N}:{symbol.Trim().ToUpperInvariant()}";
+    }
+
+    private static (string Label, string Tone) ResolveEnvironmentBadge(
+        ExecutionEnvironment executionEnvironment,
+        ExecutionOrderExecutorKind executorKind)
+    {
+        if (executionEnvironment == ExecutionEnvironment.BinanceTestnet ||
+            executorKind == ExecutionOrderExecutorKind.BinanceTestnet)
+        {
+            return (TestnetEnvironmentLabel, "info");
+        }
+
+        return executionEnvironment switch
+        {
+            ExecutionEnvironment.Demo => (DemoEnvironmentLabel, "neutral"),
+            ExecutionEnvironment.Live => (LiveEnvironmentLabel, "danger"),
+            _ => (UnknownEnvironmentLabel, "neutral")
+        };
     }
 
     private static ExchangePosition? ResolveMatchingLivePosition(
@@ -1180,9 +1323,6 @@ public sealed class UserDashboardPortfolioReadModelService(
         return normalized.Length <= maxLength ? normalized : normalized[..maxLength];
     }
 }
-
-
-
 
 
 

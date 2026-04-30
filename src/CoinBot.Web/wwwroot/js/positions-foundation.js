@@ -25,6 +25,7 @@
     document.addEventListener('click', function (event) {
         const tabTrigger = event.target.closest('[data-cb-positions-tab-trigger]');
         const refreshTrigger = event.target.closest('[data-cb-positions-refresh]');
+        const manualCloseTrigger = event.target.closest('[data-cb-user-manual-close-button]');
 
         if (tabTrigger) {
             event.preventDefault();
@@ -35,6 +36,41 @@
             event.preventDefault();
             setButtonLoading(refreshTrigger, true);
             window.location.reload();
+        }
+
+        if (manualCloseTrigger) {
+            const panel = manualCloseTrigger.closest('[data-cb-user-manual-close-panel]');
+            const form = panel ? panel.querySelector('[data-cb-user-manual-close-form]') : null;
+            const checkbox = panel ? panel.querySelector('[data-cb-user-manual-close-checkbox]') : null;
+
+            if (!panel || !form || !checkbox) {
+                return;
+            }
+
+            event.preventDefault();
+            event.stopPropagation();
+
+            if (!checkbox.checked) {
+                checkbox.focus();
+                return;
+            }
+
+            const symbol = form.querySelector('input[name="symbol"]')?.value?.trim();
+            const message = symbol
+                ? symbol + ' reduce-only close emri gonderilsin mi?'
+                : 'Reduce-only close emri gonderilsin mi?';
+
+            if (!window.confirm(message)) {
+                return;
+            }
+
+            setButtonLoading(manualCloseTrigger, true);
+            if (typeof form.requestSubmit === 'function') {
+                form.requestSubmit(manualCloseTrigger);
+                return;
+            }
+
+            form.submit();
         }
     });
 

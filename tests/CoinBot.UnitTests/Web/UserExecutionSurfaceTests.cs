@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text.RegularExpressions;
 
 namespace CoinBot.UnitTests.Web;
 
@@ -39,6 +40,14 @@ public sealed class UserExecutionSurfaceTests
         Assert.Contains("data-cb-closed-position-row", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-positions-total-pnl", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-positions-pnl-consistency", content, StringComparison.Ordinal);
+        Assert.Contains("Futures pozisyonlari", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-user-manual-close-form", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-user-manual-close-button", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-user-manual-close-checkbox", content, StringComparison.Ordinal);
+        Assert.Contains("Reduce-only close emrini onayliyorum.", content, StringComparison.Ordinal);
+        Assert.Contains("Bu buton borsaya reduce-only close emri gonderir.", content, StringComparison.Ordinal);
+        Assert.Contains("asp-action=\"ManualClose\"", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("multiple", content, StringComparison.OrdinalIgnoreCase);
 
         Assert.DoesNotContain("correlation", content, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("ClientOrderId", content, StringComparison.OrdinalIgnoreCase);
@@ -46,6 +55,30 @@ public sealed class UserExecutionSurfaceTests
         Assert.DoesNotContain("Execution Detail", content, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("lifecycle", content, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("AI score", content, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PositionsFoundationScript_WiresUserManualCloseDoubleConfirm()
+    {
+        var root = ResolveRepositoryRoot();
+        var script = File.ReadAllText(Path.Combine(root, "src", "CoinBot.Web", "wwwroot", "js", "positions-foundation.js"));
+
+        Assert.Contains("data-cb-user-manual-close-button", script, StringComparison.Ordinal);
+        Assert.Contains("data-cb-user-manual-close-form", script, StringComparison.Ordinal);
+        Assert.Contains("data-cb-user-manual-close-checkbox", script, StringComparison.Ordinal);
+        Assert.Contains("window.confirm", script, StringComparison.Ordinal);
+        Assert.Contains("reduce-only close emri gonderilsin mi?", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UserLayout_RendersExactlyOnePositionsNavigationLink()
+    {
+        var root = ResolveRepositoryRoot();
+        var layout = File.ReadAllText(Path.Combine(root, "src", "CoinBot.Web", "Views", "Shared", "_Layout.cshtml"));
+        var positionsNavCount = Regex.Matches(layout, "asp-controller=\"Positions\"").Count;
+
+        Assert.Equal(1, positionsNavCount);
+        Assert.Contains("asp-action=\"Index\"", layout, StringComparison.Ordinal);
     }
 
     private static string ResolveRepositoryRoot()

@@ -12,6 +12,199 @@ namespace CoinBot.UnitTests.Infrastructure.Dashboard;
 public sealed class UserDashboardPortfolioReadModelServiceTests
 {
     [Fact]
+    public async Task GetSnapshotAsync_MapsManualCloseMetadata_ForUniqueTestnetFuturesPosition()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        await using var context = CreateContext(databaseRoot);
+        var exchangeAccountId = Guid.NewGuid();
+        var botId = Guid.NewGuid();
+        var syncedAtUtc = new DateTime(2026, 4, 30, 9, 0, 0, DateTimeKind.Utc);
+
+        context.ExchangeAccounts.Add(new ExchangeAccount
+        {
+            Id = exchangeAccountId,
+            OwnerUserId = "user-manual-close-01",
+            ExchangeName = "Binance",
+            DisplayName = "Primary",
+            CredentialStatus = ExchangeCredentialStatus.Active,
+            ApiKeyCiphertext = "cipher-api-key",
+            ApiSecretCiphertext = "cipher-api-secret"
+        });
+        context.TradingBots.Add(new TradingBot
+        {
+            Id = botId,
+            OwnerUserId = "user-manual-close-01",
+            Name = "Manual Close Bot",
+            StrategyKey = "manual-close",
+            Symbol = "SOLUSDT",
+            ExchangeAccountId = exchangeAccountId,
+            IsEnabled = true
+        });
+        context.ExchangePositions.Add(new ExchangePosition
+        {
+            OwnerUserId = "user-manual-close-01",
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "SOLUSDT",
+            PositionSide = "LONG",
+            Quantity = 0.4m,
+            EntryPrice = 100m,
+            BreakEvenPrice = 100m,
+            UnrealizedProfit = 12m,
+            MarginType = "isolated",
+            IsolatedWallet = 10m,
+            ExchangeUpdatedAtUtc = syncedAtUtc,
+            SyncedAtUtc = syncedAtUtc
+        });
+        context.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "user-manual-close-01",
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            BotId = botId,
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            StrategyKey = "manual-close",
+            Symbol = "SOLUSDT",
+            Timeframe = "1m",
+            BaseAsset = "SOL",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.4m,
+            Price = 100m,
+            FilledQuantity = 0.4m,
+            AverageFillPrice = 100m,
+            ExecutionEnvironment = ExecutionEnvironment.BinanceTestnet,
+            ExecutorKind = ExecutionOrderExecutorKind.BinanceTestnet,
+            State = ExecutionOrderState.Filled,
+            SubmittedToBroker = true,
+            IdempotencyKey = "manual-close-position",
+            RootCorrelationId = "manual-close-position-root",
+            CreatedDate = syncedAtUtc,
+            UpdatedDate = syncedAtUtc,
+            LastStateChangedAtUtc = syncedAtUtc
+        });
+        await context.SaveChangesAsync();
+
+        var service = new UserDashboardPortfolioReadModelService(context);
+
+        var snapshot = await service.GetSnapshotAsync("user-manual-close-01");
+
+        var position = Assert.Single(snapshot.Positions);
+        Assert.True(position.IsExchangePosition);
+        Assert.True(position.CanManualClose);
+        Assert.Equal(botId, position.ManualCloseBotId);
+        Assert.Equal(exchangeAccountId, position.ExchangeAccountId);
+        Assert.Equal("Testnet", position.EnvironmentLabel);
+        Assert.Equal("info", position.EnvironmentTone);
+        Assert.Null(position.ManualCloseUnavailableReason);
+    }
+
+    [Fact]
+    public async Task GetSnapshotAsync_DisablesManualClose_WhenPositionMatchesMultipleBots()
+    {
+        var databaseRoot = new InMemoryDatabaseRoot();
+        await using var context = CreateContext(databaseRoot);
+        var exchangeAccountId = Guid.NewGuid();
+        var syncedAtUtc = new DateTime(2026, 4, 30, 9, 5, 0, DateTimeKind.Utc);
+
+        context.ExchangeAccounts.Add(new ExchangeAccount
+        {
+            Id = exchangeAccountId,
+            OwnerUserId = "user-manual-close-02",
+            ExchangeName = "Binance",
+            DisplayName = "Primary",
+            CredentialStatus = ExchangeCredentialStatus.Active,
+            ApiKeyCiphertext = "cipher-api-key",
+            ApiSecretCiphertext = "cipher-api-secret"
+        });
+        context.TradingBots.AddRange(
+            new TradingBot
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = "user-manual-close-02",
+                Name = "Manual Close Bot A",
+                StrategyKey = "manual-close-a",
+                Symbol = "SOLUSDT",
+                ExchangeAccountId = exchangeAccountId,
+                IsEnabled = true
+            },
+            new TradingBot
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = "user-manual-close-02",
+                Name = "Manual Close Bot B",
+                StrategyKey = "manual-close-b",
+                Symbol = "SOLUSDT",
+                ExchangeAccountId = exchangeAccountId,
+                IsEnabled = true
+            });
+        context.ExchangePositions.Add(new ExchangePosition
+        {
+            OwnerUserId = "user-manual-close-02",
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "SOLUSDT",
+            PositionSide = "LONG",
+            Quantity = 0.4m,
+            EntryPrice = 100m,
+            BreakEvenPrice = 100m,
+            UnrealizedProfit = 8m,
+            MarginType = "isolated",
+            IsolatedWallet = 10m,
+            ExchangeUpdatedAtUtc = syncedAtUtc,
+            SyncedAtUtc = syncedAtUtc
+        });
+        context.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "user-manual-close-02",
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = Guid.NewGuid(),
+            SignalType = StrategySignalType.Entry,
+            BotId = Guid.NewGuid(),
+            ExchangeAccountId = exchangeAccountId,
+            Plane = ExchangeDataPlane.Futures,
+            StrategyKey = "manual-close-position",
+            Symbol = "SOLUSDT",
+            Timeframe = "1m",
+            BaseAsset = "SOL",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.4m,
+            Price = 100m,
+            FilledQuantity = 0.4m,
+            AverageFillPrice = 100m,
+            ExecutionEnvironment = ExecutionEnvironment.BinanceTestnet,
+            ExecutorKind = ExecutionOrderExecutorKind.BinanceTestnet,
+            State = ExecutionOrderState.Filled,
+            SubmittedToBroker = true,
+            IdempotencyKey = "manual-close-position-ambiguous",
+            RootCorrelationId = "manual-close-position-ambiguous-root",
+            CreatedDate = syncedAtUtc,
+            UpdatedDate = syncedAtUtc,
+            LastStateChangedAtUtc = syncedAtUtc
+        });
+        await context.SaveChangesAsync();
+
+        var service = new UserDashboardPortfolioReadModelService(context);
+
+        var snapshot = await service.GetSnapshotAsync("user-manual-close-02");
+
+        var position = Assert.Single(snapshot.Positions);
+        Assert.True(position.IsExchangePosition);
+        Assert.False(position.CanManualClose);
+        Assert.Null(position.ManualCloseBotId);
+        Assert.Equal("Pozisyon icin tekil bot eslesmesi bulunamadi.", position.ManualCloseUnavailableReason);
+    }
+
+    [Fact]
     public async Task GetSnapshotAsync_ReturnsBalancesPositionsAndSyncSummary_ForActiveBinanceAccount()
     {
         var databaseRoot = new InMemoryDatabaseRoot();
@@ -1279,7 +1472,6 @@ public sealed class UserDashboardPortfolioReadModelServiceTests
         }
     }
 }
-
 
 
 

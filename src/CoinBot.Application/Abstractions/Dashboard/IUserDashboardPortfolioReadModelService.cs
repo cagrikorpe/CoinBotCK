@@ -52,7 +52,14 @@ public sealed record UserDashboardPositionSnapshot(
     decimal? CostBasis = null,
     decimal? MarkPrice = null,
     decimal? AvailableQuantity = null,
-    decimal? LockedQuantity = null);
+    decimal? LockedQuantity = null,
+    Guid? ExchangeAccountId = null,
+    string? EnvironmentLabel = null,
+    string? EnvironmentTone = null,
+    bool IsExchangePosition = false,
+    bool CanManualClose = false,
+    Guid? ManualCloseBotId = null,
+    string? ManualCloseUnavailableReason = null);
 
 public sealed record UserDashboardExpectancySnapshot(
     bool HasData,

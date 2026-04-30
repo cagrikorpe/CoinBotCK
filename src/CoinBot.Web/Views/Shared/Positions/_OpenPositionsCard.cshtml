@@ -1,14 +1,18 @@
 @using CoinBot.Application.Abstractions.Dashboard
+@using CoinBot.Domain.Enums
 @model UserDashboardPortfolioSnapshot
 @{
-    var openRows = Model.Positions.OrderBy(item => item.Symbol, StringComparer.Ordinal).ToArray();
+    var openRows = Model.Positions
+        .Where(item => item.IsExchangePosition && item.Plane == ExchangeDataPlane.Futures)
+        .OrderBy(item => item.Symbol, StringComparer.Ordinal)
+        .ToArray();
 }
 <div class="card card-custom gutter-b cb-card" data-cb-user-exec-positions>
     <div class="card-header border-0 pt-6">
         <div class="card-title">
             <div>
-                <h3 class="card-label font-weight-bolder mb-1">Pozisyonlar</h3>
-                <div class="text-muted font-size-sm">Şu anda açık olan pozisyonlar.</div>
+                <h3 class="card-label font-weight-bolder mb-1">Futures pozisyonlari</h3>
+                <div class="text-muted font-size-sm">Yalnizca size ait acik futures pozisyonlari ve reduce-only close aksiyonu.</div>
             </div>
         </div>
         <div class="card-toolbar cb-inline-stack">
@@ -25,8 +29,10 @@
                         <th>Boyut</th>
                         <th>Giriş</th>
                         <th>Güncel</th>
-                        <th>Kâr / Zarar</th>
+                        <th>PnL</th>
+                        <th>Ortam</th>
                         <th>Son güncelleme</th>
+                        <th>Aksiyon</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -36,6 +42,11 @@
                         var directionTone = direction == "Long" ? "cb-badge-success" : "cb-badge-danger";
                         var pnlTone = row.UnrealizedProfit >= 0m ? "cb-text-positive" : "cb-text-negative";
                         var currentPrice = row.MarkPrice ?? row.BreakEvenPrice;
+                        var environmentTone = string.Equals(row.EnvironmentTone, "danger", StringComparison.OrdinalIgnoreCase)
+                            ? "cb-badge-danger"
+                            : string.Equals(row.EnvironmentTone, "success", StringComparison.OrdinalIgnoreCase)
+                                ? "cb-badge-success"
+                                : "cb-badge-info";
                         <tr data-cb-position-detail="@row.Symbol" data-cb-position-kind="open" data-cb-open-position-row>
                             <td><div class="cb-bot-row-title" data-cb-open-position-symbol>@row.Symbol</div><div class="cb-bot-row-subtitle">@row.Plane</div></td>
                             <td><span class="cb-badge @directionTone cb-direction-badge" data-cb-open-position-side>@direction</span></td>
@@ -43,7 +54,37 @@
                             <td class="cb-numeric-cell" data-cb-open-position-entry>@row.EntryPrice.ToString("0.####")</td>
                             <td class="cb-numeric-cell" data-cb-open-position-current>@currentPrice.ToString("0.####")</td>
                             <td class="cb-numeric-cell @pnlTone" data-cb-open-position-unrealized>@($"{(row.UnrealizedProfit >= 0m ? "+" : string.Empty)}{row.UnrealizedProfit:0.####}")</td>
+                            <td><span class="cb-badge @environmentTone" data-cb-open-position-environment>@(row.EnvironmentLabel ?? "n/a")</span></td>
                             <td><div class="cb-numeric-cell" data-cb-open-position-updated>@row.SyncedAtUtc.ToUniversalTime().ToString("dd MMM · HH:mm")</div></td>
+                            <td>
+                                <div class="cb-inline-stack" data-cb-user-manual-close-panel>
+                                    @if (row.CanManualClose && row.ManualCloseBotId.HasValue && row.ExchangeAccountId.HasValue)
+                                    {
+                                        <form asp-controller="Positions" asp-action="ManualClose" method="post" class="w-100" data-cb-user-manual-close-form>
+                                            @Html.AntiForgeryToken()
+                                            <input type="hidden" name="botId" value="@row.ManualCloseBotId.Value.ToString("D")" />
+                                            <input type="hidden" name="exchangeAccountId" value="@row.ExchangeAccountId.Value.ToString("D")" />
+                                            <input type="hidden" name="symbol" value="@row.Symbol" />
+                                            <div class="cb-validation-summary cb-validation-summary-warning mb-2" role="status" data-cb-user-manual-close-warning>
+                                                Bu buton borsaya reduce-only close emri gonderir.
+                                            </div>
+                                            <label class="d-flex align-items-start mb-2" data-cb-user-manual-close-confirm-row>
+                                                <input type="checkbox" name="confirmClose" value="true" class="mt-1 mr-2" data-cb-user-manual-close-checkbox />
+                                                <span>Reduce-only close emrini onayliyorum.</span>
+                                            </label>
+                                            <button type="submit" class="btn btn-sm btn-light-danger" data-cb-user-manual-close-button>
+                                                Pozisyonu kapat
+                                            </button>
+                                        </form>
+                                    }
+                                    else
+                                    {
+                                        <div class="cb-validation-summary cb-validation-summary-info mb-0" role="status" data-cb-user-manual-close-unavailable>
+                                            @(row.ManualCloseUnavailableReason ?? "Manual close hazir degil.")
+                                        </div>
+                                    }
+                                </div>
+                            </td>
                         </tr>
                     }
                 </tbody>
@@ -52,7 +93,7 @@
 
         <div class="@(openRows.Length == 0 ? string.Empty : "d-none")" data-cb-open-positions-panel="empty">
             <div class="cb-validation-summary cb-validation-summary-info mb-0" role="status">
-                Açık pozisyon yok.
+                Acik futures pozisyonu yok.
             </div>
         </div>
 
