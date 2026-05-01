@@ -1799,6 +1799,378 @@ public sealed class AdminMonitoringReadModelServiceTests
     }
 
     [Fact]
+    public async Task AdminDashboardReadModel_ProjectsExecutionControlEvidence()
+    {
+        var now = new DateTime(2026, 4, 30, 10, 0, 0, DateTimeKind.Utc);
+        var cycleId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext();
+
+        dbContext.GlobalExecutionSwitches.Add(new GlobalExecutionSwitch
+        {
+            Id = Guid.NewGuid(),
+            TradeMasterState = TradeMasterSwitchState.Armed,
+            DemoModeEnabled = true,
+            CreatedDate = now.AddDays(-1),
+            UpdatedDate = now.AddMinutes(-20)
+        });
+        dbContext.GlobalSystemStates.Add(new GlobalSystemState
+        {
+            Id = Guid.NewGuid(),
+            State = GlobalSystemStateKind.Active,
+            ReasonCode = "ACTIVE",
+            Source = "AdminPortal.Settings",
+            UpdatedAtUtc = now.AddMinutes(-10),
+            Version = 3
+        });
+        dbContext.TradingBots.AddRange(
+            new TradingBot
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = "user-a",
+                ExchangeAccountId = Guid.NewGuid(),
+                Name = "enabled-bot",
+                StrategyKey = "core",
+                Symbol = "SOLUSDT",
+                IsEnabled = true,
+                CreatedDate = now.AddDays(-2),
+                UpdatedDate = now.AddHours(-2)
+            },
+            new TradingBot
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = "user-b",
+                ExchangeAccountId = Guid.NewGuid(),
+                Name = "disabled-bot",
+                StrategyKey = "core",
+                Symbol = "ETHUSDT",
+                IsEnabled = false,
+                CreatedDate = now.AddDays(-2),
+                UpdatedDate = now.AddHours(-1)
+            });
+        dbContext.UserExecutionOverrides.AddRange(
+            new UserExecutionOverride
+            {
+                Id = Guid.NewGuid(),
+                UserId = "user-a",
+                SessionDisabled = true,
+                CreatedDate = now.AddHours(-3),
+                UpdatedDate = now.AddHours(-3)
+            },
+            new UserExecutionOverride
+            {
+                Id = Guid.NewGuid(),
+                UserId = "user-b",
+                ReduceOnly = true,
+                LeverageCap = 1m,
+                CreatedDate = now.AddHours(-2),
+                UpdatedDate = now.AddHours(-2)
+            });
+        dbContext.ExchangePositions.Add(new ExchangePosition
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "user-a",
+            ExchangeAccountId = Guid.NewGuid(),
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "SOLUSDT",
+            PositionSide = "Long",
+            Quantity = 0.2m,
+            EntryPrice = 100m,
+            BreakEvenPrice = 100.1m,
+            UnrealizedProfit = 1.5m,
+            MarginType = "isolated",
+            ExchangeUpdatedAtUtc = now.AddMinutes(-2),
+            SyncedAtUtc = now.AddMinutes(-1),
+            CreatedDate = now.AddMinutes(-5),
+            UpdatedDate = now.AddMinutes(-1)
+        });
+        dbContext.ExecutionOrders.AddRange(
+            new ExecutionOrder
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = "user-a",
+                TradingStrategyId = Guid.NewGuid(),
+                TradingStrategyVersionId = Guid.NewGuid(),
+                StrategySignalId = Guid.NewGuid(),
+                SignalType = StrategySignalType.Exit,
+                ExchangeAccountId = Guid.NewGuid(),
+                Plane = ExchangeDataPlane.Futures,
+                StrategyKey = "core",
+                Symbol = "SOLUSDT",
+                Timeframe = "1m",
+                BaseAsset = "SOL",
+                QuoteAsset = "USDT",
+                Side = ExecutionOrderSide.Sell,
+                OrderType = ExecutionOrderType.Market,
+                Quantity = 0.2m,
+                Price = 101m,
+                ReduceOnly = true,
+                ExecutionEnvironment = ExecutionEnvironment.BinanceTestnet,
+                ExecutorKind = ExecutionOrderExecutorKind.BinanceTestnet,
+                State = ExecutionOrderState.Rejected,
+                IdempotencyKey = "exec-control-fail-1",
+                RootCorrelationId = "corr-exec-control-1",
+                FailureCode = "PrivatePlaneStale",
+                SubmittedToBroker = false,
+                LastStateChangedAtUtc = now.AddMinutes(-4),
+                CreatedDate = now.AddMinutes(-4),
+                UpdatedDate = now.AddMinutes(-4)
+            },
+            new ExecutionOrder
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = "user-b",
+                TradingStrategyId = Guid.NewGuid(),
+                TradingStrategyVersionId = Guid.NewGuid(),
+                StrategySignalId = Guid.NewGuid(),
+                SignalType = StrategySignalType.Entry,
+                ExchangeAccountId = Guid.NewGuid(),
+                Plane = ExchangeDataPlane.Futures,
+                StrategyKey = "core",
+                Symbol = "ETHUSDT",
+                Timeframe = "1m",
+                BaseAsset = "ETH",
+                QuoteAsset = "USDT",
+                Side = ExecutionOrderSide.Buy,
+                OrderType = ExecutionOrderType.Market,
+                Quantity = 0.1m,
+                Price = 2000m,
+                ReduceOnly = false,
+                ExecutionEnvironment = ExecutionEnvironment.BinanceTestnet,
+                ExecutorKind = ExecutionOrderExecutorKind.BinanceTestnet,
+                State = ExecutionOrderState.Rejected,
+                IdempotencyKey = "exec-control-fail-2",
+                RootCorrelationId = "corr-exec-control-2",
+                FailureCode = "SymbolExecutionNotAllowed",
+                SubmittedToBroker = false,
+                LastStateChangedAtUtc = now.AddMinutes(-3),
+                CreatedDate = now.AddMinutes(-3),
+                UpdatedDate = now.AddMinutes(-3)
+            });
+        dbContext.MarketScannerCycles.Add(new MarketScannerCycle
+        {
+            Id = cycleId,
+            StartedAtUtc = now.AddMinutes(-3),
+            CompletedAtUtc = now.AddMinutes(-2),
+            UniverseSource = "config",
+            ScannedSymbolCount = 2,
+            EligibleCandidateCount = 1,
+            TopCandidateCount = 1,
+            BestCandidateSymbol = "SOLUSDT",
+            BestCandidateScore = 88m,
+            Summary = "execution-control-cycle"
+        });
+        dbContext.MarketScannerCandidates.Add(new MarketScannerCandidate
+        {
+            Id = Guid.NewGuid(),
+            ScanCycleId = cycleId,
+            Symbol = "SOLUSDT",
+            UniverseSource = "config",
+            ObservedAtUtc = now.AddMinutes(-2),
+            IsEligible = true,
+            Score = 88m,
+            Rank = 1,
+            IsTopCandidate = true
+        });
+        dbContext.MarketScannerHandoffAttempts.Add(new MarketScannerHandoffAttempt
+        {
+            Id = Guid.NewGuid(),
+            ScanCycleId = cycleId,
+            SelectedSymbol = "SOLUSDT",
+            SelectedTimeframe = "1m",
+            SelectedAtUtc = now.AddMinutes(-2),
+            SelectionReason = "Top-ranked eligible candidate selected.",
+            StrategyDecisionOutcome = "Persisted",
+            ExecutionRequestStatus = "Blocked",
+            BlockerCode = "RiskConcurrencyMaxOpenPositionsExceeded",
+            CompletedAtUtc = now.AddMinutes(-2),
+            CreatedDate = now.AddMinutes(-2),
+            UpdatedDate = now.AddMinutes(-2)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            new FixedTimeProvider(now),
+            Options.Create(new DataLatencyGuardOptions()),
+            Options.Create(new BotExecutionPilotOptions
+            {
+                ExecutionDispatchMode = ExecutionEnvironment.BinanceTestnet,
+                AllowedExecutionSymbols = ["SOLUSDT", "ETHUSDT"],
+                MaxOpenPositionsPerUser = 1,
+                MaxOpenPositionsGlobal = 1,
+                MaxOpenPositionsPerSymbol = 1,
+                MaxPendingOrdersPerUser = 1,
+                MaxConcurrentEntryOrdersPerUser = 1,
+                MaxConcurrentEntryOrdersPerSymbol = 1,
+                MaxSymbolsWithOpenPositionPerUser = 1
+            }));
+
+        var snapshot = await service.GetSnapshotAsync();
+        var executionControl = snapshot.OperationalObservability.ExecutionControl;
+
+        Assert.Equal("Watching", executionControl.State);
+        Assert.Equal("BinanceTestnet", executionControl.CurrentExecutionEnvironment);
+        Assert.Equal("warning", executionControl.CurrentExecutionEnvironmentTone);
+        Assert.Equal("Armed", executionControl.GlobalKillSwitchState);
+        Assert.Contains("TradeMaster armed", executionControl.GlobalKillSwitchSummary, StringComparison.Ordinal);
+        Assert.Equal("Active", executionControl.GlobalSystemState);
+        Assert.Equal(1, executionControl.EnabledBotCount);
+        Assert.Equal(1, executionControl.DisabledBotCount);
+        Assert.Equal(2, executionControl.ActiveUserExecutionOverrideCount);
+        Assert.Equal(1, executionControl.SessionDisabledOverrideCount);
+        Assert.Equal(1, executionControl.ReduceOnlyOverrideCount);
+        Assert.Equal(1, executionControl.CurrentOpenPositionsGlobal);
+        Assert.Equal(1, executionControl.CurrentOpenSymbolsGlobal);
+        Assert.Equal(2, executionControl.AllowedExecutionSymbolCount);
+        Assert.Contains("SOLUSDT, ETHUSDT", executionControl.SymbolAllowlistSummary, StringComparison.Ordinal);
+        Assert.Contains("Limits per-user/global/per-symbol 1/1/1", executionControl.ConcurrencyExposureSummary, StringComparison.Ordinal);
+        Assert.Contains("SessionDisabled 1", executionControl.UserExecutionOverrideSummary, StringComparison.Ordinal);
+        Assert.Contains("Enabled 1", executionControl.BotControlSummary, StringComparison.Ordinal);
+        Assert.Contains("Blocked", executionControl.LastExecutionDecisionSummary, StringComparison.Ordinal);
+        Assert.Contains(executionControl.FailureReasons, item => item.ReasonCode == "PrivatePlaneStale");
+        Assert.Contains(executionControl.FailureReasons, item => item.ReasonCode == "SymbolExecutionNotAllowed");
+    }
+
+    [Fact]
+    public async Task AdminDashboardReadModel_ProjectsMultiSymbolStabilityEvidence()
+    {
+        var now = new DateTime(2026, 4, 30, 9, 0, 0, DateTimeKind.Utc);
+        var cycleId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext();
+
+        dbContext.TradingBots.AddRange(
+            new TradingBot
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = "user-a",
+                ExchangeAccountId = Guid.NewGuid(),
+                Name = "multi-bot",
+                StrategyKey = "core",
+                Symbol = "BTCUSDT",
+                AllowedSymbolsCsv = "BTCUSDT,ETHUSDT",
+                IsEnabled = true,
+                CreatedDate = now.AddDays(-2),
+                UpdatedDate = now.AddMinutes(-30)
+            },
+            new TradingBot
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = "user-b",
+                ExchangeAccountId = Guid.NewGuid(),
+                Name = "fallback-bot",
+                StrategyKey = "core",
+                Symbol = "SOLUSDT",
+                AllowedSymbolsCsv = null,
+                IsEnabled = true,
+                CreatedDate = now.AddDays(-1),
+                UpdatedDate = now.AddMinutes(-20)
+            });
+        dbContext.MarketScannerCycles.Add(new MarketScannerCycle
+        {
+            Id = cycleId,
+            StartedAtUtc = now.AddMinutes(-6),
+            CompletedAtUtc = now.AddMinutes(-5),
+            UniverseSource = "config+registry",
+            ScannedSymbolCount = 4,
+            EligibleCandidateCount = 2,
+            TopCandidateCount = 2,
+            BestCandidateSymbol = "ETHUSDT",
+            BestCandidateScore = 91m,
+            Summary = "multi-symbol-cycle"
+        });
+        dbContext.MarketScannerHandoffAttempts.AddRange(
+            new MarketScannerHandoffAttempt
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                SelectedSymbol = "BTCUSDT",
+                SelectedTimeframe = "1m",
+                SelectedAtUtc = now.AddMinutes(-4),
+                SelectionReason = "Top-ranked eligible candidate selected.",
+                StrategyDecisionOutcome = "Persisted",
+                ExecutionRequestStatus = "Prepared",
+                CompletedAtUtc = now.AddMinutes(-4),
+                CreatedDate = now.AddMinutes(-4),
+                UpdatedDate = now.AddMinutes(-4)
+            },
+            new MarketScannerHandoffAttempt
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                SelectedSymbol = "ETHUSDT",
+                SelectedTimeframe = "1m",
+                SelectedAtUtc = now.AddMinutes(-3),
+                SelectionReason = "Top-ranked eligible candidate selected.",
+                StrategyDecisionOutcome = "Persisted",
+                ExecutionRequestStatus = "Prepared",
+                CompletedAtUtc = now.AddMinutes(-3),
+                CreatedDate = now.AddMinutes(-3),
+                UpdatedDate = now.AddMinutes(-3)
+            },
+            new MarketScannerHandoffAttempt
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                SelectedSymbol = "XRPUSDT",
+                SelectedTimeframe = "1m",
+                SelectedAtUtc = now.AddMinutes(-2),
+                SelectionReason = "Scope filtered candidate.",
+                StrategyDecisionOutcome = "Persisted",
+                ExecutionRequestStatus = "Blocked",
+                BlockerCode = "CandidateOutsideBotSymbolScope",
+                CompletedAtUtc = now.AddMinutes(-2),
+                CreatedDate = now.AddMinutes(-2),
+                UpdatedDate = now.AddMinutes(-2)
+            },
+            new MarketScannerHandoffAttempt
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                SelectedSymbol = "SOLUSDT",
+                SelectedTimeframe = "1m",
+                SelectedAtUtc = now.AddMinutes(-1),
+                SelectionReason = "Guardrail blocked candidate.",
+                StrategyDecisionOutcome = "Persisted",
+                ExecutionRequestStatus = "Blocked",
+                BlockerCode = "RiskConcurrencyMaxOpenPositionsExceeded",
+                CompletedAtUtc = now.AddMinutes(-1),
+                CreatedDate = now.AddMinutes(-1),
+                UpdatedDate = now.AddMinutes(-1)
+            });
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            new FixedTimeProvider(now),
+            Options.Create(new DataLatencyGuardOptions()),
+            Options.Create(new BotExecutionPilotOptions
+            {
+                AllowedExecutionSymbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+            }));
+
+        var snapshot = await service.GetSnapshotAsync();
+        var multiSymbol = snapshot.OperationalObservability.MultiSymbolStability;
+
+        Assert.Equal("Watching", multiSymbol.State);
+        Assert.Contains("Enabled bots 2", multiSymbol.Summary, StringComparison.Ordinal);
+        Assert.Equal(2, multiSymbol.EnabledBotCount);
+        Assert.Equal(1, multiSymbol.MultiScopeBotCount);
+        Assert.Equal(1, multiSymbol.PrimaryFallbackBotCount);
+        Assert.Equal(3, multiSymbol.CoveredSymbolCount);
+        Assert.Equal(2, multiSymbol.PreparedSymbolCount);
+        Assert.Equal(2, multiSymbol.BlockedSymbolCount);
+        Assert.Contains("Multi-scope 1", multiSymbol.BotScopeSummary, StringComparison.Ordinal);
+        Assert.Contains("BTCUSDT:1", multiSymbol.PreparedSymbolSummary, StringComparison.Ordinal);
+        Assert.Contains("ETHUSDT:1", multiSymbol.PreparedSymbolSummary, StringComparison.Ordinal);
+        Assert.Contains("SOLUSDT:1", multiSymbol.BlockedSymbolSummary, StringComparison.Ordinal);
+        Assert.Contains("XRPUSDT:1", multiSymbol.BlockedSymbolSummary, StringComparison.Ordinal);
+        Assert.Contains("CandidateOutsideBotSymbolScope:1", multiSymbol.ScopeBlockerSummary, StringComparison.Ordinal);
+        Assert.Contains("RiskConcurrencyMaxOpenPositionsExceeded:1", multiSymbol.GuardrailSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AdminDashboardReadModel_DriftSummaryParser_IsSafeForMalformedValues()
     {
         var now = new DateTime(2026, 4, 29, 9, 30, 0, DateTimeKind.Utc);
@@ -1958,6 +2330,12 @@ public sealed class AdminMonitoringReadModelServiceTests
             snapshot.OperationalObservability.PilotConfigEvidence.AllowedSymbolsSummary,
             snapshot.OperationalObservability.PrivateSyncEvidence.Summary,
             snapshot.OperationalObservability.PrivateSyncEvidence.DriftSummary,
+            snapshot.OperationalObservability.MultiSymbolStability.Summary,
+            snapshot.OperationalObservability.MultiSymbolStability.BotScopeSummary,
+            snapshot.OperationalObservability.MultiSymbolStability.PreparedSymbolSummary,
+            snapshot.OperationalObservability.MultiSymbolStability.BlockedSymbolSummary,
+            snapshot.OperationalObservability.MultiSymbolStability.ScopeBlockerSummary,
+            snapshot.OperationalObservability.MultiSymbolStability.GuardrailSummary,
             string.Join(" | ", snapshot.OperationalObservability.NoSubmitReasons.Select(item => item.ReasonCode)),
             string.Join(" | ", snapshot.OperationalObservability.BlockedReasons.Select(item => item.ReasonCode)),
             string.Join(" | ", snapshot.OperationalObservability.CriticalWarnings.Select(item => item.Summary)));
@@ -1988,6 +2366,11 @@ public sealed class AdminMonitoringReadModelServiceTests
         Assert.Empty(snapshot.OperationalObservability.NoSubmitReasons);
         Assert.Equal(0, snapshot.OperationalObservability.ExitPnlEvidence.LastExitCount);
         Assert.Null(snapshot.OperationalObservability.ExitPnlEvidence.LastExitReason);
+        Assert.Equal("Unknown", snapshot.OperationalObservability.ExecutionControl.State);
+        Assert.Equal("Not configured; execution allowlist remains config-read-only.", snapshot.OperationalObservability.ExecutionControl.SymbolAllowlistSummary);
+        Assert.Empty(snapshot.OperationalObservability.ExecutionControl.FailureReasons);
+        Assert.Equal("Unknown", snapshot.OperationalObservability.MultiSymbolStability.State);
+        Assert.Equal("No multi-symbol stability evidence yet.", snapshot.OperationalObservability.MultiSymbolStability.Summary);
     }
 
     [Fact]

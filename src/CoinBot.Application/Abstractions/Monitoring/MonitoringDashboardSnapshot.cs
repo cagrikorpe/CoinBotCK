@@ -58,6 +58,10 @@ public sealed record OperationalObservabilitySnapshot(
 
     public OperationalPrivateSyncEvidenceSnapshot PrivateSyncEvidence { get; init; } = OperationalPrivateSyncEvidenceSnapshot.Empty();
 
+    public OperationalExecutionControlSnapshot ExecutionControl { get; init; } = OperationalExecutionControlSnapshot.Empty();
+
+    public OperationalMultiSymbolStabilitySnapshot MultiSymbolStability { get; init; } = OperationalMultiSymbolStabilitySnapshot.Empty();
+
     public static OperationalObservabilitySnapshot Empty()
     {
         return new OperationalObservabilitySnapshot(
@@ -86,7 +90,9 @@ public sealed record OperationalObservabilitySnapshot(
             ExitPnlEvidence = OperationalExitPnlEvidenceSnapshot.Empty(),
             StrategyProfitQuality = OperationalStrategyProfitQualitySnapshot.Empty(),
             PilotConfigEvidence = OperationalPilotConfigEvidenceSnapshot.Empty(),
-            PrivateSyncEvidence = OperationalPrivateSyncEvidenceSnapshot.Empty()
+            PrivateSyncEvidence = OperationalPrivateSyncEvidenceSnapshot.Empty(),
+            ExecutionControl = OperationalExecutionControlSnapshot.Empty(),
+            MultiSymbolStability = OperationalMultiSymbolStabilitySnapshot.Empty()
         };
     }
 }
@@ -215,6 +221,90 @@ public sealed record OperationalPrivateSyncEvidenceSnapshot(
             UpdatedDate: null,
             InactiveBlockedCredentialAccountCount: 0,
             PrivatePlaneStaleRejectCount: 0);
+    }
+}
+
+public sealed record OperationalExecutionControlSnapshot(
+    string State,
+    string CurrentExecutionEnvironment,
+    string CurrentExecutionEnvironmentTone,
+    string GlobalKillSwitchState,
+    string GlobalKillSwitchSummary,
+    string GlobalSystemState,
+    string GlobalSystemStateSummary,
+    int EnabledBotCount,
+    int DisabledBotCount,
+    string BotControlSummary,
+    int ActiveUserExecutionOverrideCount,
+    int SessionDisabledOverrideCount,
+    int ReduceOnlyOverrideCount,
+    string UserExecutionOverrideSummary,
+    int CurrentOpenPositionsGlobal,
+    int CurrentOpenSymbolsGlobal,
+    string ConcurrencyExposureSummary,
+    int AllowedExecutionSymbolCount,
+    string SymbolAllowlistSummary,
+    string LastExecutionDecisionSummary,
+    IReadOnlyCollection<OperationalReasonBucketSnapshot> FailureReasons)
+{
+    public static OperationalExecutionControlSnapshot Empty()
+    {
+        return new OperationalExecutionControlSnapshot(
+            State: "Unknown",
+            CurrentExecutionEnvironment: "Unknown",
+            CurrentExecutionEnvironmentTone: "info",
+            GlobalKillSwitchState: "Unknown",
+            GlobalKillSwitchSummary: "Global kill switch snapshot unavailable.",
+            GlobalSystemState: "Unknown",
+            GlobalSystemStateSummary: "Global system state snapshot unavailable.",
+            EnabledBotCount: 0,
+            DisabledBotCount: 0,
+            BotControlSummary: "Bot enable/disable summary unavailable.",
+            ActiveUserExecutionOverrideCount: 0,
+            SessionDisabledOverrideCount: 0,
+            ReduceOnlyOverrideCount: 0,
+            UserExecutionOverrideSummary: "User execution override summary unavailable.",
+            CurrentOpenPositionsGlobal: 0,
+            CurrentOpenSymbolsGlobal: 0,
+            ConcurrencyExposureSummary: "Concurrency / exposure summary unavailable.",
+            AllowedExecutionSymbolCount: 0,
+            SymbolAllowlistSummary: "Execution symbol allowlist unavailable.",
+            LastExecutionDecisionSummary: "No recent execution decision evidence.",
+            FailureReasons: Array.Empty<OperationalReasonBucketSnapshot>());
+    }
+}
+
+public sealed record OperationalMultiSymbolStabilitySnapshot(
+    string State,
+    string Summary,
+    int EnabledBotCount,
+    int MultiScopeBotCount,
+    int PrimaryFallbackBotCount,
+    int CoveredSymbolCount,
+    int PreparedSymbolCount,
+    int BlockedSymbolCount,
+    string BotScopeSummary,
+    string PreparedSymbolSummary,
+    string BlockedSymbolSummary,
+    string ScopeBlockerSummary,
+    string GuardrailSummary)
+{
+    public static OperationalMultiSymbolStabilitySnapshot Empty()
+    {
+        return new OperationalMultiSymbolStabilitySnapshot(
+            State: "Unknown",
+            Summary: "No multi-symbol stability evidence yet.",
+            EnabledBotCount: 0,
+            MultiScopeBotCount: 0,
+            PrimaryFallbackBotCount: 0,
+            CoveredSymbolCount: 0,
+            PreparedSymbolCount: 0,
+            BlockedSymbolCount: 0,
+            BotScopeSummary: "Bot symbol scope unavailable.",
+            PreparedSymbolSummary: "No recent prepared symbol evidence.",
+            BlockedSymbolSummary: "No recent blocked symbol evidence.",
+            ScopeBlockerSummary: "No recent scope blocker.",
+            GuardrailSummary: "No recent multi-symbol guardrail blocker.");
     }
 }
 

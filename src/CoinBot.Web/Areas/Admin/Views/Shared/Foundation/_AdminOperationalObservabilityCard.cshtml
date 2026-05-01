@@ -16,6 +16,8 @@
     var recentExitOrders = exitPnl.RecentExitOrders.ToArray();
     var pilotConfig = operational.PilotConfigEvidence ?? OperationalPilotConfigEvidenceSnapshot.Empty();
     var privateSync = operational.PrivateSyncEvidence ?? OperationalPrivateSyncEvidenceSnapshot.Empty();
+    var executionControl = operational.ExecutionControl ?? OperationalExecutionControlSnapshot.Empty();
+    var multiSymbol = operational.MultiSymbolStability ?? OperationalMultiSymbolStabilitySnapshot.Empty();
     var criticalWarnings = operational.CriticalWarnings
         .ToArray();
 
@@ -77,6 +79,111 @@
                 <div class="cb-admin-info-strip-text" data-cb-ops-worker-heartbeat-summary>@operational.WorkerHeartbeatSummary</div>
             </div>
             <span class="cb-admin-info-strip-meta">Bounded</span>
+        </div>
+
+        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4" data-cb-admin-execution-control>
+            <div>
+                <div class="cb-admin-info-strip-title">Execution control</div>
+                <div class="cb-admin-info-strip-text" data-cb-admin-global-kill-switch>
+                    Global kill switch @executionControl.GlobalKillSwitchState · @executionControl.GlobalKillSwitchSummary
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-admin-current-execution-environment>
+                    Current execution environment @executionControl.CurrentExecutionEnvironment · Global system @executionControl.GlobalSystemState · @executionControl.GlobalSystemStateSummary
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-admin-symbol-allowlist>
+                    Symbol allowlist @executionControl.SymbolAllowlistSummary
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-admin-concurrency-summary>
+                    Max concurrency / exposure @executionControl.ConcurrencyExposureSummary
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-admin-user-execution-override>
+                    User execution override @executionControl.UserExecutionOverrideSummary
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-admin-bot-control-summary>
+                    Bot enable / disable @executionControl.BotControlSummary
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-admin-last-execution-decision>
+                    Last execution decision @executionControl.LastExecutionDecisionSummary
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-admin-execution-control-write-model>
+                    Kill switch and global state keep existing ONAYLA + CSRF + audit flow in Settings. User override, bot enable / disable and symbol allowlist remain read-only here unless an admin write action already exists elsewhere.
+                </div>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+            {
+                Label = executionControl.State,
+                Tone = ResolveTone(executionControl.State),
+                IconText = "EC"
+            })
+        </div>
+
+        <div class="cb-admin-worker-meta-grid mt-4">
+            <div class="cb-admin-summary-card" data-cb-admin-execution-control-badge>
+                <span class="cb-admin-summary-label">Execution environment</span>
+                <strong>@executionControl.CurrentExecutionEnvironment</strong>
+                <small>@executionControl.GlobalSystemState</small>
+                <div class="cb-admin-page-meta mt-4">
+                    @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+                    {
+                        Label = executionControl.CurrentExecutionEnvironment,
+                        Tone = executionControl.CurrentExecutionEnvironmentTone,
+                        IconText = "ENV"
+                    })
+                </div>
+            </div>
+            <div class="cb-admin-summary-card" data-cb-admin-execution-control-bots>
+                <span class="cb-admin-summary-label">Bot enable / disable</span>
+                <strong>@executionControl.EnabledBotCount enabled</strong>
+                <small>@executionControl.DisabledBotCount disabled</small>
+            </div>
+            <div class="cb-admin-summary-card" data-cb-admin-execution-control-overrides>
+                <span class="cb-admin-summary-label">User execution override</span>
+                <strong>@executionControl.ActiveUserExecutionOverrideCount active</strong>
+                <small>SessionDisabled @executionControl.SessionDisabledOverrideCount · ReduceOnly @executionControl.ReduceOnlyOverrideCount</small>
+            </div>
+            <div class="cb-admin-summary-card" data-cb-admin-execution-control-allowlist>
+                <span class="cb-admin-summary-label">Symbol allowlist</span>
+                <strong>@executionControl.AllowedExecutionSymbolCount</strong>
+                <small>@executionControl.SymbolAllowlistSummary</small>
+            </div>
+        </div>
+
+        <div class="cb-admin-inline-actions mt-4" data-cb-admin-execution-control-links>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="Settings" asp-fragment="cb_admin_settings_execution" class="btn btn-sm btn-light-primary font-weight-bold">Execution hard gate</a>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="Settings" asp-fragment="cb_admin_settings_global_state" class="btn btn-sm btn-light-primary font-weight-bold">Global system state</a>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="BotOperations" class="btn btn-sm btn-light-primary font-weight-bold">Bot operations</a>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="Users" class="btn btn-sm btn-light-primary font-weight-bold">Users</a>
+            <a asp-area="Admin" asp-controller="Admin" asp-action="ConfigHistory" class="btn btn-sm btn-light-primary font-weight-bold">Config history</a>
+        </div>
+
+        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4" data-cb-admin-multi-symbol-stability>
+            <div>
+                <div class="cb-admin-info-strip-title">Multi-symbol stability</div>
+                <div class="cb-admin-info-strip-text" data-cb-admin-multi-symbol-stability-summary>
+                    @multiSymbol.Summary
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-admin-multi-symbol-bot-scope>
+                    Bot symbol scope @multiSymbol.BotScopeSummary
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-admin-multi-symbol-prepared>
+                    Prepared symbols @multiSymbol.PreparedSymbolSummary
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-admin-multi-symbol-blocked>
+                    Blocked symbols @multiSymbol.BlockedSymbolSummary
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-admin-multi-symbol-scope-blockers>
+                    Scope blockers @multiSymbol.ScopeBlockerSummary
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-admin-multi-symbol-guardrails>
+                    Guardrail summary @multiSymbol.GuardrailSummary
+                </div>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+            {
+                Label = multiSymbol.State,
+                Tone = ResolveTone(multiSymbol.State),
+                IconText = "MS"
+            })
         </div>
 
         <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4" data-cb-ops-pilot-config>
@@ -253,6 +360,24 @@
                     <span class="cb-admin-info-strip-meta">Last 200</span>
                 </div>
             </div>
+        </div>
+
+        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4" data-cb-admin-failure-distribution>
+            <div>
+                <div class="cb-admin-info-strip-title">Recent order failures</div>
+                @if (executionControl.FailureReasons.Count == 0)
+                {
+                    <div class="cb-admin-info-strip-text" data-cb-admin-failure-distribution-empty>No recent failure code in bounded window.</div>
+                }
+                else
+                {
+                    foreach (var reason in executionControl.FailureReasons)
+                    {
+                        <div class="cb-admin-info-strip-text mt-1" data-cb-admin-failure-distribution-row>@reason.ReasonCode · @reason.Count</div>
+                    }
+                }
+            </div>
+            <span class="cb-admin-info-strip-meta">Last 50</span>
         </div>
 
         <div class="row mt-4">

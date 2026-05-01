@@ -212,6 +212,77 @@ public sealed class AdminOverviewSurfaceTests
     }
 
     [Fact]
+    public void AdminSystemHealthView_RendersExecutionControlSurface()
+    {
+        var operationalCardContent = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Areas",
+            "Admin",
+            "Views",
+            "Shared",
+            "Foundation",
+            "_AdminOperationalObservabilityCard.cshtml"));
+
+        Assert.Contains("data-cb-admin-execution-control", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-global-kill-switch", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-current-execution-environment", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-execution-control-badge", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-symbol-allowlist", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-concurrency-summary", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-user-execution-override", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-bot-control-summary", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-last-execution-decision", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-failure-distribution", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Global kill switch", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Current execution environment", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Symbol allowlist", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Max concurrency / exposure", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("User execution override", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Bot enable / disable", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Last execution decision", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Recent order failures", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Execution hard gate", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Global system state", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Bot operations", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Config history", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("OwnerUserId", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("CorrelationId", operationalCardContent, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AdminSystemHealthView_RendersMultiSymbolStabilitySurface()
+    {
+        var operationalCardContent = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Areas",
+            "Admin",
+            "Views",
+            "Shared",
+            "Foundation",
+            "_AdminOperationalObservabilityCard.cshtml"));
+
+        Assert.Contains("data-cb-admin-multi-symbol-stability", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-multi-symbol-stability-summary", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-multi-symbol-bot-scope", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-multi-symbol-prepared", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-multi-symbol-blocked", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-multi-symbol-scope-blockers", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-multi-symbol-guardrails", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Multi-symbol stability", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Bot symbol scope", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Prepared symbols", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Blocked symbols", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Scope blockers", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Guardrail summary", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("OwnerUserId", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("CorrelationId", operationalCardContent, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AdminBotOperationsTable_RendersManualCloseDoubleConfirmSurface()
     {
         var content = File.ReadAllText(Path.Combine(

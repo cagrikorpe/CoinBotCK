@@ -106,6 +106,18 @@ public sealed class AdminMonitoringReadModelService(
         CancellationToken cancellationToken)
     {
         var windowStartUtc = utcNow.AddHours(-24);
+        var recentHandoffRows = await dbContext.MarketScannerHandoffAttempts
+            .AsNoTracking()
+            .Where(entity =>
+                !entity.IsDeleted &&
+                entity.CompletedAtUtc >= windowStartUtc)
+            .OrderByDescending(entity => entity.CompletedAtUtc)
+            .Take(100)
+            .Select(entity => new MonitoringHandoffRow(
+                entity.SelectedSymbol,
+                entity.ExecutionRequestStatus,
+                entity.BlockerCode))
+            .ToListAsync(cancellationToken);
         var blockedHandoffRows = await dbContext.MarketScannerHandoffAttempts
             .AsNoTracking()
             .Where(entity =>
@@ -114,13 +126,18 @@ public sealed class AdminMonitoringReadModelService(
                 entity.ExecutionRequestStatus != "Prepared")
             .OrderByDescending(entity => entity.CompletedAtUtc)
             .Take(50)
-            .Select(entity => new
-            {
-                entity.BlockerCode
-            })
+            .Select(entity => entity.BlockerCode)
             .ToListAsync(cancellationToken);
         var exitPnlEvidence = await LoadExitPnlEvidenceAsync(windowStartUtc, cancellationToken);
         var strategyProfitQuality = await LoadStrategyProfitQualityAsync(utcNow.AddDays(-30), cancellationToken);
+        var allBotStateRows = await dbContext.TradingBots
+            .AsNoTracking()
+            .Where(entity => !entity.IsDeleted)
+            .Select(entity => new MonitoringBotStateRow(
+                entity.IsEnabled,
+                entity.Symbol,
+                entity.AllowedSymbolsCsv))
+            .ToListAsync(cancellationToken);
         var enabledBotRows = await dbContext.TradingBots
             .AsNoTracking()
             .Where(entity =>
@@ -133,6 +150,16 @@ public sealed class AdminMonitoringReadModelService(
                 entity.OwnerUserId,
                 entity.ExchangeAccountId!.Value,
                 entity.Symbol!))
+            .ToListAsync(cancellationToken);
+        var executionOverrideRows = await dbContext.UserExecutionOverrides
+            .AsNoTracking()
+            .Where(entity => !entity.IsDeleted)
+            .Select(entity => new MonitoringExecutionOverrideRow(
+                entity.SessionDisabled,
+                entity.ReduceOnly,
+                entity.LeverageCap.HasValue,
+                entity.MaxOrderSize.HasValue,
+                entity.MaxDailyTrades.HasValue))
             .ToListAsync(cancellationToken);
         var openPositionRows = await dbContext.ExchangePositions
             .AsNoTracking()
@@ -161,6 +188,16 @@ public sealed class AdminMonitoringReadModelService(
                 !entity.SubmittedToBroker &&
                 entity.FailureCode == "PrivatePlaneStale")
             .CountAsync(cancellationToken);
+        var failureCodeRows = await dbContext.ExecutionOrders
+            .AsNoTracking()
+            .Where(entity =>
+                !entity.IsDeleted &&
+                entity.CreatedDate >= windowStartUtc &&
+                entity.FailureCode != null)
+            .OrderByDescending(entity => entity.CreatedDate)
+            .Take(50)
+            .Select(entity => entity.FailureCode)
+            .ToListAsync(cancellationToken);
         var decisionRows = await dbContext.AiShadowDecisions
             .AsNoTracking()
             .IgnoreQueryFilters()
@@ -202,7 +239,7 @@ public sealed class AdminMonitoringReadModelService(
             .OrderByDescending(entity => entity.UpdatedAtUtc)
             .FirstOrDefaultAsync(cancellationToken);
         var blockedReasons = BuildReasonBuckets(
-            blockedHandoffRows.Select(entity => entity.BlockerCode),
+            blockedHandoffRows,
             4,
             "Blocked");
         var noSubmitReasons = BuildReasonBuckets(
@@ -211,11 +248,16 @@ public sealed class AdminMonitoringReadModelService(
                 .Select(entity => entity.NoSubmitReason),
             4,
             "NoSubmit");
+        var failureReasons = BuildReasonBuckets(
+            failureCodeRows,
+            4,
+            "Failure");
         var executionReadiness = BuildExecutionReadinessSnapshot(
             executionSwitchEntity,
             globalSystemStateEntity,
             scannerSnapshot.LastSuccessfulHandoff,
             scannerSnapshot.LastBlockedHandoff);
+        var latestHandoffSummary = BuildLatestHandoffSummary(scannerSnapshot.LatestHandoff);
         var recentDecisionCount = decisionRows.Count;
         var recentOutcomeCount = outcomeRows.Length;
         var coveragePercent = recentDecisionCount == 0
@@ -239,6 +281,20 @@ public sealed class AdminMonitoringReadModelService(
             openPositionRows,
             syncStateRows,
             privatePlaneStaleRejectCount);
+        var executionControl = BuildExecutionControlEvidence(
+            botExecutionOptions: botExecutionPilotOptionsValue,
+            executionReadiness: executionReadiness,
+            latestHandoffSummary: latestHandoffSummary,
+            exitPnlEvidence: exitPnlEvidence,
+            botStateRows: allBotStateRows,
+            executionOverrideRows: executionOverrideRows,
+            openPositionRows: openPositionRows,
+            failureReasons: failureReasons);
+        var multiSymbolStability = BuildMultiSymbolStabilityEvidence(
+            botExecutionOptions: botExecutionPilotOptionsValue,
+            scannerSnapshot: scannerSnapshot,
+            botStateRows: allBotStateRows,
+            handoffRows: recentHandoffRows);
         var criticalWarnings = BuildCriticalWarnings(
             healthSnapshotEntities,
             workerHeartbeatEntities,
@@ -258,7 +314,7 @@ public sealed class AdminMonitoringReadModelService(
             LastScannerCycleSummary: scannerSnapshot.CycleSummary ?? "No scanner cycle yet.",
             TopCandidateSymbol: scannerSnapshot.BestCandidateSymbol,
             EligibleCandidateCount: scannerSnapshot.EligibleCandidateCount,
-            LatestHandoffSummary: BuildLatestHandoffSummary(scannerSnapshot.LatestHandoff),
+            LatestHandoffSummary: latestHandoffSummary,
             ExecutionReadiness: executionReadiness,
             RecentAiShadowDecisionCount: recentDecisionCount,
             RecentAiShadowDecisionOutcomeCount: recentOutcomeCount,
@@ -275,7 +331,9 @@ public sealed class AdminMonitoringReadModelService(
             ExitPnlEvidence = exitPnlEvidence,
             StrategyProfitQuality = strategyProfitQuality,
             PilotConfigEvidence = pilotConfigEvidence,
-            PrivateSyncEvidence = privateSyncEvidence
+            PrivateSyncEvidence = privateSyncEvidence,
+            ExecutionControl = executionControl,
+            MultiSymbolStability = multiSymbolStability
         };
     }
 
@@ -1785,6 +1843,272 @@ public sealed class AdminMonitoringReadModelService(
             PrivatePlaneStaleRejectCount: privatePlaneStaleRejectCount);
     }
 
+    private static OperationalExecutionControlSnapshot BuildExecutionControlEvidence(
+        BotExecutionPilotOptions botExecutionOptions,
+        OperationalExecutionReadinessSnapshot executionReadiness,
+        string latestHandoffSummary,
+        OperationalExitPnlEvidenceSnapshot exitPnlEvidence,
+        IReadOnlyCollection<MonitoringBotStateRow> botStateRows,
+        IReadOnlyCollection<MonitoringExecutionOverrideRow> executionOverrideRows,
+        IReadOnlyCollection<MonitoringOpenPositionRow> openPositionRows,
+        IReadOnlyCollection<OperationalReasonBucketSnapshot> failureReasons)
+    {
+        var enabledBotCount = botStateRows.Count(entity => entity.IsEnabled);
+        var disabledBotCount = botStateRows.Count - enabledBotCount;
+        var activeOverrideCount = executionOverrideRows.Count(entity => entity.HasAnyOverride);
+        var sessionDisabledOverrideCount = executionOverrideRows.Count(entity => entity.SessionDisabled);
+        var reduceOnlyOverrideCount = executionOverrideRows.Count(entity => entity.ReduceOnly);
+        var leverageCapOverrideCount = executionOverrideRows.Count(entity => entity.HasLeverageCap);
+        var maxOrderSizeOverrideCount = executionOverrideRows.Count(entity => entity.HasMaxOrderSize);
+        var maxDailyTradesOverrideCount = executionOverrideRows.Count(entity => entity.HasMaxDailyTrades);
+        var currentOpenPositionsGlobal = openPositionRows.Count;
+        var currentOpenSymbolsGlobal = openPositionRows
+            .Select(entity => NormalizeSymbol(entity.Symbol))
+            .Where(symbol => !string.IsNullOrWhiteSpace(symbol))
+            .Distinct(StringComparer.Ordinal)
+            .Count();
+        var hasExecutionAllowlist = botExecutionOptions.TryResolveNormalizedAllowedExecutionSymbols(out var allowedExecutionSymbols);
+        var allowedExecutionSymbolCount = hasExecutionAllowlist ? allowedExecutionSymbols.Length : 0;
+        var symbolAllowlistSummary = BuildExecutionAllowlistSummary(hasExecutionAllowlist, allowedExecutionSymbols);
+        var concurrencyExposureSummary =
+            $"Open positions {currentOpenPositionsGlobal} · Open symbols {currentOpenSymbolsGlobal} · Limits per-user/global/per-symbol {botExecutionOptions.MaxOpenPositionsPerUser}/{botExecutionOptions.MaxOpenPositionsGlobal}/{botExecutionOptions.MaxOpenPositionsPerSymbol} · Pending per-user {botExecutionOptions.MaxPendingOrdersPerUser} · Entry per-user/symbol {botExecutionOptions.MaxConcurrentEntryOrdersPerUser}/{botExecutionOptions.MaxConcurrentEntryOrdersPerSymbol} · Symbols per-user {botExecutionOptions.MaxSymbolsWithOpenPositionPerUser}";
+        var userExecutionOverrideSummary = activeOverrideCount == 0
+            ? "No active user execution override."
+            : $"Active {activeOverrideCount} · SessionDisabled {sessionDisabledOverrideCount} · ReduceOnly {reduceOnlyOverrideCount} · LeverageCap {leverageCapOverrideCount} · MaxOrderSize {maxOrderSizeOverrideCount} · MaxDailyTrades {maxDailyTradesOverrideCount}";
+        var botControlSummary = $"Enabled {enabledBotCount} · Disabled {disabledBotCount}";
+        var globalKillSwitchState = executionReadiness.TradeMasterState ?? "Unknown";
+        var globalKillSwitchSummary = string.Equals(globalKillSwitchState, TradeMasterSwitchState.Armed.ToString(), StringComparison.Ordinal)
+            ? $"TradeMaster armed · default mode {(executionReadiness.DefaultMode ?? "Unknown")}."
+            : $"TradeMaster {globalKillSwitchState} · execution gate fail-closed.";
+        var globalSystemState = executionReadiness.GlobalSystemState ?? "Unknown";
+        var globalSystemStateSummary = string.IsNullOrWhiteSpace(executionReadiness.ReasonCode)
+            ? $"Global system {globalSystemState}."
+            : $"Global system {globalSystemState} · reason {executionReadiness.ReasonCode}.";
+        var lastExecutionDecisionSummary = !string.Equals(latestHandoffSummary, "No handoff attempt yet.", StringComparison.Ordinal)
+            ? latestHandoffSummary
+            : exitPnlEvidence.LastExitSummary;
+        if (string.IsNullOrWhiteSpace(lastExecutionDecisionSummary))
+        {
+            lastExecutionDecisionSummary = "No recent execution decision evidence.";
+        }
+
+        var currentExecutionEnvironment = botExecutionOptions.ExecutionDispatchMode.ToString();
+        var currentExecutionEnvironmentTone = botExecutionOptions.ExecutionDispatchMode switch
+        {
+            ExecutionEnvironment.BinanceTestnet => "warning",
+            ExecutionEnvironment.Demo => "info",
+            ExecutionEnvironment.Live => "critical",
+            _ => "info"
+        };
+
+        return new OperationalExecutionControlSnapshot(
+            State: executionReadiness.State,
+            CurrentExecutionEnvironment: currentExecutionEnvironment,
+            CurrentExecutionEnvironmentTone: currentExecutionEnvironmentTone,
+            GlobalKillSwitchState: globalKillSwitchState,
+            GlobalKillSwitchSummary: globalKillSwitchSummary,
+            GlobalSystemState: globalSystemState,
+            GlobalSystemStateSummary: globalSystemStateSummary,
+            EnabledBotCount: enabledBotCount,
+            DisabledBotCount: disabledBotCount,
+            BotControlSummary: botControlSummary,
+            ActiveUserExecutionOverrideCount: activeOverrideCount,
+            SessionDisabledOverrideCount: sessionDisabledOverrideCount,
+            ReduceOnlyOverrideCount: reduceOnlyOverrideCount,
+            UserExecutionOverrideSummary: userExecutionOverrideSummary,
+            CurrentOpenPositionsGlobal: currentOpenPositionsGlobal,
+            CurrentOpenSymbolsGlobal: currentOpenSymbolsGlobal,
+            ConcurrencyExposureSummary: concurrencyExposureSummary,
+            AllowedExecutionSymbolCount: allowedExecutionSymbolCount,
+            SymbolAllowlistSummary: symbolAllowlistSummary,
+            LastExecutionDecisionSummary: TrimSummary(lastExecutionDecisionSummary, 200),
+            FailureReasons: failureReasons);
+    }
+
+    private static OperationalMultiSymbolStabilitySnapshot BuildMultiSymbolStabilityEvidence(
+        BotExecutionPilotOptions botExecutionOptions,
+        MarketScannerDashboardSnapshot scannerSnapshot,
+        IReadOnlyCollection<MonitoringBotStateRow> botStateRows,
+        IReadOnlyCollection<MonitoringHandoffRow> handoffRows)
+    {
+        if (botStateRows.Count == 0 &&
+            handoffRows.Count == 0 &&
+            scannerSnapshot.ScannedSymbolCount == 0 &&
+            scannerSnapshot.TopCandidateCount == 0 &&
+            string.IsNullOrWhiteSpace(scannerSnapshot.BestCandidateSymbol))
+        {
+            return OperationalMultiSymbolStabilitySnapshot.Empty();
+        }
+
+        var enabledBotRows = botStateRows
+            .Where(entity => entity.IsEnabled)
+            .ToArray();
+        var botScopes = enabledBotRows
+            .Select(entity => ResolveEffectiveBotSymbolScope(entity.AllowedSymbolsCsv, entity.Symbol))
+            .ToArray();
+        var multiScopeBotCount = botScopes.Count(scope => scope.Length > 1);
+        var primaryFallbackBotCount = enabledBotRows.Count(entity =>
+            string.IsNullOrWhiteSpace(entity.AllowedSymbolsCsv) &&
+            !string.IsNullOrWhiteSpace(NormalizeSymbol(entity.Symbol)));
+        var coveredSymbols = botScopes
+            .SelectMany(scope => scope)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(symbol => symbol, StringComparer.Ordinal)
+            .ToArray();
+        var preparedSymbolBuckets = handoffRows
+            .Where(entity => string.Equals(entity.ExecutionRequestStatus, "Prepared", StringComparison.Ordinal))
+            .Select(entity => NormalizeSymbol(entity.SelectedSymbol))
+            .Where(symbol => !string.IsNullOrWhiteSpace(symbol))
+            .GroupBy(symbol => symbol, StringComparer.Ordinal)
+            .OrderByDescending(group => group.Count())
+            .ThenBy(group => group.Key, StringComparer.Ordinal)
+            .ToArray();
+        var blockedSymbolBuckets = handoffRows
+            .Where(entity => !string.Equals(entity.ExecutionRequestStatus, "Prepared", StringComparison.Ordinal))
+            .Select(entity => NormalizeSymbol(entity.SelectedSymbol))
+            .Where(symbol => !string.IsNullOrWhiteSpace(symbol))
+            .GroupBy(symbol => symbol, StringComparer.Ordinal)
+            .OrderByDescending(group => group.Count())
+            .ThenBy(group => group.Key, StringComparer.Ordinal)
+            .ToArray();
+        var scopeBlockers = BuildReasonBuckets(
+            handoffRows
+                .Where(entity =>
+                    string.Equals(entity.BlockerCode, "CandidateOutsideBotSymbolScope", StringComparison.Ordinal) ||
+                    string.Equals(entity.BlockerCode, "NoEnabledBotForSymbol", StringComparison.Ordinal))
+                .Select(entity => entity.BlockerCode),
+            4,
+            "ScopeBlocked");
+        var guardrailBlockers = BuildReasonBuckets(
+            handoffRows
+                .Where(entity => IsMultiSymbolGuardrailBlocker(entity.BlockerCode))
+                .Select(entity => entity.BlockerCode),
+            4,
+            "GuardrailBlocked");
+        var hasExecutionAllowlist = botExecutionOptions.TryResolveNormalizedAllowedExecutionSymbols(out var allowedExecutionSymbols);
+        var configuredExecutionSymbolCount = hasExecutionAllowlist ? allowedExecutionSymbols.Length : 0;
+        var hasMultiSymbolScope = coveredSymbols.Length > 1 ||
+                                  configuredExecutionSymbolCount > 1 ||
+                                  scannerSnapshot.ScannedSymbolCount > 1;
+        var preparedSymbolCount = preparedSymbolBuckets.Length;
+        var blockedSymbolCount = blockedSymbolBuckets.Length;
+        var state = enabledBotRows.Length == 0
+            ? "Unknown"
+            : !hasMultiSymbolScope
+                ? "SingleScope"
+                : scopeBlockers.Count > 0 || blockedSymbolCount > preparedSymbolCount
+                    ? "Watching"
+                    : preparedSymbolCount > 0
+                        ? "Ready"
+                        : "Watching";
+        var summary =
+            $"Enabled bots {enabledBotRows.Length} · Covered symbols {coveredSymbols.Length} · Prepared symbols {preparedSymbolCount} · Blocked symbols {blockedSymbolCount} · Best candidate {(scannerSnapshot.BestCandidateSymbol ?? "n/a")}";
+
+        return new OperationalMultiSymbolStabilitySnapshot(
+            State: state,
+            Summary: summary,
+            EnabledBotCount: enabledBotRows.Length,
+            MultiScopeBotCount: multiScopeBotCount,
+            PrimaryFallbackBotCount: primaryFallbackBotCount,
+            CoveredSymbolCount: coveredSymbols.Length,
+            PreparedSymbolCount: preparedSymbolCount,
+            BlockedSymbolCount: blockedSymbolCount,
+            BotScopeSummary: $"Enabled {enabledBotRows.Length} · Multi-scope {multiScopeBotCount} · Primary fallback {primaryFallbackBotCount} · Covered {coveredSymbols.Length}",
+            PreparedSymbolSummary: BuildGroupedSummary(preparedSymbolBuckets, "No recent prepared symbol evidence."),
+            BlockedSymbolSummary: BuildGroupedSummary(blockedSymbolBuckets, "No recent blocked symbol evidence."),
+            ScopeBlockerSummary: FormatReasonSummary(scopeBlockers, "No recent scope blocker."),
+            GuardrailSummary: FormatReasonSummary(guardrailBlockers, "No recent multi-symbol guardrail blocker."));
+    }
+
+    private static string BuildExecutionAllowlistSummary(bool hasExecutionAllowlist, string[] allowedExecutionSymbols)
+    {
+        if (!hasExecutionAllowlist)
+        {
+            return "Not configured; execution allowlist remains config-read-only.";
+        }
+
+        if (allowedExecutionSymbols.Length == 0)
+        {
+            return "Configured empty; entry execution blocks fail-closed.";
+        }
+
+        var boundedSummary = allowedExecutionSymbols.Length <= 5
+            ? string.Join(", ", allowedExecutionSymbols)
+            : string.Join(", ", allowedExecutionSymbols.Take(5)) + $" +{allowedExecutionSymbols.Length - 5} more";
+
+        return $"{allowedExecutionSymbols.Length} symbol · {boundedSummary}";
+    }
+
+    private static string[] ResolveEffectiveBotSymbolScope(string? allowedSymbolsCsv, string? primarySymbol)
+    {
+        var configuredSymbols = ParseNormalizedSymbolsCsv(allowedSymbolsCsv);
+        if (configuredSymbols.Length > 0)
+        {
+            return configuredSymbols;
+        }
+
+        var normalizedPrimarySymbol = NormalizeSymbol(primarySymbol);
+        return string.IsNullOrWhiteSpace(normalizedPrimarySymbol)
+            ? []
+            : [normalizedPrimarySymbol];
+    }
+
+    private static string[] ParseNormalizedSymbolsCsv(string? csv)
+    {
+        return string.IsNullOrWhiteSpace(csv)
+            ? []
+            : csv
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(NormalizeSymbol)
+                .Where(symbol => !string.IsNullOrWhiteSpace(symbol))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(symbol => symbol, StringComparer.Ordinal)
+                .ToArray();
+    }
+
+    private static string BuildGroupedSummary(
+        IEnumerable<IGrouping<string, string>> buckets,
+        string emptySummary)
+    {
+        var items = buckets
+            .Take(4)
+            .Select(group => $"{group.Key}:{group.Count()}")
+            .ToArray();
+
+        return items.Length == 0
+            ? emptySummary
+            : string.Join(" · ", items);
+    }
+
+    private static string FormatReasonSummary(
+        IReadOnlyCollection<OperationalReasonBucketSnapshot> buckets,
+        string emptySummary)
+    {
+        if (buckets.Count == 0)
+        {
+            return emptySummary;
+        }
+
+        return string.Join(" · ", buckets.Select(item => $"{item.ReasonCode}:{item.Count}"));
+    }
+
+    private static bool IsMultiSymbolGuardrailBlocker(string? blockerCode)
+    {
+        return blockerCode switch
+        {
+            "SymbolExecutionNotAllowed" => true,
+            "SymbolAllowlistEmpty" => true,
+            "RiskConcurrencyMaxOpenPositionsExceeded" => true,
+            "RiskConcurrencyMaxPendingOrdersExceeded" => true,
+            "RiskConcurrencyMaxSymbolExposureExceeded" => true,
+            "RiskConcurrencyMaxSymbolsExceeded" => true,
+            "DuplicateExecutionRequestSuppressed" => true,
+            "StaleMarketData" => true,
+            "PrivatePlaneStale" => true,
+            _ => false
+        };
+    }
+
     private static bool MatchesPilotScope(
         MonitoringBotScopeRow entity,
         IReadOnlySet<string> allowedSymbols,
@@ -2545,6 +2869,26 @@ public sealed class AdminMonitoringReadModelService(
         string OwnerUserId,
         Guid ExchangeAccountId,
         string Symbol);
+
+    private sealed record MonitoringBotStateRow(
+        bool IsEnabled,
+        string? Symbol,
+        string? AllowedSymbolsCsv);
+
+    private sealed record MonitoringHandoffRow(
+        string? SelectedSymbol,
+        string ExecutionRequestStatus,
+        string? BlockerCode);
+
+    private sealed record MonitoringExecutionOverrideRow(
+        bool SessionDisabled,
+        bool ReduceOnly,
+        bool HasLeverageCap,
+        bool HasMaxOrderSize,
+        bool HasMaxDailyTrades)
+    {
+        public bool HasAnyOverride => SessionDisabled || ReduceOnly || HasLeverageCap || HasMaxOrderSize || HasMaxDailyTrades;
+    }
 
     private sealed record MonitoringOpenPositionRow(
         Guid ExchangeAccountId,
