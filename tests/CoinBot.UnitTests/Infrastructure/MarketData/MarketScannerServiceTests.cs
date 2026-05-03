@@ -537,7 +537,7 @@ public sealed class MarketScannerServiceTests
 
         var cycle = await service.RunOnceAsync();
 
-        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id && entity.Symbol == "BTCUSDT");
         Assert.False(candidate.IsEligible);
         Assert.Equal("CandidateOutsideBotSymbolScope", candidate.RejectionReason);
         Assert.Contains("StrategyOutcome=CandidateOutsideBotSymbolScope", candidate.ScoringSummary, StringComparison.Ordinal);
@@ -592,6 +592,117 @@ public sealed class MarketScannerServiceTests
         Assert.Null(candidate.RejectionReason);
         Assert.Equal("ETHUSDT", cycle.BestCandidateSymbol);
         Assert.Contains("StrategyKey=scanner-scope-allow", candidate.ScoringSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_IncludesConfiguredBotScopeSymbolsInUniverse_AndPersistsMissingScopeCandidates()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        await SeedStrategyGraphAsync(
+            dbContext,
+            "user-scope-universe",
+            "ETHUSDT",
+            "scanner-scope-universe",
+            "{}",
+            allowedSymbolsCsv: "SOLUSDT,ETHUSDT,BNBUSDT,DOGEUSDT,XRPUSDT");
+        SeedCandles(dbContext, "ETHUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        await dbContext.SaveChangesAsync();
+
+        var marketDataService = new FakeMarketDataService();
+        marketDataService.SetLatestPrice("ETHUSDT", 100m, nowUtc.UtcDateTime);
+
+        var service = new MarketScannerService(
+            dbContext,
+            marketDataService,
+            new FakeSharedSymbolRegistry([]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 5,
+                MaxUniverseSymbols = 10,
+                VolumeLookbackHours = 1,
+                Min24hQuoteVolume = 100m,
+                MaxDataAgeSeconds = 120,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = false
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = [] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance,
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                SignalEvaluationMode = ExecutionEnvironment.Live,
+                PilotActivationEnabled = true,
+                AllowedSymbols = ["ETHUSDT", "SOLUSDT"]
+            }));
+
+        var cycle = await service.RunOnceAsync();
+        var candidates = await dbContext.MarketScannerCandidates
+            .Where(entity => entity.ScanCycleId == cycle.Id)
+            .ToDictionaryAsync(entity => entity.Symbol);
+
+        Assert.Equal(5, cycle.ScannedSymbolCount);
+        Assert.Equal(["BNBUSDT", "DOGEUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"], candidates.Keys.OrderBy(item => item, StringComparer.Ordinal).ToArray());
+        Assert.True(candidates["ETHUSDT"].IsEligible);
+        Assert.Contains("enabled-bot", candidates["ETHUSDT"].UniverseSource, StringComparison.Ordinal);
+
+        Assert.Equal("MissingLastPrice", candidates["BNBUSDT"].RejectionReason);
+        Assert.Equal("MissingLastPrice", candidates["DOGEUSDT"].RejectionReason);
+        Assert.Equal("MissingLastPrice", candidates["SOLUSDT"].RejectionReason);
+        Assert.Equal("MissingLastPrice", candidates["XRPUSDT"].RejectionReason);
+        Assert.Contains("enabled-bot-scope", candidates["BNBUSDT"].UniverseSource, StringComparison.Ordinal);
+        Assert.Contains("enabled-bot-scope", candidates["DOGEUSDT"].UniverseSource, StringComparison.Ordinal);
+        Assert.Contains("enabled-bot-scope", candidates["SOLUSDT"].UniverseSource, StringComparison.Ordinal);
+        Assert.Contains("enabled-bot-scope", candidates["XRPUSDT"].UniverseSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_PersistsScopedStaleCandidate_WhenConfiguredBotScopeSymbolHasStaleData()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        await SeedStrategyGraphAsync(
+            dbContext,
+            "user-scope-stale",
+            "ETHUSDT",
+            "scanner-scope-stale",
+            "{}",
+            allowedSymbolsCsv: "BNBUSDT");
+        SeedCandles(dbContext, "ETHUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        SeedCandles(dbContext, "BNBUSDT", nowUtc.UtcDateTime.AddMinutes(-10), closePrice: 600m, volume: 1_000m);
+        await dbContext.SaveChangesAsync();
+
+        var marketDataService = new FakeMarketDataService();
+        marketDataService.SetLatestPrice("ETHUSDT", 100m, nowUtc.UtcDateTime);
+
+        var service = new MarketScannerService(
+            dbContext,
+            marketDataService,
+            new FakeSharedSymbolRegistry([]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 5,
+                MaxUniverseSymbols = 10,
+                VolumeLookbackHours = 24,
+                Min24hQuoteVolume = 100m,
+                MaxDataAgeSeconds = 120,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = false
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = [] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance);
+
+        var cycle = await service.RunOnceAsync();
+        var candidates = await dbContext.MarketScannerCandidates
+            .Where(entity => entity.ScanCycleId == cycle.Id)
+            .ToDictionaryAsync(entity => entity.Symbol);
+
+        Assert.Equal(2, cycle.ScannedSymbolCount);
+        Assert.Equal("StaleMarketData", candidates["BNBUSDT"].RejectionReason);
+        Assert.Contains("enabled-bot-scope", candidates["BNBUSDT"].UniverseSource, StringComparison.Ordinal);
     }
 
     [Fact]

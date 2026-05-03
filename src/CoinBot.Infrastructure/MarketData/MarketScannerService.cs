@@ -307,17 +307,45 @@ public sealed class MarketScannerService(
     private async Task<IReadOnlyCollection<UniverseSymbolCandidate>> ResolveUniverseAsync(DateTime nowUtc, CancellationToken cancellationToken)
     {
         var universe = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
+        var enabledBotUniverseSymbols = new HashSet<string>(StringComparer.Ordinal);
         var trackedSymbols = await sharedSymbolRegistry.ListSymbolsAsync(cancellationToken);
         AddSymbols(universe, trackedSymbols.Select(item => item.Symbol), "registry");
         AddSymbols(universe, configuredSeedSymbols, "config");
 
-        var enabledBotSymbols = await dbContext.TradingBots
+        var enabledBotScopes = await dbContext.TradingBots
             .AsNoTracking()
             .IgnoreQueryFilters()
-            .Where(entity => entity.IsEnabled && !entity.IsDeleted && entity.Symbol != null)
-            .Select(entity => entity.Symbol!)
+            .Where(entity => entity.IsEnabled && !entity.IsDeleted)
+            .Select(entity => new
+            {
+                entity.Symbol,
+                entity.AllowedSymbolsCsv
+            })
             .ToListAsync(cancellationToken);
-        AddSymbols(universe, enabledBotSymbols, "enabled-bot");
+
+        AddSymbols(
+            universe,
+            enabledBotScopes
+                .Where(entity => !string.IsNullOrWhiteSpace(entity.Symbol))
+                .Select(entity => entity.Symbol!),
+            "enabled-bot");
+        AddSymbols(
+            enabledBotUniverseSymbols,
+            enabledBotScopes
+                .Where(entity => !string.IsNullOrWhiteSpace(entity.Symbol))
+                .Select(entity => entity.Symbol!));
+
+        foreach (var enabledBotScope in enabledBotScopes)
+        {
+            var scopedSymbols = ParseAllowedSymbolsCsv(enabledBotScope.AllowedSymbolsCsv);
+            if (scopedSymbols.Length == 0)
+            {
+                continue;
+            }
+
+            AddSymbols(universe, scopedSymbols, "enabled-bot-scope");
+            AddSymbols(enabledBotUniverseSymbols, scopedSymbols);
+        }
 
         var recentWindowStartUtc = nowUtc.AddHours(-scannerOptionsValue.VolumeLookbackHours);
         var recentWindowCandles = await LoadHistoricalMarketWindowCandlesAsync(
@@ -339,7 +367,7 @@ public sealed class MarketScannerService(
         {
             var allowedSymbolSet = new HashSet<string>(allowedPilotSymbols, StringComparer.Ordinal);
             universe = universe
-                .Where(item => allowedSymbolSet.Contains(item.Key))
+                .Where(item => allowedSymbolSet.Contains(item.Key) || enabledBotUniverseSymbols.Contains(item.Key))
                 .ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
         }
 
@@ -923,6 +951,20 @@ public sealed class MarketScannerService(
                 }
 
                 sources.Add(source);
+            }
+            catch (ArgumentException)
+            {
+            }
+        }
+    }
+
+    private static void AddSymbols(ISet<string> target, IEnumerable<string> symbols)
+    {
+        foreach (var symbol in symbols)
+        {
+            try
+            {
+                target.Add(MarketDataSymbolNormalizer.Normalize(symbol));
             }
             catch (ArgumentException)
             {
