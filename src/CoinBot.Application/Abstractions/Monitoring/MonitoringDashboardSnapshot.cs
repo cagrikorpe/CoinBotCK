@@ -289,6 +289,18 @@ public sealed record OperationalMultiSymbolStabilitySnapshot(
     string ScopeBlockerSummary,
     string GuardrailSummary)
 {
+    public int TotalScannedSymbols { get; init; }
+
+    public int ActiveSymbolCount { get; init; }
+
+    public int OpenPositionCount { get; init; }
+
+    public string ExposureSummary { get; init; } = "No open symbol exposure evidence.";
+
+    public string TopBlockerReasons { get; init; } = "No recent blocker reason.";
+
+    public IReadOnlyCollection<OperationalMultiSymbolRuntimeRowSnapshot> SymbolRows { get; init; } = Array.Empty<OperationalMultiSymbolRuntimeRowSnapshot>();
+
     public static OperationalMultiSymbolStabilitySnapshot Empty()
     {
         return new OperationalMultiSymbolStabilitySnapshot(
@@ -307,6 +319,22 @@ public sealed record OperationalMultiSymbolStabilitySnapshot(
             GuardrailSummary: "No recent multi-symbol guardrail blocker.");
     }
 }
+
+public sealed record OperationalMultiSymbolRuntimeRowSnapshot(
+    string Symbol,
+    string StatusLabel,
+    string PositionSide,
+    decimal? PositionQuantity,
+    string ExposureLabel,
+    string LastSignalLabel,
+    string LastOrderLabel,
+    string LastBlockerCode,
+    string ScannerScoreLabel,
+    string RankingReason,
+    string RiskStateLabel,
+    string FreshnessLabel,
+    string DuplicateCooldownLabel,
+    DateTime? LastSeenUtc);
 
 public sealed record OperationalExitPnlEvidenceSnapshot(
     int LastExitCount,

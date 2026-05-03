@@ -106,6 +106,29 @@ public sealed class AdminMonitoringReadModelService(
         CancellationToken cancellationToken)
     {
         var windowStartUtc = utcNow.AddHours(-24);
+        var latestScannerCandidateRows = scannerSnapshot.ScanCycleId.HasValue
+            ? await dbContext.MarketScannerCandidates
+                .AsNoTracking()
+                .Where(entity =>
+                    !entity.IsDeleted &&
+                    entity.ScanCycleId == scannerSnapshot.ScanCycleId.Value)
+                .OrderBy(entity => entity.Rank ?? int.MaxValue)
+                .ThenBy(entity => entity.Symbol)
+                .Take(20)
+                .Select(entity => new MonitoringScannerCandidateRow(
+                    entity.Symbol,
+                    entity.ObservedAtUtc,
+                    entity.LastCandleAtUtc,
+                    entity.IsEligible,
+                    entity.RejectionReason,
+                    entity.Score,
+                    entity.MarketScore,
+                    entity.StrategyScore,
+                    entity.Rank,
+                    entity.IsTopCandidate,
+                    entity.ScoringSummary))
+                .ToListAsync(cancellationToken)
+            : [];
         var recentHandoffRows = await dbContext.MarketScannerHandoffAttempts
             .AsNoTracking()
             .Where(entity =>
@@ -117,6 +140,27 @@ public sealed class AdminMonitoringReadModelService(
                 entity.SelectedSymbol,
                 entity.ExecutionRequestStatus,
                 entity.BlockerCode))
+            .ToListAsync(cancellationToken);
+        var recentHandoffDetailRows = await dbContext.MarketScannerHandoffAttempts
+            .AsNoTracking()
+            .Where(entity =>
+                !entity.IsDeleted &&
+                entity.CompletedAtUtc >= windowStartUtc)
+            .OrderByDescending(entity => entity.CompletedAtUtc)
+            .Take(120)
+            .Select(entity => new MonitoringHandoffDetailRow(
+                entity.SelectedSymbol,
+                entity.ExecutionRequestStatus,
+                entity.BlockerCode,
+                entity.BlockerSummary,
+                entity.GuardSummary,
+                entity.RiskOutcome,
+                entity.RiskVetoReasonCode,
+                entity.RiskSummary,
+                entity.ExecutionSide,
+                entity.CandidateScore,
+                entity.CandidateMarketScore,
+                entity.CompletedAtUtc))
             .ToListAsync(cancellationToken);
         var blockedHandoffRows = await dbContext.MarketScannerHandoffAttempts
             .AsNoTracking()
@@ -170,7 +214,36 @@ public sealed class AdminMonitoringReadModelService(
             .Select(entity => new MonitoringOpenPositionRow(
                 entity.ExchangeAccountId,
                 entity.OwnerUserId,
-                entity.Symbol))
+                entity.Symbol,
+                entity.PositionSide,
+                entity.Quantity,
+                entity.UnrealizedProfit,
+                entity.SyncedAtUtc))
+            .ToListAsync(cancellationToken);
+        var recentExecutionOrderRows = await dbContext.ExecutionOrders
+            .AsNoTracking()
+            .Where(entity =>
+                !entity.IsDeleted &&
+                entity.Plane == ExchangeDataPlane.Futures &&
+                entity.ExecutionEnvironment == botExecutionPilotOptionsValue.ExecutionDispatchMode &&
+                entity.CreatedDate >= windowStartUtc)
+            .OrderByDescending(entity => entity.CreatedDate)
+            .ThenByDescending(entity => entity.LastStateChangedAtUtc)
+            .Take(120)
+            .Select(entity => new MonitoringExecutionOrderRow(
+                entity.Symbol,
+                entity.SignalType,
+                entity.Side,
+                entity.Quantity,
+                entity.Price,
+                entity.AverageFillPrice,
+                entity.ReduceOnly,
+                entity.State,
+                entity.SubmittedToBroker,
+                entity.DuplicateSuppressed,
+                entity.CooldownApplied,
+                entity.FailureCode,
+                entity.CreatedDate))
             .ToListAsync(cancellationToken);
         var syncStateRows = await dbContext.ExchangeAccountSyncStates
             .AsNoTracking()
@@ -294,7 +367,13 @@ public sealed class AdminMonitoringReadModelService(
             botExecutionOptions: botExecutionPilotOptionsValue,
             scannerSnapshot: scannerSnapshot,
             botStateRows: allBotStateRows,
-            handoffRows: recentHandoffRows);
+            handoffRows: recentHandoffRows,
+            latestScannerCandidateRows: latestScannerCandidateRows,
+            recentHandoffDetailRows: recentHandoffDetailRows,
+            recentExecutionOrderRows: recentExecutionOrderRows,
+            openPositionRows: openPositionRows,
+            utcNow: utcNow,
+            staleThresholdMilliseconds: staleThresholdMilliseconds);
         var criticalWarnings = BuildCriticalWarnings(
             healthSnapshotEntities,
             workerHeartbeatEntities,
@@ -1929,10 +2008,19 @@ public sealed class AdminMonitoringReadModelService(
         BotExecutionPilotOptions botExecutionOptions,
         MarketScannerDashboardSnapshot scannerSnapshot,
         IReadOnlyCollection<MonitoringBotStateRow> botStateRows,
-        IReadOnlyCollection<MonitoringHandoffRow> handoffRows)
+        IReadOnlyCollection<MonitoringHandoffRow> handoffRows,
+        IReadOnlyCollection<MonitoringScannerCandidateRow> latestScannerCandidateRows,
+        IReadOnlyCollection<MonitoringHandoffDetailRow> recentHandoffDetailRows,
+        IReadOnlyCollection<MonitoringExecutionOrderRow> recentExecutionOrderRows,
+        IReadOnlyCollection<MonitoringOpenPositionRow> openPositionRows,
+        DateTime utcNow,
+        int staleThresholdMilliseconds)
     {
         if (botStateRows.Count == 0 &&
             handoffRows.Count == 0 &&
+            latestScannerCandidateRows.Count == 0 &&
+            recentExecutionOrderRows.Count == 0 &&
+            openPositionRows.Count == 0 &&
             scannerSnapshot.ScannedSymbolCount == 0 &&
             scannerSnapshot.TopCandidateCount == 0 &&
             string.IsNullOrWhiteSpace(scannerSnapshot.BestCandidateSymbol))
@@ -1992,6 +2080,17 @@ public sealed class AdminMonitoringReadModelService(
                                   scannerSnapshot.ScannedSymbolCount > 1;
         var preparedSymbolCount = preparedSymbolBuckets.Length;
         var blockedSymbolCount = blockedSymbolBuckets.Length;
+        var symbolRows = BuildMultiSymbolRuntimeRows(
+            latestScannerCandidateRows,
+            recentHandoffDetailRows,
+            recentExecutionOrderRows,
+            openPositionRows,
+            utcNow,
+            staleThresholdMilliseconds);
+        var blockerReasons = BuildReasonBuckets(
+            recentHandoffDetailRows.Select(entity => entity.BlockerCode),
+            4,
+            "Blocked");
         var state = enabledBotRows.Length == 0
             ? "Unknown"
             : !hasMultiSymbolScope
@@ -2002,7 +2101,7 @@ public sealed class AdminMonitoringReadModelService(
                         ? "Ready"
                         : "Watching";
         var summary =
-            $"Enabled bots {enabledBotRows.Length} · Covered symbols {coveredSymbols.Length} · Prepared symbols {preparedSymbolCount} · Blocked symbols {blockedSymbolCount} · Best candidate {(scannerSnapshot.BestCandidateSymbol ?? "n/a")}";
+            $"Enabled bots {enabledBotRows.Length} · Scanned {scannerSnapshot.ScannedSymbolCount} · Active symbols {symbolRows.Length} · Open positions {openPositionRows.Count} · Blocked symbols {blockedSymbolCount} · Best candidate {(scannerSnapshot.BestCandidateSymbol ?? "n/a")}";
 
         return new OperationalMultiSymbolStabilitySnapshot(
             State: state,
@@ -2017,7 +2116,429 @@ public sealed class AdminMonitoringReadModelService(
             PreparedSymbolSummary: BuildGroupedSummary(preparedSymbolBuckets, "No recent prepared symbol evidence."),
             BlockedSymbolSummary: BuildGroupedSummary(blockedSymbolBuckets, "No recent blocked symbol evidence."),
             ScopeBlockerSummary: FormatReasonSummary(scopeBlockers, "No recent scope blocker."),
-            GuardrailSummary: FormatReasonSummary(guardrailBlockers, "No recent multi-symbol guardrail blocker."));
+            GuardrailSummary: FormatReasonSummary(guardrailBlockers, "No recent multi-symbol guardrail blocker."))
+        {
+            TotalScannedSymbols = scannerSnapshot.ScannedSymbolCount,
+            ActiveSymbolCount = symbolRows.Length,
+            OpenPositionCount = openPositionRows.Count,
+            ExposureSummary = BuildMultiSymbolExposureSummary(openPositionRows),
+            TopBlockerReasons = FormatReasonSummary(blockerReasons, "No recent blocker reason."),
+            SymbolRows = symbolRows
+        };
+    }
+
+    private static OperationalMultiSymbolRuntimeRowSnapshot[] BuildMultiSymbolRuntimeRows(
+        IReadOnlyCollection<MonitoringScannerCandidateRow> latestScannerCandidateRows,
+        IReadOnlyCollection<MonitoringHandoffDetailRow> recentHandoffDetailRows,
+        IReadOnlyCollection<MonitoringExecutionOrderRow> recentExecutionOrderRows,
+        IReadOnlyCollection<MonitoringOpenPositionRow> openPositionRows,
+        DateTime utcNow,
+        int staleThresholdMilliseconds)
+    {
+        var latestCandidateBySymbol = latestScannerCandidateRows
+            .GroupBy(entity => NormalizeSymbol(entity.Symbol), StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => group
+                    .OrderBy(entity => entity.Rank ?? int.MaxValue)
+                    .ThenByDescending(entity => NormalizeUtc(entity.ObservedAtUtc))
+                    .First(),
+                StringComparer.Ordinal);
+        var latestHandoffBySymbol = recentHandoffDetailRows
+            .Select(entity => new
+            {
+                Symbol = NormalizeSymbol(entity.SelectedSymbol),
+                Row = entity
+            })
+            .Where(entity => !string.IsNullOrWhiteSpace(entity.Symbol))
+            .GroupBy(entity => entity.Symbol, StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => group
+                    .OrderByDescending(entity => NormalizeUtc(entity.Row.CompletedAtUtc))
+                    .First()
+                    .Row,
+                StringComparer.Ordinal);
+        var latestOrderBySymbol = recentExecutionOrderRows
+            .GroupBy(entity => NormalizeSymbol(entity.Symbol), StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => group
+                    .OrderByDescending(entity => NormalizeUtc(entity.CreatedDate))
+                    .First(),
+                StringComparer.Ordinal);
+        var openPositionsBySymbol = openPositionRows
+            .GroupBy(entity => NormalizeSymbol(entity.Symbol), StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => group.ToArray(),
+                StringComparer.Ordinal);
+        var symbols = latestCandidateBySymbol.Keys
+            .Concat(latestHandoffBySymbol.Keys)
+            .Concat(latestOrderBySymbol.Keys)
+            .Concat(openPositionsBySymbol.Keys)
+            .Where(symbol => !string.IsNullOrWhiteSpace(symbol))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (symbols.Length == 0)
+        {
+            return [];
+        }
+
+        return symbols
+            .Select(symbol =>
+            {
+                latestCandidateBySymbol.TryGetValue(symbol, out var candidate);
+                latestHandoffBySymbol.TryGetValue(symbol, out var handoff);
+                latestOrderBySymbol.TryGetValue(symbol, out var order);
+                openPositionsBySymbol.TryGetValue(symbol, out var positions);
+                return new
+                {
+                    Symbol = symbol,
+                    Rank = candidate?.Rank ?? int.MaxValue,
+                    HasOpenPosition = positions is { Length: > 0 },
+                    LastSeenUtc = ResolveMultiSymbolLastSeenUtc(candidate, handoff, order, positions),
+                    Row = BuildMultiSymbolRuntimeRow(
+                        symbol,
+                        candidate,
+                        handoff,
+                        order,
+                        positions,
+                        utcNow,
+                        staleThresholdMilliseconds)
+                };
+            })
+            .OrderByDescending(entity => entity.HasOpenPosition)
+            .ThenBy(entity => entity.Rank)
+            .ThenByDescending(entity => entity.LastSeenUtc ?? DateTime.MinValue)
+            .ThenBy(entity => entity.Symbol, StringComparer.Ordinal)
+            .Take(10)
+            .Select(entity => entity.Row)
+            .ToArray();
+    }
+
+    private static OperationalMultiSymbolRuntimeRowSnapshot BuildMultiSymbolRuntimeRow(
+        string symbol,
+        MonitoringScannerCandidateRow? candidate,
+        MonitoringHandoffDetailRow? handoff,
+        MonitoringExecutionOrderRow? order,
+        MonitoringOpenPositionRow[]? positions,
+        DateTime utcNow,
+        int staleThresholdMilliseconds)
+    {
+        var positionState = ResolvePositionState(positions);
+        return new OperationalMultiSymbolRuntimeRowSnapshot(
+            Symbol: symbol,
+            StatusLabel: ResolveMultiSymbolStatus(candidate, handoff, order, positionState.HasOpenPosition),
+            PositionSide: positionState.PositionSide,
+            PositionQuantity: positionState.PositionQuantity,
+            ExposureLabel: positionState.ExposureLabel,
+            LastSignalLabel: ResolveMultiSymbolLastSignalLabel(candidate, handoff, order),
+            LastOrderLabel: ResolveMultiSymbolLastOrderLabel(order),
+            LastBlockerCode: ResolveMultiSymbolLastBlockerCode(candidate, handoff, order),
+            ScannerScoreLabel: ResolveMultiSymbolScannerScoreLabel(candidate, handoff),
+            RankingReason: ResolveMultiSymbolRankingReason(candidate),
+            RiskStateLabel: ResolveMultiSymbolRiskStateLabel(handoff),
+            FreshnessLabel: ResolveMultiSymbolFreshnessLabel(candidate, handoff, order, utcNow, staleThresholdMilliseconds),
+            DuplicateCooldownLabel: ResolveMultiSymbolDuplicateCooldownLabel(handoff, order),
+            LastSeenUtc: ResolveMultiSymbolLastSeenUtc(candidate, handoff, order, positions));
+    }
+
+    private static string BuildMultiSymbolExposureSummary(IReadOnlyCollection<MonitoringOpenPositionRow> openPositionRows)
+    {
+        if (openPositionRows.Count == 0)
+        {
+            return "No open symbol exposure evidence.";
+        }
+
+        var buckets = openPositionRows
+            .GroupBy(entity => NormalizeSymbol(entity.Symbol), StringComparer.Ordinal)
+            .OrderByDescending(group => Math.Abs(group.Sum(item => item.Quantity)))
+            .ThenBy(group => group.Key, StringComparer.Ordinal)
+            .Take(4)
+            .Select(group =>
+            {
+                var netQuantity = group.Sum(item => item.Quantity);
+                return $"{group.Key} {netQuantity.ToString("0.########", CultureInfo.InvariantCulture)}";
+            })
+            .ToArray();
+
+        return $"Open rows {openPositionRows.Count} · {string.Join(" · ", buckets)}";
+    }
+
+    private static DateTime? ResolveMultiSymbolLastSeenUtc(
+        MonitoringScannerCandidateRow? candidate,
+        MonitoringHandoffDetailRow? handoff,
+        MonitoringExecutionOrderRow? order,
+        MonitoringOpenPositionRow[]? positions)
+    {
+        DateTime?[] values =
+        [
+            candidate is null ? null : NormalizeUtc(candidate.ObservedAtUtc),
+            handoff is null ? null : NormalizeUtc(handoff.CompletedAtUtc),
+            order is null ? null : NormalizeUtc(order.CreatedDate),
+            positions is null || positions.Length == 0
+                ? null
+                : positions.Max(entity => NormalizeUtc(entity.SyncedAtUtc))
+        ];
+
+        var resolvedValues = values
+            .Where(entity => entity.HasValue)
+            .Select(entity => entity!.Value)
+            .ToArray();
+
+        return resolvedValues.Length == 0
+            ? null
+            : resolvedValues.Max();
+    }
+
+    private static string ResolveMultiSymbolStatus(
+        MonitoringScannerCandidateRow? candidate,
+        MonitoringHandoffDetailRow? handoff,
+        MonitoringExecutionOrderRow? order,
+        bool hasOpenPosition)
+    {
+        if (hasOpenPosition)
+        {
+            return "Open";
+        }
+
+        if (order is not null &&
+            order.SignalType == StrategySignalType.Exit &&
+            string.Equals(order.State.ToString(), ExecutionOrderState.Filled.ToString(), StringComparison.Ordinal))
+        {
+            return "Flat";
+        }
+
+        if (handoff is not null &&
+            string.Equals(handoff.ExecutionRequestStatus, "Prepared", StringComparison.Ordinal))
+        {
+            return "Prepared";
+        }
+
+        if (handoff is not null &&
+            !string.Equals(handoff.ExecutionRequestStatus, "Prepared", StringComparison.Ordinal))
+        {
+            return "Blocked";
+        }
+
+        if (candidate?.IsEligible == true)
+        {
+            return "Eligible";
+        }
+
+        if (!string.IsNullOrWhiteSpace(candidate?.RejectionReason))
+        {
+            return "Rejected";
+        }
+
+        return order is null ? "n/a" : order.State.ToString();
+    }
+
+    private static string ResolveMultiSymbolLastSignalLabel(
+        MonitoringScannerCandidateRow? candidate,
+        MonitoringHandoffDetailRow? handoff,
+        MonitoringExecutionOrderRow? order)
+    {
+        if (order is not null)
+        {
+            return $"{order.SignalType} {order.Side}";
+        }
+
+        if (handoff?.ExecutionSide is not null)
+        {
+            return $"{handoff.ExecutionRequestStatus} {handoff.ExecutionSide}";
+        }
+
+        if (candidate?.IsEligible == true)
+        {
+            return "Candidate eligible";
+        }
+
+        return string.IsNullOrWhiteSpace(candidate?.RejectionReason)
+            ? "n/a"
+            : candidate.RejectionReason!.Trim();
+    }
+
+    private static string ResolveMultiSymbolLastOrderLabel(MonitoringExecutionOrderRow? order)
+    {
+        if (order is null)
+        {
+            return "n/a";
+        }
+
+        var reduceOnlySuffix = order.ReduceOnly ? " · ReduceOnly" : string.Empty;
+        var brokerState = order.SubmittedToBroker ? "Broker" : "Local";
+        return $"{order.SignalType} {order.Side} · {order.State} · {brokerState}{reduceOnlySuffix}";
+    }
+
+    private static string ResolveMultiSymbolLastBlockerCode(
+        MonitoringScannerCandidateRow? candidate,
+        MonitoringHandoffDetailRow? handoff,
+        MonitoringExecutionOrderRow? order)
+    {
+        if (!string.IsNullOrWhiteSpace(handoff?.BlockerCode))
+        {
+            return handoff.BlockerCode!.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(candidate?.RejectionReason))
+        {
+            return candidate.RejectionReason!.Trim();
+        }
+
+        return string.IsNullOrWhiteSpace(order?.FailureCode)
+            ? "n/a"
+            : order!.FailureCode!.Trim();
+    }
+
+    private static string ResolveMultiSymbolScannerScoreLabel(
+        MonitoringScannerCandidateRow? candidate,
+        MonitoringHandoffDetailRow? handoff)
+    {
+        if (candidate is not null)
+        {
+            return $"Score {candidate.Score.ToString("0.####", CultureInfo.InvariantCulture)} · M {candidate.MarketScore.ToString("0.####", CultureInfo.InvariantCulture)} · S {(candidate.StrategyScore?.ToString(CultureInfo.InvariantCulture) ?? "n/a")}";
+        }
+
+        if (handoff?.CandidateScore is not null || handoff?.CandidateMarketScore is not null)
+        {
+            return $"Score {(handoff.CandidateScore?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a")} · M {(handoff.CandidateMarketScore?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a")}";
+        }
+
+        return "n/a";
+    }
+
+    private static string ResolveMultiSymbolRankingReason(MonitoringScannerCandidateRow? candidate)
+    {
+        if (candidate is null)
+        {
+            return "n/a";
+        }
+
+        return ExecutionDecisionDiagnostics.ExtractToken("RankingReasonCode", candidate.ScoringSummary)
+            ?? ExecutionDecisionDiagnostics.ExtractToken("RankingDecision", candidate.ScoringSummary)
+            ?? candidate.RejectionReason
+            ?? "n/a";
+    }
+
+    private static string ResolveMultiSymbolRiskStateLabel(MonitoringHandoffDetailRow? handoff)
+    {
+        if (handoff is null)
+        {
+            return "n/a";
+        }
+
+        if (!string.IsNullOrWhiteSpace(handoff.RiskOutcome))
+        {
+            return string.IsNullOrWhiteSpace(handoff.RiskVetoReasonCode)
+                ? handoff.RiskOutcome!.Trim()
+                : $"{handoff.RiskOutcome!.Trim()} · {handoff.RiskVetoReasonCode!.Trim()}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(handoff.BlockerCode) &&
+            handoff.BlockerCode.StartsWith("Risk", StringComparison.Ordinal))
+        {
+            return handoff.BlockerCode.Trim();
+        }
+
+        return string.IsNullOrWhiteSpace(handoff.RiskSummary)
+            ? "n/a"
+            : TrimSummary(handoff.RiskSummary, 88);
+    }
+
+    private static string ResolveMultiSymbolFreshnessLabel(
+        MonitoringScannerCandidateRow? candidate,
+        MonitoringHandoffDetailRow? handoff,
+        MonitoringExecutionOrderRow? order,
+        DateTime utcNow,
+        int staleThresholdMilliseconds)
+    {
+        if (string.Equals(handoff?.BlockerCode, "PrivatePlaneStale", StringComparison.Ordinal) ||
+            string.Equals(order?.FailureCode, "PrivatePlaneStale", StringComparison.Ordinal))
+        {
+            return "PrivatePlaneStale";
+        }
+
+        if (string.Equals(handoff?.BlockerCode, "StaleMarketData", StringComparison.Ordinal) ||
+            string.Equals(candidate?.RejectionReason, "StaleMarketData", StringComparison.Ordinal))
+        {
+            return "StaleMarketData";
+        }
+
+        if (string.Equals(handoff?.BlockerCode, "MarketDataUnavailable", StringComparison.Ordinal) ||
+            string.Equals(candidate?.RejectionReason, "MarketDataUnavailable", StringComparison.Ordinal) ||
+            string.Equals(candidate?.RejectionReason, "MissingMarketData", StringComparison.Ordinal))
+        {
+            return "NoMarketData";
+        }
+
+        if (candidate?.LastCandleAtUtc is null)
+        {
+            return "n/a";
+        }
+
+        var candleAge = utcNow - NormalizeUtc(candidate.LastCandleAtUtc.Value);
+        var ageMinutes = Math.Max(0d, candleAge.TotalMinutes);
+        var isStale = candleAge.TotalMilliseconds > staleThresholdMilliseconds;
+        return isStale
+            ? $"Stale candle {ageMinutes.ToString("0.#", CultureInfo.InvariantCulture)}m"
+            : $"Fresh candle {ageMinutes.ToString("0.#", CultureInfo.InvariantCulture)}m";
+    }
+
+    private static string ResolveMultiSymbolDuplicateCooldownLabel(
+        MonitoringHandoffDetailRow? handoff,
+        MonitoringExecutionOrderRow? order)
+    {
+        if (!string.IsNullOrWhiteSpace(handoff?.BlockerCode) &&
+            (handoff.BlockerCode.Contains("Duplicate", StringComparison.Ordinal) ||
+             handoff.BlockerCode.Contains("Cooldown", StringComparison.Ordinal)))
+        {
+            return handoff.BlockerCode.Trim();
+        }
+
+        if (order is null)
+        {
+            return "n/a";
+        }
+
+        return (order.DuplicateSuppressed, order.CooldownApplied) switch
+        {
+            (true, true) => "Duplicate/Cooldown",
+            (true, false) => "DuplicateSuppressed",
+            (false, true) => "CooldownApplied",
+            _ => "n/a"
+        };
+    }
+
+    private static PositionState ResolvePositionState(MonitoringOpenPositionRow[]? positions)
+    {
+        if (positions is null || positions.Length == 0)
+        {
+            return PositionState.Empty;
+        }
+
+        var netQuantity = positions.Sum(entity => entity.Quantity);
+        var unrealizedProfit = positions.Sum(entity => entity.UnrealizedProfit);
+        var normalizedSide = netQuantity > 0m
+            ? "Long"
+            : netQuantity < 0m
+                ? "Short"
+                : positions
+                    .Select(entity => string.IsNullOrWhiteSpace(entity.PositionSide) ? null : entity.PositionSide.Trim())
+                    .Where(entity => !string.IsNullOrWhiteSpace(entity))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count() > 1
+                    ? "Mixed"
+                    : "Flat";
+        decimal? quantity = netQuantity == 0m ? null : netQuantity;
+        var exposureLabel = $"Rows {positions.Length} · Net {netQuantity.ToString("0.########", CultureInfo.InvariantCulture)} · uPnL {unrealizedProfit.ToString("0.########", CultureInfo.InvariantCulture)}";
+
+        return new PositionState(
+            HasOpenPosition: true,
+            PositionSide: normalizedSide,
+            PositionQuantity: quantity,
+            ExposureLabel: exposureLabel);
     }
 
     private static string BuildExecutionAllowlistSummary(bool hasExecutionAllowlist, string[] allowedExecutionSymbols)
@@ -2875,10 +3396,37 @@ public sealed class AdminMonitoringReadModelService(
         string? Symbol,
         string? AllowedSymbolsCsv);
 
+    private sealed record MonitoringScannerCandidateRow(
+        string Symbol,
+        DateTime ObservedAtUtc,
+        DateTime? LastCandleAtUtc,
+        bool IsEligible,
+        string? RejectionReason,
+        decimal Score,
+        decimal MarketScore,
+        int? StrategyScore,
+        int? Rank,
+        bool IsTopCandidate,
+        string? ScoringSummary);
+
     private sealed record MonitoringHandoffRow(
         string? SelectedSymbol,
         string ExecutionRequestStatus,
         string? BlockerCode);
+
+    private sealed record MonitoringHandoffDetailRow(
+        string? SelectedSymbol,
+        string ExecutionRequestStatus,
+        string? BlockerCode,
+        string? BlockerSummary,
+        string? GuardSummary,
+        string? RiskOutcome,
+        string? RiskVetoReasonCode,
+        string? RiskSummary,
+        ExecutionOrderSide? ExecutionSide,
+        decimal? CandidateScore,
+        decimal? CandidateMarketScore,
+        DateTime CompletedAtUtc);
 
     private sealed record MonitoringExecutionOverrideRow(
         bool SessionDisabled,
@@ -2893,7 +3441,26 @@ public sealed class AdminMonitoringReadModelService(
     private sealed record MonitoringOpenPositionRow(
         Guid ExchangeAccountId,
         string OwnerUserId,
-        string Symbol);
+        string Symbol,
+        string PositionSide,
+        decimal Quantity,
+        decimal UnrealizedProfit,
+        DateTime SyncedAtUtc);
+
+    private sealed record MonitoringExecutionOrderRow(
+        string Symbol,
+        StrategySignalType SignalType,
+        ExecutionOrderSide Side,
+        decimal Quantity,
+        decimal Price,
+        decimal? AverageFillPrice,
+        bool ReduceOnly,
+        ExecutionOrderState State,
+        bool SubmittedToBroker,
+        bool DuplicateSuppressed,
+        bool CooldownApplied,
+        string? FailureCode,
+        DateTime CreatedDate);
 
     private sealed record DriftSummaryParts(
         int? BalanceMismatches,
@@ -2941,6 +3508,19 @@ public sealed class AdminMonitoringReadModelService(
         string? DecisionReasonCode,
         string? DecisionSummary,
         DateTime ObservedAtUtc);
+
+    private sealed record PositionState(
+        bool HasOpenPosition,
+        string PositionSide,
+        decimal? PositionQuantity,
+        string ExposureLabel)
+    {
+        public static PositionState Empty { get; } = new(
+            HasOpenPosition: false,
+            PositionSide: "n/a",
+            PositionQuantity: null,
+            ExposureLabel: "n/a");
+    }
 
     private sealed class OpenEntryLot
     {

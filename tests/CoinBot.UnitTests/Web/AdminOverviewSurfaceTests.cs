@@ -283,6 +283,43 @@ public sealed class AdminOverviewSurfaceTests
     }
 
     [Fact]
+    public void AdminSystemHealthView_RendersMultiSymbolRuntimeSurface()
+    {
+        var operationalCardContent = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Areas",
+            "Admin",
+            "Views",
+            "Shared",
+            "Foundation",
+            "_AdminOperationalObservabilityCard.cshtml"));
+
+        Assert.Contains("data-cb-admin-multi-symbol-runtime", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-multi-symbol-runtime-summary", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-multi-symbol-top-blockers", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-multi-symbol-runtime-table", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-multi-symbol-runtime-rows", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-multi-symbol-runtime-row", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-multi-symbol-runtime-symbol", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Total scanned symbols", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Active symbols", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Open positions", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Top blocker reasons", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Last signal", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Last order", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Last blocker", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Scanner score", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Ranking reason", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Risk state", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Freshness", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Duplicate / cooldown", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("OwnerUserId", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("CorrelationId", operationalCardContent, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AdminBotOperationsTable_RendersManualCloseDoubleConfirmSurface()
     {
         var content = File.ReadAllText(Path.Combine(

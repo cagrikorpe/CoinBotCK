@@ -2171,6 +2171,270 @@ public sealed class AdminMonitoringReadModelServiceTests
     }
 
     [Fact]
+    public async Task AdminDashboardReadModel_ProjectsMultiSymbolRuntimeRows()
+    {
+        var now = new DateTime(2026, 5, 3, 10, 0, 0, DateTimeKind.Utc);
+        var cycleId = Guid.NewGuid();
+        var accountId = Guid.NewGuid();
+        var strategyId = Guid.NewGuid();
+        var strategyVersionId = Guid.NewGuid();
+        var bnbSignalId = Guid.NewGuid();
+        var xrpSignalId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext();
+
+        dbContext.TradingBots.Add(new TradingBot
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "owner-a",
+            ExchangeAccountId = accountId,
+            Name = "multi-runtime-bot",
+            StrategyKey = "core",
+            Symbol = "BNBUSDT",
+            AllowedSymbolsCsv = "BNBUSDT,ETHUSDT,DOGEUSDT,XRPUSDT,SOLUSDT",
+            IsEnabled = true,
+            CreatedDate = now.AddDays(-2),
+            UpdatedDate = now.AddMinutes(-30)
+        });
+        dbContext.MarketScannerCycles.Add(new MarketScannerCycle
+        {
+            Id = cycleId,
+            StartedAtUtc = now.AddMinutes(-6),
+            CompletedAtUtc = now.AddMinutes(-5),
+            UniverseSource = "config+enabled-bot-scope+historical-candles",
+            ScannedSymbolCount = 5,
+            EligibleCandidateCount = 1,
+            TopCandidateCount = 1,
+            BestCandidateSymbol = "BNBUSDT",
+            BestCandidateScore = 100m,
+            Summary = "multi-symbol runtime"
+        });
+        dbContext.MarketScannerCandidates.AddRange(
+            new MarketScannerCandidate
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                Symbol = "BNBUSDT",
+                UniverseSource = "enabled-bot-scope+historical-candles",
+                ObservedAtUtc = now.AddMinutes(-5),
+                LastCandleAtUtc = now.AddMinutes(-1),
+                LastPrice = 612.3m,
+                QuoteVolume24h = 123456m,
+                MarketScore = 100m,
+                StrategyScore = 88,
+                ScoringSummary = "RankingDecision=Selected; RankingReasonCode=HighestCompositeScore; CandidateScore=100; MarketScore=100; StrategyScore=88; RiskPenalty=0; VolatilityScore=92; LiquidityScore=95; TrendAlignment=Bullish; DirectionalConflictStatus=NotEvaluated",
+                IsEligible = true,
+                Score = 100m,
+                Rank = 1,
+                IsTopCandidate = true
+            },
+            new MarketScannerCandidate
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                Symbol = "DOGEUSDT",
+                UniverseSource = "enabled-bot-scope+historical-candles",
+                ObservedAtUtc = now.AddMinutes(-5),
+                LastCandleAtUtc = now.AddHours(-2),
+                LastPrice = 0.22m,
+                QuoteVolume24h = 321654m,
+                MarketScore = 45m,
+                StrategyScore = 0,
+                ScoringSummary = "RankingDecision=Rejected; RankingReasonCode=StaleMarketData; CandidateScore=0; MarketScore=45; StrategyScore=0; RiskPenalty=0; VolatilityScore=35; LiquidityScore=40; TrendAlignment=Neutral; DirectionalConflictStatus=NotEvaluated",
+                IsEligible = false,
+                RejectionReason = "StaleMarketData",
+                Score = 0m
+            });
+        dbContext.MarketScannerHandoffAttempts.AddRange(
+            new MarketScannerHandoffAttempt
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                SelectedSymbol = "BNBUSDT",
+                SelectedTimeframe = "1m",
+                SelectedAtUtc = now.AddMinutes(-4),
+                CandidateRank = 1,
+                CandidateMarketScore = 100m,
+                CandidateScore = 100m,
+                SelectionReason = "Top-ranked eligible candidate selected.",
+                StrategyDecisionOutcome = "Persisted",
+                RiskOutcome = "Allowed",
+                RiskSummary = "RiskState=Allowed",
+                ExecutionRequestStatus = "Prepared",
+                ExecutionSide = ExecutionOrderSide.Buy,
+                CompletedAtUtc = now.AddMinutes(-4),
+                CreatedDate = now.AddMinutes(-4),
+                UpdatedDate = now.AddMinutes(-4)
+            },
+            new MarketScannerHandoffAttempt
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                SelectedSymbol = "ETHUSDT",
+                SelectedTimeframe = "1m",
+                SelectedAtUtc = now.AddMinutes(-3),
+                CandidateRank = 2,
+                CandidateMarketScore = 87m,
+                CandidateScore = 82m,
+                SelectionReason = "Execution allowlist blocked symbol.",
+                StrategyDecisionOutcome = "Persisted",
+                RiskOutcome = "Allowed",
+                ExecutionRequestStatus = "Blocked",
+                BlockerCode = "SymbolExecutionNotAllowed",
+                BlockerSummary = "Execution allowlist blocked symbol.",
+                CompletedAtUtc = now.AddMinutes(-3),
+                CreatedDate = now.AddMinutes(-3),
+                UpdatedDate = now.AddMinutes(-3)
+            },
+            new MarketScannerHandoffAttempt
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                SelectedSymbol = "XRPUSDT",
+                SelectedTimeframe = "1m",
+                SelectedAtUtc = now.AddMinutes(-2),
+                SelectionReason = "Duplicate request suppressed.",
+                StrategyDecisionOutcome = "Persisted",
+                ExecutionRequestStatus = "Blocked",
+                BlockerCode = "DuplicateExecutionRequestSuppressed",
+                CompletedAtUtc = now.AddMinutes(-2),
+                CreatedDate = now.AddMinutes(-2),
+                UpdatedDate = now.AddMinutes(-2)
+            });
+        dbContext.ExchangePositions.Add(new ExchangePosition
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "owner-a",
+            ExchangeAccountId = accountId,
+            Plane = ExchangeDataPlane.Futures,
+            Symbol = "BNBUSDT",
+            PositionSide = "Long",
+            Quantity = 1.25m,
+            EntryPrice = 611.8m,
+            BreakEvenPrice = 612.1m,
+            UnrealizedProfit = 2.5m,
+            MarginType = "isolated",
+            ExchangeUpdatedAtUtc = now.AddSeconds(-45),
+            SyncedAtUtc = now.AddSeconds(-30),
+            CreatedDate = now.AddMinutes(-10),
+            UpdatedDate = now.AddSeconds(-30)
+        });
+
+        var bnbSignal = CreateStrategySignal(
+            bnbSignalId,
+            strategyId,
+            strategyVersionId,
+            StrategySignalType.Entry,
+            "BNBUSDT",
+            now.AddMinutes(-4));
+        var xrpSignal = CreateStrategySignal(
+            xrpSignalId,
+            strategyId,
+            strategyVersionId,
+            StrategySignalType.Entry,
+            "XRPUSDT",
+            now.AddMinutes(-2));
+        dbContext.TradingStrategySignals.AddRange(bnbSignal, xrpSignal);
+
+        var bnbOrder = CreateExecutionOrder(
+            bnbSignalId,
+            strategyId,
+            strategyVersionId,
+            "core",
+            "BNBUSDT",
+            StrategySignalType.Entry,
+            ExecutionOrderSide.Buy,
+            1.25m,
+            612.1m,
+            reduceOnly: false,
+            createdAtUtc: now.AddMinutes(-4));
+        bnbOrder.State = ExecutionOrderState.Filled;
+        bnbOrder.LastStateChangedAtUtc = now.AddMinutes(-3);
+
+        var xrpOrder = CreateExecutionOrder(
+            xrpSignalId,
+            strategyId,
+            strategyVersionId,
+            "core",
+            "XRPUSDT",
+            StrategySignalType.Entry,
+            ExecutionOrderSide.Buy,
+            200m,
+            0.55m,
+            reduceOnly: false,
+            createdAtUtc: now.AddMinutes(-2));
+        xrpOrder.SubmittedToBroker = false;
+        xrpOrder.State = ExecutionOrderState.Rejected;
+        xrpOrder.DuplicateSuppressed = true;
+        xrpOrder.CooldownApplied = true;
+        xrpOrder.FailureCode = "DuplicateExecutionRequestSuppressed";
+
+        dbContext.ExecutionOrders.AddRange(bnbOrder, xrpOrder);
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            new FixedTimeProvider(now),
+            Options.Create(new DataLatencyGuardOptions
+            {
+                StaleDataThresholdSeconds = 120
+            }),
+            Options.Create(new BotExecutionPilotOptions
+            {
+                ExecutionDispatchMode = ExecutionEnvironment.BinanceTestnet,
+                AllowedExecutionSymbols = ["BNBUSDT"]
+            }));
+
+        var snapshot = await service.GetSnapshotAsync();
+        var runtime = snapshot.OperationalObservability.MultiSymbolStability;
+
+        Assert.Equal(5, runtime.TotalScannedSymbols);
+        Assert.Equal(4, runtime.ActiveSymbolCount);
+        Assert.Equal(1, runtime.OpenPositionCount);
+        Assert.Contains("BNBUSDT 1.25", runtime.ExposureSummary, StringComparison.Ordinal);
+        Assert.Contains("SymbolExecutionNotAllowed:1", runtime.TopBlockerReasons, StringComparison.Ordinal);
+        Assert.Contains("DuplicateExecutionRequestSuppressed:1", runtime.TopBlockerReasons, StringComparison.Ordinal);
+
+        var bnbRow = Assert.Single(runtime.SymbolRows, item => item.Symbol == "BNBUSDT");
+        Assert.Equal("Open", bnbRow.StatusLabel);
+        Assert.Equal("Long", bnbRow.PositionSide);
+        Assert.Equal(1.25m, bnbRow.PositionQuantity);
+        Assert.Contains("uPnL 2.5", bnbRow.ExposureLabel, StringComparison.Ordinal);
+        Assert.Equal("Entry Buy", bnbRow.LastSignalLabel);
+        Assert.Contains("Filled", bnbRow.LastOrderLabel, StringComparison.Ordinal);
+        Assert.Equal("n/a", bnbRow.LastBlockerCode);
+        Assert.Contains("Score 100", bnbRow.ScannerScoreLabel, StringComparison.Ordinal);
+        Assert.Equal("HighestCompositeScore", bnbRow.RankingReason);
+        Assert.Contains("Allowed", bnbRow.RiskStateLabel, StringComparison.Ordinal);
+        Assert.Contains("Fresh candle", bnbRow.FreshnessLabel, StringComparison.Ordinal);
+        Assert.Equal("n/a", bnbRow.DuplicateCooldownLabel);
+        Assert.True(bnbRow.LastSeenUtc.HasValue);
+
+        var ethRow = Assert.Single(runtime.SymbolRows, item => item.Symbol == "ETHUSDT");
+        Assert.Equal("Blocked", ethRow.StatusLabel);
+        Assert.Equal("SymbolExecutionNotAllowed", ethRow.LastBlockerCode);
+
+        var dogeRow = Assert.Single(runtime.SymbolRows, item => item.Symbol == "DOGEUSDT");
+        Assert.Equal("Rejected", dogeRow.StatusLabel);
+        Assert.Equal("StaleMarketData", dogeRow.LastBlockerCode);
+        Assert.Equal("StaleMarketData", dogeRow.FreshnessLabel);
+
+        var xrpRow = Assert.Single(runtime.SymbolRows, item => item.Symbol == "XRPUSDT");
+        Assert.Equal("Blocked", xrpRow.StatusLabel);
+        Assert.Equal("DuplicateExecutionRequestSuppressed", xrpRow.LastBlockerCode);
+        Assert.Equal("DuplicateExecutionRequestSuppressed", xrpRow.DuplicateCooldownLabel);
+
+        var rendered = string.Join(
+            " | ",
+            runtime.Summary,
+            runtime.ExposureSummary,
+            runtime.TopBlockerReasons,
+            string.Join(" | ", runtime.SymbolRows.Select(item => $"{item.Symbol}:{item.ExposureLabel}:{item.LastOrderLabel}:{item.LastBlockerCode}:{item.RiskStateLabel}")));
+        Assert.DoesNotContain("owner-a", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain(accountId.ToString("D"), rendered, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AdminDashboardReadModel_DriftSummaryParser_IsSafeForMalformedValues()
     {
         var now = new DateTime(2026, 4, 29, 9, 30, 0, DateTimeKind.Utc);
@@ -2336,6 +2600,9 @@ public sealed class AdminMonitoringReadModelServiceTests
             snapshot.OperationalObservability.MultiSymbolStability.BlockedSymbolSummary,
             snapshot.OperationalObservability.MultiSymbolStability.ScopeBlockerSummary,
             snapshot.OperationalObservability.MultiSymbolStability.GuardrailSummary,
+            snapshot.OperationalObservability.MultiSymbolStability.ExposureSummary,
+            snapshot.OperationalObservability.MultiSymbolStability.TopBlockerReasons,
+            string.Join(" | ", snapshot.OperationalObservability.MultiSymbolStability.SymbolRows.Select(item => $"{item.Symbol}:{item.ExposureLabel}:{item.LastOrderLabel}:{item.LastBlockerCode}:{item.RiskStateLabel}")),
             string.Join(" | ", snapshot.OperationalObservability.NoSubmitReasons.Select(item => item.ReasonCode)),
             string.Join(" | ", snapshot.OperationalObservability.BlockedReasons.Select(item => item.ReasonCode)),
             string.Join(" | ", snapshot.OperationalObservability.CriticalWarnings.Select(item => item.Summary)));
@@ -2371,6 +2638,12 @@ public sealed class AdminMonitoringReadModelServiceTests
         Assert.Empty(snapshot.OperationalObservability.ExecutionControl.FailureReasons);
         Assert.Equal("Unknown", snapshot.OperationalObservability.MultiSymbolStability.State);
         Assert.Equal("No multi-symbol stability evidence yet.", snapshot.OperationalObservability.MultiSymbolStability.Summary);
+        Assert.Equal(0, snapshot.OperationalObservability.MultiSymbolStability.TotalScannedSymbols);
+        Assert.Equal(0, snapshot.OperationalObservability.MultiSymbolStability.ActiveSymbolCount);
+        Assert.Equal(0, snapshot.OperationalObservability.MultiSymbolStability.OpenPositionCount);
+        Assert.Equal("No open symbol exposure evidence.", snapshot.OperationalObservability.MultiSymbolStability.ExposureSummary);
+        Assert.Equal("No recent blocker reason.", snapshot.OperationalObservability.MultiSymbolStability.TopBlockerReasons);
+        Assert.Empty(snapshot.OperationalObservability.MultiSymbolStability.SymbolRows);
     }
 
     [Fact]

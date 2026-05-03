@@ -18,6 +18,7 @@
     var privateSync = operational.PrivateSyncEvidence ?? OperationalPrivateSyncEvidenceSnapshot.Empty();
     var executionControl = operational.ExecutionControl ?? OperationalExecutionControlSnapshot.Empty();
     var multiSymbol = operational.MultiSymbolStability ?? OperationalMultiSymbolStabilitySnapshot.Empty();
+    var multiSymbolRuntimeRows = multiSymbol.SymbolRows.ToArray();
     var criticalWarnings = operational.CriticalWarnings
         .ToArray();
 
@@ -162,6 +163,9 @@
                 <div class="cb-admin-info-strip-text" data-cb-admin-multi-symbol-stability-summary>
                     @multiSymbol.Summary
                 </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-admin-multi-symbol-runtime-summary>
+                    Total scanned symbols @multiSymbol.TotalScannedSymbols · Active symbols @multiSymbol.ActiveSymbolCount · Open positions @multiSymbol.OpenPositionCount · Exposure @multiSymbol.ExposureSummary
+                </div>
                 <div class="cb-admin-info-strip-text mt-2" data-cb-admin-multi-symbol-bot-scope>
                     Bot symbol scope @multiSymbol.BotScopeSummary
                 </div>
@@ -177,6 +181,9 @@
                 <div class="cb-admin-info-strip-text mt-2" data-cb-admin-multi-symbol-guardrails>
                     Guardrail summary @multiSymbol.GuardrailSummary
                 </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-admin-multi-symbol-top-blockers>
+                    Top blocker reasons @multiSymbol.TopBlockerReasons
+                </div>
             </div>
             @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
             {
@@ -184,6 +191,57 @@
                 Tone = ResolveTone(multiSymbol.State),
                 IconText = "MS"
             })
+        </div>
+
+        <div class="table-responsive mt-4" data-cb-admin-multi-symbol-runtime>
+            <table class="table table-borderless cb-admin-table mb-0" data-cb-admin-multi-symbol-runtime-table>
+                <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Status</th>
+                    <th>Position</th>
+                    <th>Exposure</th>
+                    <th>Last signal</th>
+                    <th>Last order</th>
+                    <th>Last blocker</th>
+                    <th>Scanner score</th>
+                    <th>Ranking reason</th>
+                    <th>Risk state</th>
+                    <th>Freshness</th>
+                    <th>Duplicate / cooldown</th>
+                    <th>Last seen</th>
+                </tr>
+                </thead>
+                <tbody data-cb-admin-multi-symbol-runtime-rows>
+                @if (multiSymbolRuntimeRows.Length == 0)
+                {
+                    <tr data-cb-admin-multi-symbol-runtime-empty>
+                        <td colspan="13">Multi-symbol runtime rows n/a.</td>
+                    </tr>
+                }
+                else
+                {
+                    foreach (var row in multiSymbolRuntimeRows)
+                    {
+                        <tr data-cb-admin-multi-symbol-runtime-row>
+                            <td data-cb-admin-multi-symbol-runtime-symbol>@row.Symbol</td>
+                            <td>@row.StatusLabel</td>
+                            <td>@row.PositionSide @(row.PositionQuantity?.ToString("0.########") ?? "n/a")</td>
+                            <td>@row.ExposureLabel</td>
+                            <td>@row.LastSignalLabel</td>
+                            <td>@row.LastOrderLabel</td>
+                            <td>@row.LastBlockerCode</td>
+                            <td>@row.ScannerScoreLabel</td>
+                            <td>@row.RankingReason</td>
+                            <td>@row.RiskStateLabel</td>
+                            <td>@row.FreshnessLabel</td>
+                            <td>@row.DuplicateCooldownLabel</td>
+                            <td>@(row.LastSeenUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "n/a")</td>
+                        </tr>
+                    }
+                }
+                </tbody>
+            </table>
         </div>
 
         <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4" data-cb-ops-pilot-config>
