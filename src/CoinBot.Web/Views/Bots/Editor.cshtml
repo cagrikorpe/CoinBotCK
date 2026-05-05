@@ -69,13 +69,14 @@
                     </div>
 
                     <div class="form-group">
-                        <label asp-for="Form.Symbol">Symbol</label>
+                        <label asp-for="Form.Symbol">Primary Symbol</label>
                         <select asp-for="Form.Symbol" class="form-control" data-cb-bot-symbol-select>
                             @foreach (var option in Model.SymbolOptions)
                             {
                                 <option value="@option.Value">@option.Label</option>
                             }
                         </select>
+                        <small class="form-text text-muted">Primary Symbol bu botun backward-compatible tekil fallback semboludur.</small>
                         <span asp-validation-for="Form.Symbol" class="text-danger"></span>
                     </div>
 
@@ -89,7 +90,7 @@
                         {
                             <div class="form-control-plaintext" data-cb-bot-scanner-universe-list>@string.Join(" · ", scannerUniverse)</div>
                         }
-                        <small class="form-text text-muted">Readonly scanner görünürlüğü. Bot symbol alanı tekil kalır ve bu alan post edilmez.</small>
+                        <small class="form-text text-muted">Scanner Universe read-only'dir ve runtime market-data configuration kaynağından gelir.</small>
                     </div>
 
                     <div class="form-group" data-cb-bot-allowed-symbols>
@@ -115,7 +116,7 @@
                                 }
                             </div>
                         }
-                        <small class="form-text text-muted">Boş bırakılırsa backward-compatible olarak Primary Symbol fallback kullanılır.</small>
+                        <small class="form-text text-muted">Allowed Symbols bu botun multi-symbol scanner scope'unu tanımlar. Boş bırakılırsa bot Primary Symbol fallback kullanır.</small>
                     </div>
 
                     <div class="form-group">

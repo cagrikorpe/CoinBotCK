@@ -88,8 +88,12 @@ public sealed class BotIndexSurfaceTests
         Assert.Contains("data-cb-bot-allowed-symbols-empty", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-bot-allowed-symbols-list", content, StringComparison.Ordinal);
         Assert.Contains("name=\"AllowedSymbols\"", content, StringComparison.Ordinal);
+        Assert.Contains("Primary Symbol", content, StringComparison.Ordinal);
         Assert.Contains("Scanner Universe", content, StringComparison.Ordinal);
         Assert.Contains("Allowed Symbols", content, StringComparison.Ordinal);
+        Assert.Contains("Primary Symbol bu botun backward-compatible tekil fallback semboludur.", content, StringComparison.Ordinal);
+        Assert.Contains("Allowed Symbols bu botun multi-symbol scanner scope'unu tanımlar. Boş bırakılırsa bot Primary Symbol fallback kullanır.", content, StringComparison.Ordinal);
+        Assert.Contains("Scanner Universe read-only'dir ve runtime market-data configuration kaynağından gelir.", content, StringComparison.Ordinal);
         Assert.Contains("Allowed symbol seçimi için scanner universe configured değil.", content, StringComparison.Ordinal);
         Assert.Contains("Scanner universe configured değil.", content, StringComparison.Ordinal);
         Assert.Contains("LongOnly", content, StringComparison.Ordinal);
