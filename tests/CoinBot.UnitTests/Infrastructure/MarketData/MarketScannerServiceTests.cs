@@ -595,6 +595,78 @@ public sealed class MarketScannerServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_DoesNotReportNoEnabledBotForScopedPilotSymbols_WhenActiveBotScopeIncludesBtcEthSol()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        var strategy = await SeedStrategyGraphAsync(
+            dbContext,
+            "user-scope-aligned",
+            "ETHUSDT",
+            "scanner-scope-aligned",
+            "{}",
+            allowedSymbolsCsv: "BTCUSDT,ETHUSDT,SOLUSDT");
+        SeedCandles(dbContext, "BTCUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 1_000m);
+        SeedCandles(dbContext, "ETHUSDT", nowUtc.UtcDateTime, closePrice: 101m, volume: 1_000m);
+        SeedCandles(dbContext, "SOLUSDT", nowUtc.UtcDateTime, closePrice: 25m, volume: 1_000m);
+        await dbContext.SaveChangesAsync();
+
+        var marketDataService = new FakeMarketDataService();
+        marketDataService.SetLatestPrice("BTCUSDT", 100m, nowUtc.UtcDateTime);
+        marketDataService.SetLatestPrice("ETHUSDT", 101m, nowUtc.UtcDateTime);
+        marketDataService.SetLatestPrice("SOLUSDT", 25m, nowUtc.UtcDateTime);
+        var indicatorDataService = new FakeIndicatorDataService();
+        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", nowUtc.UtcDateTime));
+        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("ETHUSDT", "1m", nowUtc.UtcDateTime));
+        indicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", nowUtc.UtcDateTime));
+        var strategyEvaluatorService = new FakeStrategyEvaluatorService();
+        strategyEvaluatorService.SetReport("BTCUSDT", CreateEvaluationReport(strategy.TradingStrategyId, strategy.TradingStrategyVersionId, "scanner-scope-aligned", "BTCUSDT", "1m", nowUtc.UtcDateTime, 95, "BTC scope accepted."));
+        strategyEvaluatorService.SetReport("ETHUSDT", CreateEvaluationReport(strategy.TradingStrategyId, strategy.TradingStrategyVersionId, "scanner-scope-aligned", "ETHUSDT", "1m", nowUtc.UtcDateTime, 80, "ETH scope accepted."));
+        strategyEvaluatorService.SetReport("SOLUSDT", CreateEvaluationReport(strategy.TradingStrategyId, strategy.TradingStrategyVersionId, "scanner-scope-aligned", "SOLUSDT", "1m", nowUtc.UtcDateTime, 70, "SOL scope accepted."));
+
+        var service = new MarketScannerService(
+            dbContext,
+            marketDataService,
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("BTCUSDT", "Binance", "BTC", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime),
+                new SymbolMetadataSnapshot("ETHUSDT", "Binance", "ETH", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime),
+                new SymbolMetadataSnapshot("SOLUSDT", "Binance", "SOL", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 3,
+                MaxUniverseSymbols = 10,
+                Min24hQuoteVolume = 100m,
+                MaxDataAgeSeconds = 120,
+                StrategyScoreWeight = 2m,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = true
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = [] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance,
+            handoffService: null,
+            indicatorDataService,
+            strategyEvaluatorService,
+            Options.Create(new BotExecutionPilotOptions { SignalEvaluationMode = ExecutionEnvironment.Live }));
+
+        var cycle = await service.RunOnceAsync();
+        var candidates = await dbContext.MarketScannerCandidates
+            .Where(entity => entity.ScanCycleId == cycle.Id)
+            .ToDictionaryAsync(entity => entity.Symbol);
+
+        Assert.Equal(3, cycle.ScannedSymbolCount);
+        Assert.True(candidates["BTCUSDT"].IsEligible);
+        Assert.True(candidates["SOLUSDT"].IsEligible);
+        Assert.Null(candidates["BTCUSDT"].RejectionReason);
+        Assert.Null(candidates["SOLUSDT"].RejectionReason);
+        Assert.DoesNotContain("NoEnabledBotForSymbol", candidates["BTCUSDT"].ScoringSummary ?? string.Empty, StringComparison.Ordinal);
+        Assert.DoesNotContain("NoEnabledBotForSymbol", candidates["SOLUSDT"].ScoringSummary ?? string.Empty, StringComparison.Ordinal);
+        Assert.DoesNotContain("NoEnabledBotForSymbol", cycle.Summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task RunOnceAsync_IncludesConfiguredBotScopeSymbolsInUniverse_AndPersistsMissingScopeCandidates()
     {
         var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);

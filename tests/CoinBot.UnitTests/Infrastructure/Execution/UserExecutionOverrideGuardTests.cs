@@ -65,6 +65,43 @@ public sealed class UserExecutionOverrideGuardTests
     }
 
     [Fact]
+    public async Task EvaluateAsync_AllowsConfiguredPilotSymbols_WhenUserOverrideAllowListIncludesIntendedScope()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.UserExecutionOverrides.Add(new UserExecutionOverride
+        {
+            UserId = "user-scope-aligned",
+            AllowedSymbolsCsv = "BTCUSDT,ETHUSDT,SOLUSDT",
+            DeniedSymbolsCsv = string.Empty,
+            ReduceOnly = false,
+            SessionDisabled = false
+        });
+        await dbContext.SaveChangesAsync();
+
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance);
+
+        foreach (var symbol in new[] { "BTCUSDT", "ETHUSDT", "SOLUSDT" })
+        {
+            var result = await guard.EvaluateAsync(
+                new UserExecutionOverrideEvaluationRequest(
+                    "user-scope-aligned",
+                    symbol,
+                    ExecutionEnvironment.Demo,
+                    ExecutionOrderSide.Buy,
+                    0.1m,
+                    100m,
+                    StrategyKey: "pilot-scope"),
+                CancellationToken.None);
+
+            Assert.False(result.IsBlocked, symbol);
+            Assert.Null(result.BlockCode);
+        }
+    }
+
+    [Fact]
     public async Task EvaluateAsync_AllowsDevelopmentFuturesPilotOverride_WhenResolvedModeRemainsDemo()
     {
         await using var dbContext = CreateDbContext();
