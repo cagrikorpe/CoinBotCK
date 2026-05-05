@@ -5,6 +5,45 @@
         .OrderByDescending(worker => worker.FreshnessTier)
         .ThenBy(worker => worker.WorkerName, StringComparer.Ordinal)
         .ToArray();
+
+    string SanitizeWorkerDetail(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "No error detail";
+        }
+
+        var sanitized = value
+            .Replace("ExchangeAccountIds", "ExchangeAccounts", StringComparison.Ordinal)
+            .Replace("ExchangeAccountId", "ExchangeAccount", StringComparison.Ordinal)
+            .Replace("CorrelationId", "Trace", StringComparison.Ordinal)
+            .Replace("ExecutionAttemptId", "ExecutionAttempt", StringComparison.Ordinal)
+            .Replace("DecisionId", "Decision", StringComparison.Ordinal)
+            .Replace("OwnerUserId", "User", StringComparison.Ordinal)
+            .Replace("UserId", "User", StringComparison.Ordinal);
+
+        sanitized = System.Text.RegularExpressions.Regex.Replace(
+            sanitized,
+            @"\b(ScanCycleId|CandidateId|BotId|HandoffAttemptId|StrategySignalId|CorrelationId|ExecutionAttemptId|DecisionId|OwnerUserId|UserId|ExchangeAccountId)=[^;|]+",
+            match => match.Groups[1].Value switch
+            {
+                "ScanCycleId" => "ScanCycle=redacted",
+                "CandidateId" => "Candidate=redacted",
+                "BotId" => "Bot=redacted",
+                "HandoffAttemptId" => "HandoffAttempt=redacted",
+                "StrategySignalId" => "StrategySignal=redacted",
+                "CorrelationId" => "Trace=redacted",
+                "ExecutionAttemptId" => "ExecutionAttempt=redacted",
+                "DecisionId" => "Decision=redacted",
+                "OwnerUserId" => "User=redacted",
+                "UserId" => "User=redacted",
+                "ExchangeAccountId" => "ExchangeAccount=redacted",
+                _ => "internal=redacted"
+            },
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        return sanitized;
+    }
 }
 
 <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-panel-card">
@@ -87,7 +126,7 @@
                                 <div class="cb-admin-summary-card">
                                     <span class="cb-admin-summary-label">Error</span>
                                     <strong>@(worker.LastErrorCode ?? "none")</strong>
-                                    <small>@(worker.LastErrorMessage ?? worker.Detail ?? "No error detail")</small>
+                                    <small>@SanitizeWorkerDetail(worker.LastErrorMessage ?? worker.Detail)</small>
                                 </div>
                             </div>
                         </div>

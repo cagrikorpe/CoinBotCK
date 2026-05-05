@@ -137,9 +137,32 @@ public sealed class AdminOverviewSurfaceTests
         Assert.Contains("data-cb-ops-blocked-reasons", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("data-cb-ops-no-submit-reasons", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("data-cb-ops-warning-list", operationalCardContent, StringComparison.Ordinal);
-        Assert.DoesNotContain("CorrelationId", operationalCardContent, StringComparison.Ordinal);
-        Assert.DoesNotContain("OwnerUserId", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("SanitizeOperationalSummary(operational.LastScannerCycleSummary)", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("SanitizeOperationalSummary(operational.LatestHandoffSummary)", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("privateSync.ExchangeAccountId", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("Account=@(privateSync.ExchangeAccountId", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("@row.OwnerUserId", operationalCardContent, StringComparison.Ordinal);
         Assert.DoesNotContain("ScoringSummary", operationalCardContent, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AdminWorkerHealthList_SanitizesWorkerErrorDetailSurface()
+    {
+        var content = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Areas",
+            "Admin",
+            "Views",
+            "Shared",
+            "Foundation",
+            "_AdminWorkerHealthList.cshtml"));
+
+        Assert.Contains("SanitizeWorkerDetail", content, StringComparison.Ordinal);
+        Assert.Contains("@SanitizeWorkerDetail(worker.LastErrorMessage ?? worker.Detail)", content, StringComparison.Ordinal);
+        Assert.Contains("ScanCycle=redacted", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("@(worker.LastErrorMessage ?? worker.Detail ?? \"No error detail\")", content, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -207,8 +230,8 @@ public sealed class AdminOverviewSurfaceTests
         Assert.Contains("data-cb-ops-entry-orders", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("data-cb-ops-exit-order-row", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("data-cb-ops-entry-order-row", operationalCardContent, StringComparison.Ordinal);
-        Assert.DoesNotContain("CorrelationId", operationalCardContent, StringComparison.Ordinal);
-        Assert.DoesNotContain("OwnerUserId", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("Account=@(privateSync.ExchangeAccountId", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("@row.OwnerUserId", operationalCardContent, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -247,8 +270,8 @@ public sealed class AdminOverviewSurfaceTests
         Assert.Contains("Global system state", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("Bot operations", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("Config history", operationalCardContent, StringComparison.Ordinal);
-        Assert.DoesNotContain("OwnerUserId", operationalCardContent, StringComparison.Ordinal);
-        Assert.DoesNotContain("CorrelationId", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("Account=@(privateSync.ExchangeAccountId", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("@row.OwnerUserId", operationalCardContent, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -278,8 +301,8 @@ public sealed class AdminOverviewSurfaceTests
         Assert.Contains("Blocked symbols", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("Scope blockers", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("Guardrail summary", operationalCardContent, StringComparison.Ordinal);
-        Assert.DoesNotContain("OwnerUserId", operationalCardContent, StringComparison.Ordinal);
-        Assert.DoesNotContain("CorrelationId", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("Account=@(privateSync.ExchangeAccountId", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("@row.OwnerUserId", operationalCardContent, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -315,8 +338,8 @@ public sealed class AdminOverviewSurfaceTests
         Assert.Contains("Risk state", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("Freshness", operationalCardContent, StringComparison.Ordinal);
         Assert.Contains("Duplicate / cooldown", operationalCardContent, StringComparison.Ordinal);
-        Assert.DoesNotContain("OwnerUserId", operationalCardContent, StringComparison.Ordinal);
-        Assert.DoesNotContain("CorrelationId", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("Account=@(privateSync.ExchangeAccountId", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("@row.OwnerUserId", operationalCardContent, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -407,6 +430,26 @@ public sealed class AdminOverviewSurfaceTests
         Assert.Contains("ViewData[\"AdminLastUpdatedAtUtc\"]", content, StringComparison.Ordinal);
         Assert.Contains("pageLastUpdatedAtUtc", content, StringComparison.Ordinal);
         Assert.Contains("healthSnapshot?.LastUpdatedAtUtc", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("CorrelationId / OrderId / DecisionId / ExecutionAttemptId / IncidentId / UserId", content, StringComparison.Ordinal);
+        Assert.Contains("aria-label=\"Audit, trace ve incident arama\"", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AdminTopbar_RendersLogoutAsPostForm()
+    {
+        var content = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Areas",
+            "Admin",
+            "Views",
+            "Shared",
+            "_AdminTopbar.cshtml"));
+
+        Assert.Contains("form asp-area=\"\" asp-controller=\"Auth\" asp-action=\"Logout\" method=\"post\"", content, StringComparison.Ordinal);
+        Assert.Contains("type=\"submit\"", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("<a asp-controller=\"Auth\" asp-action=\"Logout\"", content, StringComparison.Ordinal);
     }
 
     [Fact]

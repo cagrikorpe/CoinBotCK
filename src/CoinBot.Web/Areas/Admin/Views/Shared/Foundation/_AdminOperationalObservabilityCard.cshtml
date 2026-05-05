@@ -33,6 +33,45 @@
             _ => "info"
         };
     }
+
+    string SanitizeOperationalSummary(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "n/a";
+        }
+
+        var sanitized = value
+            .Replace("ExchangeAccountIds", "ExchangeAccounts", StringComparison.Ordinal)
+            .Replace("ExchangeAccountId", "ExchangeAccount", StringComparison.Ordinal)
+            .Replace("CorrelationId", "Trace", StringComparison.Ordinal)
+            .Replace("ExecutionAttemptId", "ExecutionAttempt", StringComparison.Ordinal)
+            .Replace("DecisionId", "Decision", StringComparison.Ordinal)
+            .Replace("OwnerUserId", "User", StringComparison.Ordinal)
+            .Replace("UserId", "User", StringComparison.Ordinal);
+
+        sanitized = System.Text.RegularExpressions.Regex.Replace(
+            sanitized,
+            @"\b(ScanCycleId|CandidateId|BotId|HandoffAttemptId|StrategySignalId|CorrelationId|ExecutionAttemptId|DecisionId|OwnerUserId|UserId|ExchangeAccountId)=[^;|]+",
+            match => match.Groups[1].Value switch
+            {
+                "ScanCycleId" => "ScanCycle=redacted",
+                "CandidateId" => "Candidate=redacted",
+                "BotId" => "Bot=redacted",
+                "HandoffAttemptId" => "HandoffAttempt=redacted",
+                "StrategySignalId" => "StrategySignal=redacted",
+                "CorrelationId" => "Trace=redacted",
+                "ExecutionAttemptId" => "ExecutionAttempt=redacted",
+                "DecisionId" => "Decision=redacted",
+                "OwnerUserId" => "User=redacted",
+                "UserId" => "User=redacted",
+                "ExchangeAccountId" => "ExchangeAccount=redacted",
+                _ => "internal=redacted"
+            },
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        return sanitized;
+    }
 }
 
 <div class="card card-custom gutter-b cb-card cb-admin-card cb-admin-panel-card" data-cb-operational-observability-card>
@@ -77,7 +116,7 @@
         <div class="cb-admin-info-strip cb-admin-info-strip-info mt-6" data-cb-ops-worker-summary>
             <div>
                 <div class="cb-admin-info-strip-title">Worker heartbeat</div>
-                <div class="cb-admin-info-strip-text" data-cb-ops-worker-heartbeat-summary>@operational.WorkerHeartbeatSummary</div>
+                <div class="cb-admin-info-strip-text" data-cb-ops-worker-heartbeat-summary>@SanitizeOperationalSummary(operational.WorkerHeartbeatSummary)</div>
             </div>
             <span class="cb-admin-info-strip-meta">Bounded</span>
         </div>
@@ -261,7 +300,7 @@
             <div>
                 <div class="cb-admin-info-strip-title">Private sync</div>
                 <div class="cb-admin-info-strip-text" data-cb-ops-private-sync-summary>
-                    State=@privateSync.State · Account=@(privateSync.ExchangeAccountId ?? "n/a") · Plane=@privateSync.Plane · Stream=@privateSync.PrivateStreamConnectionState · Drift=@privateSync.DriftStatus · AgeSec=@(privateSync.SyncAgeSeconds?.ToString() ?? "n/a")
+                    State=@privateSync.State · Plane=@privateSync.Plane · Stream=@privateSync.PrivateStreamConnectionState · Drift=@privateSync.DriftStatus · AgeSec=@(privateSync.SyncAgeSeconds?.ToString() ?? "n/a")
                 </div>
                 <div class="cb-admin-info-strip-text mt-2" data-cb-ops-private-sync-drift>
                     Balance mismatches @((privateSync.BalanceMismatches?.ToString() ?? "n/a")) · Position mismatches @((privateSync.PositionMismatches?.ToString() ?? "n/a")) · Snapshot source @privateSync.SnapshotSource
@@ -289,8 +328,8 @@
                     <span> · top </span>
                     <span data-cb-ops-top-candidate>@(operational.TopCandidateSymbol ?? "n/a")</span>
                 </div>
-                <div class="cb-admin-info-strip-text mt-2" data-cb-ops-last-scanner-summary>@operational.LastScannerCycleSummary</div>
-                <div class="cb-admin-info-strip-text mt-2" data-cb-ops-latest-handoff-summary>@operational.LatestHandoffSummary</div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-ops-last-scanner-summary>@SanitizeOperationalSummary(operational.LastScannerCycleSummary)</div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-ops-latest-handoff-summary>@SanitizeOperationalSummary(operational.LatestHandoffSummary)</div>
             </div>
             <span class="cb-admin-info-strip-meta">Latest cycle</span>
         </div>

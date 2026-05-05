@@ -42,7 +42,7 @@ public sealed class PositionsController(
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> ManualClose(
         string? botId,
-        string? exchangeAccountId,
+        [FromForm(Name = "accountScope")] string? accountScope,
         string? symbol,
         [FromForm] bool confirmClose,
         CancellationToken cancellationToken)
@@ -68,7 +68,7 @@ public sealed class PositionsController(
         }
 
         if (!Guid.TryParse(botId, out var parsedBotId) ||
-            !Guid.TryParse(exchangeAccountId, out var parsedExchangeAccountId) ||
+            !Guid.TryParse(accountScope, out var parsedAccountScope) ||
             normalizedSymbol is null)
         {
             await WriteManualCloseAuditAsync(
@@ -87,7 +87,7 @@ public sealed class PositionsController(
             row => row.IsExchangePosition &&
                    row.CanManualClose &&
                    row.ManualCloseBotId == parsedBotId &&
-                   row.ExchangeAccountId == parsedExchangeAccountId &&
+                   row.ExchangeAccountId == parsedAccountScope &&
                    string.Equals(row.Symbol, normalizedSymbol, StringComparison.OrdinalIgnoreCase));
 
         if (matchingPosition is null)
@@ -106,7 +106,7 @@ public sealed class PositionsController(
         var result = await adminManualCloseService.CloseAsync(
             new AdminManualCloseRequest(
                 parsedBotId,
-                parsedExchangeAccountId,
+                parsedAccountScope,
                 normalizedSymbol,
                 userId,
                 $"user:{userId}",

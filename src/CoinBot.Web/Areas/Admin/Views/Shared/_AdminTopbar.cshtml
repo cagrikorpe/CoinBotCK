@@ -86,7 +86,7 @@
                         <path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
                     </svg>
                 </span>
-                <input name="query" type="text" class="form-control border-0 bg-transparent" value="@searchQuery" aria-label="CorrelationId / OrderId / DecisionId / ExecutionAttemptId / IncidentId / UserId" />
+                <input name="query" type="text" class="form-control border-0 bg-transparent" value="@searchQuery" aria-label="Audit, trace ve incident arama" />
             </form>
 
             <div class="cb-topbar-actions">
@@ -139,10 +139,12 @@
                                 <span class="navi-text">Admin access</span>
                                 @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "MFA", Tone = "warning" })
                             </a>
-                            <a asp-controller="Auth" asp-action="Logout" class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75">
-                                <span class="navi-text">Çıkış yap</span>
-                                @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Auth", Tone = "neutral" })
-                            </a>
+                            <form asp-area="" asp-controller="Auth" asp-action="Logout" method="post" class="px-4 py-3">
+                                <button type="submit" class="btn btn-link p-0 d-flex w-100 justify-content-between align-items-center text-white-75">
+                                    <span class="navi-text">Çıkış yap</span>
+                                    @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "Auth", Tone = "neutral" })
+                                </button>
+                            </form>
                             <a asp-controller="Home" asp-action="Index" asp-area="" class="navi-item px-4 py-3 d-flex justify-content-between align-items-center text-white-75">
                                 <span class="navi-text">Kullanıcı paneline dön</span>
                                 @await Html.PartialAsync("Foundation/_AdminBadge", new AdminBadgeViewModel { Label = "UI", Tone = "neutral" })

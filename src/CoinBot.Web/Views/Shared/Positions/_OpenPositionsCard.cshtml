@@ -42,6 +42,7 @@
                         var directionTone = direction == "Long" ? "cb-badge-success" : "cb-badge-danger";
                         var pnlTone = row.UnrealizedProfit >= 0m ? "cb-text-positive" : "cb-text-negative";
                         var currentPrice = row.MarkPrice ?? row.BreakEvenPrice;
+                        var (_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, accountScope, _, _, _, _, _, _) = row;
                         var environmentTone = string.Equals(row.EnvironmentTone, "danger", StringComparison.OrdinalIgnoreCase)
                             ? "cb-badge-danger"
                             : string.Equals(row.EnvironmentTone, "success", StringComparison.OrdinalIgnoreCase)
@@ -58,21 +59,21 @@
                             <td><div class="cb-numeric-cell" data-cb-open-position-updated>@row.SyncedAtUtc.ToUniversalTime().ToString("dd MMM · HH:mm")</div></td>
                             <td>
                                 <div class="cb-inline-stack" data-cb-user-manual-close-panel>
-                                    @if (row.CanManualClose && row.ManualCloseBotId.HasValue && row.ExchangeAccountId.HasValue)
+                                    @if (row.CanManualClose && row.ManualCloseBotId.HasValue && accountScope.HasValue)
                                     {
-                                        <form asp-controller="Positions" asp-action="ManualClose" method="post" class="w-100" data-cb-user-manual-close-form>
+                                        <form asp-controller="Positions" asp-action="ManualClose" method="post" class="w-100" data-cb-user-manual-close-form data-cb-manual-close-form data-cb-manual-close-action="ManualClose">
                                             @Html.AntiForgeryToken()
                                             <input type="hidden" name="botId" value="@row.ManualCloseBotId.Value.ToString("D")" />
-                                            <input type="hidden" name="exchangeAccountId" value="@row.ExchangeAccountId.Value.ToString("D")" />
+                                            <input type="hidden" name="accountScope" value="@accountScope.Value.ToString("D")" />
                                             <input type="hidden" name="symbol" value="@row.Symbol" />
                                             <div class="cb-validation-summary cb-validation-summary-warning mb-2" role="status" data-cb-user-manual-close-warning>
                                                 Bu buton borsaya reduce-only close emri gonderir.
                                             </div>
                                             <label class="d-flex align-items-start mb-2" data-cb-user-manual-close-confirm-row>
-                                                <input type="checkbox" name="confirmClose" value="true" class="mt-1 mr-2" data-cb-user-manual-close-checkbox />
-                                                <span>Reduce-only close emrini onayliyorum.</span>
+                                                <input type="checkbox" name="confirmClose" value="true" class="mt-1 mr-2" data-cb-user-manual-close-checkbox data-cb-manual-close-double-confirm required />
+                                                <span>Reduce-only close emrini onayliyorum ve pozisyonu kapat komutunu bilerek confirm ediyorum.</span>
                                             </label>
-                                            <button type="submit" class="btn btn-sm btn-light-danger" data-cb-user-manual-close-button>
+                                            <button type="submit" class="btn btn-sm btn-light-danger" data-cb-user-manual-close-button data-cb-manual-close-submit>
                                                 Pozisyonu kapat
                                             </button>
                                         </form>
