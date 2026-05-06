@@ -65,13 +65,13 @@ public sealed class UserExecutionOverrideGuardTests
     }
 
     [Fact]
-    public async Task EvaluateAsync_AllowsConfiguredPilotSymbols_WhenUserOverrideAllowListIncludesIntendedScope()
+    public async Task EvaluateAsync_AllowsConfiguredPilotSymbols_WhenUserOverrideAllowListIncludesIntendedFiveSymbolScope()
     {
         await using var dbContext = CreateDbContext();
         dbContext.UserExecutionOverrides.Add(new UserExecutionOverride
         {
             UserId = "user-scope-aligned",
-            AllowedSymbolsCsv = "BTCUSDT,ETHUSDT,SOLUSDT",
+            AllowedSymbolsCsv = "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT",
             DeniedSymbolsCsv = string.Empty,
             ReduceOnly = false,
             SessionDisabled = false
@@ -83,7 +83,7 @@ public sealed class UserExecutionOverrideGuardTests
             new FakeTradingModeResolver(),
             logger: NullLogger<UserExecutionOverrideGuard>.Instance);
 
-        foreach (var symbol in new[] { "BTCUSDT", "ETHUSDT", "SOLUSDT" })
+        foreach (var symbol in new[] { "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT" })
         {
             var result = await guard.EvaluateAsync(
                 new UserExecutionOverrideEvaluationRequest(
@@ -99,6 +99,184 @@ public sealed class UserExecutionOverrideGuardTests
             Assert.False(result.IsBlocked, symbol);
             Assert.Null(result.BlockCode);
         }
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_BlocksExplicitlyDeniedSymbol_WhenOverrideDenyListContainsRequestedSymbol()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.UserExecutionOverrides.Add(new UserExecutionOverride
+        {
+            UserId = "user-denied-symbol",
+            AllowedSymbolsCsv = "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT",
+            DeniedSymbolsCsv = "XRPUSDT",
+            ReduceOnly = false,
+            SessionDisabled = false
+        });
+        await dbContext.SaveChangesAsync();
+
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance);
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-denied-symbol",
+                "XRPUSDT",
+                ExecutionEnvironment.Demo,
+                ExecutionOrderSide.Buy,
+                10m,
+                2m,
+                StrategyKey: "pilot-scope"),
+            CancellationToken.None);
+
+        Assert.True(result.IsBlocked);
+        Assert.Equal("UserExecutionSymbolDenied", result.BlockCode);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_BlocksWhenOrderNotionalExceedsConfiguredMaxOrderSize()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.UserExecutionOverrides.Add(new UserExecutionOverride
+        {
+            UserId = "user-max-order-block",
+            AllowedSymbolsCsv = "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT",
+            MaxOrderSize = 100m,
+            ReduceOnly = false,
+            SessionDisabled = false
+        });
+        await dbContext.SaveChangesAsync();
+
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance);
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-max-order-block",
+                "ETHUSDT",
+                ExecutionEnvironment.Demo,
+                ExecutionOrderSide.Buy,
+                1m,
+                101m,
+                StrategyKey: "pilot-scope"),
+            CancellationToken.None);
+
+        Assert.True(result.IsBlocked);
+        Assert.Equal("UserExecutionMaxOrderSizeExceeded", result.BlockCode);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_AllowsWhenOrderNotionalFitsConfiguredMaxOrderSize()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.UserExecutionOverrides.Add(new UserExecutionOverride
+        {
+            UserId = "user-max-order-allow",
+            AllowedSymbolsCsv = "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT",
+            MaxOrderSize = 100m,
+            ReduceOnly = false,
+            SessionDisabled = false
+        });
+        await dbContext.SaveChangesAsync();
+
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance);
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-max-order-allow",
+                "BTCUSDT",
+                ExecutionEnvironment.Demo,
+                ExecutionOrderSide.Buy,
+                0.001m,
+                56_520m,
+                StrategyKey: "pilot-scope"),
+            CancellationToken.None);
+
+        Assert.False(result.IsBlocked);
+        Assert.Null(result.BlockCode);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_AllowsPilotWhenRequestedNotionalFitsUpdatedConservativeHardCap()
+    {
+        await using var dbContext = CreateDbContext();
+        var botId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        var timeProvider = new AdjustableTimeProvider(new DateTimeOffset(2026, 3, 22, 12, 0, 0, TimeSpan.Zero));
+        var evaluatedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+
+        dbContext.RiskProfiles.Add(new RiskProfile
+        {
+            OwnerUserId = "user-pilot-cap-100",
+            ProfileName = "Pilot",
+            MaxDailyLossPercentage = 5m,
+            MaxPositionSizePercentage = 100m,
+            MaxLeverage = 2m,
+            MaxConcurrentPositions = 1
+        });
+        dbContext.ExchangeBalances.Add(new ExchangeBalance
+        {
+            ExchangeAccountId = exchangeAccountId,
+            OwnerUserId = "user-pilot-cap-100",
+            Plane = ExchangeDataPlane.Futures,
+            Asset = "USDT",
+            WalletBalance = 1000m,
+            CrossWalletBalance = 1000m,
+            AvailableBalance = 1000m,
+            MaxWithdrawAmount = 1000m,
+            ExchangeUpdatedAtUtc = evaluatedAtUtc
+        });
+        await dbContext.SaveChangesAsync();
+
+        var guard = new UserExecutionOverrideGuard(
+            dbContext,
+            new FakeTradingModeResolver(),
+            logger: NullLogger<UserExecutionOverrideGuard>.Instance,
+            hostEnvironment: new TestHostEnvironment(Environments.Development),
+            riskPolicyEvaluator: new RiskPolicyEvaluator(
+                dbContext,
+                timeProvider,
+                NullLogger<RiskPolicyEvaluator>.Instance),
+            botExecutionPilotOptions: Options.Create(new BotExecutionPilotOptions
+            {
+                Enabled = true,
+                AllowedUserIds = ["user-pilot-cap-100"],
+                AllowedBotIds = [botId.ToString("N")],
+                AllowedSymbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"],
+                MaxPilotOrderNotional = "100",
+                MaxOpenPositionsPerUser = 1,
+                PerBotCooldownSeconds = 300,
+                PerSymbolCooldownSeconds = 300,
+                MaxDailyLossPercentage = 5m
+            }));
+
+        var result = await guard.EvaluateAsync(
+            new UserExecutionOverrideEvaluationRequest(
+                "user-pilot-cap-100",
+                "BTCUSDT",
+                ExecutionEnvironment.Live,
+                ExecutionOrderSide.Buy,
+                0.001m,
+                56_520m,
+                BotId: botId,
+                StrategyKey: "pilot-core",
+                Context: "DevelopmentFuturesTestnetPilot=True | PilotMarginType=ISOLATED | PilotLeverage=1",
+                TradingStrategyId: Guid.NewGuid(),
+                TradingStrategyVersionId: Guid.NewGuid(),
+                Timeframe: "1m"),
+            CancellationToken.None);
+
+        Assert.False(result.IsBlocked);
+        Assert.Null(result.BlockCode);
+        Assert.Contains("MaxPilotOrderNotional=100", result.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("RequestedNotional=56.52", result.GuardSummary, StringComparison.Ordinal);
     }
 
     [Fact]

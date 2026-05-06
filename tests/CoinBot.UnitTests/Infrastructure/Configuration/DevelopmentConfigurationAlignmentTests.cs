@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Xml.Linq;
 using Microsoft.Extensions.Configuration;
 
 namespace CoinBot.UnitTests.Infrastructure.Configuration;
@@ -37,7 +38,7 @@ public sealed class DevelopmentConfigurationAlignmentTests
         var webConfig = LoadEffectiveDevelopmentConfiguration(Path.Combine(repoRoot, "src", "CoinBot.Web"));
         var workerConfig = LoadEffectiveDevelopmentConfiguration(Path.Combine(repoRoot, "src", "CoinBot.Worker"));
 
-        var expectedSymbols = new[] { "BTCUSDT", "ETHUSDT", "SOLUSDT" };
+        var expectedSymbols = new[] { "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT" };
 
         Assert.Equal(expectedSymbols, LoadStringArray(webConfig, "MarketData:Binance:SeedSymbols"));
         Assert.Equal(expectedSymbols, LoadStringArray(workerConfig, "MarketData:Binance:SeedSymbols"));
@@ -60,6 +61,8 @@ public sealed class DevelopmentConfigurationAlignmentTests
 
         Assert.Equal("BinanceTestnet", webConfig["BotExecutionPilot:ExecutionDispatchMode"]);
         Assert.Equal("BinanceTestnet", workerConfig["BotExecutionPilot:ExecutionDispatchMode"]);
+        Assert.Equal("100", webConfig["BotExecutionPilot:MaxPilotOrderNotional"]);
+        Assert.Equal("100", workerConfig["BotExecutionPilot:MaxPilotOrderNotional"]);
 
         Assert.DoesNotContain("live", webConfig["MarketData:Binance:RestBaseUrl"] ?? string.Empty, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("prod", webConfig["MarketData:Binance:RestBaseUrl"] ?? string.Empty, StringComparison.OrdinalIgnoreCase);
@@ -105,11 +108,18 @@ public sealed class DevelopmentConfigurationAlignmentTests
 
     private static IConfigurationRoot LoadEffectiveDevelopmentConfiguration(string projectDirectory)
     {
-        return new ConfigurationBuilder()
+        var builder = new ConfigurationBuilder()
             .SetBasePath(projectDirectory)
             .AddJsonFile("appsettings.json", optional: false)
-            .AddJsonFile("appsettings.Development.json", optional: false)
-            .Build();
+            .AddJsonFile("appsettings.Development.json", optional: false);
+
+        var userSecretsPath = TryResolveUserSecretsPath(projectDirectory);
+        if (!string.IsNullOrWhiteSpace(userSecretsPath))
+        {
+            builder.AddJsonFile(userSecretsPath, optional: true);
+        }
+
+        return builder.Build();
     }
 
     private static string[] LoadStringArray(IConfiguration configuration, string key)
@@ -122,5 +132,35 @@ public sealed class DevelopmentConfigurationAlignmentTests
             .Select(value => value!.Trim().ToUpperInvariant())
             .Distinct(StringComparer.Ordinal)
             .ToArray();
+    }
+
+    private static string? TryResolveUserSecretsPath(string projectDirectory)
+    {
+        var projectFile = Directory
+            .EnumerateFiles(projectDirectory, "*.csproj", SearchOption.TopDirectoryOnly)
+            .SingleOrDefault();
+
+        if (projectFile is null)
+        {
+            return null;
+        }
+
+        var projectDocument = XDocument.Load(projectFile);
+        var userSecretsId = projectDocument
+            .Descendants()
+            .FirstOrDefault(element => string.Equals(element.Name.LocalName, "UserSecretsId", StringComparison.Ordinal))
+            ?.Value
+            ?.Trim();
+
+        if (string.IsNullOrWhiteSpace(userSecretsId))
+        {
+            return null;
+        }
+
+        var secretsRoot = OperatingSystem.IsWindows()
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Microsoft", "UserSecrets")
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".microsoft", "usersecrets");
+
+        return Path.Combine(secretsRoot, userSecretsId, "secrets.json");
     }
 }

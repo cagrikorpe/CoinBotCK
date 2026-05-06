@@ -315,6 +315,50 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal("ETHUSDT", harness.ExecutionEngine.LastCommand?.Symbol);
     }
 
+    [Theory]
+    [InlineData("BTCUSDT")]
+    [InlineData("ETHUSDT")]
+    [InlineData("SOLUSDT")]
+    [InlineData("BNBUSDT")]
+    [InlineData("XRPUSDT")]
+    public async Task RunOnceAsync_PreparesCandidate_WhenSelectedSymbolIsInsideConfiguredFiveSymbolExecutionAllowlist(string symbol)
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        await using var harness = CreateHarness(
+            nowUtc,
+            new BotExecutionPilotOptions
+            {
+                SignalEvaluationMode = ExecutionEnvironment.Live,
+                ExecutionDispatchMode = ExecutionEnvironment.BinanceTestnet,
+                PilotActivationEnabled = true,
+                PrimeHistoricalCandleCount = 34,
+                AllowedExecutionSymbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]
+            });
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(
+            harness.DbContext,
+            "user-five-symbol-allow",
+            "ETHUSDT",
+            "pilot-five-symbol-allow",
+            allowedSymbolsCsv: "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: symbol);
+        SeedCandidate(harness.DbContext, scanCycleId, symbol, rank: 1, score: 10_000m);
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata(symbol, symbol[..^4], "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot(symbol, "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, symbol, "1m", harness.NowUtc));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
+        Assert.Equal(symbol, attempt.SelectedSymbol);
+        Assert.NotEqual("SymbolExecutionNotAllowed", attempt.BlockerCode);
+        Assert.Contains("AllowedExecutionSymbols=BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("SymbolAllowlistDecision=Allowed", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Equal(symbol, harness.ExecutionEngine.LastCommand?.Symbol);
+        Assert.Equal(ExecutionEnvironment.BinanceTestnet, harness.ExecutionEngine.LastCommand?.RequestedEnvironment);
+    }
+
     [Fact]
     public async Task RunOnceAsync_UsesProtectedMinNotionalSizingParity_ForEntryQuantity()
     {
