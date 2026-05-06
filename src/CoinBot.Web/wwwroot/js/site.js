@@ -116,22 +116,31 @@
         }
     }
 
+    function hasCheckedConfirmation(form, selector) {
+        const checkbox = form?.querySelector(selector);
+        return !!checkbox && checkbox.checked;
+    }
+
     function handleAdminManualCloseTrigger(event) {
-        const trigger = event.target.closest('[data-cb-admin-manual-close-button]');
+        const trigger = event.target.closest('[data-cb-admin-manual-close-confirm]');
         if (!trigger) {
             return false;
         }
 
-        const panel = trigger.closest('[data-cb-admin-manual-close-panel]');
-        const form = panel?.querySelector('[data-cb-admin-manual-close-form]');
-        const submitButton = panel?.querySelector('[data-cb-admin-manual-close-confirm]');
-        if (!panel || !form || !submitButton) {
+        const form = trigger.closest('[data-cb-admin-manual-close-form]');
+        if (!form) {
             return false;
         }
 
-        event.preventDefault();
-        event.stopPropagation();
-        if (panel.dataset.cbManualCloseSubmitting === 'true') {
+        if (!hasCheckedConfirmation(form, '[data-cb-admin-manual-close-double-confirm]')) {
+            event.preventDefault();
+            form.querySelector('[data-cb-admin-manual-close-double-confirm]')?.focus();
+            return true;
+        }
+
+        const panel = trigger.closest('[data-cb-admin-manual-close-panel]');
+        if (panel?.dataset.cbManualCloseSubmitting === 'true') {
+            event.preventDefault();
             return true;
         }
 
@@ -140,17 +149,62 @@
             ? symbol + ' reduce-only close emri gonderilsin mi?'
             : 'Reduce-only close emri gonderilsin mi?';
         if (!window.confirm(message)) {
+            event.preventDefault();
             return true;
         }
 
-        panel.dataset.cbManualCloseSubmitting = 'true';
-        if (typeof form.requestSubmit === 'function') {
-            form.requestSubmit(submitButton);
-        } else {
-            submitButton.click();
+        if (panel) {
+            panel.dataset.cbManualCloseSubmitting = 'true';
         }
 
-        return true;
+        return false;
+    }
+
+    function handleBotToggleTrigger(event) {
+        const trigger = event.target.closest('[data-cb-bot-toggle-submit]');
+        if (!trigger) {
+            return false;
+        }
+
+        const form = trigger.closest('[data-cb-bot-toggle-form]');
+        if (!form) {
+            return false;
+        }
+
+        if (!hasCheckedConfirmation(form, '[data-cb-bot-toggle-double-confirm]')) {
+            event.preventDefault();
+            form.querySelector('[data-cb-bot-toggle-double-confirm]')?.focus();
+            return true;
+        }
+
+        const actionLabel = trigger.textContent?.trim() || 'Bot durum degisikligi';
+        if (!window.confirm(actionLabel + ' aksiyonu yeni runtime kararlarini etkileyebilir. Devam edilsin mi?')) {
+            event.preventDefault();
+            return true;
+        }
+
+        return false;
+    }
+
+    function handleBotEditSafetyTrigger(event) {
+        const trigger = event.target.closest('[data-cb-bot-edit-safety-submit]');
+        if (!trigger) {
+            return false;
+        }
+
+        const form = trigger.closest('[data-cb-bot-edit-form]');
+        if (!form) {
+            return false;
+        }
+
+        const checkbox = form.querySelector('[data-cb-bot-edit-safety-confirm]');
+        if (checkbox && !checkbox.checked) {
+            event.preventDefault();
+            checkbox.focus();
+            return true;
+        }
+
+        return false;
     }
 
 
@@ -165,6 +219,14 @@
 
     document.addEventListener('click', function (event) {
         if (handleAdminManualCloseTrigger(event)) {
+            return;
+        }
+
+        if (handleBotToggleTrigger(event)) {
+            return;
+        }
+
+        if (handleBotEditSafetyTrigger(event)) {
             return;
         }
 

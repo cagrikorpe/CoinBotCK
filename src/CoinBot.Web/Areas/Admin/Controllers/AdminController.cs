@@ -612,6 +612,25 @@ public sealed class AdminController : Controller
             return mfaResult;
         }
 
+        if (!ReadConfirmationFlag("confirmClose"))
+        {
+            var blockedActorUserId = ResolveAdminUserId();
+            await adminAuditLogService.WriteAsync(
+                BuildAdminAuditLogWriteRequest(
+                    blockedActorUserId,
+                    "Admin.BotOperations.ManualCloseBlocked",
+                    "TradingBot",
+                    botId,
+                    oldValueSummary: null,
+                    newValueSummary: "Manual close blocked because confirmation was not acknowledged.",
+                    reason: "Manual reduce-only close requested from admin bot operations.",
+                    correlationId: HttpContext.TraceIdentifier),
+                cancellationToken);
+
+            TempData[AdminBotOperationsErrorTempDataKey] = "Reduce-only close icin onay kutusunu isaretleyin.";
+            return RedirectToAction(nameof(BotOperations));
+        }
+
         if (adminManualCloseService is null)
         {
             TempData[AdminBotOperationsErrorTempDataKey] = "Manual close servisi kullanilamiyor.";
@@ -5852,6 +5871,26 @@ public sealed class AdminController : Controller
     private string? ResolveMaskedUserAgent()
     {
         return AdminRequestValueMasker.MaskUserAgent(Request.Headers["User-Agent"].ToString());
+    }
+
+    private bool ReadConfirmationFlag(string formKey)
+    {
+        if (!Request.HasFormContentType ||
+            !Request.Form.TryGetValue(formKey, out var values))
+        {
+            return false;
+        }
+
+        foreach (var value in values)
+        {
+            if (string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(value, "on", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private AdminCrisisEscalationPreviewViewModel? LoadCrisisPreviewViewModelFromTempData()

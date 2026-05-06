@@ -39,6 +39,13 @@ public sealed class BotIndexSurfaceTests
         Assert.Contains("LongShort", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-bot-start-block-reason", content, StringComparison.Ordinal);
         Assert.Contains("Strateji hazır değil", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-toggle-form", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-toggle-warning", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-toggle-double-confirm", content, StringComparison.Ordinal);
+        Assert.Contains("name=\"confirmBotStateChange\"", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-toggle-submit", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-toggle-open-exposure-warning", content, StringComparison.Ordinal);
+        Assert.Contains("broker-etkili", content, StringComparison.OrdinalIgnoreCase);
 
         Assert.Contains("data-cb-bot-ops-card", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-bot-ops-signal", content, StringComparison.Ordinal);
@@ -96,6 +103,12 @@ public sealed class BotIndexSurfaceTests
         Assert.Contains("Scanner Universe read-only'dir ve runtime market-data configuration kaynağından gelir.", content, StringComparison.Ordinal);
         Assert.Contains("Allowed symbol seçimi için scanner universe configured değil.", content, StringComparison.Ordinal);
         Assert.Contains("Scanner universe configured değil.", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-edit-form", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-edit-safety-warning", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-edit-safety-confirm", content, StringComparison.Ordinal);
+        Assert.Contains("name=\"confirmBotConfigChange\"", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-edit-safety-submit", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-edit-open-exposure-warning", content, StringComparison.Ordinal);
         Assert.Contains("LongOnly", content, StringComparison.Ordinal);
         Assert.Contains("ShortOnly", content, StringComparison.Ordinal);
         Assert.Contains("LongShort", content, StringComparison.Ordinal);
@@ -103,6 +116,24 @@ public sealed class BotIndexSurfaceTests
 
         Assert.DoesNotContain("execution analytics", content, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("ReasonCode", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SiteJs_WiresBotSafetyConfirmationMarkers()
+    {
+        var content = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "wwwroot",
+            "js",
+            "site.js"));
+
+        Assert.Contains("data-cb-bot-toggle-submit", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-toggle-double-confirm", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-edit-safety-submit", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-bot-edit-safety-confirm", content, StringComparison.Ordinal);
+        Assert.Contains("window.confirm", content, StringComparison.Ordinal);
     }
 
     private static string ResolveRepositoryRoot()

@@ -128,6 +128,13 @@ public class BotsController(
             return View("Editor", MapEditor(snapshot, isEditMode: true, form));
         }
 
+        if (RequiresOperationalSafetyConfirmation(snapshot.Draft, form) &&
+            !ReadConfirmationFlag("confirmBotConfigChange"))
+        {
+            ModelState.AddModelError(string.Empty, "Broker-etkili bot degisikligi icin onay kutusunu isaretleyin.");
+            return View("Editor", MapEditor(snapshot, isEditMode: true, form));
+        }
+
         var result = await botManagementService.UpdateAsync(
             userId,
             botId,
@@ -167,6 +174,12 @@ public class BotsController(
         if (userId is null)
         {
             return Challenge();
+        }
+
+        if (!ReadConfirmationFlag("confirmBotStateChange"))
+        {
+            TempData["BotControlError"] = "Bot durum degisikligi icin onay kutusunu isaretleyin.";
+            return RedirectToAction(nameof(Index));
         }
 
         var result = await botPilotControlService.SetEnabledAsync(
@@ -354,7 +367,59 @@ public class BotsController(
                 .Select(option => new BotManagementOptionViewModel(
                     option.ExchangeAccountId.ToString(),
                     $"{option.DisplayName} - {(option.IsActive ? "Active" : "Inactive")} / {(option.IsWritable ? "Writable" : "ReadOnly")}"))
-                .ToArray());
+                .ToArray(),
+            snapshot.OpenOrderCount,
+            snapshot.OpenPositionCount);
+    }
+
+    private bool ReadConfirmationFlag(string formKey)
+    {
+        if (!Request.HasFormContentType ||
+            !Request.Form.TryGetValue(formKey, out var values))
+        {
+            return false;
+        }
+
+        foreach (var value in values)
+        {
+            if (string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(value, "on", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool RequiresOperationalSafetyConfirmation(
+        BotManagementDraftSnapshot currentDraft,
+        BotManagementInputModel proposedForm)
+    {
+        return !string.Equals(NormalizeScalar(proposedForm.StrategyKey), NormalizeScalar(currentDraft.StrategyKey), StringComparison.Ordinal) ||
+               !string.Equals(NormalizeScalar(proposedForm.Symbol), NormalizeScalar(currentDraft.Symbol), StringComparison.Ordinal) ||
+               !NormalizeSymbols(proposedForm.AllowedSymbols).SetEquals(NormalizeSymbols(currentDraft.AllowedSymbols)) ||
+               proposedForm.Quantity != currentDraft.Quantity ||
+               proposedForm.ExchangeAccountId != currentDraft.ExchangeAccountId ||
+               (proposedForm.Leverage ?? 1m) != (currentDraft.Leverage ?? 1m) ||
+               !string.Equals(NormalizeScalar(proposedForm.MarginType), NormalizeScalar(currentDraft.MarginType), StringComparison.Ordinal) ||
+               proposedForm.IsEnabled != currentDraft.IsEnabled ||
+               proposedForm.DirectionMode != currentDraft.DirectionMode;
+    }
+
+    private static string NormalizeScalar(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : value.Trim().ToUpperInvariant();
+    }
+
+    private static HashSet<string> NormalizeSymbols(IEnumerable<string> symbols)
+    {
+        return symbols
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Select(item => item.Trim().ToUpperInvariant())
+            .ToHashSet(StringComparer.Ordinal);
     }
 
     private static string? ResolveMarketDataBadgeText(BotManagementBotSnapshot snapshot)

@@ -135,18 +135,41 @@
                                         <td class="text-right">
                                             <div class="d-inline-flex align-items-center">
                                                 <a asp-action="Edit" asp-route-botId="@bot.BotId" class="btn btn-sm btn-light-primary font-weight-bold mr-2" data-cb-bot-detail>Detay</a>
-                                                <form asp-action="SetEnabled" asp-route-botId="@bot.BotId" method="post" class="d-inline" data-cb-bot-toggle>
+                                                <form asp-action="SetEnabled" asp-route-botId="@bot.BotId" method="post" class="d-inline" data-cb-bot-toggle data-cb-bot-toggle-form>
                                                     @Html.AntiForgeryToken()
                                                     <input type="hidden" name="isEnabled" value="@(!bot.IsEnabled)" />
+                                                    <div class="cb-admin-info-strip cb-admin-info-strip-warning mb-3 text-left" data-cb-bot-toggle-warning>
+                                                        <div>
+                                                            <div class="cb-admin-info-strip-title">Broker-etkili degisiklik</div>
+                                                            <div class="cb-admin-info-strip-text">Bot ac/kapat aksiyonu yeni execution kararlarini etkiler. Runtime block reason ve kill switch durumunu kontrol edin.</div>
+                                                        </div>
+                                                        <span class="cb-admin-info-strip-meta">Safety</span>
+                                                    </div>
+                                                    <label class="form-check text-left mb-3" data-cb-bot-toggle-double-confirm-wrap>
+                                                        <input type="checkbox"
+                                                               name="confirmBotStateChange"
+                                                               value="true"
+                                                               class="form-check-input"
+                                                               data-cb-bot-toggle-double-confirm
+                                                               required />
+                                                        <span class="form-check-label">Bu bot durum degisikliginin broker-etkili runtime sonuc dogurabilecegini confirm ediyorum.</span>
+                                                    </label>
                                                     <button type="submit"
                                                             class="btn btn-sm @(bot.IsEnabled ? "btn-light-danger" : "btn-light-success") font-weight-bold"
                                                             disabled="@(enableBlocked)"
-                                                            data-cb-bot-start-blocked="@enableBlocked.ToString().ToLowerInvariant()">
+                                                            data-cb-bot-start-blocked="@enableBlocked.ToString().ToLowerInvariant()"
+                                                            data-cb-bot-toggle-submit>
                                                         @toggleText
                                                     </button>
                                                     @if (enableBlocked)
                                                     {
                                                         <div class="text-muted small mt-2" data-cb-bot-start-block-reason>Strateji hazır değil.</div>
+                                                    }
+                                                    @if (bot.OpenPositionCount > 0 || bot.OpenOrderCount > 0)
+                                                    {
+                                                        <div class="text-muted small mt-2" data-cb-bot-toggle-open-exposure-warning>
+                                                            Acik pozisyon/emir var: @bot.OpenPositionCount pozisyon · @bot.OpenOrderCount emir. Durum degisikligi yeni entry/exit akislarini etkileyebilir.
+                                                        </div>
                                                     }
                                                 </form>
                                             </div>

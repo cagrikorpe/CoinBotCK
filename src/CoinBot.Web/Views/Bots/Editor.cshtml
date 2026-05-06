@@ -44,10 +44,22 @@
                     </div>
                 }
 
+                @if (Model.IsEditMode && (Model.OpenPositionCount > 0 || Model.OpenOrderCount > 0))
+                {
+                    <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-6" data-cb-bot-edit-open-exposure-warning>
+                        <div>
+                            <div class="cb-admin-info-strip-title">Acik exposure bulundu</div>
+                            <div class="cb-admin-info-strip-text">Bu botta @Model.OpenPositionCount acik pozisyon ve @Model.OpenOrderCount acik emir var. Primary Symbol, Allowed Symbols, hesap veya yon degisikligi yalnizca sonraki runtime kararlarini etkiler; mevcut exposure'u geriye donuk tasimaz.</div>
+                        </div>
+                        <span class="cb-admin-info-strip-meta">Risk</span>
+                    </div>
+                }
+
                 <form asp-action="@(Model.IsEditMode ? "Edit" : "Create")"
                       asp-route-botId="@(Model.BotId)"
                       method="post"
-                      class="mt-6">
+                      class="mt-6"
+                      data-cb-bot-edit-form>
                     @Html.AntiForgeryToken()
 
                     <div class="form-group">
@@ -173,9 +185,29 @@
                         }
                     </div>
 
+                    @if (Model.IsEditMode)
+                    {
+                        <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-6" data-cb-bot-edit-safety-warning>
+                            <div>
+                                <div class="cb-admin-info-strip-title">Broker-etkili config degisikligi</div>
+                                <div class="cb-admin-info-strip-text">Primary Symbol, Allowed Symbols, hesap, quantity, leverage, margin, yon ve enable-state degisikligi sonraki entry/exit kararlarini etkiler.</div>
+                            </div>
+                            <span class="cb-admin-info-strip-meta">Safety</span>
+                        </div>
+
+                        <div class="form-group form-check mt-4" data-cb-bot-edit-safety-confirm-wrap>
+                            <input type="checkbox"
+                                   name="confirmBotConfigChange"
+                                   value="true"
+                                   class="form-check-input"
+                                   data-cb-bot-edit-safety-confirm />
+                            <label class="form-check-label">Bu bot config degisikliginin broker-etkili runtime davranisini degistirebilecegini confirm ediyorum.</label>
+                        </div>
+                    }
+
                     <div class="d-flex justify-content-between align-items-center">
                         <a asp-action="Index" class="btn btn-light">Listeye dön</a>
-                        <button type="submit" class="btn btn-primary" disabled="@(!hasStrategies)">Kaydet</button>
+                        <button type="submit" class="btn btn-primary" disabled="@(!hasStrategies)" data-cb-bot-edit-safety-submit>Kaydet</button>
                     </div>
                 </form>
             </div>

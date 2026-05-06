@@ -14,7 +14,9 @@ public sealed class BotManagementEditorViewModel
         IReadOnlyCollection<BotManagementOptionViewModel> symbolOptions,
         IReadOnlyCollection<string> scannerUniverseSymbols,
         IReadOnlyCollection<BotManagementOptionViewModel> strategyOptions,
-        IReadOnlyCollection<BotManagementOptionViewModel> exchangeAccountOptions)
+        IReadOnlyCollection<BotManagementOptionViewModel> exchangeAccountOptions,
+        int openOrderCount,
+        int openPositionCount)
     {
         BotId = botId;
         IsEditMode = isEditMode;
@@ -23,6 +25,8 @@ public sealed class BotManagementEditorViewModel
         ScannerUniverseSymbols = scannerUniverseSymbols;
         StrategyOptions = strategyOptions;
         ExchangeAccountOptions = exchangeAccountOptions;
+        OpenOrderCount = openOrderCount;
+        OpenPositionCount = openPositionCount;
     }
 
     public Guid? BotId { get; }
@@ -38,6 +42,10 @@ public sealed class BotManagementEditorViewModel
     public IReadOnlyCollection<BotManagementOptionViewModel> StrategyOptions { get; }
 
     public IReadOnlyCollection<BotManagementOptionViewModel> ExchangeAccountOptions { get; }
+
+    public int OpenOrderCount { get; }
+
+    public int OpenPositionCount { get; }
 }
 
 public sealed class BotManagementInputModel

@@ -367,6 +367,10 @@ public sealed class AdminOverviewSurfaceTests
         Assert.Contains("name=\"botId\"", content, StringComparison.Ordinal);
         Assert.Contains("name=\"exchangeAccountId\"", content, StringComparison.Ordinal);
         Assert.Contains("name=\"symbol\"", content, StringComparison.Ordinal);
+        Assert.Contains("name=\"confirmClose\"", content, StringComparison.Ordinal);
+        Assert.Contains("type=\"checkbox\"", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-manual-close-double-confirm", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-manual-close-warning", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-reauth-required=\"true\"", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-admin-manual-close-unavailable-reason", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-admin-bot-last-error", content, StringComparison.Ordinal);
@@ -397,7 +401,7 @@ public sealed class AdminOverviewSurfaceTests
     }
 
     [Fact]
-    public void SiteJs_WiresManualCloseSummaryClick_ToRequestSubmit()
+    public void SiteJs_WiresManualCloseConfirmationSurface()
     {
         var content = File.ReadAllText(Path.Combine(
             ResolveRepositoryRoot(),
@@ -407,11 +411,11 @@ public sealed class AdminOverviewSurfaceTests
             "js",
             "site.js"));
 
-        Assert.Contains("data-cb-admin-manual-close-button", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-admin-manual-close-form", content, StringComparison.Ordinal);
         Assert.Contains("data-cb-admin-manual-close-confirm", content, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-manual-close-double-confirm", content, StringComparison.Ordinal);
         Assert.Contains("window.confirm", content, StringComparison.Ordinal);
-        Assert.Contains("form.requestSubmit", content, StringComparison.Ordinal);
+        Assert.Contains("cbManualCloseSubmitting", content, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -440,7 +440,13 @@ public sealed class BotManagementService(
             IsEnabled: false,
             DirectionMode: TradingBotDirectionMode.LongOnly);
 
-        return await CreateEditorSnapshotAsync(ownerUserId, null, draft, cancellationToken);
+        return await CreateEditorSnapshotAsync(
+            ownerUserId,
+            null,
+            draft,
+            openOrderCount: 0,
+            openPositionCount: 0,
+            cancellationToken: cancellationToken);
     }
 
     public async Task<BotManagementEditorSnapshot?> GetEditEditorAsync(string ownerUserId, Guid botId, CancellationToken cancellationToken = default)
@@ -473,7 +479,13 @@ public sealed class BotManagementService(
             bot.IsEnabled,
             bot.DirectionMode);
 
-        return await CreateEditorSnapshotAsync(ownerUserId, bot.Id, draft, cancellationToken);
+        return await CreateEditorSnapshotAsync(
+            ownerUserId,
+            bot.Id,
+            draft,
+            bot.OpenOrderCount,
+            bot.OpenPositionCount,
+            cancellationToken);
     }
 
     public async Task<BotManagementSaveResult> CreateAsync(
@@ -784,6 +796,8 @@ public sealed class BotManagementService(
         string ownerUserId,
         Guid? botId,
         BotManagementDraftSnapshot draft,
+        int openOrderCount,
+        int openPositionCount,
         CancellationToken cancellationToken)
     {
         var strategies = await dbContext.TradingStrategies
@@ -830,7 +844,9 @@ public sealed class BotManagementService(
             ResolveSymbolOptions(draft.Symbol),
             ResolveScannerUniverseSymbols(),
             strategyOptions,
-            exchangeAccountOptions);
+            exchangeAccountOptions,
+            openOrderCount,
+            openPositionCount);
     }
 
     private async Task<bool> StrategySelectionExistsAsync(
@@ -1761,6 +1777,4 @@ public sealed class BotManagementService(
             .ToArray();
     }
 }
-
-
 

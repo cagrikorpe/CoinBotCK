@@ -95,7 +95,9 @@ public sealed record BotManagementEditorSnapshot(
     IReadOnlyCollection<string> SymbolOptions,
     IReadOnlyCollection<string> ScannerUniverseSymbols,
     IReadOnlyCollection<BotStrategyOptionSnapshot> StrategyOptions,
-    IReadOnlyCollection<BotExchangeAccountOptionSnapshot> ExchangeAccountOptions);
+    IReadOnlyCollection<BotExchangeAccountOptionSnapshot> ExchangeAccountOptions,
+    int OpenOrderCount = 0,
+    int OpenPositionCount = 0);
 
 public sealed record BotManagementDraftSnapshot(
     string Name,

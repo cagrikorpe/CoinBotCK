@@ -8,6 +8,7 @@ using CoinBot.Web.Controllers;
 using CoinBot.Web.ViewModels.Bots;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ViewFeatures;
 
@@ -548,11 +549,35 @@ public sealed class BotsControllerTests
     }
 
     [Fact]
+    public async Task Edit_Get_MapsOpenExposureCounts_ForOperationalSafetyWarning()
+    {
+        var managementService = CreateManagementService();
+        managementService.EditSnapshot = managementService.EditSnapshot! with
+        {
+            OpenOrderCount = 2,
+            OpenPositionCount = 1
+        };
+        var controller = CreateController(managementService, new FakeBotPilotControlService(), new FakeUserSettingsService(), "user-bot-03a", "trace-bot-003a");
+
+        var result = await controller.Edit(managementService.EditBotId, CancellationToken.None);
+
+        var viewResult = Assert.IsType<ViewResult>(result);
+        var model = Assert.IsType<BotManagementEditorViewModel>(viewResult.Model);
+
+        Assert.Equal(2, model.OpenOrderCount);
+        Assert.Equal(1, model.OpenPositionCount);
+    }
+
+    [Fact]
     public async Task Edit_Post_PersistsBot_AndRedirectsOnSuccess()
     {
         var managementService = CreateManagementService();
         managementService.UpdateResult = new BotManagementSaveResult(managementService.EditBotId, true, true, true, null, null);
         var controller = CreateController(managementService, new FakeBotPilotControlService(), new FakeUserSettingsService(), "user-bot-06", "trace-bot-006");
+        SetFormValues(controller, new Dictionary<string, Microsoft.Extensions.Primitives.StringValues>
+        {
+            ["confirmBotConfigChange"] = "true"
+        });
         var form = CreateInput();
 
         var result = await controller.Edit(managementService.EditBotId, form, CancellationToken.None);
@@ -566,6 +591,26 @@ public sealed class BotsControllerTests
         Assert.Equal("BTCUSDT", request.Command.Symbol);
         Assert.Equal(["BTCUSDT", "ETHUSDT"], request.Command.AllowedSymbols);
         Assert.Equal("Pilot bot guncellendi.", controller.TempData["BotControlSuccess"]);
+    }
+
+    [Fact]
+    public async Task Edit_Post_ReturnsViewWithError_WhenRiskyConfigConfirmationMissing()
+    {
+        var managementService = CreateManagementService();
+        var controller = CreateController(managementService, new FakeBotPilotControlService(), new FakeUserSettingsService(), "user-bot-06a", "trace-bot-006a");
+        var form = CreateInput();
+
+        var result = await controller.Edit(managementService.EditBotId, form, CancellationToken.None);
+
+        var viewResult = Assert.IsType<ViewResult>(result);
+        var model = Assert.IsType<BotManagementEditorViewModel>(viewResult.Model);
+
+        Assert.Equal("Editor", viewResult.ViewName);
+        Assert.Empty(managementService.UpdateRequests);
+        Assert.False(controller.ModelState.IsValid);
+        Assert.Contains(controller.ModelState[string.Empty]!.Errors, item => item.ErrorMessage.Contains("onay kutusunu isaretleyin", StringComparison.Ordinal));
+        Assert.Equal(0, model.OpenOrderCount);
+        Assert.Equal(0, model.OpenPositionCount);
     }
 
     [Fact]
@@ -588,6 +633,10 @@ public sealed class BotsControllerTests
         };
         var controller = CreateController(CreateManagementService(), service, new FakeUserSettingsService(), "user-bot-08", "trace-bot-008");
         var botId = Guid.NewGuid();
+        SetFormValues(controller, new Dictionary<string, Microsoft.Extensions.Primitives.StringValues>
+        {
+            ["confirmBotStateChange"] = "true"
+        });
 
         var result = await controller.SetEnabled(botId, true, CancellationToken.None);
 
@@ -600,6 +649,25 @@ public sealed class BotsControllerTests
         Assert.Equal("user-bot-08", request.OwnerUserId);
         Assert.Equal("user:user-bot-08", request.Actor);
         Assert.Equal("trace-bot-008", request.CorrelationId);
+    }
+
+    [Fact]
+    public async Task SetEnabled_ReturnsError_WhenConfirmationMissing()
+    {
+        var service = new FakeBotPilotControlService
+        {
+            Result = new BotPilotToggleResult(Guid.NewGuid(), true, true, null, null)
+        };
+        var controller = CreateController(CreateManagementService(), service, new FakeUserSettingsService(), "user-bot-08a", "trace-bot-008a");
+        var botId = Guid.NewGuid();
+
+        var result = await controller.SetEnabled(botId, true, CancellationToken.None);
+
+        var redirectResult = Assert.IsType<RedirectToActionResult>(result);
+
+        Assert.Equal(nameof(BotsController.Index), redirectResult.ActionName);
+        Assert.Empty(service.Requests);
+        Assert.Equal("Bot durum degisikligi icin onay kutusunu isaretleyin.", controller.TempData["BotControlError"]);
     }
 
     [Fact]
@@ -646,7 +714,9 @@ public sealed class BotsControllerTests
             ["BTCUSDT", "ETHUSDT"],
             ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
             [new BotStrategyOptionSnapshot("strategy-a", "Strategy A", true)],
-            [new BotExchangeAccountOptionSnapshot(Guid.NewGuid(), "Pilot Futures", true, true)]);
+            [new BotExchangeAccountOptionSnapshot(Guid.NewGuid(), "Pilot Futures", true, true)],
+            0,
+            0);
 
         return new FakeBotManagementService
         {
@@ -694,6 +764,13 @@ public sealed class BotsControllerTests
         return controller;
     }
 
+    private static void SetFormValues(BotsController controller, IDictionary<string, Microsoft.Extensions.Primitives.StringValues> values)
+    {
+        controller.ControllerContext.HttpContext.Features.Set<IFormFeature>(
+            new FormFeature(new FormCollection(new Dictionary<string, Microsoft.Extensions.Primitives.StringValues>(values))));
+        controller.ControllerContext.HttpContext.Request.ContentType = "application/x-www-form-urlencoded";
+    }
+
     private sealed class FakeBotManagementService : IBotManagementService
     {
         public BotManagementPageSnapshot PageSnapshot { get; set; } = new([]);
@@ -704,7 +781,9 @@ public sealed class BotsControllerTests
             ["BTCUSDT"],
             ["BTCUSDT"],
             [],
-            []);
+            [],
+            0,
+            0);
 
         public BotManagementEditorSnapshot? EditSnapshot { get; set; }
 

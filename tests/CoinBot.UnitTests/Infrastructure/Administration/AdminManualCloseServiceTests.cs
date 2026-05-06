@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Execution;
@@ -8,7 +9,9 @@ using CoinBot.Infrastructure.Administration;
 using CoinBot.Infrastructure.Identity;
 using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 namespace CoinBot.UnitTests.Infrastructure.Administration;
@@ -208,6 +211,142 @@ public sealed class AdminManualCloseServiceTests
         Assert.Equal(1, harness.ExecutionEngine.DispatchCalls);
     }
 
+    [Fact]
+    public async Task ManualClose_AdminScope_DispatchesUsingTargetOwnerScope_AndPersistsExecutionOrderWithTargetOwner()
+    {
+        var databaseName = Guid.NewGuid().ToString("N");
+        var now = new DateTime(2026, 5, 6, 10, 0, 0, DateTimeKind.Utc);
+        var botId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+
+        var seedOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(databaseName)
+            .Options;
+
+        await using (var seedContext = new ApplicationDbContext(seedOptions, new TestDataScopeContext()))
+        {
+            seedContext.Users.Add(new ApplicationUser
+            {
+                Id = "user-1",
+                UserName = "user-1",
+                TradingModeOverride = ExecutionEnvironment.BinanceTestnet
+            });
+            seedContext.ExchangeAccounts.Add(new ExchangeAccount
+            {
+                Id = exchangeAccountId,
+                OwnerUserId = "user-1",
+                ExchangeName = "Binance",
+                DisplayName = "Binance Testnet",
+                CredentialStatus = ExchangeCredentialStatus.Active,
+                CreatedDate = now,
+                UpdatedDate = now
+            });
+            seedContext.TradingBots.Add(new TradingBot
+            {
+                Id = botId,
+                OwnerUserId = "user-1",
+                Name = "Manual Close Bot",
+                StrategyKey = "manual-close",
+                Symbol = "SOLUSDT",
+                ExchangeAccountId = exchangeAccountId,
+                IsEnabled = true,
+                Leverage = 1,
+                MarginType = "ISOLATED",
+                CreatedDate = now,
+                UpdatedDate = now
+            });
+            seedContext.ExchangeAccountSyncStates.Add(new ExchangeAccountSyncState
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = "user-1",
+                ExchangeAccountId = exchangeAccountId,
+                Plane = ExchangeDataPlane.Futures,
+                PrivateStreamConnectionState = ExchangePrivateStreamConnectionState.Connected,
+                DriftStatus = ExchangeStateDriftStatus.InSync,
+                LastPrivateStreamEventAtUtc = now,
+                LastPositionSyncedAtUtc = now,
+                LastBalanceSyncedAtUtc = now,
+                LastStateReconciledAtUtc = now,
+                CreatedDate = now,
+                UpdatedDate = now
+            });
+            seedContext.ExchangePositions.Add(new ExchangePosition
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = "user-1",
+                ExchangeAccountId = exchangeAccountId,
+                Plane = ExchangeDataPlane.Futures,
+                Symbol = "SOLUSDT",
+                PositionSide = "BOTH",
+                Quantity = 0.08m,
+                EntryPrice = 100m,
+                BreakEvenPrice = 100m,
+                ExchangeUpdatedAtUtc = now,
+                SyncedAtUtc = now,
+                CreatedDate = now,
+                UpdatedDate = now
+            });
+
+            await seedContext.SaveChangesAsync();
+        }
+
+        var httpContextAccessor = new HttpContextAccessor
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(
+                    new ClaimsIdentity(
+                    [
+                        new Claim(ClaimTypes.NameIdentifier, "admin-01")
+                    ],
+                    "TestAuth"))
+            }
+        };
+
+        var services = new ServiceCollection();
+        services.AddSingleton<IHttpContextAccessor>(httpContextAccessor);
+        services.AddScoped<IDataScopeContextAccessor, DataScopeContextAccessor>();
+        services.AddScoped<IDataScopeContext>(serviceProvider => serviceProvider.GetRequiredService<IDataScopeContextAccessor>());
+        services.AddDbContext<ApplicationDbContext>(options => options.UseInMemoryDatabase(databaseName));
+        services.AddSingleton<IMarketDataService, FakeMarketDataService>();
+        services.AddSingleton<ITradingModeResolver>(new FakeTradingModeResolver(ExecutionEnvironment.BinanceTestnet));
+        services.AddScoped<IExecutionEngine, PersistingExecutionEngine>();
+        services.AddScoped<IAdminManualCloseService, AdminManualCloseService>();
+        services.AddSingleton<TimeProvider>(new FixedTimeProvider(now));
+        services.AddOptions<BotExecutionPilotOptions>()
+            .Configure(options => options.PrivatePlaneFreshnessThresholdSeconds = 15);
+
+        await using var serviceProvider = services.BuildServiceProvider();
+        await using var scope = serviceProvider.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<IAdminManualCloseService>();
+
+        var result = await service.CloseAsync(
+            new AdminManualCloseRequest(
+                botId,
+                exchangeAccountId,
+                "SOLUSDT",
+                "admin-01",
+                "admin:admin-01",
+                "corr-manual-close"));
+
+        Assert.True(result.IsSuccess);
+
+        await using var verifyContext = new ApplicationDbContext(seedOptions, new TestDataScopeContext());
+        var persistedOrder = await verifyContext.ExecutionOrders
+            .IgnoreQueryFilters()
+            .OrderByDescending(entity => entity.CreatedDate)
+            .FirstAsync();
+
+        Assert.Equal("user-1", persistedOrder.OwnerUserId);
+        Assert.Equal(botId, persistedOrder.BotId);
+        Assert.Equal(exchangeAccountId, persistedOrder.ExchangeAccountId);
+        Assert.True(persistedOrder.ReduceOnly);
+        Assert.Equal(ExecutionEnvironment.BinanceTestnet, persistedOrder.ExecutionEnvironment);
+        Assert.Equal(ExecutionOrderExecutorKind.BinanceTestnet, persistedOrder.ExecutorKind);
+        Assert.Equal(ExecutionOrderState.Submitted, persistedOrder.State);
+        Assert.True(persistedOrder.SubmittedToBroker);
+    }
+
     private sealed class ManualCloseHarness : IAsyncDisposable
     {
         private ManualCloseHarness(
@@ -393,6 +532,7 @@ public sealed class AdminManualCloseServiceTests
             var service = new AdminManualCloseService(
                 dbContext,
                 executionEngine,
+                serviceScopeFactory: null,
                 new FakeTradingModeResolver(effectiveMode),
                 new FakeMarketDataService(),
                 Options.Create(new BotExecutionPilotOptions
@@ -478,6 +618,97 @@ public sealed class AdminManualCloseServiceTests
             snapshotsByIdempotencyKey[idempotencyKey] = snapshot;
 
             return Task.FromResult(new ExecutionDispatchResult(snapshot, false));
+        }
+    }
+
+    private sealed class PersistingExecutionEngine(ApplicationDbContext dbContext) : IExecutionEngine
+    {
+        public async Task<ExecutionDispatchResult> DispatchAsync(ExecutionCommand command, CancellationToken cancellationToken = default)
+        {
+            var submittedAtUtc = DateTime.UtcNow;
+            var order = new ExecutionOrder
+            {
+                OwnerUserId = command.OwnerUserId,
+                TradingStrategyId = command.TradingStrategyId,
+                TradingStrategyVersionId = command.TradingStrategyVersionId,
+                StrategySignalId = command.StrategySignalId,
+                SignalType = command.SignalType,
+                BotId = command.BotId,
+                ExchangeAccountId = command.ExchangeAccountId,
+                Plane = command.Plane,
+                StrategyKey = command.StrategyKey,
+                Symbol = command.Symbol,
+                Timeframe = command.Timeframe,
+                BaseAsset = command.BaseAsset,
+                QuoteAsset = command.QuoteAsset,
+                Side = command.Side,
+                OrderType = command.OrderType,
+                Quantity = command.Quantity,
+                Price = command.Price,
+                ReduceOnly = command.ReduceOnly,
+                ExecutionEnvironment = command.RequestedEnvironment ?? ExecutionEnvironment.BinanceTestnet,
+                ExecutorKind = ExecutionOrderExecutorKind.BinanceTestnet,
+                State = ExecutionOrderState.Submitted,
+                IdempotencyKey = command.IdempotencyKey ?? Guid.NewGuid().ToString("N"),
+                RootCorrelationId = command.CorrelationId ?? Guid.NewGuid().ToString("N"),
+                SubmittedToBroker = true,
+                SubmittedAtUtc = submittedAtUtc,
+                LastStateChangedAtUtc = submittedAtUtc
+            };
+
+            dbContext.ExecutionOrders.Add(order);
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            return new ExecutionDispatchResult(
+                new ExecutionOrderSnapshot(
+                    order.Id,
+                    order.TradingStrategyId,
+                    order.TradingStrategyVersionId,
+                    order.StrategySignalId,
+                    order.SignalType,
+                    order.BotId,
+                    order.ExchangeAccountId,
+                    order.StrategyKey,
+                    order.Symbol,
+                    order.Timeframe,
+                    order.BaseAsset,
+                    order.QuoteAsset,
+                    order.Side,
+                    order.OrderType,
+                    order.Quantity,
+                    order.Price,
+                    0m,
+                    null,
+                    null,
+                    null,
+                    null,
+                    order.ReduceOnly,
+                    null,
+                    order.ExecutionEnvironment,
+                    order.ExecutorKind,
+                    order.State,
+                    order.IdempotencyKey,
+                    order.RootCorrelationId,
+                    null,
+                    null,
+                    null,
+                    null,
+                    ExecutionRejectionStage.None,
+                    order.SubmittedToBroker,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    null,
+                    order.SubmittedAtUtc,
+                    null,
+                    ExchangeStateDriftStatus.Unknown,
+                    null,
+                    null,
+                    order.LastStateChangedAtUtc,
+                    Array.Empty<ExecutionOrderTransitionSnapshot>()),
+                IsDuplicate: false);
         }
     }
 

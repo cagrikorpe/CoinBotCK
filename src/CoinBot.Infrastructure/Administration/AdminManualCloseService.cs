@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using CoinBot.Application.Abstractions.Administration;
+using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Execution;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Domain.Entities;
@@ -9,6 +10,7 @@ using CoinBot.Domain.Enums;
 using CoinBot.Infrastructure.Jobs;
 using CoinBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 namespace CoinBot.Infrastructure.Administration;
@@ -16,6 +18,7 @@ namespace CoinBot.Infrastructure.Administration;
 public sealed class AdminManualCloseService(
     ApplicationDbContext dbContext,
     IExecutionEngine executionEngine,
+    IServiceScopeFactory? serviceScopeFactory,
     ITradingModeResolver tradingModeResolver,
     IMarketDataService marketDataService,
     IOptions<BotExecutionPilotOptions>? botExecutionPilotOptions = null,
@@ -300,7 +303,10 @@ public sealed class AdminManualCloseService(
             Plane: ExchangeDataPlane.Futures,
             RequestedEnvironment: ExecutionEnvironment.BinanceTestnet);
 
-        var dispatchResult = await executionEngine.DispatchAsync(command, cancellationToken);
+        var dispatchResult = await DispatchAsTargetOwnerAsync(
+            bot.OwnerUserId,
+            command,
+            cancellationToken);
         var order = dispatchResult.Order;
         var outcomeCode = ResolveResultCode(order.FailureCode, order.State, order.SubmittedToBroker);
         var summary = BuildResultSummary(context, order, outcomeCode);
@@ -316,6 +322,23 @@ public sealed class AdminManualCloseService(
             userMessage,
             order,
             dispatchResult.IsDuplicate);
+    }
+
+    private async Task<ExecutionDispatchResult> DispatchAsTargetOwnerAsync(
+        string targetOwnerUserId,
+        ExecutionCommand command,
+        CancellationToken cancellationToken)
+    {
+        if (serviceScopeFactory is null)
+        {
+            return await executionEngine.DispatchAsync(command, cancellationToken);
+        }
+
+        using var executionScope = serviceScopeFactory.CreateScope();
+        var dataScopeAccessor = executionScope.ServiceProvider.GetRequiredService<IDataScopeContextAccessor>();
+        using var ownerScope = dataScopeAccessor.BeginScope(targetOwnerUserId);
+        var scopedExecutionEngine = executionScope.ServiceProvider.GetRequiredService<IExecutionEngine>();
+        return await scopedExecutionEngine.DispatchAsync(command, cancellationToken);
     }
 
     private static string ResolveResultCode(string? failureCode, ExecutionOrderState state, bool submittedToBroker)

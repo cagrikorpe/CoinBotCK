@@ -413,6 +413,10 @@ public sealed class AdminControllerTests
             new FakeGlobalExecutionSwitchService(),
             auditLogService: auditLogService,
             adminManualCloseService: manualCloseService);
+        SetFormValues(controller, new Dictionary<string, Microsoft.Extensions.Primitives.StringValues>
+        {
+            ["confirmClose"] = "true"
+        });
 
         var result = await controller.ManualCloseBotPosition(botId.ToString(), exchangeAccountId.ToString(), "SOLUSDT", CancellationToken.None);
 
@@ -425,6 +429,28 @@ public sealed class AdminControllerTests
         Assert.Equal("SOLUSDT", request.Symbol);
         var audit = Assert.Single(auditLogService.Requests);
         Assert.Equal("Admin.BotOperations.ManualClose", audit.ActionType);
+    }
+
+    [Fact]
+    public async Task ManualCloseBotPosition_RedirectsWithError_WhenConfirmationMissing()
+    {
+        var botId = Guid.NewGuid();
+        var exchangeAccountId = Guid.NewGuid();
+        var manualCloseService = new FakeAdminManualCloseService();
+        var auditLogService = new FakeAdminAuditLogService();
+        var controller = CreateController(
+            new FakeGlobalExecutionSwitchService(),
+            auditLogService: auditLogService,
+            adminManualCloseService: manualCloseService);
+
+        var result = await controller.ManualCloseBotPosition(botId.ToString(), exchangeAccountId.ToString(), "SOLUSDT", CancellationToken.None);
+
+        var redirect = Assert.IsType<RedirectToActionResult>(result);
+        Assert.Equal(nameof(AdminController.BotOperations), redirect.ActionName);
+        Assert.Equal("Reduce-only close icin onay kutusunu isaretleyin.", controller.TempData["AdminBotOperationsError"]);
+        Assert.Empty(manualCloseService.Requests);
+        var audit = Assert.Single(auditLogService.Requests);
+        Assert.Equal("Admin.BotOperations.ManualCloseBlocked", audit.ActionType);
     }
 
     [Fact]
@@ -445,6 +471,10 @@ public sealed class AdminControllerTests
             new FakeGlobalExecutionSwitchService(),
             auditLogService: auditLogService,
             adminManualCloseService: manualCloseService);
+        SetFormValues(controller, new Dictionary<string, Microsoft.Extensions.Primitives.StringValues>
+        {
+            ["confirmClose"] = "true"
+        });
 
         var result = await controller.ManualCloseBotPosition(botId.ToString(), exchangeAccountId.ToString(), "SOLUSDT", CancellationToken.None);
 
@@ -3923,6 +3953,13 @@ public sealed class AdminControllerTests
             },
             TempData = new TempDataDictionary(httpContext, new TestTempDataProvider())
         };
+    }
+
+    private static void SetFormValues(AdminController controller, IDictionary<string, Microsoft.Extensions.Primitives.StringValues> values)
+    {
+        controller.ControllerContext.HttpContext.Features.Set<IFormFeature>(
+            new FormFeature(new FormCollection(new Dictionary<string, Microsoft.Extensions.Primitives.StringValues>(values))));
+        controller.ControllerContext.HttpContext.Request.ContentType = "application/x-www-form-urlencoded";
     }
 
     private static ApprovalQueueDetailSnapshot CreateApprovalDetailSnapshot(string approvalReference)

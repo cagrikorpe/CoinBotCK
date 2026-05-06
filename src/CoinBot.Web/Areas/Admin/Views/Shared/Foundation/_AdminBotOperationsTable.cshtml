@@ -119,6 +119,22 @@
                                                         <input type="hidden" name="botId" value="@row.BotId" />
                                                         <input type="hidden" name="exchangeAccountId" value="@row.ManualCloseExchangeAccountId" />
                                                         <input type="hidden" name="symbol" value="@row.ManualCloseSymbol" />
+                                                        <div class="cb-admin-info-strip cb-admin-info-strip-warning mt-3" data-cb-admin-manual-close-warning>
+                                                            <div>
+                                                                <div class="cb-admin-info-strip-title">Broker-etkili close aksiyonu</div>
+                                                                <div class="cb-admin-info-strip-text">Bu form reduce-only close emri gonderir. Private plane stale, credential veya environment guard aktifse backend fail-closed bloklar.</div>
+                                                            </div>
+                                                            <span class="cb-admin-info-strip-meta">@row.ManualCloseEnvironmentLabel</span>
+                                                        </div>
+                                                        <label class="form-check mt-3 mb-3" data-cb-admin-manual-close-double-confirm-wrap>
+                                                            <input type="checkbox"
+                                                                   name="confirmClose"
+                                                                   value="true"
+                                                                   class="form-check-input"
+                                                                   data-cb-admin-manual-close-double-confirm
+                                                                   required />
+                                                            <span class="form-check-label">Bu reduce-only manual close aksiyonunun broker-etkili oldugunu confirm ediyorum.</span>
+                                                        </label>
                                                         <button type="submit" class="btn btn-xs btn-danger font-weight-bold" data-cb-admin-manual-close-confirm>Confirm Reduce-Only Close</button>
                                                     </form>
                                                 }
