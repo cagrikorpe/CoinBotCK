@@ -157,6 +157,7 @@ public sealed class MarketScannerHandoffService(
 
         if (candidates.Count == 0)
         {
+            var noEligibleGuardSummary = await BuildNoEligibleCandidateGuardSummaryAsync(scanCycleId, cancellationToken);
             await RunDemoConsistencyForScanSymbolsAsync(scanCycleId, cancellationToken);
             return await PersistBlockedAttemptAsync(
                 scanCycleId,
@@ -171,7 +172,7 @@ public sealed class MarketScannerHandoffService(
                 executionStatus: "Blocked",
                 blockerCode: "NoEligibleCandidate",
                 blockerDetail: "Scanner handoff did not find an eligible candidate in the latest scan cycle.",
-                guardSummary: "CandidateSelection=None",
+                guardSummary: noEligibleGuardSummary,
                 cancellationToken);
         }
 
@@ -264,7 +265,9 @@ public sealed class MarketScannerHandoffService(
                     executionStatus: "Blocked",
                     blockerCode: "MissingFreshSignalData",
                     blockerDetail: $"Scanner handoff could not resolve a ready indicator snapshot for {symbol} {klineInterval}.",
-                    guardSummary: $"IndicatorState=Unavailable; Symbol={symbol}; Timeframe={klineInterval}",
+                    guardSummary: BuildFreshnessGuardSummary(
+                        candidate,
+                        $"IndicatorState=Unavailable; Symbol={symbol}; Timeframe={klineInterval}"),
                     cancellationToken: cancellationToken);
                 continue;
             }
@@ -284,7 +287,9 @@ public sealed class MarketScannerHandoffService(
                     executionStatus: "Blocked",
                     blockerCode: "ReferencePriceUnavailable",
                     blockerDetail: $"Scanner handoff could not resolve a reference price for {symbol}.",
-                    guardSummary: $"ReferencePrice=Unavailable; Symbol={symbol}",
+                    guardSummary: BuildFreshnessGuardSummary(
+                        candidate,
+                        $"ReferencePrice=Unavailable; Symbol={symbol}; Timeframe={klineInterval}"),
                     cancellationToken: cancellationToken);
                 continue;
             }
@@ -2461,6 +2466,76 @@ public sealed class MarketScannerHandoffService(
         options.Converters.Add(new JsonStringEnumConverter());
 
         return options;
+    }
+
+    private async Task<string> BuildNoEligibleCandidateGuardSummaryAsync(
+        Guid scanCycleId,
+        CancellationToken cancellationToken)
+    {
+        var cycleSummary = await dbContext.MarketScannerCycles
+            .AsNoTracking()
+            .Where(entity => entity.Id == scanCycleId)
+            .Select(entity => entity.Summary)
+            .SingleOrDefaultAsync(cancellationToken);
+
+        return string.IsNullOrWhiteSpace(cycleSummary)
+            ? "CandidateSelection=None"
+            : Truncate($"CandidateSelection=None; ScannerCycleSummary={cycleSummary}", 512) ?? "CandidateSelection=None";
+    }
+
+    private static string BuildFreshnessGuardSummary(MarketScannerCandidate candidate, string baseSummary)
+    {
+        string[] tokens =
+        [
+            "FreshnessState",
+            "FreshnessReason",
+            "FreshnessSource",
+            "DataAgeSeconds",
+            "KlineStatus",
+            "KlineReason",
+            "HistoricalFallbackState",
+            "HistoricalFallbackLagSeconds"
+        ];
+
+        var evidenceTokens = tokens
+            .Select(token => TryExtractSummaryToken(candidate.ScoringSummary, token))
+            .Where(token => !string.IsNullOrWhiteSpace(token))
+            .ToArray();
+
+        if (evidenceTokens.Length == 0)
+        {
+            return baseSummary;
+        }
+
+        return Truncate(
+                   $"{baseSummary}; {string.Join("; ", evidenceTokens)}",
+                   512)
+               ?? baseSummary;
+    }
+
+    private static string? TryExtractSummaryToken(string? summary, string key)
+    {
+        if (string.IsNullOrWhiteSpace(summary) || string.IsNullOrWhiteSpace(key))
+        {
+            return null;
+        }
+
+        var tokenPrefix = key + "=";
+        var startIndex = summary.IndexOf(tokenPrefix, StringComparison.Ordinal);
+        if (startIndex < 0)
+        {
+            return null;
+        }
+
+        startIndex += tokenPrefix.Length;
+        var endIndex = summary.IndexOf(';', startIndex);
+        var value = endIndex >= 0
+            ? summary[startIndex..endIndex]
+            : summary[startIndex..];
+
+        return string.IsNullOrWhiteSpace(value)
+            ? null
+            : tokenPrefix + value.Trim();
     }
 
     private static string BuildLatencyGuardSummarySnippet(DegradedModeSnapshot latencySnapshot)

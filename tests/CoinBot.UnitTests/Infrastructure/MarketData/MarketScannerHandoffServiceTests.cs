@@ -1871,6 +1871,33 @@ public sealed class MarketScannerHandoffServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_PersistsMissingFreshSignalData_WithScannerFreshnessEvidence()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        _ = await SeedBotGraphAsync(harness.DbContext, "user-btc", "BTCUSDT", "pilot-btc");
+        SeedScanCycle(harness.DbContext, scanCycleId);
+        SeedCandidate(
+            harness.DbContext,
+            scanCycleId,
+            "BTCUSDT",
+            rank: 1,
+            score: 9_000m,
+            scoringSummary: "FreshnessState=Missing; FreshnessReason=MissingCacheKey; FreshnessSource=Unavailable; DataAgeSeconds=n/a; KlineStatus=Miss; KlineReason=Miss; HistoricalFallbackState=None; HistoricalFallbackLagSeconds=n/a");
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("BTCUSDT", "BTC", "USDT");
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("MissingFreshSignalData", attempt.BlockerCode);
+        Assert.Contains("FreshnessReason=MissingCacheKey", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("HistoricalFallbackState=None", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("KlineStatus=Miss", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Null(harness.ExecutionGate.LastRequest);
+    }
+
+    [Fact]
     public async Task RunOnceAsync_PersistsContinuityGapBlocker_DistinctFromStaleMarketData()
     {
         await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
@@ -1891,6 +1918,25 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Contains("Execution blocked because the candle continuity guard is active.", attempt.BlockerDetail, StringComparison.Ordinal);
         Assert.Contains("LatencyReason=CandleDataGapDetected", attempt.BlockerDetail, StringComparison.Ordinal);
         Assert.DoesNotContain("StaleMarketData", attempt.BlockerCode, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_NoEligibleCandidate_EmbedsScannerCycleFreshnessSummary()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        SeedScanCycle(harness.DbContext, scanCycleId, eligibleCandidateCount: 0, bestCandidateSymbol: null, bestCandidateScore: null);
+        await harness.DbContext.SaveChangesAsync();
+        var cycle = await harness.DbContext.MarketScannerCycles.SingleAsync(entity => entity.Id == scanCycleId);
+        cycle.Summary = "Market scanner evaluated 5 symbols and found no eligible candidates. Reasons=StaleMarketData:4 [BNBUSDT, BTCUSDT]. Freshness=StaleCandleAgeExceeded:4 [BNBUSDT, BTCUSDT].";
+        await harness.DbContext.SaveChangesAsync();
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Blocked", attempt.ExecutionRequestStatus);
+        Assert.Equal("NoEligibleCandidate", attempt.BlockerCode);
+        Assert.Contains("ScannerCycleSummary=Market scanner evaluated 5 symbols", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("Freshness=StaleCandleAgeExceeded:4", attempt.GuardSummary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -2420,7 +2466,7 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal("NoEligibleCandidate", attempt.BlockerCode);
         Assert.Equal("No eligible candidate available.", attempt.SelectionReason);
         Assert.Equal("NoEligibleCandidate: Scanner handoff did not find an eligible candidate in the latest scan cycle.", attempt.BlockerSummary);
-        Assert.Equal("CandidateSelection=None", attempt.GuardSummary);
+        Assert.StartsWith("CandidateSelection=None", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Null(attempt.SelectedSymbol);
     }
 

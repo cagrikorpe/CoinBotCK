@@ -2113,6 +2113,11 @@ public sealed class MarketScannerServiceTests
         Assert.Equal("QuoteAssetNotAllowed", candidates["XRPBTC"].RejectionReason);
         Assert.Equal("SymbolTradingDisabled", candidates["HALTUSDT"].RejectionReason);
         Assert.Equal("MissingLastPrice", candidates["MISSINGUSDT"].RejectionReason);
+        Assert.Contains("FreshnessReason=StaleCandleAgeExceeded", candidates["STALEUSDT"].ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("FreshnessReason=MissingCacheKey", candidates["MISSINGUSDT"].ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("Freshness=", cycle.Summary, StringComparison.Ordinal);
+        Assert.Contains("MissingCacheKey", cycle.Summary, StringComparison.Ordinal);
+        Assert.Contains("StaleCandleAgeExceeded", cycle.Summary, StringComparison.Ordinal);
         Assert.All(candidates.Values, candidate => Assert.False(candidate.IsTopCandidate));
     }
 
@@ -2171,8 +2176,52 @@ public sealed class MarketScannerServiceTests
         Assert.True(candidate.IsEligible);
         Assert.Equal(nowUtc.UtcDateTime.AddSeconds(-1), candidate.LastCandleAtUtc);
         Assert.Equal(101m, candidate.LastPrice);
+        Assert.Contains("FreshnessState=Fresh", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("FreshnessReason=FreshSharedKline", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("HistoricalFallbackState=HistoricalParityLag", candidate.ScoringSummary, StringComparison.Ordinal);
         Assert.Equal(1, marketDataService.SharedKlineReadCount);
         Assert.Equal(1, marketDataService.SharedPriceReadCount);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_ReportsHistoricalFallbackFreshness_WhenSharedKlineCacheKeyIsMissing()
+    {
+        var nowUtc = new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(nowUtc);
+        await using var dbContext = CreateDbContext();
+        SeedCandles(dbContext, "ETHUSDT", nowUtc.UtcDateTime, closePrice: 100m, volume: 2_000m);
+        await dbContext.SaveChangesAsync();
+
+        var marketDataService = new FakeMarketDataService();
+        marketDataService.SetLatestPrice("ETHUSDT", 101m, nowUtc.UtcDateTime);
+
+        var service = new MarketScannerService(
+            dbContext,
+            marketDataService,
+            new FakeSharedSymbolRegistry([
+                new SymbolMetadataSnapshot("ETHUSDT", "Binance", "ETH", "USDT", 0.1m, 0.001m, "TRADING", true, nowUtc.UtcDateTime)
+            ]),
+            Options.Create(new MarketScannerOptions
+            {
+                TopCandidateCount = 1,
+                MaxUniverseSymbols = 10,
+                Min24hQuoteVolume = 100m,
+                MaxDataAgeSeconds = 120,
+                AllowedQuoteAssets = ["USDT"],
+                HandoffEnabled = false
+            }),
+            Options.Create(new BinanceMarketDataOptions { KlineInterval = "1m", SeedSymbols = ["ETHUSDT"] }),
+            timeProvider,
+            NullLogger<MarketScannerService>.Instance);
+
+        var cycle = await service.RunOnceAsync();
+        var candidate = await dbContext.MarketScannerCandidates.SingleAsync(entity => entity.ScanCycleId == cycle.Id);
+
+        Assert.True(candidate.IsEligible);
+        Assert.Contains("FreshnessState=Fresh", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("FreshnessReason=HistoricalFallbackApplied", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("HistoricalFallbackState=HistoricalCandlesDbFallback", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("FreshnessSummary=", (await dbContext.WorkerHeartbeats.SingleAsync(entity => entity.WorkerKey == MarketScannerService.WorkerKey)).Detail, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -2263,9 +2312,11 @@ public sealed class MarketScannerServiceTests
         Assert.Equal(0, cycle.EligibleCandidateCount);
         Assert.Contains("QuoteVolume24hMissing:1 [BTCUSDT]", cycle.Summary ?? string.Empty, StringComparison.Ordinal);
         Assert.Contains("LowQuoteVolume:1 [ETHUSDT]", cycle.Summary ?? string.Empty, StringComparison.Ordinal);
+        Assert.Contains("Freshness=HistoricalFallbackApplied:1 [ETHUSDT]", cycle.Summary ?? string.Empty, StringComparison.Ordinal);
         Assert.Equal("LowQuoteVolume", heartbeat.LastErrorCode);
         Assert.Contains("QuoteVolume24hMissing:1 [BTCUSDT]", heartbeat.LastErrorMessage ?? string.Empty, StringComparison.Ordinal);
         Assert.Contains("LowQuoteVolume:1 [ETHUSDT]", heartbeat.Detail ?? string.Empty, StringComparison.Ordinal);
+        Assert.Contains("FreshnessSummary=", heartbeat.Detail ?? string.Empty, StringComparison.Ordinal);
     }
 
     [Fact]

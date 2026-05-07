@@ -167,6 +167,12 @@ public sealed class MarketScannerService(
                 .ThenBy(item => item.reason, StringComparer.Ordinal)
                 .Take(5)
                 .ToArray();
+            var freshnessSummary = BuildCandidateTokenBreakdown(candidates, "FreshnessReason", maxEntries: 4, maxSymbolsPerReason: 2);
+            var fallbackSummary = BuildCandidateTokenBreakdown(
+                candidates.Where(candidate => !string.Equals(ExtractToken(candidate.ScoringSummary, "HistoricalFallbackState"), "None", StringComparison.Ordinal)).ToArray(),
+                "HistoricalFallbackState",
+                maxEntries: 3,
+                maxSymbolsPerReason: 2);
 
             await ultraDebugLogService.WriteAsync(
                 new UltraDebugLogEntry(
@@ -208,14 +214,16 @@ public sealed class MarketScannerService(
                             scannerMs = cycleDurationMilliseconds,
                             strategyMs = (int?)null,
                             handoffMs = (int?)null,
-                            executionMs = (int?)null,
-                            exchangeMs = (int?)null,
-                            persistMs = (int?)null
-                        },
-                        cycleDurationMilliseconds,
-                        cycleSummary = cycle.Summary,
-                        rejectionSummary
-                    }),
+                        executionMs = (int?)null,
+                        exchangeMs = (int?)null,
+                        persistMs = (int?)null
+                    },
+                    cycleDurationMilliseconds,
+                    cycleSummary = cycle.Summary,
+                    rejectionSummary,
+                    freshnessSummary,
+                    historicalFallbackSummary = fallbackSummary
+                }),
                 cancellationToken);
         }
 
@@ -469,6 +477,7 @@ public sealed class MarketScannerService(
                 marketScore,
                 strategyScoring.StrategyScore,
                 rejectionReason,
+                freshness,
                 marketWindow,
                 candidateIntelligence,
                 rankingSummary),
@@ -2357,6 +2366,7 @@ public sealed class MarketScannerService(
         decimal marketScore,
         int? strategyScore,
         string? rejectionReason,
+        ScannerFreshnessSnapshot freshness,
         ScannerMarketWindowSnapshot marketWindow,
         ScannerCandidateIntelligenceSummary candidateIntelligence,
         ScannerCandidateRankingSummary rankingSummary)
@@ -2365,12 +2375,20 @@ public sealed class MarketScannerService(
         var directionalConflictStatus = ResolveDirectionalConflictStatus(rejectionReason, scoringSummary);
         var riskPenalty = ResolveRiskPenalty(rejectionReason);
         var volatilityScore = ResolveVolatilityScore(candidateIntelligence);
+        var freshnessState = ResolveFreshnessState(freshness);
+        var freshnessReason = ResolveFreshnessReasonCode(freshness, marketWindow);
+        var historicalFallbackState = ResolveHistoricalFallbackState(freshness, marketWindow);
         var summarySegments = new List<string>(16);
         if (!string.IsNullOrWhiteSpace(scoringSummary))
         {
             summarySegments.Add(scoringSummary!);
         }
 
+        summarySegments.Add($"FreshnessState={freshnessState}");
+        summarySegments.Add($"FreshnessReason={freshnessReason}");
+        summarySegments.Add($"FreshnessSource={freshness.FreshnessSource}");
+        summarySegments.Add($"HistoricalFallbackState={historicalFallbackState}");
+        summarySegments.Add($"HistoricalFallbackLagSeconds={(marketWindow.HistoricalParityLagSeconds?.ToString(CultureInfo.InvariantCulture) ?? "n/a")}");
         summarySegments.Add($"CandidateScore={rankingSummary.EffectiveScore.ToString("0.####", CultureInfo.InvariantCulture)}");
         summarySegments.Add($"MarketScore={marketScore.ToString("0.####", CultureInfo.InvariantCulture)}");
         summarySegments.Add($"StrategyScore={(strategyScore?.ToString(CultureInfo.InvariantCulture) ?? "n/a")}");
@@ -2737,10 +2755,77 @@ public sealed class MarketScannerService(
         ScannerFreshnessSnapshot freshness,
         ScannerMarketWindowSnapshot marketWindow)
     {
+        var freshnessState = ResolveFreshnessState(freshness);
+        var freshnessReason = ResolveFreshnessReasonCode(freshness, marketWindow);
+        var historicalFallbackState = ResolveHistoricalFallbackState(freshness, marketWindow);
         return Truncate(
-            $"MarketRejected={rejectionReason}; QuoteVolume24h={(quoteVolume?.ToString(CultureInfo.InvariantCulture) ?? "n/a")}; MarketScore={marketScore.ToString("0.####", CultureInfo.InvariantCulture)}; FreshnessSource={freshness.FreshnessSource}; Diagnostic={freshness.DiagnosticCode}; LastCandleAtUtc={(freshness.LastCandleAtUtc?.ToString("O") ?? "n/a")}; ObservedAtUtc={freshness.ObservedAtUtc:O}; DataAgeSeconds={(freshness.DataAgeSeconds?.ToString(CultureInfo.InvariantCulture) ?? "n/a")}; ThresholdSeconds={scannerOptionsValue.MaxDataAgeSeconds.ToString(CultureInfo.InvariantCulture)}; TickerStatus={freshness.TickerReadStatus}; KlineStatus={freshness.KlineReadStatus}; KlineReason={freshness.KlineReasonCode}; KlineReasonSummary={freshness.KlineReasonSummary ?? "n/a"}; HistoricalLastCandleAtUtc={(marketWindow.LatestHistoricalCandleAtUtc?.ToString("O") ?? "n/a")}; HistoricalParityLagSeconds={(marketWindow.HistoricalParityLagSeconds?.ToString(CultureInfo.InvariantCulture) ?? "n/a")}; HistoricalRecoveryApplied={marketWindow.HistoricalRecoveryApplied}; HistoricalRecoverySource={(marketWindow.HistoricalRecoverySource ?? "n/a")}",
+            $"MarketRejected={rejectionReason}; FreshnessState={freshnessState}; FreshnessReason={freshnessReason}; HistoricalFallbackState={historicalFallbackState}; HistoricalFallbackLagSeconds={(marketWindow.HistoricalParityLagSeconds?.ToString(CultureInfo.InvariantCulture) ?? "n/a")}; QuoteVolume24h={(quoteVolume?.ToString(CultureInfo.InvariantCulture) ?? "n/a")}; MarketScore={marketScore.ToString("0.####", CultureInfo.InvariantCulture)}; FreshnessSource={freshness.FreshnessSource}; Diagnostic={freshness.DiagnosticCode}; LastCandleAtUtc={(freshness.LastCandleAtUtc?.ToString("O") ?? "n/a")}; ObservedAtUtc={freshness.ObservedAtUtc:O}; DataAgeSeconds={(freshness.DataAgeSeconds?.ToString(CultureInfo.InvariantCulture) ?? "n/a")}; ThresholdSeconds={scannerOptionsValue.MaxDataAgeSeconds.ToString(CultureInfo.InvariantCulture)}; TickerStatus={freshness.TickerReadStatus}; KlineStatus={freshness.KlineReadStatus}; KlineReason={freshness.KlineReasonCode}; KlineReasonSummary={freshness.KlineReasonSummary ?? "n/a"}; HistoricalLastCandleAtUtc={(marketWindow.LatestHistoricalCandleAtUtc?.ToString("O") ?? "n/a")}; HistoricalParityLagSeconds={(marketWindow.HistoricalParityLagSeconds?.ToString(CultureInfo.InvariantCulture) ?? "n/a")}; HistoricalRecoveryApplied={marketWindow.HistoricalRecoveryApplied}; HistoricalRecoverySource={(marketWindow.HistoricalRecoverySource ?? "n/a")}",
             512)
             ?? $"MarketRejected={rejectionReason}; FreshnessSource={freshness.FreshnessSource}";
+    }
+
+    private static string ResolveFreshnessState(ScannerFreshnessSnapshot freshness)
+    {
+        if (freshness.IsStale)
+        {
+            return "Stale";
+        }
+
+        return freshness.LastCandleAtUtc.HasValue
+            ? "Fresh"
+            : "Missing";
+    }
+
+    private static string ResolveFreshnessReasonCode(
+        ScannerFreshnessSnapshot freshness,
+        ScannerMarketWindowSnapshot marketWindow)
+    {
+        if (!freshness.LastCandleAtUtc.HasValue)
+        {
+            return freshness.KlineReadStatus == SharedMarketDataCacheReadStatus.Miss
+                ? "MissingCacheKey"
+                : "MissingCandle";
+        }
+
+        if (freshness.IsStale)
+        {
+            return "StaleCandleAgeExceeded";
+        }
+
+        if (marketWindow.HistoricalRecoveryApplied)
+        {
+            return "HistoricalRecoveryApplied";
+        }
+
+        if (freshness.KlineReadStatus == SharedMarketDataCacheReadStatus.Miss ||
+            freshness.FreshnessSource.StartsWith("HistoricalCandlesDb:", StringComparison.Ordinal))
+        {
+            return "HistoricalFallbackApplied";
+        }
+
+        return "FreshSharedKline";
+    }
+
+    private static string ResolveHistoricalFallbackState(
+        ScannerFreshnessSnapshot freshness,
+        ScannerMarketWindowSnapshot marketWindow)
+    {
+        if (marketWindow.HistoricalRecoveryApplied)
+        {
+            return "HistoricalRecoveryApplied";
+        }
+
+        if (freshness.KlineReadStatus == SharedMarketDataCacheReadStatus.Miss && freshness.LastCandleAtUtc.HasValue)
+        {
+            return "HistoricalCandlesDbFallback";
+        }
+
+        if (marketWindow.HasHistoricalParityLag)
+        {
+            return "HistoricalParityLag";
+        }
+
+        return "None";
     }
 
     private static decimal ClampScoreBand(decimal value)
@@ -3037,9 +3122,12 @@ public sealed class MarketScannerService(
         }
 
         var rejectionSummary = BuildRejectionBreakdown(candidates, maxEntries: 4, maxSymbolsPerReason: 2);
+        var freshnessSummary = BuildCandidateTokenBreakdown(candidates, "FreshnessReason", maxEntries: 3, maxSymbolsPerReason: 2);
         return string.IsNullOrWhiteSpace(rejectionSummary)
             ? $"Market scanner evaluated {cycle.ScannedSymbolCount} symbols and found no eligible candidates."
-            : $"Market scanner evaluated {cycle.ScannedSymbolCount} symbols and found no eligible candidates. Reasons={rejectionSummary}.";
+            : string.IsNullOrWhiteSpace(freshnessSummary)
+                ? $"Market scanner evaluated {cycle.ScannedSymbolCount} symbols and found no eligible candidates. Reasons={rejectionSummary}."
+                : $"Market scanner evaluated {cycle.ScannedSymbolCount} symbols and found no eligible candidates. Reasons={rejectionSummary}. Freshness={freshnessSummary}.";
     }
 
     private static string BuildCycleDetail(
@@ -3066,8 +3154,14 @@ public sealed class MarketScannerService(
             <= 4 => string.Join(",", allowedSymbols),
             _ => string.Join(",", allowedSymbols.Take(4)) + $"+{allowedSymbols.Length - 4}"
         };
+        var freshnessSummary = BuildCandidateTokenBreakdown(candidates, "FreshnessReason", maxEntries: 4, maxSymbolsPerReason: 2) ?? "none";
+        var fallbackSummary = BuildCandidateTokenBreakdown(
+            candidates.Where(candidate => !string.Equals(ExtractToken(candidate.ScoringSummary, "HistoricalFallbackState"), "None", StringComparison.Ordinal)).ToArray(),
+            "HistoricalFallbackState",
+            maxEntries: 3,
+            maxSymbolsPerReason: 2) ?? "none";
 
-        return $"ScanCycleId={cycle.Id}; Timeframe={timeframe}; HandoffEnabled={handoffEnabled}; ExecutionHost={normalizedExecutionHost}; UniverseSource={cycle.UniverseSource}; Scanned={cycle.ScannedSymbolCount}; Eligible={cycle.EligibleCandidateCount}; Top={cycle.TopCandidateCount}; BestCandidate={cycle.BestCandidateSymbol ?? "n/a"}; BestScore={cycle.BestCandidateScore?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a"}; AiRankingFallbackCount={aiRankingFallbackCount}; AiRankingSuppressionCount={adaptiveSuppressionCount}; AiRankingTopCandidateChangedCount={topCandidateChangedByAiCount}; PilotAutoManageAdoptedPositions={pilotOptions.AutoManageAdoptedPositions}; PilotExecutionDispatchMode={pilotOptions.ExecutionDispatchMode}; PilotAllowedSymbolsCount={allowedSymbols.Length}; PilotAllowedSymbols={allowedSymbolsSummary}; PilotAllowedBotIdsCount={pilotOptions.ResolveNormalizedAllowedBotIds().Length}; PilotAllowedUserIdsCount={pilotOptions.ResolveNormalizedAllowedUserIds().Length}; PilotAllowedExchangeAccountIdsCount=n/a; TopRejectReason={rejectedReason}; CompletedAtUtc={cycle.CompletedAtUtc:O}";
+        return $"ScanCycleId={cycle.Id}; Timeframe={timeframe}; HandoffEnabled={handoffEnabled}; ExecutionHost={normalizedExecutionHost}; UniverseSource={cycle.UniverseSource}; Scanned={cycle.ScannedSymbolCount}; Eligible={cycle.EligibleCandidateCount}; Top={cycle.TopCandidateCount}; BestCandidate={cycle.BestCandidateSymbol ?? "n/a"}; BestScore={cycle.BestCandidateScore?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a"}; AiRankingFallbackCount={aiRankingFallbackCount}; AiRankingSuppressionCount={adaptiveSuppressionCount}; AiRankingTopCandidateChangedCount={topCandidateChangedByAiCount}; PilotAutoManageAdoptedPositions={pilotOptions.AutoManageAdoptedPositions}; PilotExecutionDispatchMode={pilotOptions.ExecutionDispatchMode}; PilotAllowedSymbolsCount={allowedSymbols.Length}; PilotAllowedSymbols={allowedSymbolsSummary}; PilotAllowedBotIdsCount={pilotOptions.ResolveNormalizedAllowedBotIds().Length}; PilotAllowedUserIdsCount={pilotOptions.ResolveNormalizedAllowedUserIds().Length}; PilotAllowedExchangeAccountIdsCount=n/a; TopRejectReason={rejectedReason}; FreshnessSummary={freshnessSummary}; HistoricalFallbackSummary={fallbackSummary}; CompletedAtUtc={cycle.CompletedAtUtc:O}";
     }
 
     private static string? ResolveDominantRejectionReason(IReadOnlyCollection<MarketScannerCandidate> candidates)
@@ -3089,6 +3183,44 @@ public sealed class MarketScannerService(
         var groups = candidates
             .Where(item => !item.IsEligible && !string.IsNullOrWhiteSpace(item.RejectionReason))
             .GroupBy(item => item.RejectionReason!, StringComparer.Ordinal)
+            .OrderByDescending(group => group.Count())
+            .ThenBy(group => group.Key, StringComparer.Ordinal)
+            .Take(Math.Max(1, maxEntries))
+            .Select(group =>
+            {
+                var symbols = group
+                    .Select(item => item.Symbol)
+                    .Where(item => !string.IsNullOrWhiteSpace(item))
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(item => item, StringComparer.Ordinal)
+                    .Take(Math.Max(1, maxSymbolsPerReason))
+                    .ToArray();
+
+                return symbols.Length == 0
+                    ? $"{group.Key}:{group.Count()}"
+                    : $"{group.Key}:{group.Count()} [{string.Join(", ", symbols)}]";
+            })
+            .ToArray();
+
+        return groups.Length == 0
+            ? null
+            : string.Join(" | ", groups);
+    }
+
+    private static string? BuildCandidateTokenBreakdown(
+        IReadOnlyCollection<MarketScannerCandidate> candidates,
+        string tokenKey,
+        int maxEntries,
+        int maxSymbolsPerReason)
+    {
+        var groups = candidates
+            .Select(candidate => new
+            {
+                candidate.Symbol,
+                TokenValue = ExtractToken(candidate.ScoringSummary, tokenKey)
+            })
+            .Where(item => !string.IsNullOrWhiteSpace(item.TokenValue))
+            .GroupBy(item => item.TokenValue!, StringComparer.Ordinal)
             .OrderByDescending(group => group.Count())
             .ThenBy(group => group.Key, StringComparer.Ordinal)
             .Take(Math.Max(1, maxEntries))
