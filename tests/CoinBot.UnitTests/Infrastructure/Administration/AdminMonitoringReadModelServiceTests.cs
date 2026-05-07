@@ -2435,6 +2435,161 @@ public sealed class AdminMonitoringReadModelServiceTests
     }
 
     [Fact]
+    public async Task AdminDashboardReadModel_ProjectsMarketDataFreshnessRows()
+    {
+        var now = new DateTime(2026, 5, 7, 10, 0, 0, DateTimeKind.Utc);
+        var cycleId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext();
+
+        dbContext.WorkerHeartbeats.Add(new CoinBot.Domain.Entities.WorkerHeartbeat
+        {
+            Id = Guid.NewGuid(),
+            WorkerKey = MarketScannerService.WorkerKey,
+            WorkerName = "Market Scanner",
+            HealthState = MonitoringHealthState.Healthy,
+            FreshnessTier = MonitoringFreshnessTier.Hot,
+            CircuitBreakerState = CircuitBreakerStateCode.Closed,
+            LastHeartbeatAtUtc = now.AddSeconds(-5),
+            LastUpdatedAtUtc = now.AddSeconds(-5),
+            SnapshotAgeSeconds = 5,
+            Detail = "ScanCycleId=redacted; FreshnessSummary=FreshSharedKline:1 [BTCUSDT]; HistoricalFallbackSummary=HistoricalCandlesDbFallback:1 [ETHUSDT]"
+        });
+        dbContext.MarketScannerCycles.Add(new MarketScannerCycle
+        {
+            Id = cycleId,
+            StartedAtUtc = now.AddMinutes(-3),
+            CompletedAtUtc = now.AddMinutes(-2),
+            UniverseSource = "config+enabled-bot-scope+historical-candles",
+            ScannedSymbolCount = 3,
+            EligibleCandidateCount = 1,
+            TopCandidateCount = 1,
+            BestCandidateSymbol = "ETHUSDT",
+            BestCandidateScore = 94.6m,
+            Summary = "freshness snapshot"
+        });
+        dbContext.MarketScannerCandidates.AddRange(
+            new MarketScannerCandidate
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                Symbol = "BTCUSDT",
+                UniverseSource = "enabled-bot-scope+historical-candles",
+                ObservedAtUtc = now.AddMinutes(-2),
+                LastCandleAtUtc = now.AddMinutes(-5).AddSeconds(-5),
+                IsEligible = false,
+                RejectionReason = "StaleMarketData",
+                Score = 0m,
+                MarketScore = 22m,
+                StrategyScore = 0,
+                ScoringSummary = "RankingDecision=Rejected; RankingReasonCode=StaleMarketData; Symbol=BTCUSDT; Timeframe=1m; FreshnessState=Stale; FreshnessReason=StaleCandleAgeExceeded; FreshnessSource=SharedKlineCache; HistoricalFallbackState=HistoricalCandlesDbFallback; HistoricalFallbackLagSeconds=18; DataAgeSeconds=305; ThresholdSeconds=120"
+            },
+            new MarketScannerCandidate
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                Symbol = "ETHUSDT",
+                UniverseSource = "enabled-bot-scope+historical-candles",
+                ObservedAtUtc = now.AddMinutes(-1),
+                LastCandleAtUtc = now.AddSeconds(-10),
+                IsEligible = true,
+                Score = 94.6m,
+                Rank = 1,
+                IsTopCandidate = true,
+                MarketScore = 100m,
+                StrategyScore = 88,
+                ScoringSummary = "RankingDecision=Selected; RankingReasonCode=HighestCompositeScore; Symbol=ETHUSDT; Timeframe=1m; FreshnessState=Fresh; FreshnessReason=HistoricalFallbackApplied; FreshnessSource=HistoricalCandlesDb; HistoricalFallbackState=HistoricalCandlesDbFallback; HistoricalFallbackLagSeconds=9; DataAgeSeconds=10; ThresholdSeconds=120"
+            });
+        dbContext.MarketScannerHandoffAttempts.AddRange(
+            new MarketScannerHandoffAttempt
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                SelectedSymbol = "BTCUSDT",
+                SelectedTimeframe = "1m",
+                SelectedAtUtc = now.AddMinutes(-2),
+                SelectionReason = "Freshness stale.",
+                StrategyDecisionOutcome = "Persisted",
+                ExecutionRequestStatus = "Blocked",
+                BlockerCode = "StaleMarketData",
+                BlockerSummary = "Execution blocked because market data is stale.",
+                GuardSummary = "FreshnessReason=StaleCandleAgeExceeded",
+                CompletedAtUtc = now.AddMinutes(-2),
+                CreatedDate = now.AddMinutes(-2),
+                UpdatedDate = now.AddMinutes(-2)
+            },
+            new MarketScannerHandoffAttempt
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleId,
+                SelectedSymbol = "XRPUSDT",
+                SelectedTimeframe = "1m",
+                SelectedAtUtc = now.AddMinutes(-1),
+                SelectionReason = "Missing fresh signal data.",
+                StrategyDecisionOutcome = "Persisted",
+                ExecutionRequestStatus = "Blocked",
+                BlockerCode = "MissingFreshSignalData",
+                BlockerSummary = "Missing fresh indicator snapshot.",
+                GuardSummary = "FreshnessReason=MissingCacheKey; FreshnessSource=Unavailable; HistoricalFallbackState=None",
+                CompletedAtUtc = now.AddMinutes(-1),
+                CreatedDate = now.AddMinutes(-1),
+                UpdatedDate = now.AddMinutes(-1)
+            });
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            new FixedTimeProvider(now),
+            Options.Create(new DataLatencyGuardOptions
+            {
+                StaleDataThresholdSeconds = 120
+            }));
+
+        var snapshot = await service.GetSnapshotAsync();
+        var freshness = snapshot.OperationalObservability.MarketDataFreshness;
+
+        Assert.Equal("Watching", freshness.State);
+        Assert.Equal(3, freshness.SymbolCount);
+        Assert.Equal(1, freshness.FreshSymbolCount);
+        Assert.Equal(1, freshness.MissingSymbolCount);
+        Assert.Equal(1, freshness.StaleSymbolCount);
+        Assert.Equal(1, freshness.MissingFreshSignalDataCount);
+        Assert.Equal(2, freshness.StaleMarketDataCount);
+        Assert.Equal(2, freshness.FallbackUsedCount);
+        Assert.Equal(1, freshness.FallbackFailedCount);
+        Assert.Equal("MissingFreshSignalData", freshness.LastFreshnessBlocker);
+        Assert.Contains("FreshSharedKline:1", freshness.ScannerFreshnessSummary, StringComparison.Ordinal);
+        Assert.Contains("HistoricalCandlesDbFallback:1", freshness.HistoricalFallbackSummary, StringComparison.Ordinal);
+
+        var staleRow = Assert.Single(freshness.SymbolRows, item => item.Symbol == "BTCUSDT");
+        Assert.Equal("1m", staleRow.Timeframe);
+        Assert.Equal("Stale", staleRow.FreshnessStatusLabel);
+        Assert.Equal("305s", staleRow.DataAgeLabel);
+        Assert.Equal("120s", staleRow.ThresholdLabel);
+        Assert.Equal(2, staleRow.StaleMarketDataCount);
+        Assert.Equal(1, staleRow.FallbackUsedCount);
+        Assert.Equal(1, staleRow.FallbackFailedCount);
+        Assert.Equal("StaleMarketData", staleRow.LastFreshnessBlocker);
+        Assert.Equal("StaleCandleAgeExceeded", staleRow.FreshnessReason);
+        Assert.Equal("SharedKlineCache", staleRow.FreshnessSourceLabel);
+        Assert.Contains("HistoricalCandlesDbFallback", staleRow.FallbackLabel, StringComparison.Ordinal);
+
+        var fallbackRow = Assert.Single(freshness.SymbolRows, item => item.Symbol == "ETHUSDT");
+        Assert.Equal("Fresh via fallback", fallbackRow.FreshnessStatusLabel);
+        Assert.Equal(1, fallbackRow.FallbackUsedCount);
+        Assert.Equal(0, fallbackRow.FallbackFailedCount);
+        Assert.Equal("HistoricalFallbackApplied", fallbackRow.FreshnessReason);
+        Assert.Equal("HistoricalCandlesDb", fallbackRow.FreshnessSourceLabel);
+
+        var missingRow = Assert.Single(freshness.SymbolRows, item => item.Symbol == "XRPUSDT");
+        Assert.Equal("Missing", missingRow.FreshnessStatusLabel);
+        Assert.Equal(1, missingRow.MissingFreshSignalDataCount);
+        Assert.Equal("MissingFreshSignalData", missingRow.LastFreshnessBlocker);
+        Assert.Equal("MissingCacheKey", missingRow.FreshnessReason);
+        Assert.Equal("n/a", missingRow.DataAgeLabel);
+    }
+
+    [Fact]
     public async Task AdminDashboardReadModel_DriftSummaryParser_IsSafeForMalformedValues()
     {
         var now = new DateTime(2026, 4, 29, 9, 30, 0, DateTimeKind.Utc);
@@ -2603,6 +2758,10 @@ public sealed class AdminMonitoringReadModelServiceTests
             snapshot.OperationalObservability.MultiSymbolStability.ExposureSummary,
             snapshot.OperationalObservability.MultiSymbolStability.TopBlockerReasons,
             string.Join(" | ", snapshot.OperationalObservability.MultiSymbolStability.SymbolRows.Select(item => $"{item.Symbol}:{item.ExposureLabel}:{item.LastOrderLabel}:{item.LastBlockerCode}:{item.RiskStateLabel}")),
+            snapshot.OperationalObservability.MarketDataFreshness.Summary,
+            snapshot.OperationalObservability.MarketDataFreshness.ScannerFreshnessSummary,
+            snapshot.OperationalObservability.MarketDataFreshness.HistoricalFallbackSummary,
+            string.Join(" | ", snapshot.OperationalObservability.MarketDataFreshness.SymbolRows.Select(item => $"{item.Symbol}:{item.Timeframe}:{item.LastFreshnessBlocker}:{item.FreshnessReason}:{item.FreshnessSourceLabel}:{item.FallbackLabel}")),
             string.Join(" | ", snapshot.OperationalObservability.NoSubmitReasons.Select(item => item.ReasonCode)),
             string.Join(" | ", snapshot.OperationalObservability.BlockedReasons.Select(item => item.ReasonCode)),
             string.Join(" | ", snapshot.OperationalObservability.CriticalWarnings.Select(item => item.Summary)));
@@ -2644,6 +2803,11 @@ public sealed class AdminMonitoringReadModelServiceTests
         Assert.Equal("No open symbol exposure evidence.", snapshot.OperationalObservability.MultiSymbolStability.ExposureSummary);
         Assert.Equal("No recent blocker reason.", snapshot.OperationalObservability.MultiSymbolStability.TopBlockerReasons);
         Assert.Empty(snapshot.OperationalObservability.MultiSymbolStability.SymbolRows);
+        Assert.Equal("Unknown", snapshot.OperationalObservability.MarketDataFreshness.State);
+        Assert.Equal("No market data freshness evidence yet.", snapshot.OperationalObservability.MarketDataFreshness.Summary);
+        Assert.Equal("n/a", snapshot.OperationalObservability.MarketDataFreshness.ScannerFreshnessSummary);
+        Assert.Equal("n/a", snapshot.OperationalObservability.MarketDataFreshness.HistoricalFallbackSummary);
+        Assert.Empty(snapshot.OperationalObservability.MarketDataFreshness.SymbolRows);
     }
 
     [Fact]

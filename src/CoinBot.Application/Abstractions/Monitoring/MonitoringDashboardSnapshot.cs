@@ -62,6 +62,8 @@ public sealed record OperationalObservabilitySnapshot(
 
     public OperationalMultiSymbolStabilitySnapshot MultiSymbolStability { get; init; } = OperationalMultiSymbolStabilitySnapshot.Empty();
 
+    public OperationalMarketDataFreshnessSnapshot MarketDataFreshness { get; init; } = OperationalMarketDataFreshnessSnapshot.Empty();
+
     public static OperationalObservabilitySnapshot Empty()
     {
         return new OperationalObservabilitySnapshot(
@@ -92,7 +94,8 @@ public sealed record OperationalObservabilitySnapshot(
             PilotConfigEvidence = OperationalPilotConfigEvidenceSnapshot.Empty(),
             PrivateSyncEvidence = OperationalPrivateSyncEvidenceSnapshot.Empty(),
             ExecutionControl = OperationalExecutionControlSnapshot.Empty(),
-            MultiSymbolStability = OperationalMultiSymbolStabilitySnapshot.Empty()
+            MultiSymbolStability = OperationalMultiSymbolStabilitySnapshot.Empty(),
+            MarketDataFreshness = OperationalMarketDataFreshnessSnapshot.Empty()
         };
     }
 }
@@ -334,6 +337,59 @@ public sealed record OperationalMultiSymbolRuntimeRowSnapshot(
     string RiskStateLabel,
     string FreshnessLabel,
     string DuplicateCooldownLabel,
+    DateTime? LastSeenUtc);
+
+public sealed record OperationalMarketDataFreshnessSnapshot(
+    string State,
+    string Summary,
+    int SymbolCount,
+    int FreshSymbolCount,
+    int MissingSymbolCount,
+    int StaleSymbolCount,
+    int MissingFreshSignalDataCount,
+    int StaleMarketDataCount,
+    int FallbackUsedCount,
+    int FallbackFailedCount,
+    string LastFreshnessBlocker,
+    string ScannerFreshnessSummary,
+    string HistoricalFallbackSummary,
+    IReadOnlyCollection<OperationalMarketDataFreshnessRowSnapshot> SymbolRows)
+{
+    public static OperationalMarketDataFreshnessSnapshot Empty()
+    {
+        return new OperationalMarketDataFreshnessSnapshot(
+            State: "Unknown",
+            Summary: "No market data freshness evidence yet.",
+            SymbolCount: 0,
+            FreshSymbolCount: 0,
+            MissingSymbolCount: 0,
+            StaleSymbolCount: 0,
+            MissingFreshSignalDataCount: 0,
+            StaleMarketDataCount: 0,
+            FallbackUsedCount: 0,
+            FallbackFailedCount: 0,
+            LastFreshnessBlocker: "n/a",
+            ScannerFreshnessSummary: "n/a",
+            HistoricalFallbackSummary: "n/a",
+            SymbolRows: Array.Empty<OperationalMarketDataFreshnessRowSnapshot>());
+    }
+}
+
+public sealed record OperationalMarketDataFreshnessRowSnapshot(
+    string Symbol,
+    string Timeframe,
+    string FreshnessStatusLabel,
+    DateTime? LastCandleAtUtc,
+    string DataAgeLabel,
+    string ThresholdLabel,
+    int MissingFreshSignalDataCount,
+    int StaleMarketDataCount,
+    int FallbackUsedCount,
+    int FallbackFailedCount,
+    string LastFreshnessBlocker,
+    string FreshnessReason,
+    string FreshnessSourceLabel,
+    string FallbackLabel,
     DateTime? LastSeenUtc);
 
 public sealed record OperationalExitPnlEvidenceSnapshot(

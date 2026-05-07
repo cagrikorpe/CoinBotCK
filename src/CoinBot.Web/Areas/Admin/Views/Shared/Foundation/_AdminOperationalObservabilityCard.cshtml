@@ -18,7 +18,9 @@
     var privateSync = operational.PrivateSyncEvidence ?? OperationalPrivateSyncEvidenceSnapshot.Empty();
     var executionControl = operational.ExecutionControl ?? OperationalExecutionControlSnapshot.Empty();
     var multiSymbol = operational.MultiSymbolStability ?? OperationalMultiSymbolStabilitySnapshot.Empty();
+    var marketDataFreshness = operational.MarketDataFreshness ?? OperationalMarketDataFreshnessSnapshot.Empty();
     var multiSymbolRuntimeRows = multiSymbol.SymbolRows.ToArray();
+    var marketDataFreshnessRows = marketDataFreshness.SymbolRows.ToArray();
     var criticalWarnings = operational.CriticalWarnings
         .ToArray();
 
@@ -275,6 +277,85 @@
                             <td>@row.RiskStateLabel</td>
                             <td>@row.FreshnessLabel</td>
                             <td>@row.DuplicateCooldownLabel</td>
+                            <td>@(row.LastSeenUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "n/a")</td>
+                        </tr>
+                    }
+                }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4" data-cb-admin-market-data-freshness>
+            <div>
+                <div class="cb-admin-info-strip-title">Market data freshness</div>
+                <div class="cb-admin-info-strip-text" data-cb-admin-market-data-freshness-summary>
+                    @marketDataFreshness.Summary
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-admin-market-data-freshness-counts>
+                    Symbols @marketDataFreshness.SymbolCount · Fresh @marketDataFreshness.FreshSymbolCount · Missing @marketDataFreshness.MissingSymbolCount · Stale @marketDataFreshness.StaleSymbolCount
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-admin-market-data-freshness-blockers>
+                    MissingFreshSignalData @marketDataFreshness.MissingFreshSignalDataCount · StaleMarketData @marketDataFreshness.StaleMarketDataCount · Last blocker @marketDataFreshness.LastFreshnessBlocker
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-admin-market-data-freshness-fallback>
+                    Fallback used @marketDataFreshness.FallbackUsedCount · failed @marketDataFreshness.FallbackFailedCount · Scanner freshness @SanitizeOperationalSummary(marketDataFreshness.ScannerFreshnessSummary) · Historical fallback @SanitizeOperationalSummary(marketDataFreshness.HistoricalFallbackSummary)
+                </div>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+            {
+                Label = marketDataFreshness.State,
+                Tone = ResolveTone(marketDataFreshness.State),
+                IconText = "FR"
+            })
+        </div>
+
+        <div class="table-responsive mt-4" data-cb-admin-market-data-freshness-table-wrap>
+            <table class="table table-borderless cb-admin-table mb-0" data-cb-admin-market-data-freshness-table>
+                <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Timeframe</th>
+                    <th>Status</th>
+                    <th>Last candle</th>
+                    <th>Data age</th>
+                    <th>Threshold</th>
+                    <th>MissingFreshSignalData</th>
+                    <th>StaleMarketData</th>
+                    <th>Fallback used</th>
+                    <th>Fallback failed</th>
+                    <th>Last blocker</th>
+                    <th>Freshness reason</th>
+                    <th>Freshness source</th>
+                    <th>Fallback</th>
+                    <th>Last seen</th>
+                </tr>
+                </thead>
+                <tbody data-cb-admin-market-data-freshness-rows>
+                @if (marketDataFreshnessRows.Length == 0)
+                {
+                    <tr data-cb-admin-market-data-freshness-empty>
+                        <td colspan="15">Market data freshness rows n/a.</td>
+                    </tr>
+                }
+                else
+                {
+                    foreach (var row in marketDataFreshnessRows)
+                    {
+                        <tr data-cb-admin-market-data-freshness-row>
+                            <td data-cb-admin-market-data-freshness-symbol>@row.Symbol</td>
+                            <td>@row.Timeframe</td>
+                            <td>@row.FreshnessStatusLabel</td>
+                            <td>@(row.LastCandleAtUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "n/a")</td>
+                            <td>@row.DataAgeLabel</td>
+                            <td>@row.ThresholdLabel</td>
+                            <td>@row.MissingFreshSignalDataCount</td>
+                            <td>@row.StaleMarketDataCount</td>
+                            <td>@row.FallbackUsedCount</td>
+                            <td>@row.FallbackFailedCount</td>
+                            <td>@row.LastFreshnessBlocker</td>
+                            <td>@row.FreshnessReason</td>
+                            <td>@row.FreshnessSourceLabel</td>
+                            <td>@row.FallbackLabel</td>
                             <td>@(row.LastSeenUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "n/a")</td>
                         </tr>
                     }

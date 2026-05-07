@@ -343,6 +343,40 @@ public sealed class AdminOverviewSurfaceTests
     }
 
     [Fact]
+    public void AdminSystemHealthView_RendersMarketDataFreshnessSurface()
+    {
+        var operationalCardContent = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Areas",
+            "Admin",
+            "Views",
+            "Shared",
+            "Foundation",
+            "_AdminOperationalObservabilityCard.cshtml"));
+
+        Assert.Contains("data-cb-admin-market-data-freshness", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-market-data-freshness-summary", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-market-data-freshness-counts", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-market-data-freshness-blockers", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-market-data-freshness-fallback", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-market-data-freshness-table", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-market-data-freshness-rows", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-market-data-freshness-row", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-market-data-freshness-symbol", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Market data freshness", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("MissingFreshSignalData", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("StaleMarketData", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Fallback used", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Last blocker", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Freshness reason", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Freshness source", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("Account=@(privateSync.ExchangeAccountId", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("@row.OwnerUserId", operationalCardContent, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AdminBotOperationsTable_RendersManualCloseDoubleConfirmSurface()
     {
         var content = File.ReadAllText(Path.Combine(

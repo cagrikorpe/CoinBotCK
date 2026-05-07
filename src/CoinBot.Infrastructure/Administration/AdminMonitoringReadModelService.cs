@@ -129,6 +129,30 @@ public sealed class AdminMonitoringReadModelService(
                     entity.ScoringSummary))
                 .ToListAsync(cancellationToken)
             : [];
+        var recentFreshnessCandidateRows = await dbContext.MarketScannerCandidates
+            .AsNoTracking()
+            .Where(entity =>
+                !entity.IsDeleted &&
+                entity.ObservedAtUtc >= windowStartUtc &&
+                entity.ScoringSummary != null &&
+                (entity.ScoringSummary.Contains("FreshnessReason=") ||
+                 entity.ScoringSummary.Contains("HistoricalFallbackState=")))
+            .OrderByDescending(entity => entity.ObservedAtUtc)
+            .ThenByDescending(entity => entity.Rank ?? int.MaxValue)
+            .Take(240)
+            .Select(entity => new MonitoringScannerCandidateRow(
+                entity.Symbol,
+                entity.ObservedAtUtc,
+                entity.LastCandleAtUtc,
+                entity.IsEligible,
+                entity.RejectionReason,
+                entity.Score,
+                entity.MarketScore,
+                entity.StrategyScore,
+                entity.Rank,
+                entity.IsTopCandidate,
+                entity.ScoringSummary))
+            .ToListAsync(cancellationToken);
         var recentHandoffRows = await dbContext.MarketScannerHandoffAttempts
             .AsNoTracking()
             .Where(entity =>
@@ -150,6 +174,7 @@ public sealed class AdminMonitoringReadModelService(
             .Take(120)
             .Select(entity => new MonitoringHandoffDetailRow(
                 entity.SelectedSymbol,
+                entity.SelectedTimeframe,
                 entity.ExecutionRequestStatus,
                 entity.BlockerCode,
                 entity.BlockerSummary,
@@ -374,6 +399,12 @@ public sealed class AdminMonitoringReadModelService(
             openPositionRows: openPositionRows,
             utcNow: utcNow,
             staleThresholdMilliseconds: staleThresholdMilliseconds);
+        var marketDataFreshness = BuildMarketDataFreshnessEvidence(
+            utcNow,
+            workerHeartbeatEntities,
+            recentFreshnessCandidateRows,
+            recentHandoffDetailRows,
+            staleThresholdMilliseconds);
         var criticalWarnings = BuildCriticalWarnings(
             healthSnapshotEntities,
             workerHeartbeatEntities,
@@ -412,7 +443,8 @@ public sealed class AdminMonitoringReadModelService(
             PilotConfigEvidence = pilotConfigEvidence,
             PrivateSyncEvidence = privateSyncEvidence,
             ExecutionControl = executionControl,
-            MultiSymbolStability = multiSymbolStability
+            MultiSymbolStability = multiSymbolStability,
+            MarketDataFreshness = marketDataFreshness
         };
     }
 
@@ -2127,6 +2159,233 @@ public sealed class AdminMonitoringReadModelService(
         };
     }
 
+    private static OperationalMarketDataFreshnessSnapshot BuildMarketDataFreshnessEvidence(
+        DateTime utcNow,
+        IReadOnlyCollection<WorkerHeartbeatEntity> workerHeartbeatEntities,
+        IReadOnlyCollection<MonitoringScannerCandidateRow> recentFreshnessCandidateRows,
+        IReadOnlyCollection<MonitoringHandoffDetailRow> recentHandoffDetailRows,
+        int staleThresholdMilliseconds)
+    {
+        var freshnessHandoffRows = recentHandoffDetailRows
+            .Where(entity => IsFreshnessHandoffBlocker(entity.BlockerCode))
+            .ToArray();
+        var scannerHeartbeat = workerHeartbeatEntities
+            .Where(entity => string.Equals(entity.WorkerKey, MarketScannerService.WorkerKey, StringComparison.Ordinal))
+            .OrderByDescending(entity => NormalizeUtc(entity.LastUpdatedAtUtc))
+            .FirstOrDefault();
+        var scannerFreshnessSummary = ExecutionDecisionDiagnostics.ExtractToken("FreshnessSummary", scannerHeartbeat?.Detail) ?? "n/a";
+        var historicalFallbackSummary = ExecutionDecisionDiagnostics.ExtractToken("HistoricalFallbackSummary", scannerHeartbeat?.Detail) ?? "n/a";
+
+        if (recentFreshnessCandidateRows.Count == 0 &&
+            freshnessHandoffRows.Length == 0 &&
+            string.Equals(scannerFreshnessSummary, "n/a", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(historicalFallbackSummary, "n/a", StringComparison.OrdinalIgnoreCase))
+        {
+            return OperationalMarketDataFreshnessSnapshot.Empty();
+        }
+
+        var rows = BuildMarketDataFreshnessRows(
+            recentFreshnessCandidateRows,
+            freshnessHandoffRows,
+            utcNow,
+            staleThresholdMilliseconds);
+        if (rows.Length == 0)
+        {
+            return OperationalMarketDataFreshnessSnapshot.Empty() with
+            {
+                ScannerFreshnessSummary = scannerFreshnessSummary,
+                HistoricalFallbackSummary = historicalFallbackSummary
+            };
+        }
+
+        var freshSymbolCount = rows.Count(entity =>
+            string.Equals(entity.FreshnessStatusLabel, "Fresh", StringComparison.Ordinal) ||
+            string.Equals(entity.FreshnessStatusLabel, "Fresh via fallback", StringComparison.Ordinal));
+        var missingSymbolCount = rows.Count(entity => string.Equals(entity.FreshnessStatusLabel, "Missing", StringComparison.Ordinal));
+        var staleSymbolCount = rows.Count(entity => string.Equals(entity.FreshnessStatusLabel, "Stale", StringComparison.Ordinal));
+        var missingFreshSignalDataCount = rows.Sum(entity => entity.MissingFreshSignalDataCount);
+        var staleMarketDataCount = rows.Sum(entity => entity.StaleMarketDataCount);
+        var fallbackUsedCount = rows.Sum(entity => entity.FallbackUsedCount);
+        var fallbackFailedCount = rows.Sum(entity => entity.FallbackFailedCount);
+        var latestFreshnessBlocker = freshnessHandoffRows
+            .OrderByDescending(entity => NormalizeUtc(entity.CompletedAtUtc))
+            .Select(entity => entity.BlockerCode)
+            .FirstOrDefault(code => !string.IsNullOrWhiteSpace(code))
+            ?? rows.Select(entity => entity.LastFreshnessBlocker)
+                .FirstOrDefault(value => !string.Equals(value, "n/a", StringComparison.OrdinalIgnoreCase))
+            ?? "n/a";
+        var state = staleSymbolCount > 0 || missingSymbolCount > 0 || fallbackFailedCount > 0
+            ? "Watching"
+            : freshSymbolCount > 0
+                ? "Healthy"
+                : "Unknown";
+        var summary =
+            $"Symbols {rows.Length} · Fresh {freshSymbolCount} · Missing {missingSymbolCount} · Stale {staleSymbolCount} · MissingFreshSignalData {missingFreshSignalDataCount} · StaleMarketData {staleMarketDataCount} · Fallback used {fallbackUsedCount} · failed {fallbackFailedCount}";
+
+        return new OperationalMarketDataFreshnessSnapshot(
+            State: state,
+            Summary: summary,
+            SymbolCount: rows.Length,
+            FreshSymbolCount: freshSymbolCount,
+            MissingSymbolCount: missingSymbolCount,
+            StaleSymbolCount: staleSymbolCount,
+            MissingFreshSignalDataCount: missingFreshSignalDataCount,
+            StaleMarketDataCount: staleMarketDataCount,
+            FallbackUsedCount: fallbackUsedCount,
+            FallbackFailedCount: fallbackFailedCount,
+            LastFreshnessBlocker: latestFreshnessBlocker,
+            ScannerFreshnessSummary: scannerFreshnessSummary,
+            HistoricalFallbackSummary: historicalFallbackSummary,
+            SymbolRows: rows);
+    }
+
+    private static OperationalMarketDataFreshnessRowSnapshot[] BuildMarketDataFreshnessRows(
+        IReadOnlyCollection<MonitoringScannerCandidateRow> recentFreshnessCandidateRows,
+        IReadOnlyCollection<MonitoringHandoffDetailRow> freshnessHandoffRows,
+        DateTime utcNow,
+        int staleThresholdMilliseconds)
+    {
+        var candidatesBySymbol = recentFreshnessCandidateRows
+            .GroupBy(entity => NormalizeSymbol(entity.Symbol), StringComparer.Ordinal)
+            .Where(group => !string.IsNullOrWhiteSpace(group.Key))
+            .ToDictionary(
+                group => group.Key,
+                group => group
+                    .OrderByDescending(entity => NormalizeUtc(entity.ObservedAtUtc))
+                    .ThenBy(entity => entity.Rank ?? int.MaxValue)
+                    .ToArray(),
+                StringComparer.Ordinal);
+        var handoffsBySymbol = freshnessHandoffRows
+            .Select(entity => new
+            {
+                Symbol = NormalizeSymbol(entity.SelectedSymbol),
+                Row = entity
+            })
+            .Where(entity => !string.IsNullOrWhiteSpace(entity.Symbol))
+            .GroupBy(entity => entity.Symbol, StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => group
+                    .OrderByDescending(entity => NormalizeUtc(entity.Row.CompletedAtUtc))
+                    .Select(entity => entity.Row)
+                    .ToArray(),
+                StringComparer.Ordinal);
+        var symbols = candidatesBySymbol.Keys
+            .Concat(handoffsBySymbol.Keys)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (symbols.Length == 0)
+        {
+            return [];
+        }
+
+        return symbols
+            .Select(symbol =>
+            {
+                candidatesBySymbol.TryGetValue(symbol, out var candidateHistory);
+                handoffsBySymbol.TryGetValue(symbol, out var handoffHistory);
+                var latestCandidate = candidateHistory?.FirstOrDefault();
+                var latestHandoff = handoffHistory?.FirstOrDefault();
+                var row = BuildMarketDataFreshnessRow(
+                    symbol,
+                    latestCandidate,
+                    candidateHistory ?? [],
+                    latestHandoff,
+                    handoffHistory ?? [],
+                    utcNow,
+                    staleThresholdMilliseconds);
+                return new
+                {
+                    Priority = ResolveMarketDataFreshnessPriority(row.FreshnessStatusLabel),
+                    row.LastSeenUtc,
+                    Row = row
+                };
+            })
+            .OrderByDescending(entity => entity.Priority)
+            .ThenByDescending(entity => entity.LastSeenUtc ?? DateTime.MinValue)
+            .ThenBy(entity => entity.Row.Symbol, StringComparer.Ordinal)
+            .Take(10)
+            .Select(entity => entity.Row)
+            .ToArray();
+    }
+
+    private static OperationalMarketDataFreshnessRowSnapshot BuildMarketDataFreshnessRow(
+        string symbol,
+        MonitoringScannerCandidateRow? latestCandidate,
+        IReadOnlyCollection<MonitoringScannerCandidateRow> candidateHistory,
+        MonitoringHandoffDetailRow? latestHandoff,
+        IReadOnlyCollection<MonitoringHandoffDetailRow> handoffHistory,
+        DateTime utcNow,
+        int staleThresholdMilliseconds)
+    {
+        var freshnessState = ExecutionDecisionDiagnostics.ExtractToken("FreshnessState", latestCandidate?.ScoringSummary);
+        var freshnessReason = ExecutionDecisionDiagnostics.ExtractToken("FreshnessReason", latestCandidate?.ScoringSummary)
+            ?? ResolveFreshnessReasonFallback(latestCandidate?.RejectionReason, latestHandoff?.BlockerCode);
+        var freshnessSource = ExecutionDecisionDiagnostics.ExtractToken("FreshnessSource", latestCandidate?.ScoringSummary) ?? "n/a";
+        var fallbackState = ExecutionDecisionDiagnostics.ExtractToken("HistoricalFallbackState", latestCandidate?.ScoringSummary) ?? "None";
+        var fallbackLagSeconds = TryParseDecimalToken("HistoricalFallbackLagSeconds", latestCandidate?.ScoringSummary);
+        var timeframe = ExecutionDecisionDiagnostics.ExtractToken("Timeframe", latestCandidate?.ScoringSummary)
+            ?? latestHandoff?.SelectedTimeframe
+            ?? "n/a";
+        var dataAgeSeconds = TryParseDecimalToken("DataAgeSeconds", latestCandidate?.ScoringSummary)
+            ?? ResolveFreshnessAgeSeconds(latestCandidate?.LastCandleAtUtc, utcNow);
+        var thresholdSeconds = TryParseDecimalToken("ThresholdSeconds", latestCandidate?.ScoringSummary)
+            ?? staleThresholdMilliseconds / 1000m;
+        var missingFreshSignalDataCount = handoffHistory.Count(entity =>
+            string.Equals(entity.BlockerCode, "MissingFreshSignalData", StringComparison.Ordinal));
+        var staleMarketDataCount = handoffHistory.Count(entity =>
+                string.Equals(entity.BlockerCode, "StaleMarketData", StringComparison.Ordinal)) +
+            candidateHistory.Count(entity => string.Equals(entity.RejectionReason, "StaleMarketData", StringComparison.Ordinal));
+        var fallbackUsedCount = candidateHistory.Count(entity =>
+        {
+            var state = ExecutionDecisionDiagnostics.ExtractToken("HistoricalFallbackState", entity.ScoringSummary);
+            return !string.IsNullOrWhiteSpace(state) &&
+                   !string.Equals(state, "None", StringComparison.OrdinalIgnoreCase);
+        });
+        var fallbackFailedCount = candidateHistory.Count(entity =>
+        {
+            var state = ExecutionDecisionDiagnostics.ExtractToken("HistoricalFallbackState", entity.ScoringSummary);
+            if (string.IsNullOrWhiteSpace(state) || string.Equals(state, "None", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return !string.Equals(ExecutionDecisionDiagnostics.ExtractToken("FreshnessState", entity.ScoringSummary), "Fresh", StringComparison.OrdinalIgnoreCase);
+        });
+        var freshnessStatusLabel = ResolveMarketDataFreshnessStatusLabel(
+            latestCandidate,
+            latestHandoff,
+            freshnessState,
+            freshnessReason,
+            fallbackState,
+            dataAgeSeconds,
+            thresholdSeconds);
+        var lastFreshnessBlocker = ResolveMarketDataLastFreshnessBlocker(latestCandidate, latestHandoff);
+        var fallbackLabel = fallbackUsedCount == 0
+            ? "none"
+            : $"{fallbackState} · lag {(fallbackLagSeconds?.ToString("0.##", CultureInfo.InvariantCulture) ?? "n/a")}s · used {fallbackUsedCount} / failed {fallbackFailedCount}";
+        var lastSeenUtc = ResolveMarketDataFreshnessLastSeenUtc(latestCandidate, latestHandoff);
+
+        return new OperationalMarketDataFreshnessRowSnapshot(
+            Symbol: symbol,
+            Timeframe: string.IsNullOrWhiteSpace(timeframe) ? "n/a" : timeframe.Trim(),
+            FreshnessStatusLabel: freshnessStatusLabel,
+            LastCandleAtUtc: NormalizeUtcNullable(latestCandidate?.LastCandleAtUtc),
+            DataAgeLabel: dataAgeSeconds.HasValue
+                ? $"{dataAgeSeconds.Value.ToString("0.##", CultureInfo.InvariantCulture)}s"
+                : "n/a",
+            ThresholdLabel: $"{thresholdSeconds.ToString("0.##", CultureInfo.InvariantCulture)}s",
+            MissingFreshSignalDataCount: missingFreshSignalDataCount,
+            StaleMarketDataCount: staleMarketDataCount,
+            FallbackUsedCount: fallbackUsedCount,
+            FallbackFailedCount: fallbackFailedCount,
+            LastFreshnessBlocker: lastFreshnessBlocker,
+            FreshnessReason: string.IsNullOrWhiteSpace(freshnessReason) ? "n/a" : freshnessReason.Trim(),
+            FreshnessSourceLabel: string.IsNullOrWhiteSpace(freshnessSource) ? "n/a" : freshnessSource.Trim(),
+            FallbackLabel: fallbackLabel,
+            LastSeenUtc: lastSeenUtc);
+    }
+
     private static OperationalMultiSymbolRuntimeRowSnapshot[] BuildMultiSymbolRuntimeRows(
         IReadOnlyCollection<MonitoringScannerCandidateRow> latestScannerCandidateRows,
         IReadOnlyCollection<MonitoringHandoffDetailRow> recentHandoffDetailRows,
@@ -2508,6 +2767,145 @@ public sealed class AdminMonitoringReadModelService(
             (true, false) => "DuplicateSuppressed",
             (false, true) => "CooldownApplied",
             _ => "n/a"
+        };
+    }
+
+    private static string ResolveMarketDataFreshnessStatusLabel(
+        MonitoringScannerCandidateRow? latestCandidate,
+        MonitoringHandoffDetailRow? latestHandoff,
+        string? freshnessState,
+        string? freshnessReason,
+        string? fallbackState,
+        decimal? dataAgeSeconds,
+        decimal thresholdSeconds)
+    {
+        if (string.Equals(latestHandoff?.BlockerCode, "StaleMarketData", StringComparison.Ordinal) ||
+            string.Equals(latestCandidate?.RejectionReason, "StaleMarketData", StringComparison.Ordinal) ||
+            string.Equals(freshnessReason, "StaleCandleAgeExceeded", StringComparison.Ordinal))
+        {
+            return "Stale";
+        }
+
+        if (string.Equals(latestHandoff?.BlockerCode, "MissingFreshSignalData", StringComparison.Ordinal) ||
+            string.Equals(latestCandidate?.RejectionReason, "MissingFreshSignalData", StringComparison.Ordinal) ||
+            string.Equals(latestCandidate?.RejectionReason, "MarketDataUnavailable", StringComparison.Ordinal) ||
+            string.Equals(latestCandidate?.RejectionReason, "MissingMarketData", StringComparison.Ordinal) ||
+            string.Equals(freshnessReason, "MissingCacheKey", StringComparison.Ordinal) ||
+            string.Equals(freshnessReason, "MissingCandle", StringComparison.Ordinal))
+        {
+            return "Missing";
+        }
+
+        if (string.Equals(freshnessState, "Fresh", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(fallbackState) &&
+            !string.Equals(fallbackState, "None", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Fresh via fallback";
+        }
+
+        if (string.Equals(freshnessState, "Fresh", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Fresh";
+        }
+
+        if (dataAgeSeconds.HasValue)
+        {
+            return dataAgeSeconds.Value > thresholdSeconds ? "Stale" : "Fresh";
+        }
+
+        return "n/a";
+    }
+
+    private static string ResolveMarketDataLastFreshnessBlocker(
+        MonitoringScannerCandidateRow? latestCandidate,
+        MonitoringHandoffDetailRow? latestHandoff)
+    {
+        if (IsFreshnessHandoffBlocker(latestHandoff?.BlockerCode))
+        {
+            return latestHandoff!.BlockerCode!.Trim();
+        }
+
+        return latestCandidate?.RejectionReason switch
+        {
+            "StaleMarketData" => "StaleMarketData",
+            "MissingFreshSignalData" => "MissingFreshSignalData",
+            "MarketDataUnavailable" => "MarketDataUnavailable",
+            "MissingMarketData" => "MissingMarketData",
+            _ => "n/a"
+        };
+    }
+
+    private static string? ResolveFreshnessReasonFallback(string? rejectionReason, string? blockerCode)
+    {
+        if (string.Equals(blockerCode, "MissingFreshSignalData", StringComparison.Ordinal) ||
+            string.Equals(rejectionReason, "MissingFreshSignalData", StringComparison.Ordinal) ||
+            string.Equals(rejectionReason, "MarketDataUnavailable", StringComparison.Ordinal) ||
+            string.Equals(rejectionReason, "MissingMarketData", StringComparison.Ordinal))
+        {
+            return "MissingCacheKey";
+        }
+
+        if (string.Equals(blockerCode, "StaleMarketData", StringComparison.Ordinal) ||
+            string.Equals(rejectionReason, "StaleMarketData", StringComparison.Ordinal))
+        {
+            return "StaleCandleAgeExceeded";
+        }
+
+        return null;
+    }
+
+    private static decimal? ResolveFreshnessAgeSeconds(DateTime? lastCandleAtUtc, DateTime utcNow)
+    {
+        if (!lastCandleAtUtc.HasValue)
+        {
+            return null;
+        }
+
+        var ageSeconds = Math.Max(0d, (utcNow - NormalizeUtc(lastCandleAtUtc.Value)).TotalSeconds);
+        return decimal.Round((decimal)ageSeconds, 2);
+    }
+
+    private static DateTime? ResolveMarketDataFreshnessLastSeenUtc(
+        MonitoringScannerCandidateRow? latestCandidate,
+        MonitoringHandoffDetailRow? latestHandoff)
+    {
+        DateTime?[] values =
+        [
+            latestCandidate is null ? null : NormalizeUtc(latestCandidate.ObservedAtUtc),
+            latestHandoff is null ? null : NormalizeUtc(latestHandoff.CompletedAtUtc)
+        ];
+
+        var resolvedValues = values
+            .Where(entity => entity.HasValue)
+            .Select(entity => entity!.Value)
+            .ToArray();
+
+        return resolvedValues.Length == 0
+            ? null
+            : resolvedValues.Max();
+    }
+
+    private static int ResolveMarketDataFreshnessPriority(string statusLabel)
+    {
+        return statusLabel switch
+        {
+            "Missing" => 4,
+            "Stale" => 3,
+            "Fresh via fallback" => 2,
+            "Fresh" => 1,
+            _ => 0
+        };
+    }
+
+    private static bool IsFreshnessHandoffBlocker(string? blockerCode)
+    {
+        return blockerCode switch
+        {
+            "MissingFreshSignalData" => true,
+            "StaleMarketData" => true,
+            "MarketDataUnavailable" => true,
+            "MissingMarketData" => true,
+            _ => false
         };
     }
 
@@ -3416,6 +3814,7 @@ public sealed class AdminMonitoringReadModelService(
 
     private sealed record MonitoringHandoffDetailRow(
         string? SelectedSymbol,
+        string? SelectedTimeframe,
         string ExecutionRequestStatus,
         string? BlockerCode,
         string? BlockerSummary,
