@@ -279,6 +279,11 @@ public sealed class MarketScannerServiceTests
         Assert.Contains("ScannerShadowScore=55", btc.ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("ScannerShadowContributions=TrendBreakoutConfirmed:+55", btc.ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("TrendAlignment=Bullish", btc.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("StrategyDirection=n/a", btc.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("AdvisoryDirection=Bullish", btc.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerTrendAlignment=StrategyDirectionUnavailable", btc.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("ConflictReason=None", btc.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("RankingScore=96.6667", btc.ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("DirectionalConflictStatus=NotEvaluated", btc.ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("RankingDecision=Selected", btc.ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("RankingReasonCode=HighestCompositeScore", btc.ScoringSummary, StringComparison.Ordinal);
@@ -1313,6 +1318,10 @@ public sealed class MarketScannerServiceTests
         Assert.Equal("SOLUSDT", cycle.BestCandidateSymbol);
         Assert.Contains("EntryDirection=Short", candidate.ScoringSummary, StringComparison.Ordinal);
         Assert.Contains("BotDirectionMode=ShortOnly", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("StrategyDirection=Short", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("AdvisoryDirection=Bullish", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerTrendAlignment=ConflictShortAgainstBullishScanner", candidate.ScoringSummary, StringComparison.Ordinal);
+        Assert.Contains("ConflictReason=DirectionalConflictShortAgainstBullishScanner", candidate.ScoringSummary, StringComparison.Ordinal);
     }
 
     [Fact]

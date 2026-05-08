@@ -355,6 +355,7 @@ public sealed class MarketScannerHandoffService(
 
             PreparedExecutionContext executionContext;
             var entryDirection = ResolveSignalDirection(strategySignal);
+            var directionalQuality = BuildDirectionalQualityEvidence(candidate, entryDirection);
             decimal currentNetQuantity = 0m;
             CurrentPositionSnapshot? currentPosition = null;
             var positionAdoptionSummary = botMatchResolution.PositionAdoptionSummary;
@@ -373,7 +374,8 @@ public sealed class MarketScannerHandoffService(
                     CloseSide: null,
                     AutoReverse: false,
                     ExitPnlGuardSummary: null,
-                    PositionAdoptionSummary: null);
+                    PositionAdoptionSummary: null,
+                    DirectionalQualitySummary: directionalQuality.Summary);
             }
             catch (ExecutionValidationException exception)
             {
@@ -456,7 +458,8 @@ public sealed class MarketScannerHandoffService(
                                 guardSummary: Truncate(
                                         BuildCompactEntrySuppressionGuardSummary(
                                             entrySymbolAllowlistPolicy.Summary ?? $"SymbolExecutionAllowlist=Applied; SelectedSymbol={symbol}",
-                                            executionContext.PositionAdoptionSummary),
+                                            executionContext.PositionAdoptionSummary,
+                                            executionContext.DirectionalQualitySummary),
                                         512)
                                     ?? $"SignalType=Entry; SymbolExecutionAllowlist=Applied; SelectedSymbol={symbol}",
                                 cancellationToken: cancellationToken,
@@ -483,7 +486,8 @@ public sealed class MarketScannerHandoffService(
                                         PrependGuardSummarySegment(
                                             entrySymbolAllowlistPolicy.Summary,
                                             $"OpenPositionSuppression=SameDirection; EntryDirection={entryDirection}; CurrentNetQuantity={currentNetQuantity:0.########}"),
-                                        executionContext.PositionAdoptionSummary),
+                                        executionContext.PositionAdoptionSummary,
+                                        executionContext.DirectionalQualitySummary),
                                     512)
                                 ?? "SignalType=Entry; OpenPositionSuppression=SameDirection",
                             cancellationToken: cancellationToken,
@@ -504,7 +508,8 @@ public sealed class MarketScannerHandoffService(
                         CloseSide: currentPositionDirection == StrategyTradeDirection.Long ? ExecutionOrderSide.Sell : ExecutionOrderSide.Buy,
                         AutoReverse: false,
                         ExitPnlGuardSummary: null,
-                        PositionAdoptionSummary: positionAdoptionSummary);
+                        PositionAdoptionSummary: positionAdoptionSummary,
+                        DirectionalQualitySummary: directionalQuality.Summary);
                     activeSymbolAllowlistPolicy = EvaluateSymbolExecutionAllowlist(symbol, executionContext.ReduceOnly);
 
                     if (!botExecutionOptionsValue.AutoManageAdoptedPositions)
@@ -604,13 +609,24 @@ public sealed class MarketScannerHandoffService(
 
             if (executionContext.SignalType == StrategySignalType.Entry &&
                 TryResolveDirectionalScannerConflict(
-                    candidate,
+                    directionalQuality,
                     symbol,
-                    entryDirection,
                     out var directionalConflictBlockerCode,
                     out var directionalConflictBlockerDetail,
                     out var directionalConflictGuardSummary))
             {
+                logger.LogInformation(
+                    "Market scanner directional conflict blocked. Symbol={Symbol} StrategyKey={StrategyKey} Timeframe={Timeframe} StrategyDirection={StrategyDirection} AdvisoryDirection={AdvisoryDirection} ScannerTrendAlignment={ScannerTrendAlignment} ConflictReason={ConflictReason} RankingScore={RankingScore} CandidateScore={CandidateScore} RiskPenalty={RiskPenalty}.",
+                    symbol,
+                    ownerBotMatch.StrategyKey,
+                    klineInterval,
+                    directionalQuality.StrategyDirection,
+                    directionalQuality.AdvisoryDirection,
+                    directionalQuality.ScannerTrendAlignment,
+                    directionalQuality.ConflictReason,
+                    directionalQuality.RankingScore,
+                    directionalQuality.CandidateScore,
+                    directionalQuality.RiskPenalty);
                 latestAttempt = await PersistBlockedAttemptWithShadowDecisionAsync(
                     scanCycleId,
                     candidate,
@@ -2355,8 +2371,10 @@ public sealed class MarketScannerHandoffService(
         var concurrencySegment = string.IsNullOrWhiteSpace(concurrencyGuardSummary)
             ? string.Empty
             : $"{concurrencyGuardSummary}; ";
+        var latencySegment =
+            $"LatencyReason={latencySnapshot.ReasonCode}; LastCandleAtUtc={latencySnapshot.LatestDataTimestampAtUtc?.ToString("O") ?? "missing"}; DataAgeMs={latencySnapshot.LatestDataAgeMilliseconds?.ToString(CultureInfo.InvariantCulture) ?? "missing"}; ContinuityGapCount={latencySnapshot.LatestContinuityGapCount?.ToString(CultureInfo.InvariantCulture) ?? "missing"}";
         var summary =
-            $"{concurrencySegment}{leveragePolicySegment}{symbolAllowlistSegment}ExecutionGate=Allowed; UserExecutionOverride=Allowed; ExecutionDispatch=Dispatched; Symbol={symbol}; Timeframe={klineInterval}; {BuildLatencyGuardSummarySnippet(latencySnapshot)}; {(string.IsNullOrWhiteSpace(executionContext.ExitPnlGuardSummary) ? string.Empty : $"{executionContext.ExitPnlGuardSummary}; ")}DispatchDuplicate={dispatchResult.IsDuplicate}; ExecutorKind={dispatchResult.Order.ExecutorKind}; ExecutionOrderState={dispatchResult.Order.State}; ExecutionOrderFailureCode={dispatchResult.Order.FailureCode ?? "none"}; ExecutionOrderId={dispatchResult.Order.ExecutionOrderId:N}";
+            $"ExecutionGate=Allowed; UserExecutionOverride=Allowed; {concurrencySegment}{leveragePolicySegment}{symbolAllowlistSegment}ExecutionDispatch=Dispatched; Symbol={symbol}; Timeframe={klineInterval}; {latencySegment}; {(string.IsNullOrWhiteSpace(executionContext.ExitPnlGuardSummary) ? string.Empty : $"{executionContext.ExitPnlGuardSummary}; ")}DispatchDuplicate={dispatchResult.IsDuplicate}";
 
         return AppendExecutionIntentGuardSummary(summary, executionContext);
     }
@@ -2513,6 +2531,45 @@ public sealed class MarketScannerHandoffService(
                ?? baseSummary;
     }
 
+    private static DirectionalQualityEvidence BuildDirectionalQualityEvidence(
+        MarketScannerCandidate candidate,
+        StrategyTradeDirection strategyDirection)
+    {
+        var scoringSummary = candidate.ScoringSummary;
+        var strategyDirectionLabel = strategyDirection switch
+        {
+            StrategyTradeDirection.Long => "Long",
+            StrategyTradeDirection.Short => "Short",
+            _ => ExtractSummaryTokenValue(scoringSummary, "StrategyDirection") ?? "n/a"
+        };
+        var advisoryDirection = ExtractSummaryTokenValue(scoringSummary, "AdvisoryDirection")
+            ?? ResolveAdvisoryDirection(scoringSummary);
+        var scannerTrendAlignment = ExtractSummaryTokenValue(scoringSummary, "ScannerTrendAlignment")
+            ?? ResolveScannerTrendAlignment(strategyDirectionLabel, advisoryDirection);
+        var conflictReason = ExtractSummaryTokenValue(scoringSummary, "ConflictReason")
+            ?? ResolveConflictReason(scannerTrendAlignment);
+        var rankingScore = ExtractSummaryTokenValue(scoringSummary, "RankingScore")
+            ?? ExtractSummaryTokenValue(scoringSummary, "CandidateScore")
+            ?? candidate.Score.ToString("0.####", CultureInfo.InvariantCulture);
+        var candidateScore = ExtractSummaryTokenValue(scoringSummary, "CandidateScore")
+            ?? candidate.Score.ToString("0.####", CultureInfo.InvariantCulture);
+        var riskPenalty = ExtractSummaryTokenValue(scoringSummary, "RiskPenalty") ?? "0";
+        var summary = Truncate(
+                          $"StrategyDirection={strategyDirectionLabel}; ScannerTrendAlignment={scannerTrendAlignment}; AdvisoryDirection={advisoryDirection}; ConflictReason={conflictReason}; RankingScore={rankingScore}; CandidateScore={candidateScore}; RiskPenalty={riskPenalty}",
+                          512)
+                      ?? $"StrategyDirection={strategyDirectionLabel}; ScannerTrendAlignment={scannerTrendAlignment}; AdvisoryDirection={advisoryDirection}; ConflictReason={conflictReason}; RankingScore={rankingScore}; CandidateScore={candidateScore}; RiskPenalty={riskPenalty}";
+
+        return new DirectionalQualityEvidence(
+            strategyDirectionLabel,
+            scannerTrendAlignment,
+            advisoryDirection,
+            conflictReason,
+            rankingScore,
+            candidateScore,
+            riskPenalty,
+            summary);
+    }
+
     private static string? TryExtractSummaryToken(string? summary, string key)
     {
         if (string.IsNullOrWhiteSpace(summary) || string.IsNullOrWhiteSpace(key))
@@ -2536,6 +2593,72 @@ public sealed class MarketScannerHandoffService(
         return string.IsNullOrWhiteSpace(value)
             ? null
             : tokenPrefix + value.Trim();
+    }
+
+    private static string? ExtractSummaryTokenValue(string? summary, string key)
+    {
+        var token = TryExtractSummaryToken(summary, key);
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return null;
+        }
+
+        var tokenPrefix = key + "=";
+        return token.StartsWith(tokenPrefix, StringComparison.Ordinal)
+            ? token[tokenPrefix.Length..]
+            : null;
+    }
+
+    private static string ResolveAdvisoryDirection(string? scoringSummary)
+    {
+        if (string.IsNullOrWhiteSpace(scoringSummary))
+        {
+            return "Neutral";
+        }
+
+        if (scoringSummary.Contains("HasTrendBreakoutUp", StringComparison.Ordinal) ||
+            scoringSummary.Contains("TrendBreakoutConfirmed", StringComparison.Ordinal))
+        {
+            return "Bullish";
+        }
+
+        if (scoringSummary.Contains("HasTrendBreakoutDown", StringComparison.Ordinal) ||
+            scoringSummary.Contains("TrendBreakdownConfirmed", StringComparison.Ordinal))
+        {
+            return "Bearish";
+        }
+
+        if (scoringSummary.Contains("HasCompressionBreakoutSetup", StringComparison.Ordinal) ||
+            scoringSummary.Contains("CompressionBreakoutSetupDetected", StringComparison.Ordinal))
+        {
+            return "CompressionSetup";
+        }
+
+        return "Neutral";
+    }
+
+    private static string ResolveScannerTrendAlignment(string strategyDirection, string advisoryDirection)
+    {
+        return (strategyDirection, advisoryDirection) switch
+        {
+            ("Long", "Bullish") => "AlignedLong",
+            ("Short", "Bearish") => "AlignedShort",
+            ("Long", "Bearish") => "ConflictLongAgainstBearishScanner",
+            ("Short", "Bullish") => "ConflictShortAgainstBullishScanner",
+            (_, "CompressionSetup") => "AdvisoryCompressionSetup",
+            ("n/a", _) => "StrategyDirectionUnavailable",
+            _ => "Neutral"
+        };
+    }
+
+    private static string ResolveConflictReason(string scannerTrendAlignment)
+    {
+        return scannerTrendAlignment switch
+        {
+            "ConflictLongAgainstBearishScanner" => DirectionalConflictLongAgainstBearishScannerCode,
+            "ConflictShortAgainstBullishScanner" => DirectionalConflictShortAgainstBullishScannerCode,
+            _ => "None"
+        };
     }
 
     private static string BuildLatencyGuardSummarySnippet(DegradedModeSnapshot latencySnapshot)
@@ -3038,7 +3161,8 @@ public sealed class MarketScannerHandoffService(
 
     private static string BuildCompactEntrySuppressionGuardSummary(
         string summary,
-        string? positionAdoptionSummary)
+        string? positionAdoptionSummary,
+        string? directionalQualitySummary)
     {
         var compactPositionAdoptionSummary = BuildCompactPositionAdoptionGuardSummary(positionAdoptionSummary);
         var compactSummary =
@@ -3390,12 +3514,16 @@ public sealed class MarketScannerHandoffService(
 
         if (!string.Equals(resolvedExecutionContext.ExecutionIntent, ExitCloseOnlyIntentCode, StringComparison.Ordinal))
         {
+            var classificationSummary = string.IsNullOrWhiteSpace(resolvedExecutionContext.DirectionalQualitySummary)
+                ? "SignalType=Entry; ReverseEntryConvertedToCloseOnly=False; ManualClose=False"
+                : $"SignalType=Entry; ReverseEntryConvertedToCloseOnly=False; ManualClose=False; {resolvedExecutionContext.DirectionalQualitySummary}";
             var entrySummary = guardSummary.StartsWith("SignalType=Entry;", StringComparison.Ordinal)
                 ? guardSummary
                 : BuildGuardSummaryWithPositionAdoption(
-                    "SignalType=Entry; ExecutionIntent=Entry; ExitIntent=n/a; EntrySource=StrategyEntry; ExitSource=n/a; ReverseEntryConvertedToCloseOnly=False; ManualClose=False",
+                    classificationSummary,
                     resolvedExecutionContext.PositionAdoptionSummary,
                     guardSummary);
+
             return Truncate(entrySummary, maxLength) ?? guardSummary;
         }
 
@@ -4063,9 +4191,8 @@ public sealed class MarketScannerHandoffService(
     }
 
     private static bool TryResolveDirectionalScannerConflict(
-        MarketScannerCandidate candidate,
+        DirectionalQualityEvidence directionalQuality,
         string symbol,
-        StrategyTradeDirection entryDirection,
         out string blockerCode,
         out string blockerDetail,
         out string guardSummary)
@@ -4074,21 +4201,12 @@ public sealed class MarketScannerHandoffService(
         blockerDetail = string.Empty;
         guardSummary = string.Empty;
 
-        if (entryDirection is not StrategyTradeDirection.Long and not StrategyTradeDirection.Short ||
-            string.IsNullOrWhiteSpace(candidate.ScoringSummary))
+        if (string.IsNullOrWhiteSpace(directionalQuality.ConflictReason))
         {
             return false;
         }
 
-        var scoringSummary = candidate.ScoringSummary!;
-        var hasBullishScannerBias =
-            scoringSummary.Contains("HasTrendBreakoutUp", StringComparison.Ordinal) ||
-            scoringSummary.Contains("TrendBreakoutConfirmed", StringComparison.Ordinal);
-        var hasBearishScannerBias =
-            scoringSummary.Contains("HasTrendBreakoutDown", StringComparison.Ordinal) ||
-            scoringSummary.Contains("TrendBreakdownConfirmed", StringComparison.Ordinal);
-
-        if (entryDirection == StrategyTradeDirection.Short && hasBullishScannerBias)
+        if (string.Equals(directionalQuality.ConflictReason, DirectionalConflictShortAgainstBullishScannerCode, StringComparison.Ordinal))
         {
             blockerCode = DirectionalConflictShortAgainstBullishScannerCode;
             blockerDetail = $"Execution blocked because bullish scanner advisory conflicts with the requested short entry for {symbol}.";
@@ -4096,7 +4214,7 @@ public sealed class MarketScannerHandoffService(
             return true;
         }
 
-        if (entryDirection == StrategyTradeDirection.Long && hasBearishScannerBias)
+        if (string.Equals(directionalQuality.ConflictReason, DirectionalConflictLongAgainstBearishScannerCode, StringComparison.Ordinal))
         {
             blockerCode = DirectionalConflictLongAgainstBearishScannerCode;
             blockerDetail = $"Execution blocked because bearish scanner advisory conflicts with the requested long entry for {symbol}.";
@@ -4157,7 +4275,18 @@ public sealed class MarketScannerHandoffService(
         ExecutionOrderSide? CloseSide,
         bool AutoReverse,
         string? ExitPnlGuardSummary,
-        string? PositionAdoptionSummary);
+        string? PositionAdoptionSummary,
+        string? DirectionalQualitySummary);
+
+    private sealed record DirectionalQualityEvidence(
+        string StrategyDirection,
+        string ScannerTrendAlignment,
+        string AdvisoryDirection,
+        string ConflictReason,
+        string RankingScore,
+        string CandidateScore,
+        string RiskPenalty,
+        string Summary);
 
     private sealed record PilotLeveragePolicyEvaluation(
         bool IsBlocked,

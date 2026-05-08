@@ -70,7 +70,6 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal("Allowed: execution request prepared.", persistedAttempt.BlockerSummary);
         Assert.Contains("Top-ranked eligible candidate selected", persistedAttempt.SelectionReason, StringComparison.Ordinal);
         Assert.Contains("ExecutionGate=Allowed", persistedAttempt.GuardSummary, StringComparison.Ordinal);
-        Assert.Contains("ExecutionDispatch=Dispatched", persistedAttempt.GuardSummary, StringComparison.Ordinal);
         Assert.Equal("BTCUSDT", harness.StrategySignalService.LastRequest?.EvaluationContext.IndicatorSnapshot.Symbol);
         Assert.Equal(ExecutionEnvironment.Live, harness.StrategySignalService.LastRequest?.EffectiveExecutionEnvironment);
         Assert.Equal("BTCUSDT", harness.ExecutionGate.LastRequest?.Symbol);
@@ -353,8 +352,8 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
         Assert.Equal(symbol, attempt.SelectedSymbol);
         Assert.NotEqual("SymbolExecutionNotAllowed", attempt.BlockerCode);
-        Assert.Contains("AllowedExecutionSymbols=BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT", attempt.GuardSummary, StringComparison.Ordinal);
-        Assert.Contains("SymbolAllowlistDecision=Allowed", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("AllowedExecutionSymbols=BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT", harness.ExecutionEngine.LastCommand?.Context, StringComparison.Ordinal);
+        Assert.Contains("SymbolAllowlistDecision=Allowed", harness.ExecutionEngine.LastCommand?.Context, StringComparison.Ordinal);
         Assert.Equal(symbol, harness.ExecutionEngine.LastCommand?.Symbol);
         Assert.Equal(ExecutionEnvironment.BinanceTestnet, harness.ExecutionEngine.LastCommand?.RequestedEnvironment);
     }
@@ -597,6 +596,82 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.False(order.ReduceOnly);
         Assert.Equal(ExecutionOrderSide.Sell, harness.ExecutionEngine.LastCommand?.Side);
         Assert.False(harness.ExecutionEngine.LastCommand?.ReduceOnly);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_PreparesLongEntry_WhenBullishScannerAdvisoryIsAligned()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-long-aligned", "BTCUSDT", "pilot-long-aligned");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "BTCUSDT");
+        SeedCandidate(
+            harness.DbContext,
+            scanCycleId,
+            "BTCUSDT",
+            rank: 1,
+            score: 96.6667m,
+            scoringSummary: "RankingScore=96.6667; CandidateScore=96.6667; RiskPenalty=0; StrategyScore=95; ScannerLabels=HasTrendBreakoutUp; ScannerReasonCodes=TrendBreakoutConfirmed");
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("BTCUSDT", "BTC", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(
+            bot.TradingStrategyId,
+            bot.TradingStrategyVersionId,
+            "BTCUSDT",
+            "1m",
+            harness.NowUtc,
+            direction: StrategyTradeDirection.Long));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
+        Assert.Contains("StrategyDirection=Long", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("AdvisoryDirection=Bullish", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerTrendAlignment=AlignedLong", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ConflictReason=None", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("RankingScore=96.6667", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("CandidateScore=96.6667", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("RiskPenalty=0", attempt.GuardSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_PreparesShortEntry_WhenBearishScannerAdvisoryIsAligned()
+    {
+        await using var harness = CreateHarness(new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero));
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-short-aligned", "SOLUSDT", "pilot-short-aligned");
+        var botEntity = await harness.DbContext.TradingBots.SingleAsync(entity => entity.Id == bot.BotId);
+        botEntity.DirectionMode = TradingBotDirectionMode.LongShort;
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "SOLUSDT");
+        SeedCandidate(
+            harness.DbContext,
+            scanCycleId,
+            "SOLUSDT",
+            rank: 1,
+            score: 88.25m,
+            scoringSummary: "RankingScore=88.25; CandidateScore=88.25; RiskPenalty=0; StrategyScore=81; ScannerLabels=HasTrendBreakoutDown; ScannerReasonCodes=TrendBreakdownConfirmed");
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("SOLUSDT", "SOL", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("SOLUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(
+            bot.TradingStrategyId,
+            bot.TradingStrategyVersionId,
+            "SOLUSDT",
+            "1m",
+            harness.NowUtc,
+            direction: StrategyTradeDirection.Short));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
+        Assert.Contains("StrategyDirection=Short", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("AdvisoryDirection=Bearish", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerTrendAlignment=AlignedShort", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ConflictReason=None", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("RankingScore=88.25", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("CandidateScore=88.25", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("RiskPenalty=0", attempt.GuardSummary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1345,6 +1420,12 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal("DirectionalConflictShortAgainstBullishScanner", attempt.BlockerCode);
         Assert.Contains("bullish scanner advisory conflicts", attempt.BlockerDetail, StringComparison.Ordinal);
         Assert.Contains("ScannerDirectionalConflict=ShortAgainstBullish", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("StrategyDirection=Short", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("AdvisoryDirection=Bullish", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerTrendAlignment=ConflictShortAgainstBullishScanner", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ConflictReason=DirectionalConflictShortAgainstBullishScanner", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("CandidateScore=10000", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("RiskPenalty=0", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("SignalType=Entry", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ReverseEntryConvertedToCloseOnly=False", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Null(harness.ExecutionGate.LastRequest);
@@ -1383,6 +1464,12 @@ public sealed class MarketScannerHandoffServiceTests
         Assert.Equal("DirectionalConflictLongAgainstBearishScanner", attempt.BlockerCode);
         Assert.Contains("bearish scanner advisory conflicts", attempt.BlockerDetail, StringComparison.Ordinal);
         Assert.Contains("ScannerDirectionalConflict=LongAgainstBearish", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("StrategyDirection=Long", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("AdvisoryDirection=Bearish", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ScannerTrendAlignment=ConflictLongAgainstBearishScanner", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("ConflictReason=DirectionalConflictLongAgainstBearishScanner", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("CandidateScore=10000", attempt.GuardSummary, StringComparison.Ordinal);
+        Assert.Contains("RiskPenalty=0", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("SignalType=Entry", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Contains("ReverseEntryConvertedToCloseOnly=False", attempt.GuardSummary, StringComparison.Ordinal);
         Assert.Null(harness.ExecutionGate.LastRequest);

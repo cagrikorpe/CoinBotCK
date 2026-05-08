@@ -2371,32 +2371,41 @@ public sealed class MarketScannerService(
         ScannerCandidateIntelligenceSummary candidateIntelligence,
         ScannerCandidateRankingSummary rankingSummary)
     {
+        var strategyDirection = ResolveStrategyDirection(scoringSummary);
+        var advisoryDirection = ResolveAdvisoryDirection(candidateIntelligence);
         var trendAlignment = ResolveTrendAlignment(candidateIntelligence, scoringSummary);
         var directionalConflictStatus = ResolveDirectionalConflictStatus(rejectionReason, scoringSummary);
+        var scannerTrendAlignment = ResolveScannerTrendAlignment(strategyDirection, advisoryDirection);
+        var conflictReason = ResolveConflictReason(scannerTrendAlignment, directionalConflictStatus);
         var riskPenalty = ResolveRiskPenalty(rejectionReason);
         var volatilityScore = ResolveVolatilityScore(candidateIntelligence);
         var freshnessState = ResolveFreshnessState(freshness);
         var freshnessReason = ResolveFreshnessReasonCode(freshness, marketWindow);
         var historicalFallbackState = ResolveHistoricalFallbackState(freshness, marketWindow);
-        var summarySegments = new List<string>(16);
-        if (!string.IsNullOrWhiteSpace(scoringSummary))
-        {
-            summarySegments.Add(scoringSummary!);
-        }
-
-        summarySegments.Add($"FreshnessState={freshnessState}");
-        summarySegments.Add($"FreshnessReason={freshnessReason}");
-        summarySegments.Add($"FreshnessSource={freshness.FreshnessSource}");
-        summarySegments.Add($"HistoricalFallbackState={historicalFallbackState}");
-        summarySegments.Add($"HistoricalFallbackLagSeconds={(marketWindow.HistoricalParityLagSeconds?.ToString(CultureInfo.InvariantCulture) ?? "n/a")}");
+        var summarySegments = new List<string>(24);
+        summarySegments.Add($"RankingScore={rankingSummary.EffectiveScore.ToString("0.####", CultureInfo.InvariantCulture)}");
         summarySegments.Add($"CandidateScore={rankingSummary.EffectiveScore.ToString("0.####", CultureInfo.InvariantCulture)}");
         summarySegments.Add($"MarketScore={marketScore.ToString("0.####", CultureInfo.InvariantCulture)}");
         summarySegments.Add($"StrategyScore={(strategyScore?.ToString(CultureInfo.InvariantCulture) ?? "n/a")}");
         summarySegments.Add($"RiskPenalty={riskPenalty.ToString("0.####", CultureInfo.InvariantCulture)}");
         summarySegments.Add($"VolatilityScore={volatilityScore.ToString("0.####", CultureInfo.InvariantCulture)}");
         summarySegments.Add($"LiquidityScore={marketScore.ToString("0.####", CultureInfo.InvariantCulture)}");
+        summarySegments.Add($"StrategyDirection={strategyDirection}");
+        summarySegments.Add($"AdvisoryDirection={advisoryDirection}");
+        summarySegments.Add($"ScannerTrendAlignment={scannerTrendAlignment}");
+        summarySegments.Add($"ConflictReason={conflictReason}");
         summarySegments.Add($"TrendAlignment={trendAlignment}");
         summarySegments.Add($"DirectionalConflictStatus={directionalConflictStatus}");
+        summarySegments.Add($"FreshnessState={freshnessState}");
+        summarySegments.Add($"FreshnessReason={freshnessReason}");
+        summarySegments.Add($"FreshnessSource={freshness.FreshnessSource}");
+        summarySegments.Add($"HistoricalFallbackState={historicalFallbackState}");
+        summarySegments.Add($"HistoricalFallbackLagSeconds={(marketWindow.HistoricalParityLagSeconds?.ToString(CultureInfo.InvariantCulture) ?? "n/a")}");
+        if (!string.IsNullOrWhiteSpace(scoringSummary))
+        {
+            summarySegments.Add(scoringSummary!);
+        }
+
         summarySegments.Add($"ScannerRankingMode={rankingSummary.RankingMode}");
         summarySegments.Add($"ScannerClassicalScore={(rankingSummary.ClassicalScore?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a")}");
         summarySegments.Add($"ScannerCombinedScore={(rankingSummary.CombinedScore?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a")}");
@@ -2452,7 +2461,15 @@ public sealed class MarketScannerService(
             return null;
         }
 
-        return Truncate(string.Join("; ", summarySegments), CandidateScoringSummaryMaxLength);
+        var summary = Truncate(string.Join("; ", summarySegments), CandidateScoringSummaryMaxLength);
+        summary = PrependSummaryToken(summary, "ConflictReason", conflictReason);
+        summary = PrependSummaryToken(summary, "ScannerTrendAlignment", scannerTrendAlignment);
+        summary = PrependSummaryToken(summary, "AdvisoryDirection", advisoryDirection);
+        summary = PrependSummaryToken(summary, "StrategyDirection", strategyDirection);
+        summary = PrependSummaryToken(summary, "RiskPenalty", riskPenalty.ToString("0.####", CultureInfo.InvariantCulture));
+        summary = PrependSummaryToken(summary, "CandidateScore", rankingSummary.EffectiveScore.ToString("0.####", CultureInfo.InvariantCulture));
+        summary = PrependSummaryToken(summary, "RankingScore", rankingSummary.EffectiveScore.ToString("0.####", CultureInfo.InvariantCulture));
+        return summary;
     }
 
     private async Task<AiRankingOutcomeCoverageSummary> ResolveAiRankingOutcomeCoverageAsync(
@@ -3017,6 +3034,68 @@ public sealed class MarketScannerService(
                rejectionReason.StartsWith("StrategyRiskVetoed", StringComparison.Ordinal)
             ? 100m
             : 0m;
+    }
+
+    private static string ResolveStrategyDirection(string? scoringSummary)
+    {
+        return ExtractToken(scoringSummary, "EntryDirection") switch
+        {
+            "Long" => "Long",
+            "Short" => "Short",
+            _ => "n/a"
+        };
+    }
+
+    private static string ResolveAdvisoryDirection(ScannerCandidateIntelligenceSummary candidateIntelligence)
+    {
+        if (candidateIntelligence.Labels.Contains("HasTrendBreakoutUp", StringComparer.Ordinal) ||
+            candidateIntelligence.ReasonCodes.Contains("TrendBreakoutConfirmed", StringComparer.Ordinal))
+        {
+            return "Bullish";
+        }
+
+        if (candidateIntelligence.Labels.Contains("HasTrendBreakoutDown", StringComparer.Ordinal) ||
+            candidateIntelligence.ReasonCodes.Contains("TrendBreakdownConfirmed", StringComparer.Ordinal))
+        {
+            return "Bearish";
+        }
+
+        if (candidateIntelligence.Labels.Contains("HasCompressionBreakoutSetup", StringComparer.Ordinal) ||
+            candidateIntelligence.ReasonCodes.Contains("CompressionBreakoutSetupDetected", StringComparer.Ordinal))
+        {
+            return "CompressionSetup";
+        }
+
+        return "Neutral";
+    }
+
+    private static string ResolveScannerTrendAlignment(string strategyDirection, string advisoryDirection)
+    {
+        return (strategyDirection, advisoryDirection) switch
+        {
+            ("Long", "Bullish") => "AlignedLong",
+            ("Short", "Bearish") => "AlignedShort",
+            ("Long", "Bearish") => "ConflictLongAgainstBearishScanner",
+            ("Short", "Bullish") => "ConflictShortAgainstBullishScanner",
+            (_, "CompressionSetup") => "AdvisoryCompressionSetup",
+            ("n/a", _) => "StrategyDirectionUnavailable",
+            _ => "Neutral"
+        };
+    }
+
+    private static string ResolveConflictReason(string scannerTrendAlignment, string? directionalConflictStatus)
+    {
+        if (string.Equals(directionalConflictStatus, "BlockedByBotDirectionMode", StringComparison.Ordinal))
+        {
+            return "EntryDirectionModeBlocked";
+        }
+
+        return scannerTrendAlignment switch
+        {
+            "ConflictLongAgainstBearishScanner" => "DirectionalConflictLongAgainstBearishScanner",
+            "ConflictShortAgainstBullishScanner" => "DirectionalConflictShortAgainstBullishScanner",
+            _ => "None"
+        };
     }
 
     private static string ResolveTrendAlignment(
