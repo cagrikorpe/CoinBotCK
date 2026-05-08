@@ -2590,6 +2590,143 @@ public sealed class AdminMonitoringReadModelServiceTests
     }
 
     [Fact]
+    public async Task AdminDashboardReadModel_ProjectsDirectionQualityEvidence()
+    {
+        var now = new DateTime(2026, 5, 8, 8, 0, 0, DateTimeKind.Utc);
+        var cycleA = Guid.NewGuid();
+        var cycleB = Guid.NewGuid();
+        await using var dbContext = CreateDbContext();
+
+        dbContext.MarketScannerCycles.AddRange(
+            new MarketScannerCycle
+            {
+                Id = cycleA,
+                StartedAtUtc = now.AddMinutes(-12),
+                CompletedAtUtc = now.AddMinutes(-11),
+                UniverseSource = "config+registry",
+                ScannedSymbolCount = 5,
+                EligibleCandidateCount = 2,
+                TopCandidateCount = 2,
+                BestCandidateSymbol = "BNBUSDT",
+                BestCandidateScore = 94.6667m,
+                Summary = "direction-quality-cycle-a"
+            },
+            new MarketScannerCycle
+            {
+                Id = cycleB,
+                StartedAtUtc = now.AddMinutes(-6),
+                CompletedAtUtc = now.AddMinutes(-5),
+                UniverseSource = "config+registry",
+                ScannedSymbolCount = 5,
+                EligibleCandidateCount = 2,
+                TopCandidateCount = 2,
+                BestCandidateSymbol = "BNBUSDT",
+                BestCandidateScore = 95.1m,
+                Summary = "direction-quality-cycle-b"
+            });
+        dbContext.MarketScannerCandidates.AddRange(
+            new MarketScannerCandidate
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleA,
+                Symbol = "BNBUSDT",
+                UniverseSource = "config+registry",
+                ObservedAtUtc = now.AddMinutes(-11),
+                IsEligible = true,
+                Score = 94.6667m,
+                Rank = 1,
+                IsTopCandidate = true,
+                MarketScore = 95m,
+                StrategyScore = 89,
+                ScoringSummary = "StrategyKey=alpha-core; Symbol=BNBUSDT; Timeframe=1m; StrategyDirection=Long; AdvisoryDirection=Bearish; ScannerTrendAlignment=ConflictLongAgainstBearishScanner; ConflictReason=DirectionalConflictLongAgainstBearishScanner; RankingScore=94.6667; CandidateScore=94.6667; RiskPenalty=0"
+            },
+            new MarketScannerCandidate
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleB,
+                Symbol = "BNBUSDT",
+                UniverseSource = "config+registry",
+                ObservedAtUtc = now.AddMinutes(-5),
+                IsEligible = true,
+                Score = 95.1m,
+                Rank = 1,
+                IsTopCandidate = true,
+                MarketScore = 96m,
+                StrategyScore = 90,
+                ScoringSummary = "StrategyKey=alpha-core; Symbol=BNBUSDT; Timeframe=1m; StrategyDirection=Long; AdvisoryDirection=Bearish; ScannerTrendAlignment=ConflictLongAgainstBearishScanner; ConflictReason=DirectionalConflictLongAgainstBearishScanner; RankingScore=95.1; CandidateScore=95.1; RiskPenalty=0"
+            },
+            new MarketScannerCandidate
+            {
+                Id = Guid.NewGuid(),
+                ScanCycleId = cycleB,
+                Symbol = "ETHUSDT",
+                UniverseSource = "config+registry",
+                ObservedAtUtc = now.AddMinutes(-4),
+                IsEligible = true,
+                Score = 90m,
+                Rank = 2,
+                IsTopCandidate = true,
+                MarketScore = 91m,
+                StrategyScore = 85,
+                ScoringSummary = "StrategyKey=alpha-core; Symbol=ETHUSDT; Timeframe=1m; StrategyDirection=Long; AdvisoryDirection=Bullish; ScannerTrendAlignment=AlignedLong; ConflictReason=None; RankingScore=90; CandidateScore=90; RiskPenalty=0"
+            });
+        dbContext.MarketScannerHandoffAttempts.Add(new MarketScannerHandoffAttempt
+        {
+            Id = Guid.NewGuid(),
+            ScanCycleId = cycleB,
+            SelectedSymbol = "BNBUSDT",
+            SelectedTimeframe = "1m",
+            SelectedAtUtc = now.AddMinutes(-3),
+            SelectionReason = "Directional conflict blocked.",
+            StrategyDecisionOutcome = "Persisted",
+            ExecutionRequestStatus = "Blocked",
+            BlockerCode = "DirectionalConflictLongAgainstBearishScanner",
+            BlockerSummary = "Scanner handoff blocked because long entry conflicts with bearish scanner advisory.",
+            GuardSummary = "StrategyKey=alpha-core; Timeframe=1m; StrategyDirection=Long; AdvisoryDirection=Bearish; ScannerTrendAlignment=ConflictLongAgainstBearishScanner; ConflictReason=DirectionalConflictLongAgainstBearishScanner; RankingScore=95.1; CandidateScore=95.1; RiskPenalty=0",
+            CompletedAtUtc = now.AddMinutes(-3),
+            CreatedDate = now.AddMinutes(-3),
+            UpdatedDate = now.AddMinutes(-3)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            new FixedTimeProvider(now),
+            Options.Create(new DataLatencyGuardOptions()));
+
+        var snapshot = await service.GetSnapshotAsync();
+        var directionQuality = snapshot.OperationalObservability.DirectionQuality;
+
+        Assert.Equal("Watching", directionQuality.State);
+        Assert.Equal(2, directionQuality.SymbolCount);
+        Assert.Equal(1, directionQuality.StrategyCount);
+        Assert.Equal(1, directionQuality.AlignedCount);
+        Assert.Equal(2, directionQuality.ConflictedCount);
+        Assert.Equal("DirectionalConflictLongAgainstBearishScanner", directionQuality.LastConflictReason);
+        Assert.Contains("BNBUSDT/alpha-core:2", directionQuality.ConflictCountSummary, StringComparison.Ordinal);
+
+        var conflictRow = Assert.Single(directionQuality.Rows, item => item.Symbol == "BNBUSDT" && item.StrategyKey == "alpha-core");
+        Assert.Equal("1m", conflictRow.Timeframe);
+        Assert.Equal(2, conflictRow.ConflictCount);
+        Assert.Equal(0, conflictRow.AlignedCount);
+        Assert.Equal("DirectionalConflictLongAgainstBearishScanner", conflictRow.LastConflictReason);
+        Assert.Equal("Long", conflictRow.StrategyDirection);
+        Assert.Equal("ConflictLongAgainstBearishScanner", conflictRow.ScannerTrendAlignment);
+        Assert.Equal("Bearish", conflictRow.AdvisoryDirection);
+        Assert.Equal("95.1", conflictRow.CandidateScoreLabel);
+        Assert.Equal("95.1", conflictRow.RankingScoreLabel);
+        Assert.Equal("0", conflictRow.RiskPenaltyLabel);
+
+        var alignedRow = Assert.Single(directionQuality.Rows, item => item.Symbol == "ETHUSDT" && item.StrategyKey == "alpha-core");
+        Assert.Equal(0, alignedRow.ConflictCount);
+        Assert.Equal(1, alignedRow.AlignedCount);
+        Assert.Equal("n/a", alignedRow.LastConflictReason);
+        Assert.Equal("AlignedLong", alignedRow.ScannerTrendAlignment);
+        Assert.Equal("Bullish", alignedRow.AdvisoryDirection);
+    }
+
+    [Fact]
     public async Task AdminDashboardReadModel_DriftSummaryParser_IsSafeForMalformedValues()
     {
         var now = new DateTime(2026, 4, 29, 9, 30, 0, DateTimeKind.Utc);
@@ -2762,6 +2899,10 @@ public sealed class AdminMonitoringReadModelServiceTests
             snapshot.OperationalObservability.MarketDataFreshness.ScannerFreshnessSummary,
             snapshot.OperationalObservability.MarketDataFreshness.HistoricalFallbackSummary,
             string.Join(" | ", snapshot.OperationalObservability.MarketDataFreshness.SymbolRows.Select(item => $"{item.Symbol}:{item.Timeframe}:{item.LastFreshnessBlocker}:{item.FreshnessReason}:{item.FreshnessSourceLabel}:{item.FallbackLabel}")),
+            snapshot.OperationalObservability.DirectionQuality.Summary,
+            snapshot.OperationalObservability.DirectionQuality.ConflictCountSummary,
+            snapshot.OperationalObservability.DirectionQuality.LastConflictReason,
+            string.Join(" | ", snapshot.OperationalObservability.DirectionQuality.Rows.Select(item => $"{item.Symbol}:{item.StrategyKey}:{item.LastConflictReason}:{item.ScannerTrendAlignment}:{item.AdvisoryDirection}")),
             string.Join(" | ", snapshot.OperationalObservability.NoSubmitReasons.Select(item => item.ReasonCode)),
             string.Join(" | ", snapshot.OperationalObservability.BlockedReasons.Select(item => item.ReasonCode)),
             string.Join(" | ", snapshot.OperationalObservability.CriticalWarnings.Select(item => item.Summary)));
@@ -2808,6 +2949,11 @@ public sealed class AdminMonitoringReadModelServiceTests
         Assert.Equal("n/a", snapshot.OperationalObservability.MarketDataFreshness.ScannerFreshnessSummary);
         Assert.Equal("n/a", snapshot.OperationalObservability.MarketDataFreshness.HistoricalFallbackSummary);
         Assert.Empty(snapshot.OperationalObservability.MarketDataFreshness.SymbolRows);
+        Assert.Equal("Unknown", snapshot.OperationalObservability.DirectionQuality.State);
+        Assert.Equal("No strategy / scanner direction quality evidence yet.", snapshot.OperationalObservability.DirectionQuality.Summary);
+        Assert.Equal("No recent directional conflict.", snapshot.OperationalObservability.DirectionQuality.ConflictCountSummary);
+        Assert.Equal("n/a", snapshot.OperationalObservability.DirectionQuality.LastConflictReason);
+        Assert.Empty(snapshot.OperationalObservability.DirectionQuality.Rows);
     }
 
     [Fact]

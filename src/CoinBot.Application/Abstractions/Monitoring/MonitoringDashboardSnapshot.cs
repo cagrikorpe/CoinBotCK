@@ -64,6 +64,8 @@ public sealed record OperationalObservabilitySnapshot(
 
     public OperationalMarketDataFreshnessSnapshot MarketDataFreshness { get; init; } = OperationalMarketDataFreshnessSnapshot.Empty();
 
+    public OperationalDirectionQualitySnapshot DirectionQuality { get; init; } = OperationalDirectionQualitySnapshot.Empty();
+
     public static OperationalObservabilitySnapshot Empty()
     {
         return new OperationalObservabilitySnapshot(
@@ -95,7 +97,8 @@ public sealed record OperationalObservabilitySnapshot(
             PrivateSyncEvidence = OperationalPrivateSyncEvidenceSnapshot.Empty(),
             ExecutionControl = OperationalExecutionControlSnapshot.Empty(),
             MultiSymbolStability = OperationalMultiSymbolStabilitySnapshot.Empty(),
-            MarketDataFreshness = OperationalMarketDataFreshnessSnapshot.Empty()
+            MarketDataFreshness = OperationalMarketDataFreshnessSnapshot.Empty(),
+            DirectionQuality = OperationalDirectionQualitySnapshot.Empty()
         };
     }
 }
@@ -390,6 +393,47 @@ public sealed record OperationalMarketDataFreshnessRowSnapshot(
     string FreshnessReason,
     string FreshnessSourceLabel,
     string FallbackLabel,
+    DateTime? LastSeenUtc);
+
+public sealed record OperationalDirectionQualitySnapshot(
+    string State,
+    string Summary,
+    int SymbolCount,
+    int StrategyCount,
+    int AlignedCount,
+    int ConflictedCount,
+    string ConflictCountSummary,
+    string LastConflictReason,
+    IReadOnlyCollection<OperationalDirectionQualityRowSnapshot> Rows)
+{
+    public static OperationalDirectionQualitySnapshot Empty()
+    {
+        return new OperationalDirectionQualitySnapshot(
+            State: "Unknown",
+            Summary: "No strategy / scanner direction quality evidence yet.",
+            SymbolCount: 0,
+            StrategyCount: 0,
+            AlignedCount: 0,
+            ConflictedCount: 0,
+            ConflictCountSummary: "No recent directional conflict.",
+            LastConflictReason: "n/a",
+            Rows: Array.Empty<OperationalDirectionQualityRowSnapshot>());
+    }
+}
+
+public sealed record OperationalDirectionQualityRowSnapshot(
+    string Symbol,
+    string StrategyKey,
+    string Timeframe,
+    int ConflictCount,
+    int AlignedCount,
+    string LastConflictReason,
+    string StrategyDirection,
+    string ScannerTrendAlignment,
+    string AdvisoryDirection,
+    string CandidateScoreLabel,
+    string RankingScoreLabel,
+    string RiskPenaltyLabel,
     DateTime? LastSeenUtc);
 
 public sealed record OperationalExitPnlEvidenceSnapshot(

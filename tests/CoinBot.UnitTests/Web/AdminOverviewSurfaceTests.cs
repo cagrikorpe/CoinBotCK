@@ -377,6 +377,42 @@ public sealed class AdminOverviewSurfaceTests
     }
 
     [Fact]
+    public void AdminSystemHealthView_RendersDirectionQualitySurface()
+    {
+        var operationalCardContent = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Areas",
+            "Admin",
+            "Views",
+            "Shared",
+            "Foundation",
+            "_AdminOperationalObservabilityCard.cshtml"));
+
+        Assert.Contains("data-cb-admin-direction-quality", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-direction-quality-summary", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-direction-quality-counts", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-direction-quality-conflicts", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-direction-quality-table", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-direction-quality-rows", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-direction-quality-row", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-direction-quality-symbol", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Strategy / scanner direction quality", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Conflict count", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Aligned count", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Last DirectionalConflict", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Strategy direction", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Scanner trend", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Advisory direction", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Candidate score", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Ranking score", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Risk penalty", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("Account=@(privateSync.ExchangeAccountId", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("@row.OwnerUserId", operationalCardContent, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AdminBotOperationsTable_RendersManualCloseDoubleConfirmSurface()
     {
         var content = File.ReadAllText(Path.Combine(

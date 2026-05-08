@@ -153,6 +153,31 @@ public sealed class AdminMonitoringReadModelService(
                 entity.IsTopCandidate,
                 entity.ScoringSummary))
             .ToListAsync(cancellationToken);
+        var recentDirectionCandidateRows = await dbContext.MarketScannerCandidates
+            .AsNoTracking()
+            .Where(entity =>
+                !entity.IsDeleted &&
+                entity.ObservedAtUtc >= windowStartUtc &&
+                entity.ScoringSummary != null &&
+                (entity.ScoringSummary.Contains("StrategyDirection=") ||
+                 entity.ScoringSummary.Contains("ScannerTrendAlignment=") ||
+                 entity.ScoringSummary.Contains("ConflictReason=")))
+            .OrderByDescending(entity => entity.ObservedAtUtc)
+            .ThenByDescending(entity => entity.Rank ?? int.MaxValue)
+            .Take(240)
+            .Select(entity => new MonitoringScannerCandidateRow(
+                entity.Symbol,
+                entity.ObservedAtUtc,
+                entity.LastCandleAtUtc,
+                entity.IsEligible,
+                entity.RejectionReason,
+                entity.Score,
+                entity.MarketScore,
+                entity.StrategyScore,
+                entity.Rank,
+                entity.IsTopCandidate,
+                entity.ScoringSummary))
+            .ToListAsync(cancellationToken);
         var recentHandoffRows = await dbContext.MarketScannerHandoffAttempts
             .AsNoTracking()
             .Where(entity =>
@@ -405,6 +430,9 @@ public sealed class AdminMonitoringReadModelService(
             recentFreshnessCandidateRows,
             recentHandoffDetailRows,
             staleThresholdMilliseconds);
+        var directionQuality = BuildDirectionQualityEvidence(
+            recentDirectionCandidateRows,
+            recentHandoffDetailRows);
         var criticalWarnings = BuildCriticalWarnings(
             healthSnapshotEntities,
             workerHeartbeatEntities,
@@ -444,7 +472,8 @@ public sealed class AdminMonitoringReadModelService(
             PrivateSyncEvidence = privateSyncEvidence,
             ExecutionControl = executionControl,
             MultiSymbolStability = multiSymbolStability,
-            MarketDataFreshness = marketDataFreshness
+            MarketDataFreshness = marketDataFreshness,
+            DirectionQuality = directionQuality
         };
     }
 
@@ -2239,6 +2268,217 @@ public sealed class AdminMonitoringReadModelService(
             SymbolRows: rows);
     }
 
+    private static OperationalDirectionQualitySnapshot BuildDirectionQualityEvidence(
+        IReadOnlyCollection<MonitoringScannerCandidateRow> recentDirectionCandidateRows,
+        IReadOnlyCollection<MonitoringHandoffDetailRow> recentHandoffDetailRows)
+    {
+        var candidateSamples = recentDirectionCandidateRows
+            .Select(MapDirectionQualityCandidateSample)
+            .Where(entity => entity is not null)
+            .Cast<DirectionQualityCandidateSample>()
+            .ToArray();
+        var conflictSamples = recentHandoffDetailRows
+            .Select(MapDirectionQualityConflictSample)
+            .Where(entity => entity is not null)
+            .Cast<DirectionQualityConflictSample>()
+            .ToArray();
+
+        if (candidateSamples.Length == 0 && conflictSamples.Length == 0)
+        {
+            return OperationalDirectionQualitySnapshot.Empty();
+        }
+
+        var groupingKeys = candidateSamples
+            .Select(entity => new DirectionQualityGroupingKey(entity.Symbol, entity.StrategyKey, entity.Timeframe))
+            .Concat(conflictSamples.Select(entity => new DirectionQualityGroupingKey(entity.Symbol, entity.StrategyKey, entity.Timeframe)))
+            .Distinct()
+            .ToArray();
+        if (groupingKeys.Length == 0)
+        {
+            return OperationalDirectionQualitySnapshot.Empty();
+        }
+
+        var allRows = groupingKeys
+            .Select(key => BuildDirectionQualityRow(key, candidateSamples, conflictSamples))
+            .ToArray();
+        var rows = allRows
+            .OrderByDescending(entity => entity.ConflictCount)
+            .ThenByDescending(entity => entity.AlignedCount)
+            .ThenByDescending(entity => NormalizeUtcNullable(entity.LastSeenUtc))
+            .ThenBy(entity => entity.Symbol, StringComparer.Ordinal)
+            .ThenBy(entity => entity.StrategyKey, StringComparer.Ordinal)
+            .Take(10)
+            .ToArray();
+        var symbolCount = groupingKeys
+            .Select(entity => entity.Symbol)
+            .Distinct(StringComparer.Ordinal)
+            .Count();
+        var strategyCount = groupingKeys
+            .Select(entity => entity.StrategyKey)
+            .Where(entity => !string.IsNullOrWhiteSpace(entity))
+            .Distinct(StringComparer.Ordinal)
+            .Count();
+        var alignedCount = allRows.Sum(entity => entity.AlignedCount);
+        var conflictedCount = allRows.Sum(entity => entity.ConflictCount);
+        var conflictCountSummary = allRows
+            .Where(entity => entity.ConflictCount > 0)
+            .OrderByDescending(entity => entity.ConflictCount)
+            .ThenBy(entity => entity.Symbol, StringComparer.Ordinal)
+            .ThenBy(entity => entity.StrategyKey, StringComparer.Ordinal)
+            .Take(4)
+            .Select(entity => $"{entity.Symbol}/{entity.StrategyKey}:{entity.ConflictCount}")
+            .ToArray();
+        var lastConflictReason = conflictSamples
+            .OrderByDescending(entity => NormalizeUtc(entity.ObservedAtUtc))
+            .Select(entity => entity.ConflictReason)
+            .FirstOrDefault(entity => IsDirectionalConflictReasonCode(entity))
+            ?? candidateSamples
+                .Where(entity => IsDirectionalConflictReasonCode(entity.ConflictReason))
+                .OrderByDescending(entity => NormalizeUtc(entity.ObservedAtUtc))
+                .Select(entity => entity.ConflictReason)
+                .FirstOrDefault()
+            ?? "n/a";
+        var state = conflictedCount > 0
+            ? "Watching"
+            : alignedCount > 0
+                ? "Healthy"
+                : "Unknown";
+        var summary =
+            $"Symbols {symbolCount} · Strategies {strategyCount} · Aligned {alignedCount} · Conflicted {conflictedCount} · Last conflict {lastConflictReason}";
+
+        return new OperationalDirectionQualitySnapshot(
+            State: state,
+            Summary: summary,
+            SymbolCount: symbolCount,
+            StrategyCount: strategyCount,
+            AlignedCount: alignedCount,
+            ConflictedCount: conflictedCount,
+            ConflictCountSummary: conflictCountSummary.Length == 0
+                ? "No recent directional conflict."
+                : string.Join(" | ", conflictCountSummary),
+            LastConflictReason: lastConflictReason,
+            Rows: rows);
+    }
+
+    private static OperationalDirectionQualityRowSnapshot BuildDirectionQualityRow(
+        DirectionQualityGroupingKey key,
+        IReadOnlyCollection<DirectionQualityCandidateSample> candidateSamples,
+        IReadOnlyCollection<DirectionQualityConflictSample> conflictSamples)
+    {
+        var matchingCandidates = candidateSamples
+            .Where(entity => entity.Symbol == key.Symbol &&
+                             entity.StrategyKey == key.StrategyKey &&
+                             entity.Timeframe == key.Timeframe)
+            .OrderByDescending(entity => NormalizeUtc(entity.ObservedAtUtc))
+            .ToArray();
+        var matchingConflicts = conflictSamples
+            .Where(entity => entity.Symbol == key.Symbol &&
+                             entity.StrategyKey == key.StrategyKey &&
+                             entity.Timeframe == key.Timeframe)
+            .OrderByDescending(entity => NormalizeUtc(entity.ObservedAtUtc))
+            .ToArray();
+        var latestCandidate = matchingCandidates.FirstOrDefault();
+        var latestConflict = matchingConflicts.FirstOrDefault();
+        var candidateConflictCount = matchingCandidates.Count(entity => IsDirectionalConflictReasonCode(entity.ConflictReason));
+        var alignedCount = matchingCandidates.Count(entity => IsAlignedScannerTrendAlignment(entity.ScannerTrendAlignment));
+        var conflictCount = Math.Max(candidateConflictCount, matchingConflicts.Length);
+        var lastConflictReason = latestConflict?.ConflictReason
+            ?? matchingCandidates
+                .Where(entity => IsDirectionalConflictReasonCode(entity.ConflictReason))
+                .Select(entity => entity.ConflictReason)
+                .FirstOrDefault()
+            ?? "n/a";
+        var strategyDirection = latestConflict?.StrategyDirection ?? latestCandidate?.StrategyDirection ?? "n/a";
+        var scannerTrendAlignment = latestConflict?.ScannerTrendAlignment ?? latestCandidate?.ScannerTrendAlignment ?? "n/a";
+        var advisoryDirection = latestConflict?.AdvisoryDirection ?? latestCandidate?.AdvisoryDirection ?? "n/a";
+        var candidateScore = latestConflict?.CandidateScore ?? latestCandidate?.CandidateScore;
+        var rankingScore = latestConflict?.RankingScore ?? latestCandidate?.RankingScore;
+        var riskPenalty = latestConflict?.RiskPenalty ?? latestCandidate?.RiskPenalty;
+        var lastSeenValues = matchingConflicts
+            .Select(entity => entity.ObservedAtUtc)
+            .Concat(matchingCandidates.Select(entity => entity.ObservedAtUtc))
+            .ToArray();
+        DateTime? lastSeenUtc = lastSeenValues.Length == 0
+            ? null
+            : NormalizeUtc(lastSeenValues.Max());
+
+        return new OperationalDirectionQualityRowSnapshot(
+            Symbol: key.Symbol,
+            StrategyKey: key.StrategyKey,
+            Timeframe: key.Timeframe,
+            ConflictCount: conflictCount,
+            AlignedCount: alignedCount,
+            LastConflictReason: lastConflictReason,
+            StrategyDirection: strategyDirection,
+            ScannerTrendAlignment: scannerTrendAlignment,
+            AdvisoryDirection: advisoryDirection,
+            CandidateScoreLabel: FormatDirectionQualityDecimal(candidateScore),
+            RankingScoreLabel: FormatDirectionQualityDecimal(rankingScore),
+            RiskPenaltyLabel: FormatDirectionQualityDecimal(riskPenalty),
+            LastSeenUtc: lastSeenUtc);
+    }
+
+    private static DirectionQualityCandidateSample? MapDirectionQualityCandidateSample(MonitoringScannerCandidateRow row)
+    {
+        var symbol = NormalizeSymbol(row.Symbol);
+        if (string.IsNullOrWhiteSpace(symbol))
+        {
+            return null;
+        }
+
+        var strategyKey = ResolveDirectionQualityStrategyKey(row.ScoringSummary);
+        var timeframe = ResolveDirectionQualityTimeframe(row.ScoringSummary, null);
+        var strategyDirection = ResolveDirectionQualityToken("StrategyDirection", row.ScoringSummary) ?? "n/a";
+        var scannerTrendAlignment = ResolveDirectionQualityToken("ScannerTrendAlignment", row.ScoringSummary) ?? "n/a";
+        var advisoryDirection = ResolveDirectionQualityToken("AdvisoryDirection", row.ScoringSummary) ?? "n/a";
+        var conflictReason = ResolveDirectionQualityToken("ConflictReason", row.ScoringSummary) ?? "n/a";
+
+        return new DirectionQualityCandidateSample(
+            Symbol: symbol,
+            StrategyKey: strategyKey,
+            Timeframe: timeframe,
+            StrategyDirection: strategyDirection,
+            ScannerTrendAlignment: scannerTrendAlignment,
+            AdvisoryDirection: advisoryDirection,
+            ConflictReason: conflictReason,
+            CandidateScore: TryParseDecimalToken("CandidateScore", row.ScoringSummary),
+            RankingScore: TryParseDecimalToken("RankingScore", row.ScoringSummary),
+            RiskPenalty: TryParseDecimalToken("RiskPenalty", row.ScoringSummary),
+            ObservedAtUtc: NormalizeUtc(row.ObservedAtUtc));
+    }
+
+    private static DirectionQualityConflictSample? MapDirectionQualityConflictSample(MonitoringHandoffDetailRow row)
+    {
+        var blockerCode = string.IsNullOrWhiteSpace(row.BlockerCode)
+            ? string.Empty
+            : row.BlockerCode.Trim();
+        if (!IsDirectionalConflictReasonCode(blockerCode))
+        {
+            return null;
+        }
+
+        var symbol = NormalizeSymbol(row.SelectedSymbol);
+        if (string.IsNullOrWhiteSpace(symbol))
+        {
+            return null;
+        }
+
+        var strategyKey = ResolveDirectionQualityStrategyKey(row.GuardSummary, row.BlockerSummary);
+        var timeframe = ResolveDirectionQualityTimeframe(row.GuardSummary, row.SelectedTimeframe, row.BlockerSummary);
+        return new DirectionQualityConflictSample(
+            Symbol: symbol,
+            StrategyKey: strategyKey,
+            Timeframe: timeframe,
+            StrategyDirection: ResolveDirectionQualityToken("StrategyDirection", row.GuardSummary, row.BlockerSummary) ?? "n/a",
+            ScannerTrendAlignment: ResolveDirectionQualityToken("ScannerTrendAlignment", row.GuardSummary, row.BlockerSummary) ?? blockerCode,
+            AdvisoryDirection: ResolveDirectionQualityToken("AdvisoryDirection", row.GuardSummary, row.BlockerSummary) ?? "n/a",
+            ConflictReason: ResolveDirectionQualityToken("ConflictReason", row.GuardSummary, row.BlockerSummary) ?? blockerCode,
+            CandidateScore: TryParseDecimalToken("CandidateScore", row.GuardSummary, row.BlockerSummary),
+            RankingScore: TryParseDecimalToken("RankingScore", row.GuardSummary, row.BlockerSummary),
+            RiskPenalty: TryParseDecimalToken("RiskPenalty", row.GuardSummary, row.BlockerSummary),
+            ObservedAtUtc: NormalizeUtc(row.CompletedAtUtc));
+    }
+
     private static OperationalMarketDataFreshnessRowSnapshot[] BuildMarketDataFreshnessRows(
         IReadOnlyCollection<MonitoringScannerCandidateRow> recentFreshnessCandidateRows,
         IReadOnlyCollection<MonitoringHandoffDetailRow> freshnessHandoffRows,
@@ -2895,6 +3135,50 @@ public sealed class AdminMonitoringReadModelService(
             "Fresh" => 1,
             _ => 0
         };
+    }
+
+    private static string ResolveDirectionQualityStrategyKey(params string?[] sources)
+    {
+        var strategyKey = ExecutionDecisionDiagnostics.ExtractToken("StrategyKey", sources);
+        return string.IsNullOrWhiteSpace(strategyKey)
+            ? "n/a"
+            : strategyKey.Trim();
+    }
+
+    private static string ResolveDirectionQualityTimeframe(string? primarySource, string? fallbackTimeframe, params string?[] additionalSources)
+    {
+        var sources = new string?[additionalSources.Length + 1];
+        sources[0] = primarySource;
+        for (var index = 0; index < additionalSources.Length; index++)
+        {
+            sources[index + 1] = additionalSources[index];
+        }
+
+        var timeframe = ExecutionDecisionDiagnostics.ExtractToken("Timeframe", sources);
+        if (!string.IsNullOrWhiteSpace(timeframe))
+        {
+            return timeframe.Trim();
+        }
+
+        return string.IsNullOrWhiteSpace(fallbackTimeframe)
+            ? "n/a"
+            : fallbackTimeframe.Trim();
+    }
+
+    private static string? ResolveDirectionQualityToken(string key, params string?[] sources)
+    {
+        return ExecutionDecisionDiagnostics.ExtractToken(key, sources);
+    }
+
+    private static bool IsAlignedScannerTrendAlignment(string? value)
+    {
+        return string.Equals(value, "AlignedLong", StringComparison.Ordinal) ||
+               string.Equals(value, "AlignedShort", StringComparison.Ordinal);
+    }
+
+    private static string FormatDirectionQualityDecimal(decimal? value)
+    {
+        return value?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a";
     }
 
     private static bool IsFreshnessHandoffBlocker(string? blockerCode)
@@ -3826,6 +4110,37 @@ public sealed class AdminMonitoringReadModelService(
         decimal? CandidateScore,
         decimal? CandidateMarketScore,
         DateTime CompletedAtUtc);
+
+    private readonly record struct DirectionQualityGroupingKey(
+        string Symbol,
+        string StrategyKey,
+        string Timeframe);
+
+    private sealed record DirectionQualityCandidateSample(
+        string Symbol,
+        string StrategyKey,
+        string Timeframe,
+        string StrategyDirection,
+        string ScannerTrendAlignment,
+        string AdvisoryDirection,
+        string ConflictReason,
+        decimal? CandidateScore,
+        decimal? RankingScore,
+        decimal? RiskPenalty,
+        DateTime ObservedAtUtc);
+
+    private sealed record DirectionQualityConflictSample(
+        string Symbol,
+        string StrategyKey,
+        string Timeframe,
+        string StrategyDirection,
+        string ScannerTrendAlignment,
+        string AdvisoryDirection,
+        string ConflictReason,
+        decimal? CandidateScore,
+        decimal? RankingScore,
+        decimal? RiskPenalty,
+        DateTime ObservedAtUtc);
 
     private sealed record MonitoringExecutionOverrideRow(
         bool SessionDisabled,

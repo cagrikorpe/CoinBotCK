@@ -19,8 +19,10 @@
     var executionControl = operational.ExecutionControl ?? OperationalExecutionControlSnapshot.Empty();
     var multiSymbol = operational.MultiSymbolStability ?? OperationalMultiSymbolStabilitySnapshot.Empty();
     var marketDataFreshness = operational.MarketDataFreshness ?? OperationalMarketDataFreshnessSnapshot.Empty();
+    var directionQuality = operational.DirectionQuality ?? OperationalDirectionQualitySnapshot.Empty();
     var multiSymbolRuntimeRows = multiSymbol.SymbolRows.ToArray();
     var marketDataFreshnessRows = marketDataFreshness.SymbolRows.ToArray();
+    var directionQualityRows = directionQuality.Rows.ToArray();
     var criticalWarnings = operational.CriticalWarnings
         .ToArray();
 
@@ -356,6 +358,78 @@
                             <td>@row.FreshnessReason</td>
                             <td>@row.FreshnessSourceLabel</td>
                             <td>@row.FallbackLabel</td>
+                            <td>@(row.LastSeenUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "n/a")</td>
+                        </tr>
+                    }
+                }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4" data-cb-admin-direction-quality>
+            <div>
+                <div class="cb-admin-info-strip-title">Strategy / scanner direction quality</div>
+                <div class="cb-admin-info-strip-text" data-cb-admin-direction-quality-summary>
+                    @SanitizeOperationalSummary(directionQuality.Summary)
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-admin-direction-quality-counts>
+                    Symbols @directionQuality.SymbolCount · Strategies @directionQuality.StrategyCount · Aligned @directionQuality.AlignedCount · Conflicted @directionQuality.ConflictedCount
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-admin-direction-quality-conflicts>
+                    Top conflicts @SanitizeOperationalSummary(directionQuality.ConflictCountSummary) · Last DirectionalConflict @directionQuality.LastConflictReason
+                </div>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+            {
+                Label = directionQuality.State,
+                Tone = ResolveTone(directionQuality.State),
+                IconText = "DQ"
+            })
+        </div>
+
+        <div class="table-responsive mt-4" data-cb-admin-direction-quality-table-wrap>
+            <table class="table table-borderless cb-admin-table mb-0" data-cb-admin-direction-quality-table>
+                <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Strategy</th>
+                    <th>Timeframe</th>
+                    <th>Conflict count</th>
+                    <th>Aligned count</th>
+                    <th>Last DirectionalConflict</th>
+                    <th>Strategy direction</th>
+                    <th>Scanner trend</th>
+                    <th>Advisory direction</th>
+                    <th>Candidate score</th>
+                    <th>Ranking score</th>
+                    <th>Risk penalty</th>
+                    <th>Last seen</th>
+                </tr>
+                </thead>
+                <tbody data-cb-admin-direction-quality-rows>
+                @if (directionQualityRows.Length == 0)
+                {
+                    <tr data-cb-admin-direction-quality-empty>
+                        <td colspan="13">Strategy / scanner direction quality rows n/a.</td>
+                    </tr>
+                }
+                else
+                {
+                    foreach (var row in directionQualityRows)
+                    {
+                        <tr data-cb-admin-direction-quality-row>
+                            <td data-cb-admin-direction-quality-symbol>@row.Symbol</td>
+                            <td>@row.StrategyKey</td>
+                            <td>@row.Timeframe</td>
+                            <td>@row.ConflictCount</td>
+                            <td>@row.AlignedCount</td>
+                            <td>@row.LastConflictReason</td>
+                            <td>@row.StrategyDirection</td>
+                            <td>@row.ScannerTrendAlignment</td>
+                            <td>@row.AdvisoryDirection</td>
+                            <td>@row.CandidateScoreLabel</td>
+                            <td>@row.RankingScoreLabel</td>
+                            <td>@row.RiskPenaltyLabel</td>
                             <td>@(row.LastSeenUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "n/a")</td>
                         </tr>
                     }
