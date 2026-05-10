@@ -166,6 +166,71 @@ Beklenen kapanis davranisi:
 - bounded reconciliation poll ayni smoke kosusunda `LastReconciledAtUtc` ve final reconciliation durumunu doldurur
 - bu kapanis gelmezse smoke pass olmaz; summary blocker olarak raporlanir
 
+## 2026-05-10 5-symbol multi-symbol pilot closure record
+
+Closure decision:
+- `FAZ-FINAL-MULTI-SYMBOL-PILOT-CLOSURE-1 = CLOSED_WITH_NOTE`
+
+Evidence window:
+- `2026-05-08 07:19:07 UTC` to `2026-05-10 07:24:57 UTC`
+- web and worker were running during evidence collection
+
+Observed runtime evidence:
+- `ScannerCycleCount=11538`
+- `HandoffAttemptCount=12494`
+- scanner covered `5/5` configured symbols on every measured cycle:
+  - `BNBUSDT`
+  - `BTCUSDT`
+  - `ETHUSDT`
+  - `SOLUSDT`
+  - `XRPUSDT`
+- scanned symbol count distribution:
+  - `Min=5`
+  - `Max=5`
+  - `Avg=5`
+- candidate coverage existed for all configured symbols
+- ranking evidence existed with:
+  - `RankingDecision`
+  - `RankingReasonCode`
+  - `RankingScore`
+  - `CandidateScore`
+  - `RiskPenalty`
+  - `SelectedSymbol`
+- handoff evidence existed for selected symbols and `NoEligibleCandidate` cycles
+
+Fail-closed guard evidence:
+- `ExitCloseOnlyBlockedUnprofitableLong` with `ProfitPolicy=Applied`
+- `SameDirectionLongEntrySuppressed`
+- `PrivatePlaneStale`
+- `StaleMarketData`
+- `MissingFreshSignalData`
+
+Hard safety counters:
+- `BadExitSubmittedWithoutReduceOnly=0`
+- `LiveOrProdSubmitCount=0`
+- `RejectedButSubmittedCount=0`
+- duplicate `ExternalOrderId`: none
+- duplicate `IdempotencyKey`: none
+- `DuplicateSuppressedButSubmittedCount=0`
+- `PrivatePlaneStaleSubmittedCount=0`
+- `TracePossibleSecretLeakCount=0`
+
+Operational evidence:
+- decision traces existed for persisted, skipped, suppressed-duplicate, allow, and block decisions
+- position snapshot showed an `ETHUSDT` futures position consistent with same-direction, risk, and profit-policy blocks
+- admin `SystemHealth` rendered without observed `500`
+- runtime monitor logs were collected across the evidence window
+- git clean
+- artifact scan clean
+- build succeeded with `0 warnings` and `0 errors`
+- unit tests passed `1273/1273`
+- secret scan findings were limited to test placeholders, redaction assertions, and parameter names; no real secret was observed
+
+Closure note:
+- no fresh broker entry/exit submission was observed in the 48h window
+- this is non-blocking for safety/fail-closed runtime closure
+- preserve this note as: `fresh broker trade not observed`
+
 
 
 
