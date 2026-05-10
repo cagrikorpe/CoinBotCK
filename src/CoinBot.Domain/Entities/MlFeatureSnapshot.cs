@@ -60,6 +60,26 @@ public sealed class MlFeatureSnapshot : BaseEntity
 
     public decimal? PositionRealizedPnl { get; set; }
 
+    public decimal SignalConfidenceScore { get; set; }
+
+    public decimal TrendAlignmentScore { get; set; }
+
+    public decimal VolatilityScore { get; set; }
+
+    public decimal LiquidityScore { get; set; }
+
+    public decimal RecentPerformanceScore { get; set; }
+
+    public decimal DrawdownPenalty { get; set; }
+
+    public decimal SampleQualityScore { get; set; }
+
+    public decimal FeatureCompletenessScore { get; set; }
+
+    public decimal CombinedBaselineScore { get; set; }
+
+    public string BaselineScoreSummary { get; set; } = string.Empty;
+
     public string FeatureCompletenessState { get; set; } = "Unavailable";
 
     public string FeatureCompletenessSummary { get; set; } = "Unavailable";

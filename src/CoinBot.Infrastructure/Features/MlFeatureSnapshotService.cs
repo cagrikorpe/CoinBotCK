@@ -19,7 +19,7 @@ public sealed class MlFeatureSnapshotService(
     ILogger<MlFeatureSnapshotService> logger,
     IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null) : IMlFeatureSnapshotService
 {
-    private const string SchemaVersionValue = "MLFS-1.v1";
+    private const string SchemaVersionValue = "MLFS-1.v2";
     private readonly int privatePlaneFreshnessThresholdMilliseconds =
         checked(Math.Max(1, botExecutionPilotOptions.Value.PrivatePlaneFreshnessThresholdSeconds) * 1000);
     private readonly ExecutionRuntimeOptions executionRuntimeOptionsValue = executionRuntimeOptions?.Value ?? new ExecutionRuntimeOptions();
@@ -82,6 +82,27 @@ public sealed class MlFeatureSnapshotService(
         var volatilityScore = TryParseDecimalToken(request.CandidateScoringSummary, "VolatilityScore");
         var liquidityScore = TryParseDecimalToken(request.CandidateScoringSummary, "LiquidityScore");
         var advisoryDirection = ExtractTokenValue(request.CandidateScoringSummary, "AdvisoryDirection");
+        var scannerTrendAlignment = ExtractTokenValue(request.CandidateScoringSummary, "ScannerTrendAlignment");
+        var trendState = ResolveTrendState(latestFeatureSnapshot, advisoryDirection);
+        var volatilityState = ResolveVolatilityState(latestFeatureSnapshot, volatilityScore);
+        var liquidityState = ResolveLiquidityState(liquidityScore);
+        var featureCompletenessState = ResolveFeatureCompletenessState(latestFeatureSnapshot);
+        var featureCompletenessSummary = ResolveFeatureCompletenessSummary(latestFeatureSnapshot);
+        var baselineScore = MlBaselineScoringEngine.Calculate(
+            new MlBaselineScoreInput(
+                strategyScore,
+                volatilityScore,
+                liquidityScore,
+                riskPenalty,
+                request.StrategyDirection,
+                advisoryDirection,
+                scannerTrendAlignment,
+                trendState,
+                volatilityState,
+                liquidityState,
+                latestFeatureSnapshot,
+                pnlReference.RealizedPnl,
+                pnlReference.UnrealizedPnl));
 
         var entity = new MlFeatureSnapshot
         {
@@ -95,9 +116,9 @@ public sealed class MlFeatureSnapshotService(
             MarketScore = marketScore,
             StrategyScore = strategyScore,
             RiskPenalty = riskPenalty,
-            TrendState = ResolveTrendState(latestFeatureSnapshot, advisoryDirection),
-            VolatilityState = ResolveVolatilityState(latestFeatureSnapshot, volatilityScore),
-            LiquidityState = ResolveLiquidityState(liquidityScore),
+            TrendState = trendState,
+            VolatilityState = volatilityState,
+            LiquidityState = liquidityState,
             MarketFreshnessState = NormalizeExplicitState(ExtractTokenValue(request.CandidateScoringSummary, "FreshnessState"), "Unavailable"),
             MarketFreshnessReason = NormalizeOptional(ExtractTokenValue(request.CandidateScoringSummary, "FreshnessReason")),
             MarketFreshnessSource = NormalizeOptional(ExtractTokenValue(request.CandidateScoringSummary, "FreshnessSource")),
@@ -113,8 +134,18 @@ public sealed class MlFeatureSnapshotService(
             ReduceOnly = request.ReduceOnly,
             PositionUnrealizedPnl = pnlReference.UnrealizedPnl,
             PositionRealizedPnl = pnlReference.RealizedPnl,
-            FeatureCompletenessState = ResolveFeatureCompletenessState(latestFeatureSnapshot),
-            FeatureCompletenessSummary = ResolveFeatureCompletenessSummary(latestFeatureSnapshot),
+            SignalConfidenceScore = baselineScore.SignalConfidenceScore,
+            TrendAlignmentScore = baselineScore.TrendAlignmentScore,
+            VolatilityScore = baselineScore.VolatilityScore,
+            LiquidityScore = baselineScore.LiquidityScore,
+            RecentPerformanceScore = baselineScore.RecentPerformanceScore,
+            DrawdownPenalty = baselineScore.DrawdownPenalty,
+            SampleQualityScore = baselineScore.SampleQualityScore,
+            FeatureCompletenessScore = baselineScore.FeatureCompletenessScore,
+            CombinedBaselineScore = baselineScore.CombinedBaselineScore,
+            BaselineScoreSummary = baselineScore.Summary,
+            FeatureCompletenessState = featureCompletenessState,
+            FeatureCompletenessSummary = featureCompletenessSummary,
             SchemaVersion = SchemaVersionValue,
             CapturedAtUtc = capturedAtUtc,
             FeatureAnchorTimeUtc = latestFeatureSnapshot?.FeatureAnchorTimeUtc,
@@ -126,11 +157,12 @@ public sealed class MlFeatureSnapshotService(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         logger.LogDebug(
-            "ML feature snapshot captured for {Symbol} {Timeframe}. GuardDecision={GuardDecision} ExecutionDecision={ExecutionDecision}",
+            "ML feature snapshot captured for {Symbol} {Timeframe}. GuardDecision={GuardDecision} ExecutionDecision={ExecutionDecision} CombinedBaselineScore={CombinedBaselineScore}",
             entity.Symbol,
             entity.Timeframe,
             entity.GuardDecision,
-            entity.ExecutionDecision);
+            entity.ExecutionDecision,
+            entity.CombinedBaselineScore);
 
         return Map(entity);
     }
@@ -433,6 +465,16 @@ public sealed class MlFeatureSnapshotService(
             entity.ReduceOnly,
             entity.PositionUnrealizedPnl,
             entity.PositionRealizedPnl,
+            entity.SignalConfidenceScore,
+            entity.TrendAlignmentScore,
+            entity.VolatilityScore,
+            entity.LiquidityScore,
+            entity.RecentPerformanceScore,
+            entity.DrawdownPenalty,
+            entity.SampleQualityScore,
+            entity.FeatureCompletenessScore,
+            entity.CombinedBaselineScore,
+            entity.BaselineScoreSummary,
             entity.FeatureCompletenessState,
             entity.FeatureCompletenessSummary,
             entity.SchemaVersion,

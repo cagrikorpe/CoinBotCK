@@ -2896,6 +2896,15 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             nameof(MlFeatureSnapshot.ScannerScore),
             nameof(MlFeatureSnapshot.MarketScore),
             nameof(MlFeatureSnapshot.RiskPenalty),
+            nameof(MlFeatureSnapshot.SignalConfidenceScore),
+            nameof(MlFeatureSnapshot.TrendAlignmentScore),
+            nameof(MlFeatureSnapshot.VolatilityScore),
+            nameof(MlFeatureSnapshot.LiquidityScore),
+            nameof(MlFeatureSnapshot.RecentPerformanceScore),
+            nameof(MlFeatureSnapshot.DrawdownPenalty),
+            nameof(MlFeatureSnapshot.SampleQualityScore),
+            nameof(MlFeatureSnapshot.FeatureCompletenessScore),
+            nameof(MlFeatureSnapshot.CombinedBaselineScore),
             nameof(MlFeatureSnapshot.PositionUnrealizedPnl),
             nameof(MlFeatureSnapshot.PositionRealizedPnl)
         })
@@ -2903,6 +2912,10 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             builder.Property(propertyName)
                 .HasPrecision(38, 18);
         }
+
+        builder.Property(entity => entity.BaselineScoreSummary)
+            .HasMaxLength(512)
+            .IsRequired();
 
         builder.Property(entity => entity.TrendState)
             .HasMaxLength(64)

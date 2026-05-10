@@ -150,9 +150,19 @@ public sealed class MlFeatureSnapshotServiceTests
         Assert.False(model.ReduceOnly);
         Assert.Equal(12.34m, model.PositionUnrealizedPnl);
         Assert.Null(model.PositionRealizedPnl);
+        Assert.Equal(72m, model.SignalConfidenceScore);
+        Assert.Equal(60m, model.TrendAlignmentScore);
+        Assert.Equal(45m, model.VolatilityScore);
+        Assert.Equal(88m, model.LiquidityScore);
+        Assert.Equal(62.34m, model.RecentPerformanceScore);
+        Assert.Equal(0m, model.DrawdownPenalty);
+        Assert.Equal(100m, model.SampleQualityScore);
+        Assert.Equal(100m, model.FeatureCompletenessScore);
+        Assert.Equal(76.344m, model.CombinedBaselineScore);
+        Assert.Contains("CombinedBaselineScore=76.344", model.BaselineScoreSummary, StringComparison.Ordinal);
         Assert.Equal("Ready", model.FeatureCompletenessState);
         Assert.Contains("SampleCount=240/200", model.FeatureCompletenessSummary, StringComparison.Ordinal);
-        Assert.Equal("MLFS-1.v1", model.SchemaVersion);
+        Assert.Equal("MLFS-1.v2", model.SchemaVersion);
         Assert.Equal(ExecutionEnvironment.BinanceTestnet, model.ExecutionEnvironment);
 
         var persisted = await harness.DbContext.MlFeatureSnapshots.AsNoTracking().SingleAsync();
@@ -206,6 +216,16 @@ public sealed class MlFeatureSnapshotServiceTests
         Assert.Equal("Unavailable:TradingFeatureSnapshotMissing", model.FeatureCompletenessSummary);
         Assert.Null(model.PositionUnrealizedPnl);
         Assert.Null(model.PositionRealizedPnl);
+        Assert.Equal(0m, model.SignalConfidenceScore);
+        Assert.Equal(25m, model.TrendAlignmentScore);
+        Assert.Equal(25m, model.VolatilityScore);
+        Assert.Equal(20m, model.LiquidityScore);
+        Assert.Equal(50m, model.RecentPerformanceScore);
+        Assert.Equal(0m, model.DrawdownPenalty);
+        Assert.Equal(0m, model.SampleQualityScore);
+        Assert.Equal(0m, model.FeatureCompletenessScore);
+        Assert.Equal(13.5m, model.CombinedBaselineScore);
+        Assert.Contains("FeatureCompletenessScore=0", model.BaselineScoreSummary, StringComparison.Ordinal);
     }
 
     [Fact]
