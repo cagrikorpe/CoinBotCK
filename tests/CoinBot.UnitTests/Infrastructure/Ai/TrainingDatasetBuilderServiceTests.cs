@@ -62,6 +62,21 @@ public sealed class TrainingDatasetBuilderServiceTests
         Assert.Equal("true", row.Values["label_has_execution_order"]);
         Assert.Equal("true", row.Values["label_was_submitted_to_broker"]);
         Assert.Equal("true", row.Values["label_was_filled"]);
+        Assert.Equal("true", row.Values["label_good_entry"]);
+        Assert.Null(row.Values["label_good_exit"]);
+        Assert.Equal("Win", row.Values["label_outcome"]);
+        Assert.Equal("false", row.Values["label_false_signal"]);
+        Assert.Equal("0.015", row.Values["label_expected_move_pct"]);
+        Assert.Equal("0.1", row.Values["label_max_favorable_excursion"]);
+        Assert.Equal("0.05", row.Values["label_max_adverse_excursion"]);
+        Assert.Equal("0.06", row.Values["label_estimated_pnl"]);
+        Assert.Equal("0.05", row.Values["label_drawdown"]);
+        Assert.Equal("0", row.Values["label_risk_violation_count"]);
+        Assert.Equal("0", row.Values["label_duplicate_order_count"]);
+        Assert.Equal("0", row.Values["label_stale_data_entry_count"]);
+        Assert.Equal("0", row.Values["label_reduce_only_violation_count"]);
+        Assert.Equal("Complete", row.Values["label_completeness"]);
+        Assert.Equal("TDL-1.v1", row.Values["label_version"]);
         Assert.Equal("true", row.Values["meta_is_training_eligible"]);
         Assert.DoesNotContain(dataset.Columns, column => column.Name == "feature_last_decision_outcome");
         Assert.DoesNotContain(dataset.Columns, column => column.Name == "feature_feature_summary");
@@ -103,8 +118,131 @@ public sealed class TrainingDatasetBuilderServiceTests
         Assert.Single(dbContext.AiShadowDecisionOutcomes);
         Assert.Equal("true", row.Values["label_was_blocked"]);
         Assert.Equal("TradeMasterDisarmed", row.Values["label_block_reason"]);
+        Assert.Equal("Win", row.Values["label_outcome"]);
+        Assert.Equal("true", row.Values["label_good_entry"]);
+        Assert.Equal("false", row.Values["label_false_signal"]);
+        Assert.Null(row.Values["label_estimated_pnl"]);
+        Assert.Equal("Complete", row.Values["label_completeness"]);
         Assert.Equal("false", row.Values["label_has_execution_order"]);
         Assert.Equal("0.02", row.Values["label_realized_return"]);
+    }
+
+    [Fact]
+    public async Task BuildAsync_ProducesUnknownOutcomeLabels_WhenOutcomeCoverageCannotBeScored()
+    {
+        await using var dbContext = CreateDbContext();
+        var builder = CreateService(dbContext, new DateTime(2026, 4, 24, 13, 30, 0, DateTimeKind.Utc));
+        var featureSnapshotId = Guid.Parse("99999999-9999-9999-9999-999999999999");
+        var decisionId = Guid.Parse("88888888-8888-8888-8888-888888888888");
+        var featureAnchorTimeUtc = new DateTime(2026, 4, 24, 12, 20, 0, DateTimeKind.Utc);
+
+        SeedFeatureSnapshot(dbContext, featureSnapshotId, featureAnchorTimeUtc);
+        SeedShadowDecision(
+            dbContext,
+            decisionId,
+            featureSnapshotId,
+            strategySignalId: null,
+            featureAnchorTimeUtc,
+            finalAction: "ShadowOnly",
+            hypotheticalSubmitAllowed: true,
+            hypotheticalBlockReason: null,
+            noSubmitReason: "ShadowModeActive",
+            aiDirection: "Long");
+        await dbContext.SaveChangesAsync();
+
+        var dataset = await builder.BuildAsync(new TrainingDatasetBuildRequest("ml-user", TrainingEligibleOnly: false));
+        var row = Assert.Single(dataset.Rows);
+
+        Assert.False(row.IsTrainingEligible);
+        Assert.Equal("Unknown", row.Values["label_outcome"]);
+        Assert.Null(row.Values["label_good_entry"]);
+        Assert.Null(row.Values["label_false_signal"]);
+        Assert.Equal("Unknown", row.Values["label_completeness"]);
+        Assert.Equal("TDL-1.v1", row.Values["label_version"]);
+        Assert.Equal("false", row.Values["meta_is_training_eligible"]);
+    }
+
+    [Fact]
+    public async Task BuildAsync_ProducesLossAndSafetyLabels_ForRiskBlockedExitContext()
+    {
+        await using var dbContext = CreateDbContext();
+        var builder = CreateService(dbContext, new DateTime(2026, 4, 24, 14, 0, 0, DateTimeKind.Utc));
+        var featureSnapshotId = Guid.Parse("11111111-aaaa-bbbb-cccc-111111111111");
+        var decisionId = Guid.Parse("22222222-aaaa-bbbb-cccc-222222222222");
+        var strategySignalId = Guid.Parse("33333333-aaaa-bbbb-cccc-333333333333");
+        var featureAnchorTimeUtc = new DateTime(2026, 4, 24, 12, 40, 0, DateTimeKind.Utc);
+
+        SeedFeatureSnapshot(dbContext, featureSnapshotId, featureAnchorTimeUtc);
+        SeedShadowDecision(
+            dbContext,
+            decisionId,
+            featureSnapshotId,
+            strategySignalId,
+            featureAnchorTimeUtc,
+            finalAction: "NoSubmit",
+            hypotheticalSubmitAllowed: false,
+            hypotheticalBlockReason: "StaleMarketData",
+            noSubmitReason: "MissingFreshSignalData",
+            aiDirection: "Long",
+            riskVetoPresent: true,
+            pilotSafetyBlocked: true);
+        SeedShadowOutcome(
+            dbContext,
+            decisionId,
+            featureAnchorTimeUtc,
+            futureCloseTimeUtc: featureAnchorTimeUtc.AddMinutes(2),
+            referenceClosePrice: 100m,
+            realizedReturn: -0.03m,
+            outcomeScore: -0.25m);
+
+        var selectedOrderId = SeedExecutionOrder(
+            dbContext,
+            strategySignalId,
+            side: ExecutionOrderSide.Sell,
+            stopLossPrice: 103m,
+            takeProfitPrice: 96m,
+            signalType: StrategySignalType.Exit,
+            reduceOnly: false,
+            createdDateUtc: featureAnchorTimeUtc.AddSeconds(50),
+            submittedAtUtc: featureAnchorTimeUtc.AddSeconds(55),
+            lastStateChangedAtUtc: featureAnchorTimeUtc.AddSeconds(56));
+
+        SeedExecutionOrder(
+            dbContext,
+            strategySignalId,
+            side: ExecutionOrderSide.Sell,
+            stopLossPrice: 103m,
+            takeProfitPrice: 96m,
+            signalType: StrategySignalType.Exit,
+            reduceOnly: true,
+            submittedToBroker: false,
+            duplicateSuppressed: true,
+            state: ExecutionOrderState.Rejected,
+            createdDateUtc: featureAnchorTimeUtc.AddSeconds(10),
+            lastStateChangedAtUtc: featureAnchorTimeUtc.AddSeconds(11));
+
+        SeedDemoLedgerTransaction(dbContext, selectedOrderId, -12.5m, featureAnchorTimeUtc.AddMinutes(3));
+        SeedHistoricalCandles(
+            dbContext,
+            ("BTCUSDT", "1m", featureAnchorTimeUtc.AddMinutes(1), 98m, 101m, 96m),
+            ("BTCUSDT", "1m", featureAnchorTimeUtc.AddMinutes(2), 97m, 99m, 95m));
+        await dbContext.SaveChangesAsync();
+
+        var dataset = await builder.BuildAsync(new TrainingDatasetBuildRequest("ml-user"));
+        var row = Assert.Single(dataset.Rows);
+
+        Assert.Equal("Loss", row.Values["label_outcome"]);
+        Assert.Equal("false", row.Values["label_good_entry"]);
+        Assert.Equal("false", row.Values["label_good_exit"]);
+        Assert.Equal("true", row.Values["label_false_signal"]);
+        Assert.Equal("-12.5", row.Values["label_realized_pnl"]);
+        Assert.Equal("-0.03", row.Values["label_estimated_pnl"]);
+        Assert.Equal("0.05", row.Values["label_drawdown"]);
+        Assert.Equal("2", row.Values["label_risk_violation_count"]);
+        Assert.Equal("1", row.Values["label_duplicate_order_count"]);
+        Assert.Equal("2", row.Values["label_stale_data_entry_count"]);
+        Assert.Equal("1", row.Values["label_reduce_only_violation_count"]);
+        Assert.Equal("Complete", row.Values["label_completeness"]);
     }
 
     [Fact]
@@ -156,11 +294,73 @@ public sealed class TrainingDatasetBuilderServiceTests
         Assert.Contains("Train", splitBuckets);
         Assert.Contains("Validation", splitBuckets);
         Assert.Contains("Test", splitBuckets);
+        Assert.Equal(TrainingDatasetExportMode.Internal, export.ExportMode);
         Assert.Contains("meta_split_bucket", export.ColumnOrder);
+        Assert.Contains("meta_user_id", export.ColumnOrder);
         Assert.DoesNotContain("feature_last_decision_outcome", export.CsvContent, StringComparison.Ordinal);
         Assert.DoesNotContain("feature_top_signal_hints", export.CsvContent, StringComparison.Ordinal);
         Assert.Contains("label_outcome_score", export.CsvContent, StringComparison.Ordinal);
         Assert.Contains("training-dataset-all-symbols-all-timeframes-BarsForward-1-20260424.csv", export.FileName, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExportCsvAsync_SanitizedMode_RemovesInternalMetadataColumns()
+    {
+        await using var dbContext = CreateDbContext();
+        var builder = CreateService(dbContext, new DateTime(2026, 4, 24, 14, 15, 0, DateTimeKind.Utc));
+        var featureSnapshotId = Guid.Parse("abababab-abab-abab-abab-abababababab");
+        var decisionId = Guid.Parse("cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd");
+        var strategySignalId = Guid.Parse("efefefef-efef-efef-efef-efefefefefef");
+        var anchorTimeUtc = new DateTime(2026, 4, 24, 12, 30, 0, DateTimeKind.Utc);
+
+        SeedFeatureSnapshot(dbContext, featureSnapshotId, anchorTimeUtc);
+        SeedShadowDecision(
+            dbContext,
+            decisionId,
+            featureSnapshotId,
+            strategySignalId,
+            anchorTimeUtc,
+            finalAction: "ShadowOnly",
+            hypotheticalSubmitAllowed: true,
+            hypotheticalBlockReason: null,
+            noSubmitReason: "ShadowModeActive",
+            aiDirection: "Long");
+        SeedShadowOutcome(
+            dbContext,
+            decisionId,
+            anchorTimeUtc,
+            futureCloseTimeUtc: anchorTimeUtc.AddMinutes(1),
+            referenceClosePrice: 100m,
+            realizedReturn: 0.01m,
+            outcomeScore: 0.60m);
+        SeedExecutionOrder(dbContext, strategySignalId, side: ExecutionOrderSide.Buy, stopLossPrice: 98m, takeProfitPrice: 105m);
+        SeedHistoricalCandles(
+            dbContext,
+            ("BTCUSDT", "1m", anchorTimeUtc.AddMinutes(1), 101m, 102m, 99m));
+        await dbContext.SaveChangesAsync();
+
+        var export = await builder.ExportCsvAsync(new TrainingDatasetBuildRequest(
+            "ml-user",
+            ExportMode: TrainingDatasetExportMode.Sanitized));
+
+        Assert.Equal(TrainingDatasetExportMode.Sanitized, export.ExportMode);
+        Assert.DoesNotContain("meta_user_id", export.ColumnOrder);
+        Assert.DoesNotContain("meta_bot_id", export.ColumnOrder);
+        Assert.DoesNotContain("meta_feature_snapshot_id", export.ColumnOrder);
+        Assert.DoesNotContain("meta_ai_shadow_decision_id", export.ColumnOrder);
+        Assert.DoesNotContain("meta_strategy_signal_id", export.ColumnOrder);
+        Assert.DoesNotContain("meta_execution_order_id", export.ColumnOrder);
+        Assert.DoesNotContain("meta_correlation_id", export.ColumnOrder);
+        Assert.DoesNotContain("meta_snapshot_key", export.ColumnOrder);
+        Assert.DoesNotContain("ml-user", export.CsvContent, StringComparison.Ordinal);
+        Assert.DoesNotContain(featureSnapshotId.ToString("D"), export.CsvContent, StringComparison.Ordinal);
+        Assert.DoesNotContain(decisionId.ToString("D"), export.CsvContent, StringComparison.Ordinal);
+        Assert.DoesNotContain(strategySignalId.ToString("D"), export.CsvContent, StringComparison.Ordinal);
+        Assert.DoesNotContain($"corr-{featureSnapshotId:N}", export.CsvContent, StringComparison.Ordinal);
+        Assert.DoesNotContain($"snapshot-{featureSnapshotId:N}", export.CsvContent, StringComparison.Ordinal);
+        Assert.Contains("meta_symbol", export.ColumnOrder);
+        Assert.Contains("label_outcome_score", export.CsvContent, StringComparison.Ordinal);
+        Assert.Contains("-sanitized.csv", export.FileName, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -285,7 +485,9 @@ public sealed class TrainingDatasetBuilderServiceTests
         bool hypotheticalSubmitAllowed,
         string? hypotheticalBlockReason,
         string noSubmitReason,
-        string aiDirection)
+        string aiDirection,
+        bool riskVetoPresent = false,
+        bool pilotSafetyBlocked = false)
     {
         dbContext.AiShadowDecisions.Add(new AiShadowDecision
         {
@@ -314,6 +516,10 @@ public sealed class TrainingDatasetBuilderServiceTests
             AiLatencyMs = 5,
             TradingMode = ExecutionEnvironment.Live,
             Plane = ExchangeDataPlane.Futures,
+            RiskVetoPresent = riskVetoPresent,
+            RiskVetoReason = riskVetoPresent ? "MaxRisk" : null,
+            PilotSafetyBlocked = pilotSafetyBlocked,
+            PilotSafetyReason = pilotSafetyBlocked ? "PilotSafety" : null,
             FinalAction = finalAction,
             HypotheticalSubmitAllowed = hypotheticalSubmitAllowed,
             HypotheticalBlockReason = hypotheticalBlockReason,
@@ -361,21 +567,37 @@ public sealed class TrainingDatasetBuilderServiceTests
         });
     }
 
-    private static void SeedExecutionOrder(
+    private static Guid SeedExecutionOrder(
         ApplicationDbContext dbContext,
         Guid strategySignalId,
         ExecutionOrderSide side,
         decimal? stopLossPrice,
-        decimal? takeProfitPrice)
+        decimal? takeProfitPrice,
+        StrategySignalType signalType = StrategySignalType.Entry,
+        bool reduceOnly = false,
+        bool submittedToBroker = true,
+        bool duplicateSuppressed = false,
+        ExecutionOrderState state = ExecutionOrderState.Filled,
+        decimal quantity = 0.01m,
+        decimal price = 100m,
+        decimal? averageFillPrice = 100m,
+        decimal? filledQuantity = 0.01m,
+        DateTime? createdDateUtc = null,
+        DateTime? submittedAtUtc = null,
+        DateTime? lastStateChangedAtUtc = null)
     {
+        var executionOrderId = Guid.NewGuid();
+        var createdUtc = createdDateUtc ?? new DateTime(2026, 4, 24, 12, 0, 15, DateTimeKind.Utc);
+        var submittedUtc = submittedAtUtc ?? new DateTime(2026, 4, 24, 12, 0, 20, DateTimeKind.Utc);
+        var stateChangedUtc = lastStateChangedAtUtc ?? new DateTime(2026, 4, 24, 12, 0, 30, DateTimeKind.Utc);
         dbContext.ExecutionOrders.Add(new ExecutionOrder
         {
-            Id = Guid.NewGuid(),
+            Id = executionOrderId,
             OwnerUserId = "ml-user",
             TradingStrategyId = Guid.NewGuid(),
             TradingStrategyVersionId = Guid.NewGuid(),
             StrategySignalId = strategySignalId,
-            SignalType = StrategySignalType.Entry,
+            SignalType = signalType,
             BotId = Guid.Parse("12121212-1212-1212-1212-121212121212"),
             Plane = ExchangeDataPlane.Futures,
             StrategyKey = "ml-shadow-core",
@@ -385,20 +607,51 @@ public sealed class TrainingDatasetBuilderServiceTests
             QuoteAsset = "USDT",
             Side = side,
             OrderType = ExecutionOrderType.Market,
-            Quantity = 0.01m,
-            Price = 100m,
-            FilledQuantity = 0.01m,
-            AverageFillPrice = 100m,
+            Quantity = quantity,
+            Price = price,
+            FilledQuantity = filledQuantity ?? quantity,
+            AverageFillPrice = averageFillPrice,
             StopLossPrice = stopLossPrice,
             TakeProfitPrice = takeProfitPrice,
+            ReduceOnly = reduceOnly,
             ExecutionEnvironment = ExecutionEnvironment.Live,
-            State = ExecutionOrderState.Filled,
+            State = state,
             IdempotencyKey = $"idem-{strategySignalId:N}",
             RootCorrelationId = $"corr-{strategySignalId:N}",
-            SubmittedToBroker = true,
-            SubmittedAtUtc = new DateTime(2026, 4, 24, 12, 0, 20, DateTimeKind.Utc),
-            LastFilledAtUtc = new DateTime(2026, 4, 24, 12, 0, 30, DateTimeKind.Utc),
-            LastStateChangedAtUtc = new DateTime(2026, 4, 24, 12, 0, 30, DateTimeKind.Utc)
+            SubmittedToBroker = submittedToBroker,
+            DuplicateSuppressed = duplicateSuppressed,
+            CreatedDate = createdUtc,
+            SubmittedAtUtc = submittedToBroker ? submittedUtc : null,
+            LastFilledAtUtc = state == ExecutionOrderState.Filled ? stateChangedUtc : null,
+            LastStateChangedAtUtc = stateChangedUtc
+        });
+
+        return executionOrderId;
+    }
+
+    private static void SeedDemoLedgerTransaction(
+        ApplicationDbContext dbContext,
+        Guid executionOrderId,
+        decimal realizedPnlDelta,
+        DateTime occurredAtUtc)
+    {
+        dbContext.DemoLedgerTransactions.Add(new DemoLedgerTransaction
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = "ml-user",
+            OperationId = $"demo-op-{executionOrderId:N}",
+            TransactionType = DemoLedgerTransactionType.FillApplied,
+            BotId = Guid.Parse("12121212-1212-1212-1212-121212121212"),
+            PositionScopeKey = "BTCUSDT:1m",
+            OrderId = executionOrderId.ToString("N"),
+            Symbol = "BTCUSDT",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = DemoTradeSide.Buy,
+            Quantity = 0.01m,
+            Price = 100m,
+            RealizedPnlDelta = realizedPnlDelta,
+            OccurredAtUtc = occurredAtUtc
         });
     }
 

@@ -15,6 +15,7 @@ public sealed class TrainingDatasetBuilderService(
     private const int DefaultTake = 500;
     private const int MaxTake = 1000;
     private const string CsvContentType = "text/csv; charset=utf-8";
+    private const string LabelVersion = "TDL-1.v1";
 
     private static readonly IReadOnlyCollection<TrainingDatasetColumnSnapshot> Columns =
     [
@@ -102,7 +103,23 @@ public sealed class TrainingDatasetBuilderService(
         new("label_was_filled", TrainingDatasetColumnGroup.Label, "bool", "True when the resolved execution order reached filled state."),
         new("label_execution_state", TrainingDatasetColumnGroup.Label, "string", "Resolved execution order state."),
         new("label_execution_failure_code", TrainingDatasetColumnGroup.Label, "string", "Resolved execution failure code."),
-        new("label_execution_rejection_stage", TrainingDatasetColumnGroup.Label, "string", "Resolved execution rejection stage.")
+        new("label_execution_rejection_stage", TrainingDatasetColumnGroup.Label, "string", "Resolved execution rejection stage."),
+        new("label_good_entry", TrainingDatasetColumnGroup.Label, "bool", "True when the directional entry outcome resolved as favorable."),
+        new("label_good_exit", TrainingDatasetColumnGroup.Label, "bool", "True when the exit order resolved as a favorable close."),
+        new("label_outcome", TrainingDatasetColumnGroup.Label, "string", "Deterministic directional outcome classification: Win, Loss, Neutral, or Unknown."),
+        new("label_false_signal", TrainingDatasetColumnGroup.Label, "bool", "True when the directional recommendation resolved as a loss."),
+        new("label_expected_move_pct", TrainingDatasetColumnGroup.Label, "decimal", "Ex-ante expected move proxy from ATR/reference price."),
+        new("label_max_favorable_excursion", TrainingDatasetColumnGroup.Label, "decimal", "Positive maximum favorable excursion magnitude."),
+        new("label_max_adverse_excursion", TrainingDatasetColumnGroup.Label, "decimal", "Positive maximum adverse excursion magnitude."),
+        new("label_realized_pnl", TrainingDatasetColumnGroup.Label, "decimal", "Actual realized PnL linked to the resolved execution order when available."),
+        new("label_estimated_pnl", TrainingDatasetColumnGroup.Label, "decimal", "Directional estimated PnL from outcome return and order notional."),
+        new("label_drawdown", TrainingDatasetColumnGroup.Label, "decimal", "Directional drawdown estimate from adverse excursion and order notional."),
+        new("label_risk_violation_count", TrainingDatasetColumnGroup.Label, "int", "Count of deterministic risk or pilot-safety veto signals on the decision."),
+        new("label_duplicate_order_count", TrainingDatasetColumnGroup.Label, "int", "Count of duplicate-suppressed execution rows for the resolved strategy signal."),
+        new("label_stale_data_entry_count", TrainingDatasetColumnGroup.Label, "int", "Count of stale or missing-fresh-signal entry blockers on the decision."),
+        new("label_reduce_only_violation_count", TrainingDatasetColumnGroup.Label, "int", "Count of exit execution rows that were not reduce-only."),
+        new("label_completeness", TrainingDatasetColumnGroup.Label, "string", "Completeness classification for the derived label set."),
+        new("label_version", TrainingDatasetColumnGroup.Label, "string", "Deterministic label schema version.")
     ];
 
     private static readonly IReadOnlyCollection<TrainingDatasetLabelDefinitionSnapshot> LabelDefinitions =
@@ -121,7 +138,21 @@ public sealed class TrainingDatasetBuilderService(
         new("label_false_positive", "Whether a positive directional recommendation scored negatively.", false, "Copied from AiShadowDecisionOutcome."),
         new("label_false_neutral", "Whether a neutral recommendation missed a meaningful move.", false, "Copied from AiShadowDecisionOutcome."),
         new("label_overtrading", "Whether a directional recommendation fired into a neutral outcome band.", false, "Copied from AiShadowDecisionOutcome."),
-        new("label_suppression_aligned", "Whether suppression would have aligned with the realized outcome.", false, "Useful for no-trade policy evaluation.")
+        new("label_suppression_aligned", "Whether suppression would have aligned with the realized outcome.", false, "Useful for no-trade policy evaluation."),
+        new("label_outcome", "Deterministic directional outcome classification using the resolved directional return.", false, "Win/Loss/Neutral/Unknown."),
+        new("label_good_entry", "Whether the entry idea was favorable over the scored horizon.", true, "Independent from whether the trade was blocked."),
+        new("label_good_exit", "Whether the resolved exit order closed favorably.", true, "Only populated for exit or reduce-only closes."),
+        new("label_false_signal", "Whether the directional recommendation resolved as a loss.", true, "Null when outcome is unknown."),
+        new("label_expected_move_pct", "Expected move proxy from ATR/reference price at feature time.", true, "Ex-ante snapshot-derived label aid, not future leakage."),
+        new("label_realized_pnl", "Actual realized PnL linked to the resolved order when ledger/fill evidence exists.", true, "Null when no actual realized PnL evidence exists."),
+        new("label_estimated_pnl", "Directional estimated PnL from realized return and order notional.", true, "Used when actual realized PnL is unavailable."),
+        new("label_drawdown", "Directional drawdown estimate from adverse excursion and order notional.", true, "Positive magnitude."),
+        new("label_risk_violation_count", "Count of structured risk/pilot safety veto signals.", false, "Negative or safety-oriented label."),
+        new("label_duplicate_order_count", "Count of duplicate-suppressed orders for the resolved strategy signal.", false, "Operational safety label."),
+        new("label_stale_data_entry_count", "Count of stale-data blockers on the decision.", false, "Operational data-quality label."),
+        new("label_reduce_only_violation_count", "Count of exit orders that violated reduce-only expectations.", false, "Should normally stay zero."),
+        new("label_completeness", "Completeness state for the extended deterministic label set.", false, "Complete, Partial, or Unknown."),
+        new("label_version", "Version identifier for the extended deterministic label schema.", false, LabelVersion)
     ];
 
     private static readonly IReadOnlyCollection<TrainingDatasetLeakageRuleSnapshot> LeakageRules =
@@ -138,7 +169,23 @@ public sealed class TrainingDatasetBuilderService(
         new("meta_strategy_decision_outcome", "Excluded from feature columns because it is a downstream decision result.")
     ];
 
-    private static readonly IReadOnlyCollection<string> ColumnOrder = Columns.Select(column => column.Name).ToArray();
+    private static readonly IReadOnlySet<string> SanitizedMetadataColumns = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "meta_user_id",
+        "meta_bot_id",
+        "meta_feature_snapshot_id",
+        "meta_ai_shadow_decision_id",
+        "meta_strategy_signal_id",
+        "meta_execution_order_id",
+        "meta_correlation_id",
+        "meta_snapshot_key"
+    };
+
+    private static readonly IReadOnlyCollection<string> InternalColumnOrder = Columns.Select(column => column.Name).ToArray();
+    private static readonly IReadOnlyCollection<string> SanitizedColumnOrder = Columns
+        .Where(column => !SanitizedMetadataColumns.Contains(column.Name))
+        .Select(column => column.Name)
+        .ToArray();
 
     public async Task<TrainingDatasetBuildSnapshot> BuildAsync(
         TrainingDatasetBuildRequest request,
@@ -171,14 +218,14 @@ public sealed class TrainingDatasetBuilderService(
 
         var outcomesByDecisionId = await LoadOutcomeRowsAsync(normalized, decisions, cancellationToken);
         var featuresById = await LoadFeatureRowsAsync(decisions, cancellationToken);
-        var executionOrdersBySignalId = await LoadExecutionOrdersAsync(normalized.UserId, decisions, cancellationToken);
+        var executionOrderContextsBySignalId = await LoadExecutionOrdersAsync(normalized.UserId, decisions, cancellationToken);
         var candleWindowsByMarket = await LoadCandleWindowsAsync(outcomesByDecisionId.Values, cancellationToken);
 
         var sourceRows = BuildSourceRows(
             decisions,
             featuresById,
             outcomesByDecisionId,
-            executionOrdersBySignalId,
+            executionOrderContextsBySignalId,
             candleWindowsByMarket);
 
         var trainingEligibleRowCount = sourceRows.Count(row => row.IsTrainingEligible);
@@ -205,8 +252,9 @@ public sealed class TrainingDatasetBuilderService(
         CancellationToken cancellationToken = default)
     {
         var dataset = await BuildAsync(request, cancellationToken);
-        var csv = BuildCsv(dataset.Rows);
-        var fileName = BuildFileName(dataset);
+        var columnOrder = ResolveExportColumnOrder(request.ExportMode);
+        var csv = BuildCsv(dataset.Rows, columnOrder);
+        var fileName = BuildFileName(dataset, request.ExportMode);
 
         return new TrainingDatasetExportSnapshot(
             fileName,
@@ -214,7 +262,8 @@ public sealed class TrainingDatasetBuilderService(
             csv,
             dataset.SourceRowCount,
             dataset.RowCount,
-            ColumnOrder);
+            request.ExportMode,
+            columnOrder);
     }
 
     private async Task<IReadOnlyCollection<DecisionProjection>> LoadDecisionRowsAsync(
@@ -411,7 +460,7 @@ public sealed class TrainingDatasetBuilderService(
         return rows.ToDictionary(entity => entity.Id);
     }
 
-    private async Task<IReadOnlyDictionary<Guid, ExecutionOrderProjection>> LoadExecutionOrdersAsync(
+    private async Task<IReadOnlyDictionary<Guid, ExecutionOrderContextProjection>> LoadExecutionOrdersAsync(
         string userId,
         IReadOnlyCollection<DecisionProjection> decisions,
         CancellationToken cancellationToken)
@@ -424,7 +473,7 @@ public sealed class TrainingDatasetBuilderService(
 
         if (strategySignalIds.Length == 0)
         {
-            return new Dictionary<Guid, ExecutionOrderProjection>();
+            return new Dictionary<Guid, ExecutionOrderContextProjection>();
         }
 
         var rows = await dbContext.ExecutionOrders
@@ -436,9 +485,16 @@ public sealed class TrainingDatasetBuilderService(
             .Select(entity => new ExecutionOrderProjection(
                 entity.Id,
                 entity.StrategySignalId,
+                entity.SignalType,
                 entity.Side,
+                entity.Quantity,
+                entity.FilledQuantity,
+                entity.Price,
+                entity.AverageFillPrice,
                 entity.State,
                 entity.SubmittedToBroker,
+                entity.ReduceOnly,
+                entity.DuplicateSuppressed,
                 entity.FailureCode,
                 entity.RejectionStage,
                 entity.StopLossPrice,
@@ -447,7 +503,7 @@ public sealed class TrainingDatasetBuilderService(
                 entity.CreatedDate))
             .ToListAsync(cancellationToken);
 
-        return rows
+        var selectedOrdersBySignalId = rows
             .GroupBy(entity => entity.StrategySignalId)
             .ToDictionary(
                 group => group.Key,
@@ -457,6 +513,86 @@ public sealed class TrainingDatasetBuilderService(
                     .ThenByDescending(entity => entity.LastStateChangedAtUtc)
                     .ThenByDescending(entity => entity.CreatedDate)
                     .First());
+
+        var realizedPnlByExecutionOrderId = await LoadRealizedPnlByExecutionOrderIdAsync(
+            userId,
+            selectedOrdersBySignalId.Values.Select(entity => entity.Id).Distinct().ToArray(),
+            cancellationToken);
+
+        return rows
+            .GroupBy(entity => entity.StrategySignalId)
+            .ToDictionary(
+                group => group.Key,
+                group =>
+                {
+                    var selectedOrder = selectedOrdersBySignalId[group.Key];
+                    return new ExecutionOrderContextProjection(
+                        selectedOrder,
+                        group.Count(entity => entity.DuplicateSuppressed),
+                        group.Count(entity => entity.SignalType == StrategySignalType.Exit && !entity.ReduceOnly),
+                        realizedPnlByExecutionOrderId.TryGetValue(selectedOrder.Id, out var realizedPnl)
+                            ? realizedPnl
+                            : null);
+                });
+    }
+
+    private async Task<IReadOnlyDictionary<Guid, decimal>> LoadRealizedPnlByExecutionOrderIdAsync(
+        string userId,
+        IReadOnlyCollection<Guid> executionOrderIds,
+        CancellationToken cancellationToken)
+    {
+        if (executionOrderIds.Count == 0)
+        {
+            return new Dictionary<Guid, decimal>();
+        }
+
+        var spotPnlRows = await dbContext.SpotPortfolioFills
+            .AsNoTracking()
+            .Where(entity =>
+                entity.OwnerUserId == userId &&
+                executionOrderIds.Contains(entity.ExecutionOrderId) &&
+                !entity.IsDeleted)
+            .GroupBy(entity => entity.ExecutionOrderId)
+            .Select(group => new
+            {
+                ExecutionOrderId = group.Key,
+                RealizedPnl = group.Sum(entity => entity.RealizedPnlDelta)
+            })
+            .ToListAsync(cancellationToken);
+
+        var normalizedExecutionOrderIds = executionOrderIds
+            .Select(static entity => entity.ToString("N"))
+            .ToArray();
+
+        var demoPnlRows = await dbContext.DemoLedgerTransactions
+            .AsNoTracking()
+            .Where(entity =>
+                entity.OwnerUserId == userId &&
+                entity.OrderId != null &&
+                normalizedExecutionOrderIds.Contains(entity.OrderId) &&
+                !entity.IsDeleted)
+            .GroupBy(entity => entity.OrderId!)
+            .Select(group => new
+            {
+                OrderId = group.Key,
+                RealizedPnl = group.Sum(entity => entity.RealizedPnlDelta ?? 0m)
+            })
+            .ToListAsync(cancellationToken);
+
+        var result = spotPnlRows.ToDictionary(entity => entity.ExecutionOrderId, entity => entity.RealizedPnl);
+        foreach (var row in demoPnlRows)
+        {
+            if (!Guid.TryParseExact(row.OrderId, "N", out var executionOrderId))
+            {
+                continue;
+            }
+
+            result[executionOrderId] = result.TryGetValue(executionOrderId, out var existingRealizedPnl)
+                ? existingRealizedPnl + row.RealizedPnl
+                : row.RealizedPnl;
+        }
+
+        return result;
     }
 
     private async Task<IReadOnlyDictionary<MarketKey, IReadOnlyCollection<CandleProjection>>> LoadCandleWindowsAsync(
@@ -507,7 +643,7 @@ public sealed class TrainingDatasetBuilderService(
         IReadOnlyCollection<DecisionProjection> decisions,
         IReadOnlyDictionary<Guid, FeatureProjection> featuresById,
         IReadOnlyDictionary<Guid, OutcomeProjection> outcomesByDecisionId,
-        IReadOnlyDictionary<Guid, ExecutionOrderProjection> executionOrdersBySignalId,
+        IReadOnlyDictionary<Guid, ExecutionOrderContextProjection> executionOrderContextsBySignalId,
         IReadOnlyDictionary<MarketKey, IReadOnlyCollection<CandleProjection>> candleWindowsByMarket)
     {
         var rows = new List<DatasetSourceRow>(decisions.Count);
@@ -520,17 +656,34 @@ public sealed class TrainingDatasetBuilderService(
             }
 
             outcomesByDecisionId.TryGetValue(decision.Id, out var outcome);
-            var executionOrder = decision.StrategySignalId.HasValue &&
-                                 executionOrdersBySignalId.TryGetValue(decision.StrategySignalId.Value, out var resolvedOrder)
-                ? resolvedOrder
+            var executionOrderContext = decision.StrategySignalId.HasValue &&
+                                        executionOrderContextsBySignalId.TryGetValue(decision.StrategySignalId.Value, out var resolvedOrderContext)
+                ? resolvedOrderContext
                 : null;
 
+            var executionOrder = executionOrderContext?.SelectedOrder;
+
             var labelDirection = ResolveLabelDirection(decision.AiDirection, decision.StrategyDirection);
-            var isTrainingEligible = outcome is not null && outcome.OutcomeState == AiShadowOutcomeState.Scored;
+            var directionalReturn = ResolveDirectionalReturn(outcome, labelDirection);
+            var outcomeLabel = ResolveOutcomeLabel(outcome, directionalReturn);
+            var expectedMovePct = ResolveExpectedMovePct(feature);
+            var riskViolationCount = ResolveRiskViolationCount(decision);
+            var staleDataEntryCount = ResolveStaleDataEntryCount(decision, feature);
+            var duplicateOrderCount = executionOrderContext?.DuplicateOrderCount ?? 0;
+            var reduceOnlyViolationCount = executionOrderContext?.ReduceOnlyViolationCount ?? 0;
+            var orderNotional = ResolveOrderNotional(executionOrder);
+            var realizedPnl = executionOrderContext?.RealizedPnl;
 
             var marketKey = new MarketKey(feature.Symbol, feature.Timeframe);
             candleWindowsByMarket.TryGetValue(marketKey, out var marketCandles);
             var excursions = ResolveExcursions(outcome, labelDirection, marketCandles);
+            var estimatedPnl = ResolveEstimatedPnl(directionalReturn, orderNotional);
+            var drawdown = ResolveDrawdown(excursions.MaeReturn, orderNotional);
+            var goodEntry = ResolveGoodEntry(outcomeLabel);
+            var goodExit = ResolveGoodExit(executionOrder, realizedPnl, estimatedPnl, outcomeLabel);
+            var falseSignal = ResolveFalseSignal(outcomeLabel);
+            var labelCompleteness = ResolveLabelCompleteness(outcome, labelDirection, expectedMovePct, outcomeLabel);
+            var isTrainingEligible = outcome is not null && outcome.OutcomeState == AiShadowOutcomeState.Scored;
             var protectiveDirection = ResolveExecutionDirection(executionOrder, labelDirection);
             var takeProfitTouched = ResolveProtectiveTouch(protectiveDirection, executionOrder?.TakeProfitPrice, marketCandles, outcome, isStopLoss: false);
             var stopLossTouched = ResolveProtectiveTouch(protectiveDirection, executionOrder?.StopLossPrice, marketCandles, outcome, isStopLoss: true);
@@ -622,7 +775,23 @@ public sealed class TrainingDatasetBuilderService(
                 ["label_was_filled"] = FormatBool(executionOrder?.State == ExecutionOrderState.Filled),
                 ["label_execution_state"] = executionOrder?.State.ToString(),
                 ["label_execution_failure_code"] = executionOrder?.FailureCode,
-                ["label_execution_rejection_stage"] = executionOrder?.RejectionStage.ToString()
+                ["label_execution_rejection_stage"] = executionOrder?.RejectionStage.ToString(),
+                ["label_good_entry"] = FormatBool(goodEntry),
+                ["label_good_exit"] = FormatBool(goodExit),
+                ["label_outcome"] = outcomeLabel,
+                ["label_false_signal"] = FormatBool(falseSignal),
+                ["label_expected_move_pct"] = FormatDecimal(expectedMovePct),
+                ["label_max_favorable_excursion"] = FormatDecimal(excursions.MfeReturn),
+                ["label_max_adverse_excursion"] = FormatDecimal(ResolveAdverseExcursionMagnitude(excursions.MaeReturn)),
+                ["label_realized_pnl"] = FormatDecimal(realizedPnl),
+                ["label_estimated_pnl"] = FormatDecimal(estimatedPnl),
+                ["label_drawdown"] = FormatDecimal(drawdown),
+                ["label_risk_violation_count"] = riskViolationCount.ToString(CultureInfo.InvariantCulture),
+                ["label_duplicate_order_count"] = duplicateOrderCount.ToString(CultureInfo.InvariantCulture),
+                ["label_stale_data_entry_count"] = staleDataEntryCount.ToString(CultureInfo.InvariantCulture),
+                ["label_reduce_only_violation_count"] = reduceOnlyViolationCount.ToString(CultureInfo.InvariantCulture),
+                ["label_completeness"] = labelCompleteness,
+                ["label_version"] = LabelVersion
             };
 
             rows.Add(new DatasetSourceRow(
@@ -788,6 +957,209 @@ public sealed class TrainingDatasetBuilderService(
                string.Equals(decision.FinalAction, "NoSubmit", StringComparison.Ordinal);
     }
 
+    private static decimal? ResolveDirectionalReturn(OutcomeProjection? outcome, string? labelDirection)
+    {
+        if (outcome?.OutcomeState != AiShadowOutcomeState.Scored ||
+            outcome.RealizedReturn is null ||
+            string.IsNullOrWhiteSpace(labelDirection))
+        {
+            return null;
+        }
+
+        return string.Equals(labelDirection, "Short", StringComparison.Ordinal)
+            ? RoundLabelReturn(-outcome.RealizedReturn.Value)
+            : RoundLabelReturn(outcome.RealizedReturn.Value);
+    }
+
+    private static string ResolveOutcomeLabel(OutcomeProjection? outcome, decimal? directionalReturn)
+    {
+        if (outcome?.OutcomeState != AiShadowOutcomeState.Scored || directionalReturn is null)
+        {
+            return "Unknown";
+        }
+
+        if (directionalReturn.Value > 0m)
+        {
+            return "Win";
+        }
+
+        if (directionalReturn.Value < 0m)
+        {
+            return "Loss";
+        }
+
+        return "Neutral";
+    }
+
+    private static bool? ResolveGoodEntry(string outcomeLabel)
+    {
+        return outcomeLabel switch
+        {
+            "Win" => true,
+            "Loss" => false,
+            "Neutral" => false,
+            _ => null
+        };
+    }
+
+    private static bool? ResolveGoodExit(
+        ExecutionOrderProjection? executionOrder,
+        decimal? realizedPnl,
+        decimal? estimatedPnl,
+        string outcomeLabel)
+    {
+        if (executionOrder is null ||
+            (executionOrder.SignalType != StrategySignalType.Exit && !executionOrder.ReduceOnly))
+        {
+            return null;
+        }
+
+        var resolvedPnl = realizedPnl ?? estimatedPnl;
+        if (resolvedPnl.HasValue)
+        {
+            return resolvedPnl.Value > 0m;
+        }
+
+        return outcomeLabel switch
+        {
+            "Win" => true,
+            "Loss" => false,
+            "Neutral" => false,
+            _ => null
+        };
+    }
+
+    private static bool? ResolveFalseSignal(string outcomeLabel)
+    {
+        return outcomeLabel switch
+        {
+            "Loss" => true,
+            "Win" => false,
+            "Neutral" => false,
+            _ => null
+        };
+    }
+
+    private static decimal? ResolveExpectedMovePct(FeatureProjection feature)
+    {
+        if (feature.ReferencePrice is not > 0m || feature.Atr is null)
+        {
+            return null;
+        }
+
+        return RoundLabelReturn(feature.Atr.Value / feature.ReferencePrice.Value);
+    }
+
+    private static decimal? ResolveOrderNotional(ExecutionOrderProjection? executionOrder)
+    {
+        if (executionOrder is null)
+        {
+            return null;
+        }
+
+        var price = executionOrder.AverageFillPrice ?? executionOrder.Price;
+        var quantity = executionOrder.FilledQuantity > 0m
+            ? executionOrder.FilledQuantity
+            : executionOrder.Quantity;
+
+        if (price <= 0m || quantity <= 0m)
+        {
+            return null;
+        }
+
+        return decimal.Round(price * quantity, 8, MidpointRounding.AwayFromZero);
+    }
+
+    private static decimal? ResolveEstimatedPnl(decimal? directionalReturn, decimal? orderNotional)
+    {
+        if (directionalReturn is null || orderNotional is null)
+        {
+            return null;
+        }
+
+        return decimal.Round(directionalReturn.Value * orderNotional.Value, 8, MidpointRounding.AwayFromZero);
+    }
+
+    private static decimal? ResolveDrawdown(decimal? maeReturn, decimal? orderNotional)
+    {
+        if (maeReturn is null || orderNotional is null)
+        {
+            return null;
+        }
+
+        return decimal.Round(Math.Abs(maeReturn.Value) * orderNotional.Value, 8, MidpointRounding.AwayFromZero);
+    }
+
+    private static decimal? ResolveAdverseExcursionMagnitude(decimal? maeReturn)
+    {
+        return maeReturn.HasValue
+            ? RoundLabelReturn(Math.Abs(maeReturn.Value))
+            : null;
+    }
+
+    private static int ResolveRiskViolationCount(DecisionProjection decision)
+    {
+        var count = 0;
+        if (decision.RiskVetoPresent)
+        {
+            count++;
+        }
+
+        if (decision.PilotSafetyBlocked)
+        {
+            count++;
+        }
+
+        return count;
+    }
+
+    private static int ResolveStaleDataEntryCount(DecisionProjection decision, FeatureProjection feature)
+    {
+        var staleReasonCount = 0;
+        if (ContainsStaleReason(decision.HypotheticalBlockReason))
+        {
+            staleReasonCount++;
+        }
+
+        if (ContainsStaleReason(decision.NoSubmitReason) &&
+            !string.Equals(decision.NoSubmitReason, decision.HypotheticalBlockReason, StringComparison.Ordinal))
+        {
+            staleReasonCount++;
+        }
+
+        if (staleReasonCount > 0)
+        {
+            return staleReasonCount;
+        }
+
+        return ResolveWasBlocked(decision) && feature.MarketDataReasonCode != DegradedModeReasonCode.None
+            ? 1
+            : 0;
+    }
+
+    private static string ResolveLabelCompleteness(
+        OutcomeProjection? outcome,
+        string? labelDirection,
+        decimal? expectedMovePct,
+        string outcomeLabel)
+    {
+        if (outcomeLabel == "Unknown" || outcome?.OutcomeState != AiShadowOutcomeState.Scored)
+        {
+            return "Unknown";
+        }
+
+        return !string.IsNullOrWhiteSpace(labelDirection) && expectedMovePct.HasValue
+            ? "Complete"
+            : "Partial";
+    }
+
+    private static bool ContainsStaleReason(string? value)
+    {
+        return !string.IsNullOrWhiteSpace(value) &&
+               (value.Contains("StaleMarketData", StringComparison.OrdinalIgnoreCase) ||
+                value.Contains("MissingFreshSignalData", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static string? ResolveBlockReason(DecisionProjection decision)
     {
         return NormalizeOptional(decision.HypotheticalBlockReason, 64)
@@ -829,26 +1201,36 @@ public sealed class TrainingDatasetBuilderService(
         };
     }
 
-    private static string BuildCsv(IReadOnlyCollection<TrainingDatasetRowSnapshot> rows)
+    private static string BuildCsv(
+        IReadOnlyCollection<TrainingDatasetRowSnapshot> rows,
+        IReadOnlyCollection<string> columnOrder)
     {
         var builder = new StringBuilder();
-        builder.AppendLine(string.Join(",", ColumnOrder.Select(EscapeCsv)));
+        builder.AppendLine(string.Join(",", columnOrder.Select(EscapeCsv)));
 
         foreach (var row in rows)
         {
             builder.AppendLine(string.Join(",",
-                ColumnOrder.Select(column =>
+                columnOrder.Select(column =>
                     EscapeCsv(row.Values.TryGetValue(column, out var value) ? value : null))));
         }
 
         return builder.ToString();
     }
 
-    private string BuildFileName(TrainingDatasetBuildSnapshot dataset)
+    private string BuildFileName(TrainingDatasetBuildSnapshot dataset, TrainingDatasetExportMode exportMode)
     {
         var symbol = string.IsNullOrWhiteSpace(dataset.Symbol) ? "all-symbols" : dataset.Symbol;
         var timeframe = string.IsNullOrWhiteSpace(dataset.Timeframe) ? "all-timeframes" : dataset.Timeframe;
-        return $"training-dataset-{symbol}-{timeframe}-{dataset.HorizonKind}-{dataset.HorizonValue}-{DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime):yyyyMMdd}.csv";
+        var exportModeSuffix = exportMode == TrainingDatasetExportMode.Sanitized ? "-sanitized" : string.Empty;
+        return $"training-dataset-{symbol}-{timeframe}-{dataset.HorizonKind}-{dataset.HorizonValue}-{DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime):yyyyMMdd}{exportModeSuffix}.csv";
+    }
+
+    private static IReadOnlyCollection<string> ResolveExportColumnOrder(TrainingDatasetExportMode exportMode)
+    {
+        return exportMode == TrainingDatasetExportMode.Sanitized
+            ? SanitizedColumnOrder
+            : InternalColumnOrder;
     }
 
     private static string EscapeCsv(string? value)
@@ -1063,12 +1445,25 @@ public sealed class TrainingDatasetBuilderService(
         DateTime? FutureCandleCloseTimeUtc,
         decimal? ReferenceClosePrice);
 
+    private sealed record ExecutionOrderContextProjection(
+        ExecutionOrderProjection SelectedOrder,
+        int DuplicateOrderCount,
+        int ReduceOnlyViolationCount,
+        decimal? RealizedPnl);
+
     private sealed record ExecutionOrderProjection(
         Guid Id,
         Guid StrategySignalId,
+        StrategySignalType SignalType,
         ExecutionOrderSide Side,
+        decimal Quantity,
+        decimal FilledQuantity,
+        decimal Price,
+        decimal? AverageFillPrice,
         ExecutionOrderState State,
         bool SubmittedToBroker,
+        bool ReduceOnly,
+        bool DuplicateSuppressed,
         string? FailureCode,
         ExecutionRejectionStage RejectionStage,
         decimal? StopLossPrice,

@@ -20,6 +20,7 @@ public sealed class TrainingDatasetBuilderIntegrationTests
         var botId = Guid.NewGuid();
         var featureSnapshotId = Guid.NewGuid();
         var decisionId = Guid.NewGuid();
+        var strategySignalId = Guid.NewGuid();
         var anchorTimeUtc = new DateTime(2026, 4, 24, 12, 0, 0, DateTimeKind.Utc);
 
         await using var dbContext = CreateDbContext(connectionString);
@@ -29,7 +30,7 @@ public sealed class TrainingDatasetBuilderIntegrationTests
             await dbContext.Database.EnsureDeletedAsync();
             await dbContext.Database.MigrateAsync();
 
-            await SeedGraphAsync(dbContext, userId, botId, featureSnapshotId, decisionId, anchorTimeUtc);
+            await SeedGraphAsync(dbContext, userId, botId, featureSnapshotId, decisionId, strategySignalId, anchorTimeUtc);
 
             var timeProvider = new FixedTimeProvider(new DateTime(2026, 4, 24, 14, 0, 0, DateTimeKind.Utc));
             var builder = new TrainingDatasetBuilderService(
@@ -46,11 +47,88 @@ public sealed class TrainingDatasetBuilderIntegrationTests
             Assert.Equal(1, dataset.SourceRowCount);
             Assert.True(row.IsTrainingEligible);
             Assert.Equal("Scored", row.Values["label_outcome_state"]);
+            Assert.Equal("Win", row.Values["label_outcome"]);
+            Assert.Equal("true", row.Values["label_good_entry"]);
+            Assert.Null(row.Values["label_good_exit"]);
+            Assert.Equal("false", row.Values["label_false_signal"]);
+            Assert.Equal("0.011", row.Values["label_expected_move_pct"]);
             Assert.Equal("0.02", row.Values["label_realized_return"]);
             Assert.Equal("0.03", row.Values["label_mfe_return"]);
             Assert.Equal("-0.01", row.Values["label_mae_return"]);
+            Assert.Equal("0.03", row.Values["label_max_favorable_excursion"]);
+            Assert.Equal("0.01", row.Values["label_max_adverse_excursion"]);
+            Assert.Equal("7.25", row.Values["label_realized_pnl"]);
+            Assert.Equal("0.2", row.Values["label_estimated_pnl"]);
+            Assert.Equal("0.1", row.Values["label_drawdown"]);
+            Assert.Equal("0", row.Values["label_risk_violation_count"]);
+            Assert.Equal("0", row.Values["label_duplicate_order_count"]);
+            Assert.Equal("0", row.Values["label_stale_data_entry_count"]);
+            Assert.Equal("0", row.Values["label_reduce_only_violation_count"]);
+            Assert.Equal("Complete", row.Values["label_completeness"]);
+            Assert.Equal("TDL-1.v1", row.Values["label_version"]);
             Assert.Contains("meta_is_training_eligible", export.CsvContent, StringComparison.Ordinal);
             Assert.Contains("label_outcome_score", export.CsvContent, StringComparison.Ordinal);
+            Assert.Contains("label_good_entry", export.CsvContent, StringComparison.Ordinal);
+            Assert.Contains("label_version", export.CsvContent, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await SqlServerIntegrationDatabase.CleanupDatabaseAsync(connectionString);
+        }
+    }
+
+    [Fact]
+    public async Task ExportCsvAsync_SanitizedMode_RemovesInternalMetadataColumns_OnSqlServer()
+    {
+        var connectionString = SqlServerIntegrationDatabase.ResolveConnectionString($"CoinBotTrainingDatasetSanitized_{Guid.NewGuid():N}");
+        const string userId = "ml-dataset-int-user";
+        var botId = Guid.NewGuid();
+        var featureSnapshotId = Guid.NewGuid();
+        var decisionId = Guid.NewGuid();
+        var anchorTimeUtc = new DateTime(2026, 4, 24, 12, 30, 0, DateTimeKind.Utc);
+
+        await using var dbContext = CreateDbContext(connectionString);
+
+        try
+        {
+            await dbContext.Database.EnsureDeletedAsync();
+            await dbContext.Database.MigrateAsync();
+
+            await SeedGraphAsync(dbContext, userId, botId, featureSnapshotId, decisionId, Guid.NewGuid(), anchorTimeUtc);
+
+            var timeProvider = new FixedTimeProvider(new DateTime(2026, 4, 24, 14, 15, 0, DateTimeKind.Utc));
+            var builder = new TrainingDatasetBuilderService(
+                dbContext,
+                new AiShadowDecisionService(dbContext, timeProvider),
+                timeProvider);
+
+            var export = await builder.ExportCsvAsync(new TrainingDatasetBuildRequest(
+                userId,
+                HorizonValue: 2,
+                ExportMode: TrainingDatasetExportMode.Sanitized));
+
+            Assert.Equal(TrainingDatasetExportMode.Sanitized, export.ExportMode);
+            Assert.DoesNotContain("meta_user_id", export.ColumnOrder);
+            Assert.DoesNotContain("meta_bot_id", export.ColumnOrder);
+            Assert.DoesNotContain("meta_feature_snapshot_id", export.ColumnOrder);
+            Assert.DoesNotContain("meta_ai_shadow_decision_id", export.ColumnOrder);
+            Assert.DoesNotContain("meta_strategy_signal_id", export.ColumnOrder);
+            Assert.DoesNotContain("meta_execution_order_id", export.ColumnOrder);
+            Assert.DoesNotContain("meta_correlation_id", export.ColumnOrder);
+            Assert.DoesNotContain("meta_snapshot_key", export.ColumnOrder);
+            Assert.DoesNotContain(userId, export.CsvContent, StringComparison.Ordinal);
+            Assert.DoesNotContain(botId.ToString("D"), export.CsvContent, StringComparison.Ordinal);
+            Assert.DoesNotContain(featureSnapshotId.ToString("D"), export.CsvContent, StringComparison.Ordinal);
+            Assert.DoesNotContain(decisionId.ToString("D"), export.CsvContent, StringComparison.Ordinal);
+            Assert.DoesNotContain($"corr-{featureSnapshotId:N}", export.CsvContent, StringComparison.Ordinal);
+            Assert.DoesNotContain($"shadow-{decisionId:N}", export.CsvContent, StringComparison.Ordinal);
+            Assert.DoesNotContain($"snapshot-{featureSnapshotId:N}", export.CsvContent, StringComparison.Ordinal);
+            Assert.Contains("meta_symbol", export.ColumnOrder);
+            Assert.Contains("label_outcome_score", export.CsvContent, StringComparison.Ordinal);
+            Assert.Contains("label_outcome", export.CsvContent, StringComparison.Ordinal);
+            Assert.Contains("label_completeness", export.CsvContent, StringComparison.Ordinal);
+            Assert.Contains("label_version", export.CsvContent, StringComparison.Ordinal);
+            Assert.Contains("-sanitized.csv", export.FileName, StringComparison.Ordinal);
         }
         finally
         {
@@ -73,6 +151,7 @@ public sealed class TrainingDatasetBuilderIntegrationTests
         Guid botId,
         Guid featureSnapshotId,
         Guid decisionId,
+        Guid strategySignalId,
         DateTime anchorTimeUtc)
     {
         dbContext.Users.Add(new ApplicationUser
@@ -155,6 +234,7 @@ public sealed class TrainingDatasetBuilderIntegrationTests
             OwnerUserId = userId,
             BotId = botId,
             FeatureSnapshotId = featureSnapshotId,
+            StrategySignalId = strategySignalId,
             CorrelationId = $"shadow-{decisionId:N}",
             StrategyKey = "ml-shadow-core",
             Symbol = "BTCUSDT",
@@ -179,6 +259,57 @@ public sealed class TrainingDatasetBuilderIntegrationTests
             HypotheticalSubmitAllowed = true,
             NoSubmitReason = "ShadowModeActive",
             AgreementState = "Agreement"
+        });
+
+        var executionOrderId = Guid.NewGuid();
+        dbContext.ExecutionOrders.Add(new ExecutionOrder
+        {
+            Id = executionOrderId,
+            OwnerUserId = userId,
+            TradingStrategyId = Guid.NewGuid(),
+            TradingStrategyVersionId = Guid.NewGuid(),
+            StrategySignalId = strategySignalId,
+            SignalType = StrategySignalType.Entry,
+            BotId = botId,
+            Plane = ExchangeDataPlane.Futures,
+            StrategyKey = "ml-shadow-core",
+            Symbol = "BTCUSDT",
+            Timeframe = "1m",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = ExecutionOrderSide.Buy,
+            OrderType = ExecutionOrderType.Market,
+            Quantity = 0.1m,
+            Price = 100m,
+            FilledQuantity = 0.1m,
+            AverageFillPrice = 100m,
+            ExecutionEnvironment = ExecutionEnvironment.Live,
+            State = ExecutionOrderState.Filled,
+            IdempotencyKey = $"idem-{strategySignalId:N}",
+            RootCorrelationId = $"corr-{strategySignalId:N}",
+            SubmittedToBroker = true,
+            SubmittedAtUtc = anchorTimeUtc.AddSeconds(15),
+            LastFilledAtUtc = anchorTimeUtc.AddSeconds(20),
+            LastStateChangedAtUtc = anchorTimeUtc.AddSeconds(20)
+        });
+
+        dbContext.DemoLedgerTransactions.Add(new DemoLedgerTransaction
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = userId,
+            OperationId = $"demo-op-{executionOrderId:N}",
+            TransactionType = DemoLedgerTransactionType.FillApplied,
+            BotId = botId,
+            PositionScopeKey = "BTCUSDT:1m",
+            OrderId = executionOrderId.ToString("N"),
+            Symbol = "BTCUSDT",
+            BaseAsset = "BTC",
+            QuoteAsset = "USDT",
+            Side = DemoTradeSide.Buy,
+            Quantity = 0.1m,
+            Price = 100m,
+            RealizedPnlDelta = 7.25m,
+            OccurredAtUtc = anchorTimeUtc.AddMinutes(3)
         });
 
         SeedHistoricalCandle(dbContext, anchorTimeUtc, 100m, 100m, 100m);

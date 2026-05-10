@@ -127,3 +127,51 @@ Resolved here:
 - fixed the `xUnit2031` test warning in `StrategyLifecycleIntegrationTests`
 
 Any warnings that remain after validation should be tracked explicitly and resolved intentionally; do not hide them behind broad suppression.
+
+## ML dataset workflow
+
+Current ML support is offline-only and must remain execution-neutral.
+
+Status checkpoints:
+- `FAZ-ML-01-DATA-READINESS-EVIDENCE-AUDIT`: `CLOSED AS PARTIAL_READY`
+- `FAZ-ML-02-FEATURE-STORE`: safe feature snapshot store added for offline research
+- `FAZ-ML-03-DATASET-BUILDER-LABELING`: deterministic label set added for dataset export and analysis
+
+Operational rules:
+- do not connect ML dataset generation to broker submit, execution gating, or strategy routing
+- use `TrainingDatasetExportMode.Internal` only for local/internal analysis
+- use `TrainingDatasetExportMode.Sanitized` for shared or reviewable CSV exports
+- keep sanitized exports free of internal identifiers such as user ids, bot ids, snapshot ids, strategy signal ids, execution order ids, and correlation ids
+
+Current dataset contracts:
+- feature snapshot schema version: `MLFS-1.v1`
+- label schema version: `TDL-1.v1`
+
+Deterministic labels currently exported:
+- `label_good_entry`
+- `label_good_exit`
+- `label_outcome`
+- `label_false_signal`
+- `label_expected_move_pct`
+- `label_max_favorable_excursion`
+- `label_max_adverse_excursion`
+- `label_realized_pnl`
+- `label_estimated_pnl`
+- `label_drawdown`
+- `label_risk_violation_count`
+- `label_duplicate_order_count`
+- `label_stale_data_entry_count`
+- `label_reduce_only_violation_count`
+- `label_completeness`
+- `label_version`
+
+Label derivation rules:
+- `Unknown` must remain explicit when scored outcome or directional basis is missing
+- actual realized PnL may be taken from `SpotPortfolioFills` or `DemoLedgerTransactions` when linked to the resolved execution order
+- estimated PnL and drawdown use deterministic order notional and scored outcome/excursion values when actual realized PnL is unavailable
+- risk, duplicate, stale-data, and reduce-only violations are negative/safety labels and should not be suppressed
+
+Validation minimum:
+- run solution build
+- run unit tests covering dataset, label, ML, PnL, and outcome slices
+- run `TrainingDatasetBuilderIntegrationTests` when changing export or SQL-backed label wiring

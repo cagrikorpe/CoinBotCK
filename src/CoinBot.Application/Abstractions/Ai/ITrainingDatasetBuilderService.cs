@@ -23,7 +23,8 @@ public sealed record TrainingDatasetBuildRequest(
     AiShadowOutcomeHorizonKind HorizonKind = AiShadowOutcomeDefaults.OfficialHorizonKind,
     int HorizonValue = AiShadowOutcomeDefaults.OfficialHorizonValue,
     int Take = 500,
-    bool TrainingEligibleOnly = true);
+    bool TrainingEligibleOnly = true,
+    TrainingDatasetExportMode ExportMode = TrainingDatasetExportMode.Internal);
 
 public sealed record TrainingDatasetBuildSnapshot(
     string UserId,
@@ -46,6 +47,7 @@ public sealed record TrainingDatasetExportSnapshot(
     string CsvContent,
     int SourceRowCount,
     int RowCount,
+    TrainingDatasetExportMode ExportMode,
     IReadOnlyCollection<string> ColumnOrder);
 
 public sealed record TrainingDatasetColumnSnapshot(
@@ -74,4 +76,10 @@ public enum TrainingDatasetColumnGroup
     Metadata = 0,
     Feature = 1,
     Label = 2
+}
+
+public enum TrainingDatasetExportMode
+{
+    Internal = 0,
+    Sanitized = 1
 }
