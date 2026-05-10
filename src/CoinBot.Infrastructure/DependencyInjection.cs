@@ -273,6 +273,7 @@ public static class DependencyInjection
         services.AddScoped<ITrainingDatasetBuilderService, TrainingDatasetBuilderService>();
         services.AddScoped<IStrategySignalService, StrategySignalService>();
         services.AddScoped<ITradingFeatureSnapshotService, TradingFeatureSnapshotService>();
+        services.AddScoped<IMlFeatureSnapshotService, MlFeatureSnapshotService>();
         services.AddScoped<IStrategyVersionService, StrategyVersionService>();
         services.AddScoped<TradingModeService>();
         services.AddScoped<ITradingModeResolver>(serviceProvider => serviceProvider.GetRequiredService<TradingModeService>());

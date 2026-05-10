@@ -8,6 +8,7 @@ using CoinBot.Application.Abstractions.Administration;
 using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.DemoPortfolio;
 using CoinBot.Application.Abstractions.Execution;
+using CoinBot.Application.Abstractions.Features;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Application.Abstractions.Risk;
@@ -2092,6 +2093,19 @@ public sealed class MarketScannerHandoffService(
         dbContext.MarketScannerHandoffAttempts.Add(attempt);
         await dbContext.SaveChangesAsync(cancellationToken);
 
+        await TryCaptureMlFeatureSnapshotAsync(
+            ownerUserId,
+            botMatch,
+            candidate,
+            attempt,
+            executionEnvironment: dispatchResult.Order.ExecutionEnvironment,
+            strategyDirection: ResolveSignalDirection(strategySignal).ToString(),
+            orderSignalType: executionContext.SignalType,
+            orderState: dispatchResult.Order.State,
+            submittedToBroker: dispatchResult.Order.SubmittedToBroker,
+            reduceOnly: dispatchResult.Order.ReduceOnly,
+            cancellationToken);
+
         logger.LogInformation(
             "Market scanner handoff prepared. HandoffAttemptId={HandoffAttemptId} ScanCycleId={ScanCycleId} Symbol={Symbol} BotId={BotId} StrategySignalId={StrategySignalId}.",
             attempt.Id,
@@ -2192,6 +2206,21 @@ public sealed class MarketScannerHandoffService(
         dbContext.MarketScannerHandoffAttempts.Add(attempt);
         await dbContext.SaveChangesAsync(cancellationToken);
 
+        await TryCaptureMlFeatureSnapshotAsync(
+            ownerUserId,
+            botMatch,
+            selectedCandidate,
+            attempt,
+            executionEnvironment: executionContext?.Environment,
+            strategyDirection: strategySignal is not null
+                ? ResolveSignalDirection(strategySignal).ToString()
+                : ExtractSummaryTokenValue(selectedCandidate?.ScoringSummary, "StrategyDirection"),
+            orderSignalType: executionContext?.SignalType,
+            orderState: null,
+            submittedToBroker: null,
+            reduceOnly: executionContext?.ReduceOnly,
+            cancellationToken);
+
         logger.LogInformation(
             "Market scanner handoff blocked. HandoffAttemptId={HandoffAttemptId} ScanCycleId={ScanCycleId} Symbol={Symbol} Status={Status} BlockerCode={BlockerCode}.",
             attempt.Id,
@@ -2265,7 +2294,78 @@ public sealed class MarketScannerHandoffService(
             .OrderByDescending(entity => entity.CreatedDate)
             .ThenByDescending(entity => entity.SelectedAtUtc)
             .ThenByDescending(entity => entity.Id)
-            .FirstOrDefaultAsync(cancellationToken);
+              .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    private async Task TryCaptureMlFeatureSnapshotAsync(
+        string? ownerUserId,
+        BotStrategyMatch? botMatch,
+        MarketScannerCandidate? candidate,
+        MarketScannerHandoffAttempt attempt,
+        ExecutionEnvironment? executionEnvironment,
+        string? strategyDirection,
+        StrategySignalType? orderSignalType,
+        ExecutionOrderState? orderState,
+        bool? submittedToBroker,
+        bool? reduceOnly,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(ownerUserId) ||
+            botMatch is null ||
+            candidate is null)
+        {
+            return;
+        }
+
+        try
+        {
+            using var snapshotScope = serviceScopeFactory.CreateScope();
+            var dataScopeAccessor = snapshotScope.ServiceProvider.GetRequiredService<IDataScopeContextAccessor>();
+            using var scopeOverride = dataScopeAccessor.BeginScope(ownerUserId);
+            var featureSnapshotService = snapshotScope.ServiceProvider.GetService<IMlFeatureSnapshotService>();
+            if (featureSnapshotService is null)
+            {
+                return;
+            }
+
+            await featureSnapshotService.CaptureAsync(
+                new MlFeatureSnapshotCaptureRequest(
+                    ownerUserId,
+                    botMatch.BotId,
+                    botMatch.ExchangeAccountId,
+                    botMatch.TradingStrategyVersionId,
+                    botMatch.StrategyKey,
+                    attempt.SelectedSymbol ?? candidate.Symbol,
+                    attempt.SelectedTimeframe ?? klineInterval,
+                    attempt.CompletedAtUtc,
+                    candidate.Score,
+                    candidate.MarketScore,
+                    candidate.StrategyScore,
+                    TryParseDecimalToken(candidate.ScoringSummary, "RiskPenalty", out var riskPenalty)
+                        ? riskPenalty
+                        : null,
+                    candidate.ScoringSummary,
+                    strategyDirection,
+                    string.Equals(attempt.ExecutionRequestStatus, "Blocked", StringComparison.Ordinal)
+                        ? "Blocked"
+                        : "Allowed",
+                    attempt.BlockerCode,
+                    attempt.ExecutionRequestStatus,
+                    orderSignalType,
+                    orderState,
+                    submittedToBroker,
+                    reduceOnly,
+                    executionEnvironment),
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(
+                exception,
+                "Market scanner handoff feature snapshot capture failed for Symbol={Symbol} StrategyKey={StrategyKey}.",
+                attempt.SelectedSymbol ?? candidate.Symbol,
+                botMatch.StrategyKey);
+        }
     }
 
     private MarketScannerHandoffAttempt CreateAttempt(
@@ -2607,6 +2707,14 @@ public sealed class MarketScannerHandoffService(
         return token.StartsWith(tokenPrefix, StringComparison.Ordinal)
             ? token[tokenPrefix.Length..]
             : null;
+    }
+
+    private static bool TryParseDecimalToken(string? summary, string key, out decimal value)
+    {
+        value = 0m;
+        var tokenValue = ExtractSummaryTokenValue(summary, key);
+        return !string.IsNullOrWhiteSpace(tokenValue) &&
+               decimal.TryParse(tokenValue, NumberStyles.Number, CultureInfo.InvariantCulture, out value);
     }
 
     private static string ResolveAdvisoryDirection(string? scoringSummary)

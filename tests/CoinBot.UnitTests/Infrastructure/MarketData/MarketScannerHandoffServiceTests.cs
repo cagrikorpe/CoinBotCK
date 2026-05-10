@@ -2,6 +2,7 @@ using CoinBot.Application.Abstractions.DataScope;
 using CoinBot.Application.Abstractions.Ai;
 using CoinBot.Application.Abstractions.DemoPortfolio;
 using CoinBot.Application.Abstractions.Execution;
+using CoinBot.Application.Abstractions.Features;
 using CoinBot.Application.Abstractions.Indicators;
 using CoinBot.Application.Abstractions.MarketData;
 using CoinBot.Application.Abstractions.Strategies;
@@ -921,6 +922,40 @@ public sealed class MarketScannerHandoffServiceTests
             record => record.Level == LogLevel.Information &&
                       record.Message.Contains("AiShadowDecisionCaptureSkipped", StringComparison.Ordinal) &&
                       record.Message.Contains("ServiceMissing", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_DoesNotFailPreparedAttempt_WhenMlFeatureSnapshotCaptureThrows()
+    {
+        var logger = new RecordingLogger<MarketScannerHandoffService>();
+        await using var harness = CreateHarness(
+            new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero),
+            logger: logger,
+            mlFeatureSnapshotService: new ThrowingMlFeatureSnapshotService());
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-ml-feature-write-fail", "BTCUSDT", "pilot-ml-feature-write-fail");
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "BTCUSDT");
+        SeedCandidate(
+            harness.DbContext,
+            scanCycleId,
+            "BTCUSDT",
+            rank: 1,
+            score: 10_000m,
+            scoringSummary: "CandidateScore=10000; MarketScore=55; StrategyScore=80; RiskPenalty=0; FreshnessState=Fresh; HistoricalFallbackState=None");
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("BTCUSDT", "BTC", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "BTCUSDT", "1m", harness.NowUtc));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
+        Assert.Single(harness.DbContext.MarketScannerHandoffAttempts);
+        Assert.Single(harness.DbContext.ExecutionOrders);
+        Assert.Contains(
+            logger.Records,
+            record => record.Level == LogLevel.Warning &&
+                      record.Message.Contains("feature snapshot capture failed", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -2833,6 +2868,7 @@ public sealed class MarketScannerHandoffServiceTests
         ILogger<MarketScannerHandoffService>? logger = null,
         bool registerAiShadowDecisionService = true,
         IAiShadowDecisionService? aiShadowDecisionService = null,
+        IMlFeatureSnapshotService? mlFeatureSnapshotService = null,
         bool? autoManageAdoptedPositionsOverride = null)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -2868,6 +2904,10 @@ public sealed class MarketScannerHandoffServiceTests
         services.AddSingleton<IExecutionEngine>(executionEngine);
         services.AddSingleton<IDemoSessionService>(demoSessionService);
         services.AddSingleton<ITradingModeResolver>(new FakeTradingModeResolver(resolvedTradingMode));
+        if (mlFeatureSnapshotService is not null)
+        {
+            services.AddScoped(_ => mlFeatureSnapshotService);
+        }
         if (registerAiShadowDecisionService)
         {
             services.AddScoped<IAiShadowDecisionService>(provider => new AiShadowDecisionService(
@@ -3735,6 +3775,14 @@ public sealed class MarketScannerHandoffServiceTests
         public Task<AiShadowDecisionOutcomeSummarySnapshot> GetOutcomeSummaryAsync(string userId, AiShadowOutcomeHorizonKind horizonKind = AiShadowOutcomeDefaults.OfficialHorizonKind, int horizonValue = AiShadowOutcomeDefaults.OfficialHorizonValue, int take = 200, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
+        }
+    }
+
+    private sealed class ThrowingMlFeatureSnapshotService : IMlFeatureSnapshotService
+    {
+        public Task<MlFeatureSnapshotModel> CaptureAsync(MlFeatureSnapshotCaptureRequest request, CancellationToken cancellationToken = default)
+        {
+            throw new InvalidOperationException("ML feature snapshot failure");
         }
     }
 

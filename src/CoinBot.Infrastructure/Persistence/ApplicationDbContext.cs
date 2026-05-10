@@ -109,6 +109,8 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
 
     public DbSet<TradingFeatureSnapshot> TradingFeatureSnapshots => Set<TradingFeatureSnapshot>();
 
+    public DbSet<MlFeatureSnapshot> MlFeatureSnapshots => Set<MlFeatureSnapshot>();
+
     public DbSet<AiShadowDecision> AiShadowDecisions => Set<AiShadowDecision>();
 
     public DbSet<AiShadowDecisionOutcome> AiShadowDecisionOutcomes => Set<AiShadowDecisionOutcome>();
@@ -213,6 +215,7 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         ConfigureRiskProfiles(builder.Entity<RiskProfile>());
         ConfigureTradingBots(builder.Entity<TradingBot>());
         ConfigureTradingFeatureSnapshots(builder.Entity<TradingFeatureSnapshot>());
+        ConfigureMlFeatureSnapshots(builder.Entity<MlFeatureSnapshot>());
         ConfigureAiShadowDecisions(builder.Entity<AiShadowDecision>());
         ConfigureAiShadowDecisionOutcomes(builder.Entity<AiShadowDecisionOutcome>());
         ConfigureTradingStrategies(builder.Entity<TradingStrategy>());
@@ -2862,6 +2865,116 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             .WithMany()
             .HasForeignKey(entity => entity.ExchangeAccountId)
             .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureMlFeatureSnapshots(EntityTypeBuilder<MlFeatureSnapshot> builder)
+    {
+        builder.ToTable("MlFeatureSnapshots");
+        builder.HasKey(entity => entity.Id);
+
+        builder.Property(entity => entity.Symbol)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.Timeframe)
+            .HasMaxLength(16)
+            .IsRequired();
+
+        builder.Property(entity => entity.StrategyKey)
+            .HasMaxLength(128)
+            .IsRequired();
+
+        builder.Property(entity => entity.StrategyTemplateKey)
+            .HasMaxLength(128);
+
+        builder.Property(entity => entity.SignalDirection)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        foreach (var propertyName in new[]
+        {
+            nameof(MlFeatureSnapshot.ScannerScore),
+            nameof(MlFeatureSnapshot.MarketScore),
+            nameof(MlFeatureSnapshot.RiskPenalty),
+            nameof(MlFeatureSnapshot.PositionUnrealizedPnl),
+            nameof(MlFeatureSnapshot.PositionRealizedPnl)
+        })
+        {
+            builder.Property(propertyName)
+                .HasPrecision(38, 18);
+        }
+
+        builder.Property(entity => entity.TrendState)
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.VolatilityState)
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.LiquidityState)
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.MarketFreshnessState)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.MarketFreshnessReason)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.MarketFreshnessSource)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.HistoricalFallbackState)
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.PrivatePlaneFreshnessState)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.PrivatePlaneFreshnessReason)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.GuardDecision)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.GuardReasonCode)
+            .HasMaxLength(64);
+
+        builder.Property(entity => entity.ExecutionDecision)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.OrderSignalType)
+            .HasConversion<string>()
+            .HasMaxLength(32);
+
+        builder.Property(entity => entity.OrderState)
+            .HasConversion<string>()
+            .HasMaxLength(32);
+
+        builder.Property(entity => entity.ExecutionEnvironment)
+            .HasConversion<string>()
+            .HasMaxLength(32);
+
+        builder.Property(entity => entity.FeatureCompletenessState)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.FeatureCompletenessSummary)
+            .HasMaxLength(512)
+            .IsRequired();
+
+        builder.Property(entity => entity.SchemaVersion)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.HasIndex(entity => new { entity.Symbol, entity.Timeframe, entity.CapturedAtUtc });
+        builder.HasIndex(entity => new { entity.StrategyKey, entity.CapturedAtUtc });
+        builder.HasIndex(entity => entity.ExecutionDecision);
     }
 
     private void ConfigureAiShadowDecisions(EntityTypeBuilder<AiShadowDecision> builder)
