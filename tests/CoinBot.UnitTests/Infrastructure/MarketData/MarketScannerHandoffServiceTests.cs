@@ -959,6 +959,60 @@ public sealed class MarketScannerHandoffServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_MLShadow_NoInfluence_DoesNotChangePreparedExecutionOrder()
+    {
+        var snapshotService = new ShadowDecisionReturningMlFeatureSnapshotService("WouldSuppress");
+        await using var harness = CreateHarness(
+            new DateTimeOffset(2026, 4, 3, 12, 0, 0, TimeSpan.Zero),
+            new BotExecutionPilotOptions
+            {
+                SignalEvaluationMode = ExecutionEnvironment.Live,
+                ExecutionDispatchMode = ExecutionEnvironment.BinanceTestnet,
+                PilotActivationEnabled = true,
+                PrimeHistoricalCandleCount = 34,
+                AllowedExecutionSymbols = ["BTCUSDT"]
+            },
+            ExecutionEnvironment.Live,
+            mlFeatureSnapshotService: snapshotService);
+        var scanCycleId = Guid.NewGuid();
+        var bot = await SeedBotGraphAsync(harness.DbContext, "user-ml-shadow-no-influence", "BTCUSDT", "pilot-ml-shadow-no-influence");
+        var originalLeverage = (await harness.DbContext.TradingBots.AsNoTracking().SingleAsync(entity => entity.Id == bot.BotId)).Leverage;
+        SeedScanCycle(harness.DbContext, scanCycleId, bestCandidateSymbol: "BTCUSDT");
+        SeedCandidate(
+            harness.DbContext,
+            scanCycleId,
+            "BTCUSDT",
+            rank: 1,
+            score: 10_000m,
+            scoringSummary: "CandidateScore=10000; MarketScore=55; StrategyScore=80; RiskPenalty=0; FreshnessState=Fresh; HistoricalFallbackState=None");
+        await harness.DbContext.SaveChangesAsync();
+        harness.MarketDataService.SetMetadata("BTCUSDT", "BTC", "USDT");
+        harness.IndicatorDataService.SetReadySnapshot(CreateIndicatorSnapshot("BTCUSDT", "1m", harness.NowUtc));
+        harness.StrategySignalService.SetSignal(CreateEntrySignal(bot.TradingStrategyId, bot.TradingStrategyVersionId, "BTCUSDT", "1m", harness.NowUtc));
+
+        var attempt = await harness.Service.RunOnceAsync(scanCycleId);
+
+        Assert.Equal("Prepared", attempt.ExecutionRequestStatus);
+        Assert.NotNull(snapshotService.LastRequest);
+        Assert.Equal("WouldSuppress", snapshotService.LastShadowDecision);
+        var order = await harness.DbContext.ExecutionOrders.SingleAsync(entity => entity.StrategySignalId == attempt.StrategySignalId);
+        Assert.Equal("BTCUSDT", order.Symbol);
+        Assert.Equal("BTCUSDT", harness.ExecutionEngine.LastCommand?.Symbol);
+        Assert.Equal(ExecutionOrderSide.Buy, order.Side);
+        Assert.Equal(ExecutionOrderSide.Buy, harness.ExecutionEngine.LastCommand?.Side);
+        Assert.Equal(order.Quantity, harness.ExecutionEngine.LastCommand?.Quantity);
+        Assert.Equal(ExecutionOrderType.Market, order.OrderType);
+        Assert.Equal(ExecutionOrderType.Market, harness.ExecutionEngine.LastCommand?.OrderType);
+        Assert.Equal(ExecutionEnvironment.BinanceTestnet, order.ExecutionEnvironment);
+        Assert.Equal(ExecutionEnvironment.BinanceTestnet, harness.ExecutionEngine.LastCommand?.RequestedEnvironment);
+        Assert.Equal(ExecutionOrderExecutorKind.BinanceTestnet, order.ExecutorKind);
+        Assert.False(order.SubmittedToBroker);
+        Assert.Equal(false, harness.ExecutionEngine.LastCommand?.ReduceOnly);
+        var persistedBot = await harness.DbContext.TradingBots.AsNoTracking().SingleAsync(entity => entity.Id == bot.BotId);
+        Assert.Equal(originalLeverage, persistedBot.Leverage);
+    }
+
+    [Fact]
     public async Task RunOnceAsync_SuppressesSameDirectionLongEntry_WhenLiveLongPositionAlreadyExists()
     {
         await using var harness = CreateHarness(
@@ -3783,6 +3837,82 @@ public sealed class MarketScannerHandoffServiceTests
         public Task<MlFeatureSnapshotModel> CaptureAsync(MlFeatureSnapshotCaptureRequest request, CancellationToken cancellationToken = default)
         {
             throw new InvalidOperationException("ML feature snapshot failure");
+        }
+    }
+
+    private sealed class ShadowDecisionReturningMlFeatureSnapshotService : IMlFeatureSnapshotService
+    {
+        private readonly string shadowDecision;
+
+        public ShadowDecisionReturningMlFeatureSnapshotService(string shadowDecision)
+        {
+            this.shadowDecision = shadowDecision;
+            LastShadowDecision = shadowDecision;
+        }
+
+        public MlFeatureSnapshotCaptureRequest? LastRequest { get; private set; }
+
+        public string LastShadowDecision { get; private set; }
+
+        public Task<MlFeatureSnapshotModel> CaptureAsync(MlFeatureSnapshotCaptureRequest request, CancellationToken cancellationToken = default)
+        {
+            LastRequest = request;
+            LastShadowDecision = shadowDecision;
+
+            return Task.FromResult(new MlFeatureSnapshotModel(
+                Guid.NewGuid(),
+                request.Symbol,
+                request.Timeframe,
+                request.StrategyKey,
+                StrategyTemplateKey: null,
+                StrategySchemaVersion: null,
+                SignalDirection: request.StrategyDirection ?? "Unavailable",
+                ScannerScore: request.ScannerScore,
+                MarketScore: request.MarketScore,
+                StrategyScore: request.StrategyScore,
+                RiskPenalty: request.RiskPenalty,
+                TrendState: "Unavailable",
+                VolatilityState: "Unavailable",
+                LiquidityState: "Unavailable",
+                MarketFreshnessState: "Unavailable",
+                MarketFreshnessReason: null,
+                MarketFreshnessSource: null,
+                HistoricalFallbackState: "None",
+                PrivatePlaneFreshnessState: "Unavailable",
+                PrivatePlaneFreshnessReason: null,
+                GuardDecision: request.GuardDecision,
+                GuardReasonCode: request.GuardReasonCode,
+                ExecutionDecision: request.ExecutionDecision,
+                OrderSignalType: request.OrderSignalType,
+                OrderState: request.OrderState,
+                SubmittedToBroker: request.SubmittedToBroker,
+                ReduceOnly: request.ReduceOnly,
+                PositionUnrealizedPnl: null,
+                PositionRealizedPnl: null,
+                SignalConfidenceScore: 0m,
+                TrendAlignmentScore: 0m,
+                VolatilityScore: 0m,
+                LiquidityScore: 0m,
+                RecentPerformanceScore: 0m,
+                DrawdownPenalty: 0m,
+                SampleQualityScore: 0m,
+                FeatureCompletenessScore: 0m,
+                CombinedBaselineScore: 0m,
+                BaselineScoreSummary: "n/a",
+                MlShadowScore: 1m,
+                MlConfidence: 100m,
+                MlShadowDecision: shadowDecision,
+                ModelVersion: "test-shadow",
+                FeatureSchemaVersion: "AI-1.v1",
+                ReasonSummary: "ShadowStub",
+                IsDecisionInfluential: false,
+                FeatureCompletenessState: "Unavailable",
+                FeatureCompletenessSummary: "Unavailable",
+                SchemaVersion: "MLFS-test",
+                CapturedAtUtc: DateTime.UtcNow,
+                FeatureAnchorTimeUtc: null,
+                MarketDataTimestampUtc: null,
+                ExecutionEnvironment: request.ExecutionEnvironment));
         }
     }
 

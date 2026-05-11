@@ -17,9 +17,10 @@ public sealed class MlFeatureSnapshotService(
     IOptions<BotExecutionPilotOptions> botExecutionPilotOptions,
     TimeProvider timeProvider,
     ILogger<MlFeatureSnapshotService> logger,
-    IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null) : IMlFeatureSnapshotService
+    IOptions<ExecutionRuntimeOptions>? executionRuntimeOptions = null,
+    IMlShadowScoringService? shadowScoringService = null) : IMlFeatureSnapshotService
 {
-    private const string SchemaVersionValue = "MLFS-1.v2";
+    private const string SchemaVersionValue = "MLFS-1.v3";
     private readonly int privatePlaneFreshnessThresholdMilliseconds =
         checked(Math.Max(1, botExecutionPilotOptions.Value.PrivatePlaneFreshnessThresholdSeconds) * 1000);
     private readonly ExecutionRuntimeOptions executionRuntimeOptionsValue = executionRuntimeOptions?.Value ?? new ExecutionRuntimeOptions();
@@ -88,6 +89,7 @@ public sealed class MlFeatureSnapshotService(
         var liquidityState = ResolveLiquidityState(liquidityScore);
         var featureCompletenessState = ResolveFeatureCompletenessState(latestFeatureSnapshot);
         var featureCompletenessSummary = ResolveFeatureCompletenessSummary(latestFeatureSnapshot);
+        var featureSchemaVersion = NormalizeExplicitState(latestFeatureSnapshot?.FeatureVersion, "Unavailable");
         var baselineScore = MlBaselineScoringEngine.Calculate(
             new MlBaselineScoreInput(
                 strategyScore,
@@ -103,6 +105,16 @@ public sealed class MlFeatureSnapshotService(
                 latestFeatureSnapshot,
                 pnlReference.RealizedPnl,
                 pnlReference.UnrealizedPnl));
+        var shadowScore = shadowScoringService?.Evaluate(
+            new MlShadowScoreInput(
+                latestFeatureSnapshot,
+                baselineScore.CombinedBaselineScore,
+                baselineScore.FeatureCompletenessScore,
+                riskPenalty ?? 0m,
+                request.GuardDecision,
+                request.ExecutionDecision,
+                featureSchemaVersion))
+            ?? CreateUnavailableShadowScore(featureSchemaVersion);
 
         var entity = new MlFeatureSnapshot
         {
@@ -144,6 +156,13 @@ public sealed class MlFeatureSnapshotService(
             FeatureCompletenessScore = baselineScore.FeatureCompletenessScore,
             CombinedBaselineScore = baselineScore.CombinedBaselineScore,
             BaselineScoreSummary = baselineScore.Summary,
+            MlShadowScore = shadowScore.MlShadowScore,
+            MlConfidence = shadowScore.MlConfidence,
+            MlShadowDecision = shadowScore.MlShadowDecision,
+            ModelVersion = shadowScore.ModelVersion,
+            FeatureSchemaVersion = shadowScore.FeatureSchemaVersion,
+            ReasonSummary = shadowScore.ReasonSummary,
+            IsDecisionInfluential = shadowScore.IsDecisionInfluential,
             FeatureCompletenessState = featureCompletenessState,
             FeatureCompletenessSummary = featureCompletenessSummary,
             SchemaVersion = SchemaVersionValue,
@@ -157,12 +176,14 @@ public sealed class MlFeatureSnapshotService(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         logger.LogDebug(
-            "ML feature snapshot captured for {Symbol} {Timeframe}. GuardDecision={GuardDecision} ExecutionDecision={ExecutionDecision} CombinedBaselineScore={CombinedBaselineScore}",
+            "ML feature snapshot captured for {Symbol} {Timeframe}. GuardDecision={GuardDecision} ExecutionDecision={ExecutionDecision} CombinedBaselineScore={CombinedBaselineScore} MlShadowDecision={MlShadowDecision} MlShadowScore={MlShadowScore}",
             entity.Symbol,
             entity.Timeframe,
             entity.GuardDecision,
             entity.ExecutionDecision,
-            entity.CombinedBaselineScore);
+            entity.CombinedBaselineScore,
+            entity.MlShadowDecision,
+            entity.MlShadowScore);
 
         return Map(entity);
     }
@@ -475,6 +496,13 @@ public sealed class MlFeatureSnapshotService(
             entity.FeatureCompletenessScore,
             entity.CombinedBaselineScore,
             entity.BaselineScoreSummary,
+            entity.MlShadowScore,
+            entity.MlConfidence,
+            entity.MlShadowDecision,
+            entity.ModelVersion,
+            entity.FeatureSchemaVersion,
+            entity.ReasonSummary,
+            entity.IsDecisionInfluential,
             entity.FeatureCompletenessState,
             entity.FeatureCompletenessSummary,
             entity.SchemaVersion,
@@ -482,6 +510,18 @@ public sealed class MlFeatureSnapshotService(
             entity.FeatureAnchorTimeUtc,
             entity.MarketDataTimestampUtc,
             entity.ExecutionEnvironment);
+    }
+
+    private static MlShadowScoreSnapshot CreateUnavailableShadowScore(string featureSchemaVersion)
+    {
+        return new MlShadowScoreSnapshot(
+            MlShadowScore: null,
+            MlConfidence: 0m,
+            MlShadowDecision: "NoDecision",
+            ModelVersion: "Unavailable",
+            FeatureSchemaVersion: featureSchemaVersion,
+            ReasonSummary: "ShadowModelUnavailable",
+            IsDecisionInfluential: false);
     }
 
     private static string NormalizeRequired(string? value, string parameterName)

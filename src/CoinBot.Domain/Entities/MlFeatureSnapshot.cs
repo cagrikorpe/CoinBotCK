@@ -80,6 +80,20 @@ public sealed class MlFeatureSnapshot : BaseEntity
 
     public string BaselineScoreSummary { get; set; } = string.Empty;
 
+    public decimal? MlShadowScore { get; set; }
+
+    public decimal MlConfidence { get; set; }
+
+    public string MlShadowDecision { get; set; } = "NoDecision";
+
+    public string ModelVersion { get; set; } = string.Empty;
+
+    public string FeatureSchemaVersion { get; set; } = "Unavailable";
+
+    public string ReasonSummary { get; set; } = string.Empty;
+
+    public bool IsDecisionInfluential { get; set; }
+
     public string FeatureCompletenessState { get; set; } = "Unavailable";
 
     public string FeatureCompletenessSummary { get; set; } = "Unavailable";

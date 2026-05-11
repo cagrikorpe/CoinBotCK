@@ -2905,6 +2905,8 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
             nameof(MlFeatureSnapshot.SampleQualityScore),
             nameof(MlFeatureSnapshot.FeatureCompletenessScore),
             nameof(MlFeatureSnapshot.CombinedBaselineScore),
+            nameof(MlFeatureSnapshot.MlShadowScore),
+            nameof(MlFeatureSnapshot.MlConfidence),
             nameof(MlFeatureSnapshot.PositionUnrealizedPnl),
             nameof(MlFeatureSnapshot.PositionRealizedPnl)
         })
@@ -2914,6 +2916,22 @@ public sealed class ApplicationDbContext : IdentityDbContext<ApplicationUser, Id
         }
 
         builder.Property(entity => entity.BaselineScoreSummary)
+            .HasMaxLength(512)
+            .IsRequired();
+
+        builder.Property(entity => entity.MlShadowDecision)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.ModelVersion)
+            .HasMaxLength(64)
+            .IsRequired();
+
+        builder.Property(entity => entity.FeatureSchemaVersion)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(entity => entity.ReasonSummary)
             .HasMaxLength(512)
             .IsRequired();
 
