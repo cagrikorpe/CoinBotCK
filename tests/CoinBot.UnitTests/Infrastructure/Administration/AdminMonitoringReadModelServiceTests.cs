@@ -2727,6 +2727,115 @@ public sealed class AdminMonitoringReadModelServiceTests
     }
 
     [Fact]
+    public async Task AdminDashboardReadModel_ProjectsMlShadowAdvisoryEvidence()
+    {
+        var now = new DateTime(2026, 5, 11, 9, 0, 0, DateTimeKind.Utc);
+        await using var dbContext = CreateDbContext();
+
+        dbContext.MlFeatureSnapshots.AddRange(
+            new MlFeatureSnapshot
+            {
+                Id = Guid.NewGuid(),
+                Symbol = "BNBUSDT",
+                StrategyKey = "alpha-core",
+                Timeframe = "1m",
+                CombinedBaselineScore = 82m,
+                FeatureCompletenessScore = 100m,
+                MlShadowScore = 81.25m,
+                MlConfidence = 97.5m,
+                MlShadowDecision = "WouldAllow",
+                ModelVersion = "ML-Shadow-Deterministic.v1",
+                FeatureSchemaVersion = "MLFS-1.v3",
+                ReasonSummary = "HighBaselineScoreAndCompleteness",
+                IsDecisionInfluential = false,
+                CapturedAtUtc = now.AddMinutes(-3),
+                CreatedDate = now.AddMinutes(-3),
+                UpdatedDate = now.AddMinutes(-3)
+            },
+            new MlFeatureSnapshot
+            {
+                Id = Guid.NewGuid(),
+                Symbol = "ETHUSDT",
+                StrategyKey = "alpha-core",
+                Timeframe = "1m",
+                CombinedBaselineScore = 28m,
+                FeatureCompletenessScore = 35m,
+                MlShadowScore = 24.5m,
+                MlConfidence = 88m,
+                MlShadowDecision = "WouldSuppress",
+                ModelVersion = "ML-Shadow-Deterministic.v1",
+                FeatureSchemaVersion = "MLFS-1.v3",
+                ReasonSummary = "LowCompletenessAndHighRisk",
+                IsDecisionInfluential = false,
+                CapturedAtUtc = now.AddMinutes(-2),
+                CreatedDate = now.AddMinutes(-2),
+                UpdatedDate = now.AddMinutes(-2)
+            },
+            new MlFeatureSnapshot
+            {
+                Id = Guid.NewGuid(),
+                Symbol = "XRPUSDT",
+                StrategyKey = "alpha-core",
+                Timeframe = "1m",
+                CombinedBaselineScore = 55m,
+                FeatureCompletenessScore = 55m,
+                MlShadowScore = null,
+                MlConfidence = 0m,
+                MlShadowDecision = "NoDecision",
+                ModelVersion = "ML-Shadow-Deterministic.v1",
+                FeatureSchemaVersion = "MLFS-1.v3",
+                ReasonSummary = "IncompleteFeatureData",
+                IsDecisionInfluential = false,
+                CapturedAtUtc = now.AddMinutes(-1),
+                CreatedDate = now.AddMinutes(-1),
+                UpdatedDate = now.AddMinutes(-1)
+            });
+        await dbContext.SaveChangesAsync();
+
+        var service = new AdminMonitoringReadModelService(
+            dbContext,
+            new MemoryCache(new MemoryCacheOptions()),
+            new FixedTimeProvider(now),
+            Options.Create(new DataLatencyGuardOptions()));
+
+        var snapshot = await service.GetSnapshotAsync();
+        var mlShadow = snapshot.OperationalObservability.MlShadow;
+
+        Assert.Equal("Healthy", mlShadow.State);
+        Assert.Equal(3, mlShadow.ShadowDecisionCount);
+        Assert.Equal(1, mlShadow.WouldAllowCount);
+        Assert.Equal(1, mlShadow.WouldSuppressCount);
+        Assert.Equal(1, mlShadow.NoDecisionCount);
+        Assert.Equal("ML-Shadow-Deterministic.v1", mlShadow.LatestModelVersion);
+        Assert.Equal("MLFS-1.v3", mlShadow.LatestFeatureSchemaVersion);
+        Assert.Contains("Advisory only", mlShadow.AdvisorySummary, StringComparison.Ordinal);
+        Assert.Contains("WouldAllow 1", mlShadow.Summary, StringComparison.Ordinal);
+
+        var allowRow = Assert.Single(mlShadow.Rows, item => item.Symbol == "BNBUSDT");
+        Assert.Equal("alpha-core", allowRow.StrategyKey);
+        Assert.Equal("1m", allowRow.Timeframe);
+        Assert.Equal("81.25", allowRow.MlShadowScoreLabel);
+        Assert.Equal("97.5", allowRow.MlConfidenceLabel);
+        Assert.Equal("WouldAllow", allowRow.MlShadowDecision);
+        Assert.Equal("WouldAllow", allowRow.BaselineDecision);
+        Assert.False(allowRow.IsDecisionInfluential);
+        Assert.Equal("ML-Shadow-Deterministic.v1", allowRow.ModelVersion);
+        Assert.Equal("MLFS-1.v3", allowRow.FeatureSchemaVersion);
+        Assert.Equal("HighBaselineScoreAndCompleteness", allowRow.ReasonSummary);
+
+        var suppressRow = Assert.Single(mlShadow.Rows, item => item.Symbol == "ETHUSDT");
+        Assert.Equal("WouldSuppress", suppressRow.MlShadowDecision);
+        Assert.Equal("WouldSuppress", suppressRow.BaselineDecision);
+
+        var noDecisionRow = Assert.Single(mlShadow.Rows, item => item.Symbol == "XRPUSDT");
+        Assert.Equal("n/a", noDecisionRow.MlShadowScoreLabel);
+        Assert.Equal("0", noDecisionRow.MlConfidenceLabel);
+        Assert.Equal("NoDecision", noDecisionRow.MlShadowDecision);
+        Assert.Equal("NoDecision", noDecisionRow.BaselineDecision);
+        Assert.False(noDecisionRow.IsDecisionInfluential);
+    }
+
+    [Fact]
     public async Task AdminDashboardReadModel_DriftSummaryParser_IsSafeForMalformedValues()
     {
         var now = new DateTime(2026, 4, 29, 9, 30, 0, DateTimeKind.Utc);
@@ -2954,6 +3063,12 @@ public sealed class AdminMonitoringReadModelServiceTests
         Assert.Equal("No recent directional conflict.", snapshot.OperationalObservability.DirectionQuality.ConflictCountSummary);
         Assert.Equal("n/a", snapshot.OperationalObservability.DirectionQuality.LastConflictReason);
         Assert.Empty(snapshot.OperationalObservability.DirectionQuality.Rows);
+        Assert.Equal("Unknown", snapshot.OperationalObservability.MlShadow.State);
+        Assert.Equal("No ML shadow advisory evidence yet.", snapshot.OperationalObservability.MlShadow.Summary);
+        Assert.Equal("n/a", snapshot.OperationalObservability.MlShadow.LatestModelVersion);
+        Assert.Equal("n/a", snapshot.OperationalObservability.MlShadow.LatestFeatureSchemaVersion);
+        Assert.Equal("Advisory only · IsDecisionInfluential=False.", snapshot.OperationalObservability.MlShadow.AdvisorySummary);
+        Assert.Empty(snapshot.OperationalObservability.MlShadow.Rows);
     }
 
     [Fact]

@@ -413,6 +413,43 @@ public sealed class AdminOverviewSurfaceTests
     }
 
     [Fact]
+    public void AdminSystemHealthView_RendersMlShadowAdvisorySurface()
+    {
+        var operationalCardContent = File.ReadAllText(Path.Combine(
+            ResolveRepositoryRoot(),
+            "src",
+            "CoinBot.Web",
+            "Areas",
+            "Admin",
+            "Views",
+            "Shared",
+            "Foundation",
+            "_AdminOperationalObservabilityCard.cshtml"));
+
+        Assert.Contains("data-cb-admin-ml-shadow", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-ml-shadow-summary", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-ml-shadow-counts", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-ml-shadow-advisory", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-ml-shadow-table", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-ml-shadow-rows", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-ml-shadow-row", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-ml-shadow-symbol", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("data-cb-admin-ml-shadow-empty", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("ML shadow advisory", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Advisory only", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("IsDecisionInfluential=False", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("ML shadow score", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("ML confidence", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("ML shadow decision", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Baseline decision", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Model", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Feature schema", operationalCardContent, StringComparison.Ordinal);
+        Assert.Contains("Reason summary", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("Account=@(privateSync.ExchangeAccountId", operationalCardContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("@row.OwnerUserId", operationalCardContent, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AdminBotOperationsTable_RendersManualCloseDoubleConfirmSurface()
     {
         var content = File.ReadAllText(Path.Combine(

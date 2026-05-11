@@ -20,9 +20,11 @@
     var multiSymbol = operational.MultiSymbolStability ?? OperationalMultiSymbolStabilitySnapshot.Empty();
     var marketDataFreshness = operational.MarketDataFreshness ?? OperationalMarketDataFreshnessSnapshot.Empty();
     var directionQuality = operational.DirectionQuality ?? OperationalDirectionQualitySnapshot.Empty();
+    var mlShadow = operational.MlShadow ?? OperationalMlShadowSnapshot.Empty();
     var multiSymbolRuntimeRows = multiSymbol.SymbolRows.ToArray();
     var marketDataFreshnessRows = marketDataFreshness.SymbolRows.ToArray();
     var directionQualityRows = directionQuality.Rows.ToArray();
+    var mlShadowRows = mlShadow.Rows.ToArray();
     var criticalWarnings = operational.CriticalWarnings
         .ToArray();
 
@@ -430,6 +432,76 @@
                             <td>@row.CandidateScoreLabel</td>
                             <td>@row.RankingScoreLabel</td>
                             <td>@row.RiskPenaltyLabel</td>
+                            <td>@(row.LastSeenUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "n/a")</td>
+                        </tr>
+                    }
+                }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="cb-admin-info-strip cb-admin-info-strip-info mt-4" data-cb-admin-ml-shadow>
+            <div>
+                <div class="cb-admin-info-strip-title">ML shadow advisory</div>
+                <div class="cb-admin-info-strip-text" data-cb-admin-ml-shadow-summary>
+                    @SanitizeOperationalSummary(mlShadow.Summary)
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-admin-ml-shadow-counts>
+                    Rows @mlShadow.ShadowDecisionCount · WouldAllow @mlShadow.WouldAllowCount · WouldSuppress @mlShadow.WouldSuppressCount · NoDecision @mlShadow.NoDecisionCount
+                </div>
+                <div class="cb-admin-info-strip-text mt-2" data-cb-admin-ml-shadow-advisory>
+                    Advisory only · IsDecisionInfluential=False · Model @mlShadow.LatestModelVersion · Feature schema @mlShadow.LatestFeatureSchemaVersion · @SanitizeOperationalSummary(mlShadow.AdvisorySummary)
+                </div>
+            </div>
+            @await Html.PartialAsync("_AdminBadge", new AdminBadgeViewModel
+            {
+                Label = mlShadow.State,
+                Tone = ResolveTone(mlShadow.State),
+                IconText = "ML"
+            })
+        </div>
+
+        <div class="table-responsive mt-4" data-cb-admin-ml-shadow-table-wrap>
+            <table class="table table-borderless cb-admin-table mb-0" data-cb-admin-ml-shadow-table>
+                <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Strategy</th>
+                    <th>Timeframe</th>
+                    <th>ML shadow score</th>
+                    <th>ML confidence</th>
+                    <th>ML shadow decision</th>
+                    <th>Baseline decision</th>
+                    <th>Influential</th>
+                    <th>Model</th>
+                    <th>Feature schema</th>
+                    <th>Reason summary</th>
+                    <th>Last seen</th>
+                </tr>
+                </thead>
+                <tbody data-cb-admin-ml-shadow-rows>
+                @if (mlShadowRows.Length == 0)
+                {
+                    <tr data-cb-admin-ml-shadow-empty>
+                        <td colspan="12">ML shadow advisory rows n/a.</td>
+                    </tr>
+                }
+                else
+                {
+                    foreach (var row in mlShadowRows)
+                    {
+                        <tr data-cb-admin-ml-shadow-row>
+                            <td data-cb-admin-ml-shadow-symbol>@row.Symbol</td>
+                            <td>@row.StrategyKey</td>
+                            <td>@row.Timeframe</td>
+                            <td>@row.MlShadowScoreLabel</td>
+                            <td>@row.MlConfidenceLabel</td>
+                            <td>@row.MlShadowDecision</td>
+                            <td>@row.BaselineDecision</td>
+                            <td>@row.IsDecisionInfluential.ToString().ToLowerInvariant()</td>
+                            <td>@row.ModelVersion</td>
+                            <td>@row.FeatureSchemaVersion</td>
+                            <td>@SanitizeOperationalSummary(row.ReasonSummary)</td>
                             <td>@(row.LastSeenUtc?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "n/a")</td>
                         </tr>
                     }

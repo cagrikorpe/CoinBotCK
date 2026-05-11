@@ -66,6 +66,8 @@ public sealed record OperationalObservabilitySnapshot(
 
     public OperationalDirectionQualitySnapshot DirectionQuality { get; init; } = OperationalDirectionQualitySnapshot.Empty();
 
+    public OperationalMlShadowSnapshot MlShadow { get; init; } = OperationalMlShadowSnapshot.Empty();
+
     public static OperationalObservabilitySnapshot Empty()
     {
         return new OperationalObservabilitySnapshot(
@@ -98,7 +100,8 @@ public sealed record OperationalObservabilitySnapshot(
             ExecutionControl = OperationalExecutionControlSnapshot.Empty(),
             MultiSymbolStability = OperationalMultiSymbolStabilitySnapshot.Empty(),
             MarketDataFreshness = OperationalMarketDataFreshnessSnapshot.Empty(),
-            DirectionQuality = OperationalDirectionQualitySnapshot.Empty()
+            DirectionQuality = OperationalDirectionQualitySnapshot.Empty(),
+            MlShadow = OperationalMlShadowSnapshot.Empty()
         };
     }
 }
@@ -434,6 +437,48 @@ public sealed record OperationalDirectionQualityRowSnapshot(
     string CandidateScoreLabel,
     string RankingScoreLabel,
     string RiskPenaltyLabel,
+    DateTime? LastSeenUtc);
+
+public sealed record OperationalMlShadowSnapshot(
+    string State,
+    string Summary,
+    int ShadowDecisionCount,
+    int WouldAllowCount,
+    int WouldSuppressCount,
+    int NoDecisionCount,
+    string LatestModelVersion,
+    string LatestFeatureSchemaVersion,
+    string AdvisorySummary,
+    IReadOnlyCollection<OperationalMlShadowRowSnapshot> Rows)
+{
+    public static OperationalMlShadowSnapshot Empty()
+    {
+        return new OperationalMlShadowSnapshot(
+            State: "Unknown",
+            Summary: "No ML shadow advisory evidence yet.",
+            ShadowDecisionCount: 0,
+            WouldAllowCount: 0,
+            WouldSuppressCount: 0,
+            NoDecisionCount: 0,
+            LatestModelVersion: "n/a",
+            LatestFeatureSchemaVersion: "n/a",
+            AdvisorySummary: "Advisory only · IsDecisionInfluential=False.",
+            Rows: Array.Empty<OperationalMlShadowRowSnapshot>());
+    }
+}
+
+public sealed record OperationalMlShadowRowSnapshot(
+    string Symbol,
+    string StrategyKey,
+    string Timeframe,
+    string MlShadowScoreLabel,
+    string MlConfidenceLabel,
+    string MlShadowDecision,
+    string BaselineDecision,
+    bool IsDecisionInfluential,
+    string ModelVersion,
+    string FeatureSchemaVersion,
+    string ReasonSummary,
     DateTime? LastSeenUtc);
 
 public sealed record OperationalExitPnlEvidenceSnapshot(

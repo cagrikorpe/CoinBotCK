@@ -178,6 +178,28 @@ public sealed class AdminMonitoringReadModelService(
                 entity.IsTopCandidate,
                 entity.ScoringSummary))
             .ToListAsync(cancellationToken);
+        var recentMlShadowRows = await dbContext.MlFeatureSnapshots
+            .AsNoTracking()
+            .Where(entity =>
+                !entity.IsDeleted &&
+                entity.CapturedAtUtc >= windowStartUtc)
+            .OrderByDescending(entity => entity.CapturedAtUtc)
+            .Take(160)
+            .Select(entity => new MonitoringMlShadowRow(
+                entity.Symbol,
+                entity.StrategyKey,
+                entity.Timeframe,
+                entity.MlShadowScore,
+                entity.MlConfidence,
+                entity.MlShadowDecision,
+                entity.ModelVersion,
+                entity.FeatureSchemaVersion,
+                entity.ReasonSummary,
+                entity.IsDecisionInfluential,
+                entity.CombinedBaselineScore,
+                entity.FeatureCompletenessScore,
+                entity.CapturedAtUtc))
+            .ToListAsync(cancellationToken);
         var recentHandoffRows = await dbContext.MarketScannerHandoffAttempts
             .AsNoTracking()
             .Where(entity =>
@@ -433,6 +455,7 @@ public sealed class AdminMonitoringReadModelService(
         var directionQuality = BuildDirectionQualityEvidence(
             recentDirectionCandidateRows,
             recentHandoffDetailRows);
+        var mlShadow = BuildMlShadowEvidence(recentMlShadowRows);
         var criticalWarnings = BuildCriticalWarnings(
             healthSnapshotEntities,
             workerHeartbeatEntities,
@@ -473,7 +496,8 @@ public sealed class AdminMonitoringReadModelService(
             ExecutionControl = executionControl,
             MultiSymbolStability = multiSymbolStability,
             MarketDataFreshness = marketDataFreshness,
-            DirectionQuality = directionQuality
+            DirectionQuality = directionQuality,
+            MlShadow = mlShadow
         };
     }
 
@@ -2418,6 +2442,81 @@ public sealed class AdminMonitoringReadModelService(
             LastSeenUtc: lastSeenUtc);
     }
 
+    private static OperationalMlShadowSnapshot BuildMlShadowEvidence(
+        IReadOnlyCollection<MonitoringMlShadowRow> recentMlShadowRows)
+    {
+        if (recentMlShadowRows.Count == 0)
+        {
+            return OperationalMlShadowSnapshot.Empty();
+        }
+
+        var latestRows = recentMlShadowRows
+            .GroupBy(
+                entity => new MlShadowGroupingKey(
+                    NormalizeSymbol(entity.Symbol),
+                    string.IsNullOrWhiteSpace(entity.StrategyKey) ? "n/a" : entity.StrategyKey.Trim(),
+                    string.IsNullOrWhiteSpace(entity.Timeframe) ? "n/a" : entity.Timeframe.Trim()),
+                (key, rows) => new
+                {
+                    Key = key,
+                    Row = rows
+                        .OrderByDescending(item => NormalizeUtc(item.CapturedAtUtc))
+                        .ThenBy(item => item.Symbol, StringComparer.Ordinal)
+                        .First()
+                })
+            .Where(entity => !string.IsNullOrWhiteSpace(entity.Key.Symbol))
+            .OrderByDescending(entity => NormalizeUtc(entity.Row.CapturedAtUtc))
+            .ThenBy(entity => entity.Key.Symbol, StringComparer.Ordinal)
+            .ThenBy(entity => entity.Key.StrategyKey, StringComparer.Ordinal)
+            .Take(10)
+            .Select(entity => new OperationalMlShadowRowSnapshot(
+                Symbol: entity.Key.Symbol,
+                StrategyKey: entity.Key.StrategyKey,
+                Timeframe: entity.Key.Timeframe,
+                MlShadowScoreLabel: FormatDirectionQualityDecimal(entity.Row.MlShadowScore),
+                MlConfidenceLabel: FormatDirectionQualityDecimal(entity.Row.MlConfidence),
+                MlShadowDecision: string.IsNullOrWhiteSpace(entity.Row.MlShadowDecision) ? "NoDecision" : entity.Row.MlShadowDecision.Trim(),
+                BaselineDecision: ResolveMlShadowBaselineDecision(entity.Row.CombinedBaselineScore, entity.Row.FeatureCompletenessScore),
+                IsDecisionInfluential: entity.Row.IsDecisionInfluential,
+                ModelVersion: string.IsNullOrWhiteSpace(entity.Row.ModelVersion) ? "n/a" : entity.Row.ModelVersion.Trim(),
+                FeatureSchemaVersion: string.IsNullOrWhiteSpace(entity.Row.FeatureSchemaVersion) ? "n/a" : entity.Row.FeatureSchemaVersion.Trim(),
+                ReasonSummary: string.IsNullOrWhiteSpace(entity.Row.ReasonSummary) ? "n/a" : entity.Row.ReasonSummary.Trim(),
+                LastSeenUtc: NormalizeUtc(entity.Row.CapturedAtUtc)))
+            .ToArray();
+
+        var wouldAllowCount = recentMlShadowRows.Count(entity => string.Equals(entity.MlShadowDecision, "WouldAllow", StringComparison.Ordinal));
+        var wouldSuppressCount = recentMlShadowRows.Count(entity => string.Equals(entity.MlShadowDecision, "WouldSuppress", StringComparison.Ordinal));
+        var noDecisionCount = recentMlShadowRows.Count - wouldAllowCount - wouldSuppressCount;
+        var latestRow = recentMlShadowRows
+            .OrderByDescending(entity => NormalizeUtc(entity.CapturedAtUtc))
+            .ThenBy(entity => entity.Symbol, StringComparer.Ordinal)
+            .First();
+        var latestModelVersion = string.IsNullOrWhiteSpace(latestRow.ModelVersion)
+            ? "n/a"
+            : latestRow.ModelVersion.Trim();
+        var latestFeatureSchemaVersion = string.IsNullOrWhiteSpace(latestRow.FeatureSchemaVersion)
+            ? "n/a"
+            : latestRow.FeatureSchemaVersion.Trim();
+        var hasInfluentialRow = recentMlShadowRows.Any(entity => entity.IsDecisionInfluential);
+        var state = hasInfluentialRow
+            ? "Watching"
+            : "Healthy";
+        var summary = $"Shadow rows {recentMlShadowRows.Count} · WouldAllow {wouldAllowCount} · WouldSuppress {wouldSuppressCount} · NoDecision {noDecisionCount}";
+        var advisorySummary = $"Advisory only · IsDecisionInfluential=False · Model {latestModelVersion} · Feature schema {latestFeatureSchemaVersion}";
+
+        return new OperationalMlShadowSnapshot(
+            State: state,
+            Summary: summary,
+            ShadowDecisionCount: recentMlShadowRows.Count,
+            WouldAllowCount: wouldAllowCount,
+            WouldSuppressCount: wouldSuppressCount,
+            NoDecisionCount: noDecisionCount,
+            LatestModelVersion: latestModelVersion,
+            LatestFeatureSchemaVersion: latestFeatureSchemaVersion,
+            AdvisorySummary: advisorySummary,
+            Rows: latestRows);
+    }
+
     private static DirectionQualityCandidateSample? MapDirectionQualityCandidateSample(MonitoringScannerCandidateRow row)
     {
         var symbol = NormalizeSymbol(row.Symbol);
@@ -3179,6 +3278,26 @@ public sealed class AdminMonitoringReadModelService(
     private static string FormatDirectionQualityDecimal(decimal? value)
     {
         return value?.ToString("0.####", CultureInfo.InvariantCulture) ?? "n/a";
+    }
+
+    private static string ResolveMlShadowBaselineDecision(decimal? combinedBaselineScore, decimal? featureCompletenessScore)
+    {
+        if (!combinedBaselineScore.HasValue || !featureCompletenessScore.HasValue)
+        {
+            return "NoDecision";
+        }
+
+        if (featureCompletenessScore.Value < 40m || combinedBaselineScore.Value <= 40m)
+        {
+            return "WouldSuppress";
+        }
+
+        if (featureCompletenessScore.Value >= 70m && combinedBaselineScore.Value >= 70m)
+        {
+            return "WouldAllow";
+        }
+
+        return "NoDecision";
     }
 
     private static bool IsFreshnessHandoffBlocker(string? blockerCode)
@@ -4111,7 +4230,27 @@ public sealed class AdminMonitoringReadModelService(
         decimal? CandidateMarketScore,
         DateTime CompletedAtUtc);
 
+    private sealed record MonitoringMlShadowRow(
+        string Symbol,
+        string StrategyKey,
+        string Timeframe,
+        decimal? MlShadowScore,
+        decimal MlConfidence,
+        string MlShadowDecision,
+        string ModelVersion,
+        string FeatureSchemaVersion,
+        string? ReasonSummary,
+        bool IsDecisionInfluential,
+        decimal CombinedBaselineScore,
+        decimal FeatureCompletenessScore,
+        DateTime CapturedAtUtc);
+
     private readonly record struct DirectionQualityGroupingKey(
+        string Symbol,
+        string StrategyKey,
+        string Timeframe);
+
+    private readonly record struct MlShadowGroupingKey(
         string Symbol,
         string StrategyKey,
         string Timeframe);
